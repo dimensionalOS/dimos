@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Callable
 import concurrent.futures
+import errno
 import json
 import os
+import socket
 import time
 from typing import TYPE_CHECKING, Any
 import uuid
@@ -344,6 +346,31 @@ async def mcp_sse_endpoint() -> StreamingResponse:
     )
 
 
+def _wait_for_port_free(host: str, port: int, timeout: float = 5.0, interval: float = 0.1) -> bool:
+    """Wait until ``(host, port)`` can be bound, or ``timeout`` seconds elapse.
+
+    Returns True as soon as a probe bind succeeds. Used on (re)start so a fresh
+    worker does not race a just-stopped server that has not yet released its
+    listen socket. SO_REUSEADDR does not let a probe bind past an *active*
+    listener on Linux, so this correctly blocks until the old socket is gone.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+            return True
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+        finally:
+            probe.close()
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
 class McpServer(Module):
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
@@ -361,18 +388,34 @@ class McpServer(Module):
             self._tool_stream_cleanup()
             self._tool_stream_cleanup = None
 
+        # Wake every SSE generator so it returns and its connection closes.
+        # asyncio.Queue is not thread-safe and stop() runs off the event loop,
+        # so hand the sentinel to the loop thread: a bare put_nowait here can
+        # fail to wake the waiter, leaving uvicorn's graceful shutdown blocked
+        # forever on the still-open connection (and thus never releasing the
+        # listen socket for a subsequent restart).
+        loop = self._loop
         for queue in list(app.state.sse_queues):
             try:
-                queue.put_nowait(None)
+                if loop is not None:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+                else:
+                    queue.put_nowait(None)
             except Exception:
                 pass
         app.state.sse_queues.clear()
 
         if self._uvicorn_server:
+            # force_exit so teardown can't stall on a lingering connection, and
+            # always clear state even if serve() does not settle in time -- a
+            # leftover server reference must never block a later restart's rebind.
             self._uvicorn_server.should_exit = True
-            loop = self._loop
-            if loop is not None and self._serve_future is not None:
-                self._serve_future.result(timeout=5.0)
+            self._uvicorn_server.force_exit = True
+            if self._serve_future is not None:
+                try:
+                    self._serve_future.result(timeout=5.0)
+                except Exception:
+                    logger.warning("uvicorn server did not stop within 5s", exc_info=True)
             self._uvicorn_server = None
             self._serve_future = None
         super().stop()
@@ -433,10 +476,24 @@ class McpServer(Module):
             transport.stop()
 
     def _start_server(self, port: int | None = None) -> None:
-        from dimos.core.global_config import global_config
-
-        _port = port if port is not None else global_config.mcp_port
-        _host = global_config.listen_host
+        # Idempotent: a spurious second start() must not spin up a second uvicorn
+        # on the same port. The first would keep listening after this instance's
+        # `_uvicorn_server` was overwritten, orphaning it (bound but untracked, so
+        # stop() can never shut it down) -- exactly the "port listening but never
+        # responds" wedge seen on restart.
+        if self._uvicorn_server is not None:
+            return
+        # Read config via self.config.g, not a fresh `global_config` import: workers
+        # are spawned with multiprocessing's "forkserver" method, so a fresh import
+        # here would see the forkserver's stale snapshot instead of the overrides
+        # `deploy_module` threaded through via `kwargs["g"]`.
+        _port = port if port is not None else self.config.g.mcp_port
+        _host = self.config.g.listen_host
+        # On a hot-reload restart this fresh worker can come up before the previous
+        # worker's listen socket is fully released. Wait briefly so we bind cleanly
+        # instead of dying on EADDRINUSE and leaving a non-serving server behind.
+        if not _wait_for_port_free(_host, _port):
+            logger.error("MCP port still in use after wait; bind may fail", host=_host, port=_port)
         config = uvicorn.Config(app, host=_host, port=_port, log_level="warning", access_log=False)
         server = uvicorn.Server(config)
         self._uvicorn_server = server
