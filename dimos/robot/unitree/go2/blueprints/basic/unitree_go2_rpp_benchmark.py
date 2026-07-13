@@ -73,7 +73,7 @@ _BENCHMARK_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = 
 unitree_go2_rpp_benchmark = (
     autoconnect(
         unitree_go2_rpp_controller,
-        Benchmarker.blueprint(robot="go2", gate_source="stream"),
+        Benchmarker.blueprint(),
     )
     .transports(_BENCHMARK_TRANSPORTS)
     .global_config(obstacle_avoidance=False, n_workers=6)
