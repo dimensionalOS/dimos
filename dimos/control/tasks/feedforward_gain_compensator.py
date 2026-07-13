@@ -42,10 +42,9 @@ class FeedforwardGainConfig:
     """Steady-state plant gains. Default = unity (passthrough).
 
     For Go2, do not hardcode: read the vendored fit
-    ``dimos.control.benchmarking.plant_models.GO2_PLANT_FITTED`` (currently
-    ``K_vx≈0.92``, ``K_wz≈2.45``). A stale hardcoded ``K_wz=2.175`` copy
-    silently mis-calibrated every FF controller; the single source of
-    truth is plant_models.
+    ``dimos.control.benchmarking.plant.GO2_PLANT_FITTED`` (the single source
+    of truth). Copying its K values here drifts and silently mis-calibrates
+    every FF controller.
     """
 
     K_vx: float = 1.0
