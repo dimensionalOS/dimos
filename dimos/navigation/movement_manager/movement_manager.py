@@ -94,6 +94,10 @@ class MovementManager(Module):
             return
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        # Release any latched teleop cancel: the follower ignores paths while
+        # cancelled (stop_movement=True), so without this a click builds a path but
+        # the robot never moves. A fresh goal is an explicit resume.
+        self.stop_movement.publish(Bool(data=False))
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
