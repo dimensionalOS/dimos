@@ -473,7 +473,10 @@ class ControlCoordinator(Module):
     def _on_cartesian_command(self, msg: PoseStamped) -> None:
         """Route incoming PoseStamped to CartesianIKTask by task name.
 
-        Uses frame_id as the target task name for routing.
+        Uses frame_id as the target task name for routing. A frame_id of
+        the form "<task>/<target>" routes to <task>, which reads the
+        sub-target back off the suffix (e.g. multi-EE tasks addressing
+        "dual_arm_ik/left" and "dual_arm_ik/right").
         """
         task_name = msg.frame_id
         if not task_name:
@@ -484,6 +487,8 @@ class ControlCoordinator(Module):
 
         with self._task_lock:
             task = self._tasks.get(task_name)
+            if task is None and "/" in task_name:
+                task = self._tasks.get(task_name.split("/", 1)[0])
             if task is None:
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
@@ -694,7 +699,9 @@ class ControlCoordinator(Module):
                 )
 
         # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
+        has_cartesian_ik = any(
+            t.type in ("cartesian_ik", "teleop_ik", "g1_dual_arm_ik") for t in self.config.tasks
+        )
         if has_cartesian_ik:
             try:
                 self._cartesian_command_unsub = self.coordinator_cartesian_command.subscribe(
@@ -737,8 +744,8 @@ class ControlCoordinator(Module):
                     "to twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
+        # Subscribe to buttons if any teleop tasks configured (engage/disengage)
+        has_teleop_ik = any(t.type in ("teleop_ik", "g1_dual_arm_ik") for t in self.config.tasks)
         if has_teleop_ik:
             self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
