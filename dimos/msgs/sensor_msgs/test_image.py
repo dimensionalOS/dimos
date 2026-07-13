@@ -22,7 +22,6 @@ _IS_MACOS = sys.platform == "darwin"
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 @pytest.fixture
@@ -67,21 +66,6 @@ def test_opencv_conversion(img: Image) -> None:
     # artificially patch timestamp
     decoded_img.ts = img.ts
     assert decoded_img == img
-
-
-@pytest.mark.tool
-def test_sharpness_stream() -> None:
-    get_data("unitree_office_walk")  # Preload data for testing
-    video_store = LegacyPickleStore(
-        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-    )
-
-    cnt = 0
-    for image in video_store.iterate():
-        cnt = cnt + 1
-        print(image.sharpness)
-        if cnt > 30:
-            return
 
 
 def test_sharpness_barrier() -> None:

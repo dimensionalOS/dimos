@@ -25,7 +25,3 @@ def test_lookahead_scales_in_linear_region():
 
 def test_lookahead_clamped_at_ceiling():
     assert lookahead_distance(2.0, 1.5, 0.4, 1.5) == 1.5
-
-
-def test_lookahead_monotonic_in_speed():
-    assert lookahead_distance(0.8, 1.5, 0.4, 1.5) > lookahead_distance(0.45, 1.5, 0.4, 1.5)

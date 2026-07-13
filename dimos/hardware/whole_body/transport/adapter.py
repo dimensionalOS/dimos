@@ -20,9 +20,8 @@ Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
 
 from __future__ import annotations
 
-from functools import partial
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
@@ -30,9 +29,6 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
 
 logger = setup_logger()
 
@@ -182,15 +178,15 @@ class TransportWholeBodyAdapter:
             )
 
 
-def register(registry: WholeBodyAdapterRegistry) -> None:
-    """Auto-discovered by ``whole_body_adapter_registry.discover()``."""
+def transport_lcm_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
+    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
+    kwargs.setdefault("transport_cls", LCMTransport)
+    return TransportWholeBodyAdapter(**kwargs)
+
+
+def transport_ros_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
+    """Factory for the ``transport_ros`` adapter (see ``_registry.py``)."""
     from dimos.core.transport import ROSTransport
 
-    registry.register(
-        "transport_lcm",
-        partial(TransportWholeBodyAdapter, transport_cls=LCMTransport),
-    )
-    registry.register(
-        "transport_ros",
-        partial(TransportWholeBodyAdapter, transport_cls=ROSTransport),
-    )
+    kwargs.setdefault("transport_cls", ROSTransport)
+    return TransportWholeBodyAdapter(**kwargs)

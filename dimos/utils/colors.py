@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ANSI 256 heatmap gradient: red -> orange -> yellow -> green.
+HEAT_GRADIENT_ANSI256: list[int] = [
+    52, 88, 124, 160, 196, 202, 208, 214, 220, 226, 190, 154, 148, 118, 82, 46, 40, 34,
+]  # fmt: skip
+
 
 def green(text: str) -> str:
     """Return the given text in green color."""

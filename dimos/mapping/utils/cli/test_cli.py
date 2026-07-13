@@ -66,8 +66,8 @@ requires_turbojpeg = pytest.mark.skipif(
 )
 
 
-def _run(*args: str, timeout: float = 300.0) -> SimpleNamespace:
-    """Invoke `dimos map <args>` in-process and capture its result.
+def _run(*args: str, timeout: float = 300.0, group: str = "map") -> SimpleNamespace:
+    """Invoke `dimos <group> <args>` in-process and capture its result.
 
     Uses Typer's CliRunner so the dimos import cost is paid once (module import)
     rather than per case. `timeout` is kept for call-site compatibility but is a
@@ -76,7 +76,7 @@ def _run(*args: str, timeout: float = 300.0) -> SimpleNamespace:
     """
     from dimos.robot.cli.dimos import main as cli_app
 
-    res = _runner.invoke(cli_app, ["map", *args])
+    res = _runner.invoke(cli_app, [group, *args])
     err = res.output
     if res.exception is not None and not isinstance(res.exception, SystemExit):
         err += "\n" + "".join(traceback.format_exception(res.exception))
@@ -103,10 +103,12 @@ def dataset() -> str:
 
 
 def test_summary(dataset: str) -> None:
-    res = _run("summary", dataset)
+    # summary lives under `dimos mem`, but drives the same recorded dataset.
+    res = _run("summary", dataset, group="mem")
     assert res.returncode == 0, res.stderr
     assert "lidar" in res.stdout
     assert "odom" in res.stdout
+    assert "iB" in res.stdout  # payload sizes (KiB/MiB/GiB) are included
 
 
 @requires_turbojpeg

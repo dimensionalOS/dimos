@@ -48,12 +48,12 @@ LCM over UDP can be unreliable on macOS for large or high-rate replay workloads.
 
 See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for install, Linux versus macOS defaults, and `DIMOS_TRANSPORT`.
 
-```sh
+```sh skip
 dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 ```
 
 If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
 
-```sh
+```sh skip
 uv sync --extra all --frozen
 ```

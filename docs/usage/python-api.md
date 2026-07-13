@@ -1,4 +1,6 @@
-# Python API
+---
+title: "Python API"
+---
 
 The `Dimos` class is the main entry point for using DimOS from Python. There are two modes:
 

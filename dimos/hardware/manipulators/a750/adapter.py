@@ -17,10 +17,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
+from typing import Any
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -290,8 +287,3 @@ class A750Adapter:
         details = ", ".join(f"{key}={value!r}" for key, value in kwargs.items())
         suffix = f"({details})" if details else "()"
         logger.info(f"A750Adapter.{method}{suffix}")
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("a750", A750Adapter)

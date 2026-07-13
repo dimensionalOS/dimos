@@ -29,13 +29,7 @@ class GoalRelayConfig(ModuleConfig):
 
 
 class GoalRelay(Module):
-    """Adapt odometry and goal points to the planner's PoseStamped inputs.
-
-    The MLS planner consumes start and goal as PoseStamped and replans itself
-    on map updates. This stateless adapter just relays: each odometry becomes a
-    start_pose, each goal becomes a goal_pose. A non-finite goal is relayed
-    through so the planner can clear its active goal.
-    """
+    """Adapt odometry and goal points to the planner's PoseStamped inputs."""
 
     config: GoalRelayConfig
 

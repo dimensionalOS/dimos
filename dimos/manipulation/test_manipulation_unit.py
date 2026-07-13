@@ -260,6 +260,7 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
+            world_backend="drake",
             planner_name="rrt_connect",
             kinematics_name=None,
             kinematics=kinematics,
@@ -279,6 +280,7 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
+            world_backend="drake",
             planner_name="rrt_connect",
             kinematics_name="pink",
             kinematics=module.config.kinematics,

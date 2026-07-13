@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
@@ -9,13 +20,37 @@ use validator::Validate;
 
 use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
-use crate::voxel::surface_point_xyz;
-use crate::voxel::VoxelKey;
+use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
 pub struct MLSPlanner {
     config: Config,
     planner: Planner,
+}
+
+/// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
+/// a non-finite coordinate.
+fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
+    let points: PyReadonlyArray2<'_, f32> = points
+        .extract()
+        .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
+    let shape = points.shape();
+    if shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "points must be (N, 3) float32, got shape {:?}",
+            shape
+        )));
+    }
+    let arr = points.as_array();
+    let n = shape[0];
+    Ok((0..n)
+        .filter_map(|i| {
+            let x = arr[[i, 0]];
+            let y = arr[[i, 1]];
+            let z = arr[[i, 2]];
+            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+        })
+        .collect())
 }
 
 #[pymethods]
@@ -26,17 +61,19 @@ impl MLSPlanner {
         *,
         voxel_size,
         robot_height,
+        max_overhead_m = 2.0,
         surface_closing_radius = 0.3,
         node_spacing_m = 1.0,
-        wall_clearance_m = 0.3,
+        wall_clearance_m = 0.1,
         wall_buffer_m = 0.75,
         wall_buffer_weight = 100.0,
-        step_threshold_m = 0.25,
+        step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
     ))]
     fn new(
         voxel_size: f32,
         robot_height: f32,
+        max_overhead_m: f32,
         surface_closing_radius: f32,
         node_spacing_m: f32,
         wall_clearance_m: f32,
@@ -49,6 +86,7 @@ impl MLSPlanner {
             world_frame: String::new(),
             voxel_size,
             robot_height,
+            max_overhead_m,
             surface_closing_radius,
             node_spacing_m,
             wall_clearance_m,
@@ -56,10 +94,9 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             step_penalty_weight,
-            // Only the binary's replan loop reads goal_tolerance. This
-            // in-process binding plans on demand and never consults it.
+            // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
-            // Only the binary's worker publishes viz artifacts. Unused here.
+            // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
         };
         config
@@ -72,34 +109,15 @@ impl MLSPlanner {
     }
 
     fn update_global_map(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
-
+        let pts = extract_points(points)?;
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
         Ok(())
     }
 
-    #[pyo3(signature = (points, origin, radius, z_min, z_max))]
+    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z))]
+    #[allow(clippy::too_many_arguments)]
     fn update_region(
         &mut self,
         py: Python<'_>,
@@ -108,35 +126,18 @@ impl MLSPlanner {
         radius: f32,
         z_min: f32,
         z_max: f32,
+        sensor_z: f32,
     ) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
-
-        let bounds = RegionBounds {
-            origin_x: origin.0,
-            origin_y: origin.1,
+        let pts = extract_points(points)?;
+        let bounds = RegionBounds::capped(
+            origin.0,
+            origin.1,
             radius,
             z_min,
             z_max,
-        };
+            sensor_z,
+            self.config.max_overhead_m,
+        );
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_region(&pts, &bounds, config));
@@ -221,7 +222,7 @@ impl MLSPlanner {
             .into_pyarray(py)
     }
 
-    /// Returns `(W, 3)` float32 waypoints or `None` if no path exists.
+    /// Returns `(W, 3)` float32 waypoints or `None` if no full path exists.
     fn plan<'py>(
         &self,
         py: Python<'py>,
@@ -285,6 +286,13 @@ impl MLSPlanner {
 
 #[pymodule]
 fn dimos_mls_planner(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Log planner tracing to stderr. Defaults to warn, override with RUST_LOG.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("dimos_mls_planner=warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
     m.add_class::<MLSPlanner>()?;
     Ok(())
 }

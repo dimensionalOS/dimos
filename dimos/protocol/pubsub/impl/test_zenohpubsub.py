@@ -26,13 +26,14 @@ import zenoh
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
+    Topic,
     ZenohPubSubBase,
+    ZenohQoS,
     _key_expr_to_topic,
     _topic_to_key_expr,
 )
-from dimos.protocol.pubsub.impl.zenohqos import ZenohQoS
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -195,36 +196,74 @@ class TestZenohPubSubBase:
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(msg)
-            event.set()
+            if msg == b"wildcard":
+                event.set()
 
         pubsub.subscribe_all(callback)
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
-        assert received[-1] == b"wildcard"
+        assert b"wildcard" in received
+
+    def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
+        # Models the declare/stop race: once stopped, a newly declared subscriber
+        # must undeclare itself rather than be tracked (and leak past shutdown).
+        pubsub.stop()
+        unsub = pubsub.subscribe(Topic("dimos/test/after_stop"), lambda msg, t: None)
+        assert pubsub._subscribers == []
+        unsub()  # no-op, must not raise
+
+    def test_subscribe_all_after_stop_is_noop(self, pubsub) -> None:
+        pubsub.stop()
+        unsub = pubsub.subscribe_all(lambda msg, t: None)
+        assert pubsub._drain_stops == []
+        unsub()  # no-op, must not raise
 
 
 class TestPublisherQoS:
-    """Publisher QoS is resolved from the config's rules at declare time."""
+    """Publisher QoS comes from the Topic and is applied at declare time."""
 
-    def test_publisher_qos_from_config(self, make_pubsub) -> None:
-        rule = ZenohQoS(
-            key="dimos/test/qos/**", reliability="best_effort", congestion_control="drop"
+    def test_publisher_qos_from_topic(self, pubsub) -> None:
+        topic = Topic(
+            "dimos/test/qos/stream",
+            qos=ZenohQoS(reliability="best_effort", congestion_control="drop"),
         )
-        ps = make_pubsub(qos=(rule,))
-        pub = ps._get_publisher("dimos/test/qos/stream")
+        pubsub.publish(topic, b"x")
+        pub = pubsub._publishers["dimos/test/qos/stream"]
         assert pub.reliability == zenoh.Reliability.BEST_EFFORT
         assert pub.congestion_control == zenoh.CongestionControl.DROP
 
-    def test_publisher_default_qos_without_rules(self, make_pubsub) -> None:
+    def test_publisher_default_qos_without_topic_qos(self, pubsub) -> None:
         # Pins zenoh's publisher defaults: reliable, drop under congestion.
-        ps = make_pubsub(qos=())
-        pub = ps._get_publisher("dimos/test/qos/defaults")
+        pubsub.publish(Topic("dimos/test/qos/defaults"), b"x")
+        pub = pubsub._publishers["dimos/test/qos/defaults"]
         assert pub.reliability == zenoh.Reliability.RELIABLE
         assert pub.congestion_control == zenoh.CongestionControl.DROP
 
-    def test_publisher_follows_global_rules_when_qos_unset(self, make_pubsub) -> None:
-        ps = make_pubsub()
-        pub = ps._get_publisher("dimos/rpc/test_qos/req")
+    def test_plain_lcm_topic_gets_default_qos(self, pubsub) -> None:
+        # Shared code (TF, encoders) still passes lcmpubsub Topics.
+        pubsub.publish(LCMTopic("dimos/test/qos/plain"), b"x")
+        pub = pubsub._publishers["dimos/test/qos/plain"]
+        assert pub.reliability == zenoh.Reliability.RELIABLE
+
+    def test_partial_qos_omits_unset_fields(self, pubsub) -> None:
+        topic = Topic("dimos/test/qos/partial", qos=ZenohQoS(congestion_control="block"))
+        pubsub.publish(topic, b"x")
+        pub = pubsub._publishers["dimos/test/qos/partial"]
+        assert pub.reliability == zenoh.Reliability.RELIABLE  # zenoh default kept
         assert pub.congestion_control == zenoh.CongestionControl.BLOCK
+
+
+class TestZenohQoSToWire:
+    """QoS serialization sent to native modules over stdin."""
+
+    def test_full_qos(self) -> None:
+        qos = ZenohQoS(reliability="best_effort", congestion_control="drop")
+        assert qos.to_wire() == {"reliability": "best_effort", "congestion_control": "drop"}
+
+    def test_partial_qos_omits_unset(self) -> None:
+        assert ZenohQoS(congestion_control="block").to_wire() == {"congestion_control": "block"}
+
+    def test_empty_qos(self) -> None:
+        assert ZenohQoS().to_wire() == {}
 
 
 class TestTopicKeyExprConversion:

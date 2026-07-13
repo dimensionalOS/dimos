@@ -41,8 +41,7 @@ logger = setup_logger()
 class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     """Accumulate lidar into a voxel map with raycast clearing.
 
-    Clouds are assumed world-registered. With ``registered_clouds=False`` each
-    cloud is sensor-frame and registered into the world by its odometry pose.
+    Each cloud is sensor-frame and registered into the world by its odometry pose.
     """
 
     def __init__(
@@ -51,9 +50,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         voxel_size: float = 0.1,
         max_range: float = 30.0,
         emit_every: int = 1,
-        emit_local: bool = False,
         region_percentile: float = 95.0,
-        registered_clouds: bool = True,
         **mapper_kwargs: Any,
     ) -> None:
         if emit_every < 0:
@@ -61,13 +58,12 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self.voxel_size = voxel_size
         self.max_range = max_range
         self.emit_every = emit_every
-        self.emit_local = emit_local
         self.region_percentile = region_percentile
-        self.registered_clouds = registered_clouds
         self._mapper_kwargs = mapper_kwargs
 
     def _local_bounds(
         self,
+        mapper: VoxelRayMapper,
         batch_points: list[NDArray[np.float32]],
         batch_origins: list[tuple[float, float, float]],
         last_obs: Observation[PointCloud2],
@@ -84,7 +80,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
 
         points = np.concatenate(batch_points, axis=0)
         origins = np.asarray(batch_origins, dtype=np.float32)
-        margin = self._mapper_kwargs.get("shadow_depth", 0.2) + self.voxel_size
+        margin = mapper.shadow_depth + mapper.voxel_size
         return local_bounds(points, origins, self.region_percentile, margin)
 
     def _make_obs(
@@ -96,12 +92,11 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         batch_origins: list[tuple[float, float, float]],
     ) -> Observation[PointCloud2]:
         tags = {**last_obs.tags, "frame_count": count}
-        if self.emit_local:
-            cx, cy, radius, z_min, z_max = self._local_bounds(batch_points, batch_origins, last_obs)
-            positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
-            tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
-        else:
-            positions = mapper.global_map()
+        cx, cy, radius, z_min, z_max = self._local_bounds(
+            mapper, batch_points, batch_origins, last_obs
+        )
+        positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
+        tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
         pcd = o3d.t.geometry.PointCloud()
         pcd.point["positions"] = o3c.Tensor.from_numpy(positions)
         cloud = PointCloud2(pointcloud=pcd, frame_id="world", ts=last_obs.ts)
@@ -124,14 +119,16 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
                 logger.debug("RayTraceMap: obs %s has no pose; skipping", obs.id)
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
-            if self.registered_clouds:
-                pts = obs.data.points_f32()
-            else:
-                # Sensor-frame cloud: register into the world by the pose first.
-                tf = Transform(translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw))
-                pts = obs.data.transform(tf).points_f32()
+            # Sensor-frame cloud: register into the world by the odom pose.
+            # Apply it to the f32 array directly to skip an Open3D float64 round-trip.
+            mat = Transform(
+                translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw)
+            ).to_matrix()
+            rot = mat[:3, :3].astype(np.float32)
+            trans = mat[:3, 3].astype(np.float32)
+            pts = obs.data.points_f32() @ rot.T + trans
             mapper.add_frame(pts, (x, y, z))
-            if self.emit_local and pts.size:
+            if pts.size:
                 batch_points.append(pts)
                 batch_origins.append((x, y, z))
             last_obs = obs

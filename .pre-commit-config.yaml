@@ -16,6 +16,16 @@ repos:
           - --license-filepath
           - assets/license_file_header.txt
           - --use-current-year
+      - id: insert-license
+        name: insert-license (rust)
+        files: \.rs$
+        types: [rust]
+        args:
+          - --license-filepath
+          - assets/license_file_header.txt
+          - --comment-style
+          - "//"
+          - --use-current-year
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.3

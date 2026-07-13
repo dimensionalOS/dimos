@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dimos.core.global_config import GlobalConfig
-from dimos.protocol.pubsub.impl.zenohqos import DEFAULT_ZENOH_QOS, ZenohQoS
 
 
 class TestGlobalConfigSecurityDefaults:

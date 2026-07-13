@@ -1,4 +1,6 @@
-# Transports
+---
+title: "Transports"
+---
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.
 
@@ -79,7 +81,7 @@ Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in
 Quick view on performance of our pubsub backends:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
 ![Benchmark results](../assets/pubsub_benchmark.png)
@@ -114,17 +116,7 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
+![output](../assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
 
@@ -246,11 +238,19 @@ Received: (480, 640, 3)
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
 
-## Inspecting LCM traffic (CLI)
+## Inspecting traffic (CLI)
 
-`lcmspy` shows topic frequency/bandwidth stats:
+`dimos spy` is the universal transport spy: one live view of every topic moving on every
+DimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
+system runs on LCM, Zenoh, or both.
 
-![lcmspy](../assets/lcmspy.png)
+```bash
+dimos spy                     # everything, all transports
+dimos spy --transport zenoh   # filter to one transport (repeatable flag)
+dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
+```
+
+![dimos spy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 
@@ -351,29 +351,30 @@ Use Zenoh when:
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 
+Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
+
 The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
 
 #### Per-topic QoS
 
-Zenoh publisher QoS is set per key expression by `global_config.zenoh_qos`, an ordered rule table (first match wins, defined in [`zenohqos.py`](/dimos/protocol/pubsub/impl/zenohqos.py)). Defaults:
-
-* `dimos/rpc/**` and the agent channels (`dimos/human_input`, `dimos/agent`, `dimos/agent_idle`): reliable, block under congestion (never drop).
-* `Image`/`PointCloud2` streams (matched by the type suffix in the key): best-effort, drop under congestion.
-* Everything else: zenoh defaults (reliable, drop under congestion).
-
-Override via env (JSON) or blueprint; rules are full-replace, so prepend to keep the defaults:
-
-```bash skip
-DIMOS_ZENOH_QOS='[{"key": "dimos/foo", "reliability": "best_effort"}]'
-```
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
 
 ```python skip
-blueprint.global_config(
-    zenoh_qos=({"key": "dimos/foo/**", "congestion_control": "drop"}, *DEFAULT_ZENOH_QOS),
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
+
+blueprint = blueprint.transports(
+    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
-QoS is resolved once per key when the publisher is first declared; rule changes don't affect already-declared publishers. LCM has no per-topic settings, so the rules only apply when `transport=zenoh`.
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+
+* RPC topics and the agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
+* Everything else: zenoh defaults (reliable, drop under congestion).
+
+The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
 
 ### Shared memory (IPC)
 
@@ -524,7 +525,7 @@ See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid te
 Add your backend to benchmarks to compare in context:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
 # Available transports

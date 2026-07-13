@@ -60,3 +60,12 @@ class TestBlobStore:
         blob_store.put("big", 0, data)
         assert blob_store.get("big", 0) == data
         assert blob_store.get("big", 0) == data
+
+    def test_size_bytes(self, blob_store: BlobStore) -> None:
+        assert blob_store.size_bytes("s") == 0
+        blob_store.put("s", 1, b"12345")
+        blob_store.put("s", 2, b"1234567890")
+        assert blob_store.size_bytes("s") == 15
+        blob_store.delete("s", 1)
+        assert blob_store.size_bytes("s") == 10
+        assert blob_store.size_bytes("other") == 0

@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Multi-source Dijkstra over the CellId-indexed surface graph. State and
 //! the heap live in a reusable struct so the inner loop never allocates.
@@ -17,11 +28,13 @@ pub struct DijkstraState {
     pub dist: Vec<f32>,
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
+    // Window membership for the regional search, left all-false between calls.
+    in_window: Vec<bool>,
     heap: BinaryHeap<Scored>,
 }
 
 impl DijkstraState {
-    /// Reset all vecs to the specified capacity.
+    /// Reset all vecs to n slots.
     pub fn reset(&mut self, n: usize) {
         self.dist.clear();
         self.dist.resize(n, f32::INFINITY);
@@ -29,16 +42,21 @@ impl DijkstraState {
         self.pred.resize(n, NO_CELL);
         self.source.clear();
         self.source.resize(n, 0);
+        self.in_window.clear();
+        self.in_window.resize(n, false);
         self.heap.clear();
     }
 
-    /// Grow the vecs to hold `n` slots without disturbing existing labels.
-    /// New slots default to unreached.
+    /// Grow the vecs to n slots without disturbing existing labels. New slots
+    /// default to unreached.
     fn ensure_capacity(&mut self, n: usize) {
         if self.dist.len() < n {
             self.dist.resize(n, f32::INFINITY);
             self.pred.resize(n, NO_CELL);
             self.source.resize(n, 0);
+        }
+        if self.in_window.len() < n {
+            self.in_window.resize(n, false);
         }
     }
 }
@@ -62,7 +80,7 @@ impl Weight {
     }
 }
 
-/// Multi-source dijkstra labeling each cell with its nearest source and path.
+/// Multi-source Dijkstra labeling each cell with its nearest source and path.
 pub fn dijkstra(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -101,9 +119,9 @@ pub fn dijkstra(
     }
 }
 
-/// Bounded multi-source dijkstra that re-labels only cells in `window`, seeding
-/// the wavefront from in-window sources and the cached frontier just outside it.
-/// Correct while the window margin exceeds the reach of the change.
+/// Multi-source Dijkstra that re-labels only cells in the window, seeded from
+/// in-window sources and the cached frontier just outside it. Correct while the
+/// window margin exceeds the reach of the change.
 pub fn dijkstra_region(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -111,18 +129,21 @@ pub fn dijkstra_region(
     state: &mut DijkstraState,
     weight: Weight,
 ) {
-    state.ensure_capacity(cells.slot_capacity());
+    let n_slots = cells.slot_capacity();
+    state.ensure_capacity(n_slots);
     state.heap.clear();
 
+    // Dense membership mask over the window cells.
     for &w in window {
         let i = w as usize;
+        state.in_window[i] = true;
         state.dist[i] = f32::INFINITY;
         state.pred[i] = NO_CELL;
         state.source[i] = 0;
     }
 
     for &s in sources {
-        if !cells.is_live(s) || !window.contains(&s) {
+        if !cells.is_live(s) || !state.in_window[s as usize] {
             continue;
         }
         state.dist[s as usize] = 0.0;
@@ -134,7 +155,7 @@ pub fn dijkstra_region(
     for &w in window {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
-            if !window.contains(&n) && state.dist[n as usize].is_finite() {
+            if !state.in_window[n as usize] && state.dist[n as usize].is_finite() {
                 frontier.insert(n);
             }
         }
@@ -152,7 +173,7 @@ pub fn dijkstra_region(
         let su = state.source[u as usize];
         for edge in cells.neighbors(u) {
             let v = edge.dest;
-            if !window.contains(&v) {
+            if !state.in_window[v as usize] {
                 continue;
             }
             let nd = d + weight.of(edge);
@@ -163,6 +184,10 @@ pub fn dijkstra_region(
                 state.heap.push(Scored(nd, cells.coord(v), v));
             }
         }
+    }
+
+    for &w in window {
+        state.in_window[w as usize] = false;
     }
 }
 
@@ -200,9 +225,8 @@ impl PartialOrd for Scored {
 }
 impl Ord for Scored {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Min-distance pops first. Coordinate tie-break keeps the result
-        // independent of CellId assignment, so incremental matches full rebuild.
-        other.0.total_cmp(&self.0).then(other.1.cmp(&self.1))
+        // Tie-break on cell id for repeatable ordering.
+        other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
     }
 }
 
@@ -231,6 +255,16 @@ mod tests {
             cur = state.pred[cur as usize];
         }
         cur
+    }
+
+    #[test]
+    fn walk_preds_breaks_on_pred_cycle() {
+        let mut state = DijkstraState::default();
+        state.reset(2);
+        state.pred[0] = 1;
+        state.pred[1] = 0;
+        let path = walk_preds(&state, 0);
+        assert_eq!(path, vec![0, 1]);
     }
 
     #[test]

@@ -81,18 +81,6 @@ def test_poseless_obs_is_skipped() -> None:
     assert len(results) == 1
 
 
-def test_missing_region_bounds_raises() -> None:
-    obs = Observation(
-        id=0,
-        ts=0.0,
-        pose=(0.0, 0.0, 0.0),
-        _data=PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32)),
-    )
-
-    with pytest.raises(ValueError, match="local map slices"):
-        list(MLSPlan(goal=(1.0, 1.0, 0.0))(iter([obs])))
-
-
 def test_start_z_is_dropped_by_robot_height() -> None:
     obs = _obs(
         np.zeros((1, 3), dtype=np.float32),

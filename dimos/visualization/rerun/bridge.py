@@ -166,30 +166,15 @@ def _default_blueprint() -> Blueprint:
 
 
 def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
-    """Select the pubsub backend based on the active transport.
+    """Select the pubsub backend matching the active transport.
 
-    When transport is Zenoh, we listen on BOTH Zenoh and LCM because
-    TF (transform frames) is currently hardcoded to LCM in the Module
-    base class. Without LCM, the robot pose won't update in the viewer.
+    All channels including TF flow over the active transport, so the bridge
+    listens only on that backend. To also bridge external LCM publishers while
+    running Zenoh, pass an explicit ``pubsubs=[Zenoh(), LCM()]``.
     """
     transport = getattr(config, "transport", None) or global_config.transport
     if transport == "zenoh":
-        # Thread the parent's zenoh endpoints into the session: worker processes
-        # don't see CLI overrides (e.g. --zenoh-connect) via the module-level
-        # global_config singleton, so a bare Zenoh() would fall back to multicast
-        # scouting and silently fail to reach a router across WiFi.
-        zkwargs: dict[str, Any] = {}
-        connect = getattr(config, "zenoh_connect", None)
-        if connect:
-            zkwargs["connect"] = [e.strip() for e in connect.split(",") if e.strip()]
-        listen = getattr(config, "zenoh_listen", None)
-        if listen:
-            zkwargs["listen"] = [e.strip() for e in listen.split(",") if e.strip()]
-        iface = getattr(config, "zenoh_iface", None)
-        if iface:
-            zkwargs["multicast_iface"] = iface
-        # return [LCM()]
-        return [Zenoh(**zkwargs), LCM()]
+        return [Zenoh()]
     return [LCM()]
 
 
@@ -226,7 +211,7 @@ class Config(ModuleConfig):
     visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
         default_factory=dict
     )
-    static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
+    static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
@@ -515,10 +500,30 @@ class RerunBridgeModule(Module):
     def _log_static(self) -> None:
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
+            if is_rerun_multi(data):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(archetype).__name__ for _, archetype in data],
+                )
+                for path, archetype in data:
+                    rr.log(path, archetype, static=True)
+                continue
+
             if isinstance(data, list):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(archetype).__name__ for archetype in data],
+                )
                 for archetype in data:
                     rr.log(entity_path, archetype, static=True)
             else:
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(data).__name__],
+                )
                 rr.log(entity_path, data, static=True)
 
     @rpc

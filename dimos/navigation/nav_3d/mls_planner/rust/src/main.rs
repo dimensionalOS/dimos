@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -7,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -18,12 +29,11 @@ use tracing::debug;
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
 
-/// State shared between the handle loop and the worker. The handle loop writes
-/// the newest value, the worker reads it.
+/// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
 
-/// A coalesced map input handed from the handle loop to the worker. Only the
-/// newest is kept, so a dropped intermediate frame is harmless.
+/// A map input handed from the handle loop to the worker. Only the newest is
+/// kept, so a dropped intermediate frame is harmless.
 enum MapUpdate {
     Region {
         cloud: PointCloud2,
@@ -35,13 +45,11 @@ enum MapUpdate {
 }
 
 #[derive(Module)]
-#[module(setup = spawn_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
 
-    // Incremental path: a local map slice paired by stamp with the region
-    // bounds it covers, published by the ray tracer alongside local_map.
     #[input(decode = PointCloud2::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
@@ -69,22 +77,21 @@ struct MlsPlanner {
     #[config]
     config: Config,
 
-    // Handle-loop-local: pair a local map with its stamp-matching bounds before
-    // handing the matched snapshot to the worker.
+    // Held on the handle loop until stamps match, then handed off paired.
     pending_local: Option<PointCloud2>,
     pending_bounds: Option<PoseStamped>,
 
-    // Shared with the worker task. The handle loop only writes these and wakes
-    // the worker, so it never blocks on the heavy map processing.
+    // Written by the handle loop, read by the worker, so the loop never blocks
+    // on map processing.
     pending: Shared<MapUpdate>,
     latest_start: Shared<Xyz>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
+
+    worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl MlsPlanner {
-    /// Spawn the worker that owns the planner graph and does all heavy map
-    /// processing, so the handle loop stays free to drain its inputs.
     async fn spawn_worker(&mut self) {
         let worker = Worker {
             pending: Arc::clone(&self.pending),
@@ -97,7 +104,13 @@ impl MlsPlanner {
             node_edges: self.node_edges.clone(),
             path: self.path.clone(),
         };
-        tokio::spawn(worker.run());
+        self.worker = Some(tokio::spawn(worker.run()));
+    }
+
+    async fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker.take() {
+            handle.abort();
+        }
     }
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
@@ -114,13 +127,9 @@ impl MlsPlanner {
         self.try_pair();
     }
 
-    /// Hand a local map and its stamp-matching bounds to the worker once both
-    /// are in hand. Cheap stamp compare. Runs on the handle loop.
+    /// Hand off the local map and bounds once their stamps match.
     fn try_pair(&mut self) {
-        let (Some(bounds_msg), Some(cloud)) = (&self.pending_bounds, &self.pending_local) else {
-            return;
-        };
-        if !same_stamp(&bounds_msg.header.stamp, &cloud.header.stamp) {
+        if !stamps_paired(self.pending_bounds.as_ref(), self.pending_local.as_ref()) {
             return;
         }
         let bounds = self.pending_bounds.take().expect("checked above");
@@ -128,36 +137,43 @@ impl MlsPlanner {
         self.hand_off(MapUpdate::Region { cloud, bounds });
     }
 
-    /// Store the newest map input (coalescing over any unprocessed one) and
-    /// wake the worker.
     fn hand_off(&self, update: MapUpdate) {
         *self.pending.lock().expect("pending mutex") = Some(update);
         self.wake.notify_one();
     }
 
-    /// Store-only: record the latest start pose. The worker reads it when it
-    /// replans. No wake here, so odometry never drives replanning.
+    /// Record the latest start pose. No wake here, so odometry never drives
+    /// replanning.
     async fn on_start_pose(&mut self, msg: PoseStamped) {
         let p = &msg.pose.position;
         *self.latest_start.lock().expect("start mutex") =
             Some((p.x as f32, p.y as f32, p.z as f32));
     }
 
-    /// Arm the active goal, or clear it on a non-finite goal (the cancel
-    /// signal), then wake the worker so a fresh click replans immediately
-    /// against the current graph. A goal arrives once per click, so this is not
-    /// the odometry-rate external trigger the refactor removed.
+    /// Set or cancel the active goal from a click, then wake the worker.
     async fn on_goal_pose(&mut self, msg: PoseStamped) {
-        let p = &msg.pose.position;
-        let goal = (p.x as f32, p.y as f32, p.z as f32);
-        *self.active_goal.lock().expect("goal mutex") =
-            (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal);
+        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.pose.position);
         self.wake.notify_one();
     }
 }
 
-/// Owns the planner graph and does every map mutation, graph publish, and
-/// replan off the handle loop. Woken by the handlers via `wake`.
+/// True when bounds and a local cloud are both present with matching stamps.
+fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> bool {
+    match (bounds, cloud) {
+        (Some(b), Some(c)) => same_stamp(&b.header.stamp, &c.header.stamp),
+        _ => false,
+    }
+}
+
+/// The goal position, or None when any coordinate is non-finite, which is the
+/// cancel signal.
+fn goal_position(p: &Point) -> Option<Xyz> {
+    let goal = (p.x as f32, p.y as f32, p.z as f32);
+    (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
+}
+
+/// Owns the planner graph and does map mutation, publishing, and replanning
+/// off the handle loop. Woken by the handlers.
 struct Worker {
     pending: Shared<MapUpdate>,
     latest_start: Shared<Xyz>,
@@ -177,7 +193,6 @@ impl Worker {
         let mut last_viz_at: Option<Instant> = None;
         loop {
             self.wake.notified().await;
-            // Coalesced: take the newest map input, dropping any intermediates.
             let update = self.pending.lock().expect("pending mutex").take();
             if let Some(update) = update {
                 self.apply_update(&mut planner, update, &mut last_viz_at)
@@ -187,13 +202,8 @@ impl Worker {
         }
     }
 
-    /// Mutate the graph from a map update, then publish the viz artifacts at no
-    /// more than `viz_publish_hz`. The graph itself is always updated; only the
-    /// surface_map / nodes / node_edges rebuild + publish is rate-capped, since
-    /// rebuilding the whole graph every cycle is the dominant per-cycle cost and
-    /// nothing on the planning path consumes those outputs. The CPU-bound
-    /// section runs under `block_in_place` so the runtime can still schedule the
-    /// handle loop on another thread.
+    /// Update the graph every cycle, but rate-cap viz publishing to
+    /// viz_publish_hz since building those clouds is costly and unread by planning.
     async fn apply_update(
         &self,
         planner: &mut Planner,
@@ -219,8 +229,8 @@ impl Worker {
         }
     }
 
-    /// Pure-CPU graph mutation from a map update. Returns whether the graph was
-    /// updated (false if the cloud was unusable).
+    /// Mutate the graph from a map update. Returns false if the cloud was
+    /// unusable.
     fn ingest(&self, planner: &mut Planner, update: MapUpdate) -> bool {
         match update {
             MapUpdate::Region { cloud, bounds } => {
@@ -235,13 +245,21 @@ impl Worker {
                         return false;
                     }
                 };
-                let bounds = RegionBounds {
-                    origin_x: bounds.pose.position.x as f32,
-                    origin_y: bounds.pose.position.y as f32,
-                    radius: bounds.pose.orientation.x as f32,
-                    z_min: bounds.pose.orientation.y as f32,
-                    z_max: bounds.pose.orientation.z as f32,
-                };
+                let z_max = bounds.pose.orientation.z as f32;
+                let sensor_z = self
+                    .latest_start
+                    .lock()
+                    .expect("start mutex")
+                    .map_or(z_max, |(_, _, z)| z);
+                let bounds = RegionBounds::capped(
+                    bounds.pose.position.x as f32,
+                    bounds.pose.position.y as f32,
+                    bounds.pose.orientation.x as f32,
+                    bounds.pose.orientation.y as f32,
+                    z_max,
+                    sensor_z,
+                    self.config.max_overhead_m,
+                );
 
                 let update_start = Instant::now();
                 planner.update_region(&points, &bounds, &self.config);
@@ -291,29 +309,33 @@ impl Worker {
         (surface, node_cloud, edges)
     }
 
-    /// Replan from the latest start to the active goal. Pure glue: it gates and
-    /// does IO, all planning lives in `Planner::plan`.
+    /// Gate and publish a replan. The planning itself lives in Planner::plan.
     async fn maybe_replan(&self, planner: &mut Planner, last_path_at: &mut Option<Instant>) {
-        let start = *self.latest_start.lock().expect("start mutex");
-        let goal = *self.active_goal.lock().expect("goal mutex");
-        let (Some(start), Some(goal)) = (start, goal) else {
+        let Some(start) = *self.latest_start.lock().expect("start mutex") else {
             return;
         };
-        if is_at_goal(start, goal, self.config.goal_tolerance) {
-            *self.active_goal.lock().expect("goal mutex") = None;
-            return;
-        }
-
-        let plan_start = Instant::now();
-        let waypoints = tokio::task::block_in_place(|| planner.plan(start, goal, &self.config));
-        let waypoints = match waypoints {
-            Some(wp) => wp,
-            None => {
-                tracing::warn!(?start, ?goal, "no path between start and goal");
-                publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+        // Ground-project the sensor pose so the start snaps to the supporting surface.
+        let start = (start.0, start.1, start.2 - self.config.robot_height);
+        let goal = {
+            let mut guard = self.active_goal.lock().expect("goal mutex");
+            let Some(goal) = *guard else {
+                return;
+            };
+            if is_at_goal(start, goal, self.config.goal_tolerance) {
+                *guard = None;
                 return;
             }
+            goal
         };
+
+        let plan_start = Instant::now();
+        let waypoints =
+            tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
+        if waypoints.is_empty() {
+            // No full path and nothing safe ahead on the cached path, so stop.
+            publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+            return;
+        }
         let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
         let produced = Instant::now();
         let since_last_ms = last_path_at.map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
@@ -329,7 +351,7 @@ impl Worker {
     }
 }
 
-/// True when start is within `tol` of goal in the ground plane.
+/// True if within tolerance of the goal on the ground plane.
 fn is_at_goal(start: Xyz, goal: Xyz, tol: f32) -> bool {
     (start.0 - goal.0).hypot(start.1 - goal.1) < tol
 }
@@ -531,8 +553,64 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("failed to create LCM transport");
-    run::<MlsPlanner, _>(transport).await;
+    run_with_transport::<MlsPlanner>().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_at_goal_respects_tolerance_and_ignores_z() {
+        assert!(is_at_goal((0.0, 0.0, 0.0), (0.05, 0.0, 9.0), 0.1));
+        assert!(!is_at_goal((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), 0.1));
+    }
+
+    fn stamped(stamp: Time) -> Header {
+        Header {
+            stamp,
+            ..Default::default()
+        }
+    }
+
+    fn bounds_at(stamp: Time) -> PoseStamped {
+        PoseStamped {
+            header: stamped(stamp),
+            ..Default::default()
+        }
+    }
+
+    fn cloud_at(stamp: Time) -> PointCloud2 {
+        PointCloud2 {
+            header: stamped(stamp),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stamps_paired_only_when_both_present_and_stamps_match() {
+        let s = Time { sec: 2, nsec: 3 };
+        let b = bounds_at(s.clone());
+        let c = cloud_at(s);
+        assert!(stamps_paired(Some(&b), Some(&c)));
+
+        let other = cloud_at(Time { sec: 2, nsec: 4 });
+        assert!(!stamps_paired(Some(&b), Some(&other)));
+
+        assert!(!stamps_paired(Some(&b), None));
+        assert!(!stamps_paired(None, Some(&c)));
+        assert!(!stamps_paired(None, None));
+    }
+
+    fn point(x: f64, y: f64, z: f64) -> Point {
+        Point { x, y, z }
+    }
+
+    #[test]
+    fn goal_position_passes_finite_and_cancels_on_non_finite() {
+        assert_eq!(goal_position(&point(1.0, 2.0, 3.0)), Some((1.0, 2.0, 3.0)));
+        assert_eq!(goal_position(&point(f64::NAN, 0.0, 0.0)), None);
+        assert_eq!(goal_position(&point(0.0, f64::INFINITY, 0.0)), None);
+        assert_eq!(goal_position(&point(0.0, 0.0, f64::NEG_INFINITY)), None);
+    }
 }

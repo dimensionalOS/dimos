@@ -31,15 +31,16 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     stdin_config: bool = True
 
     world_frame: str = "map"
-    voxel_size: float = 0.1
-    robot_height: float = 1.5
+    voxel_size: float = 0.08
+    robot_height: float = 0.3
+    max_overhead_m: float = 2.0
 
     surface_closing_radius: float = 0.3
     node_spacing_m: float = 1.0
-    wall_clearance_m: float = 0.3
+    wall_clearance_m: float = 0.1
     wall_buffer_m: float = 0.75
     wall_buffer_weight: float = 100.0
-    step_threshold_m: float = 0.25
+    step_threshold_m: float = 0.16
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0

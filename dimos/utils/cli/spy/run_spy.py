@@ -12,10 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live CLI dashboard for pub/sub traffic over the active transport (LCM or Zenoh)."""
+"""`dimos spy` TUI: live table of all topics across all pubsub transports.
+
+Textual app (DataTable, 0.5s refresh, theme colors, 'q' to quit). One row per
+(transport, topic) from TransportSpy.snapshot():
+
+    Transport | Topic | Type | Freq (Hz) | Bandwidth | Total | Age
+
+- Topic/Type come from split_type_suffix(); rows sort by total traffic.
+- Age is seconds since TopicStats.last_seen (liveness: dims/greys out stale rows).
+- `--transport lcm --transport zenoh` (repeatable) filters sources; default all.
+- LCM system config warning: call lcmservice.autoconf(check_only=True) before
+  entering raw TUI mode.
+"""
 
 from __future__ import annotations
 
+import sys
+import time
 from typing import Any
 
 from rich.text import Text
@@ -24,34 +38,78 @@ from textual.color import Color
 from textual.widgets import DataTable
 
 from dimos.utils.cli import theme
-from dimos.utils.cli.spy.spy import Spy
+from dimos.utils.cli.spy.core import (
+    SOURCE_FACTORIES,
+    SpyKey,
+    TransportSpy,
+    WindowStats,
+    default_sources,
+    split_type_suffix,
+    validate_transport_names,
+)
+from dimos.utils.human import human_bytes
+
+# Rows older than this (seconds since last message) render dimmed as "stale".
+STALE_AGE = 3.0
+# Window for freq / bandwidth readouts.
+STAT_WINDOW = 5.0
+# Values at which the freq / bandwidth cell colors saturate.
+FREQ_GRADIENT_MAX_HZ = 10.0
+BANDWIDTH_GRADIENT_MAX_BPS = 3 * 1024
 
 
 def gradient(max_value: float, value: float) -> str:
     """Gradient from cyan (low) to yellow (high) using DimOS theme colors."""
-    ratio = min(value / max_value, 1.0)
+    ratio = min(value / max_value, 1.0) if max_value else 0.0
     cyan = Color.parse(theme.CYAN)
     yellow = Color.parse(theme.YELLOW)
     return cyan.blend(yellow, ratio).hex
 
 
-def topic_text(topic_name: str) -> Text:
-    """Format a topic/key name, highlighting the type suffix.
+def topic_text(base: str) -> Text:
+    """Format a base topic name with DimOS theme colors."""
+    if base[:4] == "/rpc":
+        return Text(base[:4], style=theme.BLUE) + Text(base[4:], style=theme.BRIGHT_WHITE)
+    return Text(base, style=theme.BRIGHT_WHITE)
 
-    LCM channels use ``/topic#pkg.Msg``; Zenoh keys embed the type as the last
-    ``/`` segment (e.g. ``dimos/cmd_vel#geometry_msgs.Twist`` after decoding,
-    or ``dimos/cmd_vel/geometry_msgs.Twist`` for an unresolved key).
+
+def _parse_transports(argv: list[str]) -> list[str] | None:
+    """Parse repeated --transport flags; None means all default sources.
+
+    `dimos spy` accepts only `--transport <name>` (repeatable). Any other token
+    — a stray positional or unknown flag — is rejected with a clear error rather
+    than silently ignored.
     """
-    if "#" in topic_name:
-        base, suffix = topic_name.split("#", 1)
-        return Text(base, style=theme.BRIGHT_WHITE) + Text("#" + suffix, style=theme.BLUE)
-    if topic_name.startswith("/rpc"):
-        return Text("/rpc", style=theme.BLUE) + Text(topic_name[4:], style=theme.BRIGHT_WHITE)
-    return Text(topic_name, style=theme.BRIGHT_WHITE)
+    transports: list[str] = []
+    extra: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--transport":
+            i += 1
+            if i < len(argv):
+                transports.append(argv[i])
+            else:
+                raise SystemExit("Error: --transport requires a transport name")
+        elif arg.startswith("--transport="):
+            transports.append(arg.split("=", 1)[1])
+        else:
+            extra.append(arg)
+        i += 1
+    if extra:
+        raise SystemExit(
+            f"Error: unexpected argument(s) {', '.join(extra)} — "
+            "`dimos spy` accepts only --transport <name> (repeatable)."
+        )
+    try:
+        validate_transport_names(transports)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from None
+    return transports or None
 
 
-class SpyApp(App):  # type: ignore[type-arg]
-    """Real-time CLI dashboard for pub/sub traffic statistics using Textual."""
+class SpyApp(App[None]):
+    """A real-time dashboard for all-transport pubsub traffic using Textual."""
 
     CSS_PATH = "../dimos.tcss"
 
@@ -73,170 +131,132 @@ class SpyApp(App):  # type: ignore[type-arg]
     }}
     """
 
-    refresh_interval: float = 0.5
+    refresh_interval: float = 0.5  # seconds
 
     BINDINGS = [
         ("q", "quit"),
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(
-        self,
-        transport: str | None = None,
-        key: str | None = None,
-        connect: list[str] | None = None,
-        iface: str | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        # Warn about missing system config before entering TUI raw mode (LCM only).
-        if (transport or "").lower() != "zenoh":
-            from dimos.protocol.service.lcmservice import autoconf
-
-            autoconf(check_only=True)
-
-        self.spy = Spy(
-            transport=transport, key=key, connect=connect, iface=iface, graph_log_window=0.5
-        )
-        self.spy.start()
-        self.table: DataTable | None = None  # type: ignore[type-arg]
+    def __init__(self, spy: TransportSpy, **kwargs: Any) -> None:
+        """spy: an already-started TransportSpy; the caller owns its lifecycle."""
+        super().__init__(**kwargs)
+        self.spy = spy
+        self.table: DataTable[Text] | None = None
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
+        self.table = DataTable(cursor_type="none")
+        self.table.add_column("Transport")
         self.table.add_column("Topic")
+        self.table.add_column("Type")
         self.table.add_column("Freq (Hz)")
         self.table.add_column("Bandwidth")
-        self.table.add_column("Total Traffic")
+        self.table.add_column("Total")
+        self.table.add_column("Age")
         yield self.table
 
     def on_mount(self) -> None:
         self.set_interval(self.refresh_interval, self.refresh_table)
 
-    async def on_unmount(self) -> None:
-        self.spy.stop()
-
     def refresh_table(self) -> None:
-        topics = list(self.spy.topic.values())
-        topics.sort(key=lambda t: t.total_traffic(), reverse=True)
-        self.table.clear(columns=False)  # type: ignore[union-attr]
+        table = self.table
+        if table is None:
+            return
+        now = time.time()
+        snap = self.spy.snapshot()
+        rows: list[tuple[SpyKey, WindowStats]] = sorted(
+            ((key, stats.window_stats(STAT_WINDOW, now)) for key, stats in snap.items()),
+            key=lambda kv: kv[1].total_bytes,
+            reverse=True,
+        )
+        table.clear(columns=False)
 
-        for t in topics:
-            freq = t.freq(5.0)
-            kbps = t.kbps(5.0)
-            self.table.add_row(  # type: ignore[union-attr]
-                topic_text(t.name),
-                Text(f"{freq:.1f}", style=gradient(10, freq)),
-                Text(t.kbps_hr(5.0), style=gradient(1024 * 3, kbps)),
-                Text(t.total_traffic_hr()),
+        for key, stats in rows:
+            base, msg_type = split_type_suffix(key.topic)
+            freq = stats.freq
+            bps = stats.bytes_per_sec
+            age = now - stats.last_seen if stats.last_seen is not None else None
+            stale = age is not None and age > STALE_AGE
+
+            if stale:
+                # Liveness: dim the whole row for topics gone quiet.
+                table.add_row(
+                    Text(key.transport, style=theme.DIM),
+                    Text(base, style=theme.DIM),
+                    Text(msg_type or "", style=theme.DIM),
+                    Text(f"{freq:.1f}", style=theme.DIM),
+                    Text(f"{human_bytes(bps)}/s", style=theme.DIM),
+                    Text(human_bytes(stats.total_bytes), style=theme.DIM),
+                    Text(f"{age:.0f}s", style=theme.DIM),
+                )
+                continue
+
+            age_str = f"{age:.1f}s" if age is not None else "-"
+            table.add_row(
+                Text(key.transport, style=theme.BLUE),
+                topic_text(base),
+                Text(msg_type or "", style=theme.BLUE),
+                Text(f"{freq:.1f}", style=gradient(FREQ_GRADIENT_MAX_HZ, freq)),
+                Text(f"{human_bytes(bps)}/s", style=gradient(BANDWIDTH_GRADIENT_MAX_BPS, bps)),
+                Text(human_bytes(stats.total_bytes)),
+                Text(age_str, style=theme.ACCENT),
             )
 
 
-def run_noninteractive(
-    transport: str | None,
-    key: str | None,
-    interval: float,
-    duration: float | None,
-    connect: list[str] | None = None,
-    iface: str | None = None,
-) -> None:
-    """Print a periodic plain-text traffic snapshot to stdout (no TUI).
+def start_spy(transports: list[str] | None = None) -> TransportSpy:
+    """Build sources for the requested transports and start a TransportSpy.
 
-    Used for non-interactive shells, piping, and logging. Stops on Ctrl+C or
-    after ``duration`` seconds (if given).
+    Runs before the TUI enters raw mode, so autoconf and degrade warnings
+    print to a normal terminal. transports=None means every available
+    transport, best-effort: a backend that fails to construct or start is
+    skipped with a warning so the spy still shows the others. An explicit
+    transport list is strict: unknown names and construction/start failures
+    are hard errors.
     """
-    import sys
-    import time
-
-    from dimos.core.global_config import global_config
-
-    resolved = transport or global_config.transport
-
-    if resolved != "zenoh":
+    if transports is None:
+        sources = default_sources()
+    else:
+        validate_transport_names(transports)
+        # Construct only the requested sources: a filtered-out transport is
+        # never imported or instantiated, and an unavailable one that was
+        # explicitly requested stays a hard error.
+        sources = [SOURCE_FACTORIES[name]() for name in transports]
+    # Warn about missing system config before entering TUI raw mode (LCM only).
+    if any(s.name == "lcm" for s in sources):
         from dimos.protocol.service.lcmservice import autoconf
 
         autoconf(check_only=True)
+    spy = TransportSpy(sources=sources)
+    spy.start(best_effort=transports is None)
+    return spy
 
-    spy = Spy(transport=transport, key=key, connect=connect, iface=iface, graph_log_window=interval)
-    spy.start()
-    deadline = None if duration is None else time.monotonic() + duration
+
+def main() -> None:
+    """Entry point for `dimos spy` (argv: --transport filters)."""
+    spy = start_spy(_parse_transports(sys.argv[1:]))
     try:
-        while deadline is None or time.monotonic() < deadline:
-            time.sleep(interval)
-            topics = sorted(spy.topic.values(), key=lambda t: t.total_traffic(), reverse=True)
-            print(f"--- {len(topics)} topic(s) (transport={resolved}) ---")
-            for t in topics:
-                print(
-                    f"  {t.name:55s} {t.freq(5.0):7.1f} Hz  "
-                    f"{t.kbps_hr(5.0):>12s}  total {t.total_traffic_hr()}"
-                )
-            sys.stdout.flush()
-    except KeyboardInterrupt:
-        pass
+        SpyApp(spy).run()
     finally:
         spy.stop()
 
 
-def main() -> None:
-    import argparse
-    import sys
+def lcm_only_argv(args: list[str]) -> list[str]:
+    """Build the `spy` argv for the LCM-only entry points (`lcmspy` / `dimos lcmspy`).
 
-    parser = argparse.ArgumentParser(
-        prog="spy", description="Live TUI for pub/sub traffic (LCM or Zenoh)."
-    )
-    parser.add_argument(
-        "--transport",
-        choices=["lcm", "zenoh"],
-        help="Transport backend (defaults to DIMOS_TRANSPORT / .env).",
-    )
-    parser.add_argument(
-        "--key",
-        help="Override the wildcard: LCM channel regex (e.g. '/odom.*') "
-        "or Zenoh key expr (e.g. 'dimos/**').",
-    )
-    parser.add_argument(
-        "--connect",
-        action="append",
-        metavar="ENDPOINT",
-        help="Zenoh endpoint to dial, e.g. 'tcp/10.21.31.106:7447'. Repeatable. "
-        "Needed to reach a peer with scouting disabled.",
-    )
-    parser.add_argument(
-        "--iface",
-        metavar="NIC",
-        help="Pin the Zenoh multicast scout interface, e.g. 'eth0' (Zenoh only). "
-        "Defaults to DIMOS_ZENOH_IFACE.",
-    )
-    parser.add_argument(
-        "-n",
-        "--noninteractive",
-        action="store_true",
-        help="Print plain-text snapshots instead of the TUI "
-        "(auto-enabled when stdout is not a terminal).",
-    )
-    parser.add_argument(
-        "--interval", type=float, default=1.0, help="Snapshot interval, seconds (noninteractive)."
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=None,
-        help="Exit after this many seconds (noninteractive). Default: run until Ctrl+C.",
-    )
-    args = parser.parse_args()
-
-    noninteractive = args.noninteractive or not sys.stdout.isatty()
-    if noninteractive:
-        run_noninteractive(
-            args.transport,
-            args.key,
-            args.interval,
-            args.duration,
-            connect=args.connect,
-            iface=args.iface,
+    Rejects an explicit --transport override (these entry points can't choose
+    transports); all other args pass through to `spy`.
+    """
+    if any(a == "--transport" or a.startswith("--transport=") for a in args):
+        raise SystemExit(
+            "Error: lcmspy is LCM-only; use `dimos spy --transport ...` to choose transports."
         )
-    else:
-        SpyApp(transport=args.transport, key=args.key, connect=args.connect, iface=args.iface).run()
+    return ["spy", "--transport", "lcm", *args]
+
+
+def lcm_main() -> None:
+    """`lcmspy` console-script shim: the spy over the LCM source only."""
+    sys.argv = lcm_only_argv(sys.argv[1:])
+    main()
 
 
 if __name__ == "__main__":

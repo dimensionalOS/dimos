@@ -371,17 +371,10 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
-            # Always use the same transport, QoS, and Zenoh scout iface as the
-            # host — iface pins which NIC discovers the mesh, so a worker that
-            # auto-selects a different one never finds the coordinator's RPC.
+            # Always use the same transport backend as the host.
             host_config = kwargs.get("g")
             if host_config is not None:
-                global_config.update(
-                    transport=host_config.transport,
-                    zenoh_qos=host_config.zenoh_qos,
-                    zenoh_iface=host_config.zenoh_iface,
-                    zenoh_listen=host_config.zenoh_listen,
-                )
+                global_config.update(transport=host_config.transport)
 
             state.instances[module_id] = module_class(**kwargs)
 

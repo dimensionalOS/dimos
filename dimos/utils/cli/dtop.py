@@ -15,7 +15,7 @@
 """dtop — Live TUI for per-worker resource stats over LCM.
 
 Usage:
-    uv run python -m dimos.utils.cli.dtop [--topic /dimos/resource_stats]
+    uv run python -m dimos.utils.cli.dtop [--topic /resource_stats]
 """
 
 from __future__ import annotations
@@ -204,9 +204,7 @@ class ResourceSpyApp(App[None]):
 
     BINDINGS = [("q", "quit"), ("ctrl+c", "quit")]
 
-    def __init__(
-        self, topic_name: str = "/dimos/resource_stats", db_path: str | None = None
-    ) -> None:
+    def __init__(self, topic_name: str = "/resource_stats", db_path: str | None = None) -> None:
         super().__init__()
         self._topic_name = topic_name
         # Warn about missing system config before entering TUI raw mode.
@@ -558,7 +556,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dtop", description="Live TUI for per-worker resource stats."
     )
-    parser.add_argument("--topic", default="/dimos/resource_stats", help="Topic to subscribe to.")
+    parser.add_argument("--topic", default="/resource_stats", help="Topic to subscribe to.")
     parser.add_argument(
         "--transport",
         choices=["lcm", "zenoh"],

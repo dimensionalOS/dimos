@@ -28,9 +28,7 @@ import rerun as rr
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
-from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -40,8 +38,10 @@ from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
 
-TIMING_KEYS = ["update_ms", "plan_ms", "total_ms"]
-SIZE_KEYS = ["voxels", "surface_cells", "nodes", "edges"]
+# Body-frame axis-triad length for the odometry transform (m).
+ODOM_AXIS_LEN = 0.5
+# Arrow radius as a fraction of the triad length.
+AXIS_RADIUS_RATIO = 25
 
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [
@@ -73,23 +73,6 @@ def _parse_configs(
         c, b, w = (float(p) for p in parts)
         out.append((c, b, w))
     return out
-
-
-def _print_summary(streams: dict[str, dict[str, Stream[float]]]) -> None:
-    print("\nper-frame summary (mean / p50 / p95 / max):")
-    for kind, by_key in streams.items():
-        for key, stream in by_key.items():
-            values = [obs.data for obs in stream]
-            if not values:
-                continue
-            arr = np.asarray(values, dtype=np.float64)
-            mean, p50, p95, peak = (
-                arr.mean(),
-                np.percentile(arr, 50),
-                np.percentile(arr, 95),
-                arr.max(),
-            )
-            print(f"  {kind}/{key:<14} {mean:9.2f} {p50:9.2f} {p95:9.2f} {peak:9.2f}")
 
 
 PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
@@ -129,13 +112,32 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
     rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
 
 
-def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
-    """Map per-cell wall clearance to a blue ramp, clamped so it resolves near walls."""
+def _log_odometry(
+    pose: tuple[float, ...], ts: float, trail: list[tuple[float, float, float]]
+) -> None:
+    """Log the odometry pose as a moving body-frame transform and the growing trail."""
+    px, py, pz, qx, qy, qz, qw = pose
+    rr.set_time(TIMELINE, timestamp=ts)
+    rr.log(
+        "world/odom",
+        rr.Transform3D(translation=[px, py, pz], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])),
+    )
+    trail.append((px, py, pz))
+    if len(trail) > 1:
+        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[[255, 255, 255]], radii=0.015))
+
+
+def _clearance_colors(
+    clearance: NDArray[np.float32], clamp_m: float, hard_clearance: float
+) -> NDArray[np.uint8]:
+    """Color surface cells by wall clearance, red inside the hard clearance."""
     norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
     blocked = np.array([4.0, 8.0, 48.0], dtype=np.float64)
     clear = np.array([150.0, 200.0, 255.0], dtype=np.float64)
     rgb: NDArray[np.float64] = blocked + norm[:, None] * (clear - blocked)
-    return rgb.astype(np.uint8)
+    out = rgb.astype(np.uint8)
+    out[clearance < hard_clearance] = (255, 0, 0)
+    return out
 
 
 def _log_shared(
@@ -143,6 +145,7 @@ def _log_shared(
     planner: MLSPlanner,
     render_voxel: float,
     clearance_clamp: float,
+    hard_clearance: float,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
     """Log the map artifacts shared by every config from a reference planner.
 
@@ -163,7 +166,7 @@ def _log_shared(
             "world/surface_map",
             rr.Points3D(
                 surface[:, :3],
-                colors=_clearance_colors(surface[:, 3], clearance_clamp),
+                colors=_clearance_colors(surface[:, 3], clearance_clamp, hard_clearance),
                 radii=render_voxel / 2,
             ),
         )
@@ -177,19 +180,113 @@ def _log_shared(
     return surface, nodes, edges
 
 
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
+    rr.init("plan_rrd", recording_id=db_path.stem)
+    if out is not None and live:
+        # Generous viewer memory so the gRPC sink never backpressures the writer.
+        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
+        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
+    elif out is not None:
+        rr.save(str(out))
+    else:
+        rr.spawn()
+    register_colormap_annotation("turbo")
+
+
+def _build_planners(
+    configs: list[tuple[float, float, float]],
+    voxel_size: float,
+    robot_height: float,
+    max_overhead: float,
+    surface_closing_radius: float,
+    node_spacing: float,
+    step_height: float,
+    step_penalty_weight: float,
+) -> list[tuple[str, list[int], MLSPlanner]]:
+    planners: list[tuple[str, list[int], MLSPlanner]] = []
+    for i, (clr, buf, wgt) in enumerate(configs):
+        planner = MLSPlanner(
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            max_overhead_m=max_overhead,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing_m=node_spacing,
+            wall_clearance_m=clr,
+            wall_buffer_m=buf,
+            wall_buffer_weight=wgt,
+            step_threshold_m=step_height,
+            step_penalty_weight=step_penalty_weight,
+        )
+        color = PATH_PALETTE[i % len(PATH_PALETTE)]
+        label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
+        planners.append((label, color, planner))
+        print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+    return planners
+
+
+def _process_frame(
+    ray_obs: Observation[PointCloud2],
+    planners: list[tuple[str, list[int], MLSPlanner]],
+    goal: tuple[float, float, float],
+    robot_height: float,
+    render_voxel: float,
+    clearance_clamp: float,
+    hard_clearance: float,
+) -> dict[str, float]:
+    """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
+    assert ray_obs.pose_tuple is not None
+    bounds = ray_obs.tags["region_bounds"]
+    px, py, pz, *_ = ray_obs.pose_tuple
+    start = (float(px), float(py), float(pz) - robot_height)
+    ox, oy, radius, z_min, z_max = bounds
+    pts = ray_obs.data.points_f32()
+    rr.set_time(TIMELINE, timestamp=ray_obs.ts)
+
+    ref_timing: dict[str, float] = {}
+    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    for j, (label, color, planner) in enumerate(planners):
+        t0 = perf_counter()
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max, float(pz))
+        t1 = perf_counter()
+        waypoints = planner.plan(start, goal)
+        t2 = perf_counter()
+        _log_path_wp(waypoints, f"world/paths/{label}", color)
+        if j == 0:
+            ref_timing = {
+                "update_ms": (t1 - t0) * 1000,
+                "plan_ms": (t2 - t1) * 1000,
+                "total_ms": (t2 - t0) * 1000,
+            }
+            surface, nodes, edges = _log_shared(
+                start, planner, render_voxel, clearance_clamp, hard_clearance
+            )
+
+    for key, value in ref_timing.items():
+        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    sizes = {
+        "voxels": planners[0][2].voxel_count(),
+        "surface_cells": len(surface),
+        "nodes": len(nodes),
+        "edges": len(edges),
+    }
+    for key, value in sizes.items():
+        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    return ref_timing
+
+
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
     out: FsPath | None = typer.Option(
         None, "--out", help="Output .rrd path. If omitted, spawn rerun live."
     ),
     lidar_stream: str = typer.Option(
-        "fastlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
+        "pointlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
     ),
     odom_stream: str = typer.Option(
-        "fastlio_odometry", "--odom-stream", help="Odometry stream in the recording"
+        "pointlio_odometry", "--odom-stream", help="Odometry stream in the recording"
     ),
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
-    voxel_size: float = typer.Option(0.1, "--voxel-size", help="Voxel edge length (m)"),
+    voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     registered_clouds: bool = typer.Option(
         True,
@@ -198,8 +295,29 @@ def main(
         "sensor-frame clouds (pointlio); the odom pose then registers each frame.",
     ),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
+    shadow_depth: float = typer.Option(
+        0.1, "--shadow-depth", help="Extend rays past the endpoint to clear shadows (m)"
+    ),
+    grace_depth: float = typer.Option(
+        0.2, "--grace-depth", help="Skip clearing for voxels within this range of a point (m)"
+    ),
     emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
-    robot_height: float = typer.Option(1.0, "--robot-height", help="Robot height (m)"),
+    min_health: int = typer.Option(
+        -1,
+        "--min-health",
+        help="Voxel health floor; more negative needs more hits to appear and more misses to clear",
+    ),
+    max_health: int = typer.Option(5, "--max-health", help="Voxel health ceiling"),
+    support_min: int = typer.Option(
+        4,
+        "--support-min",
+        help="Min occupied neighbors a surface voxel needs to be emitted; "
+        "0 emits all, higher drops isolated returns",
+    ),
+    robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
+    max_overhead: float = typer.Option(
+        2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
+    ),
     surface_closing_radius: float = typer.Option(
         0.3,
         "--surface-closing-radius",
@@ -207,7 +325,7 @@ def main(
     ),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
     wall_clearance: float = typer.Option(
-        0.3,
+        0.1,
         "--wall-clearance",
         help="Hard clearance; cells closer to a wall or edge are impassable (m)",
     ),
@@ -218,7 +336,7 @@ def main(
         100.0, "--wall-buffer-weight", help="Peak soft wall penalty at the clearance edge"
     ),
     step_height: float = typer.Option(
-        0.25,
+        0.16,
         "--step-height",
         help="Max traversable vertical step (m); taller steps are impassable",
     ),
@@ -249,17 +367,7 @@ def main(
     ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-
-    rr.init("plan_rrd", recording_id=db_path.stem)
-    if out is not None and live:
-        # Generous viewer memory so the gRPC sink never backpressures the writer.
-        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
-        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
-    elif out is not None:
-        rr.save(str(out))
-    else:
-        rr.spawn()
-    register_colormap_annotation("turbo")
+    _init_recording(db_path, out, live)
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -278,83 +386,62 @@ def main(
                 voxel_size=voxel_size,
                 max_range=max_range,
                 ray_subsample=ray_subsample,
+                shadow_depth=shadow_depth,
+                grace_depth=grace_depth,
                 emit_every=emit_every,
-                emit_local=True,
-                registered_clouds=registered_clouds,
+                min_health=min_health,
+                max_health=max_health,
+                support_min=support_min,
             )
         )
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
-        planners: list[tuple[str, list[int], MLSPlanner]] = []
-        for i, (clr, buf, wgt) in enumerate(configs):
-            planner = MLSPlanner(
-                voxel_size=voxel_size,
-                robot_height=robot_height,
-                surface_closing_radius=surface_closing_radius,
-                node_spacing_m=node_spacing,
-                wall_clearance_m=clr,
-                wall_buffer_m=buf,
-                wall_buffer_weight=wgt,
-                step_threshold_m=step_height,
-                step_penalty_weight=step_penalty_weight,
-            )
-            color = PATH_PALETTE[i % len(PATH_PALETTE)]
-            label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
-            planners.append((label, color, planner))
-            print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+        ref_clearance = configs[0][0]
+        planners = _build_planners(
+            configs,
+            voxel_size,
+            robot_height,
+            max_overhead,
+            surface_closing_radius,
+            node_spacing,
+            step_height,
+            step_penalty_weight,
+        )
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
-        metrics = MemoryStore()
-        timing_streams = {k: metrics.stream(f"timing_{k}", float) for k in TIMING_KEYS}
-        size_streams = {k: metrics.stream(f"size_{k}", float) for k in SIZE_KEYS}
+        # Static XYZ axis triad in the odometry body frame (world/odom transform).
+        rr.log(
+            "world/odom/axes",
+            rr.Arrows3D(
+                origins=[[0.0, 0.0, 0.0]] * 3,
+                vectors=[
+                    [ODOM_AXIS_LEN, 0.0, 0.0],
+                    [0.0, ODOM_AXIS_LEN, 0.0],
+                    [0.0, 0.0, ODOM_AXIS_LEN],
+                ],
+                colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+                radii=ODOM_AXIS_LEN / AXIS_RADIUS_RATIO,
+            ),
+            static=True,
+        )
+        odom_trail: list[tuple[float, float, float]] = []
 
         try:
             frame = 0
             for ray_obs in ray_pipeline:
                 if ray_obs.pose_tuple is None:
                     continue
-                bounds = ray_obs.tags.get("region_bounds")
-                if bounds is None:
-                    raise ValueError("plan_rrd needs RayTraceMap(emit_local=True)")
-                px, py, pz, *_ = ray_obs.pose_tuple
-                start = (float(px), float(py), float(pz) - robot_height)
-                ox, oy, radius, z_min, z_max = bounds
-                pts = ray_obs.data.points_f32()
-                rr.set_time(TIMELINE, timestamp=ray_obs.ts)
-
-                ref_timing: dict[str, float] = {}
-                surface = nodes = edges = np.empty((0,), dtype=np.float32)
-                for j, (label, color, planner) in enumerate(planners):
-                    t0 = perf_counter()
-                    planner.update_region(pts, (ox, oy), radius, z_min, z_max)
-                    t1 = perf_counter()
-                    waypoints = planner.plan(start, goal)
-                    t2 = perf_counter()
-                    _log_path_wp(waypoints, f"world/paths/{label}", color)
-                    if j == 0:
-                        ref_timing = {
-                            "update_ms": (t1 - t0) * 1000,
-                            "plan_ms": (t2 - t1) * 1000,
-                            "total_ms": (t2 - t0) * 1000,
-                        }
-                        surface, nodes, edges = _log_shared(
-                            start, planner, render_voxel, clearance_clamp
-                        )
-
-                for key, value in ref_timing.items():
-                    timing_streams[key].append(float(value), ts=ray_obs.ts)
-                    rr.log(f"metrics/timing/{key}", rr.Scalars(value))
-                sizes = {
-                    "voxels": planners[0][2].voxel_count(),
-                    "surface_cells": len(surface),
-                    "nodes": len(nodes),
-                    "edges": len(edges),
-                }
-                for key, value in sizes.items():
-                    size_streams[key].append(float(value), ts=ray_obs.ts)
-                    rr.log(f"metrics/size/{key}", rr.Scalars(value))
-
+                ref_timing = _process_frame(
+                    ray_obs,
+                    planners,
+                    goal,
+                    robot_height,
+                    render_voxel,
+                    clearance_clamp,
+                    ref_clearance,
+                )
+                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, odom_trail)
                 frame += 1
                 print(
                     f"frame={frame} configs={len(planners)} "
@@ -364,9 +451,7 @@ def main(
                     flush=True,
                 )
         except KeyboardInterrupt:
-            print("\ninterrupted; reporting metrics for completed frames")
-        finally:
-            _print_summary({"timing": timing_streams, "size": size_streams})
+            print("\ninterrupted")
 
     if out is not None:
         print(f"wrote {out}")

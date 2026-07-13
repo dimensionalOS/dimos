@@ -14,29 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from typing import Any
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
-
-# Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
-# actually we can use pSHMTransport for all platforms, and for all streams
-# TODO need a global transport toggle on blueprints/global config
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
-    ("color_image", Image): pSHMTransport(
-        "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    ),
-}
-
-_transports_base = (
-    autoconnect() if platform.system() == "Linux" else autoconnect().transports(_mac_transports)
-)
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -120,7 +103,6 @@ rerun_config: dict[str, Any] = {
 }
 
 _with_vis = autoconnect(
-    _transports_base,
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,

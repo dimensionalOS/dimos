@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 try:
-    from dimos_voxel_ray_tracing import VoxelRayMapper, local_bounds
+    from dimos_voxel_ray_tracing import (
+        VoxelRayMapper,
+        local_bounds,
+    )
 except ImportError as e:
     raise ImportError(
         "dimos_voxel_ray_tracing is not built. Run: "

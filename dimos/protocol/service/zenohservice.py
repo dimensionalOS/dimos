@@ -20,7 +20,6 @@ from typing import Any
 
 import zenoh
 
-from dimos.protocol.pubsub.impl.zenohqos import ZenohQoS
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -33,55 +32,10 @@ class ZenohConfig(BaseConfig):
     mode: str = "peer"
     connect: list[str] = []
     listen: list[str] = []
-    # Pin the NIC for multicast scout beacons (e.g. "eth0"). None = follow
-    # global_config.zenoh_iface. Needed when auto-select picks the wrong
-    # interface (e.g. docker0) and peers fail to discover each other.
-    multicast_iface: str | None = None
-    # Per-publisher QoS rules; None = follow global_config.zenoh_qos.
-    # Excluded from session_key: sessions are shared, QoS is per-publisher.
-    qos: tuple[ZenohQoS, ...] | None = None
 
     @property
     def session_key(self) -> str:
-        return (
-            f"{self.mode}|{json.dumps(sorted(self.connect))}|"
-            f"{json.dumps(sorted(self.listen))}|{self.multicast_iface or ''}"
-        )
-
-
-def _global_zenoh_iface() -> str | None:
-    """Read the process-wide multicast interface from global_config.
-
-    Deferred import keeps protocol/ free of core/ at import time (same pattern
-    as zenohpubsub._qos_rules).
-    """
-    from dimos.core.global_config import global_config
-
-    return global_config.zenoh_iface
-
-
-def _global_zenoh_listen() -> list[str]:
-    """Read the process-wide Zenoh listen endpoints from global_config.
-
-    Comma-separated env value (DIMOS_ZENOH_LISTEN) becomes a list. Deferred
-    import keeps protocol/ free of core/ at import time.
-    """
-    from dimos.core.global_config import global_config
-
-    raw = global_config.zenoh_listen
-    return [e.strip() for e in raw.split(",") if e.strip()] if raw else []
-
-
-def _global_zenoh_connect() -> list[str]:
-    """Read the process-wide Zenoh connect endpoints from global_config.
-
-    Comma-separated env value (DIMOS_ZENOH_CONNECT) becomes a list. Deferred
-    import keeps protocol/ free of core/ at import time.
-    """
-    from dimos.core.global_config import global_config
-
-    raw = global_config.zenoh_connect
-    return [e.strip() for e in raw.split(",") if e.strip()] if raw else []
+        return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
 
 
 class ZenohSessionPool:
@@ -96,15 +50,10 @@ class ZenohSessionPool:
             if key not in self._sessions:
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
-                iface = config.multicast_iface or _global_zenoh_iface()
-                if iface:
-                    zconfig.insert_json5("scouting/multicast/interface", json.dumps(iface))
-                connect = config.connect or _global_zenoh_connect()
-                if connect:
-                    zconfig.insert_json5("connect/endpoints", json.dumps(connect))
-                listen = config.listen or _global_zenoh_listen()
-                if listen:
-                    zconfig.insert_json5("listen/endpoints", json.dumps(listen))
+                if config.connect:
+                    zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
+                if config.listen:
+                    zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
                 self._sessions[key] = zenoh.open(zconfig)
                 logger.debug(f"Zenoh session opened in {config.mode} mode")
             return self._sessions[key]
@@ -130,24 +79,6 @@ class ZenohService(Service):
         super().__init__(**kwargs)
         self._session_pool = session_pool or default_session_pool
         self._session: zenoh.Session | None = None
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Drop the live session + pool so the service survives the worker pipe.
-
-        Modules (and their transports) are pickled across the multiprocessing
-        boundary; the Rust-backed zenoh.Session and the pooled sessions can't be
-        pickled. Copy the dict first so popping never mutates the live instance.
-        Re-acquired against the worker-local default pool in start().
-        """
-        state = self.__dict__.copy()
-        state.pop("_session", None)
-        state.pop("_session_pool", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        self._session = None
-        self._session_pool = default_session_pool
 
     def start(self) -> None:
         self._session = self._session_pool.acquire(self.config)

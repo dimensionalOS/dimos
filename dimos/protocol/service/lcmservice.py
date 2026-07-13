@@ -65,6 +65,7 @@ class LCMService(Service):
     _stop_event: threading.Event
     _loop_running: threading.Event
     _l_lock: threading.Lock
+    _start_lock: threading.Lock
     _thread: threading.Thread | None
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
@@ -79,6 +80,7 @@ class LCMService(Service):
             self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
         self._l_lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._loop_running = threading.Event()
         self._thread = None
@@ -92,6 +94,7 @@ class LCMService(Service):
         state.pop("_loop_running", None)
         state.pop("_thread", None)
         state.pop("_l_lock", None)
+        state.pop("_start_lock", None)
         state.pop("_call_thread_pool", None)
         state.pop("_call_thread_pool_lock", None)
         return state
@@ -105,24 +108,29 @@ class LCMService(Service):
         self._loop_running = threading.Event()
         self._thread = None
         self._l_lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self._call_thread_pool = None
         self._call_thread_pool_lock = threading.RLock()
 
     def start(self) -> None:
-        # Reinitialize LCM if it's None (e.g., after unpickling)
-        if self.l is None:
-            if self.config.lcm:
-                self.l = self.config.lcm
-            else:
-                self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
+        with self._start_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
 
-        self._stop_event.clear()
-        self._loop_running.clear()
-        self._thread = threading.Thread(target=self._lcm_loop)
-        self._thread.daemon = True
-        self._thread.start()
-        if not self._loop_running.wait(timeout=5.0):
-            raise RuntimeError("LCM handler thread failed to start within 5s")
+            # Reinitialize LCM if it's None (e.g., after unpickling)
+            if self.l is None:
+                if self.config.lcm:
+                    self.l = self.config.lcm
+                else:
+                    self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
+
+            self._stop_event.clear()
+            self._loop_running.clear()
+            self._thread = threading.Thread(target=self._lcm_loop)
+            self._thread.daemon = True
+            self._thread.start()
+            if not self._loop_running.wait(timeout=5.0):
+                raise RuntimeError("LCM handler thread failed to start within 5s")
 
     def _lcm_loop(self) -> None:
         """LCM message handling loop."""
@@ -143,40 +151,43 @@ class LCMService(Service):
                 self._loop_running.set()
 
     def stop(self) -> None:
-        """Stop the LCM loop."""
-        self._stop_event.set()
-        if self._thread is not None:
-            # Only join if we're not the LCM thread (avoid "cannot join current thread")
-            if threading.current_thread() != self._thread:
-                self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                if self._thread.is_alive():
-                    logger.warning("LCM thread did not stop cleanly within timeout")
+        with self._start_lock:
+            self._stop_event.set()
 
-        # Clean up LCM instance if we created it
-        if not self.config.lcm:
-            with self._l_lock:
-                if self.l is not None:
-                    del self.l
-                    self.l = None
+            if self._thread is not None:
+                # Only join if we're not the LCM thread (avoid "cannot join current thread")
+                if threading.current_thread() != self._thread:
+                    self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                    if self._thread.is_alive():
+                        logger.warning("LCM thread did not stop cleanly within timeout")
 
-        with self._call_thread_pool_lock:
-            if self._call_thread_pool:
-                # Check if we're being called from within the thread pool
-                # If so, we can't wait for shutdown (would cause "cannot join current thread")
-                current_thread = threading.current_thread()
-                is_pool_thread = False
+                    self._thread = None
 
-                # Check if current thread is one of the pool's threads
-                # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
-                if hasattr(self._call_thread_pool, "_threads"):
-                    is_pool_thread = current_thread in self._call_thread_pool._threads
-                elif "ThreadPoolExecutor" in current_thread.name:
-                    # Fallback: check thread name pattern
-                    is_pool_thread = True
+            # Clean up LCM instance if we created it
+            if not self.config.lcm:
+                with self._l_lock:
+                    if self.l is not None:
+                        del self.l
+                        self.l = None
 
-                # Don't wait if we're in a pool thread to avoid deadlock
-                self._call_thread_pool.shutdown(wait=not is_pool_thread)
-                self._call_thread_pool = None
+            with self._call_thread_pool_lock:
+                if self._call_thread_pool:
+                    # Check if we're being called from within the thread pool
+                    # If so, we can't wait for shutdown (would cause "cannot join current thread")
+                    current_thread = threading.current_thread()
+                    is_pool_thread = False
+
+                    # Check if current thread is one of the pool's threads
+                    # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
+                    if hasattr(self._call_thread_pool, "_threads"):
+                        is_pool_thread = current_thread in self._call_thread_pool._threads
+                    elif "ThreadPoolExecutor" in current_thread.name:
+                        # Fallback: check thread name pattern
+                        is_pool_thread = True
+
+                    # Don't wait if we're in a pool thread to avoid deadlock
+                    self._call_thread_pool.shutdown(wait=not is_pool_thread)
+                    self._call_thread_pool = None
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         with self._call_thread_pool_lock:

@@ -149,6 +149,7 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         stem.startswith("test_")
         or "_test_" in stem
         or stem.endswith("_test")
+        or stem.startswith("tool_")
         or stem.startswith("fake_")
         or stem.startswith("mock_")
         or "deprecated" in rel

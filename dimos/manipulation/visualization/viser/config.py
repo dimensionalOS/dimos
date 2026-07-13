@@ -54,7 +54,6 @@ class ViserVisualizationConfig(BaseModel):
         default=0.02,
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),
     )
-    allow_plan_execute: bool = False
 
     @property
     def requires_world_visualization(self) -> bool:

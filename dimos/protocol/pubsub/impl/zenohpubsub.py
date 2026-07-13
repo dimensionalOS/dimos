@@ -14,17 +14,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
+from dataclasses import dataclass
 from functools import lru_cache
 import threading
-from typing import Any
+from typing import Any, Literal
 
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
-from dimos.protocol.pubsub.impl.zenohqos import ZenohQoS
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
 from dimos.utils.logging_config import setup_logger
@@ -41,37 +41,66 @@ _CONGESTION_CONTROL = {
 }
 
 
-def resolve_qos(key_expr: str, rules: Iterable[ZenohQoS]) -> dict[str, Any]:
-    """`declare_publisher` kwargs for a key expression: first intersecting rule wins.
+@dataclass(frozen=True)
+class ZenohQoS:
+    """Publisher QoS for one topic. Unset fields use zenoh's defaults (reliable, drop)."""
 
-    Unset fields in the winning rule (and unmatched keys) fall back to zenoh's
-    publisher defaults (reliable + drop under congestion).
+    reliability: Literal["reliable", "best_effort"] | None = None
+    congestion_control: Literal["drop", "block"] | None = None
+
+    def publisher_kwargs(self) -> dict[str, Any]:
+        """`declare_publisher` kwargs for this QoS."""
+        kwargs: dict[str, Any] = {}
+        if self.reliability is not None:
+            kwargs["reliability"] = _RELIABILITY[self.reliability]
+        if self.congestion_control is not None:
+            kwargs["congestion_control"] = _CONGESTION_CONTROL[self.congestion_control]
+        return kwargs
+
+    def to_wire(self) -> dict[str, str]:
+        """Serializable QoS sent to native modules over stdin. Only set fields."""
+        wire: dict[str, str] = {}
+        if self.reliability is not None:
+            wire["reliability"] = self.reliability
+        if self.congestion_control is not None:
+            wire["congestion_control"] = self.congestion_control
+        return wire
+
+
+# The two delivery classes used across DimOS. Everything else keeps zenoh's
+# publisher defaults (reliable, drop under congestion).
+QOS_NEVER_DROP = ZenohQoS(reliability="reliable", congestion_control="block")
+QOS_LATEST_WINS = ZenohQoS(reliability="best_effort", congestion_control="drop")
+
+
+@dataclass
+class Topic(LCMTopic):
+    """LCM-compatible Topic plus Zenoh per-topic settings.
+
+    `qos` applies to the publisher declared for this topic (subscribing ignores
+    it). Plain lcmpubsub Topics can be published too; they get default QoS.
     """
-    target = zenoh.KeyExpr(key_expr)
-    for rule in rules:
-        if zenoh.KeyExpr(rule.key).intersects(target):
-            kwargs: dict[str, Any] = {}
-            if rule.reliability is not None:
-                kwargs["reliability"] = _RELIABILITY[rule.reliability]
-            if rule.congestion_control is not None:
-                kwargs["congestion_control"] = _CONGESTION_CONTROL[rule.congestion_control]
-            return kwargs
-    return {}
+
+    qos: ZenohQoS | None = None
+
+    @property
+    def key_expr(self) -> str:
+        """The Zenoh key expression for this topic, embedding lcm_type after a '/'.
+
+        Examples:
+            Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
+            Topic("dimos/data")           -> "dimos/data"
+        """
+        if self.lcm_type is not None:
+            return f"{self.pattern}/{self.lcm_type.msg_name}"
+        return self.pattern
 
 
-def _topic_to_key_expr(topic: Topic) -> str:
-    """Convert a Topic to a Zenoh key expression.
-
-    Embeds the lcm_type in the key using '/' instead of '#' (what LCM does).
-
-    Examples:
-        Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
-        Topic("dimos/data")           -> "dimos/data"
-    """
-    base = topic.topic if isinstance(topic.topic, str) else topic.pattern
-    if topic.lcm_type is not None:
-        return f"{base}/{topic.lcm_type.msg_name}"
-    return base
+def _topic_to_key_expr(topic: LCMTopic) -> str:
+    """Convert any LCM-compatible Topic to a Zenoh key expression."""
+    if isinstance(topic, Topic):
+        return topic.key_expr
+    return Topic(topic=topic.topic, lcm_type=topic.lcm_type).key_expr
 
 
 @lru_cache(maxsize=1024)
@@ -113,48 +142,19 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self._subscribers: list[zenoh.Subscriber[Any]] = []
         self._drain_stops: list[Callable[[], None]] = []
         self._subscriber_lock = threading.Lock()
+        self._stopped = False
 
-    def __getstate__(self) -> dict[str, Any]:
-        # Cached publishers/subscribers wrap the (unpicklable) session and are
-        # re-declared lazily after start(); the locks can't be pickled either.
-        state: dict[str, Any] = super().__getstate__()
-        for key in (
-            "_publishers",
-            "_publisher_lock",
-            "_subscribers",
-            "_drain_stops",
-            "_subscriber_lock",
-        ):
-            state.pop(key, None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._publishers = {}
-        self._publisher_lock = threading.Lock()
-        self._subscribers = []
-        self._drain_stops = []
-        self._subscriber_lock = threading.Lock()
-
-    def _qos_rules(self) -> tuple[ZenohQoS, ...]:
-        if self.config.qos is not None:
-            return self.config.qos
-        # Deferred import: protocol/ stays free of core/ at import time (same
-        # pattern as pubsub/registry.py). Reads the worker-synced singleton.
-        from dimos.core.global_config import global_config
-
-        return global_config.zenoh_qos
-
-    def _get_publisher(self, key_expr: str) -> zenoh.Publisher:
+    def _get_publisher(self, key_expr: str, qos: ZenohQoS | None) -> zenoh.Publisher:
         """Get or declare the cached publisher for a key expression.
 
-        QoS is resolved from the active rules once per key at declare time;
-        later rule changes only affect publishers declared afterwards.
+        The publisher is declared with the first publish's QoS; the cache is
+        keyed by key expression, so a different QoS on a later publish to the
+        same key is ignored.
         """
         with self._publisher_lock:
             if key_expr not in self._publishers:
-                qos = resolve_qos(key_expr, self._qos_rules())
-                self._publishers[key_expr] = self.session.declare_publisher(key_expr, **qos)
+                kwargs = qos.publisher_kwargs() if qos is not None else {}
+                self._publishers[key_expr] = self.session.declare_publisher(key_expr, **kwargs)
             return self._publishers[key_expr]
 
     def publish(self, topic: Topic, message: bytes) -> None:
@@ -165,8 +165,9 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         reliability protocol (RELIABLE mode retransmits at each hop).
         """
         key_expr = _topic_to_key_expr(topic)
+        qos = topic.qos if isinstance(topic, Topic) else None
         try:
-            publisher = self._get_publisher(key_expr)
+            publisher = self._get_publisher(key_expr, qos)
             publisher.put(message)
         except Exception:
             logger.error(f"Error publishing to {key_expr}", exc_info=True)
@@ -194,6 +195,9 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
         with self._subscriber_lock:
+            if self._stopped:
+                sub.undeclare()
+                return lambda: None
             self._subscribers.append(sub)
 
         def unsubscribe() -> None:
@@ -231,21 +235,26 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 for msg, topic in batch:
                     try:
                         callback(msg, topic)
-                    except Exception as e:
-                        print(e)
+                    except Exception:
                         logger.error("Error in subscribe_all callback", exc_info=True)
 
         thread = threading.Thread(target=drain, name="zenoh-subscribe-all", daemon=True)
-        thread.start()
-        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
 
         def stop_drain() -> None:
             stop.set()
             wake.set()  # unblock the drain so it observes the stop flag
             thread.join(timeout=2.0)
 
+        # Register the stop callback and launch the drain thread under the lock so
+        # stop() can't run between them and miss the thread. If stop() already ran,
+        # bail without starting anything.
         with self._subscriber_lock:
+            if self._stopped:
+                return lambda: None
             self._drain_stops.append(stop_drain)
+            thread.start()
+
+        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
@@ -259,6 +268,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
     def stop(self) -> None:
         with self._subscriber_lock:
+            self._stopped = True
             drain_stops = list(self._drain_stops)
             self._drain_stops.clear()
         for stop_drain in drain_stops:
@@ -290,12 +300,3 @@ class PickleZenoh(
     """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
 
     ...
-
-
-__all__ = [
-    "PickleZenoh",
-    "Topic",
-    "Zenoh",
-    "ZenohPubSubBase",
-    "resolve_qos",
-]

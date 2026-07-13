@@ -66,7 +66,7 @@ class StructlogResourceLogger:
 class LCMResourceLogger:
     """Publishes resource stats as dicts over the active transport's pubsub channel."""
 
-    def __init__(self, topic: str = "/dimos/resource_stats") -> None:
+    def __init__(self, topic: str = "/resource_stats") -> None:
         from dimos.core.transport_factory import make_transport
 
         self._transport: PubSubTransport[dict[str, Any]] = make_transport(topic)

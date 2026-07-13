@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
@@ -26,6 +37,9 @@ pub struct Config {
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub robot_height: f32,
+    /// Ignore surface more than this far above the sensor.
+    #[validate(range(min = 0.0))]
+    pub max_overhead_m: f32,
     /// Radius in meters of the morphological closing that fills small holes in
     /// the extracted surface. Fills holes up to twice this wide.
     #[validate(range(min = 0.0))]
@@ -69,9 +83,19 @@ fn validate_wall_buffer(config: &Config) -> Result<(), ValidationError> {
 }
 
 impl Config {
-    /// Compute number of dilations and erosions to do based on closing radius
+    /// Number of dilation and erosion passes for the closing radius.
     pub fn closing_passes(&self) -> u32 {
         (self.surface_closing_radius / self.voxel_size).ceil() as u32
+    }
+
+    /// Robot-height headroom in cells, the clear space a cell needs to be standable.
+    pub fn headroom_cells(&self) -> i32 {
+        (self.robot_height / self.voxel_size).ceil() as i32
+    }
+
+    /// Max traversable vertical step in cells.
+    pub fn step_cells(&self) -> i32 {
+        (self.step_threshold_m / self.voxel_size).floor() as i32
     }
 }
 
@@ -85,6 +109,26 @@ pub struct RegionBounds {
 }
 
 impl RegionBounds {
+    /// Region cylinder with its ceiling capped to `max_overhead_m` above the
+    /// sensor.
+    pub fn capped(
+        origin_x: f32,
+        origin_y: f32,
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+        sensor_z: f32,
+        max_overhead_m: f32,
+    ) -> Self {
+        RegionBounds {
+            origin_x,
+            origin_y,
+            radius,
+            z_min,
+            z_max: z_max.min(sensor_z + max_overhead_m),
+        }
+    }
+
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
         let half = voxel_size * 0.5;
         let z = kz as f32 * voxel_size + half;
@@ -112,12 +156,15 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
+    // Last successful path and its goal, for safe truncation when a later
+    // replan finds no full path.
+    last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
 }
 
 impl Planner {
     pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
         let voxel_size = config.voxel_size;
-        let clearance = (config.robot_height / voxel_size).ceil() as i32;
+        let clearance = config.headroom_cells();
 
         self.voxel_map.clear();
         for &p in points {
@@ -137,8 +184,8 @@ impl Planner {
         self.rebuild_graph(config);
     }
 
-    /// Update planner artifacts within a local region instead of recomputing
-    /// the entire planner on the entire map.
+    /// Update planner artifacts within a local region instead of rebuilding
+    /// from the whole map.
     pub fn update_region(
         &mut self,
         local_points: &[(f32, f32, f32)],
@@ -146,7 +193,7 @@ impl Planner {
         config: &Config,
     ) {
         let voxel_size = config.voxel_size;
-        let clearance = (config.robot_height / voxel_size).ceil() as i32;
+        let clearance = config.headroom_cells();
         let pad = (2 * config.closing_passes()) as i32;
 
         let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
@@ -156,8 +203,7 @@ impl Planner {
             return;
         };
 
-        // A changed voxel column shifts surfaces only within pad of it, so the
-        // write-back box is the changed-column bbox grown by pad.
+        // A changed column shifts surfaces only within pad of it.
         let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
         let new_cells =
             extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
@@ -166,15 +212,16 @@ impl Planner {
         self.rebuild_region_graph(added, removed, config);
     }
 
-    /// Patch cells for the changed surface, then re-place nodes and edges over
-    /// the change window. A no-op when no surface cell changed.
+    /// Patch changed cells, then re-place nodes and edges over the change
+    /// window. A no-op when no surface cell changed.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
         config: &Config,
     ) {
-        let step = (config.step_threshold_m / config.voxel_size).floor() as i32;
+        let step = config.step_cells();
+        let clearance = config.headroom_cells();
         for &c in &removed {
             self.graph.cells.remove(c);
         }
@@ -197,6 +244,9 @@ impl Planner {
         let window = self.node_window(&seeds, config);
         place_nodes_region(
             &mut self.graph.cells,
+            &self.by_col,
+            clearance,
+            step,
             &window,
             config.voxel_size,
             config.node_spacing_m,
@@ -205,6 +255,7 @@ impl Planner {
             config.wall_buffer_weight,
             config.step_penalty_weight,
             &mut self.graph.wall_state,
+            &mut self.graph.node_scratch,
             &mut self.graph.nodes,
         );
         build_node_edges_region(
@@ -315,7 +366,7 @@ impl Planner {
     /// Rebuild all cells from surface_lookup, then nodes and edges.
     fn rebuild_graph(&mut self, config: &Config) {
         let voxel_size = config.voxel_size;
-        let step = (config.step_threshold_m / voxel_size).floor() as i32;
+        let step = config.step_cells();
 
         build_surface_cells(
             &mut self.graph.cells,
@@ -329,7 +380,7 @@ impl Planner {
     /// Live cells within the changed-cell bbox grown by the node-graph margin,
     /// which covers the reach of any node, edge, or Voronoi change.
     fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
-        // A few extra cells beyond the morphology, wall-buffer, and spacing reach.
+        // Slack beyond the morphology, wall-buffer, and spacing reach.
         const SLACK_CELLS: i32 = 2;
         let voxel_size = config.voxel_size;
         let pad = (2 * config.closing_passes()) as i32;
@@ -376,8 +427,13 @@ impl Planner {
 
     /// Full rebuild of nodes and node edges from the current cells.
     fn rebuild_nodes(&mut self, config: &Config) {
+        let clearance = config.headroom_cells();
+        let step = config.step_cells();
         place_nodes(
             &mut self.graph.cells,
+            &self.by_col,
+            clearance,
+            step,
             config.voxel_size,
             config.node_spacing_m,
             config.wall_clearance_m,
@@ -385,6 +441,7 @@ impl Planner {
             config.wall_buffer_weight,
             config.step_penalty_weight,
             &mut self.graph.wall_state,
+            &mut self.graph.node_scratch,
             &mut self.graph.nodes,
         );
 
@@ -406,7 +463,35 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(&self.graph, start, goal, config)
+        planner::plan(&self.graph, start, goal, config).map(|(wp, _)| wp)
+    }
+
+    /// Plan to the goal, or follow the cached path as far as it is still safe.
+    /// Returns the waypoints, empty when nothing ahead is traversable (stop).
+    pub fn plan_or_truncate(
+        &mut self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        config: &Config,
+    ) -> Vec<(f32, f32, f32)> {
+        if !self.graph.nodes.is_empty() {
+            if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
+                self.last_path = Some((goal, cells));
+                return waypoints;
+            }
+        }
+        match &self.last_path {
+            Some((cached_goal, cells)) if *cached_goal == goal => {
+                let safe = planner::truncate_to_safe(&self.graph, cells, start, config);
+                tracing::warn!(
+                    ?goal,
+                    safe_waypoints = safe.len(),
+                    "no full path to goal, validating and following the cached path only while safe"
+                );
+                safe
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub fn graph(&self) -> &PlannerGraph {
@@ -487,6 +572,7 @@ mod region_tests {
             world_frame: String::new(),
             voxel_size: 0.1,
             robot_height: 0.5,
+            max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.0,
@@ -497,6 +583,30 @@ mod region_tests {
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
         }
+    }
+
+    #[test]
+    fn region_bounds_capped_clamps_ceiling_to_sensor_overhead() {
+        // A ceiling above sensor_z + max_overhead is pulled down to the cap.
+        let capped = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 5.0, 0.5, 2.0);
+        assert_eq!(capped.z_max, 2.5, "ceiling capped to sensor_z + overhead");
+        // A ceiling already below the cap is left untouched.
+        let low = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 1.0, 0.5, 2.0);
+        assert_eq!(low.z_max, 1.0, "cap never raises a lower ceiling");
+        assert_eq!(low.z_min, -1.0);
+        assert_eq!(low.radius, 1.0);
+    }
+
+    #[test]
+    fn step_cells_floors_to_a_hard_bound() {
+        let mut cfg = test_config();
+        cfg.voxel_size = 0.08;
+        // 0.15 / 0.08 = 1.875 floors to 1: a 2-voxel (0.16m) step exceeds 0.15m.
+        cfg.step_threshold_m = 0.15;
+        assert_eq!(cfg.step_cells(), 1);
+        // 0.20 / 0.08 = 2.5 floors to 2, so 2-voxel steps are allowed.
+        cfg.step_threshold_m = 0.20;
+        assert_eq!(cfg.step_cells(), 2);
     }
 
     /// Floor slab with a wall down the middle, as world-frame point centers.
@@ -709,8 +819,7 @@ mod region_tests {
     }
 
     /// Re-observing the same geometry must change nothing: no voxel, surface,
-    /// cell, node, or edge moves. This is the anti-jitter guarantee, far nodes
-    /// stay put when their region is re-seen, matching a full rebuild.
+    /// cell, node, or edge moves. This is the anti-jitter guarantee.
     #[test]
     fn region_reobserve_leaves_graph_bit_identical() {
         let cfg = test_config();
@@ -879,7 +988,7 @@ mod region_tests {
             )
         };
 
-        // Interior waypoints are exact cell centers; sample between them too.
+        // Interior waypoints are exact cell centers. Sample between them too.
         let interior = &wp[1..wp.len() - 1];
         assert!(interior.len() >= 2, "expected a multi-cell path");
         for pair in interior.windows(2) {
@@ -900,7 +1009,7 @@ mod region_tests {
         }
     }
 
-    /// Solid 0.3 m block, taller than the step threshold; the path must route
+    /// Solid 0.3 m block, taller than the step threshold. The path must route
     /// around it and never climb on.
     fn block_world() -> Vec<(f32, f32, f32)> {
         let vs = 0.1_f32;
@@ -941,7 +1050,7 @@ mod region_tests {
             .plan((1.0, 0.5, 0.05), (3.9, 0.5, 0.05), &cfg)
             .expect("plan exists");
 
-        // The block top is at z = 0.4; the floor surface point is z = 0.1. No
+        // The block top is at z = 0.4. The floor surface point is z = 0.1. No
         // interior waypoint may land on the block.
         for w in &wp[1..wp.len() - 1] {
             assert!(
@@ -958,7 +1067,7 @@ mod region_tests {
     }
 
     /// Flat floor with a crossable 0.2 m ridge blocking ix 15 except a flat gap
-    /// at iy 10..12. Crossing is short but climbs two steps; the detour is flat.
+    /// at iy 10..12. Crossing is short but climbs two steps. The detour is flat.
     /// Route choice is read from the xy lane, since smoothing flattens the ridge
     /// waypoints away.
     fn ridge_world() -> Vec<(f32, f32, f32)> {

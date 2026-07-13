@@ -21,7 +21,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
 from dimos.models.vl.types import VlModelName
-from dimos.protocol.pubsub.impl.zenohqos import DEFAULT_ZENOH_QOS, ZenohQoS
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_OPEN_DEFAULT,
@@ -70,12 +69,12 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
-    planner_robot_speed: float | None = None
     mcp_port: int = 9990
     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
@@ -83,36 +82,6 @@ class GlobalConfig(BaseSettings):
     transport: TransportBackend = Field(
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
-    )
-    # Per-key-expr Zenoh publisher QoS rules; first matching rule wins.
-    # Env override is JSON: DIMOS_ZENOH_QOS='[{"key":"dimos/foo","reliability":"best_effort"}]'
-    zenoh_qos: tuple[ZenohQoS, ...] = Field(
-        default=DEFAULT_ZENOH_QOS,
-        validation_alias=AliasChoices("DIMOS_ZENOH_QOS", "zenoh_qos"),
-    )
-    # NIC for Zenoh multicast scout beacons (e.g. "eth0"). None lets zenoh
-    # auto-select, which can wrongly pick docker0/virtual NICs and break peer
-    # discovery. Set DIMOS_ZENOH_IFACE=eth0 to pin it for every dimos session.
-    zenoh_iface: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("DIMOS_ZENOH_IFACE", "zenoh_iface"),
-    )
-    # Endpoints Zenoh listens on / advertises to peers (comma-separated, e.g.
-    # "tcp/127.0.0.1:0"). Pinning to loopback keeps all peer links on lo for
-    # same-host runs, so Zenoh never advertises a VPN NIC like Tailscale (whose
-    # same-host routing black-holes traffic and stalls the session). None = zenoh
-    # default: listen on every interface, which can hand peers a VPN address.
-    zenoh_listen: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("DIMOS_ZENOH_LISTEN", "zenoh_listen"),
-    )
-    # Endpoints every Zenoh session actively dials (comma-separated, e.g.
-    # "tcp/10.21.41.1:7447"). Needed to reach a router/peer that multicast
-    # scouting won't auto-discover — e.g. a zenoh router on another L2 segment
-    # or across WiFi. None = rely on scouting only.
-    zenoh_connect: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("DIMOS_ZENOH_CONNECT", "zenoh_connect"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
@@ -126,15 +95,13 @@ class GlobalConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Coerce on assignment so string overrides from the CLI (-o g.field=val)
-        # and env become real typed values instead of raw strings.
         validate_assignment=True,
     )
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
-            if not hasattr(self, key):
+            if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 
