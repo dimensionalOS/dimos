@@ -25,6 +25,7 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
+    TypeGuard,
     get_args,
     get_origin,
     get_type_hints,
@@ -814,7 +815,7 @@ class Module(ModuleBase):
 ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]
 
 
-def is_module_type(value: Any) -> bool:
+def is_module_type(value: object) -> TypeGuard[type[Module]]:
     try:
         return inspect.isclass(value) and issubclass(value, Module)
     except Exception:
