@@ -69,7 +69,6 @@ unitree_go2_rpp_controller = (
     autoconnect(
         GO2Connection.blueprint(),
         ControlCoordinator.blueprint(
-            publish_joint_state=True,
             hardware=[
                 HardwareComponent(
                     hardware_id="go2",
