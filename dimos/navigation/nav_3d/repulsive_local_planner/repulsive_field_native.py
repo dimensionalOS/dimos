@@ -68,20 +68,6 @@ class RepulsiveFieldNativeConfig(NativeModuleConfig):
     # failure); raise together with the mapper voxel size.
     resolution: float = 0.1
     can_pass_under: float = 0.6
-    # Traversable grade (rise/run) scaling the Sobel gradient cost; a cell's
-    # cost = measured_gradient / max_grade * 100 (lethal at half of it). This
-    # replaces `can_climb` (rise-per-cell): can_climb == max_grade x resolution.
-    # CAVEAT — cell values are NOT physical robot grades: sub-cell risers
-    # quantize onto the 0.1 m grid, so the 31-degree warehouse staircase
-    # (0.17 m risers) measures 2-3x its true slope. 3.0 is the go2-physical
-    # setting (Jeff, 2026-07-11: "0.3 m per cell for this robot"): it keeps
-    # real-scale stairs open (climb corridor 95% free on the warehouse
-    # recording) while sub-storey clutter finally scores lethal. History of
-    # the old knob: 1.2 -> 0.6 caught cherry-picker-class clutter (recall
-    # 5% -> 26%); 0.6 -> 0.3 catches the 0.35-0.7 m suitcase class. The
-    # dim_city sim staircase is steeper than this robot could physically
-    # climb (its terrain map reads ~0.3 m rise per cell) — the sim blueprint
-    # overrides max_grade back to 6.0.
     max_grade: float = 3.0
     # Body-band occupancy gate (OPT-IN, body_min_points=0 disables): >=
     # body_min_points returns between body_step and can_pass_under above a
