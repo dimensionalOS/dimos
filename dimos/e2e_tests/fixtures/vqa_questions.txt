@@ -1,0 +1,7 @@
+# One question per line. Blank lines and '#' comments are ignored.
+
+What do you currently see around you?
+Search for a chair and a backpack, and tell me if you found them.
+Where is the nearest chair?
+Take a closer look at any object whose label seems uncertain and tell me what it really is.
+Give me a full catalog of everything you've found, including where each item is.
