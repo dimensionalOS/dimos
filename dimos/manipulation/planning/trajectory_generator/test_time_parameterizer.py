@@ -76,3 +76,28 @@ def test_timestamp_path_length_mismatch_raises() -> None:
     )
     with pytest.raises(ValueError):
         stage.parameterize(result)
+
+
+def test_empty_timestamps_for_nonempty_path_raises() -> None:
+    """An empty timestamp list for a non-empty path is a mismatch, not 'untimed'."""
+    stage, _ = _stage()
+    result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=[])
+    with pytest.raises(ValueError):
+        stage.parameterize(result)
+
+
+def test_non_monotonic_timestamps_raise() -> None:
+    """A zero-duration or out-of-order timeline is rejected up front."""
+    stage, _ = _stage()
+    for bad in ([0.0, 0.0, 0.0], [0.0, 2.0, 1.0]):
+        result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=bad)
+        with pytest.raises(ValueError):
+            stage.parameterize(result)
+
+
+def test_negative_timestamps_raise() -> None:
+    """A negative timeline is rejected."""
+    stage, _ = _stage()
+    result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=[-1.0, 1.0, 2.0])
+    with pytest.raises(ValueError):
+        stage.parameterize(result)

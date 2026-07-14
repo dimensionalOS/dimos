@@ -653,7 +653,11 @@ class ManipulationModule(Module):
         # Time-parameterize the geometric path into an executable trajectory.
         # Honors planner-provided timestamps; else synthesizes a trapezoidal profile.
         time_parameterizer = TrapezoidalTimeParameterizer(traj_gen)
-        traj = time_parameterizer.parameterize(result)
+        try:
+            traj = time_parameterizer.parameterize(result)
+        except ValueError as exc:
+            # A bad planner timeline must not strand the module in PLANNING.
+            return self._fail(f"Time-parameterization failed: {exc}")
         self._planned_trajectories[robot_name] = traj
         logger.info(f"Trajectory: {traj.duration:.3f}s")
 

@@ -15,9 +15,7 @@
 """Formal time-parameterization stage for manipulation planning.
 
 Turns a geometric joint-space path (a ``PlanningResult`` whose ``path`` is
-untimed joint waypoints) into a time-parameterized ``JointTrajectory``. This is
-the explicit boundary between geometric planning and execution: planners produce
-geometry, this stage produces time.
+untimed joint waypoints) into a time-parameterized ``JointTrajectory``.
 """
 
 from __future__ import annotations
@@ -54,16 +52,30 @@ class TrapezoidalTimeParameterizer:
     def parameterize(self, result: PlanningResult) -> JointTrajectory:
         waypoints = [list(state.position) for state in result.path]
 
-        # Untimed planner: synthesize timing with a trapezoidal profile.
-        if not result.timestamps:
+        # Only a genuinely absent timeline (None) means "untimed" -> synthesize a
+        # trapezoidal profile. An empty list for a non-empty path is a mismatch,
+        # caught by the length check below (not silently re-timed).
+        if result.timestamps is None:
             return self._generator.generate(waypoints)
 
-        # Planner supplied timing: preserve it exactly.
+        # Planner supplied a timeline: it must line up with the waypoints...
         if len(result.timestamps) != len(waypoints):
             raise ValueError(
                 f"timestamps ({len(result.timestamps)}) and path "
                 f"({len(waypoints)}) length mismatch"
             )
+        # ...and be a valid, executable timeline: non-negative and strictly
+        # increasing. A zero-duration or non-monotonic timeline is rejected by
+        # the controller at execution, so fail fast here instead.
+        if result.timestamps and result.timestamps[0] < 0.0:
+            raise ValueError(
+                f"timestamps must be non-negative, got {result.timestamps[0]}"
+            )
+        if any(b <= a for a, b in zip(result.timestamps, result.timestamps[1:])):
+            raise ValueError(
+                f"timestamps must be strictly increasing, got {result.timestamps}"
+            )
+
         points = [
             TrajectoryPoint(time_from_start=t, positions=list(p))
             for t, p in zip(result.timestamps, waypoints)
