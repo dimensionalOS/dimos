@@ -26,7 +26,7 @@ Drive the Go2 through the space you want as your premap. Close loops when you ca
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
 ```
 
-If `DIMOS_ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
+If `ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
 
 ```bash
 dimos run unitree-go2-memory
@@ -39,7 +39,7 @@ This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and recor
 Before building a premap, inspect the recording:
 
 ```bash
-dimos map summary recording_go2
+dimos mem summary recording_go2
 dimos map replay recording_go2 --duration 60
 ```
 
@@ -130,7 +130,7 @@ Before sending navigation goals, walk through this checklist:
 1. Place the Go2 in a region that overlaps the premap on the same floor with recognizable geometry.
 2. Wait for `relocalize:` info lines. Skipped and rejected lines are normal for the first 30 to 60 seconds.
 3. Confirm stable `world → map` TF in Rerun before sending navigation goals.
-4. Click to navigate or use agent skills such as `nav_to` on the aligned costmap.
+4. Click to navigate or use agent skills such as `navigate_with_text` on the aligned costmap.
 
 ## How it works
 
