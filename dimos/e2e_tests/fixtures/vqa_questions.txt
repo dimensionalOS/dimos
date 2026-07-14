@@ -1,7 +1,24 @@
-# One question per line. Blank lines and '#' comments are ignored.
+# VQA question bank for master_vqa_test.py — one question per line; blank
+# lines and lines starting with '#' are ignored. Each question should be
+# answerable by the agent picking the right registered MCP skill.
+#
+# Wishlist-skill coverage:
+#   item 2 (detect/list_observed_items/catalog_scene/locate/identify): the
+#     "observe / search / catalog / where is X" questions.
+#   item 1 (floorplan): the "floor plan / levels / layout" questions.
+#   item 3 (lidar signals — LidarSignalSkills: measure_space,
+#     nearest_obstacle_distance, check_clearance, coverage_report): the
+#     "how big / how far / is it clear / how much have you scanned" questions.
 
-What do you currently see around you?
+# --- item 2: perception & catalog ---
+What did you observe?
 Search for a chair and a backpack, and tell me if you found them.
-Where is the nearest chair?
-Take a closer look at any object whose label seems uncertain and tell me what it really is.
+How much of the space is occupied with furniture?
+Which table has the most chairs?
 Give me a full catalog of everything you've found, including where each item is.
+Where would I be likely to find some food?
+Where would I be likely to find a first aid kit?
+
+# --- item 1: floorplan ---
+How many levels does this building have, and what does each floor's layout look like?
+Generate a floor plan of this space and describe its overall shape.

@@ -1,0 +1,22 @@
+# VQA question bank for the *recorded-session* scenarios (china-office replay
+# and full-rrd feed) — one question per line; blank lines and '#' comments are
+# ignored. Unlike vqa_questions.txt (live/sim), this set avoids ego-"right
+# now" questions (nearest obstacle, path clearance): against a recorded tour
+# there is no meaningful current robot position.
+
+# --- perception & catalog (item 2) ---
+What did you observe?
+Search for a chair and a backpack, and tell me if you found them.
+How much of the space is occupied with furniture?
+Which table has the most chairs?
+Give me a full catalog of everything you've found, including where each item is.
+Where would I be likely to find some food?
+Where would I be likely to find a first aid kit?
+
+# --- floorplan (item 1) ---
+How many levels does this building have, and what does each floor's layout look like?
+Generate a floor plan of this space and describe its overall shape.
+
+# --- lidar signals (item 3): space-level queries only ---
+How big is this space? Give me its rough dimensions.
+How much of the space have you scanned so far?
