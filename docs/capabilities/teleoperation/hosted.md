@@ -248,8 +248,11 @@ id-0 channel, candidate propagation, thread model), see
 ## Known Limitations
 
 - **Single operator** per robot session today.
-- **TURN** is fetched best-effort from the broker; STUN-only fallback, so
-  symmetric-NAT / some cellular networks may fail to connect.
+- **Connectivity.** A direct (STUN-discovered) path is preferred and used
+  whenever it works; TURN is only the relay fallback for networks that can't
+  connect directly. TURN credentials are fetched best-effort from the broker —
+  if that fetch fails the robot runs STUN-only, so symmetric-NAT / some cellular
+  networks (which need the relay) may then fail to connect.
 - **No robot-side auto-reconnect.** If the link drops, the operator clicks
   **Connect** again; the robot side stays up.
 - **LiveKit** ships command/state/video only — no minimap or click-to-nav yet.
