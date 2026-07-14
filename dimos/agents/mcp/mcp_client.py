@@ -321,15 +321,23 @@ class McpClient(Module):
                 # the session -- before this guard, the first such exception
                 # ended this thread and every later /human_input hung
                 # forever with no signal. Surface the error as the turn's
-                # answer and keep serving.
+                # answer and keep serving. Everything here is best-effort and
+                # guarded: if the original failure WAS a publish failure, the
+                # recovery publish would raise again and kill the very loop
+                # this handler exists to keep alive.
                 logger.exception("Agent turn failed; keeping the agent loop alive")
-                from langchain_core.messages import AIMessage
+                try:
+                    from langchain_core.messages import AIMessage
 
-                error_msg = AIMessage(content=f"Agent error while handling this message: {e}")
-                self._history.append(error_msg)
-                self.agent.publish(error_msg)
-                if self._message_queue.empty():
-                    self.agent_idle.publish(True)
+                    error_msg = AIMessage(content=f"Agent error while handling this message: {e}")
+                    with self._lock:
+                        # _history is mutated under the lock everywhere else.
+                        self._history.append(error_msg)
+                    self.agent.publish(error_msg)
+                    if self._message_queue.empty():
+                        self.agent_idle.publish(True)
+                except Exception:
+                    logger.exception("Failed to surface agent-turn error; continuing")
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage

@@ -412,10 +412,12 @@ class McpServer(Module):
             self._uvicorn_server.should_exit = True
             self._uvicorn_server.force_exit = True
             if self._serve_future is not None:
+                # BaseException: uvicorn exits serve() via SystemExit on a bind
+                # failure, which `except Exception` would let escape stop().
                 try:
                     self._serve_future.result(timeout=5.0)
-                except Exception:
-                    logger.warning("uvicorn server did not stop within 5s", exc_info=True)
+                except BaseException:
+                    logger.warning("uvicorn server did not stop cleanly within 5s", exc_info=True)
             self._uvicorn_server = None
             self._serve_future = None
         super().stop()
@@ -500,3 +502,25 @@ class McpServer(Module):
         loop = self._loop
         assert loop is not None
         self._serve_future = asyncio.run_coroutine_threadsafe(server.serve(), loop)
+
+        # Fail LOUDLY if uvicorn never comes up. A bind failure (uvicorn raises
+        # SystemExit inside serve()) would otherwise sit unread in the future
+        # while the idempotence guard above turns every later start into a
+        # no-op — an MCP endpoint dead for the whole session with only a log
+        # line. Wait for the bind to be confirmed; if serve() ends first, clear
+        # state so a retry is possible and surface the error.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if server.started:
+                return
+            if self._serve_future.done():
+                exc: BaseException | None = None
+                try:
+                    self._serve_future.result()
+                except BaseException as e:  # SystemExit included
+                    exc = e
+                self._uvicorn_server = None
+                self._serve_future = None
+                raise RuntimeError(f"MCP server failed to start on {_host}:{_port}") from exc
+            time.sleep(0.05)
+        logger.warning("MCP server start not confirmed within 5s", host=_host, port=_port)
