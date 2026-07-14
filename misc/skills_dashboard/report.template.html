@@ -1,0 +1,595 @@
+<title>DimOS Perception Skills — Sprint Wrap-up</title>
+<style>
+  :root{
+    --bg:#0e1521; --surface:#152134; --surface-2:#1a2940; --surface-3:#22334e;
+    --ink:#eaf1fb; --ink-2:#b2c1d8; --muted:#7688a2;
+    --line:#233650; --line-strong:#33496e;
+    --accent:#82abe8; --accent-ink:#0e1521; --accent-soft:#18304f;
+    --good:#48c07a; --good-soft:#12301f;
+    --amber:#e0a63c; --amber-soft:#33290e;
+    --violet:#b18cf0; --violet-soft:#241a3a;
+    --bad:#e66767;
+    --matte:#0b111c;
+    --shadow:0 1px 0 rgba(255,255,255,.02), 0 12px 34px -18px rgba(0,0,0,.7);
+    --radius:14px; --radius-sm:9px;
+    --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme:light){
+    :root{
+      --bg:#eef2f7; --surface:#ffffff; --surface-2:#f4f7fb; --surface-3:#e7edf5;
+      --ink:#111c2b; --ink-2:#3c4c62; --muted:#697c96;
+      --line:#dbe4ef; --line-strong:#c3d0e0;
+      --accent:#2f6fd0; --accent-ink:#ffffff; --accent-soft:#e2ecfb;
+      --good:#1f9d57; --good-soft:#e2f4ea;
+      --amber:#b5791a; --amber-soft:#f6ecd6;
+      --violet:#7a52c6; --violet-soft:#efe8fb;
+      --bad:#cf4747;
+      --matte:#f4f7fb;
+      --shadow:0 1px 0 rgba(255,255,255,.6), 0 14px 34px -20px rgba(21,44,78,.35);
+      color-scheme:light;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1521; --surface:#152134; --surface-2:#1a2940; --surface-3:#22334e;
+    --ink:#eaf1fb; --ink-2:#b2c1d8; --muted:#7688a2;
+    --line:#233650; --line-strong:#33496e;
+    --accent:#82abe8; --accent-ink:#0e1521; --accent-soft:#18304f;
+    --good:#48c07a; --good-soft:#12301f; --amber:#e0a63c; --amber-soft:#33290e;
+    --violet:#b18cf0; --violet-soft:#241a3a; --bad:#e66767; --matte:#0b111c;
+    --shadow:0 1px 0 rgba(255,255,255,.02), 0 12px 34px -18px rgba(0,0,0,.7);
+    color-scheme:dark;
+  }
+  :root[data-theme="light"]{
+    --bg:#eef2f7; --surface:#ffffff; --surface-2:#f4f7fb; --surface-3:#e7edf5;
+    --ink:#111c2b; --ink-2:#3c4c62; --muted:#697c96;
+    --line:#dbe4ef; --line-strong:#c3d0e0;
+    --accent:#2f6fd0; --accent-ink:#ffffff; --accent-soft:#e2ecfb;
+    --good:#1f9d57; --good-soft:#e2f4ea; --amber:#b5791a; --amber-soft:#f6ecd6;
+    --violet:#7a52c6; --violet-soft:#efe8fb; --bad:#cf4747; --matte:#f4f7fb;
+    --shadow:0 1px 0 rgba(255,255,255,.6), 0 14px 34px -20px rgba(21,44,78,.35);
+    color-scheme:light;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased;letter-spacing:.005em}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono)}
+  ::selection{background:var(--accent);color:var(--accent-ink)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+  /* ---- header ---- */
+  header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .top-inner{display:flex;align-items:center;gap:16px;padding:14px 22px;max-width:1080px;margin:0 auto}
+  .brand{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+  .brand h1{margin:0;font-size:18px;font-weight:680;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .spacer{flex:1}
+  .toggle{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--line-strong);
+    color:var(--ink-2);font-family:var(--mono);font-size:12px;padding:7px 11px;border-radius:999px;cursor:pointer}
+  .toggle:hover{border-color:var(--accent);color:var(--ink)}
+
+  /* ---- hero ---- */
+  .hero{padding:38px 0 8px}
+  .hero .eyebrow{margin-bottom:12px}
+  .hero h2{font-size:clamp(28px,4.4vw,44px);line-height:1.05;letter-spacing:-.022em;margin:0 0 14px;
+    font-weight:700;text-wrap:balance;max-width:20ch}
+  .lede{font-size:17px;color:var(--ink-2);max-width:64ch;margin:0}
+  .lede b{color:var(--ink);font-weight:640}
+
+  /* ---- KPI row ---- */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0 6px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:15px 16px;box-shadow:var(--shadow)}
+  .kpi .n{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+  .kpi .l{font-size:12.5px;color:var(--muted);margin-top:7px}
+  .kpi.good .n{color:var(--good)} .kpi.violet .n{color:var(--violet)}
+  .kpi.amber .n{color:var(--amber)} .kpi.accent .n{color:var(--accent)}
+
+  /* ---- tabs ---- */
+  nav.tabs{position:sticky;top:57px;z-index:15;background:color-mix(in srgb,var(--bg) 90%,transparent);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);margin-top:28px}
+  .tabs-inner{display:flex;gap:2px;max-width:1080px;margin:0 auto;padding:0 14px;overflow-x:auto;scrollbar-width:none}
+  .tabs-inner::-webkit-scrollbar{display:none}
+  .tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
+    font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;padding:14px 13px;cursor:pointer;white-space:nowrap;
+    display:inline-flex;align-items:center;gap:7px}
+  .tab:hover{color:var(--ink-2)}
+  .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+  .tab .dot{width:7px;height:7px;border-radius:50%}
+  .dot.good{background:var(--good)} .dot.amber{background:var(--amber)} .dot.violet{background:var(--violet)}
+
+  /* ---- panels ---- */
+  main{padding:30px 0 70px}
+  .panel{display:none;animation:fade .25s ease}
+  .panel.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.panel{animation:none}}
+
+  section.block{margin-bottom:26px}
+  h3.kick{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 14px;display:flex;align-items:center;gap:10px}
+  h3.kick::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .card.pad{padding:22px 24px}
+
+  /* status pill */
+  .pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;border-radius:999px;border:1px solid transparent}
+  .pill .d{width:7px;height:7px;border-radius:50%}
+  .pill.implemented{background:var(--good-soft);color:var(--good);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
+  .pill.implemented .d{background:var(--good)}
+  .pill.prototype{background:var(--violet-soft);color:var(--violet);border-color:color-mix(in srgb,var(--violet) 35%,transparent)}
+  .pill.prototype .d{background:var(--violet)}
+  .pill.hold{background:var(--amber-soft);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,transparent)}
+  .pill.hold .d{background:var(--amber)}
+
+  /* item header */
+  .item-head{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  .item-head .id{font-family:var(--mono);font-size:13px;color:var(--muted);padding-top:4px}
+  .item-head h2{font-size:25px;letter-spacing:-.018em;margin:0;font-weight:680;flex:1;min-width:260px;text-wrap:balance}
+  .oneline{color:var(--ink-2);font-size:15.5px;margin:2px 0 20px;max-width:70ch}
+  .summary{color:var(--ink-2);font-size:15px;max-width:72ch}
+  .summary b{color:var(--ink);font-weight:620}
+
+  /* skill chips */
+  .skills{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .skill{font-family:var(--mono);font-size:12.5px;background:var(--accent-soft);color:var(--accent);
+    border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);padding:6px 10px;border-radius:var(--radius-sm)}
+  .path{font-family:var(--mono);font-size:12px;color:var(--muted)}
+
+  /* test badge */
+  .tests{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13px;
+    background:var(--good-soft);border:1px solid color-mix(in srgb,var(--good) 30%,transparent);
+    color:var(--good);padding:9px 13px;border-radius:var(--radius-sm)}
+  .tests .num{font-weight:600;font-variant-numeric:tabular-nums}
+  .tests.neutral{background:var(--surface-2);border-color:var(--line-strong);color:var(--ink-2)}
+
+  /* two-col grid */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+
+  .mini{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 9px}
+  .next{color:var(--ink-2);font-size:14px}
+  .next b{color:var(--ink)}
+
+  /* figures */
+  .figs{display:grid;grid-template-columns:1fr;gap:16px;margin-top:6px}
+  .fig{background:var(--matte);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .fig .media{display:block;width:100%;background:var(--matte)}
+  .fig img,.fig svg{display:block;width:100%;height:auto}
+  .fig .cap{padding:11px 15px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;
+    font-family:var(--mono);background:var(--surface)}
+  .fig .cap b{color:var(--ink-2);font-weight:600}
+  .fig[data-theme-img] .light-only{display:block}.fig[data-theme-img] .dark-only{display:none}
+  :root[data-theme="dark"] .fig .light-only,@media(prefers-color-scheme:dark){.fig .light-only{display:none}}
+  :root[data-theme="dark"] .fig .dark-only,@media(prefers-color-scheme:dark){.fig .dark-only{display:block}}
+  :root[data-theme="light"] .fig .light-only{display:block}
+  :root[data-theme="light"] .fig .dark-only{display:none}
+
+  /* status matrix */
+  .matrix{width:100%;border-collapse:collapse;font-size:14px}
+  .matrix th,.matrix td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .matrix th{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .matrix tr:last-child td{border-bottom:0}
+  .matrix .idc{font-family:var(--mono);color:var(--muted);width:34px}
+  .matrix .nm{font-weight:600;color:var(--ink)}
+  .matrix td .ev{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  .matrix tr.clickable{cursor:pointer}
+  .matrix tr.clickable:hover td{background:var(--surface-2)}
+  .table-wrap{overflow-x:auto}
+
+  /* callout */
+  .callout{border-left:3px solid var(--amber);background:var(--amber-soft);border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+    padding:15px 18px;color:var(--ink-2);font-size:14.5px}
+  .callout.accent{border-left-color:var(--accent);background:var(--accent-soft)}
+  .callout b{color:var(--ink)}
+  .callout .mini{margin-bottom:6px}
+
+  ul.clean{margin:0;padding-left:18px;color:var(--ink-2);font-size:14.5px}
+  ul.clean li{margin:6px 0}
+  ul.clean li b{color:var(--ink)}
+
+  footer{border-top:1px solid var(--line);padding:26px 0 40px;color:var(--muted);font-size:13px;font-family:var(--mono)}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}
+  .stamp{display:inline-flex;align-items:center;gap:8px}
+  .stamp .d{width:7px;height:7px;border-radius:50%;background:var(--good)}
+</style>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <span class="eyebrow">DimOS · 4-day sprint</span>
+      <h1>Robot Perception &amp; Scene-Understanding Skills</h1>
+    </div>
+    <span class="spacer"></span>
+    <button class="toggle" id="theme-toggle" aria-label="Toggle light and dark theme">
+      <span id="theme-icon">◐</span><span id="theme-label">Theme</span>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="eyebrow">Wrap-up report</div>
+    <h2>Four skills shipped. One foundation. Three honestly parked.</h2>
+    <p class="lede">An eight-item wishlist for giving a robot a sense of the space it moves through —
+      mapping it, cataloguing what's in it, reasoning about it over time. This is where the work landed:
+      <b>four agent-callable skills implemented and tested</b>, a <b>3D scene model</b> underpinning them, and a
+      <b>three-item activity track put on hold</b> for a concrete, fixable reason rather than left ambiguous.</p>
+
+    <div class="kpis">
+      <div class="kpi good"><div class="n">4</div><div class="l">skills implemented &amp; tested</div></div>
+      <div class="kpi violet"><div class="n">1</div><div class="l">3D-model prototype (foundation)</div></div>
+      <div class="kpi amber"><div class="n">3</div><div class="l">parked on hold, with rationale</div></div>
+      <div class="kpi accent"><div class="n">10/10</div><div class="l">headless skill tests passing</div></div>
+    </div>
+  </div>
+</div>
+
+<nav class="tabs" aria-label="Sections">
+  <div class="tabs-inner" role="tablist" id="tablist">
+    <button class="tab" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button class="tab" role="tab" data-tab="i1" aria-selected="false"><span class="dot good"></span>1 · Floorplan</button>
+    <button class="tab" role="tab" data-tab="i2" aria-selected="false"><span class="dot good"></span>2 · Identify &amp; locate</button>
+    <button class="tab" role="tab" data-tab="i3" aria-selected="false"><span class="dot good"></span>3 · Lidar signals</button>
+    <button class="tab" role="tab" data-tab="i5" aria-selected="false"><span class="dot good"></span>5 · Labeling</button>
+    <button class="tab" role="tab" data-tab="i8" aria-selected="false"><span class="dot violet"></span>8 · Scene model</button>
+    <button class="tab" role="tab" data-tab="hold" aria-selected="false"><span class="dot amber"></span>On hold · 4·6·7</button>
+  </div>
+</nav>
+
+<main>
+  <div class="wrap">
+
+  <!-- ================= OVERVIEW ================= -->
+  <div class="panel active" id="overview" role="tabpanel">
+    <section class="block">
+      <h3 class="kick">Status at a glance</h3>
+      <div class="card table-wrap">
+        <table class="matrix">
+          <thead><tr><th class="idc">#</th><th>Skill / objective</th><th>Status</th><th>Evidence</th></tr></thead>
+          <tbody>
+            <tr class="clickable" data-goto="i1"><td class="idc">1</td><td class="nm">Architectural floorplan generation</td><td><span class="pill implemented"><span class="d"></span>Implemented</span></td><td class="ev">real-data · 1 e2e test</td></tr>
+            <tr class="clickable" data-goto="i2"><td class="idc">2</td><td class="nm">Identify, list &amp; locate observed items</td><td><span class="pill implemented"><span class="d"></span>Implemented</span></td><td class="ev">replay-validated · 2 tests</td></tr>
+            <tr class="clickable" data-goto="i3"><td class="idc">3</td><td class="nm">Convert lidar to numpy signals</td><td><span class="pill implemented"><span class="d"></span>Implemented</span></td><td class="ev">35 unit tests</td></tr>
+            <tr data-goto="hold" class="clickable"><td class="idc">4</td><td class="nm">Temporally count items</td><td><span class="pill hold"><span class="d"></span>On hold</span></td><td class="ev">groundwork in item 2</td></tr>
+            <tr class="clickable" data-goto="i5"><td class="idc">5</td><td class="nm">Contextual labeling (VLM educated guesses)</td><td><span class="pill implemented"><span class="d"></span>Implemented</span></td><td class="ev">2 tests · real VLM run</td></tr>
+            <tr data-goto="hold" class="clickable"><td class="idc">6</td><td class="nm">Identify specific activity ("human does X")</td><td><span class="pill hold"><span class="d"></span>On hold</span></td><td class="ev">data-gen harness only</td></tr>
+            <tr data-goto="hold" class="clickable"><td class="idc">7</td><td class="nm">Count occurrences of activity over time</td><td><span class="pill hold"><span class="d"></span>On hold</span></td><td class="ev">downstream of 6</td></tr>
+            <tr class="clickable" data-goto="i8"><td class="idc">8</td><td class="nm">Full 3D scene model with cross-sections</td><td><span class="pill prototype"><span class="d"></span>Prototype</span></td><td class="ev">library · 1 test</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3 class="kick">What shipped</h3>
+      <div class="grid2">
+        <div class="card pad">
+          <p class="mini">The through-line</p>
+          <p class="summary">One recorded (or live) lidar+camera session flows through all four skills. Item 8's
+            <b>SceneModel</b> turns the raw cloud + trajectory into a queryable 3D model; item 1 slices it into an
+            <b>architectural floorplan</b>; item 2 detects, world-localizes and <b>catalogs every object</b> the robot
+            passed, fusing in named places from spatial memory; item 5 asks a <b>VLM to relabel</b> the ambiguous ones;
+            item 3 exposes the cloud as <b>numpy signals</b> (clearance, coverage, extents) for any script or skill.</p>
+        </div>
+        <div class="card pad">
+          <p class="mini">How it was validated</p>
+          <ul class="clean">
+            <li><b>10/10 headless skill-verification tests</b> pass — each drives the real skill code, not a mock.</li>
+            <li>Item 2 is <b>replay-validated</b> end-to-end over a recorded 87s Go2 session (accumulate → dedup → world-localize → catalog → VLM-refine).</li>
+            <li>Item 1 runs on <b>real china-office lidar</b> — the DXF / JPEG sheet in its tab is generated, not mocked.</li>
+            <li>Every skill is reachable as an <b>MCP tool</b> through the agentic Go2 blueprints.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3 class="kick">What was parked, and why</h3>
+      <div class="callout">
+        <p class="mini">Cut decision — activity track (items 6 → 7, and 4 alongside)</p>
+        Activity recognition needs either a <b>rigged, animated human asset</b> in the simulator (the repo has exactly
+        one usable human model, unrigged — every activity renders as the same static pose) or a <b>real annotated
+        activity dataset</b>. Neither is on hand. Rather than ship a recognizer that can't work, the track is on hold.
+        What <em>was</em> built — a deterministic DimSim scenario that spawns furniture-anchored NPCs on a seeded task
+        schedule and drives a robot patrol to observe and label them — <b>passes end-to-end</b> and produces the labeled
+        recordings a future recognizer would train from. It's plumbing proven, not effort lost.
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= ITEM 1 ================= -->
+  <div class="panel" id="i1" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Item 01</span>
+      <h2>Architectural floorplan generation</h2>
+      <span class="pill implemented"><span class="d"></span>Implemented</span>
+    </div>
+    <p class="oneline">Give it a recording of a walk-through; get back a multi-story CAD drawing set of the building.</p>
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">What it does</p>
+        <p class="summary">Multi-story architectural drawing sets — <b>DXF with AIA layers + JPEG sheets</b> — from lidar,
+          live or from a <code>.rrd</code> recording. Wrapped as an agent-callable skill that generates the drawings and
+          returns <b>measured attributes</b> of the navigated space: levels + floor-finish-levels, wall / door / stair
+          counts, glazed fraction, mezzanines and sunken areas, extents. Debug artifacts and 3D output are off by default
+          for MCP callers and cleaned up automatically; stylized AI renditions (drafted / cyanotype / presentation) are
+          attached to the result.</p>
+        <div class="skills"><span class="skill">generate_floorplan(rrd_path?, duration?, explore?, …)</span></div>
+        <p class="path" style="margin-top:14px">dimos/mapping/floorplan/generator.py · skills/mapping/floorplan_skill.py</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Evidence &amp; next step</p>
+        <div class="tests"><span>✓ passing</span><span class="num">1 / 1</span><span style="color:var(--ink-2)">real-data e2e (china office)</span></div>
+        <p class="next" style="margin-top:16px"><b>Built on item 8.</b> Every per-level evidence raster is a
+          <code>horizontal_section()</code> cut of the shared SceneModel, then floor segmentation, wall-vs-furniture by
+          height, glazing / doors / stairs, and a defect-gated cleaning pass draw the sheets.</p>
+        <p class="next" style="margin-top:12px"><b>Next:</b> compose the skill into the agentic Go2 blueprints so it's
+          live over MCP on-robot.</p>
+      </div>
+    </div>
+    <section class="block" style="margin-top:20px">
+      <div class="figs">
+        <figure class="fig">
+          <img class="media" alt="Generated multi-story floorplan sheet with room loops, china-office data" src="{{IMG:01-floorplan/chinaoffice_sheet_loops.jpg}}">
+          <figcaption class="cap"><b>Generated sheet</b> — three levels drawn from real china-office lidar; walls, doors, room loops, dimensions, AIA layers.</figcaption>
+        </figure>
+        <figure class="fig">
+          <img class="media light-only" alt="Voxel cross-section slicing of the property" src="{{IMG:01-floorplan/voxel_slicing_light.png}}">
+          <img class="media dark-only" alt="Voxel cross-section slicing of the property" src="{{IMG:01-floorplan/voxel_slicing_dark.png}}">
+          <figcaption class="cap"><b>Voxel slicing</b> — the closed-region pass that seals each area the robot drove through before drawing room loops.</figcaption>
+        </figure>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= ITEM 2 ================= -->
+  <div class="panel" id="i2" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Item 02</span>
+      <h2>Identify, list &amp; locate observed items</h2>
+      <span class="pill implemented"><span class="d"></span>Implemented</span>
+    </div>
+    <p class="oneline">Navigate a space, then ask "what have you seen, and where is it?" — no target object required.</p>
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">What it does</p>
+        <p class="summary"><b>Open-vocabulary scene inventory.</b> The robot detects whatever it sees, localizes each
+          detection in the world frame (depth <em>or</em> a lidar projector for cameras without depth, like the Go2),
+          deduplicates repeat sightings into a persistent object database, and answers as a prompt-free skill. New this
+          pass: the catalog <b>fuses in spatial memory</b> — folding the robot's named/tagged places ("kitchen",
+          "charging dock") into the inventory and tagging each object with its nearest place.</p>
+        <div class="skills">
+          <span class="skill">catalog_scene()</span><span class="skill">locate(query)</span>
+          <span class="skill">list_observed_items()</span><span class="skill">detect(prompts)</span><span class="skill">select(track_id)</span>
+        </div>
+        <p class="path" style="margin-top:14px">dimos/perception/object_scene_registration.py</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Evidence &amp; next step</p>
+        <div class="tests"><span>✓ passing</span><span class="num">2 / 2</span><span style="color:var(--ink-2)">+ full replay validation</span></div>
+        <p class="next" style="margin-top:16px"><b>Replay-validated</b> over a recorded 87s Go2 session. The replay
+          surfaced and fixed two production bugs: ObjectDB TTLs running on wall-clock instead of stream-time, and a crash
+          on coplanar (floor-plane) lidar clusters.</p>
+        <p class="next" style="margin-top:12px"><b>Next:</b> live validation on the Go2, then feed item 4 (temporal
+          counts) from the ObjectDB.</p>
+      </div>
+    </div>
+    <section class="block" style="margin-top:20px">
+      <div class="figs">
+        <figure class="fig">
+          <span class="media light-only">{{SVG:02-identify-locate/catalog_flow_light.svg}}</span>
+          <span class="media dark-only">{{SVG:02-identify-locate/catalog_flow_dark.svg}}</span>
+          <figcaption class="cap"><b>Catalog flow</b> — detect → world-localize → dedup into ObjectDB → fuse spatial memory → answer.</figcaption>
+        </figure>
+        <figure class="fig">
+          <img class="media light-only" alt="Lidar localization placing detected objects at world centers" src="{{IMG:02-identify-locate/lidar_localization_light.png}}">
+          <img class="media dark-only" alt="Lidar localization placing detected objects at world centers" src="{{IMG:02-identify-locate/lidar_localization_dark.png}}">
+          <figcaption class="cap"><b>Lidar localization</b> — projecting the world-frame cloud into each 2D detection places objects at their real centers.</figcaption>
+        </figure>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= ITEM 3 ================= -->
+  <div class="panel" id="i3" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Item 03</span>
+      <h2>Convert lidar to numpy signals</h2>
+      <span class="pill implemented"><span class="d"></span>Implemented</span>
+    </div>
+    <p class="oneline">Turn the live lidar stream into plain numpy — and into the handful of measurements skills actually ask for.</p>
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">What it does</p>
+        <p class="summary">A client-side <b>LidarPointCloudClient</b> lets any script outside the module graph subscribe
+          to live lidar over LCM and pull the accumulated cloud as a plain <code>(N,3)</code> float32 array — no
+          hand-rolled subscribe / accumulate / vstack bookkeeping. New: a pure-numpy <b>signals layer</b> turns that array
+          into the products the objectives need — measure the space, reactive clearance / safety, a portable occupancy
+          grid, and a coverage report — with the four highest-value queries exposed as MCP skills.</p>
+        <div class="skills">
+          <span class="skill">measure_space()</span><span class="skill">nearest_obstacle_distance()</span>
+          <span class="skill">check_clearance(heading_deg, fov_deg)</span><span class="skill">coverage_report()</span>
+        </div>
+        <p class="path" style="margin-top:14px">dimos/mapping/pointclouds/live.py · signals.py · skills/mapping/lidar_signal_skills.py</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Evidence &amp; next step</p>
+        <div class="tests"><span>✓ passing</span><span class="num">35 / 35</span><span style="color:var(--ink-2)">unit tests</span></div>
+        <p class="next" style="margin-top:16px"><b>Promoted this sprint</b> from a library-only utility to an
+          implemented skill. Item 1's floorplan collector already consumes the client.</p>
+        <p class="next" style="margin-top:12px"><b>Next:</b> validate the four MCP skills via the master-VQA e2e (its
+          question bank now includes measure / clearance / coverage questions).</p>
+      </div>
+    </div>
+    <section class="block" style="margin-top:20px">
+      <div class="figs">
+        <figure class="fig">
+          <img class="media light-only" alt="Accumulated lidar cloud as a numpy array" src="{{IMG:03-lidar-to-numpy/lidar_accumulation_light.png}}">
+          <img class="media dark-only" alt="Accumulated lidar cloud as a numpy array" src="{{IMG:03-lidar-to-numpy/lidar_accumulation_dark.png}}">
+          <figcaption class="cap"><b>Accumulation</b> — successive scans vstacked into one <code>(N,3)</code> cloud the signal tools measure over.</figcaption>
+        </figure>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= ITEM 5 ================= -->
+  <div class="panel" id="i5" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Item 05</span>
+      <h2>Contextual labeling — educated guesses</h2>
+      <span class="pill implemented"><span class="d"></span>Implemented</span>
+    </div>
+    <p class="oneline">When the detector shrugs ("object", low confidence), ask a VLM — and give it the context the detector never used.</p>
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">What it does</p>
+        <p class="summary">When the detector is unsure or produces a useless label, ask a vision-language model for an
+          educated guess — feeding it evidence the detector ignores: the <b>cropped detection image</b>, the detector's
+          own guess + confidence, the object's <b>measured real-world size</b>, and <b>what else is nearby</b>. A "mouse"
+          next to a keyboard and a monitor is a computer mouse, not an animal.</p>
+        <div class="skills"><span class="skill">identify_object(object_id)</span><span class="skill">refine_observed_labels()</span></div>
+        <p class="path" style="margin-top:14px">dimos/perception/contextual_labeling.py</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Evidence &amp; next step</p>
+        <div class="tests"><span>✓ passing</span><span class="num">2 / 2</span><span style="color:var(--ink-2)">+ real moondream VLM run</span></div>
+        <p class="next" style="margin-top:16px">Exercised for real against item 2's replayed session — all 16
+          catalogued objects refined, descriptions landing in the <code>list_observed_items()</code> output.</p>
+        <p class="next" style="margin-top:12px"><b>Next:</b> external data sources (OSM lookups, object databases) as
+          additional context, and live validation on the Go2.</p>
+      </div>
+    </div>
+    <div class="callout accent" style="margin-top:18px">
+      <p class="mini">Depends on</p>
+      <b>Item 2</b> — raw detections + the ObjectDB scene are what this refines.
+    </div>
+  </div>
+
+  <!-- ================= ITEM 8 ================= -->
+  <div class="panel" id="i8" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Item 08</span>
+      <h2>Full 3D scene model with cross-sections</h2>
+      <span class="pill prototype"><span class="d"></span>Prototype</span>
+    </div>
+    <p class="oneline">The shared 3D substrate the floorplan is drawn from — sliceable into plan cuts and elevations.</p>
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">What it does</p>
+        <p class="summary"><b>SceneModel</b> fuses everything a mapping session produced — the lidar cloud and robot
+          trajectory from a Rerun recording, plus optionally the recorded camera stream for color — into one queryable 3D
+          model, sliceable into <b>horizontal plan cuts</b> and <b>vertical elevations</b>. Exports to interactive viewer,
+          mesh (Poisson → GLB/OBJ/PLY/STL with vertex colors), and voxel grid. It's the foundation item 1 builds on.</p>
+        <p class="path" style="margin-top:14px">dimos/mapping/reconstruction/scene_model.py · demo: scripts/demo_rrd_3d_model.py</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Why prototype, not shipped</p>
+        <p class="summary">The library API is complete and unit-tested, but there's <b>no agent-callable skill wrapper
+          yet</b> — so it's honestly a prototype, not a shipped skill. It's already load-bearing: item 1's floorplan
+          pipeline slices this model first, then draws.</p>
+        <div class="tests neutral" style="margin-top:16px"><span>✓</span><span class="num">1 / 1</span><span>sections + exports test</span></div>
+        <p class="next" style="margin-top:14px"><b>Next:</b> wrap "model the space seen so far" / "show me a section at
+          z = 4.8" as a skill.</p>
+      </div>
+    </div>
+    <section class="block" style="margin-top:20px">
+      <div class="figs">
+        <figure class="fig">
+          <img class="media light-only" alt="3D scene model with horizontal and vertical cross-sections" src="{{IMG:08-scene-3d-model/scene_model_light.png}}">
+          <img class="media dark-only" alt="3D scene model with horizontal and vertical cross-sections" src="{{IMG:08-scene-3d-model/scene_model_dark.png}}">
+          <figcaption class="cap"><b>Scene model + sections</b> — the fused cloud with a horizontal plan cut and a vertical elevation sampled from it.</figcaption>
+        </figure>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= ON HOLD ================= -->
+  <div class="panel" id="hold" role="tabpanel">
+    <div class="item-head">
+      <span class="id">Items 04 · 06 · 07</span>
+      <h2>The activity track — on hold</h2>
+      <span class="pill hold"><span class="d"></span>On hold</span>
+    </div>
+    <p class="oneline">Parked deliberately, for a specific and fixable reason — not abandoned, not half-shipped.</p>
+
+    <div class="callout" style="margin-bottom:22px">
+      <p class="mini">The reason</p>
+      Recognizing <b>activities</b> (not just static objects) needs either a <b>rigged, animated human asset</b> in
+      DimSim — the repo has one usable human model, unrigged, so every activity renders as the same static pose — or a
+      <b>real annotated activity dataset</b>. Until one exists, a recognizer can't be trained or honestly validated, so
+      items 6 and 7 are held. Item 4 (temporal item-counts) is held alongside them: it's far more useful once
+      <em>activities</em>, not just items, can be counted the same way.
+    </div>
+
+    <div class="grid2">
+      <div class="card pad">
+        <p class="mini">Item 4 — Temporally count items</p>
+        <p class="summary">How many chairs today vs. yesterday; how often the cup moves. <b>No recognizer yet</b>, but item
+          2 laid the groundwork — ObjectDB already dedups over time and <code>Object.detections_count</code> is a running
+          per-item count.</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Item 6 — Identify specific activity</p>
+        <p class="summary">Action recognition over a temporal window — <b>what is happening</b>, not what is there. Needs a
+          temporal model and training data. Held on the asset/dataset gap above.</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">Item 7 — Count activity over time</p>
+        <p class="summary">Aggregate activity events into rates — the activity analogue of item 4. <b>Purely downstream of
+          item 6</b>; nothing to build until 6 resumes.</p>
+      </div>
+      <div class="card pad">
+        <p class="mini">What was built anyway (and passes)</p>
+        <p class="summary">A deterministic DimSim scenario: furniture-anchored NPCs on a seeded task schedule, a robot
+          <b>activity-patrol</b> that drives to observe each, recording what it sees (<code>.rrd</code>) plus
+          <b>ground-truth labels</b>. Proves the scene / schedule / patrol machinery end-to-end and generates the labeled
+          data a future recognizer trains from.</p>
+      </div>
+    </div>
+  </div>
+
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="stamp"><span class="d"></span>10/10 headless skill-verification tests passing</span>
+    <span>·</span>
+    <span>branch <code>zr-agent-experiments</code></span>
+    <span>·</span>
+    <span>generated from misc/skills_dashboard data</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  function apply(t){root.setAttribute('data-theme',t);
+    var dark=t==='dark';
+    document.getElementById('theme-icon').textContent=dark?'☾':'☀';
+    document.getElementById('theme-label').textContent=dark?'Dark':'Light';}
+  var mql=window.matchMedia('(prefers-color-scheme: dark)');
+  apply(mql.matches?'dark':'light');
+  document.getElementById('theme-toggle').addEventListener('click',function(){
+    apply(root.getAttribute('data-theme')==='dark'?'light':'dark');});
+
+  var tabs=Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panels=Array.prototype.slice.call(document.querySelectorAll('.panel'));
+  function select(id){
+    tabs.forEach(function(t){t.setAttribute('aria-selected', t.dataset.tab===id?'true':'false');});
+    panels.forEach(function(p){p.classList.toggle('active', p.id===id);});
+    window.scrollTo({top:0,behavior:'auto'});
+  }
+  tabs.forEach(function(t){t.addEventListener('click',function(){select(t.dataset.tab);});});
+  document.querySelectorAll('[data-goto]').forEach(function(r){
+    r.addEventListener('click',function(){select(r.getAttribute('data-goto'));});});
+})();
+</script>

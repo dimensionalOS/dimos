@@ -109,3 +109,6 @@ recording*.db
 
 # codegraph
 .codegraph/
+
+# Generated self-contained wrap-up report (rebuild: scripts/build_report.py)
+/misc/skills_dashboard/report.html
