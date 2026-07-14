@@ -31,6 +31,7 @@ import threading
 import numpy as np
 
 from dimos.core.transport import LCMTransport
+from dimos.mapping.pointclouds import signals
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -68,6 +69,16 @@ class LidarPointCloudClient:
             self._global_map_transport.stop()
             self._global_map_transport = None
 
+    def add_lidar(self, pc: PointCloud2) -> None:
+        """Ingest one lidar message.
+
+        Public entry point so code that already has the message in hand — e.g.
+        a Module feeding its in-graph ``In[PointCloud2]`` stream — can reuse
+        this accumulator without opening a second LCM subscription via
+        ``start()``.
+        """
+        self._on_lidar(pc)
+
     def _on_lidar(self, pc: PointCloud2) -> None:
         pts = pc.points_f32()
         if len(pts) == 0:
@@ -101,6 +112,62 @@ class LidarPointCloudClient:
     @property
     def message_count(self) -> int:
         return self._message_count
+
+    # ---- derived signals over the current snapshot (see signals.py) -------
+    # Thin wrappers so an outside-graph caller can ask the live sensor a
+    # question directly, without threading snapshot() through every call.
+
+    def extents(self, percentiles: tuple[float, float] | None = None) -> signals.Extents:
+        """Bounding box + room dimensions of everything scanned so far (objective 1).
+
+        Pass ``percentiles`` (e.g. ``(1.0, 99.0)``) for outlier-robust bounds;
+        see :func:`signals.extents`.
+        """
+        return signals.extents(self.snapshot(), percentiles=percentiles)
+
+    def nearest_obstacle(
+        self,
+        origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        height_band: tuple[float, float] | None = None,
+    ) -> float:
+        """Horizontal distance to the closest point; inf if none (objective 2)."""
+        return signals.nearest_obstacle(self.snapshot(), origin=origin, height_band=height_band)
+
+    def clearance(
+        self,
+        heading: float,
+        fov_deg: float = 60.0,
+        origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        height_band: tuple[float, float] | None = None,
+    ) -> float:
+        """Distance to the closest point in a cone around ``heading`` (objective 2)."""
+        return signals.clearance(
+            self.snapshot(), heading, fov_deg=fov_deg, origin=origin, height_band=height_band
+        )
+
+    def occupancy_grid(
+        self,
+        resolution: float = 0.1,
+        height_band: tuple[float, float] | None = None,
+        bounds: tuple[float, float, float, float] | None = None,
+    ) -> signals.OccupancyGrid2D:
+        """Top-down occupancy raster of the scan as a portable artifact (objective 3)."""
+        return signals.occupancy_grid(
+            self.snapshot(), resolution=resolution, height_band=height_band, bounds=bounds
+        )
+
+    def coverage_summary(self, resolution: float = 0.1) -> dict:  # type: ignore[type-arg]
+        """Coverage feedback (objective 6): points, messages, and scanned area.
+
+        ``area_m2`` is None until anything has been scanned so callers can tell
+        "nothing yet" from "0 area".
+        """
+        snap = self.snapshot()
+        return {
+            "points": len(snap),
+            "messages": self.message_count,
+            "area_m2": (signals.coverage_area(snap, resolution=resolution) if len(snap) else None),
+        }
 
     def __enter__(self) -> LidarPointCloudClient:
         self.start()

@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from dimos.mapping.pointclouds.live import LidarPointCloudClient
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -79,3 +80,34 @@ def test_empty_pointcloud_message_is_ignored() -> None:
 
     assert client.message_count == 0
     assert client.snapshot().shape == (0, 3)
+
+
+# --- derived-signal wrappers over the live snapshot -----------------------
+def test_client_extents_over_snapshot() -> None:
+    client = LidarPointCloudClient()
+    client._on_lidar(PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0]], dtype=np.float32)))
+    client._on_lidar(PointCloud2.from_numpy(np.array([[4.0, 2.0, 1.0]], dtype=np.float32)))
+
+    ext = client.extents()
+    assert ext.span == pytest.approx([4.0, 2.0, 1.0])
+
+
+def test_client_nearest_obstacle_and_clearance() -> None:
+    client = LidarPointCloudClient()
+    client._on_lidar(PointCloud2.from_numpy(np.array([[3.0, 0.0, 1.0]], dtype=np.float32)))
+
+    assert client.nearest_obstacle() == pytest.approx(3.0, abs=1e-5)
+    assert client.clearance(heading=0.0, fov_deg=60) == pytest.approx(3.0, abs=1e-5)
+    assert client.clearance(heading=np.pi, fov_deg=60) == float("inf")
+
+
+def test_client_coverage_summary_reports_none_area_when_empty() -> None:
+    client = LidarPointCloudClient()
+    summary = client.coverage_summary()
+    assert summary == {"points": 0, "messages": 0, "area_m2": None}
+
+    client._on_lidar(PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0]], dtype=np.float32)))
+    summary = client.coverage_summary(resolution=0.5)
+    assert summary["points"] == 1
+    assert summary["messages"] == 1
+    assert summary["area_m2"] == pytest.approx(0.25)  # one 0.5 m cell
