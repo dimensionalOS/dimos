@@ -165,15 +165,12 @@ class TestTaskInvoke:
         assert coordinator.task_invoke("nope", "execute", {}) is None
         assert warn.called
 
-    def test_unknown_method_warns_and_returns_none(self, coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
+    def test_unknown_method_raises(self, coordinator):
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
-        warn = mocker.patch.object(coord_mod.logger, "warning")
 
-        assert coordinator.task_invoke("traj_arm", "no_such_method", {}) is None
-        assert warn.called
+        with pytest.raises(AttributeError, match=r"traj_arm.+no_such_method"):
+            coordinator.task_invoke("traj_arm", "no_such_method", {})
 
 
 class TestActivationFanOut:
@@ -267,16 +264,14 @@ class TestValidatedDispatch:
         assert task.t_now_seen == result
         assert any("undeclared task_invoke" in str(c.args[0]) for c in warn.call_args_list)
 
-    def test_typo_method_warns_and_returns_none(self, coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
+    def test_typo_method_raises_and_names_declared_commands(self, coordinator):
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
-        warn = mocker.patch.object(coord_mod.logger, "warning")
 
         # "exceute" is a typo of the declared "execute"; no such method exists.
-        assert coordinator.task_invoke("traj_arm", "exceute", {}) is None
-        assert warn.called
+        with pytest.raises(AttributeError, match="exceute") as excinfo:
+            coordinator.task_invoke("traj_arm", "exceute", {})
+        assert "execute" in str(excinfo.value)  # the error points at the right name
 
     def test_shims_reach_only_declaring_tasks(self, coordinator):
         declaring = CommandRecordingTask("g1")

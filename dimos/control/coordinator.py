@@ -653,12 +653,14 @@ class ControlCoordinator(Module):
             if method in self._task_commands.get(task_name, frozenset()):
                 return self._invoke_declared(task, task_name, method, kwargs)
 
+            if not hasattr(task, method):
+                raise AttributeError(
+                    f"task_invoke({task_name!r}, {method!r}): task has no such method; "
+                    f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
+                )
             logger.warning(
                 f"undeclared task_invoke {task_name}.{method} — declare it in TASK_EXPOSES"
             )
-            if not hasattr(task, method):
-                logger.warning(f"Task {task_name} has no method {method}")
-                return None
             return getattr(task, method)(**kwargs)
 
     def _invoke_declared(
