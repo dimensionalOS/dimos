@@ -17,7 +17,7 @@
 .. deprecated::
     DO NOT USE for new work. This module owns its own RTCPeerConnection —
     a second broker session next to any transport-bound streams. The current
-    pattern binds ``Cloudflare*``/``LiveKit*`` transports (including video —
+    pattern binds ``Cloudflare*`` transports (including video —
     ``BrokerProvider`` has media support) directly to per-concern modules: see
     ``dimos/teleop/hosted/``. Kept only because ``teleop-hosted-go2`` still runs
     on it; deleted once that migrates.
@@ -105,7 +105,7 @@ class HostedTeleopModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         warnings.warn(
-            "HostedTeleopModule is deprecated: bind Cloudflare*/LiveKit* "
+            "HostedTeleopModule is deprecated: bind Cloudflare* "
             "transports to your module's streams instead (video included) — "
             "see dimos/teleop/hosted/.",
             DeprecationWarning,

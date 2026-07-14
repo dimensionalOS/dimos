@@ -335,11 +335,6 @@ webrtc = [
     "httpx>=0.27.0",
 ]
 
-livekit = [
-    "livekit>=1.0.0",
-    "httpx>=0.27.0",
-]
-
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -360,7 +355,7 @@ scene = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,livekit,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -566,8 +561,6 @@ module = [
     "geometry_msgs.*",
     "h5py",
     "h5py.*",
-    "livekit",
-    "livekit.*",
     "mcap",
     "mcap.*",
     "mujoco",

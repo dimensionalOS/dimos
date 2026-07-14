@@ -35,7 +35,6 @@ AND ``-o go2connection.audio_in=true`` (feeds that track's frames into the dog's
 speaker). Enabling only the latter wires the sink but the session never asks the
 operator for audio, so nothing plays.
 
-For the LiveKit-broker variant of these same blueprints, see ``livekit.py``.
 """
 
 from __future__ import annotations
