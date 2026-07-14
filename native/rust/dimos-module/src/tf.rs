@@ -261,8 +261,9 @@ impl MultiTBuffer {
                 return Some(path);
             }
             for next in self.connections(&frame) {
-                if visited.insert(next.clone()) {
+                if !visited.contains(&next) {
                     if let Some(edge) = self.edge(&frame, &next, time, tolerance) {
+                        visited.insert(next.clone());
                         let mut extended = path.clone();
                         extended.push(edge);
                         queue.push_back((next, extended));
