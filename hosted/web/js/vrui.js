@@ -526,4 +526,3 @@ export function buildCockpit(scene, headPos) {
         },
     };
 }
-

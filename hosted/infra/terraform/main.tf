@@ -157,14 +157,14 @@ output "api_url" {
 output "dns_instructions" {
   value = <<-EOT
     To connect to dimensionalos.com:
-    
+
     1. Route53 → dimensionalos.com hosted zone
     2. Create A record:
        Name:  teleop
        Type:  A
        Value: ${aws_eip.teleop.public_ip}
        TTL:   300
-    
+
     Then access at: https://teleop.dimensionalos.com
     (Add HTTPS via Caddy/Certbot on the instance)
   EOT
