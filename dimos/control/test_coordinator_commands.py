@@ -76,11 +76,10 @@ class CommandRecordingTask(BaseControlTask):
         return False
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        _ = state
         return None
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        _ = by_task, joints
+        pass
 
     # Trajectory commands
     def execute(self, trajectory: Any) -> bool:
