@@ -606,19 +606,19 @@ class _PGOState:
             robust_noise = gtsam.noiseModel.Robust.Create(
                 gtsam.noiseModel.mEstimator.Huber.Create(1.345), base_noise
             )
-            self._graph.add(gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, robust_noise))
+            self._graph.add(
+                gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, robust_noise)
+            )
         self._accepted_loops.extend(self._pending_loops)
         self._pending_loops.clear()
 
         # Cache keyframe positions right before we run the optimization
-        poses_before_update = [
-            np.asarray(kp.optimized.translation()) for kp in self._key_poses
-        ]
+        poses_before_update = [np.asarray(kp.optimized.translation()) for kp in self._key_poses]
 
         # 2. Run the first ISAM2 update with our raw graph and initial values
         # This safely registers new keys into the engine without crashing
         self._isam2.update(self._graph, self._values)
-        
+
         # Capture the initial Chi2 baseline error right after variables are registered
         chi2_before = self._isam2.getFactorsUnsafe().error(self._isam2.getLinearizationPoint())
 
@@ -644,7 +644,12 @@ class _PGOState:
         mean_jump = 0.0
         if poses_before_update and len(poses_before_update) == len(self._key_poses):
             displacements = [
-                float(np.linalg.norm(np.asarray(self._key_poses[i].optimized.translation()) - poses_before_update[i]))
+                float(
+                    np.linalg.norm(
+                        np.asarray(self._key_poses[i].optimized.translation())
+                        - poses_before_update[i]
+                    )
+                )
                 for i in range(len(self._key_poses))
             ]
             if displacements:
@@ -659,18 +664,19 @@ class _PGOState:
                 chi2_initial=round(float(chi2_before), 2),
                 chi2_optimized=round(float(chi2_after), 2),
                 max_graph_jump_meters=round(max_jump, 4),
-                mean_graph_jump_meters=round(mean_jump, 4)
+                mean_graph_jump_meters=round(mean_jump, 4),
             )
         else:
             if len(self._key_poses) % 50 == 0:
                 logger.info(
                     "PGO Odom Status Check",
                     total_keyframes=len(self._key_poses),
-                    current_chi2=round(float(chi2_after), 2)
+                    current_chi2=round(float(chi2_after), 2),
                 )
 
         last = self._key_poses[-1]
         self._world_correction = last.optimized.compose(last.local.inverse())
+
 
 def _pose3_to_transform(
     pose: gtsam.Pose3,
@@ -707,7 +713,7 @@ def _icp(
     init: Transform | None = None,
 ) -> tuple[Transform, float]:
     """Pure Python-native global registration using the core mechanics of TEASER++.
-    Decouples translation and rotation using TIMs, prunes feature mismatches via 
+    Decouples translation and rotation using TIMs, prunes feature mismatches via
     distance checks, solves rotation via GNC-TLS, and resolves translation via 1D Voting.
     """
     if len(source) < min_inliers or len(target) < min_inliers:
@@ -719,19 +725,24 @@ def _icp(
     # 1. Generate FPFH geometric features to find candidate point pairs
     src_pcd.estimate_normals(max_nn=30, radius=0.3)
     tgt_pcd.estimate_normals(max_nn=30, radius=0.3)
-    src_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(src_pcd, max_nn=100, radius=0.5).numpy()
-    tgt_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(tgt_pcd, max_nn=100, radius=0.5).numpy()
+    src_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(
+        src_pcd, max_nn=100, radius=0.5
+    ).numpy()
+    tgt_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(
+        tgt_pcd, max_nn=100, radius=0.5
+    ).numpy()
 
     src_pts = src_pcd.point.positions.numpy()
     tgt_pts = tgt_pcd.point.positions.numpy()
 
     # Nearest neighbor matching in feature space
     from scipy.spatial import KDTree
+
     tree = KDTree(tgt_fpfh)
     _, matches = tree.query(src_fpfh, k=1)
-    
-    A = src_pts.T              # Shape: (3, N)
-    B = tgt_pts[matches].T     # Shape: (3, N)
+
+    A = src_pts.T  # Shape: (3, N)
+    B = tgt_pts[matches].T  # Shape: (3, N)
     N = A.shape[1]
 
     # 2. TEASER++ First Step: Construct Translation Invariant Measurements (TIMs)
@@ -742,9 +753,9 @@ def _icp(
     for i in range(N - 1):
         A_tims.append(A[:, i] - A[:, i + 1])
         B_tims.append(B[:, i] - B[:, i + 1])
-        
-    A_tims = np.stack(A_tims, axis=1) # Shape: (3, N-1)
-    B_tims = np.stack(B_tims, axis=1) # Shape: (3, N-1)
+
+    A_tims = np.stack(A_tims, axis=1)  # Shape: (3, N-1)
+    B_tims = np.stack(B_tims, axis=1)  # Shape: (3, N-1)
 
     # Coarse Pruning Check: If absolute distances change across frames, it's an outlier match
     dist_A = np.linalg.norm(A_tims, axis=0)
@@ -759,23 +770,23 @@ def _icp(
 
     # 3. TEASER++ Second Step: Solve Rotation via Graduated Non-Convexity (GNC-TLS)
     # Set the target boundary threshold matching your noise limits
-    cbar2 = max_dist ** 2
+    cbar2 = max_dist**2
     mu = 1.0  # Initial convexity control parameter
     R_est = np.eye(3)
     weights = np.ones(A_tims_f.shape[1])
 
-    for gnc_iter in range(20):
+    for _gnc_iter in range(20):
         # Weighted Kabsch/SVD alignment algorithm to get current rotation update
         AM = A_tims_f * weights
         centroid_A = np.mean(AM, axis=1, keepdims=True)
         centroid_B = np.mean(B_tims_f * weights, axis=1, keepdims=True)
-        
+
         A_centered = A_tims_f - centroid_A
         B_centered = B_tims_f - centroid_B
-        
+
         H = (A_centered * weights) @ B_centered.T
         U, _, Vt = np.linalg.svd(H)
-        
+
         # Check for reflection condition to keep matrix valid inside SO(3)
         d = np.linalg.det(U @ Vt)
         S = np.eye(3)
@@ -789,14 +800,16 @@ def _icp(
         # Truncated Least Squares weight assignment rules
         th_low = (mu / (mu + 1)) * cbar2
         th_high = ((mu + 1) / mu) * cbar2
-        
+
         new_weights = np.zeros_like(weights)
         new_weights[residuals2 <= th_low] = 1.0
         new_weights[residuals2 >= th_high] = 0.0
-        
+
         middle_mask = (residuals2 > th_low) & (residuals2 < th_high)
         if np.any(middle_mask):
-            new_weights[middle_mask] = np.sqrt((cbar2 * mu * (mu + 1)) / residuals2[middle_mask]) - mu
+            new_weights[middle_mask] = (
+                np.sqrt((cbar2 * mu * (mu + 1)) / residuals2[middle_mask]) - mu
+            )
 
         weights = new_weights
         mu *= 1.4  # Advance the non-convex sharpening schedule
@@ -847,5 +860,5 @@ def _icp(
 
     tf = Transform.from_matrix(result.transformation.numpy(), ts=source.ts)
     rmse = float(result.inlier_rmse)
-    
+
     return tf, rmse * rmse
