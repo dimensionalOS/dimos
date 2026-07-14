@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """API key generation, validation, and management."""
 
 from datetime import datetime, timezone
@@ -24,7 +38,7 @@ def generate_api_key(environment: str = "live") -> str:
 
 
 def hash_key(plaintext_key: str) -> str:
-    """SHA-256 hash of the API key for storage."""
+    # SHA-256 is intentional: keys are 160-bit random tokens needing an O(1) hash lookup, not passwords.
     return hashlib.sha256(plaintext_key.encode()).hexdigest()
 
 
