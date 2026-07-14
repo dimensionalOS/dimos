@@ -110,3 +110,11 @@ def test_non_finite_timestamps_raise() -> None:
         result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=bad)
         with pytest.raises(ValueError):
             stage.parameterize(result)
+
+
+def test_empty_timestamps_and_empty_path_raises() -> None:
+    """Both empty: must raise ValueError, not IndexError from indexing an empty list."""
+    stage, _ = _stage()
+    result = PlanningResult(status=PlanningStatus.SUCCESS, path=[], timestamps=[])
+    with pytest.raises(ValueError):
+        stage.parameterize(result)

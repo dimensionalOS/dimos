@@ -53,38 +53,27 @@ class TrapezoidalTimeParameterizer:
     def parameterize(self, result: PlanningResult) -> JointTrajectory:
         waypoints = [list(state.position) for state in result.path]
 
-        # Only a genuinely absent timeline (None) means "untimed" -> synthesize a
-        # trapezoidal profile. An empty list for a non-empty path is a mismatch,
-        # caught by the length check below (not silently re-timed).
+        # A genuinely absent timeline (None) means "untimed" -> synthesize a
+        # trapezoidal profile. Everything else is a supplied timeline we validate.
         if result.timestamps is None:
             return self._generator.generate(waypoints)
 
-        # Planner supplied a timeline: it must line up with the waypoints...
-        if len(result.timestamps) != len(waypoints):
-            raise ValueError(
-                f"timestamps ({len(result.timestamps)}) and path "
-                f"({len(waypoints)}) length mismatch"
-            )
-        # ...and be a valid, executable timeline. NaN/inf slip past ordinary
-        # comparisons (any comparison with NaN is False; inf gives an infinite
-        # duration the controller never completes), so require finite first.
-        if any(not math.isfinite(t) for t in result.timestamps):
-            raise ValueError(
-                f"timestamps must all be finite, got {result.timestamps}"
-            )
-        # ...non-negative and strictly increasing (a zero-duration or
-        # non-monotonic timeline is rejected by the controller at execution).
-        if result.timestamps[0] < 0.0:
-            raise ValueError(
-                f"timestamps must be non-negative, got {result.timestamps[0]}"
-            )
-        if any(b <= a for a, b in zip(result.timestamps, result.timestamps[1:])):
-            raise ValueError(
-                f"timestamps must be strictly increasing, got {result.timestamps}"
-            )
+        ts = result.timestamps
+        # Guard order matters: reject empty BEFORE indexing, and reject
+        # non-finite BEFORE the numeric comparisons (NaN slips past all of them).
+        if not ts:
+            raise ValueError("timestamps must not be empty when supplied")
+        if len(ts) != len(waypoints):
+            raise ValueError(f"timestamps ({len(ts)}) and path ({len(waypoints)}) length mismatch")
+        if any(not math.isfinite(t) for t in ts):
+            raise ValueError(f"timestamps must all be finite, got {ts}")
+        if ts[0] < 0.0:
+            raise ValueError(f"timestamps must be non-negative, got {ts[0]}")
+        if any(b <= a for a, b in zip(ts, ts[1:])):
+            raise ValueError(f"timestamps must be strictly increasing, got {ts}")
 
         points = [
             TrajectoryPoint(time_from_start=t, positions=list(p))
-            for t, p in zip(result.timestamps, waypoints)
+            for t, p in zip(ts, waypoints)
         ]
         return JointTrajectory(points=points)
