@@ -21,6 +21,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
 from dimos.robot.manipulators.common.blueprints import eef_twist_task, planner
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
@@ -104,6 +105,7 @@ def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:
         pytest.param(keyboard_teleop_openarm_mock, id="openarm-mock"),
         pytest.param(keyboard_teleop_openarm, id="openarm"),
         pytest.param(keyboard_teleop_a750, id="a750"),
+        pytest.param(keyboard_teleop_a1z, id="a1z"),
     ],
 )
 def test_manipulator_keyboard_blueprint_uses_eef_twist_and_light_keyboard_kwargs(
