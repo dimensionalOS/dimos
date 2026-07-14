@@ -140,10 +140,38 @@ def test_seeded_cards_load_into_registry() -> None:
         ),
         StreamBinding("teleop_buttons", "on_teleop_buttons", Routing.BROADCAST),
     )
-    for empty_card in ("trajectory", "g1_groot_wbc"):
-        # Present in _bindings distinguishes a seeded empty card from no card at all.
-        assert empty_card in control_task_registry._bindings, f"{empty_card} card not seeded"
-        assert control_task_registry.bindings_for(empty_card) == TaskBindings()
+    trajectory = control_task_registry.bindings_for("trajectory")
+    assert trajectory.consumes == ()  # command-driven only
+    assert trajectory.exposes == frozenset({"execute", "cancel", "get_state"})
+    g1 = control_task_registry.bindings_for("g1_groot_wbc")
+    assert g1.consumes == ()  # its twist input is a later PR
+    assert g1.exposes == frozenset({"arm", "disarm", "set_dry_run"})
+
+
+def _scannable_task_classes(task_type: str) -> list[type] | None:
+    """Task-like classes defined in ``task_type``'s factory module.
+
+    Returns ``None`` when the module needs an optional dependency that is
+    not installed (the CI guard skips those); otherwise the non-empty list
+    of task classes (an empty list is a hard failure).
+    """
+    factory_path = control_task_registry._factory_paths[task_type]
+    module_name, _ = factory_path.split(":", maxsplit=1)
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        root = (exc.name or "").partition(".")[0]
+        if root in OPTIONAL_TASK_MODULES and importlib.util.find_spec(root) is None:
+            return None
+        pytest.fail(f"{task_type}: importing {module_name!r} failed: {exc}")
+    classes = [
+        cls
+        for _, cls in inspect.getmembers(module, inspect.isclass)
+        if cls.__module__ == module.__name__
+        and all(hasattr(cls, attr) for attr in ("compute", "claim", "is_active"))
+    ]
+    assert classes, f"{task_type}: no task class found in {module_name!r}"
+    return classes
 
 
 def test_declared_handlers_exist_on_task_classes() -> None:
@@ -151,38 +179,50 @@ def test_declared_handlers_exist_on_task_classes() -> None:
     for task_type, bindings in sorted(control_task_registry._bindings.items()):
         if not bindings.consumes:
             continue
-        factory_path = control_task_registry._factory_paths[task_type]
-        module_name, _ = factory_path.split(":", maxsplit=1)
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
-            root = (exc.name or "").partition(".")[0]
-            if root in OPTIONAL_TASK_MODULES and importlib.util.find_spec(root) is None:
-                continue
-            pytest.fail(f"{task_type}: importing {module_name!r} failed: {exc}")
-        task_classes = [
-            cls
-            for _, cls in inspect.getmembers(module, inspect.isclass)
-            if cls.__module__ == module.__name__
-            and all(hasattr(cls, attr) for attr in ("compute", "claim", "is_active"))
-        ]
-        assert task_classes, f"{task_type}: no task class found in {module_name!r}"
+        task_classes = _scannable_task_classes(task_type)
+        if task_classes is None:
+            continue
         for binding in bindings.consumes:
             assert any(callable(getattr(cls, binding.handler, None)) for cls in task_classes), (
-                f"{task_type}: no task class in {module_name!r} defines handler "
+                f"{task_type}: no task class defines handler "
                 f"{binding.handler!r} declared for stream {binding.stream!r}"
             )
             checked += 1
     assert checked > 0
 
 
+def test_declared_commands_exist_on_task_classes() -> None:
+    checked = 0
+    for task_type, bindings in sorted(control_task_registry._bindings.items()):
+        if not bindings.exposes:
+            continue
+        task_classes = _scannable_task_classes(task_type)
+        if task_classes is None:
+            continue
+        for command in sorted(bindings.exposes):
+            assert any(callable(getattr(cls, command, None)) for cls in task_classes), (
+                f"{task_type}: no task class defines command {command!r} declared in TASK_EXPOSES"
+            )
+            checked += 1
+    assert checked > 0
+
+
+def test_command_guard_flags_command_absent_from_task_class() -> None:
+    # Proves the guard above actually discriminates: a real command resolves
+    # to a callable on the task class, a bogus one does not.
+    task_classes = _scannable_task_classes("trajectory")
+    assert task_classes is not None
+    assert any(callable(getattr(cls, "execute", None)) for cls in task_classes)
+    assert not any(callable(getattr(cls, "no_such_command", None)) for cls in task_classes)
+
+
 def test_bindings_for_unknown_type_is_empty() -> None:
     bindings = control_task_registry.bindings_for("definitely_not_registered")
     assert bindings == TaskBindings()
     assert bindings.consumes == ()
-    assert not bindings.exposes
-    with pytest.raises(TypeError):
-        bindings.exposes["poison"] = "x:Y"
+    assert bindings.exposes == frozenset()
+    # exposes is an immutable frozenset; there is no add/mutate API.
+    assert not hasattr(bindings.exposes, "add")
 
 
 def test_register_bindings_runtime_and_conflict() -> None:
@@ -217,8 +257,19 @@ def test_register_bindings_rejects_bad_streams_and_routing() -> None:
         reg.register_bindings("fake_stream", consumes={"no_such_port": ("on_x", "broadcast")})
     with pytest.raises(ValueError, match="routing"):
         reg.register_bindings("fake_routing", consumes={"joint_command": ("on_x", "round_robin")})
-    with pytest.raises(ValueError, match="module:Model"):
-        reg.register_bindings("fake_exposes", exposes={"do_thing": "not_a_path"})
+
+
+def test_register_bindings_rejects_bad_exposes() -> None:
+    reg = ControlTaskRegistry()
+    with pytest.raises(TypeError, match="sequence"):
+        # A bare string is not a command-name sequence.
+        reg.register_bindings("fake_str_exposes", exposes="do_thing")
+    with pytest.raises(ValueError, match="private"):
+        reg.register_bindings("fake_private_exposes", exposes=["_do_thing"])
+    with pytest.raises(ValueError, match="more than once"):
+        reg.register_bindings("fake_dup_exposes", exposes=["do_thing", "do_thing"])
+    with pytest.raises(TypeError, match="non-empty strings"):
+        reg.register_bindings("fake_nonstr_exposes", exposes=[123])
 
 
 class _HandlerlessTask:

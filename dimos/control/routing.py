@@ -22,10 +22,8 @@ them when tasks are registered.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
 
 
 class Routing(str, Enum):
@@ -64,16 +62,14 @@ class StreamBinding:
     routing: Routing
 
 
-_EMPTY_EXPOSES: Mapping[str, str] = MappingProxyType({})
-
-
 @dataclass(frozen=True)
 class TaskBindings:
     """Declared input streams and commands for one task type.
 
-    ``exposes`` maps a command name to a ``"module:PydanticModel"``
-    argument-schema path; it is stored but not consumed yet.
+    ``exposes`` is the set of command names the task accepts via
+    ``ControlCoordinator.task_invoke``; the task method's own signature
+    is the argument schema (validated at dispatch, not here).
     """
 
     consumes: tuple[StreamBinding, ...] = ()
-    exposes: Mapping[str, str] = _EMPTY_EXPOSES
+    exposes: frozenset[str] = frozenset()

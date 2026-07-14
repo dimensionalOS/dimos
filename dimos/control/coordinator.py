@@ -26,6 +26,7 @@ Features:
 """
 
 from dataclasses import dataclass, field
+import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -182,6 +183,10 @@ class ControlCoordinator(Module):
         # Card-declared stream routes: stream name -> (task, handler, routing).
         # Guarded by _task_lock; entries are added/pruned with their task.
         self._routes: dict[str, list[tuple[ControlTask, str, Routing]]] = {}
+
+        # Card-declared command names per task, keyed by task name.
+        # Guarded by _task_lock; added/pruned with their task.
+        self._task_commands: dict[TaskName, frozenset[str]] = {}
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -417,6 +422,9 @@ class ControlCoordinator(Module):
             self._tasks[task.name] = task
             if task_type is not None:
                 self._register_routes(task, task_type)
+                self._task_commands[task.name] = self._commands_for(task_type)
+            else:
+                self._task_commands[task.name] = frozenset()
             logger.info(f"Added task {task.name}")
         self._sync_stream_subscriptions()
         return True
@@ -430,6 +438,7 @@ class ControlCoordinator(Module):
                 return False
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
+            self._task_commands.pop(task_name, None)
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -449,6 +458,12 @@ class ControlCoordinator(Module):
             self._routes.setdefault(binding.stream, []).append(
                 (task, binding.handler, binding.routing)
             )
+
+    def _commands_for(self, task_type: str) -> frozenset[str]:
+        """The command names the task type declares in its TASK_EXPOSES card."""
+        from dimos.control.tasks.registry import control_task_registry
+
+        return control_task_registry.bindings_for(task_type).exposes
 
     def _sync_stream_subscriptions(self) -> None:
         """Subscribe streams that gained routes; drop those whose last consumer left."""
@@ -571,28 +586,28 @@ class ControlCoordinator(Module):
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
-        """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
+        """Arm/disarm every task whose card declares ``arm`` / ``disarm``."""
+        method = "arm" if engaged else "disarm"
         with self._task_lock:
-            for task in self._tasks.values():
-                method_name = "arm" if engaged else "disarm"
-                handler = getattr(task, method_name, None)
-                if callable(handler):
-                    try:
-                        handler()
-                    except Exception:
-                        logger.exception(f"{method_name}() raised on task {task.name!r}")
+            for name, task in self._tasks.items():
+                if method not in self._task_commands.get(name, frozenset()):
+                    continue
+                try:
+                    self._invoke_declared(task, name, method, {})
+                except Exception:
+                    logger.exception(f"{method}() raised on task {name!r}")
 
     @rpc
     def set_dry_run(self, enabled: bool) -> None:
-        """Toggle dry-run on every task exposing ``set_dry_run``."""
+        """Toggle dry-run on every task whose card declares ``set_dry_run``."""
         with self._task_lock:
-            for task in self._tasks.values():
-                handler = getattr(task, "set_dry_run", None)
-                if callable(handler):
-                    try:
-                        handler(enabled)
-                    except Exception:
-                        logger.exception(f"set_dry_run() raised on task {task.name!r}")
+            for name, task in self._tasks.items():
+                if "set_dry_run" not in self._task_commands.get(name, frozenset()):
+                    continue
+                try:
+                    self._invoke_declared(task, name, "set_dry_run", {"enabled": enabled})
+                except Exception:
+                    logger.exception(f"set_dry_run() raised on task {name!r}")
 
     @rpc
     def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
@@ -616,24 +631,95 @@ class ControlCoordinator(Module):
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
-        """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
+        """Invoke a task command. Pass t_now=None to auto-inject current time.
+
+        Commands declared in the task's TASK_EXPOSES card are validated
+        against the method's own signature before dispatch; a bad kwarg name
+        or missing required argument raises to the caller. Undeclared methods
+        still dispatch exactly as before but log a nudge to declare them.
+        """
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
                 logger.warning(f"Task {task_name} not found")
                 return None
 
-            if not hasattr(task, method):
-                logger.warning(f"Task {task_name} has no method {method}")
-                return None
-
-            kwargs = kwargs or {}
+            kwargs = dict(kwargs or {})
 
             # Auto-inject t_now if requested (None means "use current time")
             if "t_now" in kwargs and kwargs["t_now"] is None:
                 kwargs["t_now"] = time.perf_counter()
 
+            if method in self._task_commands.get(task_name, frozenset()):
+                return self._invoke_declared(task, task_name, method, kwargs)
+
+            if not hasattr(task, method):
+                raise AttributeError(
+                    f"task_invoke({task_name!r}, {method!r}): task has no such method; "
+                    f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
+                )
+            logger.warning(
+                f"undeclared task_invoke {task_name}.{method} — declare it in TASK_EXPOSES"
+            )
             return getattr(task, method)(**kwargs)
+
+    def _invoke_declared(
+        self, task: ControlTask, task_name: TaskName, method: str, kwargs: dict[str, Any]
+    ) -> Any:
+        """Bind ``kwargs`` to the command's own signature, then dispatch.
+
+        Caller must hold ``_task_lock``. A bad kwarg name or missing required
+        argument raises a ``TypeError`` naming the task, command, and the
+        offending argument; it propagates to the RPC caller.
+        """
+        handler = getattr(task, method)
+        sig = inspect.signature(handler)
+        where = f"task_invoke({task_name!r}, {method!r})"
+        # ``bind`` reports a missing required arg before an unexpected one, so
+        # name unexpected kwargs explicitly — a typo'd kwarg must be visible.
+        accepts_var_kw = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not accepts_var_kw:
+            unexpected = [name for name in kwargs if name not in sig.parameters]
+            if unexpected:
+                raise TypeError(
+                    f"{where}: unexpected argument(s) {unexpected}; accepts {list(sig.parameters)}"
+                )
+        try:
+            bound = sig.bind(**kwargs)
+        except TypeError as exc:
+            raise TypeError(f"{where}: {exc}") from exc
+        return handler(*bound.args, **bound.kwargs)
+
+    @rpc
+    def describe_task(self, task_name: TaskName) -> dict[str, Any] | None:
+        """Describe a task's declared commands and stream routes.
+
+        Each declared command reports its live signature (rendered string
+        plus parameter names) — the method signature is the argument
+        contract. Returns ``{"task", "commands": {name: {"signature",
+        "params"}}, "streams": [(stream, routing), ...]}`` or ``None`` for
+        an unknown task.
+        """
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                return None
+            commands: dict[str, Any] = {}
+            for name in sorted(self._task_commands.get(task_name, frozenset())):
+                handler = getattr(task, name, None)
+                if not callable(handler):
+                    continue
+                sig = inspect.signature(handler)
+                commands[name] = {"signature": str(sig), "params": list(sig.parameters)}
+            streams = sorted(
+                (stream, routing.value)
+                for stream, entries in self._routes.items()
+                for entry_task, _handler, routing in entries
+                if entry_task is task
+            )
+            return {"task": task_name, "commands": commands, "streams": streams}
 
     @rpc
     def set_gripper_position(self, hardware_id: str, position: float) -> bool:
@@ -728,13 +814,12 @@ class ControlCoordinator(Module):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
-        # Unsubscribe from streaming commands and drop the route table
+        # Route/command tables are kept: they track _tasks, which survives stop(),
+        # and add_task() skips known names so a restart would never rebuild them.
         with self._subscribe_lock:
             for unsub in self._stream_unsubs.values():
                 unsub()
             self._stream_unsubs.clear()
-        with self._task_lock:
-            self._routes.clear()
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None
