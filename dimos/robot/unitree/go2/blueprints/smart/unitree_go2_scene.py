@@ -35,5 +35,11 @@ unitree_go2_scene = autoconnect(
         # Lidar localization jitters more than depth (sparse mid360 returns per
         # detection), so dedup over a wider radius than the 0.2m depth default.
         distance_threshold=0.35,
+        # A patrolling/touring robot usually sees each object for only a few
+        # consecutive frames before it's out of view, then never again (one
+        # pass, not lingering) -- the 6-detection default (tuned for a
+        # stationary/orbiting camera) left almost everything stuck pending on
+        # a real walkthrough. 3 still filters single-frame noise.
+        min_detections_for_permanent=3,
     ),
 ).global_config(n_workers=8)

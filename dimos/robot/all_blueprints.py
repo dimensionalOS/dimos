@@ -129,6 +129,7 @@ all_blueprints = {
     "unitree-go2-scene-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_scene_agentic:unitree_go2_scene_agentic",
     "unitree-go2-scene-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_scene_memory:unitree_go2_scene_memory",
     "unitree-go2-scene-memory-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_scene_memory_agentic:unitree_go2_scene_memory_agentic",
+    "unitree-go2-scene-memory-feed": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_scene_memory_feed:unitree_go2_scene_memory_feed",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",

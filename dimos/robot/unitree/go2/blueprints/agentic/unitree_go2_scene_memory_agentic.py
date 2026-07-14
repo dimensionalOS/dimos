@@ -31,9 +31,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_scene_memory import (
     unitree_go2_scene_memory,
 )
+from dimos.skills.mapping.floorplan_skill import FloorplanSkillContainer
+from dimos.skills.mapping.lidar_signal_skills import LidarSignalSkills
 
 unitree_go2_scene_memory_agentic = autoconnect(
     unitree_go2_scene_memory,
+    FloorplanSkillContainer.blueprint(),
+    LidarSignalSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(),
 )

@@ -36,6 +36,11 @@ unitree_go2_scene_memory = autoconnect(
         localization="lidar",
         camera_optical_frame="camera_optical",
         distance_threshold=0.35,
+        # See unitree_go2_scene.py: a touring robot sees most objects for
+        # only a few consecutive frames, so the 6-detection default (tuned
+        # for a stationary/orbiting camera) leaves almost everything stuck
+        # pending on a real walkthrough.
+        min_detections_for_permanent=3,
     ),
     SpatialMemory.blueprint(),
 ).global_config(n_workers=9)
