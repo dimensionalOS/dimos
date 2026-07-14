@@ -51,6 +51,7 @@ Edit `terraform.tfvars` with your actual values:
 aws_region           = "us-east-2"
 instance_type        = "t3.small"
 key_name             = "daneel-local"
+ssh_ingress_cidrs    = ["203.0.113.7/32"]  # REQUIRED — your admin IP(s); never 0.0.0.0/0
 cf_teleop_app_id     = "<from CF dashboard>"
 cf_teleop_app_secret = "<from CF dashboard>"
 ```
