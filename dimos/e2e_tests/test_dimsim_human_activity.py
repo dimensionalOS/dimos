@@ -36,8 +36,14 @@ import time
 
 import pytest
 
+from dimos.e2e_tests.activity_patrol import ActivityPatrol
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.e2e_tests.human_activity import HumanActivityDriver, HumanTaskScenario, Location
+from dimos.e2e_tests.human_activity import (
+    HumanActivityDriver,
+    HumanTaskScenario,
+    Location,
+    write_activity_rerun,
+)
 from dimos.e2e_tests.lcm_spy import LcmSpy
 
 SCENARIO_PATH = Path(__file__).parent / "fixtures" / "human_tasks.json"
@@ -57,13 +63,13 @@ def _write_ground_truth(path: Path, scenario: HumanTaskScenario, driver: HumanAc
                 "seed": scenario.seed,
                 "duration_s": scenario.duration_s,
                 "locations": {
-                    n: {"x": loc.x, "y": loc.y} for n, loc in scenario.locations.items()
+                    n: {
+                        "x": driver.position_of(n)[0],
+                        "y": driver.position_of(n)[1],
+                        "furniture": loc.furniture,
+                    }
+                    for n, loc in scenario.locations.items()
                 },
-                "props": [
-                    {"name": f"prop_{t.id}", "kind": t.prop.kind, "location": t.location}
-                    for t in scenario.tasks
-                    if t.prop
-                ],
                 "events": [
                     {
                         "at_s": e.at_s,
@@ -98,14 +104,22 @@ def test_human_task_schedule_is_deterministic() -> None:
         gaps = [b - a for a, b in itertools.pairwise(times)]
         assert all(lo - 1e-6 <= g <= hi + 1e-6 for g in gaps), gaps
 
-    # every one of the predefined tasks is reachable and has a 3D prop to act on
+    # every one of the predefined tasks targets a real scene object: either a
+    # furniture anchor in the apt scene, or (legacy) an explicit prop stand-in
     assert len(scenario.tasks) == 10
+    anchors = set()
     for task in scenario.tasks:
         assert task.location in scenario.locations
-        assert task.prop is not None, f"{task.id} has no prop for the human to act on"
-        assert task.prop.rest_height > 0
-    kinds = {task.prop.kind for task in scenario.tasks if task.prop}
-    assert len(kinds) == len(scenario.tasks)  # a distinct object per activity
+        loc = scenario.locations[task.location]
+        assert loc.furniture or task.prop, (
+            f"{task.id} has neither a real-furniture anchor nor a prop to act on"
+        )
+        if loc.furniture:
+            anchors.add(loc.furniture)
+    assert len(anchors) == 10  # a distinct real object per activity
+
+    # humans use the real scanned-person model
+    assert scenario.model_url.endswith(".glb")
 
     # events are globally time-ordered
     all_times = [e.at_s for e in schedule_a]
@@ -143,6 +157,7 @@ def test_dimsim_humans_run_scheduled_tasks(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
     run_human_activity: Callable[[HumanTaskScenario], HumanActivityDriver],
+    robot_patrol: Callable[[HumanActivityDriver], ActivityPatrol],
 ) -> None:
     scenario = _load_scenario()
 
@@ -154,56 +169,92 @@ def test_dimsim_humans_run_scheduled_tasks(
     ).expanduser()
     os.environ["RERUN_SAVE_PATH"] = str(rrd_path)
 
-    # Boot the DimSim scene (the robot idles — we never issue human_input, so no
-    # agent/LLM work happens beyond startup). Mirrors test_dimsim_walk_forward.
+    # Boot just the DimSim scene + robot + rerun bridge. We deliberately use the
+    # non-agentic `unitree-go2-basic` blueprint: this scaffold only populates the
+    # environment and records what the robot observes — it needs no agent, MCP,
+    # web-input, or LLM. That also keeps the test off the `misc` extra
+    # (python-multipart, required by the agentic WebInput module) and off OpenAI.
     start_blueprint(
         "run",
-        "--disable",
-        "spatial-memory",
-        "--disable",
-        "security-module",
-        "unitree-go2-agentic",
+        "unitree-go2-basic",
         simulator="dimsim",
     )
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=1200.0)
 
+    # `run_human_activity` polls the DimSim sandbox itself (wait_for_scene) before
+    # spawning, so no readiness topic is needed.
     driver = run_human_activity(scenario)
 
     # ground-truth labels beside the recording (what each human did, when)
     gt_path = rrd_path.with_suffix(".groundtruth.json")
     _write_ground_truth(gt_path, scenario, driver)
 
-    # every activity has its prop in the scene (a bed to sleep on, a plant to
-    # water, a sink for dishes, ...) so the humans have something to act on
-    assert len(driver.prop_names) == len(scenario.tasks)
-    for name in driver.prop_names:
-        assert driver.dim_sim.object_exists(name), f"missing prop in scene: {name}"
+    # every activity is anchored to REAL furniture in the apt scene (the bed,
+    # sofa, toilet, kitchen counter, ...) — this is what makes the recording
+    # meaningful for testing vision models / object detectors
+    for loc in scenario.locations.values():
+        if loc.furniture:
+            assert driver.dim_sim.object_exists(loc.furniture), (
+                f"real furniture anchor missing from scene: {loc.furniture}"
+            )
+    resolved = driver.resolved_locations
+    assert len(resolved) == len(scenario.locations)
 
-    # all humans spawned and are readable in the scene
+    # all humans spawned — as the real scanned-person model, not fallbacks —
+    # and are readable in the scene
+    assert driver.fallback_humans == set(), (
+        f"humans fell back to primitive cylinders (person GLB failed to load): "
+        f"{sorted(driver.fallback_humans)}"
+    )
     for human in scenario.humans:
         x, y = driver.dim_sim.get_human_position(human.name)
         assert math.isfinite(x) and math.isfinite(y)
+
+    # drive the robot on an activity-aware patrol so its camera + lidar actually
+    # observe the humans (a stationary robot only ever sees one fixed spot)
+    patrol = robot_patrol(driver)
 
     # let the whole schedule play out, plus enough slack for a worst-case
     # cross-map walk if the final task lands near the end of the window
     time.sleep(scenario.duration_s + 15.0)
 
-    # each human should have walked to its final scheduled task's room
+    # each human should have walked to its final task's REAL furniture position
     for human in scenario.humans:
         goal = _last_task_location(scenario, driver, human.name)
+        gx, gy = driver.position_of(goal.name)
         x, y = driver.dim_sim.get_human_position(human.name)
-        dist = math.hypot(x - goal.x, y - goal.y)
+        dist = math.hypot(x - gx, y - gy)
         assert dist < 1.0, (
-            f"{human.name} ended at ({x:.2f}, {y:.2f}), "
-            f"expected near {goal.name} ({goal.x:.2f}, {goal.y:.2f}); dist={dist:.2f}m"
+            f"{human.name} ended at ({x:.2f}, {y:.2f}), expected near "
+            f"{goal.name}/{goal.furniture} ({gx:.2f}, {gy:.2f}); dist={dist:.2f}m"
         )
+
+    # the patrol should have actually moved the robot and observed the humans
+    observed = patrol.observed_humans
+    print(
+        f"\nPatrol: robot travelled up to {patrol.max_displacement_m:.1f} m from spawn; "
+        f"observed {len(observed)}/{len(scenario.humans)} humans: {sorted(observed)}"
+    )
+    assert patrol.max_displacement_m > 1.0, (
+        f"robot barely moved ({patrol.max_displacement_m:.2f} m) — patrol/cmd_vel not driving it"
+    )
+    assert observed, "robot never got a framed look at any human during the patrol"
+
+    # fixed-world activity view: the humans doing their tasks + the robot's real
+    # patrol path driving among them (open this to watch it all in one place)
+    activity_rrd = rrd_path.with_suffix(".activity.rrd")
+    write_activity_rerun(
+        activity_rrd,
+        scenario,
+        robot_trajectory=patrol.trajectory,
+        locations_override=resolved,
+    )
 
     # the robot-observed recording should have been written by the bridge
     size = rrd_path.stat().st_size if rrd_path.exists() else 0
     print(
-        f"\nRobot-observed recording: {rrd_path} ({size / 1e6:.1f} MB)\n"
-        f"Ground-truth activity labels: {gt_path}\n"
+        f"Robot-observed recording: {rrd_path} ({size / 1e6:.1f} MB)\n"
+        f"Actor activity view:      {activity_rrd}   <- open this to watch the humans\n"
+        f"Ground-truth labels:      {gt_path}\n"
         f"Open with: dimos-viewer {rrd_path}"
     )
     assert rrd_path.exists(), (

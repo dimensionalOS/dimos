@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import time
 from typing import Any
 
 from dimos.core.transport import LCMTransport
@@ -39,9 +40,31 @@ class DimSimClient:
     @property
     def client(self) -> SceneClient:
         if self._client is None:
-            self._client = SceneClient()
-            self._client.start()
+            # assign only after a successful start, so a refused connection
+            # (sim still booting) can simply be retried by the caller
+            client = SceneClient()
+            client.start()
+            self._client = client
         return self._client
+
+    def wait_for_scene(self, timeout: float = 180.0, poll_s: float = 3.0) -> None:
+        """Block until the DimSim browser sandbox answers a trivial exec.
+
+        The MCP-ready LCM topic can fire before (or, on a shared bus, from a
+        different robot than) the DimSim browser being ready — poll the scene
+        itself before driving NPCs.
+        """
+        deadline = time.monotonic() + timeout
+        last_err: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                if self.client.exec("return 1;", timeout=5.0) == 1:
+                    return
+            except Exception as e:  # connection refused / exec timeout while booting
+                last_err = e
+                self._client = None
+            time.sleep(poll_s)
+        raise TimeoutError(f"DimSim scene not ready after {timeout}s: {last_err}")
 
     def set_agent_position(self, x: float, y: float, z: float = 0.52) -> None:
         self.client.set_agent_position(y, z, x)
@@ -72,19 +95,52 @@ class DimSimClient:
         x: float,
         y: float,
         *,
-        model_url: str = "/agent-model/robot.glb",
-        animation: str | int = "idle",
+        model_url: str | None = "/person/person.glb",
+        color: int = 0xE0A070,
+        height: float = 1.7,
+        radius: float = 0.25,
     ) -> dict[str, Any]:
-        """Spawn a named, animated NPC actor at robot-frame ``(x, y)`` on the floor."""
-        return self.client.add_npc(
-            url=model_url,
+        """Spawn a named human actor at robot-frame ``(x, y)``.
+
+        Loads the real scanned-person GLB (``model_url``) via ``add_npc`` with
+        ``collider=False`` — the earlier NPC hang was the trimesh-collider +
+        physics-snapshot path, and a visual-only actor is exactly right for
+        camera/CV work. If the model fails to load (or ``model_url`` is None),
+        falls back to a colored human-sized cylinder via the synchronous
+        ``add_object`` path; the returned dict then has ``fallback: True``.
+        Movement/readback are identical either way (``getObjectByName``).
+        """
+        if model_url:
+            old_timeout = self.client.timeout
+            try:
+                self.client.timeout = 120.0  # first GLTF load can be slow headless
+                result = self.client.add_npc(
+                    url=model_url,
+                    name=name,
+                    position=(y, 0.0, x),
+                    animation=0,
+                    collider=False,
+                )
+                result["fallback"] = False
+                return result
+            except Exception:  # load failure/timeout — fall through to cylinder
+                pass
+            finally:
+                self.client.timeout = old_timeout
+        result = self.client.add_object(
+            geometry="cylinder",
+            size=(radius, radius, height),
+            color=color,
+            position=(y, height / 2.0, x),  # center at half height → feet on floor
             name=name,
-            position=(y, 0.0, x),
-            animation=animation,
+            dynamic=False,
+            collider=None,
         )
+        result["fallback"] = True
+        return result
 
     def move_human(self, name: str, x: float, y: float) -> None:
-        """Teleport a spawned NPC to robot-frame ``(x, y)`` (keeps its floor height)."""
+        """Teleport a spawned actor to robot-frame ``(x, y)`` (keeps its floor height)."""
         self.client.exec(
             f"const o = scene.getObjectByName({json.dumps(name)});"
             f"if (o) {{ o.position.x = {y}; o.position.z = {x}; }}"
@@ -136,11 +192,39 @@ class DimSimClient:
         """Remove a spawned prop by name."""
         return self.client.remove_object(name)
 
+    # Scene objects from the apt world get runtime names like
+    # "assetPrim:<uid>:bed-mattress-core" / "prim:front-yard-floor", so anchor
+    # lookups match by exact name OR by ":<anchor>" suffix.
+    _FIND_JS = (
+        "let found = null;"
+        "scene.traverse(o => {{"
+        "  if (!found && o.name && (o.name === {name} || o.name.endsWith(':' + {name}))) "
+        "found = o;"
+        "}});"
+    )
+
+    def get_object_position(self, name: str) -> tuple[float, float]:
+        """World robot-frame (x, y) of a named scene object (e.g. furniture).
+
+        Matches exact names or the part suffix of prefixed runtime names, and
+        uses ``getWorldPosition`` so parts nested in asset groups resolve to
+        their true world location.
+        """
+        pos = self.client.exec(
+            self._FIND_JS.format(name=json.dumps(name))
+            + "if (!found) return null;"
+            "const v = new THREE.Vector3(); found.getWorldPosition(v);"
+            "return { x: v.x, z: v.z };"
+        )
+        if not pos:
+            raise KeyError(f"object not found in scene: {name}")
+        return float(pos["z"]), float(pos["x"])
+
     def object_exists(self, name: str) -> bool:
-        """Whether a named object is present in the scene."""
+        """Whether a named object (exact or part-suffix match) is in the scene."""
         return bool(
             self.client.exec(
-                f"return scene.getObjectByName({json.dumps(name)}) ? true : false;"
+                self._FIND_JS.format(name=json.dumps(name)) + "return found ? true : false;"
             )
         )
 

@@ -19,6 +19,7 @@ import time
 import pytest
 
 from dimos.core.transport import pLCMTransport
+from dimos.e2e_tests.activity_patrol import ActivityPatrol
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -187,6 +188,10 @@ def run_human_activity(
 
     def start(scenario: HumanTaskScenario) -> HumanActivityDriver:
         nonlocal driver, thread
+        # the MCP-ready signal doesn't guarantee the DimSim browser sandbox is
+        # up (and on a shared LCM bus it may even come from another robot) —
+        # poll the scene itself before spawning NPCs
+        dim_sim.wait_for_scene()
         driver = HumanActivityDriver(dim_sim, scenario)
         driver.spawn()
 
@@ -210,6 +215,27 @@ def run_human_activity(
         thread.join(timeout=2.0)
     if driver is not None:
         driver.teardown()
+
+
+@pytest.fixture
+def robot_patrol() -> Generator[Callable[[HumanActivityDriver], ActivityPatrol], None, None]:
+    """Drive the robot on an activity-aware patrol so it observes the human NPCs.
+
+    Returns ``start(driver)`` which begins publishing ``/cmd_vel`` to visit each
+    human in turn (see ``ActivityPatrol``). Stops and zeroes the robot on teardown.
+    """
+    patrol: ActivityPatrol | None = None
+
+    def start(driver: HumanActivityDriver) -> ActivityPatrol:
+        nonlocal patrol
+        patrol = ActivityPatrol(driver)
+        patrol.start()
+        return patrol
+
+    yield start
+
+    if patrol is not None:
+        patrol.stop()
 
 
 @pytest.fixture

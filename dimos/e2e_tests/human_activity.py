@@ -35,21 +35,41 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.utils.logging_config import setup_logger
+
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
+
+logger = setup_logger()
 
 
 @dataclass(frozen=True)
 class Location:
-    """A named place in robot/map-frame meters."""
+    """A named place in robot/map-frame meters.
+
+    ``furniture`` optionally anchors the location to a named object in the live
+    DimSim scene (e.g. ``"bed-mattress"``): at spawn the driver resolves the
+    object's real world position and uses it instead of the (x, y) fallback, so
+    activities happen at the actual furniture. ``standoff`` is added after
+    resolution so actors stand next to the object rather than inside its mesh.
+    """
 
     name: str
     x: float
     y: float
+    furniture: str | None = None
+    standoff: tuple[float, float] = (0.0, 0.0)
 
     @classmethod
     def from_dict(cls, name: str, raw: dict[str, Any]) -> Location:
-        return cls(name=str(name), x=float(raw["x"]), y=float(raw["y"]))
+        so = raw.get("standoff", (0.0, 0.0))
+        return cls(
+            name=str(name),
+            x=float(raw["x"]),
+            y=float(raw["y"]),
+            furniture=str(raw["furniture"]) if raw.get("furniture") else None,
+            standoff=(float(so[0]), float(so[1])),
+        )
 
 
 def _parse_color(value: Any) -> int:
@@ -240,8 +260,11 @@ class HumanActivityDriver:
         self._current_task: dict[str, TaskSpec] = {}
         self._prop_names: list[str] = []
         self._spawned = False
-        self._lidar_refresh_s = 3.0  # keep server-side lidar roughly in sync
-        self._last_lidar_refresh = 0.0
+        self._last_step_s = -1.0
+        # location name -> resolved robot-frame (x, y); filled at spawn from the
+        # live scene's furniture anchors (config coords are the fallback)
+        self._resolved: dict[str, tuple[float, float]] = {}
+        self._fallback_humans: set[str] = set()  # humans whose GLB failed to load
 
     @property
     def dim_sim(self) -> DimSimClient:
@@ -252,11 +275,54 @@ class HumanActivityDriver:
         return tuple(self._prop_names)
 
     @property
+    def resolved_locations(self) -> dict[str, tuple[float, float]]:
+        return dict(self._resolved)
+
+    @property
+    def fallback_humans(self) -> set[str]:
+        """Humans spawned as fallback cylinders because the person GLB failed."""
+        return set(self._fallback_humans)
+
+    def position_of(self, location_name: str) -> tuple[float, float]:
+        """Resolved robot-frame position of a location (config fallback if unresolved)."""
+        if location_name in self._resolved:
+            return self._resolved[location_name]
+        loc = self._scenario.locations[location_name]
+        return (loc.x, loc.y)
+
+    def resolve_locations(self) -> None:
+        """Snap each furniture-anchored location to the real object's live position."""
+        for name, loc in self._scenario.locations.items():
+            xy = (loc.x, loc.y)
+            if loc.furniture:
+                try:
+                    fx, fy = self._dim_sim.get_object_position(loc.furniture)
+                    xy = (fx + loc.standoff[0], fy + loc.standoff[1])
+                    logger.info(
+                        f"location '{name}' anchored to '{loc.furniture}' at "
+                        f"({xy[0]:.2f}, {xy[1]:.2f})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"location '{name}': anchor '{loc.furniture}' not found ({e}) — "
+                        f"using config fallback ({loc.x}, {loc.y})"
+                    )
+            self._resolved[name] = xy
+
+    @property
     def schedule(self) -> tuple[ScheduledEvent, ...]:
         return self._schedule
 
     def current_task(self, human: str) -> TaskSpec | None:
         return self._current_task.get(human)
+
+    def human_names(self) -> list[str]:
+        return [h.name for h in self._scenario.humans]
+
+    def live_position(self, name: str) -> tuple[float, float] | None:
+        """Current robot-frame (x, y) of a spawned human, or None."""
+        p = self._pos.get(name)
+        return (float(p[0]), float(p[1])) if p is not None else None
 
     def spawn_props(self) -> None:
         """Place one prop per task at its location, so each activity has a target.
@@ -267,10 +333,10 @@ class HumanActivityDriver:
         for i, task in enumerate(self._scenario.tasks):
             if task.prop is None:
                 continue
-            loc = self._scenario.location_of(task)
+            lx, ly = self.position_of(task.location)
             angle = 2.0 * np.pi * i / max(len(self._scenario.tasks), 1)
-            px = loc.x + 0.6 * float(np.cos(angle))
-            py = loc.y + 0.6 * float(np.sin(angle))
+            px = lx + 0.6 * float(np.cos(angle))
+            py = ly + 0.6 * float(np.sin(angle))
             name = f"prop_{task.id}"
             self._dim_sim.add_prop(
                 name,
@@ -283,32 +349,44 @@ class HumanActivityDriver:
             )
             self._prop_names.append(name)
 
+    # distinct colors so the actors are tellable apart in the recording
+    _HUMAN_COLORS = (0xE0A070, 0x4FA3D1, 0x8BC34A, 0xD16BA5, 0xF2C14E, 0x9C7BE0)
+
     def spawn(self) -> None:
-        """Add the task props, then one NPC per human at its home location."""
+        """Resolve real furniture anchors, then spawn props and human actors."""
+        self.resolve_locations()
         self.spawn_props()
-        for human in self._scenario.humans:
-            home = self._scenario.locations[human.home]
-            self._pos[human.name] = np.array([home.x, home.y], dtype=float)
-            self._goal[human.name] = np.array([home.x, home.y], dtype=float)
-            self._dim_sim.add_human(
+        for i, human in enumerate(self._scenario.humans):
+            hx, hy = self.position_of(human.home)
+            self._pos[human.name] = np.array([hx, hy], dtype=float)
+            self._goal[human.name] = np.array([hx, hy], dtype=float)
+            result = self._dim_sim.add_human(
                 human.name,
-                home.x,
-                home.y,
+                hx,
+                hy,
                 model_url=self._scenario.model_url,
-                animation="idle",
+                color=self._HUMAN_COLORS[i % len(self._HUMAN_COLORS)],
             )
-        # so a lidar-based map/perception sees the new geometry too (the camera
-        # renders NPCs live regardless)
-        try:
-            self._dim_sim.refresh_lidar()
-        except Exception:  # best-effort — camera perception is unaffected
-            pass
+            if result.get("fallback"):
+                self._fallback_humans.add(human.name)
+                logger.warning(f"{human.name}: person model failed to load — cylinder fallback")
+        # No lidar-snapshot refresh: the actors are visual-only (camera sees
+        # them; they are deliberately absent from the physics/lidar world).
         self._spawned = True
 
     def step(self, elapsed_s: float, dt_s: float) -> None:
-        """Apply any events due by ``elapsed_s`` and advance each NPC by ``dt_s``."""
+        """Apply any events due by ``elapsed_s`` and advance each NPC.
+
+        Movement uses the *real* elapsed delta between calls (each call blocks
+        on synchronous scene execs, so the loop can run well under its nominal
+        rate — with a fixed ``dt_s`` the humans would walk slower than
+        ``_speed_mps``). ``dt_s`` remains an upper-bound hint for the first call.
+        """
         if not self._spawned:
             return
+        real_dt = min(elapsed_s - self._last_step_s, 1.0) if self._last_step_s >= 0 else dt_s
+        self._last_step_s = elapsed_s
+        dt_s = max(real_dt, 0.0)
         # activate any events whose time has arrived
         while (
             self._next_idx < len(self._schedule)
@@ -316,12 +394,11 @@ class HumanActivityDriver:
         ):
             event = self._schedule[self._next_idx]
             self._next_idx += 1
-            loc = self._scenario.location_of(event.task)
-            self._goal[event.human] = np.array([loc.x, loc.y], dtype=float)
+            gx, gy = self.position_of(event.task.location)
+            self._goal[event.human] = np.array([gx, gy], dtype=float)
             self._current_task[event.human] = event.task
 
         # walk every NPC toward its goal
-        moved = False
         for name, pos in self._pos.items():
             goal = self._goal[name]
             delta = goal - pos
@@ -331,15 +408,9 @@ class HumanActivityDriver:
             move = min(self._speed_mps * dt_s, dist)
             pos += delta / dist * move
             self._dim_sim.move_human(name, float(pos[0]), float(pos[1]))
-            moved = True
-
-        # periodically resync the lidar snapshot so it tracks the moving humans
-        if moved and elapsed_s - self._last_lidar_refresh >= self._lidar_refresh_s:
-            self._last_lidar_refresh = elapsed_s
-            try:
-                self._dim_sim.refresh_lidar()
-            except Exception:  # best-effort
-                pass
+        # NOTE: no physics-snapshot refresh here — the actors are visual-only
+        # (collider=False), so resending the 26 MB Rapier snapshot would be pure
+        # overhead that stalls this loop (and starves the walking speed).
 
     def teardown(self) -> None:
         for human in self._scenario.humans:
@@ -352,3 +423,130 @@ class HumanActivityDriver:
                 self._dim_sim.remove_prop(name)
             except Exception:  # best-effort cleanup
                 pass
+
+
+def _rgb(color: int) -> tuple[int, int, int]:
+    return ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+
+
+def write_activity_rerun(
+    path: str | Path,
+    scenario: HumanTaskScenario,
+    dt_s: float = 0.2,
+    tail_s: float = 15.0,
+    robot_trajectory: list[tuple[float, float, float]] | None = None,
+    locations_override: dict[str, tuple[float, float]] | None = None,
+) -> Path:
+    """Write a ground-truth activity recording you can scrub in dimos-viewer.
+
+    Unlike the robot-observed ``.rrd`` (the robot's egocentric camera + lidar),
+    this is a fixed-world top-down/3D view of the *actors*: each human is a
+    moving colored sphere labeled with its current task, over the labeled task
+    rooms and their props. The human motion is pure and deterministic (recomputes
+    the same walk the driver drives in-sim), so no simulator is needed.
+
+    Pass ``robot_trajectory`` (``[(elapsed_s, x, y), ...]``, e.g.
+    ``ActivityPatrol.trajectory``) to overlay the robot's *real* patrol path as a
+    moving marker + trail — so you can watch the robot drive among the humans it
+    is observing, all in one fixed world.
+
+    Open with: ``dimos-viewer <path>`` (or ``rerun <path>``).
+    """
+    import rerun as rr
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rr.init("dimos_human_activity")
+    rr.save(str(path))
+
+    resolved = dict(locations_override or {})
+
+    def _xy(location_name: str) -> tuple[float, float]:
+        if location_name in resolved:
+            return resolved[location_name]
+        loc = scenario.locations[location_name]
+        return (loc.x, loc.y)
+
+    for name, loc in scenario.locations.items():
+        lx, ly = _xy(name)
+        label = f"{name} ({loc.furniture})" if loc.furniture else name
+        rr.log(
+            f"rooms/{name}",
+            rr.Points3D([[lx, ly, 0.0]], labels=[label],
+                        colors=[(90, 90, 90)], radii=[0.12]),
+            static=True,
+        )
+    for task in scenario.tasks:
+        if task.prop is None:
+            continue
+        lx, ly = _xy(task.location)
+        p = task.prop
+        if p.geometry == "cylinder":
+            half = [p.size[0], p.size[2] / 2.0, p.size[0]]
+        elif p.geometry == "sphere":
+            half = [p.size[0]] * 3
+        else:
+            half = [p.size[0] / 2.0, p.size[1] / 2.0, p.size[2] / 2.0]
+        rr.log(
+            f"props/{task.id}",
+            rr.Boxes3D(centers=[[lx, ly, p.rest_height]], half_sizes=[half],
+                       labels=[p.kind], colors=[_rgb(p.color)]),
+            static=True,
+        )
+
+    # deterministic constant-speed walk (mirrors HumanActivityDriver.step)
+    schedule = scenario.build_schedule()
+    humans = scenario.humans
+    colors = HumanActivityDriver._HUMAN_COLORS
+    pos = {h.name: np.array(_xy(h.home), float) for h in humans}
+    goal = {h.name: pos[h.name].copy() for h in humans}
+    current = {h.name: "idle" for h in humans}
+    hcolor = {h.name: _rgb(colors[i % len(colors)]) for i, h in enumerate(humans)}
+    speed = HumanActivityDriver._speed_mps
+
+    idx = 0
+    t = 0.0
+    total = scenario.duration_s + tail_s
+    while t <= total:
+        while idx < len(schedule) and schedule[idx].at_s <= t:
+            event = schedule[idx]
+            idx += 1
+            goal[event.human] = np.array(_xy(event.task.location), float)
+            current[event.human] = event.task.id
+        rr.set_time("elapsed", duration=t)
+        for h in humans:
+            p_ = pos[h.name]
+            delta = goal[h.name] - p_
+            dist = float(np.linalg.norm(delta))
+            if dist > 1e-3:
+                p_ += delta / dist * min(speed * dt_s, dist)
+            rr.log(
+                f"humans/{h.name}",
+                rr.Points3D([[p_[0], p_[1], 0.85]], radii=[0.25], colors=[hcolor[h.name]],
+                            labels=[f"{h.name}: {current[h.name]}"]),
+            )
+        t += dt_s
+
+    # the robot's real patrol path (moving marker + growing trail), or a static
+    # spawn marker if no trajectory was captured
+    if robot_trajectory:
+        trail: list[list[float]] = []
+        for elapsed, rx, ry in robot_trajectory:
+            trail.append([rx, ry, 0.15])
+            rr.set_time("elapsed", duration=elapsed)
+            rr.log(
+                "robot",
+                rr.Points3D([[rx, ry, 0.2]], labels=["robot"], colors=[(240, 240, 240)],
+                            radii=[0.22]),
+            )
+            rr.log("robot/trail", rr.LineStrips3D([trail], colors=[(200, 200, 200)]))
+    else:
+        rr.log(
+            "robot",
+            rr.Points3D([[3.0, 2.0, 0.2]], labels=["robot (stationary)"],
+                        colors=[(240, 240, 240)], radii=[0.22]),
+            static=True,
+        )
+
+    logger.info(f"Wrote activity ground-truth recording: {path}")
+    return path
