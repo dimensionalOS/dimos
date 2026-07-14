@@ -9,6 +9,37 @@ Realtime or LiveKit SFU — so you don't need to open any inbound ports on the
 robot's network. It works behind a home router, on Wi-Fi, wired LAN, or
 cellular.
 
+![The hosted teleop operator console: live video, minimap, command bar, and the metrics HUD](assets/operator_ui.png)
+
+## How it works
+
+There are three pieces: the **robot**, the **broker**, and the **operator's
+browser**. You never connect to the robot directly.
+
+1. **The robot dials out.** When you run a `teleop-hosted-go2-*` blueprint, the
+   robot opens an outbound WebRTC session to the broker and registers itself.
+   Because the robot initiates the connection, no inbound ports or port
+   forwarding are needed — it works from behind any NAT.
+2. **The broker bridges the session.** It sits between the robot and the
+   operator, relaying video, the minimap, telemetry, and your commands. It also
+   handles login and decides which operators may connect to which robots.
+3. **You connect from the browser.** Open the console, pick your robot, and
+   click **Connect**. The browser pulls the robot's video track and opens the
+   command/telemetry data channels back to it.
+
+Once connected, four streams flow continuously:
+
+| Stream | Direction | Carries |
+|--------|-----------|---------|
+| Video | robot → you | The selected camera, composited into one live track |
+| Minimap | robot → you | Occupancy grid + robot pose for click-to-navigate |
+| Telemetry | robot → you | Battery, posture, link latency/rate for the HUD |
+| Commands | you → robot | Drive input, sport commands, nav goals, E-STOP |
+
+Everything runs in one robot-side process sharing a single broker session, so
+there's exactly one video track and one control plane per robot — see
+[How it connects](#how-it-connects) for the channel-level detail.
+
 ## Quick Start
 
 ```bash
@@ -36,19 +67,77 @@ overrides. All broker settings can also be passed on the CLI, e.g.
 | Blueprint | Backend | Notes |
 |-----------|---------|-------|
 | `teleop-hosted-go2-transport` | Cloudflare | Drive + camera + minimap + click-to-nav (recommended) |
-| `teleop-hosted-go2-livekit` | LiveKit | Drive + camera + state; no minimap/click-nav yet |
 | `teleop-hosted-go2-multicam` | Cloudflare | Adds a second RealSense, operator-selectable, mux'd into one video track |
-| `teleop-hosted-xarm7-multicam` | Cloudflare | UFactory xArm7 IK via the ControlCoordinator, front + wrist RealSense |
-| `teleop-hosted-go2` | Cloudflare | Legacy `HostedTwistTeleopModule` wrapper (transport-swap above is preferred) |
-| `teleop-hosted-xarm7` | Cloudflare | Legacy `HostedArmTeleopModule` wrapper (multicam transport-swap above is preferred) |
+| `teleop-hosted-go2-livekit` | LiveKit | Drive + camera + state; no minimap/click-nav yet |
+| `teleop-hosted-go2-livekit-multicam` | LiveKit | LiveKit backend with the second RealSense |
 
 The transport blueprints bind `Cloudflare*` / `LiveKit*` transports directly to
-one module's streams (`Go2HostedConnection`), which shares a single broker
-session. LiveKit uses the same `transports.broker.*` config key as Cloudflare.
+the streams of several small, per-concern modules that all run in one process
+(`n_workers=1`) so they share a single broker session: `Go2CommandModule`
+(command / E-STOP / drive guard), `CameraMuxModule` (camera → video track),
+`MapCompressModule` (costmap → minimap), `HostedStatsModule` (telemetry + acks),
+and the `GO2Connection` driver itself. LiveKit uses the same
+`transports.broker.*` config key as Cloudflare.
 
 Enable the glass-to-glass latency benchmark with
-`-o go2hostedconnection.latency_stamp=true` (adds a timestamp strip the operator
+`-o cameramuxmodule.latency_stamp=true` (adds a timestamp strip the operator
 reads then crops).
+
+## Operating the robot
+
+Once the robot is running and you've clicked **Connect**, here's how to fly it.
+
+### 1. Connect
+
+Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), find your
+robot under **Available Robots**, and click **Connect**. Video appears within a
+second or two; the metrics HUD starts populating once telemetry arrives. If the
+robot doesn't show up, confirm the blueprint is still running and that the API
+key matches the one the robot registered with.
+
+### 2. Drive
+
+Use **WASD** on a desktop keyboard (or the on-screen buttons on a phone) to
+drive: `W`/`S` forward/back, `A`/`D` strafe, and turn with the yaw controls.
+Hold **Shift** for 2× speed, **Ctrl** for half speed. Drive input streams
+continuously and stops the instant you release — the robot treats a released
+key as "stop," so it never keeps coasting on a dropped packet.
+
+### 3. Navigate with the minimap
+
+The minimap shows the robot's costmap and live pose. **Click any point** on it
+to send a navigation goal — the robot plans a path and drives there on its own,
+avoiding obstacles. Give a manual drive command at any time and it takes over
+immediately, cancelling the plan. There's also a **cancel** control to stop
+navigating without driving manually.
+
+### 4. Postures and commands
+
+The command bar exposes the robot's allow-listed actions:
+
+- **Stand / sit / recover** — `RecoveryStand`, `StandDown`, `Sit`, and `Damp`
+  (relax the joints).
+- **Greetings / stretch** — `Hello`, `Stretch`.
+- **Acrobatics** — `FrontJump`, `FrontPounce` — only available when the robot
+  was launched with `-o go2commandmodule.allow_acrobatics=true`.
+- **Obstacle avoidance** — toggle the onboard avoidance layer on or off.
+- **Head LED** — set the head light brightness.
+- **Camera** — on multicam robots, pick which camera (or side-by-side view) the
+  video track shows.
+
+Each command is acknowledged, so the UI reflects what the robot actually did,
+not just what you clicked.
+
+### 5. E-STOP
+
+The **E-STOP** control is always available. It immediately stops all motion,
+cancels any active navigation, and damps the robot — and it takes priority over
+everything else in flight. Clear it with **estop_clear** (or the equivalent
+control) when you're ready to resume; the robot won't move again until you do.
+
+> **Operator loss is a stop, too.** If your connection drops, the robot sees the
+> operator leave and halts on its own — it never keeps executing your last
+> command into a dead link.
 
 ## Operator inputs
 
@@ -63,7 +152,8 @@ the robot blueprint decides what to do with it.
 | Quest 3 (xArm7) | **Controller poses** + analog triggers | `PoseStamped` → coordinator IK task; triggers → gripper |
 
 Shift = 2× speed, Ctrl = ½×. The operator can also send allow-listed sport
-commands (RecoveryStand, Sit, Damp, Hello, Stretch, FrontJump, FrontPounce),
+commands (StandDown, RecoveryStand, Sit, Damp, Hello, Stretch, and — gated
+behind `allow_acrobatics` — FrontJump, FrontPounce),
 toggle obstacle avoidance / rage mode / the head LED, pick the camera, E-STOP,
 and click the minimap to navigate.
 
@@ -90,27 +180,49 @@ regenerate from an old .db with `python -m dimos.teleop.utils.report path.db`.
 
 ## Configuration
 
-`Go2HostedConnectionConfig` — commonly-tuned fields (config key
-`go2hostedconnection`):
+Each concern is its own module, so its commonly-tuned fields live under that
+module's config key (module class name, lowercased). Pass with `-o`, e.g.
+`-o hostedstatsmodule.telemetry_hz=5`.
+
+`hostedstatsmodule` — `HostedStatsModule`:
 
 | Field | Default | Notes |
 |-------|---------|-------|
 | `telemetry_hz` | `3.0` | Robot → operator HUD push rate |
+
+`go2commandmodule` — `Go2CommandModule`:
+
+| Field | Default | Notes |
+|-------|---------|-------|
 | `cmd_stale_after_sec` | `0.5` | Drop `cmd_vel` older than this |
+| `max_linear_mps` / `max_angular_rps` | `1.5` / `2.0` | Robot-side clamp on operator drive |
+| `max_nav_goal_m` | `100.0` | Reject click-to-nav goals farther than this |
+| `allow_acrobatics` | `false` | Gate FrontJump / FrontPounce etc. |
+| `damp_on_operator_lost` | `false` | Damp the robot when the operator link drops |
+
+`cameramuxmodule` — `CameraMuxModule`:
+
+| Field | Default | Notes |
+|-------|---------|-------|
 | `latency_stamp` | `false` | Paint the glass-to-glass timestamp strip |
 | `video_max_width` / `video_max_fps` | `0` (source) | Publish-side caps for constrained uplinks |
+| `cameras` | `["cam1","cam2"]` | Named inputs; first is the boot default view |
+
+`mapcompressmodule` — `MapCompressModule`:
+
+| Field | Default | Notes |
+|-------|---------|-------|
 | `map_hz` / `odom_hz` | `2.0` / `15.0` | Minimap grid + robot-pose push rates (`0` = off) |
-| `speaker` | `true` | Play operator mic on the dog's speaker (needs broker `audio_in`) |
 | `map_min_resolution` | `0.1` | Coarsen finer occupancy grids to this m/cell before encoding for the minimap |
-| `nav_yield_sec` | `1.0` | How long a live WASD twist suppresses the nav planner's `cmd_vel` |
 
 Broker settings live under `transports.broker.*`: `api_key` (required),
 `broker_url`, `robot_id`, `robot_name` (`"robot"` default), `stun_url`,
-`video_codec` (`""` = aiortc default order; e.g. `h264`/`vp8`), and — for the
-operator→robot mic — `audio_in` (opt-in). With `audio_in=true` the offer
-carries a recvonly audio transceiver; the broker pulls the operator's mic onto
-the session and the Go2 plays it on the dog's speaker (`speaker=true`, on by
-default).
+`video_codec` (e.g. `h264`/`vp8`), `video_max_bitrate_bps` (`0` = aiortc's
+default 3 Mbps ceiling; raise for crisper video on a good uplink), and — for the
+operator→robot mic — `audio_in` (opt-in). With broker `audio_in=true` the offer
+carries a recvonly audio transceiver and the broker pulls the operator's mic
+onto the session; set `go2connection.audio_in=true` as well and the Go2 plays it
+on the dog's speaker. Operator→robot audio is Cloudflare-only.
 
 ## How it connects
 
@@ -131,7 +243,7 @@ robot                          broker (Cloudflare / LiveKit)      operator brows
 
 For the WebRTC / aiortc / Cloudflare implementation details (MAX_BUNDLE, SCTP
 id-0 channel, candidate propagation, thread model), see
-[`dimos/teleop/quest_hosted/README.md`](/dimos/teleop/quest_hosted/README.md).
+[`dimos/teleop/hosted/README.md`](/dimos/teleop/hosted/README.md).
 
 ## Known Limitations
 

@@ -69,14 +69,14 @@ teleop/
 │   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/
 │       └── static/index.html    # WebXR client
-├── quest_hosted/
-│   ├── go2_hosted_connection.py # Go2 driver + hosted plane (transport-swap)
-│   ├── arm_hosted_connection.py # Arm hosted plane → ControlCoordinator over LCM
-│   ├── hosted_base.py           # HostedConnectionMixin: shared control plane + camera mux
-│   ├── blueprints.py            # Pre-wired blueprints
-│   ├── README.md                # Channel/CF gotchas, threads, sidecars
-│   ├── hosted_teleop_module.py  # DEPRECATED — legacy self-connecting base
-│   └── hosted_extensions.py     # DEPRECATED — legacy Arm/Twist subclasses
+├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
+│   ├── go2_command.py           # Go2CommandModule: command/E-STOP dispatch + drive guard
+│   ├── command_executor.py      # SerializedCommandMixin: serialized cmds + safety fence
+│   ├── camera_mux.py            # CameraMuxModule: N cameras → one composited video track
+│   ├── map_compress.py          # MapCompressModule: costmap/odom → minimap datachannel
+│   ├── hosted_stats.py          # HostedStatsModule: telemetry + acks + cmd-link stats
+│   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
+│   └── blueprints/              # cloudflare.py + livekit.py (Go2 single + multicam)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop

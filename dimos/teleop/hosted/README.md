@@ -9,27 +9,24 @@ operator's mic comes back on a recvonly audio track.
 ## Files
 
 The session (dial-out, datachannel lifecycle, video track) is owned by the
-per-process `BrokerProvider` (`dimos/protocol/pubsub/impl/webrtc/providers/`);
-blueprints bind `Cloudflare*`/`LiveKit*` transports to the streams of ONE
-module per robot so everything shares that single session:
+per-process `BrokerProvider` / `LiveKitBrokerProvider`
+(`dimos/protocol/pubsub/impl/webrtc/providers/`); blueprints bind
+`Cloudflare*`/`LiveKit*` transports to the streams of several small,
+per-concern modules that all run in one process so everything shares that
+single session:
 
-- **`hosted_base.py`** — `HostedConnectionMixin` (subclasses `CameraMuxMixin`):
-  the shared control plane — `state_json` dispatch, `cmd_ack`, E-STOP latch,
-  telemetry — plus the camera mux (`dimos/teleop/utils/camera_mux.py`). A new
-  robot shape mixes this in and implements its hooks.
-- **`go2_hosted_connection.py`** — `Go2HostedConnection`: Go2 driver + hosted
-  plane in one module (subclasses `GO2Connection` + the mixin; the driver is
-  `dedicated_worker=True`, so the broker-bound streams must live in its process).
-- **`arm_hosted_connection.py`** — `ArmHostedConnection`: hosted plane for
-  coordinator-driven arms (`ArmTeleopModule` + the mixin). No robot connection
-  to subclass — actuation runs through the `ControlCoordinator`, fed over LCM
-  (`/coordinator/cartesian_command`, `frame_id` = task name).
-- **`blueprints.py`** — wires the above to robots, cameras, and transports.
-- **`hosted_teleop_module.py`** / **`hosted_extensions.py`** — DEPRECATED,
-  do not use for new work: the pre-transport-swap stack (the module owns its
-  own RTCPeerConnection). Still used by the `teleop-hosted-go2` /
-  `teleop-hosted-xarm7` blueprints; delete once those migrate to the
-  transport-swap modules above.
+- **`go2_command.py`** — `Go2CommandModule`: operator command / E-STOP dispatch
+  and the manual-drive guard. Reaches the driver over `@rpc` (`GO2Connection`).
+- **`camera_mux.py`** — `CameraMuxModule`: N cameras → one composited, capped
+  video track (operator-selectable views).
+- **`map_compress.py`** — `MapCompressModule`: costmap + odom → the minimap
+  datachannel (coarsened, PNG-encoded, kept under the 16 KB datachannel limit).
+- **`hosted_stats.py`** — `HostedStatsModule`: telemetry frame, command acks,
+  and command-link latency/rate stats.
+- **`command_executor.py`** — `SerializedCommandMixin`: serializes blocking
+  driver commands with nonce dedup and a safety-epoch fence (E-STOP aborts).
+- **`blueprints/cloudflare.py`** / **`blueprints/livekit.py`** — wire the above
+  to the Go2 driver, cameras, planner, and transports (single + multicam).
 
 The operator HTML lives in the [dimensional-teleop](https://github.com/dimensionalOS/dimensional-teleop)
 broker repo (`web/`), not here.
@@ -46,9 +43,10 @@ broker repo (`web/`), not here.
 3. SDP answer's candidates are propagated across bundled m-sections (aiortc
    workaround — see below) before `setRemoteDescription`.
 4. Heartbeat thread polls `/sessions/{id}/heartbeat`; each ack carries the SCTP
-   ids the broker has assigned for `cmd_unreliable`, `state_reliable`, and
-   `state_reliable_back`. We open / re-open / close negotiated channels to
-   track the broker's view.
+   ids the broker has assigned for `cmd_unreliable`, `state_reliable`,
+   `state_reliable_back`, and `map_unreliable`. We open / re-open / close
+   negotiated channels to track the broker's view (when `state_reliable` drops
+   to no id, the operator has left → the robot stops motion).
 5. Once `pc.connectionState == "connected"`, `CameraVideoTrack.arm()` starts
    delivering frames (drops everything before the operator was actually able
    to receive).
@@ -65,10 +63,11 @@ only**. That's why we need two reliable channels — one for each direction:
 | Channel | Direction | Reliable? | What it carries |
 |---|---|---|---|
 | `cmd_unreliable` | operator → robot | no (unordered, 0 retransmits) | TwistStamped / Joy / PoseStamped LCM |
-| `state_reliable` | operator → robot | yes | JSON: `ping`, `clock_report`, `video_stats` |
-| `state_reliable_back` | robot → operator | yes | JSON: `pong`, `robot_telemetry` |
+| `state_reliable` | operator → robot | yes | JSON: `ping`, `clock_report`, `video_stats`, `estop`, `camera_select`, `nav_goal` |
+| `state_reliable_back` | robot → operator | yes | JSON: `pong`, `robot_telemetry`, `cmd_ack` |
+| `map_unreliable` | robot → operator | no (lossy) | JSON: minimap occupancy grid + odom pose |
 
-All three are **negotiated by SCTP id** (broker assigns; we never pick).
+All four are **negotiated by SCTP id** (broker assigns; we never pick).
 
 ### SCTP id 0 reservation (the throwaway DC)
 
