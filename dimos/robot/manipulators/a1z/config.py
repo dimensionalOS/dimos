@@ -84,7 +84,9 @@ def make_a1z_model_config(
         model_path=A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=joint_names(A1Z_DOF, prefix="arm_joint"),
-        end_effector_link="arm_link6",
+        end_effector_link=(
+            "gripper_finger_left_link" if has_gripper else "arm_link6"
+        ),
         base_link="base_link",
         package_paths=A1Z_PACKAGE_PATHS,
         auto_convert_meshes=True,
