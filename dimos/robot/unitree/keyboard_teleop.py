@@ -18,6 +18,7 @@ import threading
 from typing import Any
 
 import pygame
+from pygame.constants import K_DOWN, K_LALT, K_LEFT, K_RALT, K_RIGHT, K_UP
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -44,6 +45,45 @@ _CONTROL_RATE_HZ = 50
 _BACKGROUND_COLOR = (30, 30, 30)
 _HELP_TEXT_COLOR = (150, 150, 150)
 _INDICATOR_RADIUS = 15
+
+
+def twist_from_keys(
+    keys: set[int],
+    linear_speed: float,
+    angular_speed: float,
+    boost_multiplier: float,
+    slow_multiplier: float,
+) -> Twist:
+    """Build a velocity command from the currently held keyboard keys."""
+    twist = Twist()
+
+    forward = pygame.K_w in keys or K_UP in keys
+    backward = pygame.K_s in keys or K_DOWN in keys
+    if forward != backward:
+        twist.linear.x = linear_speed if forward else -linear_speed
+
+    alt_held = K_LALT in keys or K_RALT in keys
+    strafe_left = pygame.K_q in keys or (alt_held and (pygame.K_a in keys or K_LEFT in keys))
+    strafe_right = pygame.K_e in keys or (alt_held and (pygame.K_d in keys or K_RIGHT in keys))
+    if strafe_left != strafe_right:
+        twist.linear.y = linear_speed if strafe_left else -linear_speed
+
+    if not alt_held:
+        turn_left = pygame.K_a in keys or K_LEFT in keys
+        turn_right = pygame.K_d in keys or K_RIGHT in keys
+        if turn_left != turn_right:
+            twist.angular.z = angular_speed if turn_left else -angular_speed
+
+    speed_multiplier = 1.0
+    if pygame.K_LSHIFT in keys or pygame.K_RSHIFT in keys:
+        speed_multiplier = boost_multiplier
+    elif pygame.K_LCTRL in keys or pygame.K_RCTRL in keys:
+        speed_multiplier = slow_multiplier
+
+    twist.linear.x *= speed_multiplier
+    twist.linear.y *= speed_multiplier
+    twist.angular.z *= speed_multiplier
+    return twist
 
 
 class KeyboardTeleop(Module):
@@ -144,39 +184,13 @@ class KeyboardTeleop(Module):
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
 
-            # Generate Twist message from held keys
-            twist = Twist()
-            twist.linear = Vector3(0, 0, 0)
-            twist.angular = Vector3(0, 0, 0)
-
-            # Forward/backward (W/S)
-            if pygame.K_w in self._keys_held:
-                twist.linear.x = self.linear_speed
-            if pygame.K_s in self._keys_held:
-                twist.linear.x = -self.linear_speed
-
-            # Strafe left/right (Q/E)
-            if pygame.K_q in self._keys_held:
-                twist.linear.y = self.linear_speed
-            if pygame.K_e in self._keys_held:
-                twist.linear.y = -self.linear_speed
-
-            # Turning (A/D)
-            if pygame.K_a in self._keys_held:
-                twist.angular.z = self.angular_speed
-            if pygame.K_d in self._keys_held:
-                twist.angular.z = -self.angular_speed
-
-            # Apply speed modifiers (Shift = boost, Ctrl = slow)
-            speed_multiplier = 1.0
-            if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-                speed_multiplier = self.boost_multiplier
-            elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-                speed_multiplier = self.slow_multiplier
-
-            twist.linear.x *= speed_multiplier
-            twist.linear.y *= speed_multiplier
-            twist.angular.z *= speed_multiplier
+            twist = twist_from_keys(
+                self._keys_held,
+                self.linear_speed,
+                self.angular_speed,
+                self.boost_multiplier,
+                self.slow_multiplier,
+            )
 
             if self.publish_only_when_active:
                 active = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
@@ -220,7 +234,7 @@ class KeyboardTeleop(Module):
             f"Linear Y (Strafe L/R): {twist.linear.y:+.2f} m/s",
             f"Angular Z (Turn L/R): {twist.angular.z:+.2f} rad/s",
             "",
-            "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self._keys_held if k < 256]),
+            "Keys: " + ", ".join(pygame.key.name(key).upper() for key in sorted(self._keys_held)),
         ]
 
         for i, text in enumerate(texts):
@@ -235,9 +249,11 @@ class KeyboardTeleop(Module):
         else:
             pygame.draw.circle(self._screen, (0, 255, 0), (450, 30), _INDICATOR_RADIUS)
 
-        y_pos = 280
+        y_pos = 250
         help_texts = [
-            "WS: Move | AD: Turn | QE: Strafe",
+            "W/S or Up/Down: Move",
+            "A/D or Left/Right: Turn",
+            "Q/E or Alt + turn keys: Strafe",
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
         ]
