@@ -85,24 +85,28 @@ def rerun_init(
             else:
                 rr.connect_grpc(url=connect_url)
             server_uri = connect_url
-        elif save_path is not None:
-            # A recording's sink can be either the in-process gRPC server or
-            # a (GrpcSink, FileSink) tee, not both. So give the server its
-            # own recording (kept alive via _server_recording) and point this
-            # recording's tee at it over loopback.
-            _server_recording = rr.RecordingStream(app_id)
-            server_uri = rr.serve_grpc(
-                grpc_port=grpc_port,
-                server_memory_limit=server_memory_limit,
-                recording=_server_recording,
-            )
-            _set_tee_sinks(server_uri, save_path)
-            logger.info(f"Rerun gRPC server ready at {server_uri}")
         else:
-            server_uri = rr.serve_grpc(
-                grpc_port=grpc_port,
-                server_memory_limit=server_memory_limit,
-            )
+            serve_kwargs: dict[str, Any] = {
+                "grpc_port": grpc_port,
+                "server_memory_limit": server_memory_limit,
+            }
+            if save_path is not None:
+                # A recording's sink can be either the in-process gRPC server
+                # or a (GrpcSink, FileSink) tee, not both. So give the server
+                # its own recording (kept alive via _server_recording) and
+                # point this recording's tee at it over loopback.
+                if _server_recording is not None:
+                    # A second serve+save in one process would drop the previous
+                    # RecordingStream — and with it the live gRPC server.
+                    logger.warning(
+                        "rerun_init called again with start_grpc + save_path; "
+                        "keeping the existing server recording alive"
+                    )
+                _server_recording = rr.RecordingStream(app_id)
+                serve_kwargs["recording"] = _server_recording
+            server_uri = rr.serve_grpc(**serve_kwargs)
+            if save_path is not None:
+                _set_tee_sinks(server_uri, save_path)
             logger.info(f"Rerun gRPC server ready at {server_uri}")
 
     # the important part of this function (consolidate them)

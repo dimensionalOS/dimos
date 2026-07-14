@@ -67,7 +67,12 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.e2e_tests.rrd_feed import feed_rrd_live, load_gt_session, session_keepalive
+from dimos.e2e_tests.rrd_feed import (
+    feed_rrd_live,
+    iter_mem2_camera_frames,
+    load_gt_session,
+    session_keepalive,
+)
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.testing.waiting import wait_until
@@ -84,6 +89,9 @@ AGENT_TOPIC = "/agent"
 AGENT_IDLE_TOPIC = "/agent_idle"
 
 DEFAULT_ANSWER_TIMEOUT_S = 90.0
+# Max time ask() waits for a previous (timed-out) turn to finish before
+# sending the next question — see the settle step at the top of ask().
+STALE_TURN_SETTLE_S = 30.0
 
 # Spin in place at spawn rather than driving to scripted waypoints. Waypoint
 # navigation (as movement-focused e2e tests do with explore_office()) needs
@@ -127,6 +135,11 @@ RRD_PATH = RRD_SESSION_DIR / "2026-06-12_0326am-PST.rrd"
 MEM2_DB_PATH = RRD_SESSION_DIR / "mem2.db"
 RRD_RESULTS_FILE = Path(__file__).parent / "vqa_results_china_office_full_rrd.ignore.json"
 RRD_FEED_SETTLE_S = 20.0  # slack for the tail of the feed to finish processing
+# Camera frames come straight from mem2.db's color_image stream (same clock as
+# the gt_pointlio pose/scan the feeder already uses), decimated to this rate --
+# see rrd_feed.iter_mem2_camera_frames. The .rrd is no longer needed for the
+# feed; only mem2.db must be present.
+MEM2_CAMERA_HZ = 1.0
 
 
 def spin_in_place(
@@ -323,6 +336,22 @@ def ask(
     queued message and True once the queue drains), then reads back every
     /agent message published during that turn to extract the final answer.
     """
+    # Settle any still-running turn before sending. After a timed-out
+    # question the agent may still be working it; asking the next question
+    # immediately would let the PREVIOUS turn's late idle=True satisfy this
+    # turn's completion check (mispairing answers) and would fold its tail
+    # messages into this turn's tool-call/token accounting.
+    idle_msgs = lcm_spy.messages.get(AGENT_IDLE_TOPIC, [])
+    if idle_msgs and pickle.loads(idle_msgs[-1]) is not True:
+        try:
+            wait_until(
+                lambda: (m := lcm_spy.messages.get(AGENT_IDLE_TOPIC, []))
+                and pickle.loads(m[-1]) is True,
+                timeout=STALE_TURN_SETTLE_S,
+            )
+        except TimeoutError:
+            pass  # best effort: proceed, accounting may include the stale tail
+
     start_agent = len(lcm_spy.messages.get(AGENT_TOPIC, []))
     start_idle = len(lcm_spy.messages.get(AGENT_IDLE_TOPIC, []))
 
@@ -513,8 +542,8 @@ def test_master_vqa_china_office_full_rrd(
     Skips if the session directory isn't present -- these are large local
     files (~1.9 GB together), not fetched via LFS like go2_china_office.db.
     """
-    if not RRD_PATH.exists() or not MEM2_DB_PATH.exists():
-        pytest.skip(f"china-office session files not found under {RRD_SESSION_DIR}")
+    if not MEM2_DB_PATH.exists():
+        pytest.skip(f"china-office mem2.db not found under {RRD_SESSION_DIR}")
 
     lcm_spy.save_topic(AGENT_TOPIC)
     lcm_spy.save_topic(AGENT_IDLE_TOPIC)
@@ -531,9 +560,14 @@ def test_master_vqa_china_office_full_rrd(
 
     lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
 
-    print(f"[master_vqa] feeding {RRD_PATH.name} (+ {MEM2_DB_PATH.name} for pose)")
+    print(f"[master_vqa] feeding {MEM2_DB_PATH.name} color_image @ ~{MEM2_CAMERA_HZ}Hz (+ gt_pointlio pose/scan)")
     session = load_gt_session(MEM2_DB_PATH)
-    stats = feed_rrd_live(RRD_PATH, MEM2_DB_PATH, session=session)
+    stats = feed_rrd_live(
+        None,
+        MEM2_DB_PATH,
+        session=session,
+        cam_frames=iter_mem2_camera_frames(MEM2_DB_PATH, target_hz=MEM2_CAMERA_HZ),
+    )
     processed = len(lcm_spy.messages.get("/detections_2d#vision_msgs.Detection2DArray", []))
     print(f"[master_vqa] feed done: {stats}")
     print(

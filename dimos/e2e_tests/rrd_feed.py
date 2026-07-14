@@ -51,9 +51,10 @@ with every .rrd-native cloud/pose combination tried first).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 import contextlib
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import threading
 import time
@@ -73,7 +74,9 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.protocol.tf.tf import TF
 
-# From camera_intrinsics.json in the china-office session dir.
+# Fallback intrinsics (hand-copied from the china-office session's
+# camera_intrinsics.json) — used only when the session dir carries no
+# machine-readable calibration; see load_camera_intrinsics().
 CAMERA_INTRINSICS = {
     "fx": 797.47561649,
     "fy": 796.48721128,
@@ -83,8 +86,40 @@ CAMERA_INTRINSICS = {
     "height": 720,
 }
 
+
+def load_camera_intrinsics(session_dir: str | Path) -> dict[str, float | int]:
+    """Intrinsics for CameraInfo.from_intrinsics, read from the session itself.
+
+    Parses ``camera_intrinsics.json`` (same schema colorize_from_session
+    reads: a 3x3 ``intrinsics`` K matrix + ``resolution``) so a re-calibrated
+    or different session is fed with ITS calibration instead of silently
+    projecting through the baked china-office constants. Falls back to those
+    constants when the file is absent.
+    """
+    path = Path(session_dir).expanduser() / "camera_intrinsics.json"
+    if not path.exists():
+        return CAMERA_INTRINSICS
+    intr = json.loads(path.read_text())
+    k = np.asarray(intr["intrinsics"], dtype=np.float64)
+    width, height = intr["resolution"]
+    return {
+        "fx": float(k[0, 0]),
+        "fy": float(k[1, 1]),
+        "cx": float(k[0, 2]),
+        "cy": float(k[1, 2]),
+        "width": int(width),
+        "height": int(height),
+    }
+
 ODOMETRY_STREAM = "gt_pointlio_odometry"
 SCAN_STREAM = "gt_pointlio_lidar"
+# Camera images now live in mem2.db too (color_image: full-rate RGB stream on
+# the *same* clock as the gt_pointlio pose/scan streams above), so the whole
+# feed can come from one file -- see iter_mem2_camera_frames. The .rrd path
+# (load_rrd_frames) predates those images being stored and only carries a
+# decimated 558-frame subset in a different frame convention.
+CAMERA_STREAM = "color_image"
+DEFAULT_MEM2_CAMERA_HZ = 1.0  # decimation target for the mem2 image feed
 
 SCAN_WINDOW_S = 3.0  # seconds of scans accumulated into each /lidar publish
 PUBLISH_DELAY_S = 0.01  # small yield between messages; flow control does the pacing
@@ -117,23 +152,19 @@ def _tmat(rotation: np.ndarray, translation: list[float]) -> np.ndarray:
 
 
 def _quat_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
-    n = np.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
-    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
-    return np.array(
-        [
-            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
-            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
-            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
-        ]
-    )
+    """Rotation matrix via the shared Quaternion type (scipy-backed)."""
+    return Quaternion(qx, qy, qz, qw).to_rotation_matrix()
 
 
 def _matrix_to_quat(rot: np.ndarray) -> tuple[float, float, float, float]:
-    w = float(np.sqrt(max(0.0, 1.0 + rot[0, 0] + rot[1, 1] + rot[2, 2])) / 2.0)
-    x = float((rot[2, 1] - rot[1, 2]) / (4 * w))
-    y = float((rot[0, 2] - rot[2, 0]) / (4 * w))
-    z = float((rot[1, 0] - rot[0, 1]) / (4 * w))
-    return x, y, z, w
+    """(x, y, z, w) via the shared Quaternion type.
+
+    scipy's extraction is robust at 180-degree rotations, where the naive
+    w-only formula (divide by 4w) hits w = 0 and silently emits NaNs into
+    every published /odom pose and tf for that frame.
+    """
+    q = Quaternion.from_rotation_matrix(rot)
+    return q.x, q.y, q.z, q.w
 
 
 # Rig chain from the session's go2_mid360_rotated.urdf (fixed joints):
@@ -188,6 +219,41 @@ def load_rrd_frames(rrd_path: str | Path) -> list[RrdFrame]:
             frames.append(RrdFrame(ts=ts, kind="lidar", data=pts))
     frames.sort(key=lambda f: f.ts)
     return frames
+
+
+def iter_mem2_camera_frames(
+    mem2_db_path: str | Path,
+    target_hz: float = DEFAULT_MEM2_CAMERA_HZ,
+) -> Iterator[RrdFrame]:
+    """Yield decimated camera frames straight from mem2.db's ``color_image``
+    stream, lazily -- only one image is decoded/resident at a time (the feed
+    gates on YOLO-E per frame anyway, so there's no benefit to materializing
+    all ~16.7k frames, and doing so would cost multiple GB of RAM).
+
+    This supersedes ``load_rrd_frames``' camera path: the mem2 images are the
+    full-rate RGB stream (1280x720) on the *same* clock as gt_pointlio
+    pose/scan, so camera<->lidar<->pose alignment is exact -- no cross-file
+    timestamp/frame reconciliation, and far richer than the .rrd's decimated
+    558 frames. Decimation keeps the first frame past each ``1/target_hz``
+    gap (target_hz<=0 keeps every frame).
+    """
+    min_dt = 1.0 / target_hz if target_hz > 0 else 0.0
+    store = SqliteStore(path=str(mem2_db_path), must_exist=True)
+    store.start()
+    try:
+        last_ts: float | None = None
+        for ts, img in store.replay().stream(CAMERA_STREAM).iterate_ts():
+            if last_ts is not None and ts - last_ts < min_dt:
+                continue
+            last_ts = ts
+            arr = img.data
+            if img.format != ImageFormat.RGB:
+                import cv2
+
+                arr = cv2.cvtColor(img.to_cv2(), cv2.COLOR_BGR2RGB)
+            yield RrdFrame(ts=ts, kind="camera", data=np.ascontiguousarray(arr))
+    finally:
+        store.stop()
 
 
 @dataclass
@@ -307,10 +373,11 @@ class _DetectionAcks:
 
 
 def feed_rrd_live(
-    rrd_path: str | Path,
+    rrd_path: str | Path | None,
     mem2_db_path: str | Path,
     publish_delay_s: float = PUBLISH_DELAY_S,
     session: GtSession | None = None,
+    cam_frames: Iterable[RrdFrame] | None = None,
 ) -> FeedStats:
     """Publish the session onto the real LCM topics a live GO2Connection
     would use: per camera frame, a world-frame accumulated lidar window
@@ -334,8 +401,10 @@ def feed_rrd_live(
     ~(camera frames x YOLO-E inference time) instead of the recording's
     real ~19.6 min duration.
     """
-    frames = load_rrd_frames(rrd_path)
-    cam_frames = [f for f in frames if f.kind == "camera"]
+    if cam_frames is None:
+        if rrd_path is None:
+            raise ValueError("feed_rrd_live needs either rrd_path or cam_frames")
+        cam_frames = [f for f in load_rrd_frames(rrd_path) if f.kind == "camera"]
     if session is None:
         session = load_gt_session(mem2_db_path)
 
@@ -354,7 +423,9 @@ def feed_rrd_live(
     unsubscribe = detections_2d.subscribe(acks.on_message)
     tf = TF()
 
-    info_msg = CameraInfo.from_intrinsics(frame_id="camera_optical", **CAMERA_INTRINSICS)
+    # The session dir (mem2.db's parent) carries the recording's calibration.
+    intrinsics = load_camera_intrinsics(Path(mem2_db_path).parent)
+    info_msg = CameraInfo.from_intrinsics(frame_id="camera_optical", **intrinsics)
 
     opt_q = _matrix_to_quat(T_BASE_OPTICAL[:3, :3])
     stats = FeedStats()

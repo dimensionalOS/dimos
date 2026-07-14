@@ -99,6 +99,16 @@ def recording_path() -> Path | None:
     return default if default.is_file() else None
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    # Drop the previous run's review index up front. Under pytest-xdist the
+    # collectors live in the workers and no process ever writes the summary
+    # (the controller runs no fixtures), so without this a STALE REVIEW.md —
+    # old checkmarks included — would silently masquerade as this run's
+    # output. An absent index is honest; a stale one is not.
+    if not hasattr(session.config, "workerinput"):
+        (OUTPUTS_ROOT / "REVIEW.md").unlink(missing_ok=True)
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     collector = getattr(session.config, _COLLECTOR_KEY, None)
     if collector is None:

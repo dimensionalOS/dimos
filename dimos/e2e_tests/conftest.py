@@ -31,6 +31,9 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:
@@ -201,7 +204,14 @@ def run_human_activity(
             start_t = time.monotonic()
             while not stop_event.is_set():
                 elapsed = time.monotonic() - start_t
-                driver.step(elapsed, dt_s)
+                try:
+                    driver.step(elapsed, dt_s)
+                except Exception:
+                    # A transient DimSim exec failure (timeout during a browser
+                    # GC pause, reconnect blip) must not silently kill the
+                    # stepping thread — that freezes every NPC and the test
+                    # later fails on an unrelated-looking assertion.
+                    logger.warning("human-activity step failed; retrying", exc_info=True)
                 time.sleep(dt_s)
 
         thread = threading.Thread(target=run, daemon=True)

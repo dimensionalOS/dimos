@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import json
 import time
 from typing import Any
@@ -62,6 +63,12 @@ class DimSimClient:
                     return
             except Exception as e:  # connection refused / exec timeout while booting
                 last_err = e
+                # Stop before dropping: a client that connected but timed out
+                # on exec owns a live websocket + recv thread — abandoning the
+                # reference would leak one per poll (~60 over a 3-min boot).
+                if self._client is not None:
+                    with contextlib.suppress(Exception):
+                        self._client.stop()
                 self._client = None
             time.sleep(poll_s)
         raise TimeoutError(f"DimSim scene not ready after {timeout}s: {last_err}")
@@ -159,8 +166,21 @@ class DimSimClient:
         return float(pos["z"]), float(pos["x"])
 
     def remove_human(self, name: str) -> bool:
-        """Remove a spawned NPC by name."""
-        return self.client.remove_npc(name)
+        """Remove a spawned human by name (NPC or fallback cylinder).
+
+        Fallback humans (see add_human) are plain meshes created via
+        add_object, which the NPC registry doesn't know — remove_npc returns
+        False for them, so fall through to removing the mesh by name.
+        Otherwise ghost 'humans' persist in the shared sim across tests.
+        """
+        if self.client.remove_npc(name):
+            return True
+        removed = self.client.exec(
+            f"const o = scene.getObjectByName({json.dumps(name)});"
+            "if (o) { scene.remove(o); return true; }"
+            "return false;"
+        )
+        return bool(removed)
 
     def add_prop(
         self,

@@ -20,27 +20,18 @@ ObjectDB) alongside SpatialMemory (CLIP frame embeddings + named/tagged
 locations) in one graph. With both present, the scene module's optional
 SceneMemorySpec dependency auto-wires to SpatialMemory, so `catalog_scene`
 fuses detected objects with the robot's known places and tags each object
-with the nearest place. Extends `unitree-go2-scene` (see that blueprint for
-the lidar-localization rationale).
+with the nearest place.
+
+Composes `unitree-go2-scene` directly (rather than re-declaring the scene
+module) so the lidar-localization tuning lives in exactly one place — see
+that blueprint for the rationale behind each parameter.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.spatial_perception import SpatialMemory
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_scene import unitree_go2_scene
 
 unitree_go2_scene_memory = autoconnect(
-    unitree_go2,
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        localization="lidar",
-        camera_optical_frame="camera_optical",
-        distance_threshold=0.35,
-        # See unitree_go2_scene.py: a touring robot sees most objects for
-        # only a few consecutive frames, so the 6-detection default (tuned
-        # for a stationary/orbiting camera) leaves almost everything stuck
-        # pending on a real walkthrough.
-        min_detections_for_permanent=3,
-    ),
+    unitree_go2_scene,
     SpatialMemory.blueprint(),
 ).global_config(n_workers=9)

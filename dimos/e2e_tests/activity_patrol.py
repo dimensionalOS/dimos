@@ -36,19 +36,12 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import normalize_angle
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.human_activity import HumanActivityDriver
 
 logger = setup_logger()
-
-
-def _norm_angle(a: float) -> float:
-    while a > math.pi:
-        a -= 2 * math.pi
-    while a < -math.pi:
-        a += 2 * math.pi
-    return a
 
 
 class ActivityPatrol:
@@ -185,7 +178,7 @@ class ActivityPatrol:
             if dist < self._arrive_m:
                 break
             heading = math.atan2(vy - pose.y, vx - pose.x)
-            err = _norm_angle(heading - pose.yaw)
+            err = normalize_angle(heading - pose.yaw)
             linear = self._linear_speed if abs(err) < 0.35 else 0.0
             angular = max(-self._rotation_speed, min(self._rotation_speed, err * 2.0))
             self._publish(linear, angular)
@@ -200,7 +193,7 @@ class ActivityPatrol:
             if pose is None or hpos is None:
                 time.sleep(self._dt)
                 continue
-            err = _norm_angle(math.atan2(hpos[1] - pose.y, hpos[0] - pose.x) - pose.yaw)
+            err = normalize_angle(math.atan2(hpos[1] - pose.y, hpos[0] - pose.x) - pose.yaw)
             if abs(err) < 0.25:
                 faced = True
             angular = max(-self._rotation_speed, min(self._rotation_speed, err * 2.0))
