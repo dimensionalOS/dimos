@@ -271,7 +271,8 @@ class WorldBeliefModule(Module):
                     self._active_scan_prompts = vocabulary
                     # Out.publish may invoke in-process consumers with the same object.
                     # Deep snapshots keep those consumers out of mutable belief state.
-                    present = _copy.deepcopy(result.objects)
+                    observations = _copy.deepcopy(result.objects)
+                    present = _copy.deepcopy(belief.present())
             summaries = [
                 {
                     "name": obj.name,
@@ -292,7 +293,7 @@ class WorldBeliefModule(Module):
                         float(obj.center.z),
                     ],
                 }
-                for obj in present
+                for obj in observations
             ]
         except FileNotFoundError as exc:
             return SkillResult.fail("INVALID_STATE", str(exc))

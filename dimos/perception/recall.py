@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import hashlib
+from itertools import groupby
+from math import floor
 import re
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory2.embed import EmbedImages
-from dimos.memory2.transform import QualityWindow
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -63,21 +64,37 @@ def build_frame_clip_index(
     thumbnail_px: int = 192,
 ) -> int:
     """Backfill a CLIP index within ``start < ts <= end`` when bounds are supplied."""
+    if hz <= 0:
+        raise ValueError("hz must be positive")
     index = (index_store if index_store is not None else store).stream(
         index_stream_name(model_id), Image
     )
-    src_stream = store.stream(src, Image)
+    src_stream = store.stream(src, Image).order_by("ts")
     if start is not None:
         src_stream = src_stream.after(start)
     if end is not None:
         src_stream = src_stream.time_range(float("-inf"), end)
+    tags = {"rec": source_tag} if source_tag else {}
+    indexed = index.tags(**tags) if tags else index
+    if start is not None:
+        indexed = indexed.time_range(floor(start * hz) / hz, float("inf"))
+    indexed_buckets = {floor(obs.ts * hz) for obs in indexed}
+    persisted_bucket_count = len(indexed_buckets)
+
+    def best_in_new_buckets(upstream: Iterator[Any]) -> Iterator[Any]:
+        for bucket, observations in groupby(upstream, key=lambda obs: floor(obs.ts * hz)):
+            if bucket in indexed_buckets:
+                continue
+            indexed_buckets.add(bucket)
+            yield max(observations, key=lambda obs: obs.data.sharpness)
+
     pipeline = (
         # Skip pose-less frames — they can't answer "where" (world-frame frames need no pose).
         src_stream.filter(
             lambda obs: obs.pose is not None or (obs.data.frame_id or "") in ("", "world")
         )
         .filter(lambda obs: obs.data.brightness > 0.1)
-        .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / hz))
+        .transform(best_in_new_buckets)
         .transform(EmbedImages(model))
     )
     n = 0
@@ -90,10 +107,15 @@ def build_frame_clip_index(
             payload,
             ts=obs.ts,
             pose=obs.pose,
-            tags={"rec": source_tag} if source_tag else {},
+            tags=tags,
             embedding=embedded.embedding,
         )
         n += 1
+    claimed_bucket_count = len(indexed_buckets) - persisted_bucket_count
+    if n < claimed_bucket_count:
+        raise RuntimeError(
+            f"embedding model returned {n} frame(s) for {claimed_bucket_count} selected bucket(s)"
+        )
     logger.info(
         "build_frame_clip_index: indexed %d frame(s) into '%s'", n, index_stream_name(model_id)
     )
@@ -122,12 +144,10 @@ def confirm_object_position(
         WorldBeliefConfig(min_frames=2 if visual_embedder is not None else 1, min_span_s=0.0)
     )
     try:
-        result = scanner.scan(
-            store, belief, prompt=[text], start=when_ts - window_s, end=when_ts + window_s
-        )
+        scanner.scan(store, belief, prompt=[text], start=when_ts - window_s, end=when_ts + window_s)
     except ScanIncompleteError:
         return None
-    matches = [o for o in result.objects if o.name == text]
+    matches = [o for o in belief.present() if o.name == text]
     if not matches:
         return None
     return max(matches, key=lambda o: float(o.confidence)).center
