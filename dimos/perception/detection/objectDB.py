@@ -90,10 +90,15 @@ class ObjectDB:
         results: list[Object] = []
         # Clock in *stream time*: TTL bookkeeping compares against the
         # observations' own timestamps, so replayed/recorded data (whose ts is
-        # far from wall clock) behaves exactly like live data. Falls back to
-        # wall clock only when the batch carries no timestamps.
-        now = max((obj.ts for obj in objects if obj.ts), default=time.time())
+        # far from wall clock) behaves exactly like live data.
+        batch_ts = max((obj.ts for obj in objects if obj.ts > 0), default=0.0)
         with self._lock:
+            # Monotonic: a batch from an older frame (e.g. detect() on a cached
+            # image) must not move the clock backwards, or ages go negative and
+            # pruning misfires. An unstamped batch (no usable ts) keeps the
+            # current stream clock instead of poisoning it with wall time —
+            # falling back to wall clock only before any stamped batch arrived.
+            now = max(batch_ts, self._last_now) or time.time()
             self._prune_stale_pending(now)
             for obj in objects:
                 matched, reason = self._match(obj, now)
@@ -111,11 +116,11 @@ class ObjectDB:
                     stats["matched_distance"] += 1
                 if self._check_promotion(matched):
                     stats["promoted"] += 1
+            self._last_now = now
 
         stats["pending"] = len(self._pending_objects)
         stats["permanent"] = len(self._objects)
         self._last_add_stats = stats
-        self._last_now = now
         if stats["created"] > 0 or stats["promoted"] > 0:
             logger.info(f"ObjectDB: {stats}")
         return results
@@ -330,7 +335,10 @@ class ObjectDB:
     def agent_encode(self) -> list[dict[str, Any]]:
         """Encode permanent objects for agent consumption."""
         with self._lock:
-            return [obj.agent_encode() for obj in self._objects.values()]
+            # Ages are computed against the DB's stream clock, not wall time,
+            # so replayed recordings report sensible "last seen" values.
+            now = self._last_now or time.time()
+            return [obj.agent_encode(now=now) for obj in self._objects.values()]
 
     def __len__(self) -> int:
         """Return number of permanent objects."""

@@ -409,10 +409,10 @@ class ObjectSceneRegistrationModule(Module):
     ) -> list[DetObject] | None:
         """2D detections -> world-frame Objects for the *cached* latest
         frame, via whichever localization source this module is configured
-        with. Used by detect()'s on-demand pass; the continuous background
-        pipeline (_process_lidar / _process_3d_detections) has its own
-        per-frame version since it runs on every frame and already has
-        these values in hand without needing a cache.
+        with. The single localization path: the continuous background
+        pipeline (_process_lidar / _process_3d_detections) caches its
+        per-frame inputs then calls this, and detect()'s on-demand pass
+        reads the same cache — so both localize identically by construction.
         """
         if self._camera_info is None:
             return None
@@ -466,6 +466,11 @@ class ObjectSceneRegistrationModule(Module):
             detect(["person", "car", "dog"])
             detect(["cup"])
         """
+        # Be liberal in what we accept: an agent (or a caller used to the old
+        # varargs signature) may pass a bare string — treat it as one prompt
+        # rather than iterating its characters into nonsense prompts.
+        if isinstance(prompts, str):
+            prompts = [prompts]
         if not prompts:
             return "No prompts provided."
         if self._latest_color_image is None:
@@ -962,16 +967,7 @@ class ObjectSceneRegistrationModule(Module):
         if not detections_2d.detections:
             return
 
-        objects = Object.from_2d_to_list_lidar(
-            detections_2d=detections_2d,
-            world_pointcloud=lidar_msg,
-            camera_info=self._camera_info,
-            world_to_optical_transform=world_to_optical,
-            filters=self._lidar_filters(),
-            use_aabb=self._use_aabb,
-            max_distance=self._max_distance,
-            max_obstacle_width=self._max_obstacle_width,
-        )
+        objects = self._localize_detections(detections_2d, color_image)
         if not objects:
             return
 
@@ -1030,16 +1026,7 @@ class ObjectSceneRegistrationModule(Module):
         # Cache the frame + resolved transform for detect()'s on-demand pass.
         self._latest_color_image = color_image
 
-        objects = Object.from_2d_to_list(
-            detections_2d=detections_2d,
-            color_image=color_image,
-            depth_image=depth_image,
-            camera_info=self._camera_info,
-            camera_transform=camera_transform,
-            max_distance=self._max_distance,
-            use_aabb=self._use_aabb,
-            max_obstacle_width=self._max_obstacle_width,
-        )
+        objects = self._localize_detections(detections_2d, color_image)
         if not objects:
             return
 

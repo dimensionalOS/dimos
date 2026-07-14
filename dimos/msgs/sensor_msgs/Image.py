@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import cached_property
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
@@ -399,12 +400,15 @@ class Image(Timestamped):
         step = max(1, max(self.data.shape[:2]) // 256)
         return float(self.data[::step, ::step].mean() / max_val)
 
-    @property
+    @cached_property
     def sharpness(self) -> float:
-        """Return sharpness score.
+        """Return sharpness score (cached; pixel data is treated as immutable).
 
         Downsamples to ~160px wide before computing Laplacian variance
-        for fast evaluation (~10-20x cheaper than full-res Sobel).
+        for fast evaluation (~10-20x cheaper than full-res Sobel). Cached
+        because the detection-ingestion path scores the same frame once per
+        matched detection (Object.update_object's sharpest-frame selection
+        plus the frame-quality gate) — the first read pays, the rest are free.
         """
         gray = self.to_grayscale().data
         # Downsample to ~160px wide for cheap evaluation

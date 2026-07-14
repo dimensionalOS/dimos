@@ -39,6 +39,66 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class ProjectedCloud:
+    """A world-frame cloud projected into one camera frame.
+
+    The projection (homogeneous transform + intrinsics + in-view masking over
+    the FULL cloud) is detection-independent, so compute it once per frame and
+    share it across that frame's detections instead of redoing O(N) work per
+    detection (``Object.from_2d_to_list_lidar`` passes it to every
+    :meth:`Detection3DPC.from_2d` call).
+    """
+
+    points_2d: np.ndarray  # (M, 2) pixel coordinates of the in-view points
+    world_points: np.ndarray  # (M, 3) matching world-frame points
+
+    @classmethod
+    def project(
+        cls,
+        world_pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+    ) -> ProjectedCloud | None:
+        """Project ``world_pointcloud`` into the camera; None if nothing is in view."""
+        fx, fy = camera_info.K[0], camera_info.K[4]
+        cx, cy = camera_info.K[2], camera_info.K[5]
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+
+        world_points, _ = world_pointcloud.as_numpy()
+
+        # Project points to camera frame
+        points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
+        extrinsics_matrix = world_to_optical_transform.to_matrix()
+        points_camera = (extrinsics_matrix @ points_homogeneous.T).T
+
+        # Filter out points behind the camera
+        valid_mask = points_camera[:, 2] > 0
+        points_camera = points_camera[valid_mask]
+        world_points = world_points[valid_mask]
+
+        if len(world_points) == 0:
+            return None
+
+        # Project to 2D
+        points_2d_homogeneous = (camera_matrix @ points_camera[:, :3].T).T
+        points_2d = points_2d_homogeneous[:, :2] / points_2d_homogeneous[:, 2:3]
+
+        # Filter points within image bounds
+        in_image_mask = (
+            (points_2d[:, 0] >= 0)
+            & (points_2d[:, 0] < camera_info.width)
+            & (points_2d[:, 1] >= 0)
+            & (points_2d[:, 1] < camera_info.height)
+        )
+        points_2d = points_2d[in_image_mask]
+        world_points = world_points[in_image_mask]
+
+        if len(world_points) == 0:
+            return None
+        return cls(points_2d=points_2d, world_points=world_points)
+
+
+@dataclass
 class Detection3DPC(Detection3D):
     pointcloud: PointCloud2 = field(default_factory=PointCloud2)
 
@@ -105,6 +165,7 @@ class Detection3DPC(Detection3D):
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
         filters: list[PointCloudFilter] | None = None,
+        projected: ProjectedCloud | None = None,
     ) -> Detection3DPC | None:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
@@ -120,6 +181,10 @@ class Detection3DPC(Detection3D):
             camera_info: Camera calibration info
             world_to_camerlka_transform: Transform from world to camera frame
             filters: List of functions to apply to the pointcloud for filtering
+            projected: Optional precomputed projection of ``world_pointcloud``
+                into this camera (see :class:`ProjectedCloud`). Callers looping
+                over one frame's detections should project once and pass it
+                here; when None the projection is computed from scratch.
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
@@ -132,46 +197,14 @@ class Detection3DPC(Detection3D):
                 statistical(),
             ]
 
-        # Extract camera parameters
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
-        image_width = camera_info.width
-        image_height = camera_info.height
-
-        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-
-        # Convert pointcloud to numpy array
-        world_points, _ = world_pointcloud.as_numpy()
-
-        # Project points to camera frame
-        points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
-        extrinsics_matrix = world_to_optical_transform.to_matrix()
-        points_camera = (extrinsics_matrix @ points_homogeneous.T).T
-
-        # Filter out points behind the camera
-        valid_mask = points_camera[:, 2] > 0
-        points_camera = points_camera[valid_mask]
-        world_points = world_points[valid_mask]
-
-        if len(world_points) == 0:
+        if projected is None:
+            projected = ProjectedCloud.project(
+                world_pointcloud, camera_info, world_to_optical_transform
+            )
+        if projected is None:
             return None
-
-        # Project to 2D
-        points_2d_homogeneous = (camera_matrix @ points_camera[:, :3].T).T
-        points_2d = points_2d_homogeneous[:, :2] / points_2d_homogeneous[:, 2:3]
-
-        # Filter points within image bounds
-        in_image_mask = (
-            (points_2d[:, 0] >= 0)
-            & (points_2d[:, 0] < image_width)
-            & (points_2d[:, 1] >= 0)
-            & (points_2d[:, 1] < image_height)
-        )
-        points_2d = points_2d[in_image_mask]
-        world_points = world_points[in_image_mask]
-
-        if len(world_points) == 0:
-            return None
+        points_2d = projected.points_2d
+        world_points = projected.world_points
 
         # Extract bbox from Detection2D
         x_min, y_min, x_max, y_max = det.bbox

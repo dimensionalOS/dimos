@@ -61,7 +61,13 @@ def is_ambiguous(obj: Object, confidence_threshold: float = DEFAULT_CONFIDENCE_T
 
     True when the detector was unsure (low confidence) or produced a label
     with no identification value (empty, generic, or a raw class id).
+    An already-refined object is never ambiguous — without this, every
+    catalog_scene()/refine_observed_labels() pass would re-query the VLM for
+    the same objects (repeat latency, churned labels between calls).
+    identify_object() bypasses this gate for explicit re-refinement.
     """
+    if obj.refined_name:
+        return False
     if obj.confidence < confidence_threshold:
         return True
     name = (obj.name or "").strip().lower()

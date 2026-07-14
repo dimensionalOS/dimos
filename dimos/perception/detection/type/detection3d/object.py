@@ -35,13 +35,51 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
-from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, ProjectedCloud
 from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
 
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+# Per-object accumulated-cloud bound (see Object.update_object): above this
+# many points the merged cloud is voxel-downsampled so per-object memory and
+# per-frame publish cost stay proportional to object size, not sighting count.
+_MAX_ACCUMULATED_POINTS = 20_000
+_ACCUMULATION_VOXEL_M = 0.02
+
+
+def _bounding_box(
+    pcd: Any, use_aabb: bool = False
+) -> tuple[Vector3, tuple[float, float, float], Quaternion]:
+    """Center, (sx, sy, sz), and orientation of an open3d pointcloud's box.
+
+    OBB gives the tighter fit, but Qhull fails on flat/degenerate clusters —
+    e.g. a lidar cluster entirely on the floor plane — so fall back to the
+    axis-aligned box (identity orientation) when it does, or when the caller
+    asks for AABB outright. Single source of truth for the three call sites
+    below (to_detection3d_msg / from_2d_to_list / from_2d_to_list_lidar).
+    """
+    if not use_aabb:
+        try:
+            obb = pcd.get_oriented_bounding_box()
+            return (
+                Vector3(obb.center[0], obb.center[1], obb.center[2]),
+                (float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])),
+                Quaternion.from_rotation_matrix(obb.R),
+            )
+        except RuntimeError:
+            pass
+    aabb = pcd.get_axis_aligned_bounding_box()
+    center = (aabb.min_bound + aabb.max_bound) / 2.0
+    extent = aabb.max_bound - aabb.min_bound
+    return (
+        Vector3(center[0], center[1], center[2]),
+        (float(extent[0]), float(extent[1]), float(extent[2])),
+        Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
 
 
 def _sharper(candidate: Image | None, current: Image | None) -> bool:
@@ -98,7 +136,15 @@ class Object(Detection3D):
         # but use the latest single-detection geometry for obstacle sizing.
         # Recomputing size from accumulated clouds inflates obstacles unrealistically.
         if other.camera_transform is not None and self.camera_transform is not None:
-            self.pointcloud = self.pointcloud + other.pointcloud
+            merged = self.pointcloud + other.pointcloud
+            # Bound accumulation: raw concatenation grows without limit over a
+            # session (an object seen N times carries N overlapping clouds),
+            # making every downstream publish/OBB pass slower each frame. A
+            # voxel pass keeps the cloud bounded by the object's geometry
+            # instead of by its sighting count.
+            if len(merged) > _MAX_ACCUMULATED_POINTS:
+                merged = merged.voxel_downsample(_ACCUMULATION_VOXEL_M)
+            self.pointcloud = merged
         else:
             self.pointcloud = other.pointcloud
 
@@ -116,17 +162,21 @@ class Object(Detection3D):
         self.frame_id = other.frame_id
 
         # Keep the SHARPEST observation's appearance (full frame + the matching
-        # 2D bbox + mask) as the crop a VLM will later label from. A dark or
+        # 2D bbox) as the crop a VLM will later label from. A dark or
         # motion-smeared frame yields a useless crop even when the 3D geometry
         # is fine, and dark frames also embed semantically close to everything
         # -- so we quality-select the labeling appearance instead of blindly
         # taking the latest. Geometry above always tracks the latest detection;
-        # image/bbox/mask move together because bbox/mask index into image's
-        # pixel grid.
+        # image/bbox move together because bbox indexes into image's pixel grid.
         if _sharper(other.image, self.image):
             self.image = other.image
             self.bbox = other.bbox
-            self.mask = other.mask
+        # The mask, by contrast, must ALWAYS track the latest detection: its
+        # only consumer applies it to the CURRENT depth frame
+        # (get_full_scene_pointcloud's exclude-object path, used by grasping),
+        # so a mask pinned to an older sharp frame would zero the wrong pixels
+        # once the camera moves.
+        self.mask = other.mask
         self.detections_count += 1
 
     def get_oriented_bounding_box(self) -> Any:
@@ -141,20 +191,8 @@ class Object(Detection3D):
 
     def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        # OBB (Qhull) fails on flat/degenerate clusters — e.g. a lidar cluster
-        # entirely on the floor plane — so fall back to an axis-aligned box.
-        try:
-            obb = self.get_oriented_bounding_box()
-            center = Vector3(obb.center[0], obb.center[1], obb.center[2])
-            size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
-            orientation = Quaternion.from_rotation_matrix(obb.R)
-        except RuntimeError:
-            aabb = self.pointcloud.axis_aligned_bounding_box
-            aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
-            aabb_extent = aabb.max_bound - aabb.min_bound
-            center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
-            size = Vector3(aabb_extent[0], aabb_extent[1], aabb_extent[2])
-            orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+        center, (sx, sy, sz), orientation = _bounding_box(self.pointcloud.pointcloud)
+        size = Vector3(sx, sy, sz)
 
         msg = ROSDetection3D()
         msg.header = Header(self.ts, self.frame_id)
@@ -341,19 +379,9 @@ class Object(Detection3D):
             else:
                 frame_id = depth_image.frame_id
 
-            # Compute bounding box: AABB for stable upright obstacles, OBB for tighter fit
-            if use_aabb:
-                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
-                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
-                aabb_extent = aabb.max_bound - aabb.min_bound
-                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
-                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
-                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
-            else:
-                obb = pc.pointcloud.get_oriented_bounding_box()
-                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
-                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
-                orientation = Quaternion.from_rotation_matrix(obb.R)
+            # Compute bounding box: AABB for stable upright obstacles, OBB for
+            # tighter fit (with AABB fallback on degenerate clusters).
+            center, (sx, sy, sz), orientation = _bounding_box(pc.pointcloud, use_aabb=use_aabb)
 
             if max_obstacle_width > 0:
                 sx = min(sx, max_obstacle_width)
@@ -436,6 +464,13 @@ class Object(Detection3D):
         objects: list[Object] = []
         frame_id = world_pointcloud.frame_id
 
+        # Project the full cloud into the camera ONCE — the projection is
+        # detection-independent, and redoing it per detection made ingestion
+        # O(detections x cloud size) per frame.
+        projected = ProjectedCloud.project(world_pointcloud, camera_info, world_to_optical_transform)
+        if projected is None:
+            return []
+
         for det in detections_2d.detections:
             det3d = Detection3DPC.from_2d(
                 det=det,
@@ -443,6 +478,7 @@ class Object(Detection3D):
                 camera_info=camera_info,
                 world_to_optical_transform=world_to_optical_transform,
                 filters=filters,
+                projected=projected,
             )
             if det3d is None:
                 continue
@@ -452,23 +488,8 @@ class Object(Detection3D):
                 continue
 
             # Compute bounding box. OBB can fail on near-coplanar/degenerate
-            # sparse lidar clusters, so fall back to AABB when it does.
-            center: Vector3
-            orientation: Quaternion
-            try:
-                if use_aabb:
-                    raise ValueError("aabb requested")
-                obb = pc.pointcloud.get_oriented_bounding_box()
-                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
-                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
-                orientation = Quaternion.from_rotation_matrix(obb.R)
-            except (RuntimeError, ValueError):
-                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
-                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
-                aabb_extent = aabb.max_bound - aabb.min_bound
-                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
-                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
-                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+            # sparse lidar clusters; _bounding_box falls back to AABB when it does.
+            center, (sx, sy, sz), orientation = _bounding_box(pc.pointcloud, use_aabb=use_aabb)
 
             if max_obstacle_width > 0:
                 sx = min(sx, max_obstacle_width)
