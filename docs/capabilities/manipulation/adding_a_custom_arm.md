@@ -153,6 +153,15 @@ ADAPTER_FACTORIES = {
 }
 ```
 
+DimOS has two unrelated families of file called `_registry.py`, and only the first is yours:
+
+| File | Declares | Written by |
+|------|----------|------------|
+| `dimos/hardware/**/_registry.py` | `ADAPTER_FACTORIES` | you, adding an arm |
+| `dimos/control/tasks/**/_registry.py` | `TASK_FACTORIES`, and the task's stream/command cards | someone adding a new control **task type** |
+
+Adding an arm never means touching the second. You reuse the task types that already ship (`trajectory`, `eef_twist`, and so on) through the blueprint helpers in Step 4, and those already declare whatever they need.
+
 The registry (`dimos/hardware/manipulators/registry.py`) discovers adapters lazily. It walks the subpackages under `dimos.hardware.manipulators`, loads each `_registry.py`, and records the name-to-import-path mapping. Your adapter module itself is imported only when someone calls `create("yourarm")`.
 
 This is why the manifest must import nothing outside the stdlib. It gets loaded even on a machine without your vendor SDK, so the name still appears in `available()`, and a missing SDK fails loudly at `create()` instead of silently dropping the arm.
