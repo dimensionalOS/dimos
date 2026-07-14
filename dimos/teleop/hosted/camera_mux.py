@@ -18,7 +18,7 @@ Standalone Module (not a mixin) that collects the latest frame per named
 camera, composites the operator-selected subset (single passthrough, or hstack
 scaled to the shortest tile), applies width/fps caps, and optionally appends
 the latency-stamp strip. The composited ``mux_image`` output binds straight to
-a ``CloudflareVideoTransport`` / ``LiveKitVideoTransport`` in the blueprint.
+a ``CloudflareVideoTransport`` in the blueprint.
 
 Operator camera selection arrives on ``camera_select`` (broker state plane).
 Not StreamModule (that is one-In-one-Out); this has N image Ins.
@@ -68,7 +68,7 @@ class CameraMuxModule(Module):
     cam1: In[Image]
     cam2: In[Image]
     camera_select: In[bytes]  # broker state: operator picks which cams to show
-    mux_image: Out[Image]  # → CloudflareVideoTransport / LiveKitVideoTransport
+    mux_image: Out[Image]  # → CloudflareVideoTransport
 
     def __init__(self, **kwargs: Any) -> None:
         """Init mux state (latest-frame cache, selection, fps stamp)."""

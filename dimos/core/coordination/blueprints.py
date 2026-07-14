@@ -273,7 +273,7 @@ class Blueprint:
 
 def transport_config_name(cls: type) -> str:
     # A config may pin an explicit key (``_config_name``) to share a config
-    # namespace with a sibling — e.g. LiveKit + Cloudflare both use "broker".
+    # namespace with a sibling (e.g. multiple broker backends under "broker").
     name = getattr(cls, "_config_name", None)
     if isinstance(name, str):
         return name

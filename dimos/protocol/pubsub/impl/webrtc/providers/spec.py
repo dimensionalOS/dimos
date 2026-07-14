@@ -47,11 +47,11 @@ DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
 
 @runtime_checkable
 class Provider(Protocol):
-    """WebRTC DataChannel backend (Cloudflare Realtime, broker, LiveKit, ...).
+    """WebRTC DataChannel backend (Cloudflare Realtime broker, ...).
 
     Implementations own signaling, ICE/DTLS, and channel lifecycle, and expose
     bytes-level publish/subscribe on named topics. DataChannels may be
-    unidirectional (Cloudflare) or bidirectional (LiveKit); the provider
+    unidirectional (as with Cloudflare) or bidirectional; the provider
     handles this transparently.
     """
 
