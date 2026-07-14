@@ -1,4 +1,4 @@
-# Booster B1 native locomotion
+# Booster B1 native integration
 
 The B1 locomotion connection uses Booster's C++ SDK through a dimOS
 `NativeModule`. It does not import or build `booster_robotics_sdk_python`.
@@ -37,3 +37,21 @@ returns the robot to prepare mode.
 Hardware behavior requires a B1 on the selected network interface and is not
 run in unit tests. The tests cover native build configuration and blueprint
 wiring only.
+
+## RGB-D camera
+
+The camera bridge uses Booster SDK DDS subscribers for its configured color,
+depth, and calibration channels and publishes native dimOS streams. The topic
+defaults live in `camera.py`. Integer depth samples are converted to float32
+meters using the configured `depth_scale` (0.001 by default).
+
+Image subscriptions are reliable by default so fragmented RGB-D samples can be
+reassembled across the robot link. For a best-effort-only ROS 2 publisher, set
+`-o boostercamera.image_reliable=false`.
+
+```bash
+ROBOT_INTERFACE=<iface> dimos run booster-b1-camera
+```
+
+The four topic config fields select the camera streams: `color_topic`,
+`depth_topic`, `color_camera_info_topic`, and `depth_camera_info_topic`.

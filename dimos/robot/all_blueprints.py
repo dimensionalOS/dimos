@@ -18,6 +18,7 @@
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "arduino-msg-example": "dimos.experimental.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
+    "booster-b1-camera": "dimos.robot.booster.b1.blueprints.basic.booster_b1_camera:booster_b1_camera",
     "booster-b1-keyboard-teleop": "dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop:booster_b1_keyboard_teleop",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
@@ -151,6 +152,7 @@ all_modules = {
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "basic-path-follower": "dimos.navigation.basic_path_follower.module.BasicPathFollower",
     "booster-b1-connection": "dimos.robot.booster.b1.connection.BoosterB1Connection",
+    "booster-camera": "dimos.robot.booster.b1.camera.BoosterCamera",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
     "click-start-goal-router": "dimos.navigation.cmu_nav.modules.click_start_goal_router.click_start_goal_router.ClickStartGoalRouter",

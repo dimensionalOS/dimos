@@ -93,11 +93,25 @@
             mainProgram = "booster_b1_native";
           };
         };
+
+        booster-camera-native = booster-b1-native.overrideAttrs (old: {
+          pname = "booster-camera-native";
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin
+            cp booster_camera_native $out/bin/
+            runHook postInstall
+          '';
+          meta = old.meta // {
+            description = "dimOS RGB-D camera bridge for Booster robots";
+            mainProgram = "booster_camera_native";
+          };
+        });
       in {
         packages = {
           default = booster-b1-native;
           booster-sdk = booster-sdk-package;
-          inherit booster-b1-native;
+          inherit booster-b1-native booster-camera-native;
         };
       });
 }

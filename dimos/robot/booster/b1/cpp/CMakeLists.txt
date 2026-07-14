@@ -50,21 +50,31 @@ add_executable(
   booster_b1_native
   main.cpp
 )
-target_include_directories(
-  booster_b1_native
-  BEFORE PRIVATE
-  "${BOOSTER_SDK_ROOT}/include"
-  "${DIMOS_LCM_INCLUDE_DIR}"
-  "${DIMOS_NATIVE_COMMON_DIR}"
-)
-target_link_libraries(
-  booster_b1_native
-  PRIVATE
-  "${BOOSTER_SDK_LIBRARY}"
-  PkgConfig::DIMOS_LCM
-  Threads::Threads
-  ${CMAKE_DL_LIBS}
-  rt
+add_executable(
+  booster_camera_native
+  camera.cpp
 )
 
-install(TARGETS booster_b1_native DESTINATION bin)
+function(configure_booster_native_target target)
+  target_include_directories(
+    ${target}
+    BEFORE PRIVATE
+    "${BOOSTER_SDK_ROOT}/include"
+    "${DIMOS_LCM_INCLUDE_DIR}"
+    "${DIMOS_NATIVE_COMMON_DIR}"
+  )
+  target_link_libraries(
+    ${target}
+    PRIVATE
+    "${BOOSTER_SDK_LIBRARY}"
+    PkgConfig::DIMOS_LCM
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+    rt
+  )
+endfunction()
+
+configure_booster_native_target(booster_b1_native)
+configure_booster_native_target(booster_camera_native)
+
+install(TARGETS booster_b1_native booster_camera_native DESTINATION bin)

@@ -28,7 +28,7 @@ _DEFAULT_COMMAND_TIMEOUT_SEC = 0.25
 _BUILD_COMMAND = "nix build .#booster-b1-native"
 
 
-def _network_interface_from_env() -> str:
+def network_interface_from_env() -> str:
     network_interface = os.environ.get("ROBOT_INTERFACE")
     if not network_interface:
         raise ValueError(
@@ -42,7 +42,7 @@ class BoosterB1ConnectionConfig(NativeModuleConfig):
     executable: str = "result/bin/booster_b1_native"
     build_command: str | None = _BUILD_COMMAND
     log_format: LogFormat = LogFormat.TEXT
-    network_interface: str = Field(default_factory=_network_interface_from_env)
+    network_interface: str = Field(default_factory=network_interface_from_env)
     command_timeout_sec: float = Field(default=_DEFAULT_COMMAND_TIMEOUT_SEC, gt=0.0)
 
 
