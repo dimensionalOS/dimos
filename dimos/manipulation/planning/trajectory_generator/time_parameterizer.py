@@ -20,6 +20,7 @@ untimed joint waypoints) into a time-parameterized ``JointTrajectory``.
 
 from __future__ import annotations
 
+import math
 from typing import Protocol, runtime_checkable
 
 from dimos.manipulation.planning.spec.models import PlanningResult
@@ -64,10 +65,16 @@ class TrapezoidalTimeParameterizer:
                 f"timestamps ({len(result.timestamps)}) and path "
                 f"({len(waypoints)}) length mismatch"
             )
-        # ...and be a valid, executable timeline: non-negative and strictly
-        # increasing. A zero-duration or non-monotonic timeline is rejected by
-        # the controller at execution, so fail fast here instead.
-        if result.timestamps and result.timestamps[0] < 0.0:
+        # ...and be a valid, executable timeline. NaN/inf slip past ordinary
+        # comparisons (any comparison with NaN is False; inf gives an infinite
+        # duration the controller never completes), so require finite first.
+        if any(not math.isfinite(t) for t in result.timestamps):
+            raise ValueError(
+                f"timestamps must all be finite, got {result.timestamps}"
+            )
+        # ...non-negative and strictly increasing (a zero-duration or
+        # non-monotonic timeline is rejected by the controller at execution).
+        if result.timestamps[0] < 0.0:
             raise ValueError(
                 f"timestamps must be non-negative, got {result.timestamps[0]}"
             )

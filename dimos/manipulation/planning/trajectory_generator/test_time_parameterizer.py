@@ -101,3 +101,12 @@ def test_negative_timestamps_raise() -> None:
     result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=[-1.0, 1.0, 2.0])
     with pytest.raises(ValueError):
         stage.parameterize(result)
+
+
+def test_non_finite_timestamps_raise() -> None:
+    """NaN or infinite timestamps are rejected (they would break the controller)."""
+    stage, _ = _stage()
+    for bad in ([0.0, float("inf"), 2.0], [0.0, float("nan"), 2.0]):
+        result = PlanningResult(status=PlanningStatus.SUCCESS, path=_path(), timestamps=bad)
+        with pytest.raises(ValueError):
+            stage.parameterize(result)
