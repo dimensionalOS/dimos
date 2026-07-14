@@ -313,6 +313,7 @@ def get_data(name: str | Path) -> Path:
 
         # If the archive is missing, preserve and return the existing usable
         # extracted data instead of raising FileNotFoundError from stat().
+        # file_path exists ⇒ extracted_path exists
         if archive_file.exists():
             archive_is_newer = archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
 

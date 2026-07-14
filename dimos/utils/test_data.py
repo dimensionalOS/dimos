@@ -419,29 +419,55 @@ def test_lfs_path_multiple_instances() -> None:
 
 
 ARCHIVE_NAME = "a750_description"
+NESTED_PATH = Path("urdf/a750_rev1_no_gripper.urdf")
 
 
-def test_get_data_without_extracted_path() -> None:
+@pytest.fixture
+def temp_data_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    """Create an isolated data environment for get_data tests."""
+
+    data_dir = tmp_path / "data"
+    lfs_dir = data_dir / ".lfs"
+
+    lfs_dir.mkdir(parents=True)
+    real_archive = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
+    temp_archive = lfs_dir / real_archive.name
+    shutil.copy2(real_archive, temp_archive)
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "_get_lfs_dir", lambda: lfs_dir)
+    monkeypatch.setattr(
+        data,
+        "_pull_lfs_archive",
+        lambda archive_name: lfs_dir / f"{archive_name}.tar.gz",
+    )
+
+    return data_dir, temp_archive
+
+
+def test_get_data_without_extracted_path(temp_data_environment: tuple[Path, Path]) -> None:
     """Test get_data when the extracted path does not exist."""
 
-    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+    data_dir, _ = temp_data_environment
+    extracted_path = data_dir / ARCHIVE_NAME
 
-    if extracted_path.is_dir():
-        shutil.rmtree(extracted_path)
-    elif extracted_path.exists():
-        extracted_path.unlink()
+    assert not extracted_path.exists()
 
     result = get_data(ARCHIVE_NAME)
 
     assert isinstance(result, Path)
+    assert result == extracted_path
     assert result.exists()
 
 
-def test_get_data_with_existing_extracted_path() -> None:
+def test_get_data_with_existing_extracted_path(temp_data_environment: tuple[Path, Path]) -> None:
     """Test get_data when the extracted path already exists."""
 
-    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
-    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+    data_dir, archive_file = temp_data_environment
+
+    extracted_path = data_dir / ARCHIVE_NAME
 
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
@@ -460,88 +486,61 @@ def test_get_data_with_existing_extracted_path() -> None:
 
     after_mtime = extracted_path.stat().st_mtime_ns
 
+    assert result == extracted_path
     assert result.exists()
     assert before_mtime == after_mtime
 
 
-def test_get_data_with_updated_archive() -> None:
+def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path]) -> None:
     """Test get_data when the archive is newer."""
 
-    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
-    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+    data_dir, archive_file = temp_data_environment
+    extracted_path = data_dir / ARCHIVE_NAME
 
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    old_archive_stat = archive_file.stat()
+    newer_mtime = extracted_path.stat().st_mtime_ns + 1_000_000_000
+    os.utime(
+        archive_file,
+        ns=(
+            archive_file.stat().st_atime_ns,
+            newer_mtime,
+        ),
+    )
 
-    try:
-        newer_mtime = extracted_path.stat().st_mtime_ns + 1_000_000_000
+    assert archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
 
-        os.utime(
-            archive_file,
-            ns=(
-                old_archive_stat.st_atime_ns,
-                newer_mtime,
-            ),
-        )
-        assert archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
-
-        result = get_data(ARCHIVE_NAME)
-
-        assert result.exists()
-
-        assert archive_file.stat().st_mtime_ns == extracted_path.stat().st_mtime_ns
-
-    finally:
-        os.utime(
-            archive_file,
-            ns=(
-                old_archive_stat.st_atime_ns,
-                old_archive_stat.st_mtime_ns,
-            ),
-        )
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+    assert result == extracted_path
+    assert archive_file.stat().st_mtime_ns == extracted_path.stat().st_mtime_ns
 
 
-def test_get_data_with_missing_archive() -> None:
+def test_get_data_with_missing_archive(temp_data_environment: tuple[Path, Path]) -> None:
     """Return existing extracted data when the archive is missing."""
 
-    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
-    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+    data_dir, archive_file = temp_data_environment
+
+    extracted_path = data_dir / ARCHIVE_NAME
 
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    backup_file = archive_file.with_name(f"{archive_file.name}.bak")
-    archive_file.rename(backup_file)
+    archive_file.unlink()
 
-    try:
-        result = get_data(ARCHIVE_NAME)
-
-        assert result == extracted_path
-        assert result.exists()
-    finally:
-        backup_file.rename(archive_file)
-
-
-def test_get_data_with_nested_path() -> None:
-    """Test get_data with a nested path inside the extracted archive."""
-
-    nested_name = "a750_description/urdf/a750_rev1_no_gripper.urdf"
-
-    result = get_data(nested_name)
-
-    assert isinstance(result, Path)
+    result = get_data(ARCHIVE_NAME)
     assert result.exists()
-    assert result.is_file()
-    assert result.name == "a750_rev1_no_gripper.urdf"
+    assert result == extracted_path
 
 
-def test_get_data_with_nested_path() -> None:
+def test_get_data_with_nested_path(temp_data_environment: tuple[Path, Path]) -> None:
     """Test get_data with a nested path inside the extracted archive."""
 
-    nested_name = "a750_description/urdf/a750_rev1_no_gripper.urdf"
-    expected_path = data.get_data_dir() / nested_name
+    data_dir, _ = temp_data_environment
+
+    nested_name = Path(ARCHIVE_NAME) / NESTED_PATH
+    expected_path = data_dir / nested_name
 
     result = get_data(nested_name)
 
