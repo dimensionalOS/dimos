@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -47,6 +49,10 @@ class GoalRelay(Module):
     start_pose: Out[PoseStamped]
     goal_pose: Out[PoseStamped]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._base_height: float | None = None
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -55,15 +61,20 @@ class GoalRelay(Module):
 
     def _on_odometry(self, msg: Odometry) -> None:
         base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
-        mount = self.tf.get(
-            self.config.base_frame, self.config.sensor_frame, msg.ts, TF_LOOKUP_TOLERANCE_S
-        )
-        if base is None or mount is None:
+        base_height = self._base_from_ground()
+        if base is None or base_height is None:
             return
-        base_height = self.config.lidar_height - mount.translation.z
         start = base.to_pose(ts=msg.ts)
         start.position.z -= base_height
         self.start_pose.publish(start)
+
+    def _base_from_ground(self) -> float | None:
+        # The base -> sensor mount is static rig geometry, so resolve it once.
+        if self._base_height is None:
+            mount = self.tf.get(self.config.base_frame, self.config.sensor_frame)
+            if mount is not None:
+                self._base_height = self.config.lidar_height - mount.translation.z
+        return self._base_height
 
     def _on_goal(self, point: PointStamped) -> None:
         self.goal_pose.publish(point.to_pose_stamped())
