@@ -44,6 +44,20 @@ if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
+def _sharper(candidate: Image | None, current: Image | None) -> bool:
+    """Whether ``candidate`` is a better labeling frame than ``current``.
+
+    Any real image beats no image; otherwise the higher Laplacian-variance
+    (sharper, less motion-blurred) frame wins. ``Image.sharpness`` downsamples
+    to ~160px first, so this stays cheap even when called on every merge.
+    """
+    if candidate is None:
+        return False
+    if current is None:
+        return True
+    return candidate.sharpness > current.sharpness
+
+
 @dataclass(kw_only=True)
 class Object(Detection3D):
     """3D object detection combining bounding box and pointcloud representations.
@@ -95,14 +109,24 @@ class Object(Detection3D):
 
         self.camera_transform = other.camera_transform
         self.track_id = other.track_id
-        self.mask = other.mask
         self.name = other.name
-        self.bbox = other.bbox
         self.confidence = other.confidence
         self.class_id = other.class_id
         self.ts = other.ts
         self.frame_id = other.frame_id
-        self.image = other.image
+
+        # Keep the SHARPEST observation's appearance (full frame + the matching
+        # 2D bbox + mask) as the crop a VLM will later label from. A dark or
+        # motion-smeared frame yields a useless crop even when the 3D geometry
+        # is fine, and dark frames also embed semantically close to everything
+        # -- so we quality-select the labeling appearance instead of blindly
+        # taking the latest. Geometry above always tracks the latest detection;
+        # image/bbox/mask move together because bbox/mask index into image's
+        # pixel grid.
+        if _sharper(other.image, self.image):
+            self.image = other.image
+            self.bbox = other.bbox
+            self.mask = other.mask
         self.detections_count += 1
 
     def get_oriented_bounding_box(self) -> Any:

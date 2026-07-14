@@ -137,12 +137,13 @@ def replayed_module():
     from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 
     # Mirror the unitree-go2-scene blueprint's tuning (see that blueprint for
-    # the distance_threshold rationale).
+    # the distance_threshold and min_detections_for_permanent rationale).
     module = ObjectSceneRegistrationModule(
         target_frame="world",
         localization="lidar",
         camera_optical_frame="camera_optical",
         distance_threshold=0.35,
+        min_detections_for_permanent=3,
     )
     # Same detector module.start() creates for LRPC mode, minus the LCM wiring.
     module._detector = Yoloe2DDetector(

@@ -294,6 +294,99 @@ def _promote_object(module: ObjectSceneRegistrationModule, obj: Object) -> None:
     module._object_db.promote(inserted[0].object_id)
 
 
+class _FakePromptDetector:
+    """Stands in for the lazily-created promptable detector: records
+    set_prompts calls and returns a canned 2D detection on process_image."""
+
+    def __init__(self, detections_2d: ImageDetections2D) -> None:  # type: ignore[type-arg]
+        self._detections_2d = detections_2d
+        self.set_prompts_calls: list[list[str] | None] = []
+
+    def set_prompts(self, text: list[str] | None = None, bboxes=None) -> None:  # type: ignore[no-untyped-def]
+        self.set_prompts_calls.append(text)
+
+    def process_image(self, image: Image) -> ImageDetections2D:  # type: ignore[type-arg]
+        return self._detections_2d
+
+    def stop(self) -> None:
+        pass
+
+
+def _fake_lidar_detection_2d() -> ImageDetections2D:  # type: ignore[type-arg]
+    """A synthetic 2D "cup" detection over a dense enough lidar blob to
+    survive from_2d_to_list_lidar's default sparse-cloud filters (same setup
+    as test_from_2d_to_list_lidar_places_blob_at_world_center, but with more
+    points -- that test skips the filters explicitly with filters=[])."""
+    image = Image.from_numpy(
+        np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, frame_id="camera_optical", ts=5.0
+    )
+    det = Detection2DBBox(
+        bbox=(300.0, 220.0, 340.0, 260.0),
+        track_id=7,
+        class_id=0,
+        confidence=0.9,
+        name="cup",
+        ts=5.0,
+        image=image,
+    )
+    return ImageDetections2D(image, [det])
+
+
+def test_detect_skill_uses_separate_detector_and_localizes_from_cached_frame() -> None:
+    """detect() must:
+    1. Use its own promptable detector (_prompt_detector), never touching
+       the always-on background detector (_detector) -- that's what lets
+       automatic prompt-free cataloging keep running undisturbed.
+    2. Localize the match against the *cached* latest lidar frame (the
+       background pipeline's job to keep fresh, not detect()'s).
+    3. Ingest the result into the shared ObjectDB so it shows up in
+       list_observed_items/catalog_scene too.
+    """
+    detections_2d = _fake_lidar_detection_2d()
+    camera_info = CameraInfo.from_intrinsics(
+        fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480, frame_id="camera_optical"
+    )
+    rng = np.random.default_rng(0)
+    # Dense enough (300 pts) to survive the default lidar sparse-cloud filters.
+    blob = np.array([0.0, 0.0, 2.0]) + rng.uniform(-0.03, 0.03, size=(300, 3))
+    world_pc = PointCloud2.from_numpy(blob.astype(float), frame_id="world", timestamp=5.0)
+
+    module = ObjectSceneRegistrationModule(localization="lidar", min_detections_for_permanent=1)
+    background_detector = object()  # sentinel: must stay untouched by detect()
+    module._detector = background_detector  # type: ignore[assignment]
+    module._prompt_detector = _FakePromptDetector(detections_2d)  # type: ignore[assignment]
+    module._camera_info = camera_info
+    module._latest_color_image = detections_2d.image
+    module._latest_lidar = world_pc
+    module._latest_world_to_optical = Transform.identity()
+    try:
+        result = module.detect(prompts=["cup"])
+
+        assert module._prompt_detector.set_prompts_calls == [["cup"]]  # type: ignore[union-attr]
+        assert module._detector is background_detector  # background detector untouched
+        assert "cup" in result
+        assert [o.name for o in module._object_db.get_all_objects()] == ["cup"]
+    finally:
+        module._detector = None  # sentinel has no .stop(); detach before teardown
+        module.stop()
+
+
+def test_detect_skill_no_prompts() -> None:
+    module = ObjectSceneRegistrationModule(localization="lidar")
+    try:
+        assert module.detect(prompts=[]) == "No prompts provided."
+    finally:
+        module.stop()
+
+
+def test_detect_skill_no_frame_yet() -> None:
+    module = ObjectSceneRegistrationModule(localization="lidar")
+    try:
+        assert module.detect(prompts=["cup"]) == "No camera frame available yet."
+    finally:
+        module.stop()
+
+
 def test_catalog_scene_without_spatial_memory_is_objects_only() -> None:
     module = ObjectSceneRegistrationModule(localization="lidar", min_detections_for_permanent=1)
     try:
@@ -464,3 +557,87 @@ def test_spatial_vector_db_get_tagged_locations_roundtrip() -> None:
     assert set(got) == {"kitchen", "charging dock"}
     assert got["kitchen"].position[0] == 1.0
     assert got["kitchen"].position[1] == 2.0
+
+
+# --- Frame-quality gate + sharpest-appearance retention (per docs/capabilities/
+# memory/plot.md: dark/blurry frames are useless and embed close to everything) ---
+
+
+def _textured_image(seed: int) -> Image:
+    """A high-frequency (sharp) frame: random noise -> large Laplacian variance."""
+    rng = np.random.default_rng(seed)
+    data = rng.integers(0, 256, size=(64, 64, 3), dtype=np.uint8)
+    return Image.from_numpy(data, format=ImageFormat.BGR, frame_id="camera_optical", ts=1.0)
+
+
+def _flat_image(value: int = 128) -> Image:
+    """A featureless (blurry) frame of constant color -> ~zero Laplacian variance.
+
+    Its brightness is ``value/255``, so ``value`` also controls dark-vs-bright.
+    """
+    data = np.full((64, 64, 3), value, dtype=np.uint8)
+    return Image.from_numpy(data, format=ImageFormat.BGR, frame_id="camera_optical", ts=1.0)
+
+
+def test_frame_quality_gate_rejects_dark_and_blurry() -> None:
+    module = ObjectSceneRegistrationModule(
+        localization="lidar", min_frame_brightness=0.06, min_frame_sharpness=0.12
+    )
+    try:
+        assert module._frame_quality_ok(_textured_image(2)) is True  # bright + sharp -> keep
+        assert module._frame_quality_ok(_flat_image(2)) is False  # near-black -> dark reject
+        assert module._frame_quality_ok(_flat_image(200)) is False  # bright but flat -> blur reject
+        assert module._frames_seen == 3
+        assert module._frames_rejected == 2
+    finally:
+        module.stop()
+
+
+def test_frame_quality_gate_disabled_by_default() -> None:
+    module = ObjectSceneRegistrationModule(localization="lidar")
+    try:
+        # Both thresholds default to 0.0: even an all-black frame passes, and
+        # the gate short-circuits before it even starts counting frames.
+        assert module._frame_quality_ok(_flat_image(0)) is True
+        assert module._frames_seen == 0
+    finally:
+        module.stop()
+
+
+def test_update_object_keeps_sharpest_appearance_crop() -> None:
+    """A blurry re-sighting must not overwrite a sharp stored crop: the VLM
+    labels from obj.image, so we keep the clearest frame (and its matching
+    bbox), while the 3D geometry still tracks the latest detection."""
+    sharp = _make_object("cup", Vector3(1.0, 2.0, 0.5))
+    sharp.image = _textured_image(0)
+    sharp.bbox = (10.0, 10.0, 20.0, 20.0)
+
+    blurry = _make_object("cup", Vector3(1.1, 2.1, 0.5))  # object moved slightly in frame
+    blurry.image = _flat_image()
+    blurry.bbox = (30.0, 30.0, 40.0, 40.0)
+    assert sharp.image.sharpness > blurry.image.sharpness
+
+    sharp.update_object(blurry)
+
+    # Geometry follows the latest (blurry) detection...
+    assert sharp.center.x == pytest.approx(1.1)
+    assert sharp.detections_count == 2
+    # ...but the labeling appearance (image + its bbox) stays the sharp one.
+    assert sharp.bbox == (10.0, 10.0, 20.0, 20.0)
+    assert sharp.image.sharpness > _flat_image().sharpness
+
+
+def test_update_object_adopts_sharper_new_appearance() -> None:
+    """The reverse: a sharp new frame replaces a blurry stored crop, bbox and all."""
+    blurry = _make_object("cup", Vector3(1.0, 2.0, 0.5))
+    blurry.image = _flat_image()
+    blurry.bbox = (30.0, 30.0, 40.0, 40.0)
+
+    sharp = _make_object("cup", Vector3(1.0, 2.0, 0.5))
+    sharp.image = _textured_image(1)
+    sharp.bbox = (10.0, 10.0, 20.0, 20.0)
+
+    blurry.update_object(sharp)
+
+    assert blurry.bbox == (10.0, 10.0, 20.0, 20.0)  # adopted the sharp frame's bbox
+    assert blurry.image.sharpness > _flat_image().sharpness

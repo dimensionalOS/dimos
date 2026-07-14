@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from typing import Any, Literal
 
 import cv2
@@ -58,14 +57,18 @@ class ObjectSceneRegistrationModule(Module):
     """Builds a live, world-located catalog of everything the robot has seen.
 
     As the robot moves through an environment, this module continuously:
-    detects objects in each camera frame (YOLO-E, open-vocabulary — no
-    prompt needed), localizes each detection in the world frame (RGBD
-    back-projection when ``localization="depth"``, or projection of a
-    world-frame lidar cloud when ``localization="lidar"`` for robots without
+    optionally skips camera frames too dark or blurry to be worth detecting on
+    (the frame-quality gate, ``min_frame_brightness``/``min_frame_sharpness``;
+    dark frames especially yield junk detections and embed close to
+    everything), detects objects in each surviving frame (YOLO-E,
+    open-vocabulary — no prompt needed), localizes each detection in the world
+    frame (RGBD back-projection when ``localization="depth"``, or projection of
+    a world-frame lidar cloud when ``localization="lidar"`` for robots without
     a depth camera, e.g. the Go2), and deduplicates/accumulates repeat
     sightings of the same physical object into a persistent `ObjectDB` (a
     "cup" seen 40 times is one database row, promoted to permanent once
-    corroborated by enough detections).
+    corroborated by enough detections; the sharpest of those sightings is kept
+    as the crop a VLM later labels from).
 
     Once the robot has navigated a space, `catalog_scene()` (or the faster
     `list_observed_items()`) answers "what's here and where is it?" as a
@@ -74,7 +77,11 @@ class ObjectSceneRegistrationModule(Module):
     vision-language model (`identify_object`, `refine_observed_labels`,
     or automatically via `catalog_scene`) — a plain-language description.
     `detect(...)` additionally supports directed search for specific named
-    items. Replay-validated end-to-end on a recorded Go2 session; see
+    items, via a second, lazily-created promptable detector run on-demand
+    against the latest cached frame -- the always-on background detector
+    stays on its prompt-free model throughout, so directed search and
+    automatic cataloging both work without disrupting each other. Replay-
+    validated end-to-end on a recorded Go2 session; see
     `dimos/perception/test_object_scene_registration_replay.py` and wishlist
     item 2 in `dimos/skills/SKILLS_WISHLIST.md`.
     """
@@ -90,10 +97,24 @@ class ObjectSceneRegistrationModule(Module):
     pointcloud: Out[PointCloud2]
 
     _detector: Yoloe2DDetector | None = None
+    # Lazily-created second detector, prompt-mode, used only by detect() for
+    # on-demand directed search. Kept separate from _detector (the
+    # open-vocab, prompt-free model that drives continuous background
+    # cataloging) because Ultralytics prompt-free checkpoints structurally
+    # reject set_classes() ("Prompt-free model does not support setting
+    # classes") -- so calling detect() never disrupts the background catalog.
+    _prompt_detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
     _latest_depth_image: Image | None = None
     _latest_camera_transform: Any = None
+    # Latest processed frame + resolved localization inputs, cached by the
+    # background pipeline on every successfully-processed frame. detect()
+    # reuses these for its on-demand localization pass instead of waiting on
+    # (or duplicating) the live subscription.
+    _latest_color_image: Image | None = None
+    _latest_lidar: PointCloud2 | None = None
+    _latest_world_to_optical: Any = None
     _vl_model: Any = None
 
     # Optional link to spatial memory. When a SpatialMemory module is present in
@@ -113,6 +134,25 @@ class ObjectSceneRegistrationModule(Module):
         localization: Literal["depth", "lidar"] = "depth",
         # Camera optical frame used for the lidar projection tf lookup.
         camera_optical_frame: str = "camera_optical",
+        # Max camera/lidar timestamp gap for a frame pair to be processed in
+        # lidar mode. 0.25s suits a live Go2 (camera ~14Hz, lidar ~7Hz:
+        # partners are always close). Sparse recordings need more: e.g. the
+        # full china-office .rrd logs camera at ~0.5Hz and lidar at ~0.85Hz,
+        # where 0.25s leaves 60% of camera frames partnerless (never
+        # processed at all). Widening is geometrically safe for accumulated
+        # world-frame clouds -- they change slowly, so a cloud up to ~1s away
+        # still projects correctly -- but raise it only as far as needed.
+        lidar_match_tolerance: float = 0.25,
+        # Pointcloud noise filters applied per detection in lidar mode.
+        # "default" (None -> Detection3DPC.from_2d's stack: raycast +
+        # radius_outlier(20 neighbors/0.3m) + statistical(40 neighbors)) is
+        # tuned for dense accumulated clouds. "sparse" keeps the raycast
+        # occlusion rejection but relaxes the density demands
+        # (radius_outlier(4 neighbors/0.5m), no statistical) -- for sparse
+        # scans/windows where the default kills most real clusters (measured
+        # on the china-office recording: 12/31 detections localized with
+        # "default" vs 22/31 with "sparse").
+        lidar_filter_preset: Literal["default", "sparse"] = "default",
         # ObjectDB tuning
         distance_threshold: float = 0.2,
         min_detections_for_permanent: int = 6,
@@ -126,6 +166,17 @@ class ObjectSceneRegistrationModule(Module):
         # Min CLIP similarity (1 - cosine distance) for a spatial-memory frame
         # to count as a match in locate()'s semantic fallback.
         semantic_locate_threshold: float = 0.23,
+        # Frame quality gate: skip running the detector (and updating the
+        # cached "latest frame") on camera frames that are too dark or too
+        # blurry to yield useful detections. Dark frames in particular are
+        # both useless AND embed semantically close to everything (false
+        # positives downstream). Both thresholds are in [0, 1] against
+        # Image.brightness / Image.sharpness; 0.0 disables that gate (the
+        # default -> unchanged behavior for existing depth robots). Opt in
+        # per-blueprint on sparse/real recordings; a conservative pair is
+        # ~(0.06, 0.12).
+        min_frame_brightness: float = 0.0,
+        min_frame_sharpness: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -133,6 +184,8 @@ class ObjectSceneRegistrationModule(Module):
         self._prompt_mode = prompt_mode
         self._localization = localization
         self._camera_optical_frame = camera_optical_frame
+        self._lidar_match_tolerance = lidar_match_tolerance
+        self._lidar_filter_preset = lidar_filter_preset
         self._object_db = ObjectDB(
             distance_threshold=distance_threshold,
             min_detections_for_permanent=min_detections_for_permanent,
@@ -142,6 +195,11 @@ class ObjectSceneRegistrationModule(Module):
         self._max_obstacle_width = max_obstacle_width
         self._place_radius = place_radius
         self._semantic_locate_threshold = semantic_locate_threshold
+        self._min_frame_brightness = min_frame_brightness
+        self._min_frame_sharpness = min_frame_sharpness
+        # Frame-quality-gate observability (see _frame_quality_ok).
+        self._frames_seen = 0
+        self._frames_rejected = 0
 
     @rpc
     def start(self) -> None:
@@ -164,7 +222,7 @@ class ObjectSceneRegistrationModule(Module):
                 self.color_image.observable(),
                 self.lidar.observable(),
                 buffer_size=20.0,
-                match_tolerance=0.25,
+                match_tolerance=self._lidar_match_tolerance,
             )
             backpressure(aligned_frames).subscribe(self._on_lidar_frames)
         else:
@@ -183,6 +241,10 @@ class ObjectSceneRegistrationModule(Module):
         if self._detector:
             self._detector.stop()
             self._detector = None
+
+        if self._prompt_detector:
+            self._prompt_detector.stop()
+            self._prompt_detector = None
 
         if self._vl_model is not None:
             self._vl_model.stop()
@@ -318,37 +380,111 @@ class ObjectSceneRegistrationModule(Module):
 
         return pc
 
+    def _get_prompt_detector(self) -> Yoloe2DDetector:
+        """Lazily create the promptable detector used by detect(). Separate
+        model instance from the background prompt-free one (see the
+        _prompt_detector field comment) -- costs extra GPU memory once
+        detect() is first called, in exchange for directed search actually
+        working without touching the always-on background catalog."""
+        if self._prompt_detector is None:
+            self._prompt_detector = Yoloe2DDetector(
+                model_name="yoloe-11l-seg.pt",
+                prompt_mode=YoloePromptMode.PROMPT,
+            )
+        return self._prompt_detector
+
+    def _lidar_filters(self) -> list[Any] | None:
+        """Pointcloud filter stack for the configured preset (see __init__)."""
+        if self._lidar_filter_preset == "sparse":
+            from dimos.perception.detection.type.detection3d.pointcloud_filters import (
+                radius_outlier,
+                raycast,
+            )
+
+            return [raycast(), radius_outlier(min_neighbors=4, radius=0.5)]
+        return None  # Detection3DPC.from_2d applies its dense-cloud defaults
+
+    def _localize_detections(
+        self, detections_2d: ImageDetections2D[Any], color_image: Image
+    ) -> list[DetObject] | None:
+        """2D detections -> world-frame Objects for the *cached* latest
+        frame, via whichever localization source this module is configured
+        with. Used by detect()'s on-demand pass; the continuous background
+        pipeline (_process_lidar / _process_3d_detections) has its own
+        per-frame version since it runs on every frame and already has
+        these values in hand without needing a cache.
+        """
+        if self._camera_info is None:
+            return None
+        if self._localization == "lidar":
+            if self._latest_lidar is None or self._latest_world_to_optical is None:
+                return None
+            return Object.from_2d_to_list_lidar(
+                detections_2d=detections_2d,
+                world_pointcloud=self._latest_lidar,
+                camera_info=self._camera_info,
+                world_to_optical_transform=self._latest_world_to_optical,
+                filters=self._lidar_filters(),
+                use_aabb=self._use_aabb,
+                max_distance=self._max_distance,
+                max_obstacle_width=self._max_obstacle_width,
+            )
+        if self._latest_depth_image is None:
+            return None
+        return Object.from_2d_to_list(
+            detections_2d=detections_2d,
+            color_image=color_image,
+            depth_image=self._latest_depth_image,
+            camera_info=self._camera_info,
+            camera_transform=self._latest_camera_transform,
+            max_distance=self._max_distance,
+            use_aabb=self._use_aabb,
+            max_obstacle_width=self._max_obstacle_width,
+        )
+
     @skill
-    def detect(self, *prompts: str) -> str:
-        """Detect objects matching the given text prompts.
+    def detect(self, prompts: list[str]) -> str:
+        """Directed, text-prompted search for specific named items.
+
+        Runs alongside (not instead of) the automatic open-vocabulary
+        cataloging that's always running in the background -- this uses a
+        separate promptable detector on the most recent camera frame, so
+        calling it never disrupts list_observed_items/catalog_scene. Any
+        match is localized in the world frame and folded into the same
+        catalog those tools read from.
 
         Do NOT call this tool multiple times for one query. Pass all objects in a single call.
-        For example, to detect a cup and mouse, call detect("cup", "mouse") not detect("cup") then detect("mouse").
+        For example, to detect a cup and mouse, call detect(["cup", "mouse"]) not detect(["cup"]) then detect(["mouse"]).
 
         Args:
-            prompts (str): Text descriptions of objects to detect (e.g., "person", "car", "dog")
+            prompts (list[str]): Text descriptions of objects to detect (e.g., ["person", "car", "dog"])
 
         Returns:
             str: Detected objects with their object_id (stable UUID) and name.
 
         Example:
-            detect("person", "car", "dog")
-            detect("cup")
+            detect(["person", "car", "dog"])
+            detect(["cup"])
         """
         if not prompts:
             return "No prompts provided."
-        if self._detector is None:
-            return "Detector not initialized."
+        if self._latest_color_image is None:
+            return "No camera frame available yet."
 
-        self._detector.set_prompts(text=list(prompts))
-        time.sleep(2.0)
-
-        detected = self.get_detected_objects()
-        if not detected:
+        detector = self._get_prompt_detector()
+        detector.set_prompts(text=list(prompts))
+        detections_2d = detector.process_image(self._latest_color_image)
+        if not detections_2d.detections:
             return "No objects detected."
 
-        obj_list = [f"  - {obj['name']} (object_id='{obj['object_id']}')" for obj in detected]
-        return f"Detected {len(detected)} object(s):\n" + "\n".join(obj_list)
+        objects = self._localize_detections(detections_2d, self._latest_color_image)
+        if not objects:
+            return "Detected objects but could not localize them in the world frame."
+
+        ingested = self._ingest_and_publish(objects)
+
+        obj_list = [f"  - {obj.display_name} (object_id='{obj.object_id}')" for obj in ingested]
+        return f"Detected {len(ingested)} object(s):\n" + "\n".join(obj_list)
 
     @skill
     def select(self, track_id: int) -> str:
@@ -716,6 +852,35 @@ class ObjectSceneRegistrationModule(Module):
         ]
         return f"Relabeled {len(refined)} object(s):\n" + "\n".join(lines)
 
+    def _frame_quality_ok(self, color_image: Image) -> bool:
+        """Whether a camera frame is worth running the detector on.
+
+        Rejects frames darker than ``min_frame_brightness`` or blurrier than
+        ``min_frame_sharpness`` (both disabled at 0.0). Rejected frames are
+        neither detected on nor cached as the "latest" frame, so detect()'s
+        on-demand pass also reuses only a good frame. Counts are logged
+        periodically for observability.
+        """
+        if self._min_frame_brightness <= 0.0 and self._min_frame_sharpness <= 0.0:
+            return True
+
+        self._frames_seen += 1
+        reason = None
+        if self._min_frame_brightness > 0.0 and color_image.brightness < self._min_frame_brightness:
+            reason = f"dark (brightness {color_image.brightness:.3f}<{self._min_frame_brightness})"
+        elif self._min_frame_sharpness > 0.0 and color_image.sharpness < self._min_frame_sharpness:
+            reason = f"blurry (sharpness {color_image.sharpness:.3f}<{self._min_frame_sharpness})"
+
+        if reason is not None:
+            self._frames_rejected += 1
+            if self._frames_rejected % 25 == 1:
+                logger.info(
+                    f"Frame-quality gate: skipped {self._frames_rejected}/{self._frames_seen} "
+                    f"frames so far (latest: {reason})"
+                )
+            return False
+        return True
+
     def _on_aligned_frames(self, frames) -> None:  # type: ignore[no-untyped-def]
         color_msg, depth_msg = frames
         self._process_images(color_msg, depth_msg)
@@ -723,6 +888,8 @@ class ObjectSceneRegistrationModule(Module):
     def _process_images(self, color_msg: Image, depth_msg: Image) -> None:
         """Process synchronized color and depth images (runs in background thread)."""
         if not self._detector or not self._camera_info:
+            return
+        if not self._frame_quality_ok(color_msg):
             return
 
         color_image = color_msg
@@ -767,13 +934,17 @@ class ObjectSceneRegistrationModule(Module):
         """
         if not self._detector or self._camera_info is None:
             return
-
-        detections_2d = self._detect_and_publish_2d(color_image)
-        if not detections_2d.detections:
+        if not self._frame_quality_ok(color_image):
             return
 
+        detections_2d = self._detect_and_publish_2d(color_image)
+
         # Transform from the lidar/world frame into the camera optical frame,
-        # used as extrinsics to project points into the image.
+        # used as extrinsics to project points into the image. Resolved (and
+        # cached below) regardless of whether the background prompt-free
+        # detector found anything in this frame, so detect()'s on-demand
+        # pass always has the truly latest frame -- not just the latest one
+        # the background detector happened to catch something in.
         world_to_optical = self.tf.get(
             self._camera_optical_frame,
             lidar_msg.frame_id,
@@ -784,11 +955,19 @@ class ObjectSceneRegistrationModule(Module):
             logger.info("Failed to lookup transform from lidar frame to camera optical frame")
             return
 
+        self._latest_color_image = color_image
+        self._latest_lidar = lidar_msg
+        self._latest_world_to_optical = world_to_optical
+
+        if not detections_2d.detections:
+            return
+
         objects = Object.from_2d_to_list_lidar(
             detections_2d=detections_2d,
             world_pointcloud=lidar_msg,
             camera_info=self._camera_info,
             world_to_optical_transform=world_to_optical,
+            filters=self._lidar_filters(),
             use_aabb=self._use_aabb,
             max_distance=self._max_distance,
             max_obstacle_width=self._max_obstacle_width,
@@ -798,13 +977,16 @@ class ObjectSceneRegistrationModule(Module):
 
         self._ingest_and_publish(objects)
 
-    def _ingest_and_publish(self, objects: list[DetObject]) -> None:
+    def _ingest_and_publish(self, objects: list[DetObject]) -> list[DetObject]:
         """Deduplicate objects into the DB and publish the full permanent set.
 
         Publishes ALL permanent objects so downstream consumers get the full
-        scene, not just this frame's batch.
+        scene, not just this frame's batch. Returns the input objects as
+        updated/created in the DB (new object_ids, matched/merged state) for
+        callers that need to report on exactly what they just ingested (e.g.
+        detect()).
         """
-        self._object_db.add_objects(objects)
+        ingested = self._object_db.add_objects(objects)
 
         all_permanent = self._object_db.get_objects()
 
@@ -814,6 +996,8 @@ class ObjectSceneRegistrationModule(Module):
 
         aggregated_pc = aggregate_pointclouds(all_permanent)
         self.pointcloud.publish(aggregated_pc)
+
+        return ingested
 
     def _process_3d_detections(
         self,
@@ -843,6 +1027,8 @@ class ObjectSceneRegistrationModule(Module):
 
         # Cache camera transform for full scene pointcloud
         self._latest_camera_transform = camera_transform
+        # Cache the frame + resolved transform for detect()'s on-demand pass.
+        self._latest_color_image = color_image
 
         objects = Object.from_2d_to_list(
             detections_2d=detections_2d,
