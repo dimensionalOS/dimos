@@ -596,40 +596,81 @@ class _PGOState:
         gtsam = self._gtsam
         has_loop = bool(self._pending_loops)
 
+        # 1. Inject the loop closure factors into the active optimization graph
         for pair in self._pending_loops:
-            # Pose3 noise is [rx, ry, rz, x, y, z]. The two halves have
-            # different units (rad² vs m²), so a uniform variance silently
-            # makes one half pathological. Use ICP fitness as the
-            # *translation* variance and a generous fixed rotation variance
-            # — loops shouldn't be trusted to fix rotation tightly without
-            # normals + p2plane.
-            # Floor at 1e-4 m² (sigma_trans ~ 1 cm) so a near-perfect ICP isn't
-            # forced to a slack 10 cm prior; a fitness score of 0.01 still wins.
             trans_var = max(1e-4, float(pair.score))
             rot_var = self._cfg.loop_rot_var
-            noise = gtsam.noiseModel.Diagonal.Variances(
+            base_noise = gtsam.noiseModel.Diagonal.Variances(
                 np.array([rot_var, rot_var, rot_var, trans_var, trans_var, trans_var])
             )
-            self._graph.add(gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, noise))
+            robust_noise = gtsam.noiseModel.Robust.Create(
+                gtsam.noiseModel.mEstimator.Huber.Create(1.345), base_noise
+            )
+            self._graph.add(gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, robust_noise))
         self._accepted_loops.extend(self._pending_loops)
         self._pending_loops.clear()
 
+        # Cache keyframe positions right before we run the optimization
+        poses_before_update = [
+            np.asarray(kp.optimized.translation()) for kp in self._key_poses
+        ]
+
+        # 2. Run the first ISAM2 update with our raw graph and initial values
+        # This safely registers new keys into the engine without crashing
         self._isam2.update(self._graph, self._values)
-        # Extra linearization iterations only when a loop edge lands; odom-only
-        # adds don't move the state much and a single update suffices.
+        
+        # Capture the initial Chi2 baseline error right after variables are registered
+        chi2_before = self._isam2.getFactorsUnsafe().error(self._isam2.getLinearizationPoint())
+
+        # 3. If a loop is active, perform the extra relinearization passes
         if has_loop:
             for _ in range(self._cfg.loop_closure_extra_iterations):
                 self._isam2.update()
+
+        # Capture the optimized Chi2 error value after updates run
+        chi2_after = self._isam2.getFactorsUnsafe().error(self._isam2.getLinearizationPoint())
+
+        # Clear active factor graph buffers
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
 
+        # 4. Pull the calculated best estimates out to optimize our local trajectory array
         estimates = self._isam2.calculateBestEstimate()
         for i in range(len(self._key_poses)):
             self._key_poses[i].optimized = estimates.atPose3(i)
 
+        # 5. Extract our displacement tracking measurements (Metric B)
+        max_jump = 0.0
+        mean_jump = 0.0
+        if poses_before_update and len(poses_before_update) == len(self._key_poses):
+            displacements = [
+                float(np.linalg.norm(np.asarray(self._key_poses[i].optimized.translation()) - poses_before_update[i]))
+                for i in range(len(self._key_poses))
+            ]
+            if displacements:
+                max_jump = max(displacements)
+                mean_jump = np.mean(displacements)
+
+        # 6. Stream status updates out to stdout console
+        if has_loop:
+            logger.info(
+                "PGO Optimization Stats",
+                loop_closed=has_loop,
+                chi2_initial=round(float(chi2_before), 2),
+                chi2_optimized=round(float(chi2_after), 2),
+                max_graph_jump_meters=round(max_jump, 4),
+                mean_graph_jump_meters=round(mean_jump, 4)
+            )
+        else:
+            if len(self._key_poses) % 50 == 0:
+                logger.info(
+                    "PGO Odom Status Check",
+                    total_keyframes=len(self._key_poses),
+                    current_chi2=round(float(chi2_after), 2)
+                )
+
         last = self._key_poses[-1]
         self._world_correction = last.optimized.compose(last.local.inverse())
-
 
 def _pose3_to_transform(
     pose: gtsam.Pose3,
@@ -665,34 +706,128 @@ def _icp(
     min_inliers: int = 10,
     init: Transform | None = None,
 ) -> tuple[Transform, float]:
-    """Point-to-plane ICP using Open3D's tensor pipeline.
-
-    Returns ``(tf, fitness)`` where ``fitness`` is mean squared inlier
-    distance (m^2) — the GTSAM noise model in `_smooth_and_update` uses
-    this directly as sigma_trans squared. On rejection (too few points or
-    zero correspondences) returns the identity transform and inf fitness.
+    """Pure Python-native global registration using the core mechanics of TEASER++.
+    Decouples translation and rotation using TIMs, prunes feature mismatches via 
+    distance checks, solves rotation via GNC-TLS, and resolves translation via 1D Voting.
     """
-
     if len(source) < min_inliers or len(target) < min_inliers:
         return Transform.identity(), float("inf")
 
     src_pcd = source.pointcloud_tensor
     tgt_pcd = target.pointcloud_tensor
 
-    # Normals on the target enable point-to-plane ICP — converges tighter
-    # than point-to-point on indoor scenes (walls give unambiguous normals
-    # that resolve the slide-along-wall ambiguity).
+    # 1. Generate FPFH geometric features to find candidate point pairs
+    src_pcd.estimate_normals(max_nn=30, radius=0.3)
     tgt_pcd.estimate_normals(max_nn=30, radius=0.3)
+    src_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(src_pcd, max_nn=100, radius=0.5).numpy()
+    tgt_fpfh = o3d.t.pipelines.registration.compute_fpfh_feature(tgt_pcd, max_nn=100, radius=0.5).numpy()
+
+    src_pts = src_pcd.point.positions.numpy()
+    tgt_pts = tgt_pcd.point.positions.numpy()
+
+    # Nearest neighbor matching in feature space
+    from scipy.spatial import KDTree
+    tree = KDTree(tgt_fpfh)
+    _, matches = tree.query(src_fpfh, k=1)
+    
+    A = src_pts.T              # Shape: (3, N)
+    B = tgt_pts[matches].T     # Shape: (3, N)
+    N = A.shape[1]
+
+    # 2. TEASER++ First Step: Construct Translation Invariant Measurements (TIMs)
+    # Pairwise subtraction completely cancels out the global translation vector t
+    A_tims = []
+    B_tims = []
+    # Pair points sequentially to keep calculation complexity at O(N) rather than O(N^2)
+    for i in range(N - 1):
+        A_tims.append(A[:, i] - A[:, i + 1])
+        B_tims.append(B[:, i] - B[:, i + 1])
+        
+    A_tims = np.stack(A_tims, axis=1) # Shape: (3, N-1)
+    B_tims = np.stack(B_tims, axis=1) # Shape: (3, N-1)
+
+    # Coarse Pruning Check: If absolute distances change across frames, it's an outlier match
+    dist_A = np.linalg.norm(A_tims, axis=0)
+    dist_B = np.linalg.norm(B_tims, axis=0)
+    inline_mask = np.abs(dist_A - dist_B) < max_dist
+
+    if np.sum(inline_mask) < min_inliers:
+        return Transform.identity(), float("inf")
+
+    A_tims_f = A_tims[:, inline_mask]
+    B_tims_f = B_tims[:, inline_mask]
+
+    # 3. TEASER++ Second Step: Solve Rotation via Graduated Non-Convexity (GNC-TLS)
+    # Set the target boundary threshold matching your noise limits
+    cbar2 = max_dist ** 2
+    mu = 1.0  # Initial convexity control parameter
+    R_est = np.eye(3)
+    weights = np.ones(A_tims_f.shape[1])
+
+    for gnc_iter in range(20):
+        # Weighted Kabsch/SVD alignment algorithm to get current rotation update
+        AM = A_tims_f * weights
+        centroid_A = np.mean(AM, axis=1, keepdims=True)
+        centroid_B = np.mean(B_tims_f * weights, axis=1, keepdims=True)
+        
+        A_centered = A_tims_f - centroid_A
+        B_centered = B_tims_f - centroid_B
+        
+        H = (A_centered * weights) @ B_centered.T
+        U, _, Vt = np.linalg.svd(H)
+        
+        # Check for reflection condition to keep matrix valid inside SO(3)
+        d = np.linalg.det(U @ Vt)
+        S = np.eye(3)
+        if d < 0:
+            S[2, 2] = -1
+        R_est = U @ S @ Vt
+
+        # Update tracking residuals under new rotation
+        residuals2 = np.sum((B_tims_f - R_est @ A_tims_f) ** 2, axis=0)
+
+        # Truncated Least Squares weight assignment rules
+        th_low = (mu / (mu + 1)) * cbar2
+        th_high = ((mu + 1) / mu) * cbar2
+        
+        new_weights = np.zeros_like(weights)
+        new_weights[residuals2 <= th_low] = 1.0
+        new_weights[residuals2 >= th_high] = 0.0
+        
+        middle_mask = (residuals2 > th_low) & (residuals2 < th_high)
+        if np.any(middle_mask):
+            new_weights[middle_mask] = np.sqrt((cbar2 * mu * (mu + 1)) / residuals2[middle_mask]) - mu
+
+        weights = new_weights
+        mu *= 1.4  # Advance the non-convex sharpening schedule
+        if mu > 1e4:
+            break
+
+    # 4. TEASER++ Third Step: Extract Translation via Adaptive 1D Consensus Voting
+    # Rotate source cloud toward target frame to find remaining translation offset entries
+    A_rotated = R_est @ A
+    t_candidates = B - A_rotated  # Shape: (3, N)
+
+    # Resolve translation independently across each spatial coordinate axis [X, Y, Z]
+    t_final = np.zeros(3)
+    for axis in range(3):
+        candidates = t_candidates[axis, :]
+        # Fast 1D histogram bin checking to extract global consensus peak
+        counts, bins = np.histogram(candidates, bins=50)
+        best_bin = np.argmax(counts)
+        # Final axis translation value is the average of items sitting inside the winning bin
+        in_bin_mask = (candidates >= bins[best_bin]) & (candidates <= bins[best_bin + 1])
+        t_final[axis] = np.mean(candidates[in_bin_mask]) if np.any(in_bin_mask) else 0.0
+
+    # 5. Local Optimization Refinement: Run a quick point-to-plane ICP
+    # Pass the robust global TEASER++ answer as an accurate initialization guess
+    teaser_T = np.eye(4)
+    teaser_T[0:3, 0:3] = R_est
+    teaser_T[0:3, 3] = t_final
 
     device = src_pcd.device
-    init_T = o3c.Tensor(
-        init.to_matrix() if init is not None else np.eye(4),
-        dtype=o3c.float64,
-        device=device,
-    )
+    init_T = o3c.Tensor(teaser_T, dtype=o3c.float64, device=device)
 
-    # Silence Open3D's "0 correspondence" warning — we deliberately use a
-    # tight max_correspondence_distance and reject loops with poor fitness.
     with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Error):
         result = o3d.t.pipelines.registration.icp(
             source=src_pcd,
@@ -710,7 +845,7 @@ def _icp(
     if float(result.fitness) == 0.0:
         return Transform.identity(), float("inf")
 
-    # Frames intentionally unlabeled: caller only reads .to_matrix().
     tf = Transform.from_matrix(result.transformation.numpy(), ts=source.ts)
     rmse = float(result.inlier_rmse)
+    
     return tf, rmse * rmse
