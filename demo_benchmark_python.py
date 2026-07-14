@@ -34,11 +34,13 @@ import psutil
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.python_worker import MethodCallProxy
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.mapping.costmapper import CostMapper as PythonCostMapper
 from dimos.mapping.native_costmapper.module import CostMapper as RustCostMapper
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -46,6 +48,27 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 _COLORS = {"python": "#dc2626", "rust": "#16a34a"}
 _DTOP_INTERVAL_SECONDS = 1.0
+
+
+def _start_module_over_worker_pipe(module: Any) -> None:
+    """Start a local module without putting its lifecycle response on the data bus."""
+    actor = module.actor_instance
+    MethodCallProxy(actor).start().result()
+
+
+class BenchmarkModuleCoordinator(ModuleCoordinator):
+    """Keep benchmark startup reliable while runtime streams use the selected transport."""
+
+    def start_all_modules(self) -> None:
+        modules = list(self._deployed_modules.values())
+        if not modules:
+            raise ValueError("No modules deployed. Call deploy() before start_all_modules().")
+
+        # Replays can flood LCM with multi-megabyte camera frames before all
+        # lifecycle responses return. The workers are local, so use their
+        # reliable control pipes for startup; measured streams remain on LCM.
+        safe_thread_map(modules, _start_module_over_worker_pipe)
+        self._send_on_system_modules()
 
 
 @dataclass(frozen=True)
@@ -350,7 +373,7 @@ def _run_system_benchmark(args: argparse.Namespace) -> SystemBenchmarkResult:
     started_at = time.monotonic()
     sampler = DtopAggregateSampler(out_dir / "host.jsonl")
     try:
-        coordinator = ModuleCoordinator.build(
+        coordinator = BenchmarkModuleCoordinator.build(
             blueprint,
             {
                 "g": {

@@ -19,7 +19,6 @@ use lcm_msgs::geometry_msgs::{Point, Pose, Quaternion};
 use lcm_msgs::nav_msgs::{MapMetaData, OccupancyGrid};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::Header;
-use rayon::prelude::*;
 use serde::Deserialize;
 use validator::ValidationError;
 
@@ -248,16 +247,16 @@ pub fn calculate_costmap(
     config: &Config,
 ) -> Result<OccupancyGrid, CostmapError> {
     let algorithm = parse_algorithm(config)?;
-    let points = extract_xyz(message)?;
+    let cloud = PointCloudView::new(message)?;
 
-    if points.is_empty() {
+    if cloud.is_empty() {
         return Ok(empty_grid(message, &algorithm));
     }
 
     match &algorithm {
-        Algorithm::HeightCost(config) => height_cost_occupancy(message, &points, config),
-        Algorithm::General(config) => general_occupancy(message, &points, config),
-        Algorithm::Simple(config) => simple_occupancy(message, &points, config),
+        Algorithm::HeightCost(config) => height_cost_occupancy(message, &cloud, config),
+        Algorithm::General(config) => general_occupancy(message, &cloud, config),
+        Algorithm::Simple(config) => simple_occupancy(message, &cloud, config),
     }
 }
 
@@ -287,72 +286,68 @@ pub fn apply_initial_safe_radius(grid: &mut OccupancyGrid, radius_meters: f64) {
 
 fn height_cost_occupancy(
     message: &PointCloud2,
-    points: &[[f64; 3]],
+    cloud: &PointCloudView<'_>,
     config: &HeightCostConfig,
 ) -> Result<OccupancyGrid, CostmapError> {
-    let bounds = GridBounds::from_points(points, config.resolution)?;
+    let bounds = GridBounds::from_cloud(cloud, config.resolution)?;
     let cell_count = bounds.cell_count()?;
-    let mut minimum_heights = vec![f32::NAN; cell_count];
-    let mut maximum_heights = vec![f32::NAN; cell_count];
+    let mut minimum_heights = vec![f32::INFINITY; cell_count];
+    let mut maximum_heights = vec![f32::NEG_INFINITY; cell_count];
     let inverse_resolution = 1.0 / config.resolution;
+    let min_x = bounds.min_x;
+    let min_y = bounds.min_y;
+    let width = bounds.width;
+    let height = bounds.height;
 
-    for &[x, y, z] in points {
-        let column = ((x - bounds.min_x) * inverse_resolution + 0.5) as usize;
-        let row = ((y - bounds.min_y) * inverse_resolution + 0.5) as usize;
-        if column >= bounds.width || row >= bounds.height {
-            continue;
+    cloud.for_each_xyz(|x, y, z| {
+        let column = ((x - min_x) * inverse_resolution + 0.5) as usize;
+        let row = ((y - min_y) * inverse_resolution + 0.5) as usize;
+        if column >= width || row >= height {
+            return;
         }
-        let index = row * bounds.width + column;
+        let index = row * width + column;
         let z = z as f32;
-        if minimum_heights[index].is_nan() || z < minimum_heights[index] {
-            minimum_heights[index] = z;
+        let min_slot = unsafe { minimum_heights.get_unchecked_mut(index) };
+        let max_slot = unsafe { maximum_heights.get_unchecked_mut(index) };
+        if z < *min_slot {
+            *min_slot = z;
         }
-        if maximum_heights[index].is_nan() || z > maximum_heights[index] {
-            maximum_heights[index] = z;
+        if z > *max_slot {
+            *max_slot = z;
+        }
+    })?;
+
+    let can_pass_under = config.can_pass_under as f32;
+    let mut heights = vec![0.0f32; cell_count];
+    let mut observed = vec![false; cell_count];
+    for index in 0..cell_count {
+        let minimum = minimum_heights[index];
+        if minimum.is_finite() {
+            let maximum = maximum_heights[index];
+            heights[index] = if maximum - minimum > can_pass_under {
+                minimum
+            } else {
+                maximum
+            };
+            observed[index] = true;
         }
     }
 
-    let can_pass_under = config.can_pass_under as f32;
-    let mut heights: Vec<f32> = minimum_heights
-        .par_iter()
-        .zip(&maximum_heights)
-        .map(|(minimum, maximum)| {
-            if minimum.is_nan() {
-                f32::NAN
-            } else if maximum - minimum > can_pass_under {
-                *minimum
-            } else {
-                *maximum
-            }
-        })
-        .collect();
-
-    let mut observed: Vec<bool> = heights.iter().map(|height| !height.is_nan()).collect();
     if config.smoothing > 0.0 && observed.iter().any(|value| *value) {
-        let weights: Vec<f32> = observed
-            .iter()
-            .map(|value| u8::from(*value) as f32)
-            .collect();
-        let filled: Vec<f32> = heights
-            .iter()
-            .map(|height| if height.is_nan() { 0.0 } else { *height })
-            .collect();
-        let smoothed_heights =
-            gaussian_filter(&filled, bounds.width, bounds.height, config.smoothing);
-        let smoothed_weights =
-            gaussian_filter(&weights, bounds.width, bounds.height, config.smoothing);
-        heights
-            .par_iter_mut()
-            .zip(&mut observed)
-            .zip(smoothed_heights.par_iter().zip(&smoothed_weights))
-            .for_each(
-                |((height, is_observed), (smoothed_height, smoothed_weight))| {
-                    if !*is_observed && *smoothed_weight > SMOOTHED_WEIGHT_MIN {
-                        *height = smoothed_height / smoothed_weight;
-                        *is_observed = true;
-                    }
-                },
-            );
+        let mut weights = vec![0.0f32; cell_count];
+        for (weight, is_observed) in weights.iter_mut().zip(&observed) {
+            if *is_observed {
+                *weight = 1.0;
+            }
+        }
+        let (smoothed_heights, smoothed_weights) =
+            gaussian_filter_pair(&heights, &weights, width, height, config.smoothing);
+        for index in 0..cell_count {
+            if !observed[index] && smoothed_weights[index] > SMOOTHED_WEIGHT_MIN {
+                heights[index] = smoothed_heights[index] / smoothed_weights[index];
+                observed[index] = true;
+            }
+        }
     }
 
     let data = if observed.iter().any(|value| *value) {
@@ -375,75 +370,64 @@ fn height_costs(
     bounds: &GridBounds,
     config: &HeightCostConfig,
 ) -> Vec<i8> {
-    let height_for_gradient: Vec<f32> = heights
-        .iter()
-        .zip(observed)
-        .map(|(height, is_observed)| if *is_observed { *height } else { 0.0 })
-        .collect();
-    let gradient_x = sobel(&height_for_gradient, bounds.width, bounds.height, true);
-    let gradient_y = sobel(&height_for_gradient, bounds.width, bounds.height, false);
+    let (gradient_x, gradient_y) = sobel_pair(heights, bounds.width, bounds.height);
     let resolution = config.resolution as f32;
     let ignore_noise = config.ignore_noise as f32;
     let can_climb = config.can_climb as f32;
+    let scale = 1.0 / (8.0 * resolution);
     let mut output = vec![UNKNOWN; heights.len()];
 
-    output
-        .par_chunks_mut(bounds.width)
-        .enumerate()
-        .for_each(|(row, output_row)| {
-            if row == 0 || row + 1 >= bounds.height {
-                return;
+    for row in 1..bounds.height.saturating_sub(1) {
+        let row_offset = row * bounds.width;
+        for column in 1..bounds.width.saturating_sub(1) {
+            let index = row_offset + column;
+            let valid_gradient = observed[index]
+                && observed[index - 1]
+                && observed[index + 1]
+                && observed[index - bounds.width]
+                && observed[index + bounds.width];
+            if !valid_gradient {
+                continue;
             }
-            for (column, output_cell) in output_row
-                .iter_mut()
-                .enumerate()
-                .take(bounds.width.saturating_sub(1))
-                .skip(1)
-            {
-                let index = row * bounds.width + column;
-                let valid_gradient = observed[index]
-                    && observed[index - 1]
-                    && observed[index + 1]
-                    && observed[index - bounds.width]
-                    && observed[index + bounds.width];
-                if !valid_gradient {
-                    continue;
-                }
 
-                let gradient_magnitude = (gradient_x[index].powi(2) + gradient_y[index].powi(2))
+            let gradient_magnitude =
+                (gradient_x[index] * gradient_x[index] + gradient_y[index] * gradient_y[index])
                     .sqrt()
-                    / (8.0 * resolution);
-                let mut height_change = gradient_magnitude * resolution;
-                if height_change < ignore_noise {
-                    height_change = 0.0;
-                }
-                let cost = (height_change / can_climb * 100.0).clamp(0.0, 100.0);
-                *output_cell = cost as i8;
+                    * scale;
+            let mut height_change = gradient_magnitude * resolution;
+            if height_change < ignore_noise {
+                height_change = 0.0;
             }
-        });
+            let cost = (height_change / can_climb * 100.0).clamp(0.0, 100.0);
+            output[index] = cost as i8;
+        }
+    }
     output
 }
 
 fn general_occupancy(
     message: &PointCloud2,
-    points: &[[f64; 3]],
+    cloud: &PointCloudView<'_>,
     config: &GeneralOccupancyConfig,
 ) -> Result<OccupancyGrid, CostmapError> {
-    let bounds = GridBounds::from_points(points, config.resolution)?;
+    let bounds = GridBounds::from_cloud(cloud, config.resolution)?;
     let mut data = vec![UNKNOWN; bounds.cell_count()?];
+    let resolution = config.resolution;
+    let min_height = config.min_height;
+    let max_height = config.max_height;
 
-    for &[x, y, z] in points {
-        if z < config.min_height {
-            let index = bounds.clipped_index(x, y, config.resolution);
+    cloud.for_each_xyz(|x, y, z| {
+        if z < min_height {
+            let index = bounds.clipped_index(x, y, resolution);
             data[index] = FREE;
         }
-    }
-    for &[x, y, z] in points {
-        if z >= config.min_height && z <= config.max_height {
-            let index = bounds.clipped_index(x, y, config.resolution);
+    })?;
+    cloud.for_each_xyz(|x, y, z| {
+        if z >= min_height && z <= max_height {
+            let index = bounds.clipped_index(x, y, resolution);
             data[index] = OCCUPIED;
         }
-    }
+    })?;
 
     if config.mark_free_radius > 0.0 {
         dilate_free_space(
@@ -464,27 +448,29 @@ fn general_occupancy(
 
 fn simple_occupancy(
     message: &PointCloud2,
-    points: &[[f64; 3]],
+    cloud: &PointCloudView<'_>,
     config: &SimpleOccupancyConfig,
 ) -> Result<OccupancyGrid, CostmapError> {
-    let bounds = GridBounds::from_points(points, config.resolution)?;
+    let bounds = GridBounds::from_cloud(cloud, config.resolution)?;
     let mut data = vec![UNKNOWN; bounds.cell_count()?];
     let inverse_resolution = 1.0 / config.resolution;
+    let min_height = config.min_height;
+    let max_height = config.max_height;
 
-    for &[x, y, z] in points {
-        if z < config.min_height {
+    cloud.for_each_xyz(|x, y, z| {
+        if z < min_height {
             if let Some(index) = bounds.rounded_index(x, y, inverse_resolution) {
                 data[index] = FREE;
             }
         }
-    }
-    for &[x, y, z] in points {
-        if z >= config.min_height && z <= config.max_height {
+    })?;
+    cloud.for_each_xyz(|x, y, z| {
+        if z >= min_height && z <= max_height {
             if let Some(index) = bounds.rounded_index(x, y, inverse_resolution) {
                 data[index] = OCCUPIED;
             }
         }
-    }
+    })?;
 
     Ok(make_grid(
         message,
@@ -504,17 +490,17 @@ struct GridBounds {
 }
 
 impl GridBounds {
-    fn from_points(points: &[[f64; 3]], resolution: f64) -> Result<Self, CostmapError> {
+    fn from_cloud(cloud: &PointCloudView<'_>, resolution: f64) -> Result<Self, CostmapError> {
         let mut min_x = f64::INFINITY;
         let mut max_x = f64::NEG_INFINITY;
         let mut min_y = f64::INFINITY;
         let mut max_y = f64::NEG_INFINITY;
-        for &[x, y, _] in points {
+        cloud.for_each_xyz(|x, y, _| {
             min_x = min_x.min(x);
             max_x = max_x.max(x);
             min_y = min_y.min(y);
             max_y = max_y.max(y);
-        }
+        })?;
         min_x -= PADDING_METERS;
         max_x += PADDING_METERS;
         min_y -= PADDING_METERS;
@@ -613,72 +599,139 @@ fn make_grid(
     }
 }
 
-fn extract_xyz(message: &PointCloud2) -> Result<Vec<[f64; 3]>, CostmapError> {
-    if message.width <= 0 || message.height <= 0 {
-        return Ok(Vec::new());
-    }
-    if message.point_step <= 0 || message.row_step <= 0 {
-        return Err(CostmapError::new(
-            "point_step and row_step must be positive",
-        ));
-    }
+struct PointCloudView<'a> {
+    data: &'a [u8],
+    width: usize,
+    height: usize,
+    point_step: usize,
+    row_step: usize,
+    x_offset: usize,
+    y_offset: usize,
+    z_offset: usize,
+    big_endian: bool,
+}
 
-    let x_offset = field_offset(message, "x")?;
-    let y_offset = field_offset(message, "y")?;
-    let z_offset = field_offset(message, "z")?;
-    let point_step = message.point_step as usize;
-    let row_step = message.row_step as usize;
-    if [x_offset, y_offset, z_offset].into_iter().any(|offset| {
-        offset
-            .checked_add(size_of::<f32>())
-            .is_none_or(|end| end > point_step)
-    }) {
-        return Err(CostmapError::new(
-            "xyz field offsets do not fit within point_step",
-        ));
-    }
-
-    let width = message.width as usize;
-    let height = message.height as usize;
-    let point_count = width
-        .checked_mul(height)
-        .ok_or_else(|| CostmapError::new("point-cloud dimensions overflow"))?;
-    let row_payload = width
-        .checked_mul(point_step)
-        .ok_or_else(|| CostmapError::new("point-cloud row size overflows"))?;
-    if row_step < row_payload {
-        return Err(CostmapError::new(
-            "row_step is shorter than width times point_step",
-        ));
-    }
-    let required = (height - 1)
-        .checked_mul(row_step)
-        .and_then(|offset| offset.checked_add(row_payload))
-        .ok_or_else(|| CostmapError::new("point-cloud data dimensions overflow"))?;
-    if message.data.len() < required {
-        return Err(CostmapError::new(
-            "data buffer is shorter than the declared cloud dimensions",
-        ));
-    }
-
-    let mut points = Vec::with_capacity(point_count);
-    for row in 0..height {
-        for column in 0..width {
-            let base = row * row_step + column * point_step;
-            let point = [
-                read_f32(&message.data, base + x_offset, message.is_bigendian) as f64,
-                read_f32(&message.data, base + y_offset, message.is_bigendian) as f64,
-                read_f32(&message.data, base + z_offset, message.is_bigendian) as f64,
-            ];
-            if point.iter().any(|value| !value.is_finite()) {
-                return Err(CostmapError::new(
-                    "point cloud contains a non-finite xyz coordinate",
-                ));
-            }
-            points.push(point);
+impl<'a> PointCloudView<'a> {
+    fn new(message: &'a PointCloud2) -> Result<Self, CostmapError> {
+        if message.width <= 0 || message.height <= 0 {
+            return Ok(Self {
+                data: &[],
+                width: 0,
+                height: 0,
+                point_step: 0,
+                row_step: 0,
+                x_offset: 0,
+                y_offset: 0,
+                z_offset: 0,
+                big_endian: false,
+            });
         }
+        if message.point_step <= 0 || message.row_step <= 0 {
+            return Err(CostmapError::new(
+                "point_step and row_step must be positive",
+            ));
+        }
+
+        let x_offset = field_offset(message, "x")?;
+        let y_offset = field_offset(message, "y")?;
+        let z_offset = field_offset(message, "z")?;
+        let point_step = message.point_step as usize;
+        let row_step = message.row_step as usize;
+        if [x_offset, y_offset, z_offset].into_iter().any(|offset| {
+            offset
+                .checked_add(size_of::<f32>())
+                .is_none_or(|end| end > point_step)
+        }) {
+            return Err(CostmapError::new(
+                "xyz field offsets do not fit within point_step",
+            ));
+        }
+
+        let width = message.width as usize;
+        let height = message.height as usize;
+        let row_payload = width
+            .checked_mul(point_step)
+            .ok_or_else(|| CostmapError::new("point-cloud row size overflows"))?;
+        if row_step < row_payload {
+            return Err(CostmapError::new(
+                "row_step is shorter than width times point_step",
+            ));
+        }
+        let required = (height - 1)
+            .checked_mul(row_step)
+            .and_then(|offset| offset.checked_add(row_payload))
+            .ok_or_else(|| CostmapError::new("point-cloud data dimensions overflow"))?;
+        if message.data.len() < required {
+            return Err(CostmapError::new(
+                "data buffer is shorter than the declared cloud dimensions",
+            ));
+        }
+
+        Ok(Self {
+            data: &message.data[..required],
+            width,
+            height,
+            point_step,
+            row_step,
+            x_offset,
+            y_offset,
+            z_offset,
+            big_endian: message.is_bigendian,
+        })
     }
-    Ok(points)
+
+    fn is_empty(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    fn for_each_xyz(&self, mut visit: impl FnMut(f64, f64, f64)) -> Result<(), CostmapError> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        // Dense XYZ little-endian clouds are the common DimOS path (point_step 12 or 16).
+        if !self.big_endian
+            && self.x_offset == 0
+            && self.y_offset == 4
+            && self.z_offset == 8
+            && self.point_step >= 12
+        {
+            for row in 0..self.height {
+                let row_base = row * self.row_step;
+                for column in 0..self.width {
+                    let base = row_base + column * self.point_step;
+                    let x = f32::from_le_bytes(self.data[base..base + 4].try_into().unwrap()) as f64;
+                    let y =
+                        f32::from_le_bytes(self.data[base + 4..base + 8].try_into().unwrap()) as f64;
+                    let z =
+                        f32::from_le_bytes(self.data[base + 8..base + 12].try_into().unwrap()) as f64;
+                    if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+                        return Err(CostmapError::new(
+                            "point cloud contains a non-finite xyz coordinate",
+                        ));
+                    }
+                    visit(x, y, z);
+                }
+            }
+            return Ok(());
+        }
+
+        for row in 0..self.height {
+            for column in 0..self.width {
+                let base = row * self.row_step + column * self.point_step;
+                let x = read_f32(self.data, base + self.x_offset, self.big_endian) as f64;
+                let y = read_f32(self.data, base + self.y_offset, self.big_endian) as f64;
+                let z = read_f32(self.data, base + self.z_offset, self.big_endian) as f64;
+                if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+                    return Err(CostmapError::new(
+                        "point cloud contains a non-finite xyz coordinate",
+                    ));
+                }
+                visit(x, y, z);
+            }
+        }
+        Ok(())
+    }
 }
 
 fn field_offset(message: &PointCloud2, name: &str) -> Result<usize, CostmapError> {
@@ -702,81 +755,145 @@ fn read_f32(data: &[u8], offset: usize, big_endian: bool) -> f32 {
     }
 }
 
-fn gaussian_filter(input: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
-    let radius = (GAUSSIAN_TRUNCATE * sigma + 0.5).floor() as isize;
-    let mut kernel = Vec::with_capacity((radius * 2 + 1) as usize);
-    let mut sum = 0.0;
-    for offset in -radius..=radius {
+fn gaussian_kernel(sigma: f64) -> (Vec<f32>, usize) {
+    let radius = (GAUSSIAN_TRUNCATE * sigma + 0.5).floor() as usize;
+    let mut kernel = Vec::with_capacity(radius * 2 + 1);
+    let mut sum = 0.0f64;
+    for offset in -(radius as isize)..=(radius as isize) {
         let value = (-(offset as f64).powi(2) / (2.0 * sigma * sigma)).exp();
-        kernel.push(value);
+        kernel.push(value as f32);
         sum += value;
     }
+    let inv_sum = (1.0 / sum) as f32;
     for value in &mut kernel {
-        *value /= sum;
+        *value *= inv_sum;
     }
+    (kernel, radius)
+}
 
-    let mut horizontal = vec![0.0; input.len()];
-    horizontal
-        .par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(row, output_row)| {
-            for (column, output_cell) in output_row.iter_mut().enumerate() {
-                let mut value = 0.0;
-                for (kernel_index, weight) in kernel.iter().enumerate() {
-                    let offset = kernel_index as isize - radius;
-                    let source_column = reflect_index(column as isize + offset, width);
-                    value += f64::from(input[row * width + source_column]) * weight;
-                }
-                *output_cell = value as f32;
+fn convolve_rows_pair(
+    input_a: &[f32],
+    input_b: &[f32],
+    output_a: &mut [f32],
+    output_b: &mut [f32],
+    width: usize,
+    height: usize,
+    kernel: &[f32],
+    radius: usize,
+) {
+    let mut padded_a = vec![0.0f32; width + radius * 2];
+    let mut padded_b = vec![0.0f32; width + radius * 2];
+    for row in 0..height {
+        let row_start = row * width;
+        for column in 0..width {
+            padded_a[radius + column] = input_a[row_start + column];
+            padded_b[radius + column] = input_b[row_start + column];
+        }
+        for index in 0..radius {
+            let left = reflect_index(-(index as isize + 1), width);
+            let right = reflect_index((width + index) as isize, width);
+            padded_a[radius - 1 - index] = input_a[row_start + left];
+            padded_b[radius - 1 - index] = input_b[row_start + left];
+            padded_a[radius + width + index] = input_a[row_start + right];
+            padded_b[radius + width + index] = input_b[row_start + right];
+        }
+        for column in 0..width {
+            let mut value_a = 0.0f32;
+            let mut value_b = 0.0f32;
+            for (kernel_index, weight) in kernel.iter().enumerate() {
+                value_a += padded_a[column + kernel_index] * weight;
+                value_b += padded_b[column + kernel_index] * weight;
             }
-        });
+            output_a[row_start + column] = value_a;
+            output_b[row_start + column] = value_b;
+        }
+    }
+}
 
-    let mut output = vec![0.0; input.len()];
-    output
-        .par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(row, output_row)| {
-            for (column, output_cell) in output_row.iter_mut().enumerate() {
-                let mut value = 0.0;
-                for (kernel_index, weight) in kernel.iter().enumerate() {
-                    let offset = kernel_index as isize - radius;
-                    let source_row = reflect_index(row as isize + offset, height);
-                    value += f64::from(horizontal[source_row * width + column]) * weight;
-                }
-                *output_cell = value as f32;
-            }
-        });
+fn transpose(input: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let mut output = vec![0.0f32; input.len()];
+    for row in 0..height {
+        let row_start = row * width;
+        for column in 0..width {
+            output[column * height + row] = input[row_start + column];
+        }
+    }
     output
 }
 
-fn sobel(input: &[f32], width: usize, height: usize, horizontal: bool) -> Vec<f32> {
-    let mut output = vec![0.0; input.len()];
-    let smoothing = [1.0_f64, 2.0, 1.0];
-    let derivative = [-1.0_f64, 0.0, 1.0];
+fn gaussian_filter_pair(
+    input_a: &[f32],
+    input_b: &[f32],
+    width: usize,
+    height: usize,
+    sigma: f64,
+) -> (Vec<f32>, Vec<f32>) {
+    let (kernel, radius) = gaussian_kernel(sigma);
+    if width == 0 || height == 0 {
+        return (Vec::new(), Vec::new());
+    }
 
-    output
-        .par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(row, output_row)| {
-            for (column, output_cell) in output_row.iter_mut().enumerate() {
-                let mut value = 0.0;
-                for kernel_row in 0..3 {
-                    let source_row = reflect_index(row as isize + kernel_row as isize - 1, height);
-                    for kernel_column in 0..3 {
-                        let source_column =
-                            reflect_index(column as isize + kernel_column as isize - 1, width);
-                        let weight = if horizontal {
-                            smoothing[kernel_row] * derivative[kernel_column]
-                        } else {
-                            derivative[kernel_row] * smoothing[kernel_column]
-                        };
-                        value += f64::from(input[source_row * width + source_column]) * weight;
-                    }
-                }
-                *output_cell = value as f32;
-            }
-        });
-    output
+    let mut horizontal_a = vec![0.0f32; input_a.len()];
+    let mut horizontal_b = vec![0.0f32; input_b.len()];
+    convolve_rows_pair(
+        input_a,
+        input_b,
+        &mut horizontal_a,
+        &mut horizontal_b,
+        width,
+        height,
+        &kernel,
+        radius,
+    );
+
+    // Transpose so the vertical pass becomes another contiguous row convolution.
+    let transposed_a = transpose(&horizontal_a, width, height);
+    let transposed_b = transpose(&horizontal_b, width, height);
+    let mut vertical_a = vec![0.0f32; input_a.len()];
+    let mut vertical_b = vec![0.0f32; input_b.len()];
+    convolve_rows_pair(
+        &transposed_a,
+        &transposed_b,
+        &mut vertical_a,
+        &mut vertical_b,
+        height,
+        width,
+        &kernel,
+        radius,
+    );
+    (
+        transpose(&vertical_a, height, width),
+        transpose(&vertical_b, height, width),
+    )
+}
+
+fn sobel_pair(input: &[f32], width: usize, height: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut gradient_x = vec![0.0f32; input.len()];
+    let mut gradient_y = vec![0.0f32; input.len()];
+    if width < 3 || height < 3 {
+        return (gradient_x, gradient_y);
+    }
+
+    // Interior cells only — border gradients are unused by height_costs.
+    for row in 1..height - 1 {
+        let above = (row - 1) * width;
+        let middle = row * width;
+        let below = (row + 1) * width;
+        for column in 1..width - 1 {
+            let index = middle + column;
+            let a0 = input[above + column - 1];
+            let a1 = input[above + column];
+            let a2 = input[above + column + 1];
+            let m0 = input[middle + column - 1];
+            let m2 = input[middle + column + 1];
+            let b0 = input[below + column - 1];
+            let b1 = input[below + column];
+            let b2 = input[below + column + 1];
+            gradient_x[index] = (a2 + 2.0 * m2 + b2) - (a0 + 2.0 * m0 + b0);
+            gradient_y[index] = (b0 + 2.0 * b1 + b2) - (a0 + 2.0 * a1 + a2);
+        }
+    }
+    (gradient_x, gradient_y)
 }
 
 fn reflect_index(index: isize, length: usize) -> usize {

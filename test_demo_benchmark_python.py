@@ -76,6 +76,35 @@ def test_rust_blueprint_only_swaps_costmapper(mocker: MockerFixture) -> None:
     assert selected.global_config_overrides["n_workers"] == 9
 
 
+def test_benchmark_start_uses_worker_pipe_instead_of_transport_rpc(
+    mocker: MockerFixture,
+) -> None:
+    coordinator = benchmark.BenchmarkModuleCoordinator()
+    first = mocker.Mock()
+    first.actor_instance._module_id = 11
+    second = mocker.Mock()
+    second.actor_instance._module_id = 12
+    coordinator._deployed_modules = {
+        _OtherModule: first,
+        PythonCostMapper: second,
+    }
+    on_system_modules = mocker.patch.object(coordinator, "_send_on_system_modules")
+
+    coordinator.start_all_modules()
+
+    requests = [
+        module.actor_instance._send_request_to_worker.call_args.args[0]
+        for module in (first, second)
+    ]
+    assert [(request.module_id, request.name) for request in requests] == [
+        (11, "start"),
+        (12, "start"),
+    ]
+    first.start.assert_not_called()
+    second.start.assert_not_called()
+    on_system_modules.assert_called_once_with()
+
+
 def test_result_round_trip_preserves_whole_system_summary() -> None:
     original = _result("python")
 
