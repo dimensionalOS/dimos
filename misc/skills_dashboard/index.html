@@ -25,6 +25,8 @@
     --bad: #e66767;
     --bad-soft: #3a1717;
     --idea: #8b99ad;
+    --hold: #9d8cd9;
+    --hold-soft: #241f3d;
     --code-bg: #0b111c;
     --code-ink: #cfdcee;
     --code-accent: #8fb8dd;
@@ -38,6 +40,7 @@
     --good: #067a06; --good-soft: #e2f3e2;
     --amber: #8a5c00; --amber-soft: #f7edd6;
     --bad: #b23434; --bad-soft: #f8e4e4; --idea: #6b7686;
+    --hold: #5a3f9c; --hold-soft: #ece8f9;
     --code-bg: #101826; --code-ink: #d5e2f4; --code-accent: #8fb8dd;
   }
   :root[data-theme="dark"] {
@@ -48,6 +51,7 @@
     --good: #35b535; --good-soft: #14301a;
     --amber: #e3a53a; --amber-soft: #33290f;
     --bad: #e66767; --bad-soft: #3a1717; --idea: #8b99ad;
+    --hold: #9d8cd9; --hold-soft: #241f3d;
     --code-bg: #0b111c; --code-ink: #cfdcee; --code-accent: #8fb8dd;
   }
 
@@ -129,6 +133,7 @@
   .dot.proto{ background: var(--amber); }
   .dot.blocked { background: var(--bad); }
   .dot.idea { background: transparent; border: 1.5px solid var(--muted); }
+  .dot.hold { background: var(--hold); }
 
   .legend {
     display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
@@ -151,6 +156,7 @@
   .pill.proto { background: var(--amber-soft); color: var(--amber); }
   .pill.blocked { background: var(--bad-soft); color: var(--bad); }
   .pill.idea  { background: var(--surface-2);  color: var(--idea); }
+  .pill.hold  { background: var(--hold-soft); color: var(--hold); }
   .lede { color: var(--ink-2); max-width: 72ch; margin: 0 0 22px; }
   .lede.scope { font-size: 13.5px; margin-top: 14px; }
 
@@ -242,6 +248,8 @@
     font-size: 13.5px; color: var(--ink-2);
   }
   .next b { color: var(--ink); }
+  .next.hold { border-left-color: var(--hold); }
+  .next.hold b { color: var(--hold); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
   .card {
     background: var(--surface); border: 1px solid var(--line);
@@ -261,6 +269,92 @@
   }
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+
+  /* Review artifacts (from the skill-verification suite's test_outputs/) */
+  .artifacts {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 14px; margin: 10px 0 4px;
+  }
+  .art { margin: 0; }
+  .art-thumb {
+    display: flex; align-items: center; justify-content: center;
+    height: 150px; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
+  }
+  .art-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .art-thumb.empty img { display: none; }
+  .art-thumb.empty::after {
+    content: "not generated yet — run the suite";
+    font-size: 11.5px; color: var(--muted); text-align: center; padding: 0 10px;
+  }
+  .art-file .art-ext {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 22px; letter-spacing: 1px; color: var(--muted);
+  }
+  .art figcaption { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+  .art figcaption .art-note { display: block; }
+
+  /* Scenario sub-tabs within the test section */
+  .subtabs { margin: 6px 0 4px; }
+  .subtab-bar {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  }
+  .subtab {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: none; border: none; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--muted);
+    padding: 7px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .subtab:hover { color: var(--ink); }
+  .subtab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted); }
+  .sdot.ok { background: #2ea043; }
+  .sdot.prog { background: #d9a007; }
+  .sdot.na { background: var(--line-strong); }
+  .subtab-panel[hidden] { display: none; }
+
+  .sc-empty {
+    display: flex; flex-direction: column; gap: 3px;
+    background: var(--surface-2); border: 1px dashed var(--line-strong);
+    border-radius: 6px; padding: 16px 18px; color: var(--muted);
+  }
+  .sc-empty b { color: var(--muted); font-size: 13px; letter-spacing: .3px; text-transform: uppercase; }
+  .sc-empty.prog { border-color: #d9a00755; }
+  .sc-empty.prog b { color: #d9a007; }
+  .sc-note { font-size: 13.5px; color: var(--ink); margin: 0 0 12px; }
+
+  .vqa { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+  .vqa-item {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 10px 13px; background: var(--surface);
+  }
+  .vqa-q { font-size: 13.5px; font-weight: 600; color: var(--ink); margin: 0 0 5px; }
+  .vqa-a { font-size: 13px; color: var(--ink); margin: 0 0 7px; white-space: pre-wrap; }
+  .vqa-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+  .vqa-meta .tool {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; color: var(--accent);
+  }
+  .vqa-meta .dur { font-size: 11px; color: var(--muted); }
+  .vqa-meta .toks { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+
+  /* Token/credit usage for a scenario run — a small stat strip above the Q&A. */
+  .usage {
+    display: flex; flex-wrap: wrap; gap: 0; margin: 2px 0 14px;
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    background: var(--surface);
+  }
+  .usage .stat {
+    flex: 1 1 auto; min-width: 96px; padding: 9px 14px;
+    border-right: 1px solid var(--line);
+  }
+  .usage .stat:last-child { border-right: 0; }
+  .usage .stat .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .usage .stat .v { font-size: 16px; font-weight: 650; color: var(--ink); margin-top: 2px; }
+  .usage .stat.accent .v { color: var(--accent); }
+  .usage .stat .u { font-size: 11px; font-weight: 500; color: var(--muted); }
 
   .concept {
     background: var(--surface); border: 1px dashed var(--line-strong);
@@ -306,6 +400,7 @@
     <span><span class="dot proto"></span> prototype</span>
     <span><span class="dot idea"></span> idea</span>
     <span><span class="dot blocked"></span> blocked</span>
+    <span><span class="dot hold"></span> on hold</span>
   </div>
   <div id="panels"></div>
 
@@ -331,11 +426,13 @@ const STATUS = {
   'prototype':   { cls: 'proto', label: 'prototype' },
   'blocked':     { cls: 'blocked', label: 'blocked' },
   'idea':        { cls: 'idea', label: 'idea' },
+  'hold':        { cls: 'hold', label: 'on hold' },
 };
 const ACTIVE_STATUSES = new Set(['implemented', 'in-progress', 'prototype']);
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                           .replace(/"/g, '&quot;');
+const fmtInt = n => Number(n).toLocaleString('en-US');
 
 // Data must always be fresh — bust both the browser cache (?v=) and any
 // intermediary with no-store, so republished results show on plain reload.
@@ -385,6 +482,93 @@ function figureHTML(dir, f) {
     : `<img class="fig${frame}" src="${esc(light)}" alt="${esc(f.alt || '')}">`;
   return `${f.heading ? `<h3>${esc(f.heading)}</h3>` : ''}
     <figure>${imgs}${f.caption_html ? `<figcaption>${f.caption_html}</figcaption>` : ''}</figure>`;
+}
+
+// A grid of review artifacts (images -> clickable thumbnails, other files ->
+// labeled links). Served from the repo root; previews degrade to a placeholder
+// when the file is absent (e.g. the suite hasn't been run on a fresh checkout).
+function artifactsBlock(arts, captionHtml) {
+  if (!arts || !arts.length) return '';
+  const isImg = f => /\.(png|jpe?g|gif|webp|svg)$/i.test(f);
+  const cells = arts.map(a => {
+    const href = esc(a.file);
+    const label = esc(a.label || a.file.split('/').pop());
+    const note = a.note ? `<span class="art-note">${esc(a.note)}</span>` : '';
+    const preview = isImg(a.file)
+      ? `<a class="art-thumb" href="${href}" target="_blank" rel="noopener"><img src="${href}" alt="${label}" loading="lazy" onerror="this.closest('.art-thumb').classList.add('empty')"></a>`
+      : `<a class="art-thumb art-file" href="${href}" target="_blank" rel="noopener"><span class="art-ext">${esc((a.file.split('.').pop() || 'file').toUpperCase())}</span></a>`;
+    return `<figure class="art">${preview}<figcaption><a href="${href}" target="_blank" rel="noopener"><code>${label}</code></a>${note}</figcaption></figure>`;
+  }).join('');
+  return `${captionHtml ? `<p class="code-cap">${captionHtml}</p>` : ''}<div class="artifacts">${cells}</div>`;
+}
+
+// A recorded VQA transcript: the LLM answering questions via MCP skill calls on
+// a scenario recording (dimos/e2e_tests master VQA e2e).
+function vqaHTML(vqa) {
+  if (!vqa || !vqa.length) return '';
+  return `<div class="vqa">${vqa.map(v => `
+    <div class="vqa-item">
+      <p class="vqa-q">${esc(v.question)}</p>
+      <p class="vqa-a">${esc(v.answer)}</p>
+      <p class="vqa-meta">${(v.tool_calls || []).map(t => `<span class="tool">${esc(t)}</span>`).join('')}${v.duration_s != null ? `<span class="dur">${v.duration_s}s</span>` : ''}${v.tokens && v.tokens.total_tokens ? `<span class="toks">${fmtInt(v.tokens.total_tokens)} tok</span>` : ''}</p>
+    </div>`).join('')}</div>`;
+}
+
+// Token/credit usage for one scenario run — a small stat strip (from the
+// master VQA e2e's aggregate_usage: total tokens, in/out split, model, est. $).
+function usageHTML(u) {
+  if (!u || !u.total_tokens) return '';
+  const cost = u.cost_usd != null
+    ? `<div class="stat accent"><div class="k">Est. cost</div><div class="v">$${u.cost_usd.toFixed(4)}</div></div>` : '';
+  const model = u.model ? `<div class="stat"><div class="k">Model</div><div class="v" style="font-size:13px">${esc(u.model)}</div></div>` : '';
+  return `<div class="usage" aria-label="Token usage for this run">
+    <div class="stat"><div class="k">Total tokens</div><div class="v">${fmtInt(u.total_tokens)}</div></div>
+    <div class="stat"><div class="k">Input</div><div class="v">${fmtInt(u.input_tokens)} <span class="u">tok</span></div></div>
+    <div class="stat"><div class="k">Output</div><div class="v">${fmtInt(u.output_tokens)} <span class="u">tok</span></div></div>
+    ${u.questions ? `<div class="stat"><div class="k">Questions</div><div class="v">${fmtInt(u.questions)}</div></div>` : ''}
+    ${cost}${model}
+  </div>`;
+}
+
+// Body for one scenario sub-tab, from item.scenarios[scenarioId].
+function scenarioBody(sc) {
+  if (!sc || sc.state === 'na' || sc.state === 'in-progress') {
+    const prog = sc && sc.state === 'in-progress';
+    const label = prog ? 'In progress' : 'N/A';
+    const reason = (sc && sc.reason) || 'No result for this scenario.';
+    return `<div class="sc-empty${prog ? ' prog' : ''}"><b>${esc(label)}</b><span>${esc(reason)}</span></div>`;
+  }
+  const note = sc.note_html ? `<p class="sc-note">${sc.note_html}</p>` : '';
+  return `${note}${usageHTML(sc.usage)}${vqaHTML(sc.vqa)}${artifactsBlock(sc.review_artifacts)}`;
+}
+
+// The whole test section: an "Unit (synthetic)" sub-tab (junit + artifacts)
+// followed by one sub-tab per e2e scenario (scenarios.json). A coloured dot on
+// each tab shows pass / in-progress / N-A at a glance.
+function scenariosHTML(idx, item, junit, scenarios) {
+  const g = `st-${idx}`;
+  const unitTests = (junit || (item.manual_tests || []).length) ? testsHTML(item, junit) : evidenceHTML(item);
+  const unitArts = artifactsBlock(item.review_artifacts,
+    (item.review_artifacts || []).length ? 'Artifacts from the synthetic unit run — written to <code>test_outputs/</code>, served from the repo root.' : '');
+  const unitBody = (unitTests || unitArts) ? `${unitTests}${unitArts}` : '<p class="code-cap">No unit suite for this item yet.</p>';
+  const unitDot = junit ? (junit.cases.some(c => c.status === 'fail') ? 'na' : 'ok') : 'na';
+
+  const tabs = [{ id: 'unit', label: 'Unit (synthetic)', dot: unitDot, body: unitBody }].concat(
+    scenarios.map(s => {
+      const sc = (item.scenarios || {})[s.id];
+      const dot = !sc ? 'na' : sc.state === 'pass' ? 'ok' : sc.state === 'in-progress' ? 'prog' : 'na';
+      return { id: s.id, label: s.label, dot, body: scenarioBody(sc) };
+    }));
+
+  const bar = tabs.map((t, i) =>
+    `<button class="subtab" role="tab" data-target="${g}-${t.id}" aria-selected="${i === 0}"><span class="sdot ${t.dot}"></span>${esc(t.label)}</button>`).join('');
+  const body = tabs.map((t, i) =>
+    `<div class="subtab-panel${i === 0 ? ' active' : ''}" id="${g}-${t.id}"${i === 0 ? '' : ' hidden'}>${t.body}</div>`).join('');
+  return `<h3>Test data — by scenario</h3>
+    <div class="subtabs">
+      <div class="subtab-bar" role="tablist">${bar}</div>
+      <div class="subtab-body">${body}</div>
+    </div>`;
 }
 
 function testsHTML(item, junit) {
@@ -446,7 +630,7 @@ function evidenceHTML(item) {
     </table></div>`;
 }
 
-function panelHTML(idx, dir, item, junit, conceptHtml) {
+function panelHTML(idx, dir, item, junit, conceptHtml, scenarios) {
   const st = STATUS[item.status] || STATUS.idea;
   const flow = (item.flow || []).length
     ? `<h3>How it works</h3><div class="flow" aria-label="Data flow">${item.flow.map((n, i) =>
@@ -476,6 +660,8 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
     ? `<h3>Dependencies</h3><p>${item.dependencies.map(d => `<span class="dep">${esc(d)}</span>`).join('')}</p>`
     : '';
   const concept = conceptHtml ? `<h3>Concept sketch — not built</h3>${conceptHtml}` : '';
+  const hold = item.hold_note_html
+    ? `<div class="next hold"><b>On hold:</b> ${item.hold_note_html}</div>` : '';
   const next = item.next_step_html ? `<div class="next"><b>Next step:</b> ${item.next_step_html}</div>` : '';
   const sources = (item.sources || []).length
     ? `<p class="files">Source: ${item.sources.map(s =>
@@ -489,8 +675,8 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
     ${skillsHTML(item)}
     ${item.figures && item.figures.length && item.figures[0].hero !== false ? figs : ''}
     ${flow}${pipe}${scope}
-    ${junit || (item.manual_tests || []).length ? testsHTML(item, junit) : evidenceHTML(item)}
-    ${concept}${cards}${exHTML}${deps}${next}${sources}
+    ${scenariosHTML(idx, item, junit, scenarios)}
+    ${concept}${cards}${exHTML}${deps}${hold}${next}${sources}
   </section>`;
 }
 
@@ -499,6 +685,8 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
   const errBox = document.getElementById('load-error');
   try {
     const index = await fetchJSON('data/items.json');
+    const scenarioCfg = await fetchTextOrNull('data/scenarios.json');
+    const SCENARIOS = scenarioCfg ? (JSON.parse(scenarioCfg).scenarios || []) : [];
     const loaded = await Promise.all(index.items.map(async slug => {
       const dir = `data/${slug}`;
       const item = await fetchJSON(`${dir}/item.json`);
@@ -510,7 +698,8 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
 
     // KPIs
     const active = loaded.filter(l => ACTIVE_STATUSES.has(l.item.status)).length;
-    const ideas = loaded.length - active;
+    const onHold = loaded.filter(l => l.item.status === 'hold').length;
+    const ideas = loaded.length - active - onHold;
     let pass = 0, fail = 0, total = 0, newest = null, suiteTime = 0;
     for (const l of loaded) {
       if (!l.junit) continue;
@@ -526,7 +715,7 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
     const testCls = fail ? 'fail' : 'ok';
     document.getElementById('kpis').innerHTML = `
       <div class="kpi"><div class="label">Items tracked</div><div class="value">${loaded.length}</div>
-        <div class="note">${active} active · ${ideas} ideas</div></div>
+        <div class="note">${active} active · ${ideas} ideas${onHold ? ` · ${onHold} on hold` : ''}</div></div>
       <div class="kpi"><div class="label">Unit tests</div>
         <div class="value"><span class="${testCls}">${pass} / ${total}</span></div>
         <div class="note">${fail ? fail + ' failing · ' : 'pass · '}${newest ? 'run ' + newest.slice(0, 10) + ', ' : ''}${suiteTime.toFixed(1)} s total</div></div>
@@ -544,7 +733,21 @@ function panelHTML(idx, dir, item, junit, conceptHtml) {
         aria-selected="${i === 0}"><span class="dot ${st.cls}"></span><span class="n">${i + 1}</span>${esc(l.item.tab_label || l.item.title)}</button>`;
     }).join('');
     document.getElementById('panels').innerHTML =
-      loaded.map((l, i) => panelHTML(i + 1, l.dir, l.item, l.junit, l.conceptHtml)).join('\n');
+      loaded.map((l, i) => panelHTML(i + 1, l.dir, l.item, l.junit, l.conceptHtml, SCENARIOS)).join('\n');
+
+    // Sub-tab (scenario) switching, delegated across all panels.
+    document.getElementById('panels').addEventListener('click', e => {
+      const btn = e.target.closest('.subtab');
+      if (!btn) return;
+      const bar = btn.closest('.subtab-bar');
+      const target = btn.getAttribute('data-target');
+      bar.querySelectorAll('.subtab').forEach(b => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+      bar.parentElement.querySelectorAll('.subtab-panel').forEach(p => {
+        const on = p.id === target;
+        p.classList.toggle('active', on);
+        p.hidden = !on;
+      });
+    });
 
     document.getElementById('footer-note').innerHTML =
       `Each tab renders <code>item.json</code> + <code>results.xml</code> + figures from its folder under

@@ -2,6 +2,27 @@
   "title": "Full 3D scene model with cross-sections",
   "tab_label": "3D scene model",
   "status": "prototype",
+  "scenarios": {
+    "china-office": {
+      "state": "pass",
+      "note_html": "The sliceable 3D model exported from chinaOffice.rrd (<span class='tmono'>--viewer</span>) — the same model the floorplan slices.",
+      "review_artifacts": [
+        {
+          "file": "/floorplan.model.rrd",
+          "label": "floorplan.model.rrd",
+          "note": "open in rerun / dimos-viewer — scrub the cut_z timeline to sweep the section plane"
+        }
+      ]
+    },
+    "dimsim-spatial-memory": {
+      "state": "na",
+      "reason": "Not exported for this recording yet."
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "Static-structure reconstruction; not the activity scenario's focus."
+    }
+  },
   "summary_html": "<span class='tmono'>SceneModel</span> fuses everything a mapping session produced — the lidar cloud and robot trajectory from a Rerun recording, plus (optionally) the recorded camera stream for color — into one queryable 3D model of the space, sliceable into horizontal plan cuts and vertical elevations for viewing and analysis. The foundation item 1's floorplan generation builds on.",
   "figures": [
     {
@@ -63,6 +84,23 @@
   ],
   "next_step_html": "Wrap as a callable skill (\"model the space seen so far\", \"show me a section at z=4.8\"). Item 1's migration is complete — the floorplan pipeline slices this model first, then draws.",
   "dependencies": [],
+  "review_artifacts": [
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/08-scene-3d-model/scene_sections.png",
+      "label": "scene_sections.png",
+      "note": "3D scatter + horizontal plan cut (z=1.5) + vertical elevation; reads as a two-floor house"
+    },
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/08-scene-3d-model/scene_model.glb",
+      "label": "scene_model.glb",
+      "note": "open in any glTF viewer / Blender — a coarse two-story shell"
+    },
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/08-scene-3d-model/scene_model.rrd",
+      "label": "scene_model.rrd",
+      "note": "open with rerun / dimos-viewer — drag the cut plane, watch the section update"
+    }
+  ],
   "sources": [
     "dimos/mapping/reconstruction/scene_model.py",
     "dimos/mapping/reconstruction/test_scene_model.py",

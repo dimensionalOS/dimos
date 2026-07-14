@@ -2,8 +2,48 @@
   "title": "Convert lidar to numpy signals",
   "tab_label": "Lidar → numpy",
   "status": "implemented",
-  "summary_html": "A client-side utility, <span class='tmono'>LidarPointCloudClient</span>, that lets any script or skill running <em>outside</em> the module graph subscribe to live lidar over LCM and pull the accumulated cloud as a plain <span class='tmono'>(N, 3)</span> float32 numpy array — no hand-rolled subscribe/accumulate/vstack bookkeeping. Extracted from the floorplan demo's ad-hoc collector, which now uses it.",
-  "skills_note": "no agent skill (by design) — this is a library API: <span class='tmono'>LidarPointCloudClient</span> in <span class='tmono'>dimos/mapping/pointclouds/live.py</span>, consumed by item 1's collection stage; wrap as a skill only when item 2/4 has a concrete need",
+  "scenarios": {
+    "china-office": {
+      "state": "na",
+      "reason": "Client-side lidar→numpy utility, not a distinct e2e skill — the floorplan run above consumes it. Validated by its own unit suite."
+    },
+    "dimsim-spatial-memory": {
+      "state": "na",
+      "reason": "Same — consumed by the mapping runs, validated by unit tests; nothing scenario-specific to show."
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "Scenario-agnostic utility; nothing activity-specific to exercise."
+    }
+  },
+  "summary_html": "A client-side utility, <span class='tmono'>LidarPointCloudClient</span>, that lets any script or skill running <em>outside</em> the module graph subscribe to live lidar over LCM and pull the accumulated cloud as a plain <span class='tmono'>(N, 3)</span> float32 numpy array — no hand-rolled subscribe/accumulate/vstack bookkeeping. Extracted from the floorplan demo's ad-hoc collector, which now uses it. <b>New:</b> a set of pure-numpy <b>signal tools</b> (<span class='tmono'>signals.py</span>) turns that raw array into the products four objectives need — <b>measure the space</b> (<span class='tmono'>extents</span>, <span class='tmono'>ground_height</span>), <b>reactive clearance/safety</b> (<span class='tmono'>nearest_obstacle</span>, <span class='tmono'>clearance</span>, <span class='tmono'>region_is_clear</span>), a <b>portable map artifact</b> (<span class='tmono'>occupancy_grid</span>, <span class='tmono'>height_map</span>), and <b>coverage feedback</b> (<span class='tmono'>coverage_area</span>) — with thin client wrappers so an outside-graph caller can ask the live sensor directly.",
+  "skills": [
+    {
+      "name": "measure_space()",
+      "container": "LidarSignalSkills",
+      "desc_html": "Bounding box + dimensions (w × d × h) of the scanned space — \"how big is this room?\"",
+      "file": "dimos/skills/mapping/lidar_signal_skills.py"
+    },
+    {
+      "name": "nearest_obstacle_distance()",
+      "container": "LidarSignalSkills",
+      "desc_html": "Horizontal distance from the robot to the closest point at body height — a quick \"is anything close to me?\"",
+      "file": "dimos/skills/mapping/lidar_signal_skills.py"
+    },
+    {
+      "name": "check_clearance(heading_deg, fov_deg)",
+      "container": "LidarSignalSkills",
+      "desc_html": "Distance to the nearest point in a cone around a heading (default: straight ahead) — \"is this direction clear?\"",
+      "file": "dimos/skills/mapping/lidar_signal_skills.py"
+    },
+    {
+      "name": "coverage_report()",
+      "container": "LidarSignalSkills",
+      "desc_html": "Points + frames accumulated and approximate floor area scanned — \"how much have you seen?\"",
+      "file": "dimos/skills/mapping/lidar_signal_skills.py"
+    }
+  ],
+  "skills_note": "the raw numpy substrate is a library API (<span class='tmono'>LidarPointCloudClient</span> + <span class='tmono'>signals.py</span>, consumed by item 1 and any outside-graph script); <span class='tmono'>LidarSignalSkills</span> exposes the four highest-value queries as MCP <span class='tmono'>@skill</span>s, wired into <span class='tmono'>unitree-go2-scene-memory-agentic</span> so an agent can ask them in natural language",
   "figures": [
     {
       "light": "lidar_accumulation_light.png",
@@ -14,9 +54,26 @@
     }
   ],
   "how_it_works": [
-    { "title": "Subscribe", "html": "Opens <span class='tmono'>LCMTransport</span> subscriptions to <span class='tmono'>/lidar</span> (per-scan chunks) and optionally <span class='tmono'>/global_map</span> (an already-accumulated map). Usable as a context manager: <span class='tmono'>with LidarPointCloudClient() as client:</span>." },
-    { "title": "Accumulate", "html": "Each <span class='tmono'>/lidar</span> message is converted with <span class='tmono'>points_f32()</span> and appended to a chunk list; empty messages are ignored. <span class='tmono'>/global_map</span> is cumulative upstream, so it's <em>latest-wins</em> rather than appended. All state is behind one lock." },
-    { "title": "Snapshot on demand", "html": "<span class='tmono'>snapshot()</span> returns a thread-safe vstack of buffered chunks + global map as <span class='tmono'>(N, 3)</span> float32 (or <span class='tmono'>(0, 3)</span> when nothing arrived). <span class='tmono'>clear()</span> drops the chunks but deliberately keeps the last global map." }
+    {
+      "title": "Subscribe",
+      "html": "Opens <span class='tmono'>LCMTransport</span> subscriptions to <span class='tmono'>/lidar</span> (per-scan chunks) and optionally <span class='tmono'>/global_map</span> (an already-accumulated map). Usable as a context manager: <span class='tmono'>with LidarPointCloudClient() as client:</span>."
+    },
+    {
+      "title": "Accumulate",
+      "html": "Each <span class='tmono'>/lidar</span> message is converted with <span class='tmono'>points_f32()</span> and appended to a chunk list; empty messages are ignored. <span class='tmono'>/global_map</span> is cumulative upstream, so it's <em>latest-wins</em> rather than appended. All state is behind one lock."
+    },
+    {
+      "title": "Snapshot on demand",
+      "html": "<span class='tmono'>snapshot()</span> returns a thread-safe vstack of buffered chunks + global map as <span class='tmono'>(N, 3)</span> float32 (or <span class='tmono'>(0, 3)</span> when nothing arrived). <span class='tmono'>clear()</span> drops the chunks but deliberately keeps the last global map."
+    },
+    {
+      "title": "Derive signals (pure numpy)",
+      "html": "<span class='tmono'>signals.py</span> is stateless: every function takes an <span class='tmono'>(N, 3)</span> array and returns plain numpy/scalars (no LCM, open3d, or graph), so it runs in a script, notebook, or skill. <b>Measure</b>: <span class='tmono'>extents()</span> → bbox + room dimensions, <span class='tmono'>ground_height()</span>. <b>Clearance/safety</b>: <span class='tmono'>nearest_obstacle()</span>, <span class='tmono'>clearance(heading, fov)</span> (closest point in a cone ahead), <span class='tmono'>region_is_clear(box)</span> — an optional <span class='tmono'>height_band</span> ignores floor/ceiling so \"nearest thing\" means \"at body height.\" <b>Map artifact</b>: <span class='tmono'>occupancy_grid()</span> (top-down <span class='tmono'>(H, W)</span> + origin + resolution), <span class='tmono'>height_map()</span> (2.5D max-z). <b>Coverage</b>: <span class='tmono'>coverage_area()</span> (scanned m²). Building blocks: <span class='tmono'>crop</span>, <span class='tmono'>filter_height</span>, <span class='tmono'>voxel_downsample</span>. Empty-cloud policy: measurement queries raise, distance queries return <span class='tmono'>inf</span> (nothing near = clear), grid/area return empty/zero."
+    },
+    {
+      "title": "Ask the live sensor",
+      "html": "Thin <span class='tmono'>LidarPointCloudClient</span> wrappers apply the signal tools to the current snapshot, so an outside-graph caller asks the sensor directly: <span class='tmono'>client.extents()</span>, <span class='tmono'>client.nearest_obstacle(height_band=…)</span>, <span class='tmono'>client.clearance(heading)</span>, <span class='tmono'>client.occupancy_grid()</span>, <span class='tmono'>client.coverage_summary()</span> (points + messages + scanned area, with <span class='tmono'>area_m2=None</span> until anything is scanned)."
+    }
   ],
   "scope_note_html": "Scope note: single-message conversion (<span class='tmono'>PointCloud2.points_f32()</span> / <span class='tmono'>.as_numpy()</span>) and in-graph accumulation + occupancy rasterization already existed and are unchanged — this fills the gap for <em>client-side</em> consumers only.",
   "test_descriptions": {
@@ -26,6 +83,33 @@
     "test_global_map_is_latest_wins": "A newer <span class='tmono'>/global_map</span> replaces (not appends to) the old one",
     "test_clear_drops_lidar_chunks_but_keeps_global_map": "<span class='tmono'>clear()</span> resets scan buffer while preserving the map",
     "test_empty_pointcloud_message_is_ignored": "Zero-point messages don't pollute the buffer or the count",
+    "test_client_extents_over_snapshot": "Client <span class='tmono'>extents()</span> reports per-axis span of everything scanned",
+    "test_client_nearest_obstacle_and_clearance": "Client <span class='tmono'>nearest_obstacle()</span>/<span class='tmono'>clearance()</span> read the live snapshot; a cone facing away returns inf",
+    "test_client_coverage_summary_reports_none_area_when_empty": "<span class='tmono'>coverage_summary()</span> gives points/messages/area, with area None before any scan",
+    "test_as_xyz_rejects_wrong_shape": "Non-(N, 3) input is rejected rather than silently mis-processed",
+    "test_crop_keeps_only_inside_box": "<span class='tmono'>crop()</span> keeps only points inside the axis-aligned box",
+    "test_filter_height_band": "<span class='tmono'>filter_height()</span> keeps only points within the z band",
+    "test_voxel_downsample_collapses_duplicates": "<span class='tmono'>voxel_downsample()</span> collapses overlapping-sweep duplicates; finer voxels separate them",
+    "test_extents_recovers_room_dimensions": "Measure: <span class='tmono'>extents()</span> recovers a 6×4×2.4 m room's span and center",
+    "test_extents_empty_raises": "<span class='tmono'>extents()</span> on an empty cloud raises rather than returning garbage",
+    "test_ground_height_finds_floor": "<span class='tmono'>ground_height()</span> locates the floor at z≈0 via a low z-percentile",
+    "test_nearest_obstacle_distance": "Safety: nearest wall to the origin is recovered at the true distance",
+    "test_nearest_obstacle_height_band_ignores_floor": "A <span class='tmono'>height_band</span> ignores the floor so the nearest body-height obstacle wins",
+    "test_nearest_obstacle_empty_is_inf": "No points → inf (nothing near = clear), never an error",
+    "test_clearance_cone_direction": "<span class='tmono'>clearance()</span> sees an obstacle in the facing cone but not one behind",
+    "test_region_is_clear": "<span class='tmono'>region_is_clear()</span> is True for an empty box, False when a point is inside",
+    "test_occupancy_grid_shape_and_perimeter": "Map: occupancy grid has the right shape/origin; perimeter occupied, interior free",
+    "test_occupancy_grid_fixed_bounds_handles_empty": "Fixed <span class='tmono'>bounds</span> yield a correctly-sized empty grid on an empty cloud",
+    "test_height_map_max_z_per_cell": "Height map takes the max z per cell and is NaN where empty",
+    "test_coverage_area_matches_occupied_cells": "Coverage: a 2×2 m patch reports ≈4 m² scanned area",
+    "test_coverage_area_empty_is_zero": "Coverage of an empty cloud is 0.0",
+    "test_measure_space_reports_dimensions": "MCP skill: <span class='tmono'>measure_space()</span> reports the scanned space's width × depth × height",
+    "test_measure_space_no_data": "<span class='tmono'>measure_space()</span> says so cleanly before any lidar arrives",
+    "test_nearest_obstacle_needs_odom": "<span class='tmono'>nearest_obstacle_distance()</span> reports \"position unknown\" until odometry arrives",
+    "test_nearest_obstacle_from_robot_pose": "From the robot's pose, nearest-obstacle finds the wall and ignores the floor under it",
+    "test_check_clearance_uses_robot_heading": "<span class='tmono'>check_clearance()</span> sees an obstacle when facing it, reports clear when turned away",
+    "test_check_clearance_explicit_heading": "<span class='tmono'>check_clearance(heading_deg)</span> checks an explicit world-frame direction",
+    "test_coverage_report": "<span class='tmono'>coverage_report()</span> goes from \"nothing scanned\" to points/frames/area after a scan",
     "test_lidar_snapshot_accumulates_numpy_cloud": "Skill-verification: a synthetic scanner sweep grows <span class='tmono'>snapshot()</span> into an <span class='tmono'>(N, 3)</span> float cloud spanning the room; saves the accumulation curve + top-down cloud for review"
   },
   "tests_note_html": "the last row is from the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>), which drives the real client end-to-end and writes a review figure to <span class='tmono'>test_outputs/</span> (indexed by <span class='tmono'>REVIEW.md</span>)",
@@ -35,10 +119,21 @@
       "caption": "the floorplan demo (item 1) consumes exactly this API for its collection stage"
     }
   ],
-  "next_step_html": "Wrap as a callable skill once item 2 or 4 has a concrete need for live client-side points. (Item 2's lidar localizer takes an already-accumulated <span class='tmono'>PointCloud2</span> from its own in-graph module, so it doesn't need this client.)",
+  "next_step_html": "Validate the four MCP skills live/replay via the master VQA e2e (<span class='tmono'>test_master_vqa*</span>, whose question bank now includes item-3 measure/clearance/coverage questions), then close objective 6's loop by letting a coverage-driven explorer stop once <span class='tmono'>coverage_report</span> plateaus.",
+  "review_artifacts": [
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/03-lidar-to-numpy/lidar_accumulation.png",
+      "label": "lidar_accumulation.png",
+      "note": "left: growth curve rises then plateaus after one revolution; right: top-down cloud outlines the room + pillar"
+    }
+  ],
   "sources": [
     "dimos/mapping/pointclouds/live.py",
+    "dimos/mapping/pointclouds/signals.py",
     "dimos/mapping/pointclouds/test_live.py",
+    "dimos/mapping/pointclouds/test_signals.py",
+    "dimos/skills/mapping/lidar_signal_skills.py",
+    "dimos/skills/mapping/test_lidar_signal_skills.py",
     "dimos/skills/skill_verification/test_03_lidar_to_numpy.py"
   ]
 }

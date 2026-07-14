@@ -5,7 +5,11 @@ framework) for reasoning about the environment the robot observes: mapping,
 object/scene understanding, and activity over time. Update status as items move
 from idea -> prototype -> implemented skill.
 
-Status legend: `idea` | `prototype` | `implemented` | `blocked`
+Status legend: `idea` | `prototype` | `implemented` | `blocked` | `HOLD`
+
+`HOLD` = deliberately paused for this release (not a technical blocker like
+`blocked` — see each item's Hold note for why, and what would need to be true
+to resume).
 
 ## Skill quick reference
 
@@ -15,12 +19,12 @@ library-only items have no skill by design or not yet):
 | Item | Skill(s) | Container / file |
 |---|---|---|
 | 1 | `generate_floorplan(...)` | `FloorplanSkillContainer` — [dimos/skills/mapping/floorplan_skill.py](mapping/floorplan_skill.py) (pipeline: [dimos/mapping/floorplan/generator.py](../mapping/floorplan/generator.py)) |
-| 2 | `catalog_scene()`, `list_observed_items()`, `detect(*prompts)`, `select(track_id)` | `ObjectSceneRegistrationModule` — [dimos/perception/object_scene_registration.py](../perception/object_scene_registration.py) |
-| 3 | — (library only: `LidarPointCloudClient`) | [dimos/mapping/pointclouds/live.py](../mapping/pointclouds/live.py) |
-| 4 | — (idea) | will build on `ObjectDB` — [dimos/perception/detection/objectDB.py](../perception/detection/objectDB.py) |
+| 2 | `catalog_scene()`, `list_observed_items()`, `detect(prompts)`, `locate(query)`, `select(track_id)` | `ObjectSceneRegistrationModule` — [dimos/perception/object_scene_registration.py](../perception/object_scene_registration.py) |
+| 3 | `measure_space()`, `nearest_obstacle_distance()`, `check_clearance(...)`, `coverage_report()` | `LidarSignalSkills` — [dimos/skills/mapping/lidar_signal_skills.py](mapping/lidar_signal_skills.py) (client: [dimos/mapping/pointclouds/live.py](../mapping/pointclouds/live.py), signal tools: [dimos/mapping/pointclouds/signals.py](../mapping/pointclouds/signals.py)) |
+| 4 | — (HOLD) | will build on `ObjectDB` — [dimos/perception/detection/objectDB.py](../perception/detection/objectDB.py) |
 | 5 | `identify_object(object_id)`, `refine_observed_labels()` | `ObjectSceneRegistrationModule` — [dimos/perception/object_scene_registration.py](../perception/object_scene_registration.py) (helpers: [dimos/perception/contextual_labeling.py](../perception/contextual_labeling.py)) |
-| 6 | — (idea) | — |
-| 7 | — (idea, blocked on 6) | — |
+| 6 | — (HOLD) | — |
+| 7 | — (HOLD, depends on 6) | — |
 | 8 | — (library only: `SceneModel`, `VoxelOccupancy`) | [dimos/mapping/reconstruction/scene_model.py](../mapping/reconstruction/scene_model.py) |
 
 All skills are exposed as MCP tools by the `unitree-go2-scene-agentic`
@@ -117,14 +121,43 @@ renamed — and mirror it in the item's dashboard folder (`skills` /
   [test_object_scene_registration.py](../perception/test_object_scene_registration.py)
   (fusion, nearest-place radius gating, graceful degradation, and a ChromaDB
   round-trip of `get_tagged_locations`).
+- **`locate(query)` skill:** answers "where is X?" for a single thing,
+  resolving in order of precision: a catalogued object by name/description
+  (world position + nearest known place), then a tagged place by name
+  ("kitchen"), then — only if nothing matches — spatial memory's semantic
+  recall over the visually-remembered space, gated on match confidence so a
+  weak guess reports "not found" instead of a wrong answer.
+- **Detection quality + robustness pass:** a frame-quality gate
+  (`min_frame_brightness`/`min_frame_sharpness`, both off at 0) skips
+  dark/motion-blurred frames before detection runs at all, logging a
+  periodic rejection-rate line; `update_object` now keeps the *sharpest*
+  observation's image/bbox/mask across merges for VLM labeling (item 5)
+  instead of always taking the latest — a dark or smeared frame no longer
+  clobbers a good crop just by arriving later. The prompted `detect(prompts)`
+  path was split onto its own lazily-built `Yoloe2DDetector` instance,
+  separate from the always-on prompt-free detector, and localization
+  (lidar-or-depth) was refactored into one shared `_localize_detections()`
+  helper used by both paths. `_lidar_filters()` now takes a
+  `lidar_filter_preset` (`"sparse"` for real mid360 returns) instead of a
+  fixed filter list — this is what closed out the earlier "tune pointcloud
+  filters for real mid360 sparsity" next step. All covered in
+  [test_object_scene_registration.py](../perception/test_object_scene_registration.py)
+  (45/45 passing as of this pass, including the new `locate()` and
+  frame-quality-gate tests).
+- **Real-data validation, extended:** beyond the 87s recorded session, item 2
+  now also runs against the *full* china-office tour (890 MB `.rrd` + 10 GB
+  `mem2.db`, ~20 min, 558 camera / 11,944 lidar frames) via a new
+  robot-connection-free path — see item 1's Notes and
+  [dimos/e2e_tests/rrd_feed.py](../../e2e_tests/rrd_feed.py) — exercised by
+  `master_vqa_test.py::test_master_vqa_china_office_full_rrd`.
 - **Next step:** validate live on the Go2 via
   `unitree-go2-scene-memory(-agentic)`, then feed item 4 (temporal counts) from
-  `ObjectDB`.
+  `ObjectDB` (item 4 is on HOLD, see below).
 
 ## 3. Convert lidar to numpy signals
-- **Status:** implemented (client-side utility) —
+- **Status:** implemented (skill) — the client-side foundation,
   [dimos/mapping/pointclouds/live.py](../mapping/pointclouds/live.py)'s
-  `LidarPointCloudClient` subscribes to `/lidar` (+ optional `/global_map`)
+  `LidarPointCloudClient`, subscribes to `/lidar` (+ optional `/global_map`)
   over LCM and exposes the accumulated points as a plain `(N, 3)` numpy array,
   with unit tests in `dimos/mapping/pointclouds/test_live.py`. Extracted from
   `demo_lidar_floorplan.py`'s previously ad hoc `LidarCollector`, which now
@@ -132,18 +165,54 @@ renamed — and mirror it in the item's dashboard folder (`skills` /
   running outside the module graph) — single-message conversion
   (`PointCloud2.points_f32()`/`.as_numpy()`) and in-graph accumulation +
   grid rasterization (`dimos/mapping/pointclouds/occupancy.py`, wired via the
-  live `Map` module) already existed and are unchanged.
-- **Next step:** wrap as a callable skill once item 2/4 have a concrete
-  need for live client-side points (item 2's `Object.from_2d_to_list_lidar()`
-  instead takes an already-accumulated `PointCloud2` as a parameter, supplied
-  by its own in-graph module, so it doesn't need this client).
+  live `Map` module) already existed and are unchanged. That foundation is now
+  wrapped as four agent-callable skills — see below.
+- **Numpy signal tools** ([dimos/mapping/pointclouds/signals.py](../mapping/pointclouds/signals.py)):
+  a set of pure-numpy helpers that turn a `snapshot()` array into the products
+  four objectives need, plus thin `LidarPointCloudClient` wrappers that apply
+  them to the live snapshot. All headless-testable
+  ([test_signals.py](../mapping/pointclouds/test_signals.py) +
+  [test_live.py](../mapping/pointclouds/test_live.py)):
+  1. **Measure the space** — `extents()` (bounding box + room dimensions),
+     `ground_height()`.
+  2. **Reactive clearance / safety** — `nearest_obstacle()`,
+     `clearance(heading, fov)` (range within a cone ahead), `region_is_clear(box)`;
+     an optional `height_band` ignores floor/ceiling so "nearest thing" means
+     "nearest thing at body height."
+  3. **Portable map artifact** — `occupancy_grid()` (top-down `(H, W)` raster +
+     origin + resolution), `height_map()` (2.5D max-z per cell).
+  6. **Coverage feedback** — `coverage_area()` (scanned m²) and the client's
+     `coverage_summary()` (points, messages, area).
+  Shared building blocks: `crop()`, `filter_height()`, `voxel_downsample()`.
+  Undefined-on-empty queries (`extents`/`ground_height`) raise; distance
+  queries return `inf` (nothing near = clear) and grid/area products return
+  empty/zero, so safety and coverage callers never special-case an empty scan.
+- **Agent-callable over MCP** — [dimos/skills/mapping/lidar_signal_skills.py](mapping/lidar_signal_skills.py)'s
+  `LidarSignalSkills` wraps the signal tools as four `@skill`s
+  (`measure_space`, `nearest_obstacle_distance`, `check_clearance`,
+  `coverage_report`). It accumulates the live world-frame `/lidar` cloud
+  (reusing `LidarPointCloudClient`, fed from its in-graph `In[PointCloud2]`
+  stream) and tracks `/odom`, so the robot-relative queries answer from where
+  the robot is now. Wired into `unitree-go2-scene-memory-agentic` (and the
+  `-feed` variant), so an LLM agent can ask "how big is this room?", "is it
+  clear ahead?", "how far to the nearest obstacle?", "how much have you
+  scanned?" — see the item-3 questions in
+  [e2e_tests/fixtures/vqa_questions.txt](../e2e_tests/fixtures/vqa_questions.txt).
+  Unit-tested in [test_lidar_signal_skills.py](mapping/test_lidar_signal_skills.py).
+- **Next step:** validate the skills live/replay via the master VQA e2e
+  (`test_master_vqa*`), then let a coverage-driven explorer stop on
+  `coverage_report` plateauing (objective 6 closing the loop).
 
 ## 4. Temporally count items
-- **Status:** idea — partially unblocked by item 2: `ObjectDB` already
+- **Status:** HOLD — partially unblocked by item 2: `ObjectDB` already
   deduplicates observations over time and each `Object.detections_count` is a
   running per-item observation count.
 - Track counts of detected items/entities over time (depends on item 2 for
   per-frame detection + item 3 for a shared point-cloud/array representation).
+- **Hold note:** paused for this release alongside items 6/7 — see item 6's
+  Hold note. Not pursued further while item 6 is on hold, since a temporal
+  count skill is far more useful once activities (not just static items) can
+  be counted the same way.
 
 ## 5. Contextual labeling / educated guesses / external data sources
 - **Status:** implemented (VLM path) —
@@ -168,14 +237,38 @@ renamed — and mirror it in the item's dashboard folder (`skills` /
   live validation on the Go2 alongside item 2's lidar path.
 
 ## 6. Identify specific activity (e.g. "human does X")
-- **Status:** idea
+- **Status:** HOLD
 - Activity/action recognition over a temporal window of observations, distinct
   from static object detection (item 2).
+- **Scaffolding built while scoping this:** a deterministic DimSim e2e harness
+  (`dimos/e2e_tests/test_dimsim_human_activity.py`,
+  `dimos/e2e_tests/human_activity.py`,
+  `dimos/e2e_tests/activity_patrol.py`) that populates the `apt` scene with
+  NPC actors (the scanned-person model, positioned at real furniture anchors
+  resolved live from the scene — bed, sofa, toilet, kitchen counter, etc.)
+  running a seeded, reproducible schedule of 10 everyday tasks, while an
+  activity-aware robot patrol drives to observe each one and records what the
+  robot sees (`.rrd`) plus ground-truth labels (`.groundtruth.json`) of what
+  each actor was doing and when. This proves the scene/schedule/recording
+  machinery end-to-end (self_hosted_large, currently passing) but does not
+  itself recognize activities — it only generates labeled data to recognize
+  them *from*.
+- **Hold note:** paused for this release — not enough existing sim
+  infrastructure (only one usable human 3D asset in the repo, unrigged/no
+  animations, so every activity looks like the same static pose) or existing
+  labeled datasets to train/validate a recognition model well. Resume once
+  either (a) a rigged, animated human asset (or several, for variety) is
+  available in DimSim, or (b) a real annotated activity dataset is on hand —
+  whichever makes the harness's output actually useful for training/eval
+  rather than a synthetic proof of plumbing.
 
 ## 7. Count occurrences of activity over time
-- **Status:** idea, depends on item 6
+- **Status:** HOLD, depends on item 6
 - Aggregate activity-recognition events (item 6) into counts/rates over time,
   analogous to item 4 but for activities instead of items.
+- **Hold note:** paused alongside item 6 — this item is purely downstream of
+  it (aggregating events item 6 doesn't yet produce), so there is nothing to
+  build here until item 6 resumes.
 
 ## 8. Full 3D scene model with cross-sections
 - **Status:** prototype —

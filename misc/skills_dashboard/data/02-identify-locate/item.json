@@ -2,6 +2,116 @@
   "title": "Identify, list, and locate observed items",
   "tab_label": "Identify & locate items",
   "status": "implemented",
+  "scenarios": {
+    "china-office": {
+      "state": "pass",
+      "note_html": "The master VQA e2e — an LLM answering questions through the MCP skill-calling loop on the china-office scene. Republished after fixing two real bugs the harness surfaced: <span class='tmono'>detect(prompts)</span> now runs its own on-demand promptable detector (a second YOLO-E instance) instead of crashing against the always-on prompt-free background detector, and the replay wait now watches <span class='tmono'>/lidar</span> for real silence instead of a fixed sleep — the old fixed-sleep approach could badly under-run the recording depending on how long model loading happened to take that run (once caught only 100/982 lidar frames). Object count varies run to run with detector/backpressure timing.",
+      "vqa": [
+        {
+          "question": "What did you observe?",
+          "answer": "Could you please specify what type of observations you are interested in, such as objects around me or specific locations?",
+          "tool_calls": [],
+          "duration_s": 1.2
+        },
+        {
+          "question": "Search for a chair and a backpack, and tell me if you found them.",
+          "answer": "I attempted to detect a chair and a backpack, but I couldn't localize them specifically in the world frame. Would you like me to try again or provide more information?",
+          "tool_calls": [
+            "detect"
+          ],
+          "duration_s": 3.1
+        },
+        {
+          "question": "How much of the space is occupied with furniture?",
+          "answer": "Currently, I have observed a bureau and a person. The bureau takes up a portion of the space, but I haven't detected other furniture pieces at the moment.",
+          "tool_calls": [
+            "catalog_scene"
+          ],
+          "duration_s": 1.5
+        },
+        {
+          "question": "Which table has the most chairs?",
+          "answer": "I haven't identified any tables or chairs so far. To assist you better, I can explore the area and identify tables and chairs if you'd like.",
+          "tool_calls": [],
+          "duration_s": 1.0
+        },
+        {
+          "question": "Give me a full catalog of everything you've found, including where each item is.",
+          "answer": "Here is a catalog of the items I've observed:\n\n1. **Bureau**: Located at position (0.65, 6.47, -0.08) meters. \n2. **Person**: Located at position (0.07, 7.78, 0.06) meters.",
+          "tool_calls": [],
+          "duration_s": 1.0
+        },
+        {
+          "question": "Where would I be likely to find some food?",
+          "answer": "I haven't cataloged any food items, but a spot near coordinates (1.13, 2.32) meters might be a likely area to find food.",
+          "tool_calls": [
+            "locate"
+          ],
+          "duration_s": 1.8
+        },
+        {
+          "question": "Where would I be likely to find a first aid kit?",
+          "answer": "I couldn't locate a first aid kit among the cataloged objects, and I don't recall it from any visited areas.",
+          "tool_calls": [
+            "locate"
+          ],
+          "duration_s": 1.71
+        }
+      ]
+    },
+    "dimsim-spatial-memory": {
+      "state": "pass",
+      "note_html": "The same VQA battery run on the DimSim spatial-memory walkthrough.",
+      "vqa": [
+        {
+          "question": "What do you currently see around you?",
+          "answer": "I currently see a church bench nearby.",
+          "tool_calls": [
+            "list_observed_items"
+          ],
+          "duration_s": 3.3
+        },
+        {
+          "question": "Search for a chair and a backpack, and tell me if you found them.",
+          "answer": "Currently, I only see a church bench and don't detect a chair or a backpack in my surroundings.",
+          "tool_calls": [
+            "detect",
+            "detect",
+            "catalog_scene"
+          ],
+          "duration_s": 4.41
+        },
+        {
+          "question": "Where is the nearest chair?",
+          "answer": "The nearest spot that resembles a chair is at the location coordinates (-10.78, -6.75) meters.",
+          "tool_calls": [
+            "locate"
+          ],
+          "duration_s": 1.81
+        },
+        {
+          "question": "Take a closer look at any object whose label seems uncertain and tell me what it really is.",
+          "answer": "There are currently no objects with uncertain labels to refine. Everything seen is confidently identified.",
+          "tool_calls": [
+            "refine_observed_labels"
+          ],
+          "duration_s": 1.6
+        },
+        {
+          "question": "Give me a full catalog of everything you've found, including where each item is.",
+          "answer": "I have identified a speaker at the location (3.38, -1.92) meters.",
+          "tool_calls": [
+            "catalog_scene"
+          ],
+          "duration_s": 1.3
+        }
+      ]
+    },
+    "human-activity": {
+      "state": "in-progress",
+      "reason": "Detecting and locating the moving NPCs over the activity run is being wired up."
+    }
+  },
   "summary_html": "Open-vocabulary scene inventory: the robot detects whatever it sees (no prompt needed), localizes each detection in the world frame, deduplicates repeat sightings into a persistent object database, and answers \"what have you seen and where is it?\" as a prompt-free agent skill — a robot can navigate a space and this skill finds and catalogs everything in it, no target object required. New in this pass: the catalog now <b>fuses in spatial memory</b> — <span class='tmono'>catalog_scene()</span> folds the robot's named/tagged places (e.g. \"kitchen\", \"charging dock\", which object detection alone can't produce) into the inventory and tags each detected object with its nearest place, and a new <span class='tmono'>locate(query)</span> skill resolves \"where is X?\" through a three-tier fallback (catalogued object &rarr; tagged place &rarr; CLIP visual recall of the space). The link is an <b>optional</b> dependency, so the catalog degrades cleanly to objects-only when no spatial-memory module is running. Prior pass: the whole lidar pipeline is <b>replay-validated end-to-end</b> on an 87s recorded Go2 session (camera + mid360 + odom) — 16 permanent objects catalogued with world position, size, confidence and a VLM description each — and two production bugs were fixed (<span class='tmono'>ObjectDB</span> wall-clock TTLs; coplanar-cluster Qhull crash, OBB &rarr; AABB fallback).",
   "skills": [
     {
@@ -23,9 +133,9 @@
       "file": "dimos/perception/object_scene_registration.py"
     },
     {
-      "name": "detect(*prompts)",
+      "name": "detect(prompts)",
       "container": "ObjectSceneRegistrationModule",
-      "desc_html": "Prompted open-vocab search, e.g. <span class='tmono'>detect(\"cup\", \"mouse\")</span> — returns matches with stable object_ids",
+      "desc_html": "Prompted open-vocab search, e.g. <span class='tmono'>detect([\"cup\", \"mouse\"])</span> — returns matches with stable object_ids",
       "file": "dimos/perception/object_scene_registration.py"
     },
     {
@@ -36,44 +146,11 @@
     }
   ],
   "skills_note": "run on a Go2 via the <span class='tmono'>unitree-go2-scene</span> blueprint (objects only), or <span class='tmono'>unitree-go2-scene-memory</span> to add spatial memory so the fusion + <span class='tmono'>locate</span> recall activate; every skill is also an MCP tool through the matching <span class='tmono'>-agentic</span> blueprint",
-  "flow": [
-    {
-      "label": "camera",
-      "sub": "/color_image"
-    },
-    {
-      "label": "YOLO-E",
-      "sub": "open-vocab 2D"
-    },
-    {
-      "label": "localize",
-      "sub": "depth | lidar",
-      "hl": true
-    },
-    {
-      "label": "Object",
-      "sub": "world xyz + size"
-    },
-    {
-      "label": "ObjectDB",
-      "sub": "dedup ≤ 0.2/0.35 m"
-    },
-    {
-      "label": "VLM refine",
-      "sub": "item 5, ambiguous only"
-    },
-    {
-      "label": "+ spatial memory",
-      "sub": "tagged places, optional",
-      "hl": true
-    },
-    {
-      "label": "catalog_scene() / locate()",
-      "sub": "objects + places + recall",
-      "hl": true
-    }
-  ],
   "how_it_works": [
+    {
+      "title": "Skip unusable frames (quality gate)",
+      "html": "Before the detector runs, each camera frame is checked against <span class='tmono'>min_frame_brightness</span> / <span class='tmono'>min_frame_sharpness</span> (both off by default; the china-office feed opts in at 0.06 / 0.12). Near-black or motion-smeared frames are dropped — they yield junk detections and, per <span class='tmono'>docs/capabilities/memory/plot.md</span>, embed semantically close to <em>everything</em>. Rejected frames also don't become the cached \"latest frame,\" so <span class='tmono'>detect()</span>'s on-demand pass reuses only a good one."
+    },
     {
       "title": "Detect (2D, open-vocab)",
       "html": "YOLO-E (<span class='tmono'>yoloe-11l-seg-pf.pt</span>, prompt-free LRPC mode by default) runs on each camera frame inside <span class='tmono'>ObjectSceneRegistrationModule</span>. Frames are timestamp-aligned with the depth image or lidar cloud before processing."
@@ -84,11 +161,11 @@
     },
     {
       "title": "Deduplicate & persist",
-      "html": "<span class='tmono'>ObjectDB</span> merges repeat sightings within a dedup radius into one object (0.2 m for depth localization; the Go2 lidar blueprint widens it to 0.35 m because sparse mid360 returns jitter more), accumulates its pointcloud, and promotes it from <em>pending</em> to <em>permanent</em> after 6 detections (tunable) — so one physical cup seen 40 times is one database row with <span class='tmono'>detections_count = 40</span>."
+      "html": "<span class='tmono'>ObjectDB</span> merges repeat sightings within a dedup radius into one object (0.2 m for depth localization; the Go2 lidar blueprint widens it to 0.35 m because sparse mid360 returns jitter more), accumulates its pointcloud, and promotes it from <em>pending</em> to <em>permanent</em> after 6 detections (tunable) — so one physical cup seen 40 times is one database row with <span class='tmono'>detections_count = 40</span>. Each merge also keeps the <b>sharpest observation's crop</b> (highest Laplacian variance) as the image a VLM later labels from — the 3D geometry tracks the latest detection, but the labeling appearance is quality-selected, not just \"whatever came last.\""
     },
     {
       "title": "Answer",
-      "html": "Agent-facing surface: <span class='tmono'>catalog_scene()</span> is the bundled one-call answer to \"what have you found while navigating this space?\" — it refines any ambiguously-labeled item with item 5's VLM pass, then returns the full inventory (name, object_id, world position, size, confidence, sighting count, description). Its pieces are also callable standalone: <span class='tmono'>list_observed_items()</span> for the same catalog without spending time on refinement, <span class='tmono'>detect(\"cup\", \"mouse\")</span> for prompted search, <span class='tmono'>identify_object</span>/<span class='tmono'>refine_observed_labels</span> to control refinement, and RPCs — <span class='tmono'>get_located_objects()</span>, per-object pointclouds, full-scene clouds."
+      "html": "Agent-facing surface: <span class='tmono'>catalog_scene()</span> is the bundled one-call answer to \"what have you found while navigating this space?\" — it refines any ambiguously-labeled item with item 5's VLM pass, then returns the full inventory (name, object_id, world position, size, confidence, sighting count, description). Its pieces are also callable standalone: <span class='tmono'>list_observed_items()</span> for the same catalog without spending time on refinement, <span class='tmono'>detect([\"cup\", \"mouse\"])</span> for prompted search, <span class='tmono'>identify_object</span>/<span class='tmono'>refine_observed_labels</span> to control refinement, and RPCs — <span class='tmono'>get_located_objects()</span>, per-object pointclouds, full-scene clouds."
     },
     {
       "title": "Fuse spatial memory (optional)",
@@ -96,6 +173,13 @@
     }
   ],
   "figures": [
+    {
+      "light": "catalog_flow_light.svg",
+      "dark": "catalog_flow_dark.svg",
+      "alt": "Pipeline diagram: sensors to a frame-quality gate (NEW) to prompt-free YOLO-E to localize (depth or lidar) to ObjectDB (dedup + keep sharpest crop, NEW) to VLM refine to catalog_scene/list_observed_items/locate. Side lanes show the on-demand promptable detector behind detect(), optional spatial memory and VLM refine, and the sibling floorplan/measure_space skills sharing the same feed.",
+      "heading": "The full pipeline",
+      "caption_html": "Three lanes. <b>Always-on catalog pipeline</b> (middle): every camera frame passes a <b>frame-quality gate</b> (<span class='tmono'>NEW</span> — drops dark/blurry frames that waste the detector and embed close to everything), then prompt-free YOLO-E → depth-or-lidar localization → <span class='tmono'>ObjectDB</span> dedup, which now <b>keeps the sharpest crop</b> per object (<span class='tmono'>NEW</span>) so the VLM labels from the clearest sighting. <b>On demand</b> (top): <span class='tmono'>detect([...])</span> runs a second, promptable detector for directed search without disturbing the background one. <b>Optional / sibling skills</b> (bottom): spatial memory adds tagged places + semantic recall, and the same live feed drives <span class='tmono'>generate_floorplan()</span> / <span class='tmono'>measure_space()</span>. Regenerate: <span class='tmono'>uv run python misc/skills_dashboard/scripts/gen_catalog_flow.py</span>"
+    },
     {
       "light": "lidar_localization_light.png",
       "dark": "lidar_localization_dark.png",
@@ -189,6 +273,18 @@
     }
   ],
   "next_step_html": "Validate live on the Go2 via <span class='tmono'>unitree-go2-scene(-agentic)</span> (replay validation done; live odom is restamped on receive so the recording's clock quirk doesn't apply), then feed item 4 (temporal counts) from <span class='tmono'>ObjectDB</span>.",
+  "review_artifacts": [
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/02-identify-locate/lidar_localization.png",
+      "label": "lidar_localization.png",
+      "note": "camera view with bboxes over projected points + top-down recovered centers landing on their clusters"
+    },
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/02-identify-locate/catalog.txt",
+      "label": "catalog.txt",
+      "note": "list_observed_items() output — one line per item with world position, size, confidence"
+    }
+  ],
   "sources": [
     "dimos/perception/object_scene_registration.py",
     "dimos/perception/detection/type/detection3d/object.py",

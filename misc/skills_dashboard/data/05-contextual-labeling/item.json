@@ -2,6 +2,40 @@
   "title": "Contextual labeling / educated guesses / external data",
   "tab_label": "Contextual labeling",
   "status": "implemented",
+  "scenarios": {
+    "china-office": {
+      "state": "pass",
+      "note_html": "The label-refinement step within the china-office VQA run.",
+      "vqa": [
+        {
+          "question": "Take a closer look at any object whose label seems uncertain and tell me what it really is.",
+          "answer": "There are no ambiguous objects that need relabeling at the moment.",
+          "tool_calls": [
+            "refine_observed_labels"
+          ],
+          "duration_s": 1.2
+        }
+      ]
+    },
+    "dimsim-spatial-memory": {
+      "state": "pass",
+      "note_html": "The label-refinement step within the DimSim VQA run.",
+      "vqa": [
+        {
+          "question": "Take a closer look at any object whose label seems uncertain and tell me what it really is.",
+          "answer": "There are currently no objects with uncertain labels to refine. Everything seen is confidently identified.",
+          "tool_calls": [
+            "refine_observed_labels"
+          ],
+          "duration_s": 1.6
+        }
+      ]
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "Refines static object labels; not exercised by the activity scenario."
+    }
+  },
   "summary_html": "When the detector is unsure or produces a useless label (\"object\", <span class='tmono'>class_17</span>, low confidence), ask a vision-language model for an educated guess — feeding it evidence the detector never uses: the cropped detection image, the detector's own guess + confidence, the object's <b>measured real-world size</b>, and <b>what else is nearby</b>. A \"mouse\" next to a keyboard and monitor is a computer mouse, not an animal. Exposed as agent skills on <span class='tmono'>ObjectSceneRegistrationModule</span>.",
   "skills": [
     {
@@ -90,6 +124,13 @@
   "next_step_html": "External data sources (e.g. OSM lookups via <span class='tmono'>dimos/agents/skills/osm.py</span>, object databases) as additional context, and live validation on the Go2 (the VLM path is already exercised for real against item 2's replayed session).",
   "dependencies": [
     "item 2 — raw detections + ObjectDB scene"
+  ],
+  "review_artifacts": [
+    {
+      "file": "/dimos/skills/skill_verification/test_outputs/05-contextual-labeling/labels_before_after.txt",
+      "label": "labels_before_after.txt",
+      "note": "each object's detector label vs refined label + the VLM prompt; ambiguous mouse relabeled via its keyboard/monitor neighbors, confident items unchanged"
+    }
   ],
   "sources": [
     "dimos/perception/contextual_labeling.py",

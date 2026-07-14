@@ -1,11 +1,46 @@
 {
   "title": "Identify specific activity (\"human does X\")",
   "tab_label": "Activity recognition",
-  "status": "idea",
+  "status": "hold",
+  "scenarios": {
+    "china-office": {
+      "state": "na",
+      "reason": "No scheduled human activity in a static building scan."
+    },
+    "dimsim-spatial-memory": {
+      "state": "na",
+      "reason": "No NPCs in the spatial-memory walkthrough."
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "The core target of this scenario — recognizing each NPC's scheduled task from the robot-observed .rrd. The deterministic schedule + ground-truth sidecar labels are in place and the e2e harness passes, but recognition itself is on hold for this release (see Hold note)."
+    }
+  },
   "summary_html": "Activity and action recognition over a temporal window of observations — distinct from item 2's static object detection, which answers <em>what is there</em>, not <em>what is happening</em>.",
   "concept_file": "concept.html",
+  "cards": [
+    {
+      "title": "What was built while scoping this",
+      "html": "A deterministic DimSim e2e harness (<span class='tmono'>dimos/e2e_tests/test_dimsim_human_activity.py</span>, <span class='tmono'>human_activity.py</span>, <span class='tmono'>activity_patrol.py</span>) populates the <span class='tmono'>apt</span> scene with NPC actors at real furniture anchors resolved live from the scene (bed, sofa, toilet, kitchen counter, …), running a seeded/reproducible schedule of 10 everyday tasks, while an activity-aware robot patrol drives to observe each one."
+    },
+    {
+      "title": "What it proves",
+      "html": "The scene, schedule, and recording machinery end-to-end: the robot's <span class='tmono'>.rrd</span> (camera + lidar) plus a <span class='tmono'>.groundtruth.json</span> sidecar of what each actor was doing and when. Currently passing (<span class='tmono'>self_hosted_large</span>)."
+    },
+    {
+      "title": "What's missing",
+      "html": "Recognition itself — nothing yet reads the recording and infers \"human does X\". The harness only <em>generates</em> labeled data to recognize activities from; it is not a recognizer."
+    }
+  ],
+  "cards_heading": "Scaffolding built while scoping this item",
   "dependencies": [
     "none hard — new temporal model needed"
   ],
-  "skills_note": "no skill yet (idea) — needs a temporal model; no file exists"
+  "skills_note": "no skill yet (on hold) — needs a temporal model",
+  "sources": [
+    "dimos/e2e_tests/test_dimsim_human_activity.py",
+    "dimos/e2e_tests/human_activity.py",
+    "dimos/e2e_tests/activity_patrol.py"
+  ],
+  "hold_note_html": "Paused for this release — not enough existing sim infrastructure (only one usable human 3D asset in the repo, unrigged with no animations, so every activity looks like the same static pose) or existing labeled datasets to train/validate a recognition model well. Resume once either (a) a rigged, animated human asset (or several, for variety) is available in DimSim, or (b) a real annotated activity dataset is on hand — whichever makes the harness's output actually useful for training/eval rather than a synthetic proof of plumbing."
 }

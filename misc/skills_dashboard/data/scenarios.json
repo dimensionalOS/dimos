@@ -1,0 +1,20 @@
+{
+  "scenarios": [
+    {
+      "id": "china-office",
+      "label": "China office",
+      "blurb": "Real hand-carried lidar + camera tour of a 3-storey office (full session: 890 MB .rrd + 10 GB mem2.db, ~20 min, 558 camera / 11,944 lidar frames). Static building; one person present."
+    },
+    {
+      "id": "dimsim-spatial-memory",
+      "label": "DimSim spatial memory",
+      "blurb": "Simulated Go2 walkthrough e2e (dimsim_spatial_memory.rrd, 411 MB) — tagged places + a 'go to the bed' spatial-recall run in DimSim."
+    },
+    {
+      "id": "human-activity",
+      "label": "Human activity (NPCs)",
+      "blurb": "DimSim populated with scripted human NPCs running scheduled everyday tasks (human_activity.rrd). Activity-recognition e2e — under active development.",
+      "status": "in-progress"
+    }
+  ]
+}

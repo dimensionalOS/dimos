@@ -26,37 +26,36 @@ and are listed under `not_covered` in the manifest.
 | 08-scene-3d-model | `SceneModel` sections/mesh | headless | synthetic house |
 
 **Tiers.** `headless` tests use synthetic/in-code inputs — no GPU, API keys, or
-network — and run anywhere. `real-data` tests need a recording and are marked
-`self_hosted`, so the default `pytest` run (which deselects `self_hosted`) skips
-them; they also skip cleanly if no recording is present.
+network — and run anywhere. The `real-data` floorplan test generates its drawing
+from a `.rrd` recording; it's gated on data presence (not a pytest marker), so
+it runs wherever a recording + `ezdxf` are available and skips cleanly otherwise.
 
 ## Running it
 
 ```sh
-# Headless tier — runs anywhere, always produces artifacts.
-# The repo default config deselects self_hosted, so this runs the 5 headless
-# tests and skips the real-data floorplan one:
+# The whole suite. The 5 headless tests run in ~10 s; the floorplan test also
+# runs (~1.5 min) when a recording is present, else skips:
 uv run pytest dimos/skills/skill_verification
 
-# Include the real-data tier too (needs a recording, ezdxf, + self-hosted deps):
-SKILL_VERIFY_RRD=/path/to/session.rrd \
-  uv run pytest dimos/skills/skill_verification -m ""
+# Fast headless-only (skip the slow floorplan generation):
+uv run pytest dimos/skills/skill_verification -k "not floorplan"
 
 # Then review:
 open dimos/skills/skill_verification/test_outputs/REVIEW.md
 ```
 
-**Don't clear `addopts` (`-o addopts=""`)** — the repo default carries the
-`-m 'not self_hosted'` filter, and clearing it drags the self_hosted floorplan
-test into a headless run (where it fails without `ezdxf` / a recording). To
-force *everything* to run, pass `-m ""` instead, which overrides just the marker
-filter while keeping the rest of the default config.
+**Don't clear `addopts` (`-o addopts=""`)** — the repo default config carries
+flags this suite relies on; if you must override the marker filter, pass `-m ""`
+rather than clearing the whole thing.
 
-The real-data floorplan test needs `ezdxf` (the DXF library the generator uses)
-and a recording — it resolves the recording from `$SKILL_VERIFY_RRD`, else
-`chinaOffice.rrd` at the repo root. It **skips cleanly** if `ezdxf` isn't
-installed or no recording is present. (Recordings are large and gitignored —
-supply your own.)
+**Tiers.** The headless tests (items 2, 3, 5, 8) use synthetic in-code inputs —
+no GPU, keys, network, or recordings — and always run. The floorplan test
+(item 1) is *data-gated*: it generates the DXF **from a `.rrd` recording** (no
+existing drawing needed), so it runs wherever a recording + `ezdxf` are present
+and skips cleanly otherwise (CI, fresh checkout). It resolves the recording from
+`$SKILL_VERIFY_RRD`, else `chinaOffice.rrd` at the repo root. `ezdxf` ships in
+the `mapping` extra (`uv sync --extra mapping`); recordings are large and
+gitignored, so supply your own.
 
 ## Reviewing the output
 

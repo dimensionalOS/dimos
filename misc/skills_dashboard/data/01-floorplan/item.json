@@ -2,7 +2,95 @@
   "title": "Architectural floorplan generation",
   "tab_label": "Floorplan generation",
   "status": "implemented",
-  "summary_html": "Multi-story architectural drawing sets (DXF with AIA layers + JPEG sheets) from lidar — live or from a .rrd recording — now wrapped as an agent-callable <span class='tmono'>@skill</span>: <span class='tmono'>FloorplanSkillContainer.generate_floorplan()</span> generates the drawings and returns measured attributes of the navigated space (levels + FFLs, wall/door/stair counts, glazed fraction, mezzanines/sunken areas, extents). Debug artifacts and 3D-model output are OFF by default for MCP callers and cleaned up automatically.",
+  "scenarios": {
+    "china-office": {
+      "state": "pass",
+      "note_html": "Floorplan generated <em>from</em> chinaOffice.rrd (no existing drawing needed) — 3 levels auto-detected, sealed room loops, doors inferred from trajectory crossings. AI review + plan critique ran on all 3 levels, and the skill's default stylized renditions (drafted / cyanotype / presentation, one full-resolution image per level rather than a cramped combined sheet) all succeeded on the 2026-07-14 run below.",
+      "review_artifacts": [
+        {
+          "file": "/dimos/skills/skill_verification/test_outputs/01-floorplan/floorplan_sheet.jpg",
+          "label": "floorplan_sheet.jpg",
+          "note": "titled architectural sheet — rooms legible, dimensions/poché, sane trajectory"
+        },
+        {
+          "file": "/dimos/skills/skill_verification/test_outputs/01-floorplan/floorplan_render.png",
+          "label": "floorplan_render.png",
+          "note": "DXF-to-PNG render — confirms the DXF layers draw"
+        },
+        {
+          "file": "/dimos/skills/skill_verification/test_outputs/01-floorplan/floorplan.dxf",
+          "label": "floorplan.dxf",
+          "note": "open in any CAD viewer — walls closed into rooms, doors on the trajectory"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-drafted-L1.png",
+          "label": "render-drafted-L1.png",
+          "note": "AI rendition — LEVEL 1, hand-drafted ink style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-cyanotype-L1.png",
+          "label": "render-cyanotype-L1.png",
+          "note": "AI rendition — LEVEL 1, cyanotype blueprint style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-presentation-L1.png",
+          "label": "render-presentation-L1.png",
+          "note": "AI rendition — LEVEL 1, modern presentation style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-drafted-L2.png",
+          "label": "render-drafted-L2.png",
+          "note": "AI rendition — LEVEL 2, hand-drafted ink style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-cyanotype-L2.png",
+          "label": "render-cyanotype-L2.png",
+          "note": "AI rendition — LEVEL 2, cyanotype blueprint style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-presentation-L2.png",
+          "label": "render-presentation-L2.png",
+          "note": "AI rendition — LEVEL 2, modern presentation style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-drafted-L3.png",
+          "label": "render-drafted-L3.png",
+          "note": "AI rendition — LEVEL 3, hand-drafted ink style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-cyanotype-L3.png",
+          "label": "render-cyanotype-L3.png",
+          "note": "AI rendition — LEVEL 3, cyanotype blueprint style"
+        },
+        {
+          "file": "/misc/skills_dashboard/data/01-floorplan/chinaoffice_loops.render-presentation-L3.png",
+          "label": "render-presentation-L3.png",
+          "note": "AI rendition — LEVEL 3, modern presentation style"
+        }
+      ]
+    },
+    "dimsim-spatial-memory": {
+      "state": "pass",
+      "note_html": "Floorplan generated from the DimSim walkthrough recording.",
+      "review_artifacts": [
+        {
+          "file": "/recordings/dimsim_floorplan_v6.jpg",
+          "label": "dimsim_floorplan_v6.jpg",
+          "note": "floorplan sheet from the DimSim run"
+        },
+        {
+          "file": "/recordings/dimsim_floorplan_v6.dxf",
+          "label": "dimsim_floorplan_v6.dxf",
+          "note": "CAD drawing — open in any DXF viewer"
+        }
+      ]
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "A floorplan needs a static structural scan of the building; the activity scenario is about moving people, not mapping the space."
+    }
+  },
+  "summary_html": "Multi-story architectural drawing sets (DXF with AIA layers + JPEG sheets) from lidar — live or from a .rrd recording — now wrapped as an agent-callable <span class='tmono'>@skill</span>: <span class='tmono'>FloorplanSkillContainer.generate_floorplan()</span> generates the drawings and returns measured attributes of the navigated space (levels + FFLs, wall/door/stair counts, glazed fraction, mezzanines/sunken areas, extents). Debug artifacts and 3D-model output are OFF by default for MCP callers and cleaned up automatically. Stylized AI renditions (drafted / cyanotype / presentation, via the OpenAI image model) are ON by default and attached to the skill's response as images the calling agent can actually see — not just file paths — so a touring agent can use them to answer layout questions.",
   "skills": [
     {
       "name": "generate_floorplan(rrd_path?, duration?, explore?, …)",
@@ -16,7 +104,7 @@
     {
       "light": "chinaoffice_sheet_loops.jpg",
       "alt": "Three cyanotype floor-plan sheets (LEVEL 1-3) of a real office building with sealed room-loop outlines: double-line walls, glazing, door swings, dimension strings, north arrows, scale bars, and a CHINA OFFICE title block",
-      "caption_html": "Best result to date: the script's own JPEG sheet from the real <span class='tmono'>chinaOffice.rrd</span> recording (67 MB, repo root), now with <b>sealed room loops</b> from the voxel model (dashed hairlines; 29 gap walls bridged across the three levels, all sealed at the smallest 0.3 m closing kernel). Three levels auto-detected (FFL +0.08 / +3.28 / +6.78 m), 64 door openings — 55 inferred from trajectory crossings — and glazing separated from solid wall. Raw CAD file with the A-AREA loop layer: <a class='filelink' href='chinaoffice_loops.dxf'>chinaoffice_loops.dxf</a>",
+      "caption_html": "Best result to date: the script's own JPEG sheet from the real <span class='tmono'>chinaOffice.rrd</span> recording (67 MB, repo root), now with <b>sealed room loops</b> from the voxel model (dashed hairlines; 27 gap walls bridged across the three levels, all sealed at the smallest 0.3 m closing kernel). Three levels auto-detected (FFL +0.08 / +3.28 / +6.78 m), 60 door openings — and glazing separated from solid wall. Raw CAD file with the A-AREA loop layer: <a class='filelink' href='chinaoffice_loops.dxf'>chinaoffice_loops.dxf</a>. Stylized AI renditions of each level are in the China office test-data tab below.",
       "heading": "Sample output — real office recording, three levels, sealed loops",
       "frame": "blueprint"
     },
@@ -68,7 +156,7 @@
       [
         "Real building (rendered above)",
         "<span class='tmono'>chinaOffice.rrd</span> — 67 MB lidar recording",
-        "3 levels auto-detected; 287 interior wall runs, 64 doors, glazing separated from solid walls; 45 sealed room loops (A-AREA) with 29 gap walls bridged, every level sealed at the smallest 0.3 m kernel; regression-checked: <span class='tmono'>--no-close-loops</span> reproduces the baseline exactly (doors identical) · <a class='filelink' href='chinaoffice_sheet_loops.jpg'>full sheet</a> / <a class='filelink' href='chinaoffice_loops.dxf'>DXF</a> (run 2026-07-10)"
+        "3 levels auto-detected; 299 interior wall runs, 60 doors, glazing separated from solid walls; 45 sealed room loops (A-AREA) with 27 gap walls bridged, every level sealed at the smallest 0.3 m kernel; AI review + plan critique + 9 stylized renditions (3 styles × 3 levels) all succeeded · <a class='filelink' href='chinaoffice_sheet_loops.jpg'>full sheet</a> / <a class='filelink' href='chinaoffice_loops.dxf'>DXF</a> (run 2026-07-14)"
       ],
       [
         "3D viewer export",
@@ -111,12 +199,12 @@
     "test_skill_registers_with_schema": "The @skill registers; its MCP schema documents every parameter and defaults debug/3D output OFF",
     "test_skill_fails_gracefully_on_missing_recording": "A bad recording path returns an error string instead of raising"
   },
-  "tests_note_html": "the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>) also runs the real generator on a recorded session (marked self-hosted — needs a recording + GPU) and writes the DXF, JPEG sheet and a DXF render to <span class='tmono'>test_outputs/</span> for eyeball review, indexed by <span class='tmono'>REVIEW.md</span>",
+  "tests_note_html": "the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>) also runs the real generator on a recorded session — the DXF is built <em>from the .rrd</em>, no existing drawing needed — and writes the DXF, JPEG sheet and a DXF render to <span class='tmono'>test_outputs/</span> for eyeball review, indexed by <span class='tmono'>REVIEW.md</span>. It's gated on data presence (needs a recording + <span class='tmono'>ezdxf</span>), so it runs locally on the sample recordings and no-ops in CI",
   "manual_tests": [
     {
       "name": "test_generate_floorplan_from_recording",
-      "desc_html": "Skill-verification: <span class='tmono'>generate_floorplan()</span> on a real recording (chinaOffice.rrd) yields a DXF with wall geometry on <span class='tmono'>A-WALL</span> + a JPEG sheet; renders the DXF to a PNG for review",
-      "badge": "SELF-HOSTED CI"
+      "desc_html": "Skill-verification: <span class='tmono'>generate_floorplan()</span> <em>from a .rrd recording</em> (chinaOffice.rrd) yields a DXF with wall geometry on <span class='tmono'>A-WALL</span> + a JPEG sheet; renders the DXF to a PNG for review",
+      "badge": "LOCAL · rrd"
     }
   ]
 }

@@ -48,11 +48,17 @@ skills:
     entrypoint: dimos.mapping.floorplan.generator.generate_floorplan
     test_file: test_01_floorplan.py
     tier: real-data
-    marker: self_hosted
+    marker: null
     fixture: >
-      A Rerun recording of a mapping session. Defaults to chinaOffice.rrd at the
-      repo root (65 MB, gitignored — supply locally or set SKILL_VERIFY_RRD).
-      Skips cleanly if no recording is present.
+      A Rerun recording of a mapping session — the DXF is generated from it, no
+      existing drawing needed. Defaults to chinaOffice.rrd at the repo root
+      (gitignored — supply locally or set SKILL_VERIFY_RRD). The canonical
+      china-office recording is the full ~20 min, 6-level walkthrough at
+      2026-06-12_03-26am-PST__china_office1/2026-06-12_0326am-PST.rrd (890 MB) —
+      chinaOffice.rrd is expected to be a symlink to it, not a standalone copy.
+      Gated on data presence, not a marker: runs (~1.5 min) wherever the
+      recording + ezdxf are available, skips cleanly otherwise (e.g. CI / fresh
+      checkout).
     how: >
       Runs generate_floorplan() on the recording with AI passes disabled (no
       OPENAI_API_KEY needed), producing a multi-level DXF + rendered JPEG sheet,
@@ -111,7 +117,7 @@ skills:
     wishlist_item: 3
     title: Convert lidar to numpy signals
     status: implemented
-    mcp_skills: []
+    mcp_skills: [measure_space, nearest_obstacle_distance, check_clearance, coverage_report]
     module: dimos.mapping.pointclouds.live.LidarPointCloudClient
     test_file: test_03_lidar_to_numpy.py
     tier: headless

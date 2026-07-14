@@ -1,12 +1,27 @@
 {
   "title": "Count occurrences of activity over time",
   "tab_label": "Activity counts",
-  "status": "idea",
-  "summary_html": "Aggregate activity-recognition events into counts and rates over time — the activity analogue of item 4's item counting. Blocked until item 6 exists.",
+  "status": "hold",
+  "scenarios": {
+    "china-office": {
+      "state": "na",
+      "reason": "No activity to count in a static scan."
+    },
+    "dimsim-spatial-memory": {
+      "state": "na",
+      "reason": "No NPCs to count."
+    },
+    "human-activity": {
+      "state": "na",
+      "reason": "Would aggregate item 6's recognition events into counts over the run, but item 6 is on hold for this release — nothing to aggregate yet."
+    }
+  },
+  "summary_html": "Aggregate activity-recognition events into counts and rates over time — the activity analogue of item 4's item counting. Depends on item 6.",
   "concept_file": "concept.html",
   "dependencies": [
     "item 6 — activity recognition",
     "pattern from item 4 — temporal aggregation"
   ],
-  "skills_note": "no skill yet (idea) — blocked on item 6's event stream"
+  "skills_note": "no skill yet (on hold) — depends on item 6's event stream",
+  "hold_note_html": "Paused alongside item 6 — this item is purely downstream of it (aggregating events item 6 doesn't yet produce), so there is nothing to build here until item 6 resumes."
 }
