@@ -28,6 +28,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--transport` | `lcm\|zenoh` | platform-dependent | Transport backend for streams, RPC, and TF. Defaults to `zenoh` on macOS, otherwise `lcm`. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
+| `--zenoh-connect` | endpoint | none | Explicit Zenoh endpoint, for example `tcp/10.21.31.103:7447`. Use when multicast discovery cannot reach the router. Set `DIMOS_ZENOH_CONNECT` for the equivalent environment override. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |

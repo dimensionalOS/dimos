@@ -102,8 +102,8 @@ ray_tracer = RayTracingVoxelMap.blueprint(
     registered_clouds=True,
 ).remappings(
     [
-        (RayTracingVoxelMap, "lidar", "dimos/slam_aligned_points"),
-        (RayTracingVoxelMap, "odometry", "dimos/slam_odom"),
+        (RayTracingVoxelMap, "lidar", "slam_aligned_points"),
+        (RayTracingVoxelMap, "odometry", "slam_odom"),
     ]
 )
 
@@ -131,7 +131,7 @@ m20_nav = autoconnect(
 # global_map is remapped off. world_frame="map" matches the M20 SLAM frame.
 m20_nav_3d = autoconnect(
     m20_nav,
-    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "dimos/slam_odom")]),
+    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "slam_odom")]),
     MLSPlannerNative.blueprint(
         world_frame="map",
         voxel_size=voxel_size,
@@ -144,7 +144,7 @@ m20_nav_3d = autoconnect(
         viz_publish_hz=1.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
-        [(BasicPathFollower, "odometry", "dimos/slam_odom")]
+        [(BasicPathFollower, "odometry", "slam_odom")]
     ),
     MovementManager.blueprint(),
 ).global_config(n_workers=10)

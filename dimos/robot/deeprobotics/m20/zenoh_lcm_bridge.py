@@ -22,11 +22,10 @@ identically (``lcm_encode``), so we forward the raw payload bytes untouched; onl
 the channel string differs:
 
     zenoh  "dimos/slam_aligned_points/sensor_msgs.PointCloud2"
-    LCM    "dimos/slam_aligned_points#sensor_msgs.PointCloud2"
+    LCM    "/slam_aligned_points#sensor_msgs.PointCloud2"
 
-i.e. replace the last ``/`` (before the ``module.Class`` type segment) with ``#``;
-the ``dimos/`` prefix is kept. Verified against the running native module's CLI:
-``--lidar dimos/slam_aligned_points#sensor_msgs.PointCloud2``.
+i.e. remove the Zenoh ``dimos/`` namespace and replace the last ``/`` (before the
+``module.Class`` type segment) with ``#``.
 
 Usage:
     python -m dimos.robot.deeprobotics.m20.zenoh_lcm_bridge [zenoh_key ...]
@@ -49,13 +48,15 @@ DEFAULT_KEYS = ["**"]
 
 
 def zkey_to_lcm(key: str) -> str:
-    """zenoh key-expr -> LCM channel ("dimos/topic#module.Class").
+    """Convert a Zenoh key expression to an LCM channel.
 
-    Just replaces the last "/" (the type separator) with "#"; the "dimos/"
-    prefix is kept, matching what the native module subscribes to.
+    The global transport factory adds ``dimos/`` only for Zenoh; LCM logical
+    channels use a leading slash instead.
     """
     topic, sep, typ = key.rpartition("/")
-    return f"/{topic}#{typ}" if sep else key
+    if not sep:
+        return key
+    return f"/{topic.removeprefix('dimos/')}#{typ}"
 
 
 def main() -> None:

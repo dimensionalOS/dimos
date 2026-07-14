@@ -1,38 +1,37 @@
 # M20 Simple Navigation
 
-
-# Table of Contents
+## Table of Contents
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-  - [1. Switch to the DimOS workspace](#1-switch-to-the-dimos-workspace)
-  - [2. Register all blueprints](#2-register-all-blueprints)
+  - [1. Switch to the DimOS Workspace](#1-switch-to-the-dimos-workspace)
+  - [2. Register All Blueprints](#2-register-all-blueprints)
   - [3. First Launch](#3-first-launch)
 - [Running the System](#running-the-system)
-  - [Terminal 1: Start the Zenoh Bridge](#terminal-1-start-the-zenoh-bridge)
-  - [Terminal 2: Launch Navigation](#terminal-2-launch-navigation)
 - [Using the Navigation System](#using-the-navigation-system)
 - [Troubleshooting](#troubleshooting)
   - [1. Failed to Build the Ray Tracing Module](#1-failed-to-build-the-ray-tracing-module)
   - [2. Cargo.lock Version Error](#2-cargolock-version-error)
   - [3. Cargo Registry (rsproxy) Error](#3-cargo-registry-rsproxy-error)
 - [Notes](#notes)
+
 ---
 
 # Prerequisites
 
 Before getting started, make sure that:
 
-* The DimOS environment has been installed successfully.
-* You are working from the DimOS workspace.
+- The DimOS environment has been installed successfully.
+- You are working from the DimOS workspace.
+- The robot is powered on and connected to the same network as your workstation.
 
 ---
 
 # Installation
 
-## 1. Switch to the DimOS workspace
+## 1. Switch to the DimOS Workspace
 
-Before compiling or launching the navigation system, switch to latest `main` branch:
+Before compiling or launching the navigation system, switch to the latest `main` branch:
 
 ```bash
 cd ~/workplace/dimos
@@ -42,13 +41,14 @@ git switch main
 
 ---
 
-## 2. Register all blueprints
+## 2. Register All Blueprints
 
 Run the following command once after setting up the environment:
 
 ```bash
 cd ~/workplace/dimos
 source .venv/bin/activate
+
 uv run pytest dimos/robot/test_all_blueprints_generation.py
 ```
 
@@ -61,47 +61,36 @@ Launch the navigation system:
 ```bash
 cd ~/workplace/dimos
 source .venv/bin/activate
-dimos run m20-simple-nav
+
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<aos_ip>:7447 \
+  run m20-simple-nav
 ```
+
+Replace `<aos_ip>` with the IP address of the robot's **AOS module**.
+
+For the M20 robot, the AOS module IP address is 10.21.33.103. You can use this address directly.
+The examples below use the default M20 AOS module IP address (`10.21.31.103`). If your deployment uses a different IP address (for example, due to custom network routing or forwarding), simply replace it with the appropriate address for your setup.
+
+Such as:
+
+```bash
+dimos --transport=zenoh \
+  --zenoh-connect tcp/10.21.31.103:7447 \
+  run m20-simple-nav
+```
+
+Internal documentation:
+
+https://alidocs.dingtalk.com/i/p/OlnXRl7ed542DGLp/docs/14lgGw3P8vv3mxz3Udj5N6y585daZ90D?dontjump=true
+
 
 On the first launch, the ray tracing voxel mapping module is compiled automatically. This process may take several minutes.
 
-If the compilation completes successfully without any errors, press **Ctrl+C** to terminate the process and continue with the steps in **Running the System**.
 
 ---
 
 # Running the System
-
-## Terminal 1: Start the Zenoh Bridge
-
-Activate the Python environment:
-
-```bash
-cd ~/workplace/dimos
-source .venv/bin/activate
-```
-
-Start the Zenoh bridge:
-
-```bash
-DIMOS_ZENOH_CONNECT=tcp/<m20_ip> \
-python -m dimos.robot.deeprobotics.m20.zenoh_lcm_bridge
-```
-
-Replace `<m20_ip>` with the robot IP address.
-
-Example:
-
-```bash
-DIMOS_ZENOH_CONNECT=tcp/10.21.31.103:7447 \
-python -m dimos.robot.deeprobotics.m20.zenoh_lcm_bridge
-```
-
----
-
-## Terminal 2: Launch Navigation
-
-Open another terminal.
 
 Activate the Python environment:
 
@@ -113,8 +102,12 @@ source .venv/bin/activate
 Launch the navigation system:
 
 ```bash
-dimos run m20-simple-nav
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<10.21.31.103>:7447 \
+  run m20-simple-nav
 ```
+
+
 
 ---
 
@@ -122,9 +115,9 @@ dimos run m20-simple-nav
 
 After the system starts successfully:
 
-* Click the **keyboard icon** in the lower-right corner to enable keyboard teleoperation.
-* Click any reachable **blue region** on the map to send a navigation goal.
-* The robot will automatically generate a path and navigate to the selected destination.
+- Click the **keyboard icon** in the lower-right corner to enable keyboard teleoperation.
+- Click any reachable **blue region** on the map to send a navigation goal.
+- The robot will automatically generate a path and navigate to the selected destination.
 
 ---
 
@@ -132,7 +125,7 @@ After the system starts successfully:
 
 ## 1. Failed to Build the Ray Tracing Module
 
-If `dimos run m20-simple-nav` fails during startup, manually compile the Rust ray tracing executable:
+If the navigation system fails during startup, manually compile the Rust ray tracing executable:
 
 ```bash
 cd dimos/mapping/ray_tracing/rust
@@ -169,7 +162,9 @@ source "$HOME/.cargo/env"
 Then launch the navigation system again:
 
 ```bash
-dimos run m20-simple-nav
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<10.21.31.103>:7447 \
+  run m20-simple-nav
 ```
 
 ---
@@ -192,7 +187,9 @@ mv ~/.cargo/config.toml ~/.cargo/config.toml.disabled
 Then rerun:
 
 ```bash
-dimos run m20-simple-nav
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<aos_ip>:7447 \
+  run m20-simple-nav
 ```
 
 The project should now compile successfully.
@@ -201,7 +198,8 @@ The project should now compile successfully.
 
 # Notes
 
-* The first launch may take **2–10 minutes**, depending on your machine, because the Rust ray tracing module is compiled automatically.
-* Always make sure the robot IP address is reachable before starting the Zenoh bridge.
-* If the build fails, refer to the **Troubleshooting** section before rerunning the navigation system.
-* Manual compilation of the Rust module is normally required only once unless the module source code changes.
+- The first launch may take **2–10 minutes**, depending on your machine, because the Rust ray tracing module is compiled automatically.
+- The default IP address of the robot's **AOS module** is `10.21.31.103`. If your deployment uses a different IP address, replace it accordingly before launching the navigation system.
+- Ensure the robot is powered on and connected to the same network as the host machine.
+- If the build fails, refer to the **Troubleshooting** section before rerunning the navigation system.
+- Manual compilation of the Rust ray tracing module is normally required only once unless its source code changes.

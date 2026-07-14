@@ -66,6 +66,20 @@ def test_global_config_flag_applies_before_subcommand():
         global_config.update(transport=original)
 
 
+def test_zenoh_connect_flag_applies_before_subcommand():
+    runner = CliRunner()
+    original = global_config.zenoh_connect
+    try:
+        result = runner.invoke(
+            main,
+            ["--zenoh-connect", "tcp/10.21.31.103:7447", "show-config"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "zenoh_connect: tcp/10.21.31.103:7447" in result.output
+    finally:
+        global_config.update(zenoh_connect=original)
+
+
 def test_blueprint_arg_help():
     class ConfigA(ModuleConfig):
         min_interval_sec: float = 0.1

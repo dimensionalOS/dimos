@@ -53,12 +53,13 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     max_health=5,
     emit_every=2,
     global_emit_every=10,
+    auto_build=True,
     # M20's onboard SLAM publishes this cloud already registered in map frame.
     registered_clouds=True,
 ).remappings(
     [
-        (RayTracingVoxelMap, "lidar", "dimos/slam_aligned_points"),
-        (RayTracingVoxelMap, "odometry", "dimos/slam_odom"),
+        (RayTracingVoxelMap, "lidar", "slam_aligned_points"),
+        (RayTracingVoxelMap, "odometry", "slam_odom"),
     ]
 )
 
@@ -69,8 +70,8 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
 #     save_path=str(map_save_path),
 # ).remappings(
 #     [
-#         (PointCloudMapSave, "lidar", "dimos/slam_aligned_points"),
-#         (PointCloudMapSave, "odometry", "dimos/slam_odom"),
+#         (PointCloudMapSave, "lidar", "slam_aligned_points"),
+#         (PointCloudMapSave, "odometry", "slam_odom"),
 #         (PointCloudMapSave, "global_map", "dimos/m20_saved_pointcloud_map"),
 #     ]
 # )
@@ -93,6 +94,6 @@ m20_simple_nav = autoconnect(
     ReplanningAStarPlanner.blueprint(
         robot_width=m20_width_clearance,
         robot_rotation_diameter=m20_rotation_diameter,
-    ).remappings([(ReplanningAStarPlanner, "odometry", "dimos/slam_odom")]),
+    ).remappings([(ReplanningAStarPlanner, "odometry", "slam_odom")]),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="m20")
