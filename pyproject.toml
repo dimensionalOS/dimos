@@ -306,6 +306,8 @@ mapping = [
     # PGO for reloc premap + cmu_nav experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
+    # DXF read/write for the floorplan generator (dimos/mapping/floorplan)
+    "ezdxf>=1.4",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
