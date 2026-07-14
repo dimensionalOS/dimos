@@ -310,10 +310,26 @@ class McpClient(Module):
             except Empty:
                 continue
 
-            with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+            try:
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+            except Exception as e:
+                # One failed turn (model API outage, quota, malformed tool
+                # output, ...) must not kill the agent loop for the rest of
+                # the session -- before this guard, the first such exception
+                # ended this thread and every later /human_input hung
+                # forever with no signal. Surface the error as the turn's
+                # answer and keep serving.
+                logger.exception("Agent turn failed; keeping the agent loop alive")
+                from langchain_core.messages import AIMessage
+
+                error_msg = AIMessage(content=f"Agent error while handling this message: {e}")
+                self._history.append(error_msg)
+                self.agent.publish(error_msg)
+                if self._message_queue.empty():
+                    self.agent_idle.publish(True)
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
