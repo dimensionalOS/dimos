@@ -658,8 +658,6 @@ class ManipulationModule(Module):
         except ValueError as exc:
             # A bad planner timeline must not strand the module, nor leave a
             # stale trajectory from a previous plan that execute() could pick up.
-        except ValueError as exc:
-            # A bad planner timeline must not strand the module in PLANNING.
             self._planned_paths.pop(robot_name, None)
             self._planned_trajectories.pop(robot_name, None)
             return self._fail(f"Time-parameterization failed: {exc}")
