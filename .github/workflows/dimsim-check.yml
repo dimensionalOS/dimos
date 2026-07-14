@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: misc/DimSim
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Don't do a full-repo LFS fetch: it would pull main's large
           # data/.lfs/* objects (several GB, some missing on the LFS server → 404)
@@ -31,7 +31,7 @@ jobs:
           # glb contents, so pointer stubs for misc/DimSim assets are fine here.
           lfs: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
 
