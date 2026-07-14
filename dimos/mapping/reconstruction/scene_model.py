@@ -49,16 +49,16 @@ logger = setup_logger()
 
 
 def quat_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
-    """Rotation matrix from a (x, y, z, w) quaternion."""
-    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) or 1.0
-    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
-    return np.array(
-        [
-            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
-            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
-            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
-        ]
-    )
+    """Rotation matrix from a (x, y, z, w) quaternion.
+
+    Thin wrapper over the shared Quaternion type so the repo keeps ONE
+    quaternion->matrix implementation (a zero-norm quaternion yields identity).
+    """
+    if not (qx or qy or qz or qw):
+        return np.eye(3)
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+
+    return Quaternion(qx, qy, qz, qw).to_rotation_matrix()
 
 
 def load_rrd_points(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
@@ -77,9 +77,18 @@ def load_rrd_points(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
         table = chunk.to_record_batch()
         for name, col in zip(table.schema.names, table.columns):
             if "Points3D:positions" in name:
-                for row in col.to_pylist():
-                    if row:
-                        cloud.append(np.asarray(row, dtype=np.float32))
+                # Fast path: flatten list<fixed_size_list<f32>[3]> straight from
+                # the arrow buffers. to_pylist() materializes every coordinate
+                # as a Python float — minutes instead of seconds on map-scale
+                # recordings (measured in rrd_feed.py on the same schema).
+                try:
+                    flat = col.values.values.to_numpy(zero_copy_only=False)
+                    if len(flat):
+                        cloud.append(np.asarray(flat, dtype=np.float32).reshape(-1, 3))
+                except Exception:
+                    for row in col.to_pylist():
+                        if row:
+                            cloud.append(np.asarray(row, dtype=np.float32))
             elif "LineStrips3D:strips" in name:
                 for row in col.to_pylist():
                     if row:
@@ -736,21 +745,29 @@ class SceneModel:
         # chokes the renderer; points with these radii read as voxels).
         occ = vox.occupancy(min_hits)
         kk, rr_i, cc = np.nonzero(occ)
-        centers = np.column_stack(
-            [
-                vox.origin[0] + (cc + 0.5) * vox.voxel,
-                vox.origin[1] + (rr_i + 0.5) * vox.voxel,
-                vox.origin[2] + (kk + 0.5) * vox.voxel,
-            ]
-        ).astype(np.float32)
-        z = centers[:, 2]
-        t = (z - z.min()) / (z.max() - z.min() + 1e-9)
-        vox_cols = np.column_stack([40 + 180 * t, 80 + 120 * t, 220 - 160 * t]).astype(np.uint8)
-        rr.log(
-            "world/voxels",
-            rr.Points3D(positions=centers, colors=vox_cols, radii=vox.voxel * 0.45),
-            static=True,
-        )
+        if len(kk):
+            centers = np.column_stack(
+                [
+                    vox.origin[0] + (cc + 0.5) * vox.voxel,
+                    vox.origin[1] + (rr_i + 0.5) * vox.voxel,
+                    vox.origin[2] + (kk + 0.5) * vox.voxel,
+                ]
+            ).astype(np.float32)
+            z = centers[:, 2]
+            t = (z - z.min()) / (z.max() - z.min() + 1e-9)
+            vox_cols = np.column_stack([40 + 180 * t, 80 + 120 * t, 220 - 160 * t]).astype(
+                np.uint8
+            )
+            rr.log(
+                "world/voxels",
+                rr.Points3D(positions=centers, colors=vox_cols, radii=vox.voxel * 0.45),
+                static=True,
+            )
+        else:
+            # A sparse single-pass scan can leave no voxel above min_hits;
+            # z.min() on the empty array would crash the save after the rest
+            # of the pipeline already succeeded.
+            logger.warning(f"No voxels with >= {min_hits} hits — skipping voxel layer")
 
         for i, region in enumerate(regions):
             if region.loops:

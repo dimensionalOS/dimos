@@ -495,7 +495,11 @@ def build_grids(
     x0, y0 = xy.min(axis=0) - margin
     x1, y1 = xy.max(axis=0) + margin
     if ((x1 - x0) / resolution) * ((y1 - y0) / resolution) > 6000 * 6000:
-        raise SystemExit("Grid too large — outliers? Tighten the z band.")
+        # ValueError, not SystemExit: this runs inside the skill's worker pool,
+        # and a SystemExit (BaseException) would sail past the skill container's
+        # error handling and kill the hosting module instead of returning an
+        # error string to the agent.
+        raise ValueError("Grid too large — outliers? Tighten the z band.")
     bounds = (float(x0), float(y0), float(x1), float(y1))
 
     def _cut(lo: float, hi: float) -> np.ndarray:
@@ -584,12 +588,14 @@ def build_grids(
         high_mask = cv2.bitwise_and(high_mask, indoor_mask)  # type: ignore[assignment]
 
     # despeckle: isolated high-return specks (sensor noise, plant tops) are
-    # not structure and only clutter clustering and the AI review
+    # not structure and only clutter clustering and the AI review. One
+    # vectorized pass — a per-component `labels == i` scan is O(n_components
+    # x H x W), which crawls on large noisy grids.
     n, labels, stats, _ = cv2.connectedComponentsWithStats(high_mask)
     min_cells = max(4, int(0.04 / (resolution * resolution)))
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < min_cells:
-            high_mask[labels == i] = 0
+    small = np.flatnonzero(stats[1:, cv2.CC_STAT_AREA] < min_cells) + 1
+    if len(small):
+        high_mask[np.isin(labels, small)] = 0
 
     return Grids(
         all_mask, high_mask, indoor_mask, envelope_mask, (float(x0), float(y0)), resolution
@@ -1311,8 +1317,13 @@ class SessionImagery:
         self.yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
         self._stream: Any = None
         self._store: Any = None
+        # One instance is shared by all of generate_floorplan's per-level
+        # worker threads; the store is a single sqlite connection, so both
+        # the lazy open and every query must be serialized.
+        self._lock = threading.Lock()
 
     def _images(self) -> Any:  # lazy: the store is 10 GB, open once
+        # Callers must hold self._lock (see best_view).
         if self._stream is None:
             from dimos.memory2.store.sqlite import SqliteStore
 
@@ -1351,7 +1362,8 @@ class SessionImagery:
         score = off_axis + 0.05 * dist
         score[~ok] = np.inf
         best = int(np.argmin(score))
-        img = self._images().find_closest(float(self.t[best]), tolerance=0.6)
+        with self._lock:
+            img = self._images().find_closest(float(self.t[best]), tolerance=0.6)
         if img is None:
             return None
         rgb = np.asarray(img.to_rgb().data)
@@ -2837,8 +2849,20 @@ def process_level(
     trajectory = model.trajectory
     z_min = level.floor_z + 0.15
     z_max = level.ceiling_z
-    # generate_floorplan resolves wall_z before dispatching levels
+    # generate_floorplan resolves wall_z before dispatching levels.
+    # Clamp below the ceiling: closely-spaced floors (legal from 1.8 m apart)
+    # can put floor_z + wall_z ABOVE z_max, which would give the structural
+    # cut a negative thickness — an all-empty mask and a sheet silently drawn
+    # with no interior walls. The clamp keeps a usable band above furniture
+    # height even on low levels.
     high_z = level.floor_z + (args.wall_z if args.wall_z is not None else 0.95)
+    if high_z >= z_max:
+        clamped = max(z_min, level.floor_z + 0.6 * (z_max - level.floor_z))
+        logger.warning(
+            f"{level.name}: wall evidence height {high_z:.2f} is above the ceiling "
+            f"{z_max:.2f} (low level) — clamping to {clamped:.2f}"
+        )
+        high_z = clamped
     # indoor evidence: returns overhead, between this band's top and ~2.5 m above
     # (wide enough to catch tall ceilings and the next story's floor slab)
     ceil_band = (level.ceiling_z, level.ceiling_z + 2.5)
@@ -2953,12 +2977,10 @@ def process_level(
         return None
 
     robot: RobotMarker | None = robot_live
-    if robot is None and len(trajectory):
-        on_level = trajectory[
-            (trajectory[:, 2] >= level.floor_z - 0.4) & (trajectory[:, 2] <= level.ceiling_z)
-        ]
-        if len(on_level):
-            robot = (float(on_level[-1, 0]), float(on_level[-1, 1]), None)
+    if robot is None and traj_xy is not None and len(traj_xy):
+        # traj_xy is the on-level trajectory filter computed once at the top
+        # of this function — the robot marker is simply its last point.
+        robot = (float(traj_xy[-1, 0]), float(traj_xy[-1, 1]), None)
 
     return LevelSheet(level=level, plan=plan, robot=robot, region=region)
 

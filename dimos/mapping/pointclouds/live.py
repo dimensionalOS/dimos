@@ -36,20 +36,34 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class LidarPointCloudClient:
-    """Subscribes to live lidar over LCM and exposes it as a numpy array."""
+    """Subscribes to live lidar over LCM and exposes it as a numpy array.
+
+    Accumulation is bounded: once the buffered chunks exceed
+    ``max_buffered_points`` they are compacted with a voxel pass, so memory
+    scales with the scanned volume rather than session length (overlapping
+    sweeps mostly revisit the same voxels). Snapshots are cached and only
+    rebuilt after new data arrives, so polling skills don't pay a full
+    re-vstack per query.
+    """
 
     def __init__(
         self,
         lidar_topic: str = "/lidar",
         global_map_topic: str | None = "/global_map",
+        max_buffered_points: int = 2_000_000,
+        compact_voxel_m: float = 0.05,
     ) -> None:
         self.lidar_topic = lidar_topic
         self.global_map_topic = global_map_topic
+        self.max_buffered_points = max_buffered_points
+        self.compact_voxel_m = compact_voxel_m
 
         self._lock = threading.Lock()
         self._chunks: list[np.ndarray] = []
+        self._buffered_points = 0
         self._global_map: np.ndarray | None = None
         self._message_count = 0
+        self._snapshot_cache: np.ndarray | None = None
 
         self._lidar_transport: LCMTransport[PointCloud2] | None = None
         self._global_map_transport: LCMTransport[PointCloud2] | None = None
@@ -85,7 +99,17 @@ class LidarPointCloudClient:
             return
         with self._lock:
             self._chunks.append(pts)
+            self._buffered_points += len(pts)
             self._message_count += 1
+            self._snapshot_cache = None
+            if self._buffered_points > self.max_buffered_points:
+                # Compact: overlapping sweeps mostly revisit the same voxels,
+                # so this bounds memory by scanned volume, not session length.
+                merged = signals.voxel_downsample(
+                    np.vstack(self._chunks), voxel_size=self.compact_voxel_m
+                )
+                self._chunks = [merged]
+                self._buffered_points = len(merged)
 
     def _on_global_map(self, pc: PointCloud2) -> None:
         pts = pc.points_f32()
@@ -93,21 +117,30 @@ class LidarPointCloudClient:
             return
         with self._lock:
             self._global_map = pts  # cumulative — latest wins
+            self._snapshot_cache = None
 
     def snapshot(self) -> np.ndarray:
-        """Thread-safe (N, 3) float32 vstack of buffered chunks + global map."""
+        """Thread-safe (N, 3) float32 vstack of buffered chunks + global map.
+
+        Cached between messages: repeated queries (each derived signal below
+        calls this) cost nothing until new data arrives.
+        """
         with self._lock:
+            if self._snapshot_cache is not None:
+                return self._snapshot_cache
             arrays = list(self._chunks)
             if self._global_map is not None:
                 arrays.append(self._global_map)
-        if not arrays:
-            return np.zeros((0, 3), dtype=np.float32)
-        return np.vstack(arrays)
+            snap = np.vstack(arrays) if arrays else np.zeros((0, 3), dtype=np.float32)
+            self._snapshot_cache = snap
+            return snap
 
     def clear(self) -> None:
         """Drop buffered /lidar chunks (the last global map, if any, is kept)."""
         with self._lock:
             self._chunks = []
+            self._buffered_points = 0
+            self._snapshot_cache = None
 
     @property
     def message_count(self) -> int:
