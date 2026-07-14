@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+import os
+import sys
 import time
 from typing import Any, Union
 
@@ -29,7 +31,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
+from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.cli import theme
 
 # Type alias for all message types we might receive
@@ -56,21 +58,20 @@ class AgentMessageMonitor:
         self.topic = topic
         self.max_messages = max_messages
         self.messages: deque[MessageEntry] = deque(maxlen=max_messages)
-        self.transport = PickleLCM()
+        self.transport = make_transport(self.topic)
         self.transport.start()
         self.callbacks: list[callable] = []  # type: ignore[valid-type]
         pass
 
     def start(self) -> None:
         """Start monitoring messages."""
-        self.transport.subscribe(Topic(self.topic), self._handle_message)
+        self.transport.subscribe(self._handle_message)
 
     def stop(self) -> None:
         """Stop monitoring."""
-        # PickleLCM doesn't have explicit stop method
-        pass
+        self.transport.stop()
 
-    def _handle_message(self, msg: Any, topic: Topic) -> None:
+    def _handle_message(self, msg: Any) -> None:
         """Handle incoming messages."""
         # Check if it's one of the message types we care about
         if isinstance(msg, SystemMessage | ToolMessage | AIMessage | HumanMessage):
@@ -219,12 +220,9 @@ class AgentSpyApp(App):  # type: ignore[type-arg]
 
 
 def main() -> None:
-    """Main entry point for agentspy."""
-    import sys
+    apply_transport_arg(sys.argv)
 
     if len(sys.argv) > 1 and sys.argv[1] == "web":
-        import os
-
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

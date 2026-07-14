@@ -253,12 +253,6 @@ class JointServoTask(BaseControlTask):
             return self._active and self._target is not None
 
 
-__all__ = [
-    "JointServoTask",
-    "JointServoTaskConfig",
-]
-
-
 class JointServoTaskParams(BaseConfig):
     timeout: float | None = None
     default_positions: list[float] | None = None

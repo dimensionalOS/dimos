@@ -267,12 +267,6 @@ class JointVelocityTask(BaseControlTask):
             return self._active and self._velocities is not None and not self._timed_out
 
 
-__all__ = [
-    "JointVelocityTask",
-    "JointVelocityTaskConfig",
-]
-
-
 class JointVelocityTaskParams(BaseConfig):
     timeout: float = 0.2
     zero_on_timeout: bool = True

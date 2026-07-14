@@ -237,6 +237,3 @@ def _float_or_none(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
-
-
-__all__ = ["JointDescription", "ModelDescription", "parse_model"]

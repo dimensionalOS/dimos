@@ -423,11 +423,3 @@ class G1WholeBodyConnection(Module):
             time.sleep(1)
 
         logger.info("Sport mode released - low-level control active")
-
-
-__all__ = [
-    "G1_JOINT_NAMES",
-    "G1LowStateSnapshot",
-    "G1WholeBodyConnection",
-    "G1WholeBodyConnectionConfig",
-]

@@ -31,12 +31,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.quest.quest_types import Buttons
 
 
@@ -295,12 +296,27 @@ class ControlTask(Protocol):
         """Handle incoming cartesian command (target or delta pose)."""
         ...
 
+    def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
+        """Handle routed spatial end-effector twist command."""
+        ...
+
     def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
         """Handle servo position commands by joint name."""
         ...
 
     def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
         """Handle velocity commands by joint name."""
+        ...
+
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """Clear transient state after a runtime discontinuity.
+
+        Called on simulation/runtime discontinuities such as a MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator. ``reactivate`` optionally
+        re-engages a task that had stopped itself. Returns True if the task
+        had state to reset.
+        """
         ...
 
 
@@ -319,6 +335,10 @@ class BaseControlTask(ControlTask):
         """No-op default."""
         return False
 
+    def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
+        """No-op default."""
+        return False
+
     def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
         """No-op default."""
         return False
@@ -327,16 +347,6 @@ class BaseControlTask(ControlTask):
         """No-op default."""
         return False
 
-
-__all__ = [
-    # Protocol + Base
-    "BaseControlTask",
-    # Types
-    "ControlMode",
-    "ControlTask",
-    "CoordinatorState",
-    "JointCommandOutput",
-    "JointName",
-    "JointStateSnapshot",
-    "ResourceClaim",
-]
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """No-op default."""
+        return False

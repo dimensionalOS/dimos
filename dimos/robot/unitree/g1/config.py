@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.config import RobotConfig
 from dimos.utils.data import LfsPath
 
 # this is robot-specific, but only needed for the local_planner module
@@ -29,7 +30,19 @@ from dimos.utils.data import LfsPath
 # probably only needs to be regenerated on robots that are notably different than the g1 (the go2 in rage mode probably needs different local planning paths)
 G1_LOCAL_PLANNER_PRECOMPUTED_PATHS = LfsPath("unitree_g1_local_planner_precomputed_paths")
 
-G1 = RobotConfig(
+
+@dataclass(frozen=True)
+class G1Config:
+    """Physical metadata used by G1 navigation and sensor blueprints."""
+
+    name: str
+    model_path: Path
+    height_clearance: float
+    width_clearance: float
+    internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
+
+
+G1 = G1Config(
     name="unitree_g1",
     model_path=Path(__file__).parent / "g1.urdf",
     height_clearance=1.2,

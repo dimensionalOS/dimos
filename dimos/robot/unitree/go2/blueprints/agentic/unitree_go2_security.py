@@ -52,5 +52,3 @@ unitree_go2_security = autoconnect(
         rerun_config={**rerun_config, "blueprint": _go2_rerun_blueprint},
     ),
 )
-
-__all__ = ["unitree_go2_security"]

@@ -30,11 +30,11 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_3d.evaluator.evaluator import Evaluator
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_stack.modules.click_start_goal_router.click_start_goal_router import (
+from dimos.navigation.cmu_nav.modules.click_start_goal_router.click_start_goal_router import (
     ClickStartGoalRouter,
 )
+from dimos.navigation.nav_3d.evaluator.evaluator import Evaluator
+from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -115,6 +115,3 @@ path_planner_eval = autoconnect(
         }
     ),
 )
-
-
-__all__ = ["path_planner_eval"]

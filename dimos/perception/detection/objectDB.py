@@ -324,6 +324,3 @@ class ObjectDB:
     def __repr__(self) -> str:
         with self._lock:
             return f"ObjectDB(permanent={len(self._objects)}, pending={len(self._pending_objects)})"
-
-
-__all__ = ["ObjectDB"]

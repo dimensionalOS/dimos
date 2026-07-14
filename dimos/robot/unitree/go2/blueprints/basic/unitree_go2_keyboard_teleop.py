@@ -56,5 +56,3 @@ unitree_go2_keyboard_teleop = (
     .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(obstacle_avoidance=True)
 )
-
-__all__ = ["unitree_go2_keyboard_teleop"]

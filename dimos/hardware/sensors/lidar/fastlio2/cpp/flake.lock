@@ -37,16 +37,16 @@
     "fast-lio": {
       "flake": false,
       "locked": {
-        "lastModified": 1778784133,
-        "narHash": "sha256-bZEmIJlrzcqrHLxCiXXXf7fgi2yjVRuad8z08HN1eMU=",
+        "lastModified": 1783023362,
+        "narHash": "sha256-h+cK9PIA8dQKEaWendfxHz1kqfEc5sqaaPRG0ma1SRc=",
         "owner": "dimensionalOS",
         "repo": "dimos-module-fastlio2",
-        "rev": "d93bc6795babe9e63cc77d2bf2b72294d9afa839",
+        "rev": "7841812385d4ee79ed981b90e9a411933b293754",
         "type": "github"
       },
       "original": {
         "owner": "dimensionalOS",
-        "ref": "v0.3.0-quiet-logs",
+        "ref": "ivan/fix/body-cloud-imu-extrinsic",
         "repo": "dimos-module-fastlio2",
         "type": "github"
       }

@@ -308,11 +308,3 @@ def _candidate_names(name: str, model_prefix: str | None) -> tuple[str, ...]:
 
 def _name(model: mujoco.MjModel, obj_type: int, obj_id: int) -> str:
     return mujoco.mj_id2name(model, obj_type, obj_id) or f"<unnamed:{obj_id}>"
-
-
-__all__ = [
-    "RobotSimBinding",
-    "RobotSimSpec",
-    "mjcf_joint_names_from_hardware",
-    "resolve_robot_sim_binding",
-]

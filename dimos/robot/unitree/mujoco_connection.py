@@ -33,7 +33,7 @@ import weakref
 
 import numpy as np
 from numpy.typing import NDArray
-from reactivex import Observable
+from reactivex import Observable, empty
 from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
@@ -237,7 +237,7 @@ class MujocoConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def enable_rage_mode(self) -> bool:
+    def set_rage_mode(self, enable: bool) -> bool:
         return True
 
     def get_video_frame(self) -> NDArray[Any] | None:
@@ -336,6 +336,11 @@ class MujocoConnection:
             return Image.from_numpy(frame, format=ImageFormat.RGB) if frame is not None else None
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
+
+    @functools.cache
+    def lowstate_stream(self) -> Observable[Any]:
+        # Sim has no low-level state (battery/IMU) stream — emit nothing.
+        return empty()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         if self._is_cleaned_up or self.shm_data is None:

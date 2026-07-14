@@ -486,6 +486,3 @@ def _collision_failure(result: IKResult) -> IKResult:
         iterations=result.iterations,
         message="Pink IK solution rejected by collision check",
     )
-
-
-__all__ = ["PinkIK", "PinkIKConfig", "PinkIKDependencyError"]

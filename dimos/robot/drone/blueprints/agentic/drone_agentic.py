@@ -54,8 +54,3 @@ drone_agentic = autoconnect(
         (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
     ]
 )
-
-__all__ = [
-    "DRONE_SYSTEM_PROMPT",
-    "drone_agentic",
-]

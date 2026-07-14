@@ -160,6 +160,3 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
 
         {MODE_COMMANDS_DOC}
         """
-
-
-__all__ = ["G1HighLevelWebRtc", "G1HighLevelWebRtcConfig"]

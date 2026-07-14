@@ -81,7 +81,7 @@ def _class_to_id(codec: Any) -> str:
     return name.lower()
 
 
-def _resolve_payload_type(payload_module: str) -> type[Any]:
+def resolve_payload_type(payload_module: str) -> type[Any]:
     parts = payload_module.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(f"Cannot resolve payload type from {payload_module!r}")
@@ -104,7 +104,7 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
     if name == "lcm":
         from dimos.memory2.codecs.lcm import LcmCodec
 
-        return LcmCodec(_resolve_payload_type(payload_module))
+        return LcmCodec(resolve_payload_type(payload_module))
     if name == "pickle":
         from dimos.memory2.codecs.pickle import PickleCodec
 

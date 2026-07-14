@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Pre-build native modules ready for tests.
+
+Discovers every cmu_nav module that defines a NativeModuleConfig with a
+`build_command` set, then runs that command. CI invokes this after installing
+Nix + the Cachix substituter so warm-cache builds are near-instant.
+
+Discovery imports each module and reads the config defaults off an
+instantiated `NativeModuleConfig` — robust against any refactor of how those
+fields are declared (literal vs computed vs factory), at the cost of needing
+dimos importable (run via `uv run`).
+"""
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import importlib
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+from dimos.core.native_module import NativeModuleConfig
+import dimos.navigation.cmu_nav.modules as modules_pkg
+
+MODULES_DIR = Path(modules_pkg.__path__[0])
+# Captured at import time; forked workers inherit it
+_T0 = time.monotonic()
+
+
+def _log(msg: str) -> None:
+    print(f"[{time.monotonic() - _T0:6.1f}s] {msg}", flush=True)
+
+
+# Pre-filter source files for a NativeModuleConfig subclass before importing
+# them. Modules that don't subclass NativeModuleConfig (e.g. nav_record) may
+# pull in heavy deps like torch at top-level import, and we don't want to
+# require those just to discover.
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
+
+
+def discover() -> tuple[type[NativeModuleConfig], ...]:
+    found: list[type[NativeModuleConfig]] = []
+    for pkg_dir in sorted(MODULES_DIR.iterdir()):
+        if not pkg_dir.is_dir():
+            continue
+        leaf = pkg_dir.name
+        src = pkg_dir / f"{leaf}.py"
+        if not src.exists() or not _HAS_NATIVE_CONFIG.search(src.read_text()):
+            continue
+        mod = importlib.import_module(f"{modules_pkg.__name__}.{leaf}.{leaf}")
+        for attr in vars(mod).values():
+            if (
+                isinstance(attr, type)
+                and attr is not NativeModuleConfig
+                and issubclass(attr, NativeModuleConfig)
+                and attr.__module__ == mod.__name__
+                and attr.model_fields["build_command"].default is not None
+            ):
+                found.append(attr)
+    return tuple(found)
+
+
+def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
+    name = cfg_cls.__name__
+    cfg = cfg_cls()
+    assert cfg.build_command is not None
+    mod = importlib.import_module(cfg_cls.__module__)
+    base_dir = Path(mod.__file__).resolve().parent  # type: ignore[arg-type]
+    cwd = Path(cfg.cwd) if cfg.cwd is not None else base_dir
+    if not cwd.is_absolute():
+        cwd = base_dir / cwd
+    exe = Path(cfg.executable)
+    if not exe.is_absolute():
+        exe = cwd / exe
+    if exe.exists():
+        return f"OK:    {name} already built at {exe}"
+    _log(f"START: {name} in {cwd}: {cfg.build_command}")
+    proc = subprocess.run(
+        cfg.build_command,
+        shell=True,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    body = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+    return f"DONE:  {name}\n{body}".rstrip()
+
+
+def main() -> None:
+    cfgs = discover()
+    failed = 0
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    _log(f"Building {len(cfgs)} module(s) with up to {workers} workers")
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(build_one, c): c for c in cfgs}
+        for fut in as_completed(futs):
+            try:
+                _log(fut.result())
+            except Exception as e:
+                _log(f"FAIL:  {futs[fut].__name__}: {e}")
+                failed += 1
+    if failed:
+        sys.exit(f"{failed} build(s) failed")
+
+
+if __name__ == "__main__":
+    main()

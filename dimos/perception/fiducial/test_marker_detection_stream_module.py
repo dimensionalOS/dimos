@@ -19,8 +19,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-pytest.importorskip("cv2.aruco")
-
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion

@@ -1,4 +1,6 @@
-# Data Loading
+---
+title: "Data Loading"
+---
 
 The [`get_data`](/dimos/utils/data.py) function provides access to test data and model files, handling Git LFS downloads automatically.
 

@@ -94,19 +94,3 @@ def execute_g1_command(
         if logger is not None:
             logger.error(f"Failed to execute {command_name}: {exc}")
         return "Failed to execute the command."
-
-
-__all__ = [
-    "ARM_API_ID",
-    "ARM_COMMANDS",
-    "ARM_COMMANDS_DOC",
-    "ARM_TOPIC",
-    "G1_ARM_CONTROLS",
-    "G1_MODE_CONTROLS",
-    "MODE_API_ID",
-    "MODE_COMMANDS",
-    "MODE_COMMANDS_DOC",
-    "MODE_TOPIC",
-    "PublishRequest",
-    "execute_g1_command",
-]

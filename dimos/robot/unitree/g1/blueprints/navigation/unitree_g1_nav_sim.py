@@ -19,8 +19,8 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
@@ -58,11 +58,11 @@ unitree_g1_nav_sim = (
             lock_z=True,
             publish_images=False,
         ),
-        create_nav_stack(**nav_config),
+        create_cmu_nav(**nav_config),
         MovementManager.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
-            rerun_config=nav_stack_rerun_config(
+            rerun_config=cmu_nav_rerun_config(
                 {
                     "visual_override": {
                         "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,

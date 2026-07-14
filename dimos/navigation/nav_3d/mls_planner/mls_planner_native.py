@@ -31,22 +31,33 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     stdin_config: bool = True
 
     world_frame: str = "map"
-    voxel_size: float = 0.1
-    robot_height: float = 1.5
+    voxel_size: float = 0.08
+    robot_height: float = 0.3
+    max_overhead_m: float = 2.0
 
-    surface_dilation_passes: int = 3
-    surface_erosion_passes: int = 3
+    surface_closing_radius: float = 0.3
     node_spacing_m: float = 1.0
-    node_wall_buffer_m: float = 0.3
-    node_step_threshold_m: float = 0.25
+    wall_clearance_m: float = 0.1
+    wall_buffer_m: float = 0.75
+    wall_buffer_weight: float = 100.0
+    step_threshold_m: float = 0.16
+    step_penalty_weight: float = 4.0
+    goal_tolerance: float = 0.3
+    viz_publish_hz: float = 2.0
 
 
 class MLSPlannerNative(NativeModule):
-    """Rust-backed MLS planner."""
+    """Rust-backed MLS planner.
+
+    Feed either global_map, which rebuilds fully per message, or the local_map
+    plus region_bounds pair from RayTracingVoxelMap for incremental updates.
+    """
 
     config: MLSPlannerNativeConfig
 
     global_map: In[PointCloud2]
+    local_map: In[PointCloud2]
+    region_bounds: In[PoseStamped]
     start_pose: In[PoseStamped]
     goal_pose: In[PoseStamped]
 

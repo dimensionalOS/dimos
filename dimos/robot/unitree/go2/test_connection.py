@@ -41,7 +41,11 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
     """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
     cfg = SimpleNamespace(unitree_connection_type="webrtc")
     go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
-    stub_webrtc.assert_called_once_with("192.168.123.161", aes_128_key="cafe" * 8)
+    stub_webrtc.assert_called_once_with(
+        "192.168.123.161",
+        aes_128_key="cafe" * 8,
+        velocity_api=False,
+    )
 
 
 def test_connection_config_aes_key_defaults_from_global_config() -> None:

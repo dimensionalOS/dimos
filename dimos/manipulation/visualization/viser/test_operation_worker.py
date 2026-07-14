@@ -277,7 +277,10 @@ def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.Mon
     [
         ("_submit_plan", "Cannot plan until target is feasible and manipulation is idle"),
         ("_submit_preview", "No fresh plan to preview"),
-        ("_submit_execute", "Panel execution disabled; set allow_plan_execute=True to enable"),
+        (
+            "_submit_execute",
+            "Cannot execute: require feasible fresh plan and matching current joints",
+        ),
     ],
 )
 def test_gui_guard_errors_keep_action_idle(

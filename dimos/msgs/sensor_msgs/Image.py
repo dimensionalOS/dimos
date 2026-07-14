@@ -619,14 +619,6 @@ class Image(Timestamped):
         )
 
 
-__all__ = [
-    "Image",
-    "ImageFormat",
-    "sharpness_barrier",
-    "sharpness_window",
-]
-
-
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
     """Emit the sharpest Image seen within each sliding time window."""
     from reactivex.scheduler import ThreadPoolScheduler

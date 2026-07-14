@@ -116,6 +116,3 @@ class Twist(LCMTwist):  # type: ignore[misc]
             False if twist is zero, True otherwise
         """
         return not self.is_zero()
-
-
-__all__ = ["Quaternion", "Twist"]

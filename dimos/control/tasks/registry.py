@@ -60,7 +60,7 @@ class ControlTaskRegistry:
                 if not os.path.isdir(entry_path):
                     continue
 
-                module_name = f"dimos.control.tasks.{entry}.__registry__"
+                module_name = f"dimos.control.tasks.{entry}._registry"
                 try:
                     module = importlib.import_module(module_name)
                 except ModuleNotFoundError as exc:
@@ -131,5 +131,3 @@ class ControlTaskRegistry:
 
 
 control_task_registry = ControlTaskRegistry()
-
-__all__ = ["ControlTaskRegistry", "TaskFactory", "control_task_registry"]

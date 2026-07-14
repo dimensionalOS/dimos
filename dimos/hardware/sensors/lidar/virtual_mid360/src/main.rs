@@ -1,10 +1,24 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Fake Livox Mid-360 — replays a recorded pcap over a virtual NIC and synthesizes
 // the Livox SDK2 control handshake so an unmodified, live-mode pointlio ingests it
 // through the real Livox SDK as if from a live sensor. Namespace-agnostic: it just
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_module::{native_config, run, LcmTransport, Module};
+use dimos_module::{native_config, run_with_transport, Module};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -425,17 +439,28 @@ fn spawn_stream(
             .unwrap_or(0);
         let ts_shift = now_ns.wrapping_sub(first_orig);
 
+        // Linux multicasts point/IMU to mcast_data (the SDK joins the group). On
+        // macOS the IPs are lo0 aliases and a multicast send source-bound to an
+        // alias fails with "No route to host", so we unicast point/IMU to host_ip
+        // instead — the SDK identifies the device by the packet's source IP, so
+        // the source-bind to lidar_ip (which works for unicast on lo0) is what
+        // matters. The consumer's SDK config drops multicast_ip on macOS so its
+        // data socket binds host_ip and receives these unicasts.
+        let data_dest = if cfg!(target_os = "macos") {
+            host_ip
+        } else {
+            mcast_data
+        };
+
         let t_wall0 = Instant::now();
         let mut t_cap0: Option<f64> = None;
         for pkt in packets.iter() {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            // Mid-360 multicasts point/IMU to mcast_data:port (the SDK joins it);
-            // status is unicast. Unicasting point/IMU is silently dropped.
             let (socket, dest_ip, dest_port) = match pkt.src_port {
-                PORT_POINT => (&point, mcast_data, DST_POINT),
-                PORT_IMU => (&imu, mcast_data, DST_IMU),
+                PORT_POINT => (&point, data_dest, DST_POINT),
+                PORT_IMU => (&imu, data_dest, DST_IMU),
                 PORT_STATUS => (&status, host_ip, DST_STATUS),
                 _ => continue,
             };
@@ -524,8 +549,5 @@ fn rewrite_ts(payload: &mut [u8], shift: u64) {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<VirtualMid360, _>(transport).await;
+    run_with_transport::<VirtualMid360>().await;
 }

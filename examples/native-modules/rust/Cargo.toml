@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "native_ping"
-path = "src/native_ping.rs"
+name = "ping"
+path = "src/ping.rs"
 
 [[bin]]
-name = "native_pong"
-path = "src/native_pong.rs"
+name = "pong"
+path = "src/pong.rs"
 
 [dependencies]
 dimos-module = { path = "../../../native/rust/dimos-module" }

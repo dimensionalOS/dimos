@@ -147,6 +147,3 @@ class G1SimConnection(G1ConnectionBase):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)
-
-
-__all__ = ["G1SimConnection"]

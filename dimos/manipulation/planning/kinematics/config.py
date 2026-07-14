@@ -68,12 +68,3 @@ def kinematics_config_from_name(name: str) -> ManipulationKinematicsConfig:
     raise ValueError(
         f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization', 'pink']"
     )
-
-
-__all__ = [
-    "DrakeOptimizationKinematicsConfig",
-    "JacobianKinematicsConfig",
-    "ManipulationKinematicsConfig",
-    "PinkKinematicsConfig",
-    "kinematics_config_from_name",
-]

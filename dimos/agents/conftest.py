@@ -84,7 +84,7 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
             AgentTestRunner.blueprint(messages=messages),
         )
 
-        global_config.update(viewer="none")
+        global_config.update(viewer="none", transport="lcm")  # fixture uses pLCMTransport sidecars
 
         nonlocal coordinator
         coordinator = ModuleCoordinator.build(blueprint)

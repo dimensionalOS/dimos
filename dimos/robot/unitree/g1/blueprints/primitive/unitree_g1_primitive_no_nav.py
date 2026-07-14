@@ -154,5 +154,3 @@ unitree_g1_primitive_no_nav = (
         }
     )
 )
-
-__all__ = ["unitree_g1_primitive_no_nav"]

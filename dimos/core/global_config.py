@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
 import re
+from typing import Literal, TypeAlias
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -25,9 +28,17 @@ from dimos.visualization.rerun.constants import (
     ViewerBackend,
 )
 
+TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
+
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
+
+
+def _default_transport() -> TransportBackend:
+    if platform.system() == "Darwin":
+        return "zenoh"
+    return "lcm"
 
 
 class GlobalConfig(BaseSettings):
@@ -58,13 +69,20 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
-    planner_robot_speed: float | None = None
     mcp_port: int = 9990
+    # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
+    # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
+    # env name and the `--transport` CLI flag (which sets the field by name) working.
+    transport: TransportBackend = Field(
+        default_factory=_default_transport,
+        validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
+    )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True
@@ -77,12 +95,13 @@ class GlobalConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        validate_assignment=True,
     )
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
-            if not hasattr(self, key):
+            if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 

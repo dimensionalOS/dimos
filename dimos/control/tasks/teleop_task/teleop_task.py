@@ -354,12 +354,6 @@ class TeleopIKTask(BaseControlTask):
         logger.info(f"TeleopIKTask {self._name} stopped")
 
 
-__all__ = [
-    "TeleopIKTask",
-    "TeleopIKTaskConfig",
-]
-
-
 class TeleopIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6

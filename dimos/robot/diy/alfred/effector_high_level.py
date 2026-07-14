@@ -157,6 +157,3 @@ class AlfredHighLevel(Module):
         except Exception as e:
             logger.error(f"Error sending Alfred velocity: {e}")
             return False
-
-
-__all__ = ["AlfredHighLevel", "AlfredHighLevelConfig"]
