@@ -59,6 +59,9 @@ def test_skill_registers_with_schema(container: FloorplanSkillContainer) -> None
     if "save_3d_model" in props:
         assert props["save_3d_model"].get("default") in (False, None)
         assert props["debug_artifacts"].get("default") in (False, None)
+        # ...but stylized AI renditions are ON by default (all three styles),
+        # so they're attached as images the calling agent can see unprompted.
+        assert props["ai_render_styles"].get("default") == "drafted,cyanotype,presentation"
 
 
 def test_skill_fails_gracefully_on_missing_recording(

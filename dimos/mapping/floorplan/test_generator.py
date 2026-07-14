@@ -14,9 +14,15 @@
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 
-from dimos.mapping.floorplan.generator import FloorplanOptions, generate_floorplan
+from dimos.mapping.floorplan.generator import (
+    FloorplanOptions,
+    FloorplanResult,
+    check_floor_plausibility,
+    generate_floorplan,
+)
 from dimos.mapping.reconstruction.scene_model import SceneModel
 
 
@@ -83,3 +89,51 @@ def test_generate_floorplan_save_3d_model(tmp_path: Path) -> None:
     result = generate_floorplan(opts, model=_synthetic_building())
     assert result.model_rrd is not None and result.model_rrd.exists()
     assert "dimos-viewer" in result.summary()
+
+
+def test_floorplan_result_agent_encode(tmp_path: Path) -> None:
+    """agent_encode() attaches renditions as images, and skips unreadable ones."""
+    good_render = tmp_path / "plan.render-drafted.png"
+    cv2.imwrite(str(good_render), np.zeros((4, 4, 3), dtype=np.uint8))
+    missing_render = tmp_path / "plan.render-cyanotype.png"  # never written
+
+    result = FloorplanResult(
+        dxf=tmp_path / "plan.dxf",
+        jpeg=tmp_path / "plan.jpg",
+        sheets=[],
+        renders=[good_render, missing_render],
+    )
+
+    content = result.agent_encode()
+
+    assert content[0] == {"type": "text", "text": result.summary()}
+    image_blocks = [c for c in content if c.get("type") == "image_url"]
+    assert len(image_blocks) == 1  # the missing render is skipped, not raised
+    assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_floorplan_result_agent_encode_no_renders(tmp_path: Path) -> None:
+    result = FloorplanResult(dxf=tmp_path / "plan.dxf", jpeg=tmp_path / "plan.jpg", sheets=[])
+    assert result.agent_encode() == [{"type": "text", "text": result.summary()}]
+
+
+def test_floor_plausibility_flags_drifted_trajectory() -> None:
+    """A drift-split floor stack (observed: 3 real stories detected as 6 spanning
+    43 m of z, with a 30 m 'story') must be flagged; real stacks must not."""
+    drifted = [-40.08, -35.98, -33.68, -3.48, -0.38, 3.22]
+    warning = check_floor_plausibility(drifted)
+    assert warning is not None and "drift" in warning
+
+    assert check_floor_plausibility([0.08, 3.28, 6.78]) is None  # the real building
+    assert check_floor_plausibility([0.0]) is None  # single story
+    assert check_floor_plausibility([]) is None
+
+
+def test_drift_warning_lands_in_summary(tmp_path: Path) -> None:
+    result = FloorplanResult(
+        dxf=tmp_path / "plan.dxf",
+        jpeg=tmp_path / "plan.jpg",
+        sheets=[],
+        warnings=["odometry drift suspected"],
+    )
+    assert "WARNING: odometry drift suspected" in result.summary()

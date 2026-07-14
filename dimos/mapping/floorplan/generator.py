@@ -57,6 +57,7 @@ stylized renditions).
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import itertools
@@ -85,6 +86,7 @@ from dimos.mapping.reconstruction.scene_model import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
@@ -104,6 +106,10 @@ MERGE_GAP = 0.35  # m — smaller gaps in a wall run are noise, bridge them
 MIN_WALL_RUN = 0.8  # m — shortest run drawn as a wall
 FLOOR_SEPARATION = 1.8  # m — minimum story height for level detection
 STORY_CAP = 2.6  # m — top of the last level's occupancy band above its floor
+# m — no real building has consecutive floors this far apart; a bigger gap means
+# the trajectory's z drifted (dead-reckoning odometry on a long tour splits one
+# real floor into several spurious z-clusters, e.g. 3 floors detected as 6)
+MAX_STORY_GAP = 12.0
 
 RobotMarker = tuple[float, float, float | None]  # x, y, yaw (None = unknown)
 
@@ -114,25 +120,51 @@ RobotMarker = tuple[float, float, float | None]  # x, y, yaw (None = unknown)
 
 
 class _PoseTracker:
-    """Tracks the latest /odom pose while lidar collection runs."""
+    """Tracks /odom poses while lidar collection runs.
+
+    Keeps the full position history, not just the latest pose: floor
+    detection is trajectory-dwell-based (detect_floor_elevations), so a
+    multi-level live collection needs everywhere the robot has been during
+    the window, exactly like the .rrd path gets from its recorded path.
+    """
+
+    # At a typical 30-50Hz odom rate this caps memory at ~1MB while covering
+    # hours of collection; on overflow, decimate 2x (keep every other pose)
+    # rather than dropping the oldest -- dwell detection wants uniform-ish
+    # coverage of the whole window, not just its tail.
+    MAX_POSES = 50_000
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pose: PoseStamped | None = None
+        self._positions: list[tuple[float, float, float]] = []
 
     def on_odom(self, pose: PoseStamped) -> None:
         with self._lock:
             self._pose = pose
+            self._positions.append(
+                (float(pose.position.x), float(pose.position.y), float(pose.position.z))
+            )
+            if len(self._positions) > self.MAX_POSES:
+                self._positions = self._positions[::2]
 
     @property
     def pose(self) -> PoseStamped | None:
         with self._lock:
             return self._pose
 
+    @property
+    def trajectory(self) -> np.ndarray:
+        """(N, 3) positions seen so far (empty if no odom arrived)."""
+        with self._lock:
+            if not self._positions:
+                return np.zeros((0, 3), dtype=np.float32)
+            return np.asarray(self._positions, dtype=np.float32)
+
 
 def collect_points(
     duration: float, lidar_topic: str, spin: bool, explore: bool
-) -> tuple[np.ndarray, PoseStamped | None]:
+) -> tuple[np.ndarray, PoseStamped | None, np.ndarray]:
     lidar_client = LidarPointCloudClient(lidar_topic=lidar_topic, global_map_topic="/global_map")
     lidar_client.start()
 
@@ -176,10 +208,14 @@ def collect_points(
 
     points = lidar_client.snapshot()
     pose = pose_tracker.pose
+    trajectory = pose_tracker.trajectory
     lidar_client.stop()
     odom_tp.stop()
-    logger.info(f"Collected {len(points)} points from {lidar_client.message_count} lidar messages")
-    return points, pose
+    logger.info(
+        f"Collected {len(points)} points from {lidar_client.message_count} lidar messages "
+        f"and {len(trajectory)} trajectory poses"
+    )
+    return points, pose, trajectory
 
 
 # --------------------------------------------------------------------------- #
@@ -264,6 +300,29 @@ def detect_floor_elevations(path_z: np.ndarray, manual: str | None) -> list[floa
         + ", ".join(f"({z:+.2f}, {dw:.0f})" for z, dw in sorted(candidates))
     )
     return sorted(floors)
+
+
+def check_floor_plausibility(floors: list[float]) -> str | None:
+    """Warning string when auto-detected floors can't be a real building.
+
+    Odometry drift on a long tour smears the trajectory's z, so revisits of
+    the same physical floor land at different elevations and one real story
+    splits into several spurious ones (observed: a 3-story office detected as
+    6 "floors" spanning 43 m). The signature is a consecutive floor gap no
+    real building has; the fix is better data, not drawing 6 sheets silently.
+    """
+    gaps = [(hi - lo, lo, hi) for lo, hi in zip(floors, floors[1:]) if hi - lo > MAX_STORY_GAP]
+    if not gaps:
+        return None
+    worst = max(g[0] for g in gaps)
+    return (
+        f"{len(floors)} floors detected, but consecutive floors "
+        f"{gaps[0][1]:+.1f} m -> {gaps[0][2]:+.1f} m are {worst:.0f} m apart — no real "
+        "building spaces stories like that, so the trajectory's z has almost certainly "
+        "drifted (dead-reckoning odometry splits each real floor into several spurious "
+        "ones). Use a drift-corrected recording (e.g. a point-LIO / loop-closed SLAM "
+        "export) or pass explicit floor elevations via levels=."
+    )
 
 
 def build_levels(floors: list[float]) -> list[Level]:
@@ -1299,31 +1358,47 @@ class SessionImagery:
         return rgb, float(self.t[best])
 
 
-def _ask_surface(rgb: np.ndarray, save_to: Path) -> str:
-    """Vision model: what is the surface ahead — glass, solid, or open?"""
-    small = cv2.resize(rgb, (896, int(896 * rgb.shape[0] / rgb.shape[1])))
-    cv2.imwrite(str(save_to), cv2.cvtColor(small, cv2.COLOR_RGB2BGR))
-    b64 = base64.b64encode(save_to.read_bytes()).decode()
+def _ask_surfaces(images: list[np.ndarray], save_to: list[Path]) -> list[str]:
+    """Vision model: what is the surface ahead — glass, solid, or open — for each
+
+    photo, numbered in order. One batched call instead of one per photo: the
+    model reads all crops at once and returns a same-length verdict array.
+    """
+    b64s = []
+    for rgb, path in zip(images, save_to):
+        small = cv2.resize(rgb, (896, int(896 * rgb.shape[0] / rgb.shape[1])))
+        cv2.imwrite(str(path), cv2.cvtColor(small, cv2.COLOR_RGB2BGR))
+        b64s.append(base64.b64encode(path.read_bytes()).decode())
+
     verdict = _openai_json(
-        "A ground robot's lidar got almost no returns from the wall "
-        "area directly ahead in this photo (the camera is facing it). "
-        "For an architectural floor plan, classify that surface: "
-        '"glass" (glass door / curtain wall / large window), '
-        '"solid" (an ordinary opaque wall — the lidar gap is a data '
-        'artifact), or "open" (no wall: an open passage or missing '
-        'geometry). Reply JSON: {"surface": "glass|solid|open", '
-        '"detail": "<a few words>"}',
-        b64,
+        "A ground robot's lidar got almost no returns from the wall area directly "
+        "ahead in each of these photos (the camera faces it), numbered in order "
+        "starting at 0. For an architectural floor plan, classify each surface: "
+        '"glass" (glass door / curtain wall / large window), "solid" (an ordinary '
+        'opaque wall — the lidar gap is a data artifact), or "open" (no wall: an '
+        'open passage or missing geometry). Reply JSON: {"surfaces": '
+        '[{"index": 0, "surface": "glass|solid|open", "detail": "<a few words>"}, ...]} '
+        "with exactly one entry per photo.",
+        b64s,
         tier="fast",
         timeout=90,
     )
+    results = ["unknown"] * len(images)
     if verdict is None:
-        return "unknown"
-    surface = str(verdict.get("surface", "unknown"))
-    logger.info(
-        "Visual inspection", surface=surface, detail=verdict.get("detail", ""), image=str(save_to)
-    )
-    return surface
+        return results
+    for entry in verdict.get("surfaces", []):
+        if not isinstance(entry, dict):
+            continue
+        idx = entry.get("index")
+        if isinstance(idx, int) and 0 <= idx < len(results):
+            results[idx] = str(entry.get("surface", "unknown"))
+            logger.info(
+                "Visual inspection",
+                surface=results[idx],
+                detail=entry.get("detail", ""),
+                image=str(save_to[idx]),
+            )
+    return results
 
 
 def visually_confirm_glazing(
@@ -1333,20 +1408,26 @@ def visually_confirm_glazing(
     out: Path,
     max_queries: int = 4,
 ) -> list[Wall]:
-    """Check the longest glazed-candidate runs against the session camera.
+    """Check the longest glazed-candidate runs against the session camera, in one call.
 
     glass → keep glazed; solid → draw as normal wall; open → remove the
     segment (there is no wall there at all).
     """
     candidates = sorted((w for w in env_walls if w.glazed), key=lambda w: -w.length)[:max_queries]
-    drop: set[int] = set()
-    for i, wall in enumerate(candidates):
+    views: list[tuple[Wall, np.ndarray]] = []
+    for wall in candidates:
         mid = ((wall.p1[0] + wall.p2[0]) / 2, (wall.p1[1] + wall.p2[1]) / 2)
         view = session.best_view(mid, level.floor_z)
-        if view is None:
-            continue
-        rgb, _ts = view
-        surface = _ask_surface(rgb, out.with_suffix(f".inspect-L{level.index}-{i}.jpg"))
+        if view is not None:
+            views.append((wall, view[0]))
+    if not views:
+        return env_walls
+
+    save_to = [out.with_suffix(f".inspect-L{level.index}-{i}.jpg") for i in range(len(views))]
+    surfaces = _ask_surfaces([rgb for _, rgb in views], save_to)
+
+    drop: set[int] = set()
+    for (wall, _rgb), surface in zip(views, surfaces):
         if surface == "solid":
             wall.glazed = False
         elif surface == "open":
@@ -1391,35 +1472,46 @@ def _best_image_model(client: Any) -> str:
     return choice
 
 
-def generate_blueprint_renditions(sheet_jpg: Path, out: Path, styles: list[str]) -> list[Path]:
-    """Stylized versions of the finished sheet via the OpenAI image model.
+def generate_blueprint_renditions(
+    sheet_jpgs: list[tuple[str, Path]], out: Path, styles: list[str]
+) -> list[Path]:
+    """Stylized versions of the finished sheet(s) via the OpenAI image model.
 
     Uses images.edit so the model restyles the actual drawing — wall layout,
     openings, labels — instead of hallucinating a new building. Unknown style
     names are passed through as custom prompts.
+
+    `sheet_jpgs` is a list of (label, source_jpg) pairs — one full-resolution
+    sheet per level rather than one cramped combined multi-level sheet, so
+    each level's rendition actually resolves its detail (label="" and a
+    single entry for single-level buildings, where the combined sheet already
+    is the per-level sheet). Every (level, style) pair is an independent
+    request, run concurrently — sequential images.edit calls (each up to
+    300s) would otherwise stack to minutes per style, times levels.
     """
-    written: list[Path] = []
     try:
         from openai import OpenAI
     except ImportError:
         logger.warning("openai package not installed — skipping renditions")
-        return written
+        return []
 
-    client = OpenAI(max_retries=0)
-    model = _best_image_model(client)
-    for style in styles:
+    model = _best_image_model(OpenAI(max_retries=0))
+
+    def _render_one(label: str, sheet_jpg: Path, style: str) -> Path | None:
         look = BLUEPRINT_STYLES.get(style, style)
         prompt = (
-            "Redraw this multi-level architectural floor plan drawing as "
+            "Redraw this architectural floor plan drawing as "
             f"{look}. Preserve the exact wall layout, door openings and swing "
             "arcs, stairs, dimension strings, north arrows, level labels and "
             "title block text — change only the rendering style."
         )
         slug = "".join(c if c.isalnum() else "-" for c in style.lower())[:24].strip("-")
-        target = out.parent / f"{out.name}.render-{slug}.png"
+        suffix = f"-{label}" if label else ""
+        target = out.parent / f"{out.name}.render-{slug}{suffix}.png"
+        tag = f"style: {style}" + (f", {label}" if label else "")
         try:
             with open(sheet_jpg, "rb") as f:
-                result = client.images.edit(
+                result = OpenAI(max_retries=0).images.edit(
                     model=model,
                     image=f,
                     prompt=prompt,
@@ -1430,11 +1522,25 @@ def generate_blueprint_renditions(sheet_jpg: Path, out: Path, styles: list[str])
             if not b64:
                 raise RuntimeError("image model returned no data")
             target.write_bytes(base64.b64decode(b64))
-            written.append(target)
-            logger.info(f"Wrote {target} (style: {style})")
+            logger.info(f"Wrote {target} ({tag})")
+            return target
         except Exception as e:
-            logger.warning(f"rendition '{style}' failed ({e})")
-    return written
+            logger.warning(f"rendition failed ({tag}): {e}")
+            return None
+
+    jobs = [(label, jpg, style) for label, jpg in sheet_jpgs for style in styles]
+    # Capped, not len(jobs)-wide: a many-level building times several styles
+    # shouldn't fire an unbounded burst of concurrent OpenAI requests. Submission
+    # (not execution) is staggered by 1s so a many-job batch doesn't slam the API
+    # in the same instant -- still concurrent, just not a simultaneous burst.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(jobs), 12) or 1) as pool:
+        futures = []
+        for i, job in enumerate(jobs):
+            if i > 0:
+                time.sleep(1.0)
+            futures.append(pool.submit(lambda j=job: _render_one(*j)))
+        results = [f.result() for f in futures]
+    return [r for r in results if r is not None]
 
 
 def plan_needs_cleaning(plan: Plan) -> tuple[bool, dict[str, int]]:
@@ -1938,52 +2044,63 @@ def vectorize(wall_mask: np.ndarray, origin: tuple[float, float], resolution: fl
 # are never picked.
 _GENERATIONS = ("gpt-5.5", "gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "gpt-4o")
 _model_cache: dict[str, str] = {}
+_model_cache_lock = threading.Lock()  # levels/sheets now query this concurrently
 
 
 def _best_model(client: Any, tier: str = "fast") -> str:
     """Most capable vision model this key can access for the given tier."""
     if tier in _model_cache:
         return _model_cache[tier]
-    choice = "gpt-4o"
-    try:
-        available = {m.id for m in client.models.list().data}
+    with _model_cache_lock:
+        if tier in _model_cache:  # another thread populated it while we waited
+            return _model_cache[tier]
+        choice = "gpt-4o"
+        try:
+            available = {m.id for m in client.models.list().data}
 
-        def _pick(suffix: str) -> str | None:
-            for gen in _GENERATIONS:
-                if gen + suffix in available:
-                    return gen + suffix
-            return None
+            def _pick(suffix: str) -> str | None:
+                for gen in _GENERATIONS:
+                    if gen + suffix in available:
+                        return gen + suffix
+                return None
 
-        if tier == "max":
-            choice = _pick("-pro") or _pick("") or choice
-        else:
-            choice = _pick("") or choice
-    except Exception:
-        pass
-    _model_cache[tier] = choice
-    logger.info(f"OpenAI model ({tier}): {choice}")
-    return choice
+            if tier == "max":
+                choice = _pick("-pro") or _pick("") or choice
+            else:
+                choice = _pick("") or choice
+        except Exception:
+            pass
+        _model_cache[tier] = choice
+        logger.info(f"OpenAI model ({tier}): {choice}")
+        return choice
 
 
 def _openai_json(
     prompt: str,
-    image_b64: str | None = None,
+    image_b64: str | list[str] | None = None,
     *,
     tier: str = "fast",
     timeout: float = 120.0,
     mime: str = "jpeg",
 ) -> dict[str, Any] | None:
-    """One JSON-answering multimodal call; Responses API with chat fallback."""
+    """One JSON-answering multimodal call; Responses API with chat fallback.
+
+    image_b64 may be a single image or a list — batching several images into
+    one call (e.g. multiple wall-glazing crops) trades a few extra prompt
+    tokens for N-1 fewer round trips.
+    """
     try:
         from openai import OpenAI
     except ImportError:
         logger.warning("openai package not installed — skipping AI pass")
         return None
 
+    images = [image_b64] if isinstance(image_b64, str) else (image_b64 or [])
+
     client = OpenAI(max_retries=0)  # a slow deep-reasoning call must not triple itself
     blocks: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
-    if image_b64:
-        blocks.append({"type": "input_image", "image_url": f"data:image/{mime};base64,{image_b64}"})
+    for img in images:
+        blocks.append({"type": "input_image", "image_url": f"data:image/{mime};base64,{img}"})
 
     # pro-tier models think for minutes; if the bounded attempt times out,
     # degrade to the plain flagship rather than stalling the whole pipeline
@@ -2005,11 +2122,11 @@ def _openai_json(
     if text is None:
         try:  # legacy chat endpoint as the last resort
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-            if image_b64:
+            for img in images:
                 content.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/{mime};base64,{image_b64}"},
+                        "image_url": {"url": f"data:image/{mime};base64,{img}"},
                     }
                 )
             response = client.chat.completions.create(  # type: ignore[call-overload]
@@ -2911,9 +3028,12 @@ class FloorplanResult:
     model_rrd: Path | None = None
     renders: list[Path] = field(default_factory=list)
     debug_dir: Path | None = None
+    warnings: list[str] = field(default_factory=list)  # data-quality caveats (e.g. odom drift)
 
     def summary(self) -> str:
         lines = [f"Floor plan generated: {len(self.sheets)} level(s)."]
+        for w in self.warnings:
+            lines.append(f"  WARNING: {w}")
         for s in self.sheets:
             glaze = f", {s.glazed_walls} glazed" if s.glazed_walls else ""
             extra = "".join(f"; {lc}" for lc in s.level_changes)
@@ -2939,6 +3059,23 @@ class FloorplanResult:
             lines.append(f"Debug artifacts kept in: {self.debug_dir}")
         return "\n".join(lines)
 
+    def agent_encode(self) -> list[dict[str, Any]]:
+        """MCP content blocks: the text summary plus one image per rendition.
+
+        Picked up automatically by the MCP server (any skill return value with
+        this method has its output forwarded as-is) and by McpClient, which
+        already special-cases non-text content into the agent's visible
+        history — so a rendition becomes something the agent can actually see,
+        not just a file path in text.
+        """
+        content: list[dict[str, Any]] = [{"type": "text", "text": self.summary()}]
+        for r in self.renders:
+            try:
+                content.extend(Image.from_file(r).agent_encode())
+            except (ValueError, OSError) as e:
+                logger.warning(f"Could not load rendition {r} for agent: {e}")
+        return content
+
 
 def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) -> FloorplanResult:
     """Run the full pipeline: 3D slices -> drawing -> conditional cleaning.
@@ -2963,13 +3100,17 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
         if len(model.points) == 0:
             raise ValueError(f"No point cloud found in {opts.rrd}")
     elif model is None:
-        points, pose = collect_points(opts.duration, opts.lidar_topic, opts.spin, opts.explore)
+        points, pose, trajectory = collect_points(
+            opts.duration, opts.lidar_topic, opts.spin, opts.explore
+        )
         if len(points) == 0:
             raise RuntimeError(
                 "No lidar data received. Is a dimos instance running? "
                 "(e.g. `dimos --simulation run unitree-go2 --daemon`)"
             )
-        model = SceneModel(points)
+        # Trajectory enables dwell-based floor detection (multi-level live
+        # collections were previously flattened to a single level).
+        model = SceneModel(points, trajectory if len(trajectory) else None)
         if pose is not None:
             robot_live = (
                 float(pose.position.x),
@@ -2977,11 +3118,17 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
                 float(pose.orientation.to_euler().z),
             )
 
+    warnings: list[str] = []
     if len(model.trajectory) or opts.levels:
         floors = detect_floor_elevations(model.trajectory[:, 2], opts.levels)
         if not floors:
             logger.warning("No floors detected from trajectory — treating as single level")
             floors = [float(np.percentile(model.points[:, 2], 2.0))]
+        if not opts.levels:  # manual levels are the caller's own claim
+            drift = check_floor_plausibility(floors)
+            if drift is not None:
+                logger.warning(drift)
+                warnings.append(drift)
         levels = build_levels(floors)
         logger.info(
             "Detected levels: "
@@ -3037,11 +3184,19 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
             except ValueError as e:
                 logger.warning(f"voxel model unavailable ({e}) — continuing without")
 
-        sheets: list[LevelSheet] = []
-        for level in levels:
-            sheet = process_level(level, model, robot_live, art_base, opts, use_ai, session, vox)
-            if sheet is not None:
-                sheets.append(sheet)
+        # levels are independent (own geometry, own AI-review calls, own debug
+        # files) — run them concurrently so a 3-level survey doesn't pay 3x the
+        # AI round-trip latency of a single level.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(levels))) as pool:
+            results = list(
+                pool.map(
+                    lambda level: process_level(
+                        level, model, robot_live, art_base, opts, use_ai, session, vox
+                    ),
+                    levels,
+                )
+            )
+        sheets: list[LevelSheet] = [s for s in results if s is not None]
 
         if not sheets:
             raise ValueError("No level produced any drawable geometry.")
@@ -3056,16 +3211,25 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
             )
 
         if use_ai:
+            needs_cleaning: list[LevelSheet] = []
             for sheet in sheets:
                 needs, issues = plan_needs_cleaning(sheet.plan)
                 if needs:
                     logger.info(f"{sheet.level.name}: cleaning needed", **issues)
-                    critique_plan(sheet, art_base)
+                    needs_cleaning.append(sheet)
                 else:
                     logger.info(
                         f"{sheet.level.name}: plan already clean — skipping AI cleaning stage",
                         **issues,
                     )
+            if needs_cleaning:
+                # critique_plan is the "max" tier (up to 420s, deep-reasoning
+                # model) — run the sheets that need it concurrently rather than
+                # serially eating that latency once per sheet.
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(needs_cleaning)
+                ) as pool:
+                    list(pool.map(lambda sheet: critique_plan(sheet, art_base), needs_cleaning))
 
         for sheet in sheets:
             sheet.plan.partitions = segment_rooms(sheet.plan, region=sheet.region)
@@ -3085,10 +3249,20 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
 
         renders: list[Path] = []
         if opts.ai_render:
+            if len(sheets) > 1:
+                # A full-resolution sheet per level rather than a cramped
+                # subplot of the combined multi-level sheet, so each level's
+                # rendition actually resolves its detail. Intermediate, not a
+                # deliverable -- lives next to the other AI-evidence artifacts.
+                level_sources = []
+                for sheet in sheets:
+                    level_jpg = art_base.parent / f"{art_base.name}.L{sheet.level.index}.jpg"
+                    write_jpeg(level_jpg, [sheet], opts)
+                    level_sources.append((f"L{sheet.level.index}", level_jpg))
+            else:
+                level_sources = [("", out.with_suffix(".jpg"))]
             renders = generate_blueprint_renditions(
-                out.with_suffix(".jpg"),
-                out,
-                [s.strip() for s in opts.ai_render.split(",")],
+                level_sources, out, [s.strip() for s in opts.ai_render.split(",")]
             )
 
         stats = []
@@ -3145,6 +3319,7 @@ def generate_floorplan(opts: FloorplanOptions, model: SceneModel | None = None) 
             model_rrd=model_rrd,
             renders=renders,
             debug_dir=debug_dir,
+            warnings=warnings,
         )
     finally:
         if session is not None:

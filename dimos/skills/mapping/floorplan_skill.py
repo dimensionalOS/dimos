@@ -23,7 +23,10 @@ and sunken areas, and per-level extents.
 
 Debug artifacts and 3D-viewer output are OFF by default here — an agent that
 only wants the analysis or the drawing should not litter the filesystem or
-pop a viewer window; both can be re-enabled per call.
+pop a viewer window; both can be re-enabled per call. Stylized AI renditions
+ARE on by default and are attached to the response as images the calling
+agent can see, not just file paths — pass ai_render_styles="" to skip them
+for a faster, MCP-timeout-safe call (see that arg's docstring).
 """
 
 from __future__ import annotations
@@ -34,7 +37,11 @@ import time
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.mapping.floorplan.generator import FloorplanOptions, generate_floorplan
+from dimos.mapping.floorplan.generator import (
+    FloorplanOptions,
+    FloorplanResult,
+    generate_floorplan,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,14 +66,21 @@ class FloorplanSkillContainer(Module):
         explore: bool = False,
         session_dir: str = "",
         levels: str = "",
-        ai_review: bool = False,
-        ai_render_styles: str = "",
+        ai_review: bool = True,
+        # On by default: renditions are attached as images the calling agent
+        # can see (agent_encode()), not just file paths, so they're part of
+        # the skill's core value. NOTE: each style is a separate OpenAI
+        # image-model call taking minutes, while MCP tool calls hard-cap at
+        # ~120s (McpClient's HTTP timeout) -- an agent calling this over MCP
+        # may see its tool call time out before the (still-succeeding) result
+        # comes back. Pass "" to skip renditions for a fast, bounded call.
+        ai_render_styles: str = "drafted,cyanotype,presentation",
         include_furniture: bool = True,
         save_3d_model: bool = False,
         debug_artifacts: bool = False,
         output_prefix: str = "",
         project_name: str = "DIMOS SITE SURVEY",
-    ) -> str:
+    ) -> str | FloorplanResult:
         """Generate an architectural floor plan of the navigated space and report its attributes.
 
         Builds a multi-level architectural drawing set (DXF with AIA layers +
@@ -74,7 +88,9 @@ class FloorplanSkillContainer(Module):
         levels with their floor elevations, wall/door/stair counts, glazed
         (glass) walls, mezzanines/sunken areas, and per-level extents — useful
         both for producing drawings and for answering questions about the
-        building the robot has explored.
+        building the robot has explored. The stylized renditions (see
+        ai_render_styles) are attached as images alongside that summary, so
+        the calling agent can see the drawing itself, not just its file path.
 
         Args:
             rrd_path: Path to a Rerun (.rrd) recording of a mapping session to analyze. Empty = collect live lidar from the running robot instead.
@@ -82,8 +98,8 @@ class FloorplanSkillContainer(Module):
             explore: When collecting live, drive the frontier explorer for full-coverage mapping instead of standing still.
             session_dir: Optional recording-session directory (gtsam_odom.tum + mem2.db + camera_intrinsics.json). Camera frames are then used to visually confirm ambiguous surfaces such as glass walls.
             levels: Manual floor elevations as comma-separated z values in meters, e.g. "-0.2,3.2,6.7". Empty = detect floors automatically from the robot trajectory (including mezzanines and sunken areas).
-            ai_review: Run the AI quality passes (classification review, glass/solid/open surface confirmation, and a defect-gated plan critique). Slower and uses the OpenAI API; the geometric pipeline alone is usually sufficient.
-            ai_render_styles: Comma-separated stylized rendition styles produced by the OpenAI image model from the finished sheet ("drafted", "cyanotype", "presentation", or a custom prompt). Empty = no renditions.
+            ai_review: Run the AI quality passes (classification review, glass/solid/open surface confirmation, and a defect-gated plan critique). On by default for better accuracy; slower and uses the OpenAI API (pass False to skip and use the geometric pipeline alone).
+            ai_render_styles: Comma-separated stylized rendition styles produced by the OpenAI image model from the finished sheet ("drafted", "cyanotype", "presentation", or a custom prompt). On by default (all three); pass "" to skip. Each style is a separate OpenAI image-model call taking minutes, which can exceed an MCP tool-call timeout even though the run still succeeds server-side.
             include_furniture: Draw movable objects as thin outlines per drafting convention. False = permanent structure only.
             save_3d_model: Also write a sliceable 3D model (<output>.model.rrd) for interactive viewing in dimos-viewer. Off by default — only request it when the 3D file is actually needed; the viewer is never auto-opened from this skill.
             debug_artifacts: Keep intermediate AI-evidence images (classification maps, camera inspection frames, critique review sheets) next to the outputs. Off by default: they are written to a temporary directory and deleted after the run.
@@ -112,7 +128,7 @@ class FloorplanSkillContainer(Module):
             )
         except (ValueError, RuntimeError, OSError) as e:
             return f"Floorplan generation failed: {e}"
-        return result.summary()
+        return result
 
 
 floorplan_skill_container = FloorplanSkillContainer.blueprint
