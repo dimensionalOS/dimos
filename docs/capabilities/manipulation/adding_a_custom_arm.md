@@ -3,8 +3,6 @@ title: "How to Integrate a New Manipulator Arm"
 ---
 An **adapter** wraps your vendor's SDK. The `ControlCoordinator` calls it at 100Hz. Write it, and motion planning, teleop, and pick-and-place all work with your arm without knowing it exists.
 
-About 200 lines. Here is the whole job.
-
 ## What the coordinator calls
 
 ```
@@ -21,9 +19,7 @@ every tick:
 disconnect()
 ```
 
-Eleven methods. The Protocol declares 26; the other fifteen are diagnostics and can return `None`/`False` forever.
-
-Your adapter owns no threads, no sockets, no ports. It is passive. The coordinator calls, it answers.
+Your adapter owns no threads. It is passive, the coordinator calls it.
 
 ## 1. Copy the mock
 
@@ -31,11 +27,11 @@ Your adapter owns no threads, no sockets, no ports. It is passive. The coordinat
 cp -r dimos/hardware/manipulators/mock dimos/hardware/manipulators/yourarm
 ```
 
-`mock/adapter.py` implements all 26 methods against fake state — a working adapter with the vendor calls missing. Replace the fakes. No base class, nothing to inherit: match the method names and DimOS accepts it.
+`mock/adapter.py` implements all 26 methods against fake state — a working adapter with the vendor calls missing. Replace the fakes. No base class, match the method names and DimOS accepts it.
 
 ## 2. Convert units, every time
 
-Your SDK almost certainly speaks degrees. DimOS speaks radians, and they go straight into the IK solver.
+Your SDK almost certainly speaks degrees. DimOS speaks radians, and SI units, and they go straight into the IK solver.
 
 ```python skip
 def read_joint_positions(self) -> list[float]:
