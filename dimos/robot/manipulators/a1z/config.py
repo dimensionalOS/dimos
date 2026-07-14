@@ -29,10 +29,6 @@ from dimos.utils.data import LfsPath
 
 A1Z_DOF = 6
 
-# These non-adjacent link pairs overlap at the home pose, so planning fails
-# with COLLISION_AT_START unless they are excluded. Enumerated with Drake's
-# ComputePointPairPenetration, which checks the convex hulls Drake plans
-# against. The same pairs penetrate in both URDF variants.
 A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("arm_link2", "arm_link5"),
     ("arm_link4", "arm_link6"),
