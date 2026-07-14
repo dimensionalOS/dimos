@@ -18,13 +18,8 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import make_a1z_hardware, make_a1z_model_config
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
-
-a1z_planner_only = ManipulationModule.blueprint(
-    robots=[make_a1z_model_config(name="arm")],
-)
 
 _a1z_planner_hw = make_a1z_hardware("arm")
 
