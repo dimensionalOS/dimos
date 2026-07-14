@@ -762,7 +762,7 @@ def _icp(
     dist_B = np.linalg.norm(B_tims, axis=0)
     inline_mask = np.abs(dist_A - dist_B) < max_dist
 
-    if np.sum(inline_mask) < min_inliers:
+    if np.sum(inline_mask) < min_inliers - 1:
         return Transform.identity(), float("inf")
 
     A_tims_f = A_tims[:, inline_mask]
@@ -777,10 +777,12 @@ def _icp(
 
     for _gnc_iter in range(20):
         # Weighted Kabsch/SVD alignment algorithm to get current rotation update
-        AM = A_tims_f * weights
-        centroid_A = np.mean(AM, axis=1, keepdims=True)
-        centroid_B = np.mean(B_tims_f * weights, axis=1, keepdims=True)
-
+        total_weight = weights.sum()
+        if total_weight == 0:
+            return Transform.identity(), float("inf")
+        centroid_A = np.sum(A_tims_f * weights, axis=1, keepdims=True) / total_weight
+        centroid_B = np.sum(B_tims_f * weights, axis=1, keepdims=True) / total_weight
+        
         A_centered = A_tims_f - centroid_A
         B_centered = B_tims_f - centroid_B
 
@@ -792,7 +794,7 @@ def _icp(
         S = np.eye(3)
         if d < 0:
             S[2, 2] = -1
-        R_est = U @ S @ Vt
+        R_est = Vt.T @ S @ U.T
 
         # Update tracking residuals under new rotation
         residuals2 = np.sum((B_tims_f - R_est @ A_tims_f) ** 2, axis=0)
