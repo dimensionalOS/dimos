@@ -273,6 +273,9 @@ manipulation = [
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Galaxea A1Z arm: git-only SDK (deps numpy/python-can/pin already present).
+    # Hardware-only; the a1z adapter lazy-imports it. Install when using real HW:
+    #   pip install "a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git"
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -549,6 +552,8 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
+    "a1z",
+    "a1z.*",
     "a750_control",
     "a750_control.*",
     "cyclonedds",
