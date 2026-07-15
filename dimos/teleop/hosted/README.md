@@ -1,6 +1,6 @@
-# Hosted Teleop
+# Remote Teleop
 
-Robot dials out to the dimensional-teleop broker (Cloudflare Realtime SFU) —
+Robot dials out to the dimensional-teleop broker —
 no inbound ports needed. The browser/VR operator connects through the broker;
 commands arrive over WebRTC datachannels, robot video goes out as a WebRTC
 track.
