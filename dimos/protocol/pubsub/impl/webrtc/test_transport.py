@@ -31,7 +31,6 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
-    WEBRTC_AVAILABLE,
     AsyncProviderBase,
     ProviderConfig,
 )
@@ -342,9 +341,6 @@ def test_raw_transport_pins_still_work() -> None:
 
 
 def test_broker_provider_requires_credentials() -> None:
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
-
     with pytest.raises(RuntimeError, match="api_key required"):
         BrokerConfig(robot_id="r1")._create()
     # robot_id is optional — the broker derives it from the API key.
@@ -354,8 +350,6 @@ def test_broker_provider_requires_credentials() -> None:
 def test_backend_coercion_leaves_webrtc_untouched() -> None:
     """The global lcm<->zenoh transport switch must never rebuild a webrtc
     transport (deliberate non-default choice, like JpegLcmTransport)."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
     from dimos.core.coordination.module_coordinator import _coerce_transport_to_backend
     from dimos.core.global_config import global_config
     from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport
@@ -372,24 +366,8 @@ def test_backend_coercion_leaves_webrtc_untouched() -> None:
         global_config.update(transport=original)
 
 
-def test_webrtc_deps_required_in_ci() -> None:
-    """A missing aiortc/httpx must not silently skip the webrtc suite in CI
-    (review: tests should fail, not \"pass\", when CI forgets a dependency).
-    Downstream/no-network installs still skip everything — no CI env var."""
-    import os
-
-    if not os.environ.get("CI"):
-        pytest.skip("dependency guard only enforced in CI")
-    assert WEBRTC_AVAILABLE, (
-        "aiortc/httpx not installed in CI, so the whole webrtc suite silently "
-        "skipped — restore dimos[webrtc] in the project-deps dependency group"
-    )
-
-
 def test_dc_name_no_collisions() -> None:
     """Sanitized OR truncated topics must stay distinct (<=64 char CF limit)."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
     from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import _dc_name
 
     assert _dc_name("cmd_unreliable") == "cmd_unreliable"  # safe short names untouched
@@ -435,8 +413,6 @@ def test_failed_connect_runs_disconnect_and_allows_retry() -> None:
 def test_broker_failed_channel_open_retries_next_heartbeat() -> None:
     """The broker id must be recorded only after a successful open — otherwise
     a createDataChannel failure is never retried (id matches, _dcs empty)."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
 
     provider = BrokerConfig(api_key="key")._create()
     # _pc is None, so _open_channel's assert fires — a stand-in for any
@@ -456,8 +432,6 @@ def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
     """A revoked session (401/404 streak) may leave the WebRTC room up, so the
     planner would keep driving. The terminal branch must inject operator_lost
     before abandoning the heartbeat loop."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
     import asyncio
 
     provider = BrokerConfig(api_key="key")._create()
@@ -478,8 +452,6 @@ def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
 def test_broker_disconnect_clears_channel_ids() -> None:
     """Stale _dc_ids after stop() would make the reconnect heartbeat skip
     _open_channel when the broker hands out the same SCTP ids."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
     import asyncio
 
     provider = BrokerConfig(api_key="key")._create()
@@ -491,8 +463,6 @@ def test_broker_disconnect_clears_channel_ids() -> None:
 def test_cloudflare_failed_subscribe_deregisters_callback() -> None:
     """If _ensure_sub fails, the callback must not stay registered (the caller
     has no unsub handle, and a later subscribe would revive it)."""
-    if not WEBRTC_AVAILABLE:
-        pytest.skip("aiortc not installed")
     from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import (
         CloudflareConfig,
         CloudflareProvider,

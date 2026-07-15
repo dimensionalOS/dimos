@@ -30,11 +30,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig, BrokerProvider
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
 
 # broker.py imports aiortc lazily, but BrokerProvider.__init__ pulls in the
 # video track (aiortc/av) — so constructing one needs the extras installed.
-pytestmark = pytest.mark.skipif(not WEBRTC_AVAILABLE, reason="aiortc not installed")
 
 
 @pytest.fixture
