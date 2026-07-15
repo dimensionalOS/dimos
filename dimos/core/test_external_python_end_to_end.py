@@ -94,7 +94,7 @@ def test_external_example_runs_through_real_coordinator_and_restarts(
 def test_external_example_runtime_assets_are_packaged() -> None:
     package = resources.files("examples.external_python_module")
     assert package.joinpath("python", "pyproject.toml").is_file()
-    assert package.joinpath("python", "uv.lock").is_file()
+    assert package.joinpath("python", "example_external", "runtime.py").is_file()
 
 
 def test_external_example_entrypoint_exits_after_clean_restart() -> None:

@@ -235,9 +235,10 @@ external_python_module/
         └── runtime.py
 ```
 
-The shipped example includes its runtime project's `pyproject.toml` and
-`uv.lock` as package data, so the same sibling layout remains available when
-DimOS is installed from a wheel.
+The shipped example includes its runtime project's `pyproject.toml` as package
+data, so the sibling layout remains available when DimOS is installed from a
+wheel. The example does not check in a `uv.lock`; uv may create one locally
+when preparing the runtime project, and lockfiles are used when present.
 
 The runtime class subclasses the declaration. Compose the declaration with
 regular modules using `autoconnect`; do not add a deployment plan, target, or

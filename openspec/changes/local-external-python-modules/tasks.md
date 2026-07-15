@@ -11,7 +11,7 @@
 - [x] 2.2 Preserve the existing coordinator deployment order so external declarations receive normal stream connections, module-reference injection, build, and start behavior.
 - [x] 2.3 Implement safe process-group cleanup, restart behavior, unexpected-exit reporting, and bounded stdout/stderr diagnostics for failed preparation and runtime termination.
 - [x] 2.4 Migrate `examples/external_python_module/` to the implementation-reference declaration and sibling runtime-project convention, removing planner- or deployment-spec setup while retaining the runnable local example.
-- [x] 2.6 Include the example runtime project's `pyproject.toml` and lockfile as package data so the installed-wheel example remains runnable without `PYTHONPATH`.
+- [x] 2.6 Include the example runtime project's `pyproject.toml` as package data so the installed-wheel example remains runnable without `PYTHONPATH`; do not require a checked-in lockfile.
 - [x] 2.5 Confirm the migrated example does not introduce a blueprint-registry input; do not regenerate `dimos/robot/all_blueprints.py` unless implementation adds a registry-discoverable blueprint.
 
 ## 3. Automated Coverage

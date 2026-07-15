@@ -18,6 +18,8 @@ import subprocess
 import threading
 import time
 
+from dimos.core.external_python_module import ExternalPythonModule
+
 
 class ExternalPythonRuntime:
     """Resolve, prepare, and own one external Python process."""
@@ -26,7 +28,12 @@ class ExternalPythonRuntime:
     shutdown_timeout = 5.0
     output_limit = 64 * 1024
 
-    def __init__(self, declaration: type, global_config: object, kwargs: dict[str, object]) -> None:
+    def __init__(
+        self,
+        declaration: type[ExternalPythonModule],
+        global_config: object,
+        kwargs: dict[str, object],
+    ) -> None:
         self.declaration = declaration
         self.global_config = global_config
         self.kwargs = kwargs

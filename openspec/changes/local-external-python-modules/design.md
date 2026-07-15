@@ -67,4 +67,4 @@ This is additive. Add the concise declaration/runtime API and migrate the PR exa
 
 ## Open Questions
 
-- Select the exact lockfile-preservation and offline flags for the Pixi/uv prepare and launch commands during implementation, then cover them in tests.
+- The example intentionally does not check in a lockfile. When a runtime project has a local `uv.lock`, preparation and launch preserve the existing locked behavior; otherwise uv resolves from `pyproject.toml` and may create a local lockfile.

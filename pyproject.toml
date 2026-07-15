@@ -52,7 +52,6 @@ exclude = [
 ]
 "examples.external_python_module" = [
     "python/pyproject.toml",
-    "python/uv.lock",
 ]
 
 [tool.setuptools.exclude-package-data]
