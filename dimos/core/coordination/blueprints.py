@@ -209,7 +209,6 @@ class Blueprint:
         configs["g"] = (GlobalConfig | None, None)
         transport_fields: dict[str, Any] = {}
         seen: set[type] = set()
-        key_owner: dict[str, type] = {}
         for spec in self.transport_map.values():
             # Raw transport instances (plain `LCMTransport(...)` pins) have no
             # config override surface — only deferred specs participate.
@@ -217,19 +216,7 @@ class Blueprint:
             if cls is None or cls in seen:
                 continue
             seen.add(cls)
-            key = transport_config_name(cls)
-            # Two different config classes mapping to the same key would silently
-            # clobber each other's fields (e.g. a shared ``_config_name``). That's
-            # only valid if they're the same schema; otherwise fail loudly.
-            prior = key_owner.get(key)
-            if prior is not None:
-                raise ValueError(
-                    f"Transport config key {key!r} is claimed by both "
-                    f"{prior.__name__} and {cls.__name__}; give them a shared "
-                    f"base config or distinct keys."
-                )
-            key_owner[key] = cls
-            transport_fields[key] = (cls | None, None)
+            transport_fields[transport_config_name(cls)] = (cls | None, None)
         if transport_fields:
             transports_model = create_model(
                 "TransportsConfig", __config__={"extra": "forbid"}, **transport_fields
@@ -272,11 +259,6 @@ class Blueprint:
 
 
 def transport_config_name(cls: type) -> str:
-    # A config may pin an explicit key (``_config_name``) to share a config
-    # namespace with a sibling (e.g. multiple broker backends under "broker").
-    name = getattr(cls, "_config_name", None)
-    if isinstance(name, str):
-        return name
     return cls.__name__.removesuffix("Config").lower()
 
 
