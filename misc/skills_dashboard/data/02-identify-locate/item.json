@@ -113,6 +113,10 @@
     }
   },
   "summary_html": "Open-vocabulary scene inventory: the robot detects whatever it sees (no prompt needed), localizes each detection in the world frame, deduplicates repeat sightings into a persistent object database, and answers \"what have you seen and where is it?\" as a prompt-free agent skill — a robot can navigate a space and this skill finds and catalogs everything in it, no target object required. New in this pass: the catalog now <b>fuses in spatial memory</b> — <span class='tmono'>catalog_scene()</span> folds the robot's named/tagged places (e.g. \"kitchen\", \"charging dock\", which object detection alone can't produce) into the inventory and tags each detected object with its nearest place, and a new <span class='tmono'>locate(query)</span> skill resolves \"where is X?\" through a three-tier fallback (catalogued object &rarr; tagged place &rarr; CLIP visual recall of the space). The link is an <b>optional</b> dependency, so the catalog degrades cleanly to objects-only when no spatial-memory module is running. Prior pass: the whole lidar pipeline is <b>replay-validated end-to-end</b> on an 87s recorded Go2 session (camera + mid360 + odom) — 16 permanent objects catalogued with world position, size, confidence and a VLM description each — and two production bugs were fixed (<span class='tmono'>ObjectDB</span> wall-clock TTLs; coplanar-cluster Qhull crash, OBB &rarr; AABB fallback).",
+  "test_command": {
+    "cmd": "uv run pytest dimos/skills/skill_verification/test_02_identify_locate.py",
+    "note": "headless — synthetic scene, no GPU/keys/network"
+  },
   "skills": [
     {
       "name": "catalog_scene()",

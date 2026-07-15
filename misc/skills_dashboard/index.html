@@ -160,6 +160,25 @@
   .lede { color: var(--ink-2); max-width: 72ch; margin: 0 0 22px; }
   .lede.scope { font-size: 13.5px; margin-top: 14px; }
 
+  /* "Test it" one-liner — the command that exercises the skill */
+  .testcmd {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 7px 12px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--good); border-radius: 0 6px 6px 0;
+    padding: 10px 14px; margin: 0 0 22px;
+  }
+  .testcmd .tc-label {
+    font: 700 10.5px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--good); flex: none;
+  }
+  .testcmd .tc-cmd {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    color: var(--code-accent); background: var(--code-bg);
+    padding: 4px 9px; border-radius: 4px; border: 1px solid var(--line);
+    overflow-x: auto; max-width: 100%;
+  }
+  .testcmd .tc-note { font-size: 12px; color: var(--muted); }
+
   h3 {
     font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -630,6 +649,19 @@ function evidenceHTML(item) {
     </table></div>`;
 }
 
+// A single "Test it" command line — the invocation that exercises this skill.
+// test_command may be a string, or {cmd, note}.
+function testCmdHTML(item) {
+  const t = item.test_command;
+  if (!t) return '';
+  const cmd = typeof t === 'string' ? t : t.cmd;
+  const note = (t && typeof t === 'object' && t.note) ? t.note : '';
+  if (!cmd) return '';
+  return `<div class="testcmd"><span class="tc-label">▶ Test it</span>` +
+    `<code class="tc-cmd">${esc(cmd)}</code>` +
+    `${note ? `<span class="tc-note">${esc(note)}</span>` : ''}</div>`;
+}
+
 function panelHTML(idx, dir, item, junit, conceptHtml, scenarios) {
   const st = STATUS[item.status] || STATUS.idea;
   const flow = (item.flow || []).length
@@ -672,6 +704,7 @@ function panelHTML(idx, dir, item, junit, conceptHtml, scenarios) {
   return `<section class="panel" role="tabpanel" id="panel-${idx}" aria-labelledby="tab-${idx}" hidden>
     <div class="panel-head"><h2>${esc(item.title)}</h2><span class="pill ${st.cls}">${esc(st.label)}</span></div>
     <p class="lede">${item.summary_html || ''}</p>
+    ${testCmdHTML(item)}
     ${skillsHTML(item)}
     ${item.figures && item.figures.length && item.figures[0].hero !== false ? figs : ''}
     ${flow}${pipe}${scope}

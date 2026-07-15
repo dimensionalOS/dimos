@@ -91,6 +91,10 @@
     }
   },
   "summary_html": "Multi-story architectural drawing sets (DXF with AIA layers + JPEG sheets) from lidar — live or from a .rrd recording — now wrapped as an agent-callable <span class='tmono'>@skill</span>: <span class='tmono'>FloorplanSkillContainer.generate_floorplan()</span> generates the drawings and returns measured attributes of the navigated space (levels + FFLs, wall/door/stair counts, glazed fraction, mezzanines/sunken areas, extents). Debug artifacts and 3D-model output are OFF by default for MCP callers and cleaned up automatically. Stylized AI renditions (drafted / cyanotype / presentation, via the OpenAI image model) are ON by default and attached to the skill's response as images the calling agent can actually see — not just file paths — so a touring agent can use them to answer layout questions.",
+  "test_command": {
+    "cmd": "uv run pytest dimos/skills/skill_verification/test_01_floorplan.py",
+    "note": "real-data — generates the DXF from chinaOffice.rrd (repo root); skips cleanly if absent. Or drive it directly: python scripts/demo_lidar_floorplan.py --rrd chinaOffice.rrd"
+  },
   "skills": [
     {
       "name": "generate_floorplan(rrd_path?, duration?, explore?, …)",

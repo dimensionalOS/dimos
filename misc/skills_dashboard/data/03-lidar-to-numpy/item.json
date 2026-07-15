@@ -17,6 +17,10 @@
     }
   },
   "summary_html": "A client-side utility, <span class='tmono'>LidarPointCloudClient</span>, that lets any script or skill running <em>outside</em> the module graph subscribe to live lidar over LCM and pull the accumulated cloud as a plain <span class='tmono'>(N, 3)</span> float32 numpy array — no hand-rolled subscribe/accumulate/vstack bookkeeping. Extracted from the floorplan demo's ad-hoc collector, which now uses it. <b>New:</b> a set of pure-numpy <b>signal tools</b> (<span class='tmono'>signals.py</span>) turns that raw array into the products four objectives need — <b>measure the space</b> (<span class='tmono'>extents</span>, <span class='tmono'>ground_height</span>), <b>reactive clearance/safety</b> (<span class='tmono'>nearest_obstacle</span>, <span class='tmono'>clearance</span>, <span class='tmono'>region_is_clear</span>), a <b>portable map artifact</b> (<span class='tmono'>occupancy_grid</span>, <span class='tmono'>height_map</span>), and <b>coverage feedback</b> (<span class='tmono'>coverage_area</span>) — with thin client wrappers so an outside-graph caller can ask the live sensor directly.",
+  "test_command": {
+    "cmd": "uv run pytest dimos/skills/skill_verification/test_03_lidar_to_numpy.py",
+    "note": "headless — synthetic scanner sweep; 35 unit tests"
+  },
   "skills": [
     {
       "name": "measure_space()",

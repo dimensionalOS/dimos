@@ -37,6 +37,10 @@
     }
   },
   "summary_html": "When the detector is unsure or produces a useless label (\"object\", <span class='tmono'>class_17</span>, low confidence), ask a vision-language model for an educated guess — feeding it evidence the detector never uses: the cropped detection image, the detector's own guess + confidence, the object's <b>measured real-world size</b>, and <b>what else is nearby</b>. A \"mouse\" next to a keyboard and monitor is a computer mouse, not an animal. Exposed as agent skills on <span class='tmono'>ObjectSceneRegistrationModule</span>.",
+  "test_command": {
+    "cmd": "uv run pytest dimos/skills/skill_verification/test_05_contextual_labeling.py",
+    "note": "headless — synthetic scene + stub VLM"
+  },
   "skills": [
     {
       "name": "identify_object(object_id)",

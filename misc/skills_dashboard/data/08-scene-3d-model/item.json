@@ -24,6 +24,10 @@
     }
   },
   "summary_html": "<span class='tmono'>SceneModel</span> fuses everything a mapping session produced — the lidar cloud and robot trajectory from a Rerun recording, plus (optionally) the recorded camera stream for color — into one queryable 3D model of the space, sliceable into horizontal plan cuts and vertical elevations for viewing and analysis. The foundation item 1's floorplan generation builds on.",
+  "test_command": {
+    "cmd": "uv run pytest dimos/skills/skill_verification/test_08_scene_model.py",
+    "note": "headless — synthetic two-story house → sections + mesh exports"
+  },
   "figures": [
     {
       "light": "scene_model_light.png",
