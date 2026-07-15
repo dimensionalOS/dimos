@@ -45,7 +45,9 @@ logger = setup_logger()
 _ALLOWED_SPORT_NAMES = frozenset(
     {"StandDown", "RecoveryStand", "Sit", "Hello", "Stretch", "Damp", "FrontPounce", "FrontJump"}
 )
-ALLOWED_SPORT_CMDS: dict[str, int] = {n: SPORT_CMD[n] for n in _ALLOWED_SPORT_NAMES}
+# Sorted so dict order is hash-seed independent: tests parametrize over this
+# dict, and unstable order breaks pytest-xdist collection across workers.
+ALLOWED_SPORT_CMDS: dict[str, int] = {n: SPORT_CMD[n] for n in sorted(_ALLOWED_SPORT_NAMES)}
 _POSTURE_SPORT_CMDS = frozenset({"StandDown", "RecoveryStand", "Sit", "Damp"})
 _ACROBATIC_SPORT_CMDS = frozenset({"FrontPounce", "FrontJump"})
 
