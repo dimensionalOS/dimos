@@ -28,7 +28,11 @@ from dimos.benchmark.spatiotemporal.models import (
     SpatialPredicate,
     TemporalPredicate,
 )
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, JsonValue, stable_id
+from dimos.benchmark.spatiotemporal.utilities import (
+    SCHEMA_VERSION,
+    JsonValue,
+    stable_id,
+)
 
 
 def _interval(
@@ -39,6 +43,7 @@ def _interval(
     end_frame_id: int,
     start_timestamp_s: float | None = None,
     end_timestamp_s: float | None = None,
+    episode_id: str = "episode_1",
 ) -> RelationInterval:
     if start_timestamp_s is None:
         start_timestamp_s = start_frame_id / 10
@@ -55,7 +60,7 @@ def _interval(
     contract: dict[str, JsonValue] = {
         "end_frame_id": end_frame_id,
         "end_timestamp_s": end_timestamp_s,
-        "episode_id": "episode_1",
+        "episode_id": episode_id,
         "object_id": object_id,
         "predicate": predicate.value,
         "relation_id": relation_id,
@@ -67,7 +72,7 @@ def _interval(
     return RelationInterval(
         interval_id=stable_id("interval", contract),
         relation_id=relation_id,
-        episode_id="episode_1",
+        episode_id=episode_id,
         subject_id=subject_id,
         predicate=predicate,
         object_id=object_id,
@@ -108,7 +113,7 @@ def test_generates_one_public_spatial_question_per_accepted_relation() -> None:
     question = questions[0]
     assert (
         question.question_id
-        == "question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e"
+        == "question_6c4562bfb3f21f38d6086b9331af250ebd473ce9162af6bf6cb8a28d94978f83"
     )
     assert question.text == "Is obj_red left of obj_blue?"
     assert question.object_ids == ("obj_red", "obj_blue")
@@ -123,6 +128,32 @@ def test_generates_one_public_spatial_question_per_accepted_relation() -> None:
         }
         & public_record.keys()
     )
+
+
+def test_spatial_question_ids_are_scoped_to_episode() -> None:
+    relation_id = stable_id(
+        "relation",
+        {
+            "object_ids": ("obj_red", "obj_blue"),
+            "predicate": SpatialPredicate.LEFT_OF.value,
+            "schema_version": SCHEMA_VERSION,
+        },
+    )
+    fact = RelationFact(
+        relation_id=relation_id,
+        episode_id="episode_1",
+        frame_id=12,
+        timestamp_s=0.5,
+        subject_id="obj_red",
+        predicate=SpatialPredicate.LEFT_OF,
+        object_id="obj_blue",
+        evidence_frame_ids=(12,),
+    )
+
+    first = generate_spatial_questions((fact,))[0]
+    second = generate_spatial_questions((fact.model_copy(update={"episode_id": "episode_2"}),))[0]
+
+    assert first.question_id != second.question_id
 
 
 def test_rejects_facts_from_multiple_episodes() -> None:
@@ -179,6 +210,32 @@ def test_generates_balanced_temporal_questions_in_byte_stable_order() -> None:
         (TemporalPredicate.AFTER, True): 1,
         (TemporalPredicate.AFTER, False): 1,
     }
+
+
+def test_temporal_question_ids_are_scoped_to_episode() -> None:
+    def question_ids(episode_id: str) -> set[str]:
+        first = _interval(
+            "obj_red",
+            SpatialPredicate.LEFT_OF,
+            "obj_blue",
+            1,
+            2,
+            episode_id=episode_id,
+        )
+        second = _interval(
+            "obj_green",
+            SpatialPredicate.ABOVE,
+            "obj_yellow",
+            4,
+            5,
+            episode_id=episode_id,
+        )
+        return {
+            question.question_id
+            for question, _ in generate_temporal_question_cases((first, second))
+        }
+
+    assert question_ids("episode_1").isdisjoint(question_ids("episode_2"))
 
 
 def test_omits_temporal_questions_with_bidirectional_interval_proofs() -> None:

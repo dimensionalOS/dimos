@@ -248,31 +248,7 @@ The command fails unless all of these gates hold:
 
 ## Reference result
 
-The verified macOS CPU run produced:
-
-- 25 seconds / 750 decoded frames;
-- 5 sampled YOLO-E frames per detector run;
-- 2 independent detector/tracker runs with identical results;
-- 8 observations;
-- 4 native object identities;
-- 0 fallback identities;
-- 6 relation facts;
-- 6 relation intervals;
-- 54 public questions: 6 spatial and 48 temporal;
-- 54 private answers;
-- logical bundle SHA-256 `ba4be04df7ed376925551bf998b6dce3fa08678665644ec0337c6eda6f9d62a9`;
-- TemporalMemory readiness after 25 public frames;
-- 5 analyzed TemporalMemory windows;
-- 3 TemporalMemory state entities;
-- 54 valid timestamp-scripted predictions;
-- 26 correct, 28 incorrect, 0 missing, and 0 invalid; and
-- byte-identical summaries across two complete command invocations.
-
-Reference full-summary SHA-256:
-
-```text
-610c4bba46705d2ba61240e904faed732199c2fe75d8bb8be86d36a7463bf491
-```
+Schema v2 makes question IDs episode-scoped, so v1 artifact and summary hashes are intentionally incompatible. Run the one-command demo to generate a fresh local reference; the final acceptance section records counts and digests only after all schema-v2 feature work is complete.
 
 ## Verification commands
 

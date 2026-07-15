@@ -17,12 +17,17 @@
 import json
 
 from dimos.benchmark.spatiotemporal.models import Question, QuestionKind, SpatialPredicate
-from dimos.benchmark.spatiotemporal.utilities import canonical_model_json
+from dimos.benchmark.spatiotemporal.utilities import canonical_model_json, stable_question_id
 
 
 def test_serializes_strict_records_to_identical_canonical_json() -> None:
     question = Question(
-        question_id="question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e",
+        question_id=stable_question_id(
+            episode_id="episode_1",
+            object_ids=("obj_red", "obj_blue"),
+            predicate=SpatialPredicate.LEFT_OF.value,
+            question_kind=QuestionKind.SPATIAL.value,
+        ),
         episode_id="episode_1",
         text="Is the mug left of the laptop at the end?",
         question_kind=QuestionKind.SPATIAL,

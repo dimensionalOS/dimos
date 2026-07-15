@@ -20,7 +20,7 @@ import pytest
 
 from dimos.benchmark.spatiotemporal.models import Question, QuestionKind, SpatialPredicate
 from dimos.benchmark.spatiotemporal.temporal_memory_answerer import TemporalMemoryAnswerer
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
+from dimos.benchmark.spatiotemporal.utilities import stable_question_id
 
 
 def test_temporal_memory_answerer_enforces_public_candidate_lifecycle(tmp_path: Path) -> None:
@@ -39,15 +39,11 @@ def test_temporal_memory_answerer_enforces_public_candidate_lifecycle(tmp_path: 
 
     answerer = TemporalMemoryAnswerer(ingest=ingest, query=query, cleanup=cleanup)
     question = Question(
-        question_id=stable_id(
-            "question",
-            {
-                "object_ids": ("obj_red", "obj_blue"),
-                "predicate": SpatialPredicate.LEFT_OF.value,
-                "question_kind": QuestionKind.SPATIAL.value,
-                "reference_ids": (),
-                "schema_version": SCHEMA_VERSION,
-            },
+        question_id=stable_question_id(
+            episode_id="episode_1",
+            object_ids=("obj_red", "obj_blue"),
+            predicate=SpatialPredicate.LEFT_OF.value,
+            question_kind=QuestionKind.SPATIAL.value,
         ),
         episode_id="episode_1",
         text="Is the red object left of the blue object?",

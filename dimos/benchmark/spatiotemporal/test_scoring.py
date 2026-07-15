@@ -24,11 +24,19 @@ from dimos.benchmark.spatiotemporal.models import (
     SpatialPredicate,
 )
 from dimos.benchmark.spatiotemporal.scoring import score_prediction
+from dimos.benchmark.spatiotemporal.utilities import stable_question_id
+
+QUESTION_ID = stable_question_id(
+    episode_id="episode_1",
+    object_ids=("obj_red", "obj_blue"),
+    predicate=SpatialPredicate.LEFT_OF.value,
+    question_kind=QuestionKind.SPATIAL.value,
+)
 
 
 def test_scores_exact_boolean_prediction_with_separate_oracle() -> None:
     question = Question(
-        question_id="question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e",
+        question_id=QUESTION_ID,
         episode_id="episode_1",
         text="Is the mug left of the laptop at the end?",
         question_kind=QuestionKind.SPATIAL,
@@ -52,7 +60,7 @@ def test_scores_exact_boolean_prediction_with_separate_oracle() -> None:
 
 def test_scores_always_yes_incorrect_against_false_private_truth() -> None:
     question = Question(
-        question_id="question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e",
+        question_id=QUESTION_ID,
         episode_id="episode_1",
         text="Is the mug left of the laptop at the end?",
         question_kind=QuestionKind.SPATIAL,
@@ -75,7 +83,7 @@ def test_scores_always_yes_incorrect_against_false_private_truth() -> None:
 
 
 def test_rejects_oracle_or_prediction_for_another_question() -> None:
-    question_id = "question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e"
+    question_id = QUESTION_ID
     other_id = f"question_{'0' * 64}"
     question = Question(
         question_id=question_id,

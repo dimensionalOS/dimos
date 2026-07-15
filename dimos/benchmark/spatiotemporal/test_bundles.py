@@ -38,6 +38,7 @@ from dimos.benchmark.spatiotemporal.utilities import (
     JsonValue,
     canonical_model_json,
     stable_id,
+    stable_question_id,
 )
 
 
@@ -59,15 +60,11 @@ def _spatial_records() -> tuple[
             "schema_version": SCHEMA_VERSION,
         },
     )
-    question_id = stable_id(
-        "question",
-        {
-            "object_ids": (subject_id, object_id),
-            "predicate": predicate.value,
-            "question_kind": QuestionKind.SPATIAL.value,
-            "reference_ids": (),
-            "schema_version": SCHEMA_VERSION,
-        },
+    question_id = stable_question_id(
+        episode_id=episode_id,
+        object_ids=(subject_id, object_id),
+        predicate=predicate.value,
+        question_kind=QuestionKind.SPATIAL.value,
     )
     question = Question(
         question_id=question_id,
@@ -255,15 +252,11 @@ def test_rejects_duplicate_oracle_answer_references(tmp_path: Path) -> None:
 def test_rejects_temporal_questions_with_foreign_relation_references(tmp_path: Path) -> None:
     _, observation, fact, _ = _spatial_records()
     references = (fact.relation_id, f"relation_{'0' * 64}")
-    question_id = stable_id(
-        "question",
-        {
-            "object_ids": (),
-            "predicate": TemporalPredicate.BEFORE.value,
-            "question_kind": QuestionKind.TEMPORAL.value,
-            "reference_ids": references,
-            "schema_version": SCHEMA_VERSION,
-        },
+    question_id = stable_question_id(
+        episode_id="episode_1",
+        predicate=TemporalPredicate.BEFORE.value,
+        question_kind=QuestionKind.TEMPORAL.value,
+        reference_ids=references,
     )
     question = Question(
         question_id=question_id,

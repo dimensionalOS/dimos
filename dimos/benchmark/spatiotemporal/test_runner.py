@@ -27,9 +27,14 @@ from dimos.benchmark.spatiotemporal.runner import (
     build_evaluation_report,
     parse_candidate_prediction,
 )
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
+from dimos.benchmark.spatiotemporal.utilities import stable_question_id
 
-QUESTION_ID = "question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e"
+QUESTION_ID = stable_question_id(
+    episode_id="episode_1",
+    object_ids=("obj_red", "obj_blue"),
+    predicate=SpatialPredicate.LEFT_OF.value,
+    question_kind=QuestionKind.SPATIAL.value,
+)
 
 
 @pytest.mark.parametrize(
@@ -64,15 +69,11 @@ def test_parses_only_boolean_and_explicit_yes_no_answers(
 def test_builds_evidence_linked_aggregate_report_with_filtered_diagnostics() -> None:
     questions = tuple(
         Question(
-            question_id=stable_id(
-                "question",
-                {
-                    "object_ids": ("obj_red", "obj_blue"),
-                    "predicate": predicate.value,
-                    "question_kind": QuestionKind.SPATIAL.value,
-                    "reference_ids": (),
-                    "schema_version": SCHEMA_VERSION,
-                },
+            question_id=stable_question_id(
+                episode_id="episode_1",
+                object_ids=("obj_red", "obj_blue"),
+                predicate=predicate.value,
+                question_kind=QuestionKind.SPATIAL.value,
             ),
             episode_id="episode_1",
             text=f"Is the red object {predicate.value} the blue object?",

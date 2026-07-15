@@ -32,7 +32,11 @@ from dimos.benchmark.spatiotemporal.models import (
     SpatialPredicate,
     TemporalPredicate,
 )
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
+from dimos.benchmark.spatiotemporal.utilities import (
+    SCHEMA_VERSION,
+    stable_id,
+    stable_question_id,
+)
 
 
 def test_bounding_box_accepts_only_strict_normalized_valid_bounds() -> None:
@@ -117,7 +121,12 @@ def test_object_observation_allows_finite_negative_timestamp_translation() -> No
 
 def test_question_rejects_malformed_id_and_non_nfc_object_identity() -> None:
     payload = {
-        "question_id": "question_4ef1579875e841ec7602de2e9cfc95f0bfdfb5e8d2e38ca798f462f8f72eda1e",
+        "question_id": stable_question_id(
+            episode_id="episode_1",
+            object_ids=("obj_red", "obj_blue"),
+            predicate=SpatialPredicate.LEFT_OF.value,
+            question_kind=QuestionKind.SPATIAL.value,
+        ),
         "episode_id": "episode_1",
         "text": "Is the mug left of the laptop at the end?",
         "question_kind": QuestionKind.SPATIAL,
@@ -157,7 +166,7 @@ def test_relation_fact_has_stable_private_sample_identity() -> None:
 
     assert (
         fact.relation_id
-        == "relation_50c38f99a34ced799c3b8c8bd3417ac288a6ce9481dc9de19525042a2e4f5ea3"
+        == "relation_d4350b93518e2cc7628cc560706c72ea137ce4ba887f4bced0d6a9513d0319b3"
     )
     with pytest.raises(ValidationError, match="relation ID"):
         RelationFact.model_validate(fact.model_dump() | {"relation_id": f"relation_{'0' * 64}"})
@@ -231,15 +240,11 @@ def test_relation_interval_has_strict_consistent_bounds() -> None:
 
 def test_question_variants_are_disjoint_and_have_stable_ids() -> None:
     references = (f"relation_{'1' * 64}", f"relation_{'2' * 64}")
-    question_id = stable_id(
-        "question",
-        {
-            "object_ids": (),
-            "predicate": TemporalPredicate.BEFORE.value,
-            "question_kind": QuestionKind.TEMPORAL.value,
-            "reference_ids": references,
-            "schema_version": SCHEMA_VERSION,
-        },
+    question_id = stable_question_id(
+        episode_id="episode_1",
+        predicate=TemporalPredicate.BEFORE.value,
+        question_kind=QuestionKind.TEMPORAL.value,
+        reference_ids=references,
     )
     temporal = Question(
         question_id=question_id,

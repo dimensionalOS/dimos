@@ -118,15 +118,6 @@ def test_coalesces_only_consecutive_samples_with_stable_relation_identity() -> N
     ] == [
         (
             "episode_1",
-            "lamp_1",
-            SpatialPredicate.ABOVE,
-            "table_1",
-            2,
-            2,
-            (2,),
-        ),
-        (
-            "episode_1",
             "mug_1",
             SpatialPredicate.LEFT_OF,
             "laptop_1",
@@ -142,6 +133,15 @@ def test_coalesces_only_consecutive_samples_with_stable_relation_identity() -> N
             4,
             4,
             (4,),
+        ),
+        (
+            "episode_1",
+            "lamp_1",
+            SpatialPredicate.ABOVE,
+            "table_1",
+            2,
+            2,
+            (2,),
         ),
         (
             "episode_2",

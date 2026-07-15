@@ -24,8 +24,8 @@ from pydantic import BaseModel
 JsonValue: TypeAlias = (
     str | bool | None | int | float | Mapping[str, "JsonValue"] | Sequence["JsonValue"]
 )
-SchemaVersion: TypeAlias = Literal["spatiotemporal-video-qa/v1"]
-SCHEMA_VERSION: Final[SchemaVersion] = "spatiotemporal-video-qa/v1"
+SchemaVersion: TypeAlias = Literal["spatiotemporal-video-qa/v2"]
+SCHEMA_VERSION: Final[SchemaVersion] = "spatiotemporal-video-qa/v2"
 
 
 def canonical_json_bytes(value: JsonValue) -> bytes:
@@ -41,6 +41,28 @@ def canonical_json_bytes(value: JsonValue) -> bytes:
 def stable_id(prefix: str, preimage: JsonValue) -> str:
     """Hash one canonical preimage into an opaque stable identifier."""
     return f"{prefix}_{sha256(canonical_json_bytes(preimage)).hexdigest()}"
+
+
+def stable_question_id(
+    *,
+    episode_id: str,
+    question_kind: str,
+    predicate: str,
+    object_ids: Sequence[str] = (),
+    reference_ids: Sequence[str] = (),
+) -> str:
+    """Create an episode-scoped ID from answer-free public semantics."""
+    return stable_id(
+        "question",
+        {
+            "episode_id": episode_id,
+            "object_ids": tuple(object_ids),
+            "predicate": predicate,
+            "question_kind": question_kind,
+            "reference_ids": tuple(reference_ids),
+            "schema_version": SCHEMA_VERSION,
+        },
+    )
 
 
 def canonical_model_json(model: BaseModel) -> str:

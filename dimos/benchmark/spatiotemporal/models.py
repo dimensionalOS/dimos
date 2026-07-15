@@ -21,7 +21,11 @@ import unicodedata
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
+from dimos.benchmark.spatiotemporal.utilities import (
+    SCHEMA_VERSION,
+    stable_id,
+    stable_question_id,
+)
 
 
 def _require_nfc(value: str) -> str:
@@ -250,15 +254,12 @@ class Question(StrictFrozenModel):
                 raise ValueError("temporal questions cannot contain object IDs")
             if len(self.reference_ids) != 2 or self.reference_ids[0] == self.reference_ids[1]:
                 raise ValueError("temporal question relation references must differ")
-        expected_id = stable_id(
-            "question",
-            {
-                "object_ids": self.object_ids,
-                "predicate": self.predicate.value,
-                "question_kind": self.question_kind.value,
-                "reference_ids": self.reference_ids,
-                "schema_version": SCHEMA_VERSION,
-            },
+        expected_id = stable_question_id(
+            episode_id=self.episode_id,
+            object_ids=self.object_ids,
+            predicate=self.predicate.value,
+            question_kind=self.question_kind.value,
+            reference_ids=self.reference_ids,
         )
         if self.question_id != expected_id:
             raise ValueError("question ID does not match its executable contract")

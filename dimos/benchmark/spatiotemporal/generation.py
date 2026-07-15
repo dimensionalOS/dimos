@@ -24,7 +24,7 @@ from dimos.benchmark.spatiotemporal.models import (
     RelationInterval,
     TemporalPredicate,
 )
-from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
+from dimos.benchmark.spatiotemporal.utilities import stable_question_id
 
 
 def generate_spatial_questions(facts: Sequence[RelationFact]) -> tuple[Question, ...]:
@@ -35,15 +35,11 @@ def generate_spatial_questions(facts: Sequence[RelationFact]) -> tuple[Question,
     questions: dict[str, Question] = {}
     for fact in facts:
         object_ids = (fact.subject_id, fact.object_id)
-        question_id = stable_id(
-            "question",
-            {
-                "object_ids": object_ids,
-                "predicate": fact.predicate.value,
-                "question_kind": QuestionKind.SPATIAL.value,
-                "reference_ids": (),
-                "schema_version": SCHEMA_VERSION,
-            },
+        question_id = stable_question_id(
+            episode_id=fact.episode_id,
+            object_ids=object_ids,
+            predicate=fact.predicate.value,
+            question_kind=QuestionKind.SPATIAL.value,
         )
         questions.setdefault(
             question_id,
@@ -126,15 +122,11 @@ def generate_temporal_question_cases(
                 False,
             ),
         ):
-            question_id = stable_id(
-                "question",
-                {
-                    "object_ids": (),
-                    "predicate": predicate.value,
-                    "question_kind": QuestionKind.TEMPORAL.value,
-                    "reference_ids": references,
-                    "schema_version": SCHEMA_VERSION,
-                },
+            question_id = stable_question_id(
+                episode_id=first.episode_id,
+                predicate=predicate.value,
+                question_kind=QuestionKind.TEMPORAL.value,
+                reference_ids=references,
             )
             question = Question(
                 question_id=question_id,
