@@ -21,10 +21,12 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 from time import perf_counter
+from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 import rerun as rr
+import rerun.blueprint as rrb
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
@@ -43,6 +45,10 @@ ODOM_AXIS_LEN = 0.5
 # Arrow radius as a fraction of the triad length.
 AXIS_RADIUS_RATIO = 25
 
+# The travelled trail. Blue, but light enough to read against the map's turbo
+# lows, and clear of PATH_PALETTE so it never reads as a planned path.
+ODOM_PATH_COLOR = [80, 160, 255]
+
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [
     [0, 255, 0],
@@ -54,6 +60,14 @@ PATH_PALETTE = [
     [120, 255, 200],
     [255, 255, 120],
 ]
+
+
+class LocalCrop(NamedTuple):
+    """Cylinder around the robot's feet that the close-up view shows."""
+
+    radius: float
+    above: float
+    below: float
 
 
 def _parse_configs(
@@ -124,19 +138,53 @@ def _log_odometry(
     )
     trail.append((px, py, pz))
     if len(trail) > 1:
-        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[[255, 255, 255]], radii=0.015))
+        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[ODOM_PATH_COLOR], radii=0.015))
 
 
-def _clearance_class_ids(
-    clearance: NDArray[np.float32], hard_clearance: float, clamp_m: float
-) -> NDArray[np.uint8]:
-    """Turbo class ids across the passable band: red where tight, blue out in the open."""
-    span = max(clamp_m - hard_clearance, 1e-6)
-    norm = np.clip(
-        np.nan_to_num((clearance - hard_clearance) / span, nan=1.0, posinf=1.0), 0.0, 1.0
+def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
+    """Color floor cells by wall clearance: dark navy where tight, pale blue in the open.
+
+    Its own ramp, not the map's turbo, so the floor reads as a distinct layer.
+    """
+    norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
+    tight = np.array([4.0, 8.0, 48.0], dtype=np.float64)
+    open_ = np.array([150.0, 200.0, 255.0], dtype=np.float64)
+    rgb: NDArray[np.float64] = tight + norm[:, None] * (open_ - tight)
+    return rgb.astype(np.uint8)
+
+
+def _log_local_map(
+    voxel_map: NDArray[np.float32],
+    ground: tuple[float, float, float],
+    crop: LocalCrop,
+    render_voxel: float,
+) -> None:
+    """Log the map cropped around the robot, in a frame parented to its feet.
+
+    The close-up view takes that frame as its origin, so it rides along with the
+    robot. Translation only: yaw would spin the view.
+    """
+    gx, gy, gz = ground
+    rr.log("world/local", rr.Transform3D(translation=[gx, gy, gz]))
+    rel = (
+        voxel_map - np.array([gx, gy, gz], dtype=np.float32)
+        if voxel_map.size
+        else np.empty((0, 3), dtype=np.float32)
     )
-    ids: NDArray[np.float64] = (1.0 - norm) * 255
-    return ids.astype(np.uint8)
+    keep = (
+        (rel[:, 0] ** 2 + rel[:, 1] ** 2 <= crop.radius**2)
+        & (rel[:, 2] >= -crop.below)
+        & (rel[:, 2] <= crop.above)
+    )
+    local = rel[keep]
+    if local.size == 0:
+        rr.log("world/local/voxel_map", rr.Points3D([]))
+        return
+    # Its own turbo: spread over the crop's own height range, not the building's,
+    # so a 1 m band of floor still reads as a full gradient.
+    z = local[:, 2]
+    class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
+    rr.log("world/local/voxel_map", rr.Points3D(local, class_ids=class_ids, radii=render_voxel / 3))
 
 
 def _log_shared(
@@ -145,6 +193,7 @@ def _log_shared(
     render_voxel: float,
     clearance_clamp: float,
     hard_clearance: float,
+    crop: LocalCrop,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
     """Log the map artifacts shared by every config from a reference planner.
 
@@ -160,6 +209,7 @@ def _log_shared(
             "world/voxel_map",
             rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 3),
         )
+    _log_local_map(voxel_map, start, crop, render_voxel)
 
     surface = planner.surface_clearance_map()
     # Walls are already drawn by the voxel map; the surface layer only answers
@@ -170,7 +220,7 @@ def _log_shared(
             "world/surface_map",
             rr.Points3D(
                 passable[:, :3],
-                class_ids=_clearance_class_ids(passable[:, 3], hard_clearance, clearance_clamp),
+                colors=_clearance_colors(passable[:, 3], clearance_clamp),
                 radii=render_voxel / 2,
             ),
         )
@@ -184,7 +234,32 @@ def _log_shared(
     return surface, nodes, edges
 
 
-def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
+def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
+    """Full map on the left; the robot-following crop and the metrics beside it."""
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                origin="world",
+                name="world",
+                contents=["+ $origin/**", "- $origin/local/**"],
+            ),
+            rrb.Vertical(
+                rrb.Spatial3DView(
+                    origin="world/local",
+                    name=f"local {crop.radius:g}m",
+                    contents=["+ $origin/**", "+ /world/paths/**", "+ /world/odom/**"],
+                ),
+                rrb.TimeSeriesView(origin="metrics/timing", name="timing"),
+                rrb.TimeSeriesView(origin="metrics/size", name="size"),
+                row_shares=[2, 1, 1],
+            ),
+            column_shares=[2, 1],
+        ),
+        collapse_panels=True,
+    )
+
+
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: LocalCrop) -> None:
     rr.init("plan_rrd", recording_id=db_path.stem)
     if out is not None and live:
         # Generous viewer memory so the gRPC sink never backpressures the writer.
@@ -194,6 +269,7 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
         rr.save(str(out))
     else:
         rr.spawn()
+    rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
 
 
@@ -236,6 +312,7 @@ def _process_frame(
     render_voxel: float,
     clearance_clamp: float,
     hard_clearance: float,
+    crop: LocalCrop,
 ) -> dict[str, float]:
     """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
     assert ray_obs.pose_tuple is not None
@@ -262,7 +339,7 @@ def _process_frame(
                 "total_ms": (t2 - t0) * 1000,
             }
             surface, nodes, edges = _log_shared(
-                start, planner, render_voxel, clearance_clamp, hard_clearance
+                start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
     for key, value in ref_timing.items():
@@ -354,6 +431,18 @@ def main(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
     render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    local_radius: float = typer.Option(
+        5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
+    ),
+    local_above: float = typer.Option(
+        1.0, "--local-above", help="Close-up view: crop this far above the robot's feet (m)"
+    ),
+    local_below: float = typer.Option(
+        2.0,
+        "--local-below",
+        help="Close-up view: crop this far below the robot's feet (m); "
+        "keeps stairs down but drops the floor below",
+    ),
     clearance_clamp: float = typer.Option(
         1.0, "--clearance-clamp", help="Max clearance (m) for the surface color scale"
     ),
@@ -365,7 +454,8 @@ def main(
     ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-    _init_recording(db_path, out, live)
+    crop = LocalCrop(local_radius, local_above, local_below)
+    _init_recording(db_path, out, live, crop)
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -438,6 +528,7 @@ def main(
                     render_voxel,
                     clearance_clamp,
                     ref_clearance,
+                    crop,
                 )
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, odom_trail)
                 frame += 1
