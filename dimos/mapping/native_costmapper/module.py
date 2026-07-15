@@ -40,7 +40,7 @@ class Config(NativeModuleConfig):
         return values
 
 
-class CostMapper(NativeModule):
+class NativeCostMapper(NativeModule):
     """Native Rust drop-in replacement for the Python cost mapper."""
 
     config: Config

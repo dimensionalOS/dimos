@@ -215,6 +215,7 @@ all_modules = {
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",
     "movement-manager": "dimos.navigation.movement_manager.movement_manager.MovementManager",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
+    "native-cost-mapper": "dimos.mapping.native_costmapper.module.NativeCostMapper",
     "nav-record": "dimos.navigation.cmu_nav.modules.nav_record.nav_record.NavRecord",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
     "object-db-module": "dimos.perception.detection.moduleDB.ObjectDBModule",

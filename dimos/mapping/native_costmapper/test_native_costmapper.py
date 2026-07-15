@@ -21,6 +21,11 @@ pytest.importorskip("dimos_native_costmapper")
 
 from dimos_native_costmapper import CostMapper as NativeCostMapper  # type: ignore[import-untyped]
 
+from dimos.mapping.costmapper import Config as PythonModuleConfig, CostMapper as PythonCostMapper
+from dimos.mapping.native_costmapper.module import (
+    Config as NativeModuleConfig,
+    NativeCostMapper as NativeCostMapperModule,
+)
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     GeneralOccupancyConfig,
@@ -147,4 +152,35 @@ def test_native_costmap_handles_empty_cloud() -> None:
 
 def test_native_costmapper_rejects_unknown_algorithm() -> None:
     with pytest.raises(ValueError, match="unknown occupancy algorithm"):
-        NativeCostMapper(algo="missing", config={})
+        NativeCostMapper(algo="missing", config={}, initial_safe_radius_meters=0.0)
+
+
+def test_native_costmapper_requires_python_owned_configuration() -> None:
+    config = asdict(SimpleOccupancyConfig())
+
+    with pytest.raises(TypeError, match="initial_safe_radius_meters"):
+        NativeCostMapper(algo="simple", config=config)
+
+    del config["frame_id"]
+    with pytest.raises(ValueError, match="missing field `frame_id`"):
+        NativeCostMapper(
+            algo="simple",
+            config=config,
+            initial_safe_radius_meters=0.0,
+        )
+
+
+def test_native_module_matches_python_stream_contract() -> None:
+    python_streams = PythonCostMapper.blueprint().blueprints[0].streams
+    native_streams = NativeCostMapperModule.blueprint().blueprints[0].streams
+
+    assert native_streams == python_streams
+
+
+def test_native_module_matches_python_configuration_contract() -> None:
+    python_config = PythonModuleConfig()
+    native_config = NativeModuleConfig()
+
+    assert native_config.algo == python_config.algo
+    assert native_config.config == python_config.config
+    assert native_config.initial_safe_radius_meters == python_config.initial_safe_radius_meters

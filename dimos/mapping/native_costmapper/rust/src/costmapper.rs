@@ -19,7 +19,7 @@ use lcm_msgs::geometry_msgs::{Point, Pose, Quaternion};
 use lcm_msgs::nav_msgs::{MapMetaData, OccupancyGrid};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::Header;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use validator::ValidationError;
 
 const PADDING_METERS: f64 = 1.0;
@@ -54,84 +54,73 @@ impl fmt::Display for CostmapError {
 
 impl std::error::Error for CostmapError {}
 
+#[derive(Debug, Clone)]
+struct FrameId(Option<String>);
+
+impl FrameId {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl<'de> Deserialize<'de> for FrameId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match serde_json::Value::deserialize(deserializer)? {
+            serde_json::Value::Null => Ok(Self(None)),
+            serde_json::Value::String(value) => Ok(Self(Some(value))),
+            _ => Err(serde::de::Error::custom(
+                "frame_id must be a string or null",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct HeightCostConfig {
     resolution: f64,
-    frame_id: Option<String>,
+    frame_id: FrameId,
     can_pass_under: f64,
     can_climb: f64,
     ignore_noise: f64,
     smoothing: f64,
 }
 
-impl Default for HeightCostConfig {
-    fn default() -> Self {
-        Self {
-            resolution: 0.05,
-            frame_id: None,
-            can_pass_under: 0.6,
-            can_climb: 0.15,
-            ignore_noise: 0.05,
-            smoothing: 1.0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct GeneralOccupancyConfig {
     resolution: f64,
-    frame_id: Option<String>,
+    frame_id: FrameId,
     min_height: f64,
     max_height: f64,
     mark_free_radius: f64,
 }
 
-impl Default for GeneralOccupancyConfig {
-    fn default() -> Self {
-        Self {
-            resolution: 0.05,
-            frame_id: None,
-            min_height: 0.1,
-            max_height: 2.0,
-            mark_free_radius: 0.4,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct SimpleOccupancyConfig {
     resolution: f64,
-    frame_id: Option<String>,
+    frame_id: FrameId,
     min_height: f64,
     max_height: f64,
-    closing_iterations: i64,
-    closing_connectivity: i64,
-    can_pass_under: f64,
-    can_climb: f64,
-    ignore_noise: f64,
-    smoothing: f64,
+    #[serde(rename = "closing_iterations")]
+    _closing_iterations: i64,
+    #[serde(rename = "closing_connectivity")]
+    _closing_connectivity: i64,
+    #[serde(rename = "can_pass_under")]
+    _can_pass_under: f64,
+    #[serde(rename = "can_climb")]
+    _can_climb: f64,
+    #[serde(rename = "ignore_noise")]
+    _ignore_noise: f64,
+    #[serde(rename = "smoothing")]
+    _smoothing: f64,
 }
 
-impl Default for SimpleOccupancyConfig {
-    fn default() -> Self {
-        Self {
-            resolution: 0.05,
-            frame_id: None,
-            min_height: 0.1,
-            max_height: 2.0,
-            closing_iterations: 1,
-            closing_connectivity: 2,
-            can_pass_under: 0.6,
-            can_climb: 0.15,
-            ignore_noise: 0.05,
-            smoothing: 1.0,
-        }
-    }
-}
-
+#[derive(Debug)]
 enum Algorithm {
     HeightCost(HeightCostConfig),
     General(GeneralOccupancyConfig),
@@ -157,17 +146,11 @@ impl Algorithm {
 }
 
 fn validate_config(config: &Config) -> Result<(), ValidationError> {
-    parse_algorithm(config).map(|_| ()).map_err(|error| {
+    CostmapCalculator::new(config).map(|_| ()).map_err(|error| {
         let mut validation_error = ValidationError::new("invalid_costmapper_config");
         validation_error.message = Some(error.to_string().into());
         validation_error
-    })?;
-    if !config.initial_safe_radius_meters.is_finite() || config.initial_safe_radius_meters < 0.0 {
-        return Err(ValidationError::new(
-            "initial_safe_radius_meters_must_be_nonnegative",
-        ));
-    }
-    Ok(())
+    })
 }
 
 fn parse_algorithm(config: &Config) -> Result<Algorithm, CostmapError> {
@@ -239,28 +222,53 @@ fn validate_height_range(min_height: f64, max_height: f64) -> Result<(), Costmap
     if !min_height.is_finite() || !max_height.is_finite() {
         return Err(CostmapError::new("height limits must be finite"));
     }
+    if min_height > max_height {
+        return Err(CostmapError::new(
+            "min_height must be less than or equal to max_height",
+        ));
+    }
     Ok(())
 }
 
-pub fn calculate_costmap(
-    message: &PointCloud2,
-    config: &Config,
-) -> Result<OccupancyGrid, CostmapError> {
-    let algorithm = parse_algorithm(config)?;
-    let cloud = PointCloudView::new(message)?;
+#[derive(Debug)]
+pub struct CostmapCalculator {
+    algorithm: Algorithm,
+    initial_safe_radius_meters: f64,
+}
 
-    if cloud.is_empty() {
-        return Ok(empty_grid(message, &algorithm));
+impl CostmapCalculator {
+    pub fn new(config: &Config) -> Result<Self, CostmapError> {
+        if !config.initial_safe_radius_meters.is_finite() || config.initial_safe_radius_meters < 0.0
+        {
+            return Err(CostmapError::new(
+                "initial_safe_radius_meters must be finite and nonnegative",
+            ));
+        }
+        Ok(Self {
+            algorithm: parse_algorithm(config)?,
+            initial_safe_radius_meters: config.initial_safe_radius_meters,
+        })
     }
 
-    match &algorithm {
-        Algorithm::HeightCost(config) => height_cost_occupancy(message, &cloud, config),
-        Algorithm::General(config) => general_occupancy(message, &cloud, config),
-        Algorithm::Simple(config) => simple_occupancy(message, &cloud, config),
+    pub fn calculate(&self, message: &PointCloud2) -> Result<OccupancyGrid, CostmapError> {
+        let cloud = PointCloudView::new(message)?;
+
+        let mut grid = if cloud.is_empty() {
+            empty_grid(message, &self.algorithm)
+        } else {
+            match &self.algorithm {
+                Algorithm::HeightCost(config) => height_cost_occupancy(message, &cloud, config)?,
+                Algorithm::General(config) => general_occupancy(message, &cloud, config)?,
+                Algorithm::Simple(config) => simple_occupancy(message, &cloud, config)?,
+            }
+        };
+
+        apply_initial_safe_radius(&mut grid, self.initial_safe_radius_meters);
+        Ok(grid)
     }
 }
 
-pub fn apply_initial_safe_radius(grid: &mut OccupancyGrid, radius_meters: f64) {
+fn apply_initial_safe_radius(grid: &mut OccupancyGrid, radius_meters: f64) {
     if radius_meters <= 0.0 || grid.data.is_empty() {
         return;
     }
@@ -390,10 +398,10 @@ fn height_costs(
                 continue;
             }
 
-            let gradient_magnitude =
-                (gradient_x[index] * gradient_x[index] + gradient_y[index] * gradient_y[index])
-                    .sqrt()
-                    * scale;
+            let gradient_magnitude = (gradient_x[index] * gradient_x[index]
+                + gradient_y[index] * gradient_y[index])
+                .sqrt()
+                * scale;
             let mut height_change = gradient_magnitude * resolution;
             if height_change < ignore_noise {
                 height_change = 0.0;
@@ -700,11 +708,12 @@ impl<'a> PointCloudView<'a> {
                 let row_base = row * self.row_step;
                 for column in 0..self.width {
                     let base = row_base + column * self.point_step;
-                    let x = f32::from_le_bytes(self.data[base..base + 4].try_into().unwrap()) as f64;
-                    let y =
-                        f32::from_le_bytes(self.data[base + 4..base + 8].try_into().unwrap()) as f64;
-                    let z =
-                        f32::from_le_bytes(self.data[base + 8..base + 12].try_into().unwrap()) as f64;
+                    let x =
+                        f32::from_le_bytes(self.data[base..base + 4].try_into().unwrap()) as f64;
+                    let y = f32::from_le_bytes(self.data[base + 4..base + 8].try_into().unwrap())
+                        as f64;
+                    let z = f32::from_le_bytes(self.data[base + 8..base + 12].try_into().unwrap())
+                        as f64;
                     if !(x.is_finite() && y.is_finite() && z.is_finite()) {
                         return Err(CostmapError::new(
                             "point cloud contains a non-finite xyz coordinate",
@@ -772,23 +781,23 @@ fn gaussian_kernel(sigma: f64) -> (Vec<f32>, usize) {
 }
 
 fn convolve_rows_pair(
-    input_a: &[f32],
-    input_b: &[f32],
-    output_a: &mut [f32],
-    output_b: &mut [f32],
-    width: usize,
-    height: usize,
+    inputs: (&[f32], &[f32]),
+    outputs: (&mut [f32], &mut [f32]),
+    dimensions: (usize, usize),
     kernel: &[f32],
     radius: usize,
 ) {
+    let (input_a, input_b) = inputs;
+    let (output_a, output_b) = outputs;
+    let (width, height) = dimensions;
     let mut padded_a = vec![0.0f32; width + radius * 2];
     let mut padded_b = vec![0.0f32; width + radius * 2];
     for row in 0..height {
         let row_start = row * width;
-        for column in 0..width {
-            padded_a[radius + column] = input_a[row_start + column];
-            padded_b[radius + column] = input_b[row_start + column];
-        }
+        let input_range = row_start..row_start + width;
+        let padded_range = radius..radius + width;
+        padded_a[padded_range.clone()].copy_from_slice(&input_a[input_range.clone()]);
+        padded_b[padded_range].copy_from_slice(&input_b[input_range]);
         for index in 0..radius {
             let left = reflect_index(-(index as isize + 1), width);
             let right = reflect_index((width + index) as isize, width);
@@ -810,15 +819,42 @@ fn convolve_rows_pair(
     }
 }
 
-fn transpose(input: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut output = vec![0.0f32; input.len()];
-    for row in 0..height {
-        let row_start = row * width;
-        for column in 0..width {
-            output[column * height + row] = input[row_start + column];
+fn convolve_columns_pair(
+    inputs: (&[f32], &[f32]),
+    outputs: (&mut [f32], &mut [f32]),
+    dimensions: (usize, usize),
+    kernel: &[f32],
+    radius: usize,
+) {
+    let (input_a, input_b) = inputs;
+    let (output_a, output_b) = outputs;
+    let (width, height) = dimensions;
+    let mut padded_a = vec![0.0f32; height + radius * 2];
+    let mut padded_b = vec![0.0f32; height + radius * 2];
+    for column in 0..width {
+        for row in 0..height {
+            padded_a[radius + row] = input_a[row * width + column];
+            padded_b[radius + row] = input_b[row * width + column];
+        }
+        for index in 0..radius {
+            let top = reflect_index(-(index as isize + 1), height);
+            let bottom = reflect_index((height + index) as isize, height);
+            padded_a[radius - 1 - index] = input_a[top * width + column];
+            padded_b[radius - 1 - index] = input_b[top * width + column];
+            padded_a[radius + height + index] = input_a[bottom * width + column];
+            padded_b[radius + height + index] = input_b[bottom * width + column];
+        }
+        for row in 0..height {
+            let mut value_a = 0.0f32;
+            let mut value_b = 0.0f32;
+            for (kernel_index, weight) in kernel.iter().enumerate() {
+                value_a += padded_a[row + kernel_index] * weight;
+                value_b += padded_b[row + kernel_index] * weight;
+            }
+            output_a[row * width + column] = value_a;
+            output_b[row * width + column] = value_b;
         }
     }
-    output
 }
 
 fn gaussian_filter_pair(
@@ -836,35 +872,23 @@ fn gaussian_filter_pair(
     let mut horizontal_a = vec![0.0f32; input_a.len()];
     let mut horizontal_b = vec![0.0f32; input_b.len()];
     convolve_rows_pair(
-        input_a,
-        input_b,
-        &mut horizontal_a,
-        &mut horizontal_b,
-        width,
-        height,
+        (input_a, input_b),
+        (&mut horizontal_a, &mut horizontal_b),
+        (width, height),
         &kernel,
         radius,
     );
 
-    // Transpose so the vertical pass becomes another contiguous row convolution.
-    let transposed_a = transpose(&horizontal_a, width, height);
-    let transposed_b = transpose(&horizontal_b, width, height);
     let mut vertical_a = vec![0.0f32; input_a.len()];
     let mut vertical_b = vec![0.0f32; input_b.len()];
-    convolve_rows_pair(
-        &transposed_a,
-        &transposed_b,
-        &mut vertical_a,
-        &mut vertical_b,
-        height,
-        width,
+    convolve_columns_pair(
+        (&horizontal_a, &horizontal_b),
+        (&mut vertical_a, &mut vertical_b),
+        (width, height),
         &kernel,
         radius,
     );
-    (
-        transpose(&vertical_a, height, width),
-        transpose(&vertical_b, height, width),
-    )
+    (vertical_a, vertical_b)
 }
 
 fn sobel_pair(input: &[f32], width: usize, height: usize) -> (Vec<f32>, Vec<f32>) {
@@ -990,17 +1014,32 @@ mod tests {
         }
     }
 
+    fn simple_config(resolution: f64) -> Config {
+        config(
+            "simple",
+            serde_json::json!({
+                "resolution": resolution,
+                "frame_id": null,
+                "min_height": 0.1,
+                "max_height": 2.0,
+                "closing_iterations": 1,
+                "closing_connectivity": 2,
+                "can_pass_under": 0.6,
+                "can_climb": 0.15,
+                "ignore_noise": 0.05,
+                "smoothing": 1.0
+            }),
+        )
+    }
+
+    fn calculate(message: &PointCloud2, config: &Config) -> Result<OccupancyGrid, CostmapError> {
+        CostmapCalculator::new(config)?.calculate(message)
+    }
+
     #[test]
     fn simple_marks_ground_free_and_obstacles_occupied() {
         let message = cloud(&[[0.0, 0.0, 0.0], [0.0, 0.0, 0.5], [0.5, 0.0, 3.0]]);
-        let result = calculate_costmap(
-            &message,
-            &config(
-                "simple",
-                serde_json::json!({"resolution": 0.5, "min_height": 0.1, "max_height": 2.0}),
-            ),
-        )
-        .unwrap();
+        let result = calculate(&message, &simple_config(0.5)).unwrap();
 
         assert_eq!(result.info.width, 5);
         assert_eq!(result.info.height, 4);
@@ -1012,12 +1051,13 @@ mod tests {
     #[test]
     fn general_dilates_free_cells_without_overwriting_obstacles() {
         let message = cloud(&[[0.0, 0.0, 0.0], [0.5, 0.0, 0.5]]);
-        let result = calculate_costmap(
+        let result = calculate(
             &message,
             &config(
                 "general",
                 serde_json::json!({
                     "resolution": 0.5,
+                    "frame_id": null,
                     "min_height": 0.1,
                     "max_height": 2.0,
                     "mark_free_radius": 0.5
@@ -1034,16 +1074,9 @@ mod tests {
     #[test]
     fn safe_radius_clears_cells_using_grid_world_coordinates() {
         let message = cloud(&[[0.0, 0.0, 0.5]]);
-        let mut result = calculate_costmap(
-            &message,
-            &config(
-                "simple",
-                serde_json::json!({"resolution": 0.5, "min_height": 0.1, "max_height": 2.0}),
-            ),
-        )
-        .unwrap();
-
-        apply_initial_safe_radius(&mut result, 0.1);
+        let mut config = simple_config(0.5);
+        config.initial_safe_radius_meters = 0.1;
+        let result = calculate(&message, &config).unwrap();
 
         let center = 2 * result.info.width as usize + 2;
         assert_eq!(result.data[center], FREE);
@@ -1051,12 +1084,23 @@ mod tests {
 
     #[test]
     fn invalid_algorithm_is_rejected() {
-        let error = calculate_costmap(
-            &cloud(&[[0.0, 0.0, 0.0]]),
-            &config("missing", serde_json::json!({})),
-        )
-        .unwrap_err();
+        let error = CostmapCalculator::new(&config("missing", serde_json::json!({}))).unwrap_err();
         assert!(error.to_string().contains("unknown occupancy algorithm"));
+    }
+
+    #[test]
+    fn missing_python_owned_config_field_is_rejected() {
+        let error = CostmapCalculator::new(&config(
+            "simple",
+            serde_json::json!({
+                "resolution": 0.5,
+                "min_height": 0.1,
+                "max_height": 2.0
+            }),
+        ))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing field `frame_id`"));
     }
 
     #[test]
@@ -1064,11 +1108,7 @@ mod tests {
         let mut message = cloud(&[[0.0, 0.0, 0.0]]);
         message.fields[0].offset = -1;
 
-        let error = calculate_costmap(
-            &message,
-            &config("simple", serde_json::json!({"resolution": 0.5})),
-        )
-        .unwrap_err();
+        let error = calculate(&message, &simple_config(0.5)).unwrap_err();
 
         assert!(error
             .to_string()

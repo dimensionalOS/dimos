@@ -15,11 +15,12 @@
 use std::time::Duration;
 
 use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
-use dimos_native_costmapper::costmapper::{apply_initial_safe_radius, calculate_costmap, Config};
+use dimos_native_costmapper::costmapper::{Config, CostmapCalculator};
 use lcm_msgs::nav_msgs::OccupancyGrid;
 use lcm_msgs::sensor_msgs::PointCloud2;
 
 #[derive(Module)]
+#[module(setup = setup)]
 struct CostMapper {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
@@ -35,9 +36,17 @@ struct CostMapper {
 
     latest_global_map: Option<PointCloud2>,
     latest_merged_map: Option<PointCloud2>,
+    calculator: Option<CostmapCalculator>,
 }
 
 impl CostMapper {
+    async fn setup(&mut self) {
+        self.calculator = Some(
+            CostmapCalculator::new(&self.config)
+                .expect("native module configuration was validated before setup"),
+        );
+    }
+
     async fn on_global_map(&mut self, message: PointCloud2) {
         self.latest_global_map = Some(message);
         let selected = self
@@ -60,7 +69,11 @@ impl CostMapper {
     }
 
     async fn calculate_and_publish(&self, message: &PointCloud2) {
-        let mut grid = match calculate_costmap(message, &self.config) {
+        let calculator = self
+            .calculator
+            .as_ref()
+            .expect("cost mapper setup must run before handling messages");
+        let grid = match calculator.calculate(message) {
             Ok(grid) => grid,
             Err(error) => {
                 warn_throttled!(
@@ -71,7 +84,6 @@ impl CostMapper {
                 return;
             }
         };
-        apply_initial_safe_radius(&mut grid, self.config.initial_safe_radius_meters);
         if let Err(error) = self.global_costmap.publish(&grid).await {
             error_throttled!(
                 Duration::from_secs(1),

@@ -16,13 +16,13 @@ use lcm_msgs::sensor_msgs::PointCloud2;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use validator::Validate;
 
-use crate::costmapper::{apply_initial_safe_radius, calculate_costmap, Config};
+use crate::costmapper::{Config, CostmapCalculator};
 
 #[pyclass]
 pub struct CostMapper {
     config: Config,
+    calculator: CostmapCalculator,
 }
 
 fn config_value(config: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
@@ -35,7 +35,7 @@ fn config_value(config: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
 #[pymethods]
 impl CostMapper {
     #[new]
-    #[pyo3(signature = (*, algo, config, initial_safe_radius_meters = 0.0))]
+    #[pyo3(signature = (*, algo, config, initial_safe_radius_meters))]
     fn new(
         algo: String,
         config: &Bound<'_, PyDict>,
@@ -46,10 +46,9 @@ impl CostMapper {
             config: config_value(config)?,
             initial_safe_radius_meters,
         };
-        config
-            .validate()
+        let calculator = CostmapCalculator::new(&config)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Self { config })
+        Ok(Self { config, calculator })
     }
 
     /// Convert an LCM-encoded PointCloud2 into an LCM-encoded OccupancyGrid.
@@ -60,9 +59,10 @@ impl CostMapper {
     ) -> PyResult<Bound<'py, PyBytes>> {
         let cloud = PointCloud2::decode(cloud)
             .map_err(|error| PyValueError::new_err(format!("invalid PointCloud2: {error}")))?;
-        let mut grid = calculate_costmap(&cloud, &self.config)
+        let grid = self
+            .calculator
+            .calculate(&cloud)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        apply_initial_safe_radius(&mut grid, self.config.initial_safe_radius_meters);
         Ok(PyBytes::new(py, &grid.encode()))
     }
 
