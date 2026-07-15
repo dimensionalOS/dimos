@@ -34,7 +34,6 @@ import socket
 import struct
 import threading
 import time
-from typing import TYPE_CHECKING
 
 import cv2
 from pydantic import Field
@@ -45,7 +44,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.BatteryState import (
     POWER_SUPPLY_STATUS_CHARGING,
@@ -56,10 +54,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.deeprobotics.m20.msgs.status import M20Status
 from dimos.spec.perception import Image as VideoSource
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -274,7 +268,7 @@ class PatrolLink:
 
 
 class M20Config(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_ip or "10.21.31.103")
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     # Wide-angle cameras. Default to the control-channel host (front = video1,
     # rear = video2); override only to point at a different stream.
     rtsp_url: str | None = None
@@ -310,11 +304,13 @@ class M20Connection(Module, VideoSource):
     _running: bool = False
     _cmd: Twist | None = None
     _cmd_ts: float = 0.0
+    _cmd_lock: threading.Lock
 
     @rpc
     def start(self) -> None:
         super().start()
         self._running = True
+        self._cmd_lock = threading.Lock()
         self._cmd = Twist.zero()
         self._cmd_ts = 0.0
 
@@ -378,6 +374,7 @@ class M20Connection(Module, VideoSource):
         if (type_, command) == _REPORT_BASIC_STATUS:
             bs = items.get("BasicStatus")
             if isinstance(bs, dict):
+                logger.info("M20 BasicStatus: %s", bs)
                 self.status.publish(_status_from(bs))
         elif (type_, command) == _REPORT_DEVICE_STATE:
             bat = items.get("BatteryStatus")
@@ -394,8 +391,9 @@ class M20Connection(Module, VideoSource):
         ``duration`` is accepted for parity with other dimos connections but is
         unused — hold behaviour is handled by the deadman in the control loop.
         """
-        self._cmd = twist
-        self._cmd_ts = time.time()
+        with self._cmd_lock:
+            self._cmd = twist
+            self._cmd_ts = time.time()
         return True
 
     def _control_loop(self) -> None:
@@ -403,11 +401,18 @@ class M20Connection(Module, VideoSource):
         # the deadman zeroes it if cmd_vel goes stale, so the robot stops if we do.
         period = 1.0 / self.config.cmd_rate_hz
         cfg = self.config
+        link = self._link
+        assert link is not None
         while self._running:
-            twist = _apply_deadman(self._cmd, time.time() - self._cmd_ts, cfg.cmd_timeout)
+            loop_start = time.monotonic()
+            with self._cmd_lock:
+                cmd = self._cmd
+                cmd_ts = self._cmd_ts
+            twist = _apply_deadman(cmd, time.time() - cmd_ts, cfg.cmd_timeout)
             axes = _axes_from_twist(twist, cfg.max_linear, cfg.max_angular)
-            self._link.send(*_MOVE, axes)  # type: ignore[union-attr]
-            time.sleep(period)
+            link.send(*_MOVE, axes)
+            elapsed = time.monotonic() - loop_start
+            time.sleep(max(0.0, period - elapsed))
 
     def _open_capture(self, url: str) -> cv2.VideoCapture:
         if self.config.low_latency:
@@ -465,21 +470,3 @@ class M20Connection(Module, VideoSource):
     def observe(self) -> Image | None:
         """Return the latest front-camera frame from the M20, or None if none yet."""
         return self._latest_video_frame
-
-
-def deploy(dimos: ModuleCoordinator, ip: str = "10.21.31.103", prefix: str = "") -> ModuleProxy:
-    from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-
-    conn = dimos.deploy(M20Connection, ip=ip)
-    conn.color_image.transport = pSHMTransport(
-        f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-    conn.color_image_rear.transport = pSHMTransport(
-        f"{prefix}/image_rear", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-    conn.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
-    conn.status.transport = LCMTransport(f"{prefix}/status", M20Status)
-    conn.battery_left.transport = LCMTransport(f"{prefix}/battery_left", BatteryState)
-    conn.battery_right.transport = LCMTransport(f"{prefix}/battery_right", BatteryState)
-    conn.start()
-    return conn

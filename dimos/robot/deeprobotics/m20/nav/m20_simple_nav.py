@@ -96,4 +96,4 @@ m20_simple_nav = autoconnect(
         robot_rotation_diameter=m20_rotation_diameter,
     ).remappings([(ReplanningAStarPlanner, "odometry", "slam_odom")]),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="m20")
+).global_config(n_workers=10, robot_model="m20", robot_ip="10.21.31.103")
