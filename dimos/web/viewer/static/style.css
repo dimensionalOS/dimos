@@ -1,0 +1,776 @@
+/*
+ * Copyright 2025-2026 Dimensional Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #1b1e1f;
+  --panel-2: #202425;
+  --panel-3: #303536;
+  --line: #3b4142;
+  --line-soft: rgb(176 225 240 / 18%);
+  --cyan: #b0e1f0;
+  --teal: #18cbb9;
+  --text: #f2f6f7;
+  --muted: #9da7aa;
+  --dim: #687174;
+  --danger: #ff6b61;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #0f1111;
+  color: var(--text);
+  font-family:
+    "Inter Tight", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+button:hover {
+  border-color: rgb(176 225 240 / 42%);
+  background: #263031;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button[data-active="true"] {
+  border-color: rgb(24 203 185 / 80%);
+  background: rgb(24 203 185 / 15%);
+  color: var(--cyan);
+}
+
+button[data-active="false"] {
+  opacity: 0.58;
+}
+
+.console-frame {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-width: 1024px;
+  min-height: 720px;
+  overflow: hidden;
+  background:
+    linear-gradient(rgb(176 225 240 / 5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(176 225 240 / 5%) 1px, transparent 1px),
+    radial-gradient(circle at 58% 42%, rgb(24 203 185 / 7%), transparent 360px),
+    var(--bg);
+  background-size: 72px 72px, 72px 72px, auto, auto;
+}
+
+.console-top {
+  position: absolute;
+  left: 48px;
+  right: 48px;
+  top: 24px;
+  height: 33px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.brand {
+  color: var(--cyan);
+  font-weight: 800;
+  text-shadow: 0 0 16px rgb(176 225 240 / 35%);
+}
+
+.console-title {
+  color: var(--muted);
+}
+
+.console-version {
+  color: var(--muted);
+  text-align: right;
+}
+
+.module {
+  position: absolute;
+  overflow: visible;
+  border: 1px solid var(--line);
+  background: rgb(27 30 31 / 94%);
+}
+
+.module::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  z-index: 20;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--text), var(--text)) 0 0 / 7px 7px no-repeat,
+    linear-gradient(var(--text), var(--text)) 100% 0 / 7px 7px no-repeat,
+    linear-gradient(var(--text), var(--text)) 0 100% / 7px 7px no-repeat,
+    linear-gradient(var(--text), var(--text)) 100% 100% / 7px 7px no-repeat;
+}
+
+.label,
+.tag,
+.window-bar,
+.badge,
+.log-list,
+.view-label,
+.live-status,
+.key,
+.panel-header,
+.session-line,
+#status {
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.value {
+  margin-top: 9px;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cyan {
+  color: var(--cyan);
+}
+
+.teal {
+  color: var(--teal);
+}
+
+.top-stats {
+  position: absolute;
+  left: 48px;
+  right: 48px;
+  top: 88px;
+  height: 66px;
+  display: grid;
+  grid-template-columns: 160px 122px 130px 124px 126px 134px 130px 1fr;
+  gap: 4px;
+}
+
+.top-stats .module {
+  position: relative;
+  inset: auto;
+}
+
+.stat {
+  height: 66px;
+  padding: 10px 12px;
+}
+
+.stop-button {
+  height: 66px;
+  display: grid;
+  place-items: center;
+  border-color: rgb(255 107 97 / 62%);
+  background: rgb(255 107 97 / 18%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.proof-window {
+  left: 48px;
+  top: 168px;
+  /* The 930px width / 490px height caps were tuned for ~1440p layouts and
+     pinned the viewport to a tiny frame on larger displays. Let it grow
+     into the available space: right sidebar is 394px wide with a 48px right
+     margin and ~70px gap (510px total), bottom controls strip is ~284px
+     tall, header is 168px (matches the ``top``). */
+  width: calc(100vw - 510px);
+  height: calc(100vh - 284px - 168px);
+  min-width: 620px;
+  min-height: 360px;
+  overflow: hidden;
+  background: #121719;
+}
+
+.window-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 32px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: #363a3b;
+  color: var(--cyan);
+  font-size: 11px;
+}
+
+#status {
+  min-width: 120px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.video-surface {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 32px;
+  bottom: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(rgb(176 225 240 / 5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(176 225 240 / 5%) 1px, transparent 1px),
+    linear-gradient(145deg, #20292b 0%, #121719 54%, #070909 100%);
+  background-size: 48px 48px, 48px 48px, auto;
+}
+
+#renderCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.viewport-tags {
+  position: absolute;
+  left: 20px;
+  top: 20px;
+  display: flex;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.tag,
+.view-label {
+  height: 33px;
+  display: grid;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  background: rgb(17 20 20 / 72%);
+  color: var(--text);
+  font-size: 10px;
+}
+
+.tag {
+  min-width: 145px;
+  padding: 0 10px;
+}
+
+.view-label {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 165px;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 53%;
+  z-index: 3;
+  width: 76px;
+  height: 76px;
+  margin-left: -38px;
+  margin-top: -38px;
+  border: 1px solid rgb(176 225 240 / 72%);
+  pointer-events: none;
+}
+
+.reticle::before,
+.reticle::after {
+  content: "";
+  position: absolute;
+  background: rgb(176 225 240 / 72%);
+}
+
+.reticle::before {
+  left: 50%;
+  top: -18px;
+  bottom: -18px;
+  width: 1px;
+}
+
+.reticle::after {
+  top: 50%;
+  left: -18px;
+  right: -18px;
+  height: 1px;
+}
+
+.live-status {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 16px;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 28px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  background: rgb(27 30 31 / 90%);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.live-status strong {
+  color: var(--text);
+  font-family: "Inter Tight", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.active {
+  color: var(--cyan);
+}
+
+.right-stack {
+  position: absolute;
+  right: 48px;
+  top: 168px;
+  width: 394px;
+  /* Hard 676px cap removed - on tall displays the sidebar floated mid-screen.
+     Match the viewport's vertical extent. */
+  height: calc(100vh - 284px - 168px);
+  display: grid;
+  grid-template-rows: 168px minmax(150px, 1fr) 168px;
+  gap: 16px;
+}
+
+.right-stack .module {
+  position: relative;
+  inset: auto;
+  width: 100%;
+}
+
+.patrol {
+  padding: 13px 14px;
+}
+
+.session-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  height: 34px;
+  border-bottom: 1px solid rgb(176 225 240 / 12%);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-line:first-of-type {
+  margin-top: 12px;
+}
+
+.session-line strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.camera-feed {
+  min-height: 150px;
+  overflow: hidden;
+}
+
+.camera-feed[data-active="false"],
+.camera-feed[data-has-frame="false"].secondary {
+  display: none;
+}
+
+.panel-header {
+  height: 32px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: #363a3b;
+  color: var(--cyan);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.panel-header button {
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.panel-note {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+#cameraImg,
+#workspaceImg {
+  width: 100%;
+  height: calc(100% - 32px);
+  min-height: 120px;
+  display: block;
+  object-fit: cover;
+  background: #000;
+}
+
+#cameraPanel[data-has-frame="false"] #cameraImg {
+  display: none;
+}
+
+#cameraEmpty {
+  height: calc(100% - 32px);
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+#cameraPanel[data-has-frame="true"] #cameraEmpty {
+  display: none;
+}
+
+.log-panel {
+  padding: 14px;
+}
+
+.log-list {
+  margin-top: 15px;
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.log-item {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+}
+
+.controls-drive {
+  left: 48px;
+  bottom: 48px;
+  width: 220px;
+  height: 168px;
+  padding: 14px;
+}
+
+.keys {
+  position: absolute;
+  left: 67px;
+  top: 52px;
+  width: 126px;
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 6px;
+}
+
+.key {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: #111515;
+  color: var(--cyan);
+  font-size: 12px;
+}
+
+.key.blank {
+  border-color: transparent;
+  background: transparent;
+}
+
+#toggleDrive {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  text-align: center;
+}
+
+.command-panel {
+  left: 284px;
+  bottom: 48px;
+  width: 360px;
+  height: 168px;
+  padding: 14px;
+}
+
+.view-panel {
+  left: 660px;
+  width: 318px;
+  bottom: 48px;
+  height: 168px;
+  padding: 14px;
+}
+
+.control-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.badge {
+  height: 24px;
+  display: grid;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgb(176 225 240 / 22%);
+  color: var(--cyan);
+  font-size: 10px;
+}
+
+.action-grid,
+.view-grid {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 44px;
+  bottom: 14px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.action-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.view-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.action-grid button,
+.view-grid button {
+  min-height: 30px;
+  padding: 5px 7px;
+  font-size: 11px;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.arms-panel {
+  right: 48px;
+  top: 88px;
+  width: 420px;
+  max-width: calc(100vw - 96px);
+  max-height: calc(100vh - 176px);
+  overflow-y: auto;
+  z-index: 8;
+}
+
+#armsPanel[data-active="false"] {
+  display: none;
+}
+
+#armsColumns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 14px 16px 16px;
+}
+
+.arm-col-title {
+  margin-bottom: 6px;
+  padding: 4px 0;
+  background: rgb(255 255 255 / 4%);
+  color: rgb(255 255 255 / 80%);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.arm-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.arm-slider-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+.arm-slider-row .joint-name {
+  overflow: hidden;
+  color: rgb(255 255 255 / 75%);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arm-slider-row .joint-val {
+  min-width: 48px;
+  color: rgb(176 225 240 / 90%);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.arm-slider-row input[type="range"] {
+  grid-column: 1 / span 2;
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: rgb(255 255 255 / 8%);
+  border-radius: 2px;
+  outline: none;
+}
+
+.arm-slider-row input[type="range"]::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  appearance: none;
+  background: var(--teal);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.arm-slider-row input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--teal);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.arm-slider-row .joint-range {
+  grid-column: 1 / span 2;
+  display: flex;
+  justify-content: space-between;
+  color: rgb(255 255 255 / 35%);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1180px) {
+  body {
+    overflow: auto;
+  }
+
+  .console-frame {
+    min-width: 0;
+    min-height: 1120px;
+    overflow: visible;
+  }
+
+  .console-top,
+  .top-stats,
+  .proof-window,
+  .right-stack,
+  .controls-drive,
+  .command-panel,
+  .view-panel {
+    position: relative;
+    left: auto;
+    right: auto;
+    top: auto;
+    bottom: auto;
+    width: calc(100vw - 32px);
+    min-width: 0;
+    margin: 16px;
+  }
+
+  .console-top {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    height: auto;
+    padding-bottom: 12px;
+  }
+
+  .console-title,
+  .console-version {
+    text-align: left;
+  }
+
+  .top-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: auto;
+  }
+
+  .proof-window {
+    height: 58vh;
+  }
+
+  .right-stack {
+    display: grid;
+    grid-template-rows: none;
+  }
+
+  .command-panel,
+  .view-panel,
+  .controls-drive {
+    height: auto;
+    min-height: 168px;
+  }
+
+  .action-grid,
+  .view-grid {
+    position: static;
+    margin-top: 16px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

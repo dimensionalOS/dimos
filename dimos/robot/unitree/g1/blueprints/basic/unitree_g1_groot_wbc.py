@@ -46,6 +46,7 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -296,6 +297,56 @@ if global_config.simulation == "mujoco":
         (VoxelGridMapper, "lidar", "pointcloud"),
         (ControlCoordinator, "twist_command", "cmd_vel"),
     ]
+
+    def _babylon_viewer() -> Any | None:
+        """Browser operator console (dimos/web/viewer) alongside the sim.
+
+        Mirrors the robot from coordinator joint state + odom; pointclouds,
+        path and camera stream over the LCM<->WS bridge; WASD in the page
+        publishes cmd_vel — the same source-blind channel the planner uses.
+        On by default in sim; DIMOS_ENABLE_BABYLON=0 to suppress.
+        """
+        if os.environ.get("DIMOS_ENABLE_BABYLON", "1").lower() in ("0", "false", "no"):
+            return None
+        from dimos.web.viewer.module import BabylonViewerModule
+
+        kwargs: dict[str, Any] = dict(
+            mjcf_path=_ROBOT_ONLY_MJCF_PATH,
+            mesh_dir=LfsPath("g1_urdf/meshes"),
+            port=int(os.environ.get("DIMOS_BABYLON_PORT", "8091")),
+        )
+        if global_config.scene_package is not None:
+            from dimos.simulation.scenes.catalog import resolve_scene_package
+
+            try:
+                package = resolve_scene_package(global_config.scene_package)
+            except (FileNotFoundError, ValueError):
+                package = None
+            # Prefer a Babylon-cooked GLB; legacy packages only carry the
+            # generic browser visual.
+            visual = (
+                package.browser_visual_path("babylon") or package.visual_path
+                if package is not None
+                else None
+            )
+            if package is not None and visual is not None and visual.exists():
+                # Same GLB + alignment the sim world was cooked from, so the
+                # browser shows the world MuJoCo is stepping.
+                kwargs.update(
+                    scene_path=str(visual),
+                    scene_scale=package.alignment.scale,
+                    scene_translation=package.alignment.translation,
+                    scene_rotation_zyx_deg=package.alignment.rotation_zyx_deg,
+                    scene_y_up=package.alignment.y_up,
+                )
+        return BabylonViewerModule.blueprint(**kwargs)
+
+    _babylon_bp = _babylon_viewer()
+    if _babylon_bp is not None:
+        from dimos.web.viewer.module import BabylonViewerModule as _BabylonMod
+
+        _nav_stack = autoconnect(_nav_stack, _babylon_bp)
+        _remappings.append((_BabylonMod, "joint_state", "coordinator_joint_state"))
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap

@@ -229,6 +229,8 @@ agents = [
 web = [
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
+    # Direct dep of dimos.web.lcm_bridge (fastapi pins a compatible version).
+    "starlette>=0.40",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
     "ffmpeg-python",
@@ -656,4 +658,6 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    # The operator console frontend; splitting it would be artificial.
+    "dimos/web/viewer/static/app.js",
 ]
