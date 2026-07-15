@@ -89,53 +89,47 @@ class MapCompressModule(Module):
         if cells is None or cells.size == 0:
             return
 
-        # Coarsen to >= map_min_resolution (block-max preserves obstacles).
-        res = grid.resolution
-        img_cells = cells
-        if 0 < res < self.config.map_min_resolution:
-            factor = max(1, round(self.config.map_min_resolution / res))
-            if factor > 1:
-                img_cells = self._block_max(cells, factor)
-                res = res * factor
-
-        # Colorize + PNG-encode; colors are baked in so the browser just blits it.
-        png_bgra = self._occupancy_to_bgra(img_cells)
+        # Coarsen/colorize/encode can raise on a malformed grid; keep it inside
+        # the guard so a bad frame drops, not the RxPY costmap subscription.
         try:
             import cv2
 
-            ok, buf = cv2.imencode(".png", png_bgra)
-        except Exception:
-            # Unlike a dropped publish, a broken encode (e.g. missing cv2)
-            # kills the minimap permanently — say so audibly.
-            logger.warning("map encode failed", exc_info=True)
-            return
-        if not ok:
-            return
-        png_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+            # Coarsen to >= map_min_resolution (block-max preserves obstacles).
+            res = grid.resolution
+            img_cells = cells
+            if 0 < res < self.config.map_min_resolution:
+                factor = max(1, round(self.config.map_min_resolution / res))
+                if factor > 1:
+                    img_cells = self._block_max(cells, factor)
+                    res = res * factor
 
-        # origin lets the browser place map + robot: cell = (world_xy - origin)/res.
-        h, w = img_cells.shape[:2]
-        origin = grid.origin.position
-        payload = {
-            "type": "map",
-            "fmt": "png",
-            "w": int(w),
-            "h": int(h),
-            "res": float(res),
-            "origin": [float(origin.x), float(origin.y)],
-            "stamp": float(grid.ts),
-            "png_b64": png_b64,
-        }
-        data = json.dumps(payload, separators=(",", ":")).encode()
-        # Drop oversized frames rather than destabilize the datachannel.
-        if len(data) > self._MAX_MAP_BYTES:
-            logger.warning("map payload too large (%d bytes), dropping frame", len(data))
-            self._last_map_pub = now  # don't retry the same oversized frame immediately
-            return
-        try:
+            ok, buf = cv2.imencode(".png", self._occupancy_to_bgra(img_cells))
+            if not ok:
+                return
+            png_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+            # origin lets the browser place map + robot: cell = (world_xy - origin)/res.
+            h, w = img_cells.shape[:2]
+            origin = grid.origin.position
+            payload = {
+                "type": "map",
+                "fmt": "png",
+                "w": int(w),
+                "h": int(h),
+                "res": float(res),
+                "origin": [float(origin.x), float(origin.y)],
+                "stamp": float(grid.ts),
+                "png_b64": png_b64,
+            }
+            data = json.dumps(payload, separators=(",", ":")).encode()
+            # Drop oversized frames rather than destabilize the datachannel.
+            if len(data) > self._MAX_MAP_BYTES:
+                logger.warning("map payload too large (%d bytes), dropping frame", len(data))
+                self._last_map_pub = now  # don't retry the same oversized frame immediately
+                return
             self.map_out.publish(data)
         except Exception:
-            logger.debug("map publish failed", exc_info=True)
+            logger.warning("map encode/publish failed, dropping frame", exc_info=True)
             return
         self._last_map_pub = now
 
@@ -145,18 +139,17 @@ class MapCompressModule(Module):
         now = time.monotonic()
         if now - self._last_odom_pub < 1.0 / self.config.odom_hz:
             return
-        yaw = float(pose.orientation.to_euler().yaw)
-        payload = {
-            "type": "odom",
-            "x": float(pose.position.x),
-            "y": float(pose.position.y),
-            "yaw": yaw,
-            "ts": float(pose.ts),
-        }
         try:
+            payload = {
+                "type": "odom",
+                "x": float(pose.position.x),
+                "y": float(pose.position.y),
+                "yaw": float(pose.orientation.to_euler().yaw),
+                "ts": float(pose.ts),
+            }
             self.map_out.publish(json.dumps(payload).encode())
         except Exception:
-            logger.debug("odom publish failed", exc_info=True)
+            logger.warning("odom encode/publish failed, dropping frame", exc_info=True)
             return
         self._last_odom_pub = now
 

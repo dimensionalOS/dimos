@@ -128,3 +128,11 @@ def test_odom_publishes_planar_pose(module: MapCompressModule) -> None:
 def test_empty_costmap_publishes_nothing(module: MapCompressModule) -> None:
     module._on_costmap(OccupancyGrid())  # no-arg = empty 1D grid; must be skipped
     assert _published_json(module.map_out, "map") is None
+
+
+def test_odom_degenerate_quaternion_does_not_raise(module: MapCompressModule) -> None:
+    # A zero quaternion makes to_euler() (scipy) raise; _on_odom runs inside an
+    # RxPY subscriber, so it must drop the frame, not kill the odom stream.
+    pose = PoseStamped(ts=1.0, position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
+    module._on_odom(pose)  # must not raise
+    assert _published_json(module.map_out, "odom") is None
