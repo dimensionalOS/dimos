@@ -118,6 +118,7 @@ all_blueprints = {
     "unitree-go2-detection": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_detection:unitree_go2_detection",
     "unitree-go2-fleet": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_fleet:unitree_go2_fleet",
     "unitree-go2-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_keyboard_teleop:unitree_go2_keyboard_teleop",
+    "unitree-go2-marker-localization": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_marker_localization",
     "unitree-go2-markers": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_markers",
     "unitree-go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_memory",
     "unitree-go2-mid360-record": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record:unitree_go2_mid360_record",
