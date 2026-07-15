@@ -77,6 +77,7 @@ teleop/
 │   ├── hosted_stats.py          # HostedStatsModule: telemetry + acks + cmd-link stats
 │   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
 │   └── blueprints/              # cloudflare.py (Go2 single + multicam)
+├── quest_hosted/                # Deprecated monolithic hosted Quest teleop (teleop-hosted-go2)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop

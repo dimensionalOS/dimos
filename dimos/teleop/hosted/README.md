@@ -1,9 +1,9 @@
 # Hosted Teleop
 
-Robot dials out to the [dimensional-teleop](https://github.com/dimensionalOS/dimensional-teleop)
-broker (Cloudflare Realtime SFU) — no inbound ports needed. The browser/VR
-operator connects through the broker; commands arrive over WebRTC datachannels,
-robot video goes out as a WebRTC track.
+Robot dials out to the dimensional-teleop broker (Cloudflare Realtime SFU) —
+no inbound ports needed. The browser/VR operator connects through the broker;
+commands arrive over WebRTC datachannels, robot video goes out as a WebRTC
+track.
 
 ## Files
 
@@ -27,12 +27,11 @@ that all run in one worker so everything shares that single session (the
 - **`blueprints/cloudflare.py`** — wires the above to the Go2 driver, cameras,
   planner, and transports (single + multicam).
 
-The operator HTML lives in the [dimensional-teleop](https://github.com/dimensionalOS/dimensional-teleop)
-broker repo (`web/`), not here.
+The operator HTML lives in the dimensional-teleop broker repo (`web/`).
 
 ## How a session connects
 
-1. Robot creates an `RTCPeerConnection` (MAX_BUNDLE, **must** — see below),
+1. Robot creates an `RTCPeerConnection` (MAX_BUNDLE, **must**),
    `addTrack(video)`, adds a recvonly audio transceiver if `audio_in` is set
    (plumbing only for now — frames are dropped until something calls
    `set_audio_frame_callback`; robot-side playback is a follow-up), opens a
@@ -41,7 +40,7 @@ broker repo (`web/`), not here.
 2. `POST /api/v1/sessions` to the broker with the offer. Broker creates a CF
    session, returns the answer + a `session_id` keyed off the robot.
 3. SDP answer's candidates are propagated across bundled m-sections (aiortc
-   workaround — see below) before `setRemoteDescription`.
+   workaround) before `setRemoteDescription`.
 4. Heartbeat thread polls `/sessions/{id}/heartbeat`; each ack carries the SCTP
    ids the broker has assigned for `cmd_unreliable`, `state_reliable`,
    `state_reliable_back`, and `map_unreliable`. We open / re-open / close
@@ -77,40 +76,15 @@ throws. So at offer time we pin a *throwaway* negotiated channel to id 0
 (reserved, never handed out by the broker). It also forces an SCTP m-line into
 the offer so the SFU has a transport to bind the real channels to.
 
-**Do not close that channel.** Under MAX_BUNDLE the SCTP shares the one bundled
+This channel must stay open. Under MAX_BUNDLE the SCTP shares the one bundled
 ICE/DTLS transport with the video track; closing the only datachannel risks
 the transport.
-
-## aiortc / Cloudflare quirks (do not regress)
-
-These are **hard-won, not in any docs** — corresponding fixes are commented at
-the call sites but the *why* lives here:
-
-- **MAX_BUNDLE is mandatory.** aiortc 1.14's default (BALANCED) puts video and
-  SCTP on separate ICE transports. CF Realtime publishes one bundled transport;
-  the video one fails ICE and you get a black quad forever. Force
-  `RTCBundlePolicy.MAX_BUNDLE` on `RTCConfiguration`.
-
-- **`addTrack` BEFORE `createDataChannel`.** Otherwise the SCTP m-line is
-  created without a transceiver and aiortc's bundle-collapse discards the
-  shared transport. ICE never starts.
-
-- **`_propagate_bundle_candidates`.** aiortc keys remote candidates by transport,
-  and under one bundled transport the *last* m-section processed wins. CF puts
-  `a=candidate` only on the video section; the empty SCTP section overwrites
-  it → remote-candidates=0 → ICE stalls at "checking". The helper replicates
-  the candidate block into every m-section that lacks one. **Do not remove.**
-
-- **`makeXRCompatible()` on real hardware.** The operator side, not us, but
-  worth knowing: `xrCompatible: true` at context creation is not enough on
-  Quest — `await gl.makeXRCompatible()` is required before building the
-  `XRWebGLLayer`.
 
 ## Reconnect
 
 Operator-side reconnect is handled in the broker — it closes the stale
-`state_reliable_back` push (CF `datachannels/close`, not in prose docs but in
-the OpenAPI spec) before re-pushing. CF does **not** auto-reap datachannel
+`state_reliable_back` push (CF `datachannels/close`) before re-pushing. CF does
+**not** auto-reap datachannel
 pushes (the 30s GC is media-only), so without that close, the long-lived robot
 session accumulates half-dead pushes and the second bridge 502s with
 `repeated_local_track_error`.

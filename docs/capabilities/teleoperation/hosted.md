@@ -79,15 +79,15 @@ Enable the glass-to-glass latency benchmark with
 
 ## Operating the robot
 
-Once the robot is running and you've clicked **Connect**, here's how to fly it.
+Once the robot is running and you've clicked **Connect**, here's how to operate it.
 
 ### 1. Connect
 
 Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), find your
-robot under **Available Robots**, and click **Connect**. Video appears within a
-second or two; the metrics HUD starts populating once telemetry arrives. If the
-robot doesn't show up, confirm the blueprint is still running and that the API
-key matches the one the robot registered with.
+robot under **Available Robots**, and click **Connect**. Video appears once the
+WebRTC session negotiates; the metrics HUD starts populating once telemetry
+arrives. If the robot doesn't show up, confirm the blueprint is still running
+and that the API key matches the one the robot registered with.
 
 ### 2. Drive
 
@@ -115,6 +115,7 @@ The command bar exposes the robot's allow-listed actions:
 - **Acrobatics** — `FrontJump`, `FrontPounce` — only available when the robot
   was launched with `-o go2commandmodule.allow_acrobatics=true`.
 - **Obstacle avoidance** — toggle the onboard avoidance layer on or off.
+- **Rage mode** — toggle the high-agility gait on or off.
 - **Head LED** — set the head light brightness.
 - **Camera** — on multicam robots, pick which camera (or side-by-side view) the
   video track shows.
@@ -128,10 +129,6 @@ The **E-STOP** control is always available. It immediately stops all motion,
 cancels any active navigation, and damps the robot — and it takes priority over
 everything else in flight. Clear it with **estop_clear** (or the equivalent
 control) when you're ready to resume; the robot won't move again until you do.
-
-> **Operator loss is a stop, too.** If your connection drops, the robot sees the
-> operator leave and halts on its own — it never keeps executing your last
-> command into a dead link.
 
 ## Operator inputs
 
@@ -227,19 +224,5 @@ robot                          broker (Cloudflare)                operator brows
   video track           ────►  broker publishes + pulls    ────►   <video> sink
 ```
 
-For the WebRTC / aiortc / Cloudflare implementation details (MAX_BUNDLE, SCTP
-id-0 channel, candidate propagation, thread model), see
+For the broker session, datachannels, and reconnect behavior, see
 [`dimos/teleop/hosted/README.md`](/dimos/teleop/hosted/README.md).
-
-## Known Limitations
-
-- **Single operator** per robot session today.
-- **Connectivity.** A direct (STUN-discovered) path is preferred and used
-  whenever it works; TURN is only the relay fallback for networks that can't
-  connect directly. TURN credentials are fetched best-effort from the broker —
-  if that fetch fails the robot runs STUN-only, so symmetric-NAT / some cellular
-  networks (which need the relay) may then fail to connect.
-- **No robot-side auto-reconnect.** If the link drops, the operator clicks
-  **Connect** again; the robot side stays up.
-- **No operator→robot audio.** The operator's mic is not played on the robot
-  yet (planned follow-up).
