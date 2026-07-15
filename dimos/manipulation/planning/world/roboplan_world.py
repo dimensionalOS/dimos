@@ -47,6 +47,7 @@ from dimos.manipulation.planning.groups.identifiers import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
+from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -424,10 +425,71 @@ class RoboPlanWorld:
         timeout: float = 10.0,
         max_iterations: int = 5000,
     ) -> PlanningResult:
-        """PlanningGroupSelection planning is not implemented by RoboPlanWorld."""
+        """Plan a single planning group using RoboPlan's native RRT."""
+        if world is not self:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                message="RoboPlan-native planner requires its RoboPlanWorld instance",
+            )
+        start_time = time.time()
+        if not selection.groups:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message="No planning groups selected",
+            )
+        if len(selection.groups) != 1:
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="RoboPlan-native planning supports exactly one selected planning group",
+            )
+
+        group = selection.groups[0]
+        try:
+            normalized_start = normalize_selection_target(selection, start, "start")
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
+        try:
+            normalized_goal = normalize_selection_target(selection, goal, "goal")
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
+
+        robot_id = self._robot_id_for_group(group.id)
+        q_start = np.asarray(normalized_start.position, dtype=np.float64)
+        q_goal = np.asarray(normalized_goal.position, dtype=np.float64)
+        try:
+            path_arrays = self._run_native_rrt(
+                robot_id,
+                q_start,
+                q_goal,
+                timeout,
+                group_name=group.group_name,
+                joint_names=list(group.local_joint_names),
+            )
+        except ValueError as exc:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - start_time,
+                message=f"RoboPlan-native planning failed: {exc}",
+            )
+        if not path_arrays:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - start_time,
+                message="RoboPlan-native planning failed: returned an empty path",
+            )
+        path = [
+            JointState(
+                name=list(selection.joint_names),
+                position=np.asarray(q).astype(float).tolist(),
+            )
+            for q in path_arrays
+        ]
         return PlanningResult(
-            status=PlanningStatus.UNSUPPORTED,
-            message="RoboPlanWorld does not support selected planning-group joint paths",
+            status=PlanningStatus.SUCCESS,
+            path=path,
+            planning_time=time.time() - start_time,
+            path_length=compute_path_length(path),
+            message="RoboPlan path found",
         )
 
     def get_name(self) -> str:
@@ -475,6 +537,11 @@ class RoboPlanWorld:
         for joint_name in config.joint_names:
             lines.append(f'    <joint name="{escape(joint_name)}"/>')
         lines.append("  </group>")
+        for group in config.planning_groups:
+            lines.append(f'  <group name="{escape(group.name)}">')
+            for joint_name in group.joint_names:
+                lines.append(f'    <joint name="{escape(joint_name)}"/>')
+            lines.append("  </group>")
         for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
             lines.append(
                 f'  <disable_collisions link1="{escape(link1)}" link2="{escape(link2)}" '
@@ -746,27 +813,33 @@ class RoboPlanWorld:
         q_start: NDArray[np.float64],
         q_goal: NDArray[np.float64],
         timeout: float,
+        *,
+        group_name: str | None = None,
+        joint_names: list[str] | None = None,
     ) -> list[NDArray[np.float64]]:
         scene = self._require_scene()
         robot = self._get_robot(robot_id)
         options = roboplan_rrt.RRTOptions()
-        options.group_name = robot.config.name
+        native_group_name = robot.config.name if group_name is None else group_name
+        native_joint_names = robot.config.joint_names if joint_names is None else joint_names
+        options.group_name = native_group_name
         options.max_planning_time = timeout
         options.collision_check_use_bisection = False
         planner = roboplan_rrt.RRT(scene, options)
-        start_config = self._to_native_joint_configuration(robot_id, q_start)
-        goal_config = self._to_native_joint_configuration(robot_id, q_goal)
+        start_config = self._to_native_joint_configuration(robot_id, q_start, native_joint_names)
+        goal_config = self._to_native_joint_configuration(robot_id, q_goal, native_joint_names)
         result = planner.plan(start_config, goal_config)
         if result is None:
             raise ValueError("RoboPlan RRT returned no path")
         return self._extract_native_path(result)
 
     def _to_native_joint_configuration(
-        self, robot_id: WorldRobotID, q: NDArray[np.float64]
+        self, robot_id: WorldRobotID, q: NDArray[np.float64], joint_names: list[str] | None = None
     ) -> roboplan_core.JointConfiguration:
         robot = self._get_robot(robot_id)
         return roboplan_core.JointConfiguration(
-            robot.config.joint_names, np.asarray(q, dtype=np.float64)
+            robot.config.joint_names if joint_names is None else joint_names,
+            np.asarray(q, dtype=np.float64),
         )
 
     def _extract_native_path(self, result: roboplan_core.JointPath) -> list[NDArray[np.float64]]:

@@ -25,7 +25,10 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.models import (
+    PlanningGroupDefinition,
+    PlanningGroupSelection,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
@@ -730,6 +733,76 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
+
+
+def test_native_selected_planner_returns_global_selected_joint_names(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    group = world._planning_group_from_id("arm/manipulator")
+    selection = PlanningGroupSelection.from_groups((group,))
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=["arm/joint1", "arm/joint2"], position=[0.0, 0.0]),
+        JointState(name=["arm/joint1", "arm/joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.name for state in result.path] == [["arm/joint1", "arm/joint2"]] * 3
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_native_selected_planner_accepts_local_joint_names(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    selection = PlanningGroupSelection.from_groups(
+        (world._planning_group_from_id("arm/manipulator"),)
+    )
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=["joint2", "joint1"], position=[0.2, 0.0]),
+        JointState(name=["joint2", "joint1"], position=[0.4, 0.2]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].name == ["arm/joint1", "arm/joint2"]
+    assert result.path[0].position == [0.0, 0.2]
+
+
+def test_native_selected_planner_rejects_multi_group_selection(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1",), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    world, _ = _make_world(fake_roboplan, config)
+    world.finalize()
+    selection = PlanningGroupSelection.from_groups(
+        (world._planning_group_from_id("arm/left"), world._planning_group_from_id("arm/right"))
+    )
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
+    )
+
+    assert result.status == PlanningStatus.UNSUPPORTED
+    assert "exactly one" in result.message
 
 
 def test_native_planner_rejects_empty_path(
