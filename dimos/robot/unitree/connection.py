@@ -142,6 +142,13 @@ class UnitreeWebRTCConnection(Resource):
         try:
             asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
         except Exception:
+            # Best-effort disconnect — don't leave a half-open peer on the dog.
+            try:
+                asyncio.run_coroutine_threadsafe(self.conn.disconnect(), self.loop).result(
+                    timeout=3.0
+                )
+            except Exception:
+                logger.warning("best-effort disconnect on connect failure failed", exc_info=True)
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             raise
@@ -335,10 +342,16 @@ class UnitreeWebRTCConnection(Resource):
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
         )
 
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
-        self.publish_request(
-            RTC_TOPIC["OBSTACLES_AVOID"],
-            {"api_id": 1001, "parameter": {"enable": int(enabled)}},
+    def sport_command(self, api_id: int) -> bool:
+        """Send a parameterless SPORT_MOD command by api_id (Hello, Stretch, ...)."""
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id}))
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["OBSTACLES_AVOID"],
+                {"api_id": 1001, "parameter": {"enable": int(enabled)}},
+            )
         )
 
     def set_motion_mode(self, name: str) -> None:
@@ -365,14 +378,23 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
+    def switch_joystick(self, enable: bool = True) -> bool:
+        """Firmware joystick listening on/off. move()'s WIRELESS_CONTROLLER
+        stick emulation is silently ignored while this is off."""
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
+            )
+        )
+
     def set_rage_mode(self, enable: bool) -> bool:
         """Toggle Rage Mode (api 2059) over WebRTC, both directions.
 
-        BalanceStand → 2059 {data:enable} → SwitchJoystick(enable). When on,
+        BalanceStand → 2059 {data:enable} → SwitchJoystick(True). When on,
         normal move() twists drive at the ~2.5 m/s rage envelope.
         """
-        # Re-establish BalanceStand before toggling (notes: always BalanceStand
-        # before flipping Rage).
+        # Always BalanceStand before flipping Rage.
         if not self.balance_stand():
             logger.warning("balance_stand() failed before rage toggle — proceeding")
         time.sleep(0.3)
@@ -386,16 +408,11 @@ class UnitreeWebRTCConnection(Resource):
         if not rage_ok:
             return False
 
-        if enable:
-            time.sleep(2.0)  # let FsmRageMode transition settle
-        joystick_ok = bool(
-            self.publish_request(
-                RTC_TOPIC["SPORT_MOD"],
-                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
-            )
-        )
+        # Settle both directions — FSM transition needs time before SwitchJoystick.
+        time.sleep(2.0)
+        joystick_ok = self.switch_joystick(True)
         if not joystick_ok:
-            logger.warning("SwitchJoystick failed after rage toggle", enabled=enable)
+            logger.warning("SwitchJoystick failed after rage toggle")
         return joystick_ok
 
     def liedown(self) -> bool:
@@ -419,6 +436,16 @@ class UnitreeWebRTCConnection(Resource):
                     "time": colortime,
                 },
             },
+        )
+
+    def set_light(self, level: int) -> bool:
+        """Head LED brightness via the VUI api (1005): levels 0-10, 0 = off."""
+        level = max(0, min(10, int(level)))
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["VUI"],
+                {"api_id": 1005, "parameter": {"brightness": level}},
+            )
         )
 
     @simple_mcache
@@ -471,10 +498,11 @@ class UnitreeWebRTCConnection(Resource):
         return self.video_stream()
 
     def stop_movement(self) -> None:
-        """Cancel the auto-stop timer (used by move() for continuous commands)."""
+        """Halt the base: publish a zero twist and cancel the auto-stop timer."""
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
+        self._publish_movement(0, 0, 0)
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
