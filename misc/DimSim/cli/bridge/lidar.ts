@@ -72,6 +72,13 @@ const fibDirs = (() => {
   return dirs;
 })();
 
+// Raycasting is chunked so one scan never blocks the event loop for its full
+// duration (~25-80ms depending on hardware): a solid block starves the 50 Hz
+// physics stepper and delays cmd_vel/odom handling. Between chunks we yield a
+// macrotask so timers can fire. Chunk size targets a few ms of raycasts.
+const RAYCAST_CHUNK = 2500;
+const _yieldLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 // -- Quaternion rotation helper (q * v) ---------------------------------------
 function rotateByQuat(
   vx: number, vy: number, vz: number,
@@ -207,6 +214,9 @@ export class ServerLidar {
       const raycastStart = profile ? performance.now() : 0;
 
       for (let i = 0; i < NUM_POINTS; i++) {
+        // Yield between chunks so physics ticks and LCM I/O interleave with
+        // the scan instead of stalling behind it.
+        if (i > 0 && i % RAYCAST_CHUNK === 0) await _yieldLoop();
         // Fibonacci direction (pre-rotated to camera-local) with per-scan golden angle jitter.
         // In FLU frame, jitter rotates around Z (up). After lidarToCamQuat, FLU Z → cam Y,
         // so jitter must rotate around camera-local Y axis.

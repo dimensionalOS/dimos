@@ -24,6 +24,11 @@ const CONTROLLER_OFFSET = 0.05;
 // -- Physics constants --------------------------------------------------------
 const PHYSICS_HZ = 50;
 const PHYSICS_DT = 1.0 / PHYSICS_HZ;
+// Upper bound on a single integration step. When the event loop stalls (lidar
+// raycast blocks, GC, slow CI runners) ticks fire late; we integrate the real
+// elapsed time so speed stays correct, but cap it so one late tick can't jump
+// the robot far through geometry.
+const MAX_STEP_DT = 0.1;
 const DEFAULT_GRAVITY_Y = -9.81;
 const DEFAULT_SPEED_SCALE = 3.0; // Multiplier for cmd_vel (linear + angular)
 const DEFAULT_TURN_SCALE = 3.0;
@@ -149,6 +154,9 @@ export class ServerPhysics {
   // Agent state
   private yaw = 0;
   private seq = 0;
+
+  // Wall-clock time of the previous _step (ms); 0 until the first step ran.
+  private lastStepAt = 0;
 
   // Profiling (DIMSIM_PROFILE_PHYSICS=1) — rolling timing per phase.
   private profile = false;
@@ -369,6 +377,16 @@ export class ServerPhysics {
     }
     this.lastStepStart = stepStart;
 
+    // Integrate over the real elapsed time, not the nominal tick period:
+    // setInterval fires late whenever the event loop is busy (lidar scans take
+    // tens of ms), and a fixed dt makes robot speed proportional to the
+    // achieved tick rate instead of the commanded velocity.
+    const now = performance.now();
+    const dt = this.lastStepAt > 0
+      ? Math.min((now - this.lastStepAt) / 1000, MAX_STEP_DT)
+      : PHYSICS_DT;
+    this.lastStepAt = now;
+
     // Safety timeout — zero velocity if no cmd_vel received recently
     const hasVel = Date.now() - this.cmdVelStamp < CMD_VEL_TIMEOUT_MS;
     const linX = hasVel ? this.linX * this.speedScale : 0;
@@ -390,7 +408,7 @@ export class ServerPhysics {
         wheelBase: this.wheelBase,
         maxSteerAngle: this.maxSteerAngle,
       },
-      PHYSICS_DT,
+      dt,
     );
     this.yaw += out.dyaw;
 

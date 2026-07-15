@@ -391,7 +391,14 @@ export async function startBridgeServer(options: BridgeServerOptions) {
                 chState.embodiment = msg.config ?? msg;
                 console.log(`${logPrefix} embodiment config stored:`, JSON.stringify(chState.embodiment));
                 if (chState.serverPhysics) chState.serverPhysics.reconfigure(chState.embodiment as any);
-                if (chState.serverLidar) chState.serverLidar.reconfigure(chState.embodiment as any);
+                if (chState.serverLidar) {
+                  chState.serverLidar.reconfigure(chState.embodiment as any);
+                  // reconfigure() above replaced the agent's rigid body; re-point
+                  // the lidar exclusion at the new one or scans hit the agent itself.
+                  if (chState.serverPhysics) {
+                    chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
+                  }
+                }
                 // fall through to relay to browser
               }
 
