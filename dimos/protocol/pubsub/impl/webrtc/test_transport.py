@@ -28,8 +28,13 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE, ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
+    WEBRTC_AVAILABLE,
+    AsyncProviderBase,
+    ProviderConfig,
+)
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 
 # ─── Mock provider ───────────────────────────────────────────────────
@@ -209,8 +214,6 @@ def test_provider_singleton_per_config() -> None:
 def test_shutdown_all_providers_stops_and_clears() -> None:
     """Graceful teardown: stop every live provider and empty the registry so the
     worker can exit (see providers/spec.shutdown_all_providers)."""
-    from dimos.protocol.pubsub.impl.webrtc.providers import spec
-
     p1 = MockConfig(name="sd1").provider()
     p2 = MockConfig(name="sd2").provider()
     p1.start()
@@ -227,8 +230,6 @@ def test_shutdown_all_providers_stops_and_clears() -> None:
 
 def test_shutdown_all_providers_continues_past_a_raising_stop() -> None:
     """One provider raising in stop() must not strand the others still running."""
-    from dimos.protocol.pubsub.impl.webrtc.providers import spec
-
     good = MockConfig(name="ok").provider()
     good.start()
     bad = MockConfig(name="bad").provider()
@@ -404,7 +405,6 @@ def test_dc_name_no_collisions() -> None:
 def test_failed_connect_runs_disconnect_and_allows_retry() -> None:
     """A failed _connect() must release provider resources (_disconnect) and
     tear the loop thread down so the next start() retries cleanly."""
-    from dimos.protocol.pubsub.impl.webrtc.providers.spec import AsyncProviderBase
 
     class FlakyProvider(AsyncProviderBase):
         def __init__(self) -> None:

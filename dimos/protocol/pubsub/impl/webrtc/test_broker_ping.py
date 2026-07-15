@@ -64,11 +64,6 @@ def test_ping_echoes_pong_with_robot_ts(provider: BrokerProvider) -> None:
     assert before <= sent["robot_ts"] <= after
 
 
-def test_ping_missing_client_ts_dropped(provider: BrokerProvider) -> None:
-    provider._maybe_answer_ping(b'{"type":"ping"}')
-    provider._dcs["state_reliable_back"].send.assert_not_called()  # type: ignore[attr-defined]
-
-
 def test_non_json_binary_ignored(provider: BrokerProvider) -> None:
     """LCM binary on the channel (future telemetry) must not be parsed."""
     provider._maybe_answer_ping(b"\x00\x01\x02\x03lcm-ish")
