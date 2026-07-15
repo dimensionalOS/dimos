@@ -1,11 +1,10 @@
 ---
 title: "Go2 Navigation Deep Dive"
 ---
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
-![Live Go2 navigation in Rerun](assets/noros_nav.gif)
+![Live Go2 navigation in Rerun](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
 
 For return visits to a known space, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) instead of relying on live mapping alone.
 
