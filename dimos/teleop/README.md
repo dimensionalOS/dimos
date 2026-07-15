@@ -86,8 +86,8 @@ teleop/
 │       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
-│   ├── recorder.py              # Generic SQLite recorder (writes .db + report.json on stop)
-│   ├── report.py                # generate_report(db_path) — read .db, emit report.json
+│   ├── recorder.py              # Generic SQLite recorder (writes .db + report_<ts>.json on stop)
+│   ├── report.py                # generate_report(db_path) — read .db, emit report_<ts>.json
 │   └── stream_stats.py          # LiveStreamStats + pcts/loss_pct (shared math)
 └── blueprints.py                # Module blueprints for easy instantiation
 ```
