@@ -204,7 +204,7 @@ When running from:
 
 ## Docs media assets
 
-Binary media displayed by the docs (screenshots, plots, GIFs) is LFS-tracked here under `docs/**/assets/`, but Mintlify deploys the docs site without fetching Git LFS. 
+Binary media displayed by the docs (screenshots, plots, GIFs) is LFS-tracked here under `docs/**/assets/`, but Mintlify deploys the docs site without fetching Git LFS.
 
 So content behind those LFS pointers is hosted as plain git blobs in [dimensionalOS/dimos-docs-assets](https://github.com/dimensionalOS/dimos-docs-assets) (mirroring the `docs` tree, minus the `docs/` prefix), and docs pages reference that copy with an absolute URL:
 
