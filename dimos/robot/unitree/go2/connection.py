@@ -44,7 +44,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import set_audio_sink
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.go2.speaker import Go2Speaker
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -216,6 +215,12 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
+    def enable_speaker(self) -> bool:
+        return False
+
+    def disable_speaker(self) -> None:
+        pass
+
     def _stream_name(self, *names: str) -> str:
         """Return the first of ``names`` present in the dataset (stream naming
         changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
@@ -295,7 +300,6 @@ class GO2Connection(Module, Camera, Pointcloud):
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
         )
-        self._speaker = Go2Speaker()  # operator → dog speaker (audio_in)
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
@@ -337,15 +341,15 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
-        if self.config.audio_in:
-            set_audio_sink(self._speaker.push)  # provider → operator PCM frames
-            self._speaker.attach(self.connection)  # PCM frames → the dog's speaker
+        if self.config.audio_in and isinstance(self.connection, UnitreeWebRTCConnection):
+            set_audio_sink(self.connection.speaker_push)
+            self.connection.enable_speaker()
 
     @rpc
     def stop(self) -> None:
-        if self.config.audio_in:
-            set_audio_sink(None)  # drop the provider's ref to this module's sink
-            self._speaker.detach()  # stop + clear the speaker track
+        if self.config.audio_in and isinstance(self.connection, UnitreeWebRTCConnection):
+            set_audio_sink(None)
+            self.connection.disable_speaker()
 
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
@@ -453,9 +457,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def stop_movement(self) -> None:
         """Zero the base immediately (webrtc deadman stop)."""
-        stop = getattr(self.connection, "stop_movement", None)
-        if stop is not None:
-            stop()
+        self.connection.stop_movement()
 
     def _on_lowstate(self, msg: LowStateMsg) -> None:
         """Cache the latest low-level state push (battery, IMU, motors, etc.)."""

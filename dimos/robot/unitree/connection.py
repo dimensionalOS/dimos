@@ -43,6 +43,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.go2.speaker import Go2Speaker
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
@@ -116,6 +117,7 @@ class UnitreeWebRTCConnection(Resource):
         self.conn = LegionConnection(
             WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key
         )
+        self._speaker = Go2Speaker()
         self.connect()
 
     def connect(self) -> None:
@@ -155,6 +157,18 @@ class UnitreeWebRTCConnection(Resource):
 
     def start(self) -> None:
         pass
+
+    def enable_speaker(self) -> bool:
+        """Wire operator audio onto this connection's WebRTC PC (best-effort)."""
+        return self._speaker.attach(self)
+
+    def disable_speaker(self) -> None:
+        """Stop and drop the operator-audio track."""
+        self._speaker.detach()
+
+    def speaker_push(self, pcm: bytes, sample_rate: int, channels: int) -> None:
+        """Feed one operator-audio frame to the speaker (the audio-sink target)."""
+        self._speaker.push(pcm, sample_rate, channels)
 
     def stop(self) -> None:
         # Cancel timer

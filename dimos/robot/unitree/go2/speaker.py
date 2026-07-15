@@ -24,11 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import fractions
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiortc.mediastreams import MediaStreamTrack
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 
 logger = setup_logger()
 
@@ -121,14 +124,14 @@ class Go2Speaker:
         if track is not None:
             track.push(pcm, sample_rate, channels)
 
-    def attach(self, connection: Any) -> bool:
+    def attach(self, connection: UnitreeWebRTCConnection) -> bool:
         """Feed the dog PC's negotiated audio m-line: replaceTrack + enable the
-        audio channel. Best-effort — sim/replay have no PC and just skip."""
-        drv = getattr(connection, "conn", None)  # unitree_webrtc_connect driver
-        loop = getattr(connection, "loop", None)
+        audio channel. Best-effort — returns False if the vendor PC isn't up."""
+        drv = connection.conn
+        loop = connection.loop
         pc = getattr(drv, "pc", None)
-        if drv is None or pc is None or loop is None:
-            logger.debug("speaker: connection has no WebRTC PC (sim/replay) — skipped")
+        if pc is None:
+            logger.debug("speaker: vendor PC not available — skipped")
             return False
         try:
             sender = next((t.sender for t in pc.getTransceivers() if t.kind == "audio"), None)
