@@ -47,6 +47,7 @@ package-lock.json
 # Ignore build artifacts
 dist/
 build/
+/.artifacts/
 
 # Rust build artifacts
 **/target/
