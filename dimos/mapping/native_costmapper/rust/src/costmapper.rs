@@ -106,6 +106,9 @@ struct SimpleOccupancyConfig {
     frame_id: FrameId,
     min_height: f64,
     max_height: f64,
+    // SimpleOccupancyConfig serializes these fields even though Python's
+    // simple_occupancy does not consume them. Deserialize them only to accept
+    // the exact same config dictionary at the native drop-in boundary.
     #[serde(rename = "closing_iterations")]
     _closing_iterations: i64,
     #[serde(rename = "closing_connectivity")]
