@@ -324,11 +324,10 @@ class TestControlCoordinatorLifecycle:
                 return True
 
             def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-                _ = state
                 return None
 
             def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-                _ = by_task, joints
+                pass
 
             def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
                 self.reset_reactivate_args.append(reactivate)
