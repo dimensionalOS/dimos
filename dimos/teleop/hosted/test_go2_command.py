@@ -77,8 +77,12 @@ class _CommandHarness(Go2CommandModule):
         self.stop_movement = MagicMock()
 
 
-def _bare() -> Go2CommandModule:
-    """A Go2CommandModule with only the fields the command paths need."""
+@pytest.fixture
+def m() -> Go2CommandModule:
+    """A Go2CommandModule with only the fields the command paths need.
+
+    Registered in ``_live_modules`` so ``_reap_cmd_executors`` stops its worker.
+    """
     module = _CommandHarness()
     _live_modules.append(module)
     return module
@@ -106,8 +110,9 @@ _NON_ACROBATIC = [n for n in ALLOWED_SPORT_CMDS if n not in ("FrontJump", "Front
 
 
 @pytest.mark.parametrize("name", _NON_ACROBATIC)
-def test_allowed_sport_cmd_calls_driver_rpc(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_allowed_sport_cmd_calls_driver_rpc(
+    m: Go2CommandModule, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
     m.go2.sport_command.return_value = True
@@ -120,8 +125,9 @@ def test_allowed_sport_cmd_calls_driver_rpc(name: str, monkeypatch: pytest.Monke
 
 
 @pytest.mark.parametrize("name", ["Backflip", "", None, 1013])
-def test_disallowed_sport_cmd_rejected(name: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_disallowed_sport_cmd_rejected(
+    m: Go2CommandModule, name: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
@@ -132,8 +138,9 @@ def test_disallowed_sport_cmd_rejected(name: Any, monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.parametrize("name", ["FrontJump", "FrontPounce"])
-def test_acrobatics_blocked_by_default(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_acrobatics_blocked_by_default(
+    m: Go2CommandModule, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
@@ -146,25 +153,22 @@ def test_acrobatics_blocked_by_default(name: str, monkeypatch: pytest.MonkeyPatc
 # ─── drive guard (stream filter → tele_cmd_vel) ───────────────────────
 
 
-def test_drive_drops_stale() -> None:
-    m = _bare()
+def test_drive_drops_stale(m: Go2CommandModule) -> None:
     m._on_cmd_vel_in(_twist(time.time() - 1.0))
     m.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_drops_future() -> None:
-    m = _bare()
+def test_drive_drops_future(m: Go2CommandModule) -> None:
     m._on_cmd_vel_in(_twist(time.time() + 5.0))
     m.tele_cmd_vel.publish.assert_not_called()
     assert m._last_cmd_ts == 0.0  # future stamp must not poison the guard
 
 
-def test_drive_drops_in_window_future_without_poisoning_guard() -> None:
+def test_drive_drops_in_window_future_without_poisoning_guard(m: Go2CommandModule) -> None:
     # A future stamp SMALLER than cmd_stale_after_sec (clock skew) must still be
     # rejected and must NOT advance _last_cmd_ts — otherwise every subsequent
     # in-order frame would be dropped as out-of-order until wall-clock catches
     # up, stalling drive. Regression guard for the in-window future case.
-    m = _bare()
     m._on_cmd_vel_in(_twist(time.time() + 0.2))  # +0.2s < 0.5s stale window
     m.tele_cmd_vel.publish.assert_not_called()
     assert m._last_cmd_ts == 0.0
@@ -173,36 +177,32 @@ def test_drive_drops_in_window_future_without_poisoning_guard() -> None:
     m.tele_cmd_vel.publish.assert_called_once()
 
 
-def test_drive_drops_out_of_order() -> None:
-    m = _bare()
+def test_drive_drops_out_of_order(m: Go2CommandModule) -> None:
     m._last_cmd_ts = time.time()
     m._on_cmd_vel_in(_twist(m._last_cmd_ts - 0.1))
     m.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_forwards_fresh() -> None:
-    m = _bare()
+def test_drive_forwards_fresh(m: Go2CommandModule) -> None:
     ts = time.time()
     m._on_cmd_vel_in(_twist(ts))
     m.tele_cmd_vel.publish.assert_called_once()
     assert m._last_cmd_ts == ts
 
 
-def test_drive_suppresses_idle_zero_stream() -> None:
+def test_drive_suppresses_idle_zero_stream(m: Go2CommandModule) -> None:
     # Idle-joystick zeros must NOT be forwarded — MovementManager treats any
     # tele_cmd_vel as active manual drive and would cancel the nav plan.
     # Stamps in the recent past (transit delay), monotonically increasing.
-    m = _bare()
     base = time.time() - 0.1
     m._on_cmd_vel_in(_twist(base, vx=0.0))
     m._on_cmd_vel_in(_twist(base + 0.01, vx=0.0))
     m.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_forwards_release_edge_zero() -> None:
+def test_drive_forwards_release_edge_zero(m: Go2CommandModule) -> None:
     # A zero right after a moving frame IS forwarded (manual stop), then the
     # idle stream goes quiet again. Stamps in the recent past, increasing.
-    m = _bare()
     base = time.time() - 0.1
     m._on_cmd_vel_in(_twist(base, vx=0.3))  # moving → forwarded
     m._on_cmd_vel_in(_twist(base + 0.01, vx=0.0))  # release edge → forwarded (stop)
@@ -210,33 +210,29 @@ def test_drive_forwards_release_edge_zero() -> None:
     assert m.tele_cmd_vel.publish.call_count == 2
 
 
-def test_estopped_drive_is_dropped() -> None:
-    m = _bare()
+def test_estopped_drive_is_dropped(m: Go2CommandModule) -> None:
     m._estopped = True
     m._on_cmd_vel_in(_twist(time.time()))
     m.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_drops_nan_timestamp() -> None:
+def test_drive_drops_nan_timestamp(m: Go2CommandModule) -> None:
     # A NaN ts passes every comparison and would poison _last_cmd_ts (ts <= NaN
     # is False forever → reorder guard permanently disabled). Must be rejected.
-    m = _bare()
     m._on_cmd_vel_in(_twist(float("nan")))
     m.tele_cmd_vel.publish.assert_not_called()
     assert m._last_cmd_ts == 0.0  # guard not poisoned
 
 
-def test_drive_drops_non_finite_velocity() -> None:
-    m = _bare()
+def test_drive_drops_non_finite_velocity(m: Go2CommandModule) -> None:
     t = _twist(time.time())
     t.linear.x = float("inf")
     m._on_cmd_vel_in(t)
     m.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_clamps_excessive_velocity() -> None:
+def test_drive_clamps_excessive_velocity(m: Go2CommandModule) -> None:
     # An untrusted operator sending huge velocities is clamped to the envelope.
-    m = _bare()
     t = _twist(time.time())
     t.linear.x = 99.0  # way over max_linear_mps=1.5
     t.angular.z = -50.0  # way under -max_angular_rps=2.0
@@ -249,8 +245,7 @@ def test_drive_clamps_excessive_velocity() -> None:
 # ─── E-STOP + fence ──────────────────────────────────────────────────
 
 
-def test_estop_latches_and_damps(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_estop_latches_and_damps(m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch) -> None:
     m.go2.sport_command.return_value = True
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
@@ -265,10 +260,9 @@ def test_estop_latches_and_damps(monkeypatch: pytest.MonkeyPatch) -> None:
     m.go2.sport_command.assert_called_with(ALLOWED_SPORT_CMDS["Damp"])
 
 
-def test_estop_clear_publishes_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_estop_clear_publishes_state(m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch) -> None:
     # Clearing E-STOP must publish robot_state immediately so the UI drops
     # estopped:true without waiting for an unrelated update.
-    m = _bare()
     m._estopped = True
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: None)
     m.robot_state.publish.reset_mock()
@@ -277,8 +271,7 @@ def test_estop_clear_publishes_state(monkeypatch: pytest.MonkeyPatch) -> None:
     m.robot_state.publish.assert_called_once()
 
 
-def test_repeated_estop_reissues_damp(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_repeated_estop_reissues_damp(m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch) -> None:
     m.go2.sport_command.return_value = True
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
@@ -291,8 +284,9 @@ def test_repeated_estop_reissues_damp(monkeypatch: pytest.MonkeyPatch) -> None:
     assert acks.count((1, True)) == 2
 
 
-def test_estop_clear_cancels_plan_and_rearms(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_estop_clear_cancels_plan_and_rearms(
+    m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
     m._estopped = True
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: None)
 
@@ -302,8 +296,7 @@ def test_estop_clear_cancels_plan_and_rearms(monkeypatch: pytest.MonkeyPatch) ->
     m.stop_movement.publish.assert_called_once()  # active plan cancelled
 
 
-def test_nav_cancel_stops_planner(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_nav_cancel_stops_planner(m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch) -> None:
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
@@ -314,8 +307,9 @@ def test_nav_cancel_stops_planner(monkeypatch: pytest.MonkeyPatch) -> None:
     assert acks == [(22, True)]
 
 
-def test_stand_ready_aborts_on_mid_sequence_estop(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_stand_ready_aborts_on_mid_sequence_estop(
+    m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
     m._posture = "Sit"
     m.go2.standup.return_value = True
     m.go2.sport_command.return_value = True
@@ -339,8 +333,9 @@ def test_stand_ready_aborts_on_mid_sequence_estop(monkeypatch: pytest.MonkeyPatc
 # ─── nonce dedup ─────────────────────────────────────────────────────
 
 
-def test_duplicate_nonce_reacks_without_reexecution(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_duplicate_nonce_reacks_without_reexecution(
+    m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
     m.go2.set_light.return_value = True
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
@@ -356,8 +351,7 @@ def test_duplicate_nonce_reacks_without_reexecution(monkeypatch: pytest.MonkeyPa
 # ─── nav goal ────────────────────────────────────────────────────────
 
 
-def test_nav_goal_publishes_and_acks(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_nav_goal_publishes_and_acks(m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch) -> None:
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
@@ -368,8 +362,9 @@ def test_nav_goal_publishes_and_acks(monkeypatch: pytest.MonkeyPatch) -> None:
     assert acks == [(11, True)]
 
 
-def test_nav_goal_rejected_when_estopped(monkeypatch: pytest.MonkeyPatch) -> None:
-    m = _bare()
+def test_nav_goal_rejected_when_estopped(
+    m: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
     m._estopped = True
     acks: list[tuple[Any, bool]] = []
     monkeypatch.setattr(m, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))

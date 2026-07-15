@@ -30,7 +30,8 @@ import pytest
 from dimos.teleop.hosted.map_compress import MapCompressModule
 
 
-def _bare_module() -> MapCompressModule:
+@pytest.fixture
+def mod() -> MapCompressModule:
     """A MapCompressModule with only the fields the compress paths need."""
     mod = object.__new__(MapCompressModule)
     mod.config = SimpleNamespace(map_hz=2.0, map_min_resolution=0.1, odom_hz=15.0)
@@ -63,8 +64,7 @@ def _occupancy(grid: Any) -> Any:
     return OccupancyGrid(grid=np.asarray(grid, dtype=np.int8), resolution=0.1)
 
 
-def test_costmap_encodes_and_publishes_map() -> None:
-    mod = _bare_module()
+def test_costmap_encodes_and_publishes_map(mod: MapCompressModule) -> None:
     grid = _occupancy([[-1, 0, 100], [0, 0, -1]])
     mod._on_costmap(grid)
 
@@ -76,13 +76,12 @@ def test_costmap_encodes_and_publishes_map() -> None:
     assert len(msg["origin"]) == 2
 
 
-def test_costmap_png_round_trips_palette() -> None:
+def test_costmap_png_round_trips_palette(mod: MapCompressModule) -> None:
     import base64
 
     import cv2
     import numpy as np
 
-    mod = _bare_module()
     mod._on_costmap(_occupancy([[-1, 0, 100]]))
     msg = _published_json(mod.map_out, "map")
     assert msg is not None
@@ -97,21 +96,19 @@ def test_costmap_png_round_trips_palette() -> None:
     assert row[2] == (255, 255, 255, 255)  # 100 = lethal #ffffff
 
 
-def test_costmap_rate_gated() -> None:
-    mod = _bare_module()
+def test_costmap_rate_gated(mod: MapCompressModule) -> None:
     mod._on_costmap(_occupancy([[0, 0]]))
     first = len(mod.map_out.publish.call_args_list)
     mod._on_costmap(_occupancy([[0, 0]]))  # immediately again → gated out
     assert len(mod.map_out.publish.call_args_list) == first
 
 
-def test_block_max_preserves_obstacle_when_coarsening() -> None:
+def test_block_max_preserves_obstacle_when_coarsening(mod: MapCompressModule) -> None:
     import base64
 
     import cv2
     import numpy as np
 
-    mod = _bare_module()
     # 0.02 m/cell → coarsen by 5× to reach 0.1. A lone obstacle must survive.
     from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
@@ -128,14 +125,13 @@ def test_block_max_preserves_obstacle_when_coarsening() -> None:
     assert lethal.any(), "obstacle erased by coarsening"
 
 
-def test_odom_publishes_planar_pose() -> None:
+def test_odom_publishes_planar_pose(mod: MapCompressModule) -> None:
     import math
 
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-    mod = _bare_module()
     q = Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2))  # yaw = 90°
     pose = PoseStamped(ts=123.0, position=[1.5, -2.0, 0.3], orientation=[q.x, q.y, q.z, q.w])
     mod._on_odom(pose)
@@ -147,9 +143,8 @@ def test_odom_publishes_planar_pose() -> None:
     assert msg["ts"] == pytest.approx(123.0)
 
 
-def test_empty_costmap_publishes_nothing() -> None:
+def test_empty_costmap_publishes_nothing(mod: MapCompressModule) -> None:
     from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
-    mod = _bare_module()
     mod._on_costmap(OccupancyGrid())  # no-arg = empty 1D grid; must be skipped
     assert _published_json(mod.map_out, "map") is None

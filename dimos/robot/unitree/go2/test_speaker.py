@@ -15,11 +15,13 @@
 """Unit tests for PCMAudioTrack (dog-speaker audio path).
 
 No WebRTC: the track is exercised directly — ``push()`` from the caller side,
-``recv()`` inside a local event loop standing in for aiortc's sender."""
+``recv()`` inside pytest's event loop standing in for aiortc's sender."""
 
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 
 from dimos.robot.unitree.go2.speaker import _MAX_QUEUED_FRAMES, PCMAudioTrack
 
@@ -28,96 +30,75 @@ _SR = 48_000
 _FRAME = b"\x01\x02" * 960
 
 
-def test_push_before_recv_is_queued() -> None:
+@pytest.fixture
+async def track() -> PCMAudioTrack:
+    """A track bound to the running (pytest-asyncio) loop — the loop push()
+    marshals onto and recv() is awaited on. Async so it shares the test's loop."""
+    return PCMAudioTrack(asyncio.get_running_loop())
+
+
+async def test_push_before_recv_is_queued(track: PCMAudioTrack) -> None:
     """The loop is injected at construction, so a frame pushed before the first
     recv() is queued (no startup drop window) — it's delivered once recv runs."""
-
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        track.push(_FRAME, _SR, 1)
-        await asyncio.sleep(0)  # let the call_soon_threadsafe _put run
-        assert track._queue.qsize() == 1
-
-    asyncio.run(scenario())
+    track.push(_FRAME, _SR, 1)
+    await asyncio.sleep(0)  # let the call_soon_threadsafe _put run
+    assert track._queue.qsize() == 1
 
 
-def test_recv_yields_frame_with_pts_progression() -> None:
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        track.push(_FRAME, _SR, 1)
-        track.push(_FRAME, _SR, 1)
-        await asyncio.sleep(0)  # let call_soon_threadsafe callbacks run
+async def test_recv_yields_frame_with_pts_progression(track: PCMAudioTrack) -> None:
+    track.push(_FRAME, _SR, 1)
+    track.push(_FRAME, _SR, 1)
+    await asyncio.sleep(0)  # let call_soon_threadsafe callbacks run
 
-        f1 = await track.recv()
-        f2 = await track.recv()
-        assert f1.sample_rate == _SR
-        assert f1.samples == 960
-        assert f1.layout.name == "mono"
-        # pts advances by the samples consumed — aiortc uses it for pacing.
-        assert (f1.pts, f2.pts) == (0, 960)
-
-    asyncio.run(scenario())
+    f1 = await track.recv()
+    f2 = await track.recv()
+    assert f1.sample_rate == _SR
+    assert f1.samples == 960
+    assert f1.layout.name == "mono"
+    # pts advances by the samples consumed — aiortc uses it for pacing.
+    assert (f1.pts, f2.pts) == (0, 960)
 
 
-def test_stereo_layout_and_sample_count() -> None:
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        track.push(_FRAME, _SR, 2)  # same bytes, 2 channels → half the samples
-        await asyncio.sleep(0)
+async def test_stereo_layout_and_sample_count(track: PCMAudioTrack) -> None:
+    track.push(_FRAME, _SR, 2)  # same bytes, 2 channels → half the samples
+    await asyncio.sleep(0)
 
-        frame = await track.recv()
-        assert frame.layout.name == "stereo"
-        assert frame.samples == 480
-
-    asyncio.run(scenario())
+    frame = await track.recv()
+    assert frame.layout.name == "stereo"
+    assert frame.samples == 480
 
 
-def test_ragged_pcm_is_trimmed_not_fatal() -> None:
+async def test_ragged_pcm_is_trimmed_not_fatal(track: PCMAudioTrack) -> None:
     """A pcm buffer that isn't a whole number of interleaved s16 samples must
     be trimmed, not raise out of recv() (aiortc treats that as fatal and kills
     operator audio for the rest of the session)."""
+    track.push(_FRAME + b"\x07", _SR, 1)  # odd trailing byte
+    await asyncio.sleep(0)
 
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        track.push(_FRAME + b"\x07", _SR, 1)  # odd trailing byte
-        await asyncio.sleep(0)
-
-        frame = await track.recv()  # must not raise
-        assert frame.samples == 960  # ragged tail dropped
-
-    asyncio.run(scenario())
+    frame = await track.recv()  # must not raise
+    assert frame.samples == 960  # ragged tail dropped
 
 
-def test_unusable_frame_is_skipped() -> None:
+async def test_unusable_frame_is_skipped(track: PCMAudioTrack) -> None:
     """An empty or zero-rate frame is skipped; recv() returns the next good
     frame instead of raising or yielding a degenerate frame."""
+    track.push(b"", _SR, 1)  # empty → skipped
+    track.push(_FRAME, 0, 1)  # zero sample rate → skipped
+    track.push(_FRAME, _SR, 1)  # good
+    await asyncio.sleep(0)
 
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        track.push(b"", _SR, 1)  # empty → skipped
-        track.push(_FRAME, 0, 1)  # zero sample rate → skipped
-        track.push(_FRAME, _SR, 1)  # good
-        await asyncio.sleep(0)
-
-        frame = await track.recv()
-        assert frame.samples == 960
-        assert frame.sample_rate == _SR
-
-    asyncio.run(scenario())
+    frame = await track.recv()
+    assert frame.samples == 960
+    assert frame.sample_rate == _SR
 
 
-def test_overflow_drops_oldest_keeps_link_live() -> None:
+async def test_overflow_drops_oldest_keeps_link_live(track: PCMAudioTrack) -> None:
     """A stalled sender must bound latency: the queue caps at
     _MAX_QUEUED_FRAMES and evicts the oldest frame, not the newest."""
+    for i in range(_MAX_QUEUED_FRAMES + 3):
+        track.push(bytes([i % 256]) * 4, _SR, 1)
+    await asyncio.sleep(0)
 
-    async def scenario() -> None:
-        track = PCMAudioTrack(asyncio.get_running_loop())
-        for i in range(_MAX_QUEUED_FRAMES + 3):
-            track.push(bytes([i % 256]) * 4, _SR, 1)
-        await asyncio.sleep(0)
-
-        assert track._queue.qsize() == _MAX_QUEUED_FRAMES
-        first, _, _ = track._queue.get_nowait()
-        assert first == bytes([3]) * 4  # frames 0-2 were evicted
-
-    asyncio.run(scenario())
+    assert track._queue.qsize() == _MAX_QUEUED_FRAMES
+    first, _, _ = track._queue.get_nowait()
+    assert first == bytes([3]) * 4  # frames 0-2 were evicted
