@@ -147,7 +147,7 @@ class Mod1(Module):
 
     @rpc
     def start(self) -> None:
-        _ = self.calc.compute1
+        self.calc.compute1  # noqa: B018
 
     @rpc
     def stop(self) -> None: ...
@@ -160,7 +160,7 @@ class Mod2(Module):
 
     @rpc
     def start(self) -> None:
-        _ = self.calc.compute1
+        self.calc.compute1  # noqa: B018
 
     @rpc
     def stop(self) -> None: ...

@@ -96,15 +96,12 @@ class FakeScene:
     def getPositionLimitVectors(
         self, group_name: str = "", collapsed: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
-        _ = (group_name, collapsed)
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
-        _ = name
         return FakeJointGroupInfo(self.joint_group_joint_names)
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
-        _ = group_name
         return q
 
     def addBoxGeometry(
@@ -115,7 +112,6 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
-        _ = (parent_frame, box, color)
         self.geometry[obstacle_id] = matrix
 
     def addSphereGeometry(
@@ -126,7 +122,6 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
-        _ = (parent_frame, sphere, color)
         self.geometry[obstacle_id] = matrix
 
     def addCylinderGeometry(
@@ -137,7 +132,6 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
-        _ = (parent_frame, cylinder, color)
         self.geometry[obstacle_id] = matrix
 
     def addMeshGeometry(
@@ -148,13 +142,11 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
-        _ = (parent_frame, mesh, color)
         self.geometry[obstacle_id] = matrix
 
     def updateGeometryPlacement(
         self, obstacle_id: str, parent_frame: str, matrix: np.ndarray
     ) -> None:
-        _ = parent_frame
         self.geometry[obstacle_id] = matrix
 
     def removeGeometry(self, obstacle_id: str) -> None:
@@ -164,7 +156,6 @@ class FakeScene:
         self.collision_settings[(body1, body2)] = enable
 
     def forwardKinematics(self, q: np.ndarray, frame_name: str, base_frame: str = "") -> np.ndarray:
-        _ = (frame_name, base_frame)
         mat = np.eye(4)
         mat[0, 3] = float(np.sum(q))
         return mat
@@ -172,7 +163,6 @@ class FakeScene:
     def computeFrameJacobian(
         self, q: np.ndarray, frame_name: str, local: bool = True
     ) -> np.ndarray:
-        _ = (q, frame_name, local)
         return np.ones((6, 2))
 
 
@@ -220,7 +210,6 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
         bisection: bool = False,
         check_endpoints: bool = True,
     ) -> bool:
-        _ = (scene, max_step_size, bisection, check_endpoints)
         for t in np.linspace(0.0, 1.0, 5):
             if scene.hasCollisions(q_start + t * (q_end - q_start)):
                 return True
@@ -278,7 +267,6 @@ def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[An
 
 
 def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
-    _ = fake_roboplan
     module_name = "dimos.manipulation.planning.world.roboplan_world"
     if module_name in sys.modules:
         return importlib.reload(sys.modules[module_name])
@@ -499,7 +487,6 @@ def test_native_planner_rejects_empty_path(
         def plan(
             self, q_start: FakeJointConfiguration, q_goal: FakeJointConfiguration
         ) -> FakeJointPath:
-            _ = (q_start, q_goal)
             return FakeJointPath(["joint1", "joint2"], [])
 
     monkeypatch.setattr(sys.modules["roboplan.rrt"], "RRT", EmptyPathRRT)
