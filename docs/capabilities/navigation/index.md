@@ -2,7 +2,7 @@
 title: "Navigation"
 ---
 
-![output](assets/noros_nav.gif)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
 
 The Go2 navigation stack uses simple **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 

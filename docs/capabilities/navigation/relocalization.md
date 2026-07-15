@@ -6,7 +6,7 @@ Main steps:
 3. Load the map back (replay)
 4. Load the map into the Go2 (live)
 
-![relocalize on the live go2 and nav_to a point in the premap](assets/reloc_and_nav_to.webp)
+![relocalize on the live go2 and nav_to a point in the premap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/reloc_and_nav_to.webp)
 
 
 ## 1. Record a run
