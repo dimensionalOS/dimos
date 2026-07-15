@@ -12,13 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic Galaxea A1Z coordinator blueprints."""
+"""Basic Galaxea A1Z coordinator, planner, and teleop blueprints."""
 
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.robot.manipulators.a1z.config import (
+    A1Z_DOF,
+    A1Z_FK_MODEL,
+    make_a1z_model_config,
+)
+from dimos.robot.manipulators.common.blueprints import (
+    coordinator,
+    eef_twist_task,
+    planner,
+    trajectory_task,
+)
 from dimos.robot.manipulators.galaxea_a1z.config import galaxea_a1z_hardware
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 # Arm-only stable configuration: the a1z SDK 'gripper' branch ships a G1Z
 # gravity model that mismatches this unit's mounting (pushes the arm during
@@ -38,5 +51,34 @@ coordinator_galaxea_a1z = autoconnect(
                 priority=10,
             )
         ],
+    ),
+)
+
+# Planner (ManipulationModule) on real hardware. Arm-only model (A1Z_Flange)
+# to stay consistent with the gripper=False hardware configuration above.
+_planner_hw = galaxea_a1z_hardware("arm", gripper=False)
+
+galaxea_a1z_planner_coordinator = autoconnect(
+    planner(robots=[make_a1z_model_config(name="arm", has_gripper=False)]),
+    coordinator(
+        hardware=[_planner_hw],
+        tasks=[trajectory_task(_planner_hw)],
+    ),
+)
+
+# Keyboard teleop on real hardware (eef twist task from the FK model).
+_teleop_hw = galaxea_a1z_hardware("arm", gripper=False)
+
+keyboard_teleop_galaxea_a1z = autoconnect(
+    KeyboardTeleopModule.blueprint(),
+    ControlCoordinator.blueprint(
+        hardware=[_teleop_hw],
+        tasks=[
+            eef_twist_task(_teleop_hw, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)
+        ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[make_a1z_model_config(name="arm", has_gripper=False)],
+        visualization={"backend": "viser"},
     ),
 )
