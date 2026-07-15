@@ -39,8 +39,6 @@ export interface RunEvalOptions {
   scenesRoot: string;
   filterScene?: string;
   filterWorkflow?: string;
-  /** Filter to specific workflow names ("scene/workflow" or just "workflow"). */
-  filterWorkflows?: string[];
 }
 
 /** Walk `scenes/<env>/evals/*.js` and return one entry per workflow file. */
@@ -48,12 +46,8 @@ export function collectWorkflows(opts: {
   scenesRoot: string;
   filterScene?: string;
   filterWorkflow?: string;
-  filterWorkflows?: string[];
 }): WorkflowEntry[] {
-  const { scenesRoot, filterScene, filterWorkflow, filterWorkflows } = opts;
-  const matchSet = filterWorkflows && filterWorkflows.length
-    ? new Set(filterWorkflows)
-    : null;
+  const { scenesRoot, filterScene, filterWorkflow } = opts;
 
   const out: WorkflowEntry[] = [];
   let sceneDirs: Deno.DirEntry[];
@@ -80,7 +74,6 @@ export function collectWorkflows(opts: {
       if (!ent.isFile || !ent.name.endsWith(".js")) continue;
       const workflow = ent.name.slice(0, -3);
       if (filterWorkflow && filterWorkflow !== workflow) continue;
-      if (matchSet && !matchSet.has(workflow) && !matchSet.has(`${scene}/${workflow}`)) continue;
 
       out.push({
         scene,

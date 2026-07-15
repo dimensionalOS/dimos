@@ -18,7 +18,6 @@ import { MAGIC_SHORT, SHORT_HEADER_SIZE } from "../vendor/lcm/types.ts";
 import { serveDir } from "@std/http/file-server";
 import { ServerLidar } from "./lidar.ts";
 import { ServerPhysics } from "./physics.ts";
-import { geometry_msgs } from "@dimos/msgs";
 
 // Magic prefix for Rapier world snapshot (ASCII "DSSN")
 const SNAPSHOT_MAGIC = 0x4453534E;
@@ -49,7 +48,6 @@ export interface BridgeServerOptions {
   evalOnly?: boolean;
   headless?: boolean;
   channels?: string[];
-  lcmBasePort?: number;
   sensorRates?: Record<string, number>;
   sensorEnable?: Record<string, boolean>;
   cameraFov?: number;
@@ -72,7 +70,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
   const {
     port, distDir, scene,
     evalOnly = false, headless = false,
-    channels, lcmBasePort = DEFAULT_LCM_PORT,
+    channels,
     sensorRates, sensorEnable, cameraFov,
   } = options;
 
@@ -143,7 +141,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
 
   for (let i = 0; i < channelNames.length; i++) {
     const name = channelNames[i];
-    const lcmPort = lcmBasePort + i;
+    const lcmPort = DEFAULT_LCM_PORT + i;
     const lcmUrl = `udpm://${DEFAULT_LCM_HOST}:${lcmPort}?ttl=0`;
     const state: ChannelState = {
       name,
@@ -283,7 +281,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           parts: Uint8Array[];
         } | null = null;
 
-        let _sensorLogN = 0;
         socket.onmessage = (event: MessageEvent) => {
           if (!(event.data instanceof ArrayBuffer) || !chState.lcm) return;
           const packet = new Uint8Array(event.data);
@@ -344,11 +341,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           try {
             const decoded = decodePacket(packet);
             if (decoded && decoded.type === "small") {
-              _sensorLogN++;
-              if (_sensorLogN === 1 || _sensorLogN % 1000 === 0) {
-                const chName = decoded.channel.split("#")[0].replace("/", "");
-                // quiet — sensor relay logging removed
-              }
               chState.sentSeqs.add(chState.lcm.getNextSeq());
               chState.lcm.publishRaw(decoded.channel, decoded.data).catch(() => {});
             }
@@ -371,8 +363,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           // quiet
         };
         socket.onerror = () => chState.controlClients.delete(socket);
-
-        let _odomLogN = 0;
 
         socket.onclose = () => {
           chState.controlClients.delete(socket);
@@ -430,8 +420,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           try {
             const decoded = decodePacket(packet);
             if (decoded && decoded.type === "small") {
-              _odomLogN++;
-
               if (chState.serverPhysics && decoded.channel === "/odom#geometry_msgs.PoseStamped") {
                 return;
               }

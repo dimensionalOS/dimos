@@ -41,7 +41,7 @@ export function dist(a: Vec3, b: Vec3): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-export function distToSurface(point: Vec3, center: Vec3, bbox?: { w: number; h: number; d: number }): number {
+function distToSurface(point: Vec3, center: Vec3, bbox?: { w: number; h: number; d: number }): number {
   if (!bbox) return dist(point, center);
   const hw = bbox.w / 2, hh = bbox.h / 2, hd = bbox.d / 2;
   const cx = Math.max(center.x - hw, Math.min(point.x, center.x + hw));
