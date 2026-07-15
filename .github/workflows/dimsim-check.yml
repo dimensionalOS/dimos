@@ -1,0 +1,49 @@
+name: dimsim-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'misc/DimSim/**'
+      - '.github/workflows/dimsim-check.yml'
+  pull_request:
+    paths:
+      - 'misc/DimSim/**'
+      - '.github/workflows/dimsim-check.yml'
+
+permissions: {}
+
+jobs:
+  check:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: misc/DimSim
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Don't do a full-repo LFS fetch: it would pull main's large
+          # data/.lfs/* objects (several GB, some missing on the LFS server → 404)
+          # which this job doesn't need. `npm run build` + `deno check` don't read
+          # glb contents, so pointer stubs for misc/DimSim assets are fine here.
+          lfs: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Type-check CLI
+        run: cd cli && deno check cli.ts
