@@ -112,3 +112,5 @@ recording*.db
 
 # Generated self-contained wrap-up report (rebuild: scripts/build_report.py)
 /misc/skills_dashboard/report.html
+/misc/skills_dashboard/report_v2.html
+/dimos-skills-report.zip
