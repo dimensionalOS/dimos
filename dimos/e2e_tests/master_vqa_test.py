@@ -89,6 +89,12 @@ AGENT_TOPIC = "/agent"
 AGENT_IDLE_TOPIC = "/agent_idle"
 
 DEFAULT_ANSWER_TIMEOUT_S = 90.0
+# Passes that include a floorplan question need far longer: generate_floorplan
+# can run ~minutes server-side (600s RPC / 630s HTTP ceilings), and the agent
+# often adds a wrap-up turn after the long tool result. Kept a step above the
+# HTTP ceiling so the client-side RPC surfaces its own error rather than this
+# outer wait firing first.
+FLOORPLAN_ANSWER_TIMEOUT_S = 660.0
 # Max time ask() waits for a previous (timed-out) turn to finish before
 # sending the next question — see the settle step at the top of ask().
 STALE_TURN_SETTLE_S = 30.0
@@ -446,11 +452,14 @@ def run_qa_pass(
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
-@pytest.mark.timeout(900)
+# Two floorplan questions can each drive a full generate_floorplan (~minutes,
+# up to FLOORPLAN_ANSWER_TIMEOUT_S) on top of setup + the perception questions.
+@pytest.mark.timeout(2100)
 def test_master_vqa(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
     human_input: Callable[[str], None],
+    explore_office: Callable[[], None],
 ) -> None:
     lcm_spy.save_topic(AGENT_TOPIC)
     lcm_spy.save_topic(AGENT_IDLE_TOPIC)
@@ -466,17 +475,28 @@ def test_master_vqa(
     lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
     time.sleep(5)
 
-    # Spin in place so perception gets a few distinct viewpoints before the
-    # Q&A pass (see spin_in_place's docstring for why not scripted waypoints).
+    # Drive the collision-safe office tour (same vetted waypoints the
+    # security/patrol tests use) so perception actually sees the office1
+    # furniture before the Q&A pass. Spinning at the spawn corner alone
+    # (-10.75,-6.78, outside the furnished cluster) sees nothing, which left
+    # every perception/floorplan answer empty of real content. A short spin
+    # afterwards adds a few extra viewpoints from the final pose.
+    explore_office()
     spin_in_place()
 
-    run_qa_pass(lcm_spy, human_input, RESULTS_FILE)
+    run_qa_pass(
+        lcm_spy,
+        human_input,
+        RESULTS_FILE,
+        answer_timeout_s=FLOORPLAN_ANSWER_TIMEOUT_S,  # question set includes a floorplan ask
+    )
 
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.self_hosted
-@pytest.mark.timeout(900)
+# See test_master_vqa: two floorplan questions dominate the wall-clock budget.
+@pytest.mark.timeout(2100)
 def test_master_vqa_china_office(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
@@ -513,15 +533,22 @@ def test_master_vqa_china_office(
     # walkthrough before asking.
     wait_for_replay_to_finish(lcm_spy)
 
-    run_qa_pass(lcm_spy, human_input, CHINA_RESULTS_FILE, questions_file=RECORDED_QUESTIONS_FILE)
+    run_qa_pass(
+        lcm_spy,
+        human_input,
+        CHINA_RESULTS_FILE,
+        questions_file=RECORDED_QUESTIONS_FILE,
+        answer_timeout_s=FLOORPLAN_ANSWER_TIMEOUT_S,  # RECORDED set includes floorplan asks
+    )
 
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.self_hosted
 # ~7 min lossless feed + Q&A including two floorplan questions that each run
-# a 60s live-collection window plus the drawing pipeline.
-@pytest.mark.timeout(1800)
+# a 60s live-collection window plus the drawing pipeline (up to
+# FLOORPLAN_ANSWER_TIMEOUT_S apiece).
+@pytest.mark.timeout(2700)
 def test_master_vqa_china_office_full_rrd(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
@@ -588,5 +615,5 @@ def test_master_vqa_china_office_full_rrd(
             # The floorplan questions legitimately take minutes: a 60s live
             # lidar-collection window plus the drawing pipeline, and the
             # agent often follows a long tool result with a second turn.
-            answer_timeout_s=300.0,
+            answer_timeout_s=FLOORPLAN_ANSWER_TIMEOUT_S,
         )

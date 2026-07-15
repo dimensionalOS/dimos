@@ -78,7 +78,11 @@ class McpClient(Module):
             daemon=True,
         )
         self._stop_event = Event()
-        self._http_client = httpx.Client(timeout=120.0)
+        # Must outlast the slowest server-side skill RPC (generate_floorplan,
+        # 600s in DEFAULT_RPC_TIMEOUTS) since this HTTP call wraps that RPC in
+        # series -- a 120s cap here would time the request out mid-render even
+        # though the server is still working. Kept a step above the RPC ceiling.
+        self._http_client = httpx.Client(timeout=630.0)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
 

@@ -38,6 +38,12 @@ DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType(
     {
         "build": 86400.0,  # 24h — docker builds, LFS downloads, etc.
         "start": 1200.0,
+        # generate_floorplan (FloorplanSkillContainer) legitimately runs for
+        # minutes: a live lidar-collection window plus the drawing pipeline and
+        # several parallel OpenAI calls (ai_review passes + ai_render styles).
+        # The default 120s cut its RPC off mid-run. Kept below McpClient's HTTP
+        # timeout so the outer HTTP call still outlasts this inner RPC.
+        "generate_floorplan": 600.0,
     }
 )
 
