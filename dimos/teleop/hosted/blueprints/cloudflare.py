@@ -16,8 +16,10 @@
 
 Composes the split hosted-teleop modules — driver (GO2Connection, as-is),
 Go2CommandModule, CameraMuxModule, HostedStatsModule, MapCompressModule — plus
-mapping/planning, all in ONE process (``n_workers=1``) so the broker transports
-share a single Cloudflare session.
+mapping/planning. GO2Connection runs in its own worker (``dedicated_worker``);
+all broker-bound modules share the other worker, so the Cloudflare transports
+resolve to a single session. GO2Connection binds no broker transport (it's
+RPC/LCM only), so the split doesn't fragment the CF session.
 
   * Operator-facing planes (video, map, telemetry, acks, inbound state/cmd) →
     TRANSPORT (each broker-bound Out binds to a ``Cloudflare*`` transport).
@@ -47,12 +49,9 @@ from dimos.core.transport import (
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -80,7 +79,6 @@ teleop_hosted_go2_transport = (
     # output feeds the driver.
     .remappings(
         [
-            (MovementManager, "cmd_vel", "cmd_vel"),  # → GO2Connection.cmd_vel
             (GO2Connection, "color_image", "cam1"),
         ]
     )
@@ -102,15 +100,9 @@ teleop_hosted_go2_transport = (
             ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
             ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
             ("cmd_vel", Twist): LCMTransport.spec("/hosted/cmd_vel", Twist),
-            # robot-internal / recorder over LCM
-            ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
-            ("lidar", PointCloud2): LCMTransport.spec("lidar", PointCloud2),
-            ("global_map", PointCloud2): LCMTransport.spec("global_map", PointCloud2),
-            ("global_costmap", OccupancyGrid): LCMTransport.spec("global_costmap", OccupancyGrid),
-            ("goal_request", PoseStamped): LCMTransport.spec("goal_request", PoseStamped),
         }
     )
-    .global_config(viewer="none", n_workers=1)  # one process → one CF session
+    .global_config(viewer="none", n_workers=2)  # go2 driver | broker+nav modules
 )
 
 
@@ -131,7 +123,6 @@ teleop_hosted_go2_multicam = (
     )
     .remappings(
         [
-            (MovementManager, "cmd_vel", "cmd_vel"),  # → GO2Connection.cmd_vel
             (GO2Connection, "color_image", "cam1"),
             (RealSenseCamera, "color_image", "cam2"),
         ]
@@ -153,13 +144,7 @@ teleop_hosted_go2_multicam = (
             ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
             ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
             ("cmd_vel", Twist): LCMTransport.spec("/hosted/cmd_vel", Twist),
-            # robot-internal / recorder over LCM
-            ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
-            ("lidar", PointCloud2): LCMTransport.spec("lidar", PointCloud2),
-            ("global_map", PointCloud2): LCMTransport.spec("global_map", PointCloud2),
-            ("global_costmap", OccupancyGrid): LCMTransport.spec("global_costmap", OccupancyGrid),
-            ("goal_request", PoseStamped): LCMTransport.spec("goal_request", PoseStamped),
         }
     )
-    .global_config(viewer="none", n_workers=1)  # one process → one CF session
+    .global_config(viewer="none", n_workers=2)  # go2 driver | broker+nav modules
 )
