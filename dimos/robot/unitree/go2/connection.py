@@ -42,7 +42,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import set_audio_sink
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
@@ -75,9 +74,6 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
-    # Play operator audio on the dog's speaker. Feeds the
-    # broker provider's process-local audio sink into the driver's WebRTC PC.
-    audio_in: bool = False
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -215,12 +211,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
-    def enable_speaker(self) -> bool:
-        return False
-
-    def disable_speaker(self) -> None:
-        pass
-
     def _stream_name(self, *names: str) -> str:
         """Return the first of ``names`` present in the dataset (stream naming
         changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
@@ -341,15 +331,8 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
-        if self.config.audio_in and isinstance(self.connection, UnitreeWebRTCConnection):
-            set_audio_sink(self.connection.speaker_push)
-            self.connection.enable_speaker()
-
     @rpc
     def stop(self) -> None:
-        if self.config.audio_in and isinstance(self.connection, UnitreeWebRTCConnection):
-            set_audio_sink(None)
-            self.connection.disable_speaker()
 
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:

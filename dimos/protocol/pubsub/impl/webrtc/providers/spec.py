@@ -72,33 +72,6 @@ class Provider(Protocol):
 _providers: dict[ProviderConfig, Provider] = {}
 _providers_lock = threading.Lock()
 
-# Persisted audio sink — applied to live providers AND any created later (a
-# module may call set_audio_sink before its transport builds the provider).
-_audio_sink: Callable[[bytes, int, int], None] | None = None
-
-
-def set_audio_sink(cb: Callable[[bytes, int, int], None] | None) -> bool:
-    """Wire an audio-frame sink ``cb(pcm_bytes, sample_rate, channels)`` onto
-    every live provider that supports one; returns True if any took it.
-
-    The sink is also PERSISTED so a provider created *after* this call (the
-    common case: a module's start() runs before its transport builds the broker
-    provider) picks it up on construction — see ``ProviderConfig.provider``.
-    Modules have no direct provider handle (singletons live in this registry).
-    No-op on providers without audio support.
-    """
-    global _audio_sink
-    with _providers_lock:
-        _audio_sink = cb
-        providers = list(_providers.values())
-    wired = False
-    for provider in providers:
-        setter = getattr(provider, "set_audio_frame_callback", None)
-        if setter is not None:
-            setter(cb)
-            wired = True
-    return wired
-
 
 def shutdown_all_providers() -> None:
     """Stop every live provider in this process and clear the registry.
@@ -129,13 +102,7 @@ class ProviderConfig(BaseModel):
     def provider(self) -> Provider:
         with _providers_lock:
             if self not in _providers:
-                prov = self._create()
-                _providers[self] = prov
-                # Apply a sink registered before this provider existed.
-                if _audio_sink is not None:
-                    setter = getattr(prov, "set_audio_frame_callback", None)
-                    if setter is not None:
-                        setter(_audio_sink)
+                _providers[self] = self._create()
             return _providers[self]
 
 
