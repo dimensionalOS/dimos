@@ -40,7 +40,10 @@ class RunRecord:
     transform_record() and log_event branch write: pose ticks
     (odom_pose/corrected_pose/correction_new/correction_hold) carry
     translation/rotation (+ magnitude_m for the correction_* kinds); log_event
-    carries level/logger/event instead.
+    carries level/logger/event instead; tag_sighting (only logged when a
+    start/end referee tag is set -- see RunMetrics.start_end_tag_id) carries
+    marker_id/reprojection_error_px alongside translation/rotation, one record
+    per frame the withheld tag was seen.
     """
 
     type: str
@@ -54,6 +57,8 @@ class RunRecord:
     level: str | None = None
     logger: str | None = None
     event: str | None = None
+    marker_id: int | None = None
+    reprojection_error_px: float | None = None
 
     @staticmethod
     def from_dict(d: Mapping[str, Any]) -> "RunRecord":
@@ -69,6 +74,7 @@ class RunRecord:
             if rotation is not None
             else None
         )
+        marker_id = d.get("marker_id")
         return RunRecord(
             type=str(d["type"]),
             ts=float(d["ts"]),
@@ -81,6 +87,8 @@ class RunRecord:
             level=d.get("level"),
             logger=d.get("logger"),
             event=d.get("event"),
+            marker_id=int(marker_id) if marker_id is not None else None,
+            reprojection_error_px=_opt_float(d.get("reprojection_error_px")),
         )
 
     @property
@@ -120,15 +128,22 @@ class RunMetrics:
     notes: str = ""
     log_path: str = ""
 
-    # Holdout-referee fields: a marker deliberately withheld from the map,
-    # scored against real ground truth instead of the ATE-proxy above (which
-    # only measures odom-vs-corrected self-consistency, no external
-    # reference). Nullable because neither trial/scripts/bench.py nor
-    # metrics_logger.py computes this today (verified: no `holdout` reference
-    # anywhere under trial/ as of this port).
-    # EXTENSION POINT: holdout referee metrics land with the trial-scripts port.
-    holdout_tag_id: int | None = None
-    holdout_error_m: float | None = None
+    # Start/end referee fields: a marker deliberately withheld from every
+    # localization map under test, scored against real ground truth instead
+    # of the ATE-proxy above (which only measures odom-vs-corrected
+    # self-consistency, no external reference). Ported from
+    # trial/scripts/bench.py's holdout-referee metrics (_median_pose /
+    # _quat_angle_deg / _holdout_referee_metrics), named start_end_* here
+    # since this typed field is the port's lasting home -- trial/scripts'
+    # internals (metrics_logger.py's --holdout-tag, RunRecord.marker_id) keep
+    # the historical "holdout" name. tag_id/closure_error_* are nullable:
+    # None when the run didn't set a start/end referee tag; readings_* stay 0
+    # in that case (a real count of zero, not "unknown").
+    start_end_tag_id: int | None = None
+    start_end_closure_error_m: float | None = None
+    start_end_closure_error_deg: float | None = None
+    start_end_readings_start: int = 0
+    start_end_readings_end: int = 0
 
 
 def _fmt_loop_closure(r: RunMetrics) -> str:
@@ -146,6 +161,19 @@ def _fmt_ate_proxy(r: RunMetrics) -> str:
     if r.ate_proxy_rmse_m is None:
         return "n/a"
     return f"{r.ate_proxy_rmse_m:.3f}m (n={r.ate_proxy_n_matched})"
+
+
+def _fmt_start_end(r: RunMetrics) -> str:
+    if r.start_end_tag_id is None:
+        return "n/a"
+    if r.start_end_closure_error_m is None:
+        return f"n/a (tag {r.start_end_tag_id})"
+    deg = (
+        f" / {r.start_end_closure_error_deg:.1f}deg"
+        if r.start_end_closure_error_deg is not None
+        else ""
+    )
+    return f"{r.start_end_closure_error_m:.3f}m{deg}"
 
 
 @dataclass
@@ -168,6 +196,7 @@ class BenchmarkResults:
         table.add_column("Route", style="cyan")
         table.add_column("Mode")
         table.add_column("Loop-closure (odom -> corrected)", justify="right")
+        table.add_column("Start/End closure", justify="right")
         table.add_column("ATE-proxy", justify="right", style="green")
         table.add_column("Accepted", justify="right")
         table.add_column("Rejected", justify="right")
@@ -184,6 +213,7 @@ class BenchmarkResults:
                 r.route,
                 r.mode,
                 _fmt_loop_closure(r),
+                _fmt_start_end(r),
                 _fmt_ate_proxy(r),
                 str(r.corrections_accepted),
                 str(r.corrections_rejected),

@@ -40,6 +40,7 @@ def test_fixture_reproduces_expected_metrics(case: FixtureCase) -> None:
         route=case.route,
         mode=case.mode,
         duration_s=case.duration_s,
+        start_end_tag=case.start_end_tag,
     )
 
     assert metrics.route == case.route
@@ -53,16 +54,19 @@ def test_fixture_reproduces_expected_metrics(case: FixtureCase) -> None:
         )
 
 
-def test_holdout_fields_default_to_none() -> None:
-    """The extension point tool_benchmark.py marks: not computed yet, must
-    stay nullable rather than silently defaulting to a misleading 0."""
+def test_start_end_fields_default_to_none() -> None:
+    """A run with no start_end_tag (the common case) must leave the referee
+    fields nullable rather than silently defaulting to a misleading 0."""
     case = testcases[0]
+    assert case.start_end_tag is None
     metrics: RunMetrics = compute_run_metrics(
         case.records,
         run_id=case.name,
         route=case.route,
         mode=case.mode,
         duration_s=case.duration_s,
+        start_end_tag=case.start_end_tag,
     )
-    assert metrics.holdout_tag_id is None
-    assert metrics.holdout_error_m is None
+    assert metrics.start_end_tag_id is None
+    assert metrics.start_end_closure_error_m is None
+    assert metrics.start_end_closure_error_deg is None

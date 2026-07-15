@@ -223,6 +223,147 @@ def _source_breakdown(log_events: Sequence[RunRecord]) -> tuple[int, int, int]:
     return marker, lidar, other
 
 
+# -- start/end referee (ported from bench.py's holdout-tag referee) --------
+#
+# A tag id deliberately EXCLUDED from every localization map under test.
+# metrics_logger.py's --holdout-tag runs a second, independent solvePnP for
+# that one id and logs each sighting as a tag_sighting record (marker_<id> ->
+# camera_optical -- the camera's pose IN the tag's own fixed frame). Because
+# the tag never moves, comparing that pose at drill-start vs drill-end IS the
+# true physical camera displacement, with no TF/odom chain and none of the
+# drift the rest of this benchmark measures. Median of the first/last
+# `window` sightings gives the measured start/end; the same median-of-a-
+# window statistic applied to whichever pose stream the run actually
+# produced (corrected_pose if any landed, else odom_pose) -- matched to the
+# SAME sighting timestamps -- gives that mode's claim over the identical
+# span. The closure error is |claim - measured|: a mode's own loop-closure
+# error, checked against a real physical reference instead of an assumed
+# taped start==end.
+
+# Number of holdout-tag sightings to median at run-start and run-end for the
+# referee's measured delta -- ported from bench.py's HOLDOUT_DEFAULT_WINDOW.
+START_END_REFEREE_WINDOW = 10
+
+
+def _quat_angle_deg(
+    q1: tuple[float, float, float, float], q2: tuple[float, float, float, float]
+) -> float:
+    """Ported from trial/scripts/bench.py's _quat_angle_deg(). Angle (deg)
+    between two orientations -- robust to the q/-q double cover (same
+    rotation, opposite sign) via abs() on the dot product."""
+    dot = sum(a * b for a, b in zip(q1, q2, strict=True))
+    dot = max(-1.0, min(1.0, abs(dot)))
+    return math.degrees(2.0 * math.acos(dot))
+
+
+def _median_pose(
+    records: Sequence[RunRecord],
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Ported from trial/scripts/bench.py's _median_pose(). Component-wise
+    median translation + a hemisphere-aligned, renormalized median
+    quaternion across a small window of same-shape records (tag_sighting /
+    odom_pose / corrected_pose all carry translation+rotation). Not a proper
+    SLERP average -- a cheap, dependency-free, outlier-resistant central
+    tendency, good enough for an N~=10 referee window, not a smoothing
+    filter."""
+
+    def _rot(r: RunRecord) -> tuple[float, float, float, float]:
+        if r.rotation is None:
+            raise ValueError(f"RunRecord of type={r.type!r} carries no rotation")
+        return r.rotation
+
+    xs, ys, zs = zip(*(r.xyz for r in records), strict=True)
+    translation = (statistics.median(xs), statistics.median(ys), statistics.median(zs))
+
+    ref = _rot(records[0])
+    aligned = [
+        q if sum(a * b for a, b in zip(q, ref, strict=True)) >= 0 else (-q[0], -q[1], -q[2], -q[3])
+        for q in (_rot(r) for r in records)
+    ]
+    qx, qy, qz, qw = (statistics.median(c) for c in zip(*aligned, strict=True))
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    rotation = (qx / norm, qy / norm, qz / norm, qw / norm) if norm > 1e-9 else ref
+    return translation, rotation
+
+
+def _nearest_record(
+    ts: float, sorted_records: Sequence[RunRecord], max_dt: float
+) -> RunRecord | None:
+    """Ported from trial/scripts/bench.py's _nearest_record() -- like
+    nearest_match() above but returns the whole record (translation +
+    rotation), needed for the start/end referee's median-pose orientation
+    comparison, not just xyz."""
+    best: RunRecord | None = None
+    best_dt = max_dt
+    for r in sorted_records:
+        dt = abs(r.ts - ts)
+        if dt <= best_dt:
+            best_dt = dt
+            best = r
+    return best
+
+
+def _start_end_referee_metrics(
+    records: Sequence[RunRecord],
+    odom: Sequence[RunRecord],
+    corrected: Sequence[RunRecord],
+    window: int = START_END_REFEREE_WINDOW,
+    max_dt: float = LOOP_CLOSURE_MAX_DT_S,
+) -> dict[str, Any]:
+    """Ported from trial/scripts/bench.py's _holdout_referee_metrics().
+
+    Shared-pipeline caveat (benchmark-spec.md §4): this referee's PnP runs
+    the exact same detector/solvePnP code as the mode under test, on the
+    same physical camera -- it is not an independent instrument. One
+    tape-measure check per session certifies that shared pipeline; it does
+    not certify the mode's own map-building/gating logic, which is what the
+    rest of this benchmark measures.
+    """
+    null_result: dict[str, Any] = {
+        "start_end_readings_start": 0,
+        "start_end_readings_end": 0,
+        "start_end_closure_error_m": None,
+        "start_end_closure_error_deg": None,
+    }
+
+    sightings = sorted(by_type(records, "tag_sighting"), key=lambda r: r.ts)
+    n = len(sightings)
+    if n < 2:
+        return {**null_result, "start_end_readings_start": n}
+
+    eff_window = window if n >= 2 * window else max(1, n // 2)
+    first, last = sightings[:eff_window], sightings[-eff_window:]
+    readings = {"start_end_readings_start": len(first), "start_end_readings_end": len(last)}
+
+    claim_source = corrected if corrected else odom
+    if not claim_source:
+        return {**null_result, **readings}
+
+    claim_sorted = sorted(claim_source, key=lambda r: r.ts)
+    claim_first = [
+        m for s in first if (m := _nearest_record(s.ts, claim_sorted, max_dt)) is not None
+    ]
+    claim_last = [m for s in last if (m := _nearest_record(s.ts, claim_sorted, max_dt)) is not None]
+    if not claim_first or not claim_last:
+        return {**null_result, **readings}
+
+    measured_start_t, measured_start_q = _median_pose(first)
+    measured_end_t, measured_end_q = _median_pose(last)
+    measured_delta_m = math.dist(measured_start_t, measured_end_t)
+    measured_delta_deg = _quat_angle_deg(measured_start_q, measured_end_q)
+
+    claimed_start_t, claimed_start_q = _median_pose(claim_first)
+    claimed_end_t, claimed_end_q = _median_pose(claim_last)
+    claimed_delta_m = math.dist(claimed_start_t, claimed_end_t)
+    claimed_delta_deg = _quat_angle_deg(claimed_start_q, claimed_end_q)
+
+    return {
+        **readings,
+        "start_end_closure_error_m": round(abs(claimed_delta_m - measured_delta_m), 4),
+        "start_end_closure_error_deg": round(abs(claimed_delta_deg - measured_delta_deg), 2),
+    }
+
+
 def compute_run_metrics(
     records: Sequence[RunRecord],
     *,
@@ -232,6 +373,7 @@ def compute_run_metrics(
     duration_s: float,
     notes: str = "",
     log_path: str = "",
+    start_end_tag: int | None = None,
 ) -> RunMetrics:
     """Ported from trial/scripts/bench.py's compute_run_metrics().
 
@@ -240,6 +382,10 @@ def compute_run_metrics(
     as "reference" -- an RMSE of how far dead-reckoning strays from the
     corrected estimate over the run, with no external ground truth required.
     Proxy, not real ATE (needs an outside reference for that).
+
+    start_end_tag: marker id deliberately excluded from every localization
+    map under test (bench.py's --holdout-tag) -- omit to skip the referee, as
+    before this port (RunMetrics.start_end_* fields stay None/0).
     """
     odom = by_type(records, "odom_pose")
     corrected = by_type(records, "corrected_pose")
@@ -262,11 +408,16 @@ def compute_run_metrics(
     marker_events, lidar_events, _other = _source_breakdown(log_events)
     loop_odom_m, loop_corrected_m = _loop_closure_errors(odom, corrected)
 
-    # Holdout-referee metrics (a marker deliberately excluded from the map,
-    # scored against real ground truth) are not computed here -- neither
-    # trial/scripts/bench.py nor metrics_logger.py has this logic as of this
-    # port. RunMetrics.holdout_tag_id / holdout_error_m stay None.
-    # EXTENSION POINT: holdout referee metrics land with the trial-scripts port.
+    start_end = (
+        _start_end_referee_metrics(records, odom, corrected)
+        if start_end_tag is not None
+        else {
+            "start_end_readings_start": 0,
+            "start_end_readings_end": 0,
+            "start_end_closure_error_m": None,
+            "start_end_closure_error_deg": None,
+        }
+    )
 
     return RunMetrics(
         run_id=run_id,
@@ -289,6 +440,11 @@ def compute_run_metrics(
         lidar_log_events=lidar_events,
         notes=notes,
         log_path=log_path,
+        start_end_tag_id=start_end_tag,
+        start_end_closure_error_m=start_end["start_end_closure_error_m"],
+        start_end_closure_error_deg=start_end["start_end_closure_error_deg"],
+        start_end_readings_start=start_end["start_end_readings_start"],
+        start_end_readings_end=start_end["start_end_readings_end"],
     )
 
 
@@ -315,5 +471,6 @@ def test_run_metrics(case: FixtureCase, benchmark_results: BenchmarkResults) -> 
         route=case.route,
         mode=case.mode,
         duration_s=case.duration_s,
+        start_end_tag=case.start_end_tag,
     )
     benchmark_results.add(metrics)

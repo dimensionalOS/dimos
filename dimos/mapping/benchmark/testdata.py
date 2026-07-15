@@ -28,9 +28,16 @@ from typing import Any
 from dimos.mapping.benchmark.type import RunRecord
 
 # Identity rotation for every synthetic pose -- rotation isn't exercised by
-# any of the ported metrics (loop-closure/ATE-proxy are translation-only), so
-# a fixed placeholder keeps the fixtures focused on what's actually measured.
+# most of the ported metrics (loop-closure/ATE-proxy are translation-only),
+# so a fixed placeholder keeps most fixtures focused on what's actually
+# measured. The start/end referee fixtures below (Cases 4/5) are the
+# exception -- they exercise _quat_angle_deg too, so they pass an explicit
+# rotation instead of relying on this default.
 _IDENTITY_ROTATION = (0.0, 0.0, 0.0, 1.0)
+
+# marker_id shared by both start/end referee fixtures (Cases 4/5) -- matches
+# trial/scripts/out/fixtures/holdout-referee_*.jsonl's marker_id=42.
+_START_END_TAG_ID = 42
 
 _POSE_FRAMES: dict[str, tuple[str, str]] = {
     "odom_pose": ("world", "base_link"),
@@ -41,7 +48,11 @@ _POSE_FRAMES: dict[str, tuple[str, str]] = {
 
 
 def _pose(
-    ts: float, kind: str, xyz: tuple[float, float, float], magnitude_m: float | None = None
+    ts: float,
+    kind: str,
+    xyz: tuple[float, float, float],
+    magnitude_m: float | None = None,
+    rotation: tuple[float, float, float, float] = _IDENTITY_ROTATION,
 ) -> RunRecord:
     frame_id, child_frame_id = _POSE_FRAMES[kind]
     return RunRecord(
@@ -50,13 +61,37 @@ def _pose(
         frame_id=frame_id,
         child_frame_id=child_frame_id,
         translation=xyz,
-        rotation=_IDENTITY_ROTATION,
+        rotation=rotation,
         magnitude_m=magnitude_m,
     )
 
 
 def _log_event(ts: float, logger: str, event: str) -> RunRecord:
     return RunRecord(type="log_event", ts=ts, level="WARNING", logger=logger, event=event)
+
+
+def _tag_sighting(
+    ts: float,
+    xyz: tuple[float, float, float],
+    rotation: tuple[float, float, float, float],
+    reprojection_error_px: float,
+    marker_id: int = _START_END_TAG_ID,
+) -> RunRecord:
+    """A tag_sighting record -- ported from metrics_logger.py's --holdout-tag
+    path: one independent-solvePnP reading (marker_<id> -> camera_optical,
+    i.e. the camera's pose IN the withheld tag's own fixed frame) per frame
+    the tag was seen, logged regardless of which mode (odom/marker/lidar) is
+    under test."""
+    return RunRecord(
+        type="tag_sighting",
+        ts=ts,
+        frame_id=f"marker_{marker_id}",
+        child_frame_id="camera_optical",
+        translation=xyz,
+        rotation=rotation,
+        marker_id=marker_id,
+        reprojection_error_px=reprojection_error_px,
+    )
 
 
 @dataclass
@@ -67,6 +102,7 @@ class FixtureCase:
     duration_s: float
     records: list[RunRecord]
     expected: dict[str, Any]
+    start_end_tag: int | None = None
 
 
 testcases: list[FixtureCase] = []
@@ -201,6 +237,86 @@ testcases.append(
             "ate_proxy_n_matched": 0,
             "marker_log_events": 0,
             "lidar_log_events": 3,
+        },
+    )
+)
+
+
+# -- Cases 4/5: start/end referee (a withheld marker tag) -------------------
+# Ported from trial/scripts/out/fixtures/holdout-referee_{odom,marker}.jsonl,
+# hand-verified against trial/scripts/bench.py's _holdout_referee_metrics()
+# in trial/scripts/tests/test_holdout_fixture_metrics.py:
+#   odom-claim run:   start/end closure error 0.2959m / 10.0deg (claim falls
+#                      back to odom_pose -- no corrections landed this run)
+#   marker-claim run: start/end closure error 0.0014m /  1.0deg (claim =
+#                      corrected_pose)
+# Both runs see the SAME withheld-tag (marker_42) sighting stream -- two
+# 10-reading clusters near drill-start (ts 0.0-4.5) and drill-end
+# (ts 15.5-20.0), the tag rotated ~10deg about z between clusters. Only the
+# claim source (odom vs. corrected) differs between the two cases, which is
+# the whole point of the referee: it scores each mode's own claim against the
+# same map-independent reference.
+
+_TEN_DEG_Z = (0.0, 0.0, 0.0871557427, 0.9961946981)  # ~10deg about z
+_NINE_DEG_Z = (0.0, 0.0, 0.0784590957, 0.9969173337)  # ~9deg about z
+
+# odom_pose ticks every 0.5s for 20s, drifting +0.01m/tick along x -- shared
+# by both cases (the physical motion under test is identical either way).
+_start_end_odom_ticks = [_pose(0.5 * i, "odom_pose", (0.01 * i, 0.0, 0.02)) for i in range(41)]
+
+# The withheld tag's own sightings -- identical in both cases (same physical
+# tag, same drill). First cluster near drill-start, second near drill-end,
+# rotated ~10deg about z from the first (the true physical displacement the
+# referee measures).
+_start_end_sightings = [
+    _tag_sighting(0.5 * i, (0.02, 0.0, 0.3), _IDENTITY_ROTATION, 0.8) for i in range(10)
+] + [_tag_sighting(15.5 + 0.5 * i, (0.03, 0.01, 0.3), _TEN_DEG_Z, 0.9) for i in range(10)]
+
+testcases.append(
+    FixtureCase(
+        name="start-end-referee-odom-claim",
+        route="holdout-referee",
+        mode="odom",
+        duration_s=21.0,
+        records=[*_start_end_odom_ticks, *_start_end_sightings],
+        start_end_tag=_START_END_TAG_ID,
+        expected={
+            "start_end_tag_id": _START_END_TAG_ID,
+            "start_end_readings_start": 10,
+            "start_end_readings_end": 10,
+            "start_end_closure_error_m": 0.2959,
+            "start_end_closure_error_deg": 10.0,
+        },
+    )
+)
+
+# corrected_pose ticks tracking the same drill, +0.0005m/tick, rotated
+# ~9deg about z from ts=5.0 onward -- closes the loop far tighter than raw
+# odom against the same withheld-tag reference.
+_start_end_corrected_ticks = [
+    _pose(
+        0.5 * i,
+        "corrected_pose",
+        (0.02 + 0.0005 * i, 0.0, 0.02),
+        rotation=_IDENTITY_ROTATION if i < 10 else _NINE_DEG_Z,
+    )
+    for i in range(41)
+]
+
+testcases.append(
+    FixtureCase(
+        name="start-end-referee-marker-claim",
+        route="holdout-referee",
+        mode="marker",
+        duration_s=21.0,
+        records=[*_start_end_odom_ticks, *_start_end_corrected_ticks, *_start_end_sightings],
+        start_end_tag=_START_END_TAG_ID,
+        expected={
+            "start_end_tag_id": _START_END_TAG_ID,
+            "start_end_readings_start": 10,
+            "start_end_readings_end": 10,
+            "start_end_closure_error_m": 0.0014,
+            "start_end_closure_error_deg": 1.0,
         },
     )
 )
