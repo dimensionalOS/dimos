@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
-    DEFAULT_BROKER_URL,
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
     ProviderConfig,
@@ -51,6 +50,9 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Default hosted-teleop broker endpoint.
+DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
 
 if TYPE_CHECKING:
     from aiortc import RTCDataChannel, RTCIceServer, RTCPeerConnection

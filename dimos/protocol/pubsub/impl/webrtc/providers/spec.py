@@ -41,9 +41,6 @@ WEBRTC_AVAILABLE = (
     importlib.util.find_spec("aiortc") is not None and importlib.util.find_spec("httpx") is not None
 )
 
-# Default hosted-teleop broker endpoint, shared by every broker config/provider.
-DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
-
 
 @runtime_checkable
 class Provider(Protocol):
