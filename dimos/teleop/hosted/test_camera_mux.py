@@ -120,6 +120,17 @@ def test_hstack_degenerate_tile_width_does_not_crash() -> None:
     assert out is not None and _is_even(out)
 
 
+def test_composite_returns_none_on_error_does_not_raise() -> None:
+    # Mismatched channel counts make np.hstack raise; _composite must return
+    # None (drop the frame), not kill its RxPY subscription.
+    mux = _make(["cam1", "cam2"])
+    with mux._cam_lock:
+        mux._cam_selected = ["cam1", "cam2"]
+    _feed(mux, "cam1", Image(data=np.zeros((480, 640, 3), np.uint8), format=ImageFormat.BGR))
+    _feed(mux, "cam2", Image(data=np.zeros((480, 640, 4), np.uint8), format=ImageFormat.BGRA))
+    assert mux._composite() is None
+
+
 def test_switch_between_selections_stays_even() -> None:
     # Reproduces the report: flipping selection changes frame size (encoder
     # reopen). Every produced frame must be even so libx264 never fails.

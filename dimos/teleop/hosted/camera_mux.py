@@ -125,32 +125,37 @@ class CameraMuxModule(Module):
 
     def _composite(self) -> Image | None:
         """Selected frames → one Image (single passthrough, else hstack to min
-        height). Even-sized (libx264). None if nothing cached."""
+        height). Even-sized (libx264). None if nothing cached, or on any
+        compositing error (a raise would kill the RxPY camera subscription)."""
         with self._cam_lock:
             order = [c for c in self._cam_order if c in self._cam_selected]
             imgs = [self._cam_frames[c] for c in order if c in self._cam_frames]
         if not imgs:
             return None
-        if len(imgs) == 1:
-            return self._even_dims(self._stamp(self._downscale(imgs[0])))
-        import cv2
+        try:
+            if len(imgs) == 1:
+                return self._even_dims(self._stamp(self._downscale(imgs[0])))
+            import cv2
 
-        target_h = min(im.data.shape[0] for im in imgs)
-        tiles = []
-        for im in imgs:
-            h, w = im.data.shape[:2]
-            tiles.append(
-                cv2.resize(im.data, (max(1, int(w * target_h / h)), target_h))
-                if h != target_h
-                else im.data
-            )
-        return self._even_dims(
-            self._stamp(
-                self._downscale(
-                    Image(data=np.hstack(tiles), format=imgs[0].format, frame_id="camera_mux")
+            target_h = min(im.data.shape[0] for im in imgs)
+            tiles = []
+            for im in imgs:
+                h, w = im.data.shape[:2]
+                tiles.append(
+                    cv2.resize(im.data, (max(1, int(w * target_h / h)), target_h))
+                    if h != target_h
+                    else im.data
+                )
+            return self._even_dims(
+                self._stamp(
+                    self._downscale(
+                        Image(data=np.hstack(tiles), format=imgs[0].format, frame_id="camera_mux")
+                    )
                 )
             )
-        )
+        except Exception:
+            logger.warning("camera composite failed, dropping frame", exc_info=True)
+            return None
 
     @staticmethod
     def _even_dims(img: Image) -> Image:
