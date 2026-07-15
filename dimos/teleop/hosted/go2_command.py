@@ -14,17 +14,10 @@
 
 """Go2 command plane: operator command / E-STOP / drive dispatch.
 
-A PLAIN module (does NOT subclass GO2Connection). It reaches the driver via an
-RPC ref — ``go2: GO2Connection`` is auto-injected as an RPCClient — and calls
-the driver's ``@rpc`` command methods (``sport_command``, ``set_rage_mode``,
-``standup``, ``move`` ...) directly, keeping synchronous return values for acks.
-
-Split: driver calls = RPC (robot-internal); operator-facing planes = transport.
-Operator commands arrive on ``state_json`` (transport, from the broker); acks go
-back on ``cmd_ack`` (transport). Drive is a guarded STREAM filter (not per-frame
-RPC): raw operator cmd_vel in → E-STOP/stale/reorder/nav-yield guard →
-``cmd_vel_out`` → the driver's ``cmd_vel`` port. Runs co-located (n_workers=1)
-with the mux / stats / driver modules so all broker transports share one session.
+Driver calls go over RPC (``go2: GO2Connection`` ref); operator-facing planes go
+over transport — commands in on ``state_json``, acks out on ``cmd_ack``. Drive is
+a guarded stream filter: operator cmd_vel → E-STOP/stale/reorder/nav-yield guard
+→ ``tele_cmd_vel``.
 """
 
 from __future__ import annotations
@@ -36,6 +29,7 @@ from typing import Any
 
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
+from unitree_webrtc_connect.constants import SPORT_CMD
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -48,31 +42,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Operator-allowed sport commands → SPORT_CMD api_id (robot-side allow-list).
-ALLOWED_SPORT_CMDS: dict[str, int] = {
-    "StandDown": 1005,
-    "RecoveryStand": 1006,
-    "Sit": 1009,
-    "Hello": 1016,
-    "Stretch": 1017,
-    "Damp": 1001,
-    "FrontPounce": 1032,  # acrobatic — leaps
-    "FrontJump": 1031,  # acrobatic — leaps
-}
+_ALLOWED_SPORT_NAMES = frozenset(
+    {"StandDown", "RecoveryStand", "Sit", "Hello", "Stretch", "Damp", "FrontPounce", "FrontJump"}
+)
+ALLOWED_SPORT_CMDS: dict[str, int] = {n: SPORT_CMD[n] for n in _ALLOWED_SPORT_NAMES}
 _POSTURE_SPORT_CMDS = frozenset({"StandDown", "RecoveryStand", "Sit", "Damp"})
 _ACROBATIC_SPORT_CMDS = frozenset({"FrontPounce", "FrontJump"})
-
-
-def _is_zero_twist(t: Twist) -> bool:
-    """True when the drive command has no linear/angular velocity (idle joystick)."""
-    return (
-        t.linear.x == 0.0
-        and t.linear.y == 0.0
-        and t.linear.z == 0.0
-        and t.angular.x == 0.0
-        and t.angular.y == 0.0
-        and t.angular.z == 0.0
-    )
 
 
 def _all_finite(t: Twist) -> bool:
@@ -190,7 +165,7 @@ class Go2CommandModule(Module):
     # ─── E-STOP + operator-loss ───────────────────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
-        """Latch E-STOP (drive filter reads the latch → stops cmd_vel_out
+        """Latch E-STOP (drive filter reads the latch → stops tele_cmd_vel
         instantly), bump safety epoch, urgently Damp via go2 RPC."""
         self._estopped = True
         self._cmd.bump_safety_epoch()
@@ -420,9 +395,9 @@ class Go2CommandModule(Module):
             msg.data = True
             self.stop_movement.publish(msg)
         except Exception:
-            logger.debug("nav cancel publish failed", exc_info=True)
+            logger.warning("nav cancel publish failed", exc_info=True)
 
-    # ─── manual drive guard (stream filter → cmd_vel_out, NOT RPC) ────
+    # ─── manual drive guard (stream filter → tele_cmd_vel, NOT RPC) ────
 
     def _on_cmd_vel_in(self, twist: Twist) -> None:
         """Guard raw operator drive — E-STOP gate, stale/future/out-of-order
@@ -433,17 +408,13 @@ class Go2CommandModule(Module):
         ts = float(twist.ts)
         if not math.isfinite(ts):
             # NaN ts passes every comparison below and would poison _last_cmd_ts.
-            logger.debug("dropping non-finite cmd_vel ts: %r", twist.ts)
             return
         age = time.time() - ts
         if age > self.config.cmd_stale_after_sec:
-            logger.debug("dropping stale cmd_vel: age=%.3fs", age)
             return
         if age < 0:  # future-stamped: don't advance _last_cmd_ts (would stall drive)
-            logger.debug("dropping future-stamped cmd_vel: age=%.3fs", age)
             return
-        if ts <= self._last_cmd_ts:
-            logger.debug("dropping out-of-order cmd_vel: ts=%.3f last=%.3f", ts, self._last_cmd_ts)
+        if ts <= self._last_cmd_ts:  # out-of-order
             return
         self._last_cmd_ts = ts
 
@@ -460,7 +431,7 @@ class Go2CommandModule(Module):
 
         # Idle zeros would make MovementManager cancel the nav plan, so forward a
         # zero only as the release edge (prev frame moving), then stay silent.
-        moving = not _is_zero_twist(twist)
+        moving = not twist.is_zero()
         if not moving and not self._last_cmd_nonzero:
             return  # idle joystick — don't preempt nav
         self._last_cmd_nonzero = moving
@@ -484,4 +455,4 @@ class Go2CommandModule(Module):
         try:
             self.robot_state.publish(json.dumps(self._robot_state()).encode())
         except Exception:
-            logger.debug("robot_state publish failed", exc_info=True)
+            logger.warning("robot_state publish failed", exc_info=True)
