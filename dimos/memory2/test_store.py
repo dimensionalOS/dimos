@@ -383,7 +383,7 @@ class TestStoreDelegation:
 
         blob_spy.gets.clear()
         for obs in s:
-            _ = obs.data
+            assert obs.data is not None
         assert len(blob_spy.gets) == 2
 
     def test_append_embedding_calls_vector_put(self, spy_session) -> None:
@@ -513,7 +513,7 @@ class TestStreamAccessor:
 
     def test_accessor_missing_raises(self, session: Store) -> None:
         with pytest.raises(AttributeError, match="nonexistent"):
-            _ = session.streams.nonexistent
+            session.streams.nonexistent  # noqa: B018
 
     def test_accessor_getitem(self, session: Store) -> None:
         s = session.stream("data", float)
