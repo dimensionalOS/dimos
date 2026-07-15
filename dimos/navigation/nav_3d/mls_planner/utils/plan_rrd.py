@@ -155,9 +155,11 @@ def _log_shared(
 
     voxel_map = planner.voxel_map()
     if voxel_map.size:
+        z = voxel_map[:, 2]
+        class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
         rr.log(
             "world/voxel_map",
-            rr.Points3D(voxel_map, colors=[[180, 125, 125]], radii=render_voxel / 2),
+            rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 3),
         )
 
     surface = planner.surface_clearance_map()
