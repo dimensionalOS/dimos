@@ -48,9 +48,7 @@ def main(
         if not issubclass(implementation_class, Module):
             raise TypeError(f"Implementation {implementation!r} is not a Module subclass")
         if not issubclass(implementation_class, declaration_class):
-            raise TypeError(
-                f"Implementation {implementation!r} does not implement {declaration!r}"
-            )
+            raise TypeError(f"Implementation {implementation!r} does not implement {declaration!r}")
         module_kwargs = pickle.loads(base64.b64decode(kwargs))
         module = implementation_class(**module_kwargs)
         if module.rpc is None:
