@@ -1,5 +1,5 @@
 ---
-title: "Hosted Teleop"
+title: "Remote Teleop"
 ---
 
 Operate a DimOS robot remotely from any browser or Quest headset over WebRTC.
