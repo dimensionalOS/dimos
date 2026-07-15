@@ -197,6 +197,12 @@ misc = [
     "portal",
 ]
 
+spot = [
+    "bosdyn-client>=4.0.0",
+    "bosdyn-api>=4.0.0",
+    "bosdyn-core>=4.0.0",
+]
+
 visualization = [
     "rerun-sdk==0.32.0",
     "dimos-viewer==0.32.0a1",
@@ -551,6 +557,8 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 module = [
     "a750_control",
     "a750_control.*",
+    "bosdyn",
+    "bosdyn.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
