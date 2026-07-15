@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.hosted.go2_command import ALLOWED_SPORT_CMDS, Go2CommandModule
 
 _live_modules: list[_CommandHarness] = []
@@ -40,7 +41,7 @@ _live_modules: list[_CommandHarness] = []
 def _reap_cmd_executors():
     yield
     while _live_modules:
-        _live_modules.pop()._cmd_stop()
+        _live_modules.pop()._cmd.stop()
     deadline = time.time() + 2.0
     while time.time() < deadline and any(
         t.name.startswith("HostedCmd-") for t in threading.enumerate()
@@ -61,9 +62,11 @@ class _CommandHarness(Go2CommandModule):
             max_linear_mps=1.5,
             max_angular_rps=2.0,
         )
-        self._cmd_init()
-        self._cmd_start()
         self._estopped = False
+        self._cmd = SerializedCommandExecutor(
+            lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
+        )
+        self._cmd.start()
         self._rage_active = False
         self._obstacle_avoidance = True
         self._light = 0.0
@@ -319,11 +322,11 @@ def test_stand_ready_aborts_on_mid_sequence_estop(
     def fake_sleep(_s: float) -> None:
         if not m._estopped:
             m._estopped = True
-            m._bump_safety_epoch()
+            m._cmd.bump_safety_epoch()
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
 
-    assert m._stand_ready_task(m._safety_epoch) is False
+    assert m._stand_ready_task(m._cmd.safety_epoch) is False
     m.go2.standup.assert_called_once()
     m.go2.balance_stand.assert_not_called()
     m.go2.switch_joystick.assert_not_called()

@@ -43,7 +43,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.teleop.hosted.command_executor import SerializedCommandMixin
+from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -97,7 +97,7 @@ class Go2CommandConfig(ModuleConfig):
     max_angular_rps: float = 2.0
 
 
-class Go2CommandModule(Module, SerializedCommandMixin):
+class Go2CommandModule(Module):
     """Operator command/E-STOP/drive plane, driving GO2Connection over RPC."""
 
     config: Go2CommandConfig
@@ -120,8 +120,10 @@ class Go2CommandModule(Module, SerializedCommandMixin):
     def __init__(self, **kwargs: Any) -> None:
         """Init command state (executor, safety epoch, posture, drive timers)."""
         super().__init__(**kwargs)
-        self._cmd_init()
         self._estopped = False
+        self._cmd = SerializedCommandExecutor(
+            lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
+        )
         self._rage_active = False
         self._obstacle_avoidance = True
         self._light = 0.0
@@ -133,7 +135,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
     def start(self) -> None:
         """Wire state_json/drive/nav subscriptions; start the command executor."""
         super().start()
-        self._cmd_start()
+        self._cmd.start()
         self.register_disposable(Disposable(self.state_json.subscribe(self._on_state_json)))
         self.register_disposable(Disposable(self.cmd_vel_in.subscribe(self._on_cmd_vel_in)))
         self._publish_robot_state()
@@ -141,7 +143,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
     @rpc
     def stop(self) -> None:
         """Shut the executor."""
-        self._cmd_stop()
+        self._cmd.stop()
         super().stop()
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
@@ -191,7 +193,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
         """Latch E-STOP (drive filter reads the latch → stops cmd_vel_out
         instantly), bump safety epoch, urgently Damp via go2 RPC."""
         self._estopped = True
-        self._bump_safety_epoch()
+        self._cmd.bump_safety_epoch()
         logger.warning("E-STOP latched by operator")
         self._cancel_nav()
         # Publish the latch NOW, not inside the Damp task — the UI must show
@@ -205,7 +207,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
                 self._publish_robot_state()
             return ok
 
-        self._submit_cmd("estop", nonce, task, urgent=True)
+        self._cmd.submit("estop", nonce, task, urgent=True)
 
     def _handle_estop_clear(self, nonce: Any) -> None:
         """Un-latch; cancel any active plan; does not move the robot."""
@@ -218,16 +220,15 @@ class Go2CommandModule(Module, SerializedCommandMixin):
     def _on_operator_lost(self) -> None:
         """Stop motion, bump epoch, clear nonces, optionally Damp."""
         logger.warning("operator link lost — stopping motion")
-        self._bump_safety_epoch()
+        self._cmd.bump_safety_epoch()
         self._cancel_nav()
-        with self._cmd_lock:
-            self._nonce_results.clear()
+        self._cmd.clear_nonces()
         try:
             self.go2.stop_movement()
         except Exception:
             logger.exception("stop_movement on operator loss failed")
         if self.config.damp_on_operator_lost:
-            self._submit_cmd(
+            self._cmd.submit(
                 "damp_on_operator_lost",
                 None,
                 lambda _ep: bool(self.go2.sport_command(ALLOWED_SPORT_CMDS["Damp"])),
@@ -242,7 +243,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
         nonce = msg.get("nonce")
 
         if name == "StandReady":
-            self._submit_cmd("StandReady", nonce, self._stand_ready_task)
+            self._cmd.submit("StandReady", nonce, self._stand_ready_task)
             return
 
         api_id = ALLOWED_SPORT_CMDS.get(name) if isinstance(name, str) else None
@@ -262,7 +263,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
                 self._publish_robot_state()
             return ok
 
-        self._submit_cmd(f"sport_cmd {name}", nonce, task, urgent=(name == "Damp"))
+        self._cmd.submit(f"sport_cmd {name}", nonce, task, urgent=(name == "Damp"))
 
     def _stand_ready_task(self, epoch: int) -> bool:
         """Standup → RecoveryStand → BalanceStand → joystick via go2 RPC, aborts
@@ -275,7 +276,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
 
         def _fenced_sleep(sec: float) -> bool:
             time.sleep(sec)
-            if not self._safety_ok(epoch):
+            if not self._cmd.safety_ok(epoch):
                 logger.warning("StandReady aborted: E-STOP / operator-lost mid-sequence")
                 return False
             return True
@@ -316,7 +317,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
             # RPC; if E-STOP fired during it, re-Damp (its trailing BalanceStand/
             # SwitchJoystick may have re-enabled motion past the E-STOP's Damp).
             ok = bool(self.go2.set_rage_mode(want_rage))
-            if not self._safety_ok(epoch):
+            if not self._cmd.safety_ok(epoch):
                 logger.warning("set_mode aborted: E-STOP / operator-lost mid-toggle — re-Damping")
                 try:
                     self.go2.sport_command(ALLOWED_SPORT_CMDS["Damp"])
@@ -329,7 +330,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
             logger.info("set_mode: rage=%s ok=%s", want_rage, ok)
             return ok
 
-        self._submit_cmd(f"set_mode {mode}", nonce, task)
+        self._cmd.submit(f"set_mode {mode}", nonce, task)
 
     def _handle_obstacle_avoidance(self, msg: dict[str, Any]) -> None:
         """Toggle the Go2's onboard obstacle avoidance on/off."""
@@ -344,7 +345,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
             logger.info("obstacle_avoidance: enabled=%s ok=%s", enabled, ok)
             return ok
 
-        self._submit_cmd(f"obstacle_avoidance {enabled}", nonce, task)
+        self._cmd.submit(f"obstacle_avoidance {enabled}", nonce, task)
 
     def _handle_light(self, msg: dict[str, Any]) -> None:
         """Head-LED brightness 0..1 → firmware level 0-10."""
@@ -372,7 +373,7 @@ class Go2CommandModule(Module, SerializedCommandMixin):
             logger.info("light: brightness=%.1f (level %d) ok=%s", brightness, level, ok)
             return ok
 
-        self._submit_cmd(f"light {brightness:.1f}", nonce, task)
+        self._cmd.submit(f"light {brightness:.1f}", nonce, task)
 
     # ─── click-to-navigate ────────────────────────────────────────────
 

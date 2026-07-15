@@ -333,7 +333,6 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def stop(self) -> None:
-
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
             self.liedown()
