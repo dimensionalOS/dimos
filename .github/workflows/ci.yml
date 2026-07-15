@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -319,7 +320,7 @@ jobs:
     # Check whether the modules-for-this-config marker cache
     # already exists. Used to skip cmu-nav-natives without using the cachix environment.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -348,15 +349,19 @@ jobs:
           lookup-only: true
 
   cmu-nav-natives:
-    # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
     # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
     # reaches a `run:` step here could exfiltrate the token, letting an attacker
     # push poisoned binaries to the Cachix cache — which subsequent CI runs and
-    # every dev with the substituter configured would unwittingly install. The
-    # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
+    # every dev with the substituter configured would unwittingly install.
+    # Allowed only on trusted events: push, merge_group (a maintainer must
+    # approve + queue the PR), and same-repo PRs — NEVER on fork `pull_request`s.
+    # The `if:` guard below is the only thing keeping forks out — DO NOT REMOVE.
+    # merge_group runs the PR's *merged* workflow with secrets, so .github/
+    # changes must be reviewed before a fork PR is queued.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
     needs: cmu-nav-natives-marker
     timeout-minutes: 300
@@ -418,10 +423,12 @@ jobs:
           key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
 
   self-hosted-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
+    # Runs on push, merge_group (trusted — a maintainer must approve + queue the
+    # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
+    # self-hosted runner to untrusted code from external contributors.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
