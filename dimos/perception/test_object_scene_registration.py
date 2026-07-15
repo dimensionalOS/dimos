@@ -382,7 +382,46 @@ def test_detect_skill_no_prompts() -> None:
 def test_detect_skill_no_frame_yet() -> None:
     module = ObjectSceneRegistrationModule(localization="lidar")
     try:
-        assert module.detect(prompts=["cup"]) == "No camera frame available yet."
+        # No frame *and* an empty catalog: nothing to report from either path.
+        assert (
+            module.detect(prompts=["cup"])
+            == "No matching items in the catalog, and no camera frame available yet."
+        )
+    finally:
+        module.stop()
+
+
+def test_detect_skill_searches_accumulated_catalog_without_a_frame() -> None:
+    """A directed search must surface items already in the catalog even when
+    they aren't in the current view (and even with no current frame at all) --
+    "search for a chair" should find the chair list_observed_items reports,
+    not answer "not in my current view."
+    """
+    module = ObjectSceneRegistrationModule(localization="lidar", min_detections_for_permanent=1)
+    try:
+        # Stub the persistent catalog so a "chair" is already observed, with no
+        # live camera frame available (_latest_color_image stays None).
+        module._match_located_objects = lambda query: (  # type: ignore[method-assign]
+            [
+                {
+                    "name": "chair",
+                    "object_id": "obj-chair-1",
+                    "position": {"x": 1.0, "y": 2.0, "z": 0.0},
+                    "size": {"x": 0.5, "y": 0.5, "z": 1.0},
+                    "confidence": 0.9,
+                    "detections": 7,
+                    "last_seen": "just now",
+                }
+            ]
+            if "chair" in query.lower()
+            else []
+        )
+        result = module.detect(prompts=["chair", "backpack"])
+
+        assert "already catalogued" in result
+        assert "chair" in result
+        assert "obj-chair-1" in result
+        assert "current view" not in result
     finally:
         module.stop()
 

@@ -446,12 +446,21 @@ class ObjectSceneRegistrationModule(Module):
     def detect(self, prompts: list[str]) -> str:
         """Directed, text-prompted search for specific named items.
 
-        Runs alongside (not instead of) the automatic open-vocabulary
-        cataloging that's always running in the background -- this uses a
-        separate promptable detector on the most recent camera frame, so
-        calling it never disrupts list_observed_items/catalog_scene. Any
-        match is localized in the world frame and folded into the same
-        catalog those tools read from.
+        Searches the *whole* space the robot has explored, not just what the
+        camera happens to be pointed at right now. For each prompt it:
+
+        1. Looks through the accumulated catalog (everything
+           list_observed_items/catalog_scene report) for items whose name
+           matches — so something seen earlier is still found even when it's
+           out of the current view.
+        2. Runs a promptable detector on the most recent camera frame to pick
+           up anything new that isn't catalogued yet. Any fresh match is
+           localized in the world frame and folded into the same catalog those
+           tools read from.
+
+        This runs alongside (not instead of) the automatic open-vocabulary
+        cataloging that's always running in the background, so calling it never
+        disrupts list_observed_items/catalog_scene.
 
         Do NOT call this tool multiple times for one query. Pass all objects in a single call.
         For example, to detect a cup and mouse, call detect(["cup", "mouse"]) not detect(["cup"]) then detect(["mouse"]).
@@ -460,7 +469,9 @@ class ObjectSceneRegistrationModule(Module):
             prompts (list[str]): Text descriptions of objects to detect (e.g., ["person", "car", "dog"])
 
         Returns:
-            str: Detected objects with their object_id (stable UUID) and name.
+            str: Matching objects with their object_id (stable UUID) and name —
+            catalogued matches (with world position) and any newly detected in
+            the current frame.
 
         Example:
             detect(["person", "car", "dog"])
@@ -473,23 +484,54 @@ class ObjectSceneRegistrationModule(Module):
             prompts = [prompts]
         if not prompts:
             return "No prompts provided."
-        if self._latest_color_image is None:
-            return "No camera frame available yet."
 
-        detector = self._get_prompt_detector()
-        detector.set_prompts(text=list(prompts))
-        detections_2d = detector.process_image(self._latest_color_image)
-        if not detections_2d.detections:
+        # 1. Consult the catalog first: a directed search must surface items
+        # already observed even if they're not in the current frame. This is
+        # what makes "search for a chair" find the chair list_observed_items
+        # reports, instead of only what's visible this instant.
+        catalog_matches: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for prompt in prompts:
+            for obj in self._match_located_objects(prompt):
+                oid = str(obj.get("object_id"))
+                if oid not in seen_ids:
+                    seen_ids.add(oid)
+                    catalog_matches.append(obj)
+
+        # 2. Then run a fresh promptable detection on the most recent frame to
+        # catch anything new that isn't catalogued yet.
+        fresh: list[DetObject] = []
+        if self._latest_color_image is not None:
+            detector = self._get_prompt_detector()
+            detector.set_prompts(text=list(prompts))
+            detections_2d = detector.process_image(self._latest_color_image)
+            if detections_2d.detections:
+                objects = self._localize_detections(detections_2d, self._latest_color_image)
+                ingested = self._ingest_and_publish(objects) if objects else []
+                # Don't double-report an object already surfaced from the catalog.
+                fresh = [obj for obj in ingested if obj.object_id not in seen_ids]
+
+        if not catalog_matches and not fresh:
+            if self._latest_color_image is None:
+                return "No matching items in the catalog, and no camera frame available yet."
             return "No objects detected."
 
-        objects = self._localize_detections(detections_2d, self._latest_color_image)
-        if not objects:
-            return "Detected objects but could not localize them in the world frame."
-
-        ingested = self._ingest_and_publish(objects)
-
-        obj_list = [f"  - {obj.display_name} (object_id='{obj.object_id}')" for obj in ingested]
-        return f"Detected {len(ingested)} object(s):\n" + "\n".join(obj_list)
+        sections = []
+        if catalog_matches:
+            places = self._fetch_tagged_places()
+            lines = self._format_located_objects(catalog_matches, places=places)
+            sections.append(
+                f"Found {len(catalog_matches)} matching item(s) already catalogued:\n"
+                + "\n".join(lines)
+            )
+        if fresh:
+            obj_list = [
+                f"  - {obj.display_name} (object_id='{obj.object_id}')" for obj in fresh
+            ]
+            sections.append(
+                f"Newly detected in the current frame ({len(fresh)}):\n" + "\n".join(obj_list)
+            )
+        return "\n\n".join(sections)
 
     @skill
     def select(self, track_id: int) -> str:
