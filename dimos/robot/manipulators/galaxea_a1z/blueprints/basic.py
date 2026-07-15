@@ -73,9 +73,7 @@ keyboard_teleop_galaxea_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         hardware=[_teleop_hw],
-        tasks=[
-            eef_twist_task(_teleop_hw, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)
-        ],
+        tasks=[eef_twist_task(_teleop_hw, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)],
     ),
     ManipulationModule.blueprint(
         robots=[make_a1z_model_config(name="arm", has_gripper=False)],
