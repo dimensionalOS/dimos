@@ -478,7 +478,7 @@ class TestLazyData:
     def test_no_data_no_loader_raises(self):
         obs = Observation(id=0, ts=0.0)
         with pytest.raises(LookupError):
-            _ = obs.data
+            obs.data  # noqa: B018
 
     def test_derive_preserves_metadata(self):
         obs = Observation(id=42, ts=1.5, pose=(1, 2, 3), tags={"k": "v"}, _data="original")

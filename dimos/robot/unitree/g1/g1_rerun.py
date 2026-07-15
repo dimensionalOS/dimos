@@ -37,12 +37,13 @@ _COSTMAP_LOOKUP_TABLE[2:101] = (255, 140, 0, 255)
 _COSTMAP_LOOKUP_TABLE[101] = (220, 30, 30, 255)
 
 
-def g1_costmap(grid: Any) -> Any:
+def g1_costmap(grid: Any, z_offset: float = 0.02) -> Any:
     """Render an OccupancyGrid with the classic costmap palette.
 
-    Lifts the mesh 2cm off the floor plane to avoid z-fighting with the ground.
+    The default z_offset lifts the mesh 2cm off the floor plane to avoid
+    z-fighting with the ground.
     """
-    return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=0.02)
+    return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=z_offset)
 
 
 def g1_urdf_static_robot(root_path: str = G1_RERUN_ROOT) -> UrdfRobotStaticRerunFactory:
