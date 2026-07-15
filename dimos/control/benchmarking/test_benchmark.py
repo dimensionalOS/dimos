@@ -89,6 +89,40 @@ def test_recording_round_trip(tmp_path):
     assert len(back.reference_path().poses) == len(ref.poses)
 
 
+def _write_recording(path, *, name, ticks):
+    rec = RunRecording.from_path(
+        robot="go2",
+        path_name=name,
+        speed=0.5,
+        reference=straight_line(length=2.0),
+        goal_tolerance=0.25,
+        velocity_threshold=0.05,
+        timeout=60.0,
+    )
+    rec.arrived = True
+    rec.reason = "goal+stop"
+    rec.ticks = ticks
+    rec.to_json(path)
+
+
+def test_malformed_recording_is_skipped_not_fatal(tmp_path):
+    """A stale-schema/partial recording (tick row not 7 values) must not abort
+    the whole directory — the good runs still score."""
+    _write_recording(
+        tmp_path / "go2_good_v0.50_000.json",
+        name="straight_line",
+        ticks=[[i * 0.1, i * 0.1, 0.0, 0.0, 0.5, 0.0, 0.0] for i in range(20)],
+    )
+    # Malformed: 4-value tick rows (missing the three cmd columns).
+    _write_recording(
+        tmp_path / "go2_bad_v0.50_001.json",
+        name="straight_line",
+        ticks=[[i * 0.1, i * 0.1, 0.0, 0.0] for i in range(20)],
+    )
+    opm = score_dir(tmp_path, tolerances_cm=[10], plots=False)
+    assert len(opm.points) == 1
+
+
 def test_path_set_is_the_full_battery():
     names = set(path_set())
     assert names == {

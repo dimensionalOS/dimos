@@ -99,22 +99,11 @@ def score_recordings(
     points: list[OperatingPoint] = []
     runs: list[dict[str, Any]] = []
     for rec in recs:
-        ref = rec.reference_path()
-        executed = _executed_from_recording(rec)
-        s = score_run(ref, executed)
-        points.append(
-            OperatingPoint(
-                path=rec.path,
-                speed=rec.speed,
-                cte_max=s.cte_max,
-                cte_rms=s.cte_rms,
-                arrived=s.arrived,
-                heading_err_rms=s.heading_err_rms,
-                heading_err_max=s.heading_err_max,
-            )
-        )
-        runs.append(
-            {
+        try:
+            ref = rec.reference_path()
+            executed = _executed_from_recording(rec)
+            s = score_run(ref, executed)
+            run = {
                 "path": rec.path,
                 "speed": rec.speed,
                 "cte_max": s.cte_max,
@@ -126,7 +115,23 @@ def score_recordings(
                 "ref": [(p[0], p[1]) for p in rec.reference],
                 "exec": [(tk[1], tk[2]) for tk in rec.ticks],
             }
+        except (ValueError, TypeError, IndexError) as e:
+            logger.warning(
+                f"skipping malformed recording (path={rec.path!r}, speed={rec.speed}): {e}"
+            )
+            continue
+        points.append(
+            OperatingPoint(
+                path=rec.path,
+                speed=rec.speed,
+                cte_max=s.cte_max,
+                cte_rms=s.cte_rms,
+                arrived=s.arrived,
+                heading_err_rms=s.heading_err_rms,
+                heading_err_max=s.heading_err_max,
+            )
         )
+        runs.append(run)
     speeds = sorted({p.speed for p in points})
     inversion = invert_tolerance(points, tolerances_cm)
     return OperatingPointMap(speeds=speeds, points=points, tolerance_inversion=inversion), runs
