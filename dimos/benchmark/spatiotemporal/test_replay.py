@@ -93,6 +93,65 @@ def test_replays_saved_observations_to_root_independent_bundles(tmp_path: Path) 
         assert len(bundle.answers) == len(bundle.questions)
 
 
+def test_replay_coalesces_relations_across_consecutive_sparse_samples(tmp_path: Path) -> None:
+    left = BoundingBox2D(x_min=0.1, y_min=0.2, x_max=0.2, y_max=0.4)
+    right = BoundingBox2D(x_min=0.7, y_min=0.2, x_max=0.8, y_max=0.4)
+    observations = tuple(
+        _observation(frame_id=frame_id, object_id=object_id, box=box)
+        for frame_id in (0, 150)
+        for object_id, box in (("left", left), ("right", right))
+    )
+
+    DeterministicObservationBundleGenerator(sample_schedule=((0, 0.0), (150, 15.0))).generate(
+        observations, tmp_path / "bundle", "1" * 64
+    )
+    intervals = load_bundle(tmp_path / "bundle").relation_intervals
+
+    assert len(intervals) == 2
+    assert all(interval.start_frame_id == 0 for interval in intervals)
+    assert all(interval.end_frame_id == 150 for interval in intervals)
+    assert all(interval.evidence_frame_ids == (0, 150) for interval in intervals)
+
+
+def test_replay_does_not_bridge_an_empty_intervening_sample(tmp_path: Path) -> None:
+    left = BoundingBox2D(x_min=0.1, y_min=0.2, x_max=0.2, y_max=0.4)
+    right = BoundingBox2D(x_min=0.7, y_min=0.2, x_max=0.8, y_max=0.4)
+    observations = tuple(
+        _observation(frame_id=frame_id, object_id=object_id, box=box)
+        for frame_id in (0, 300)
+        for object_id, box in (("left", left), ("right", right))
+    )
+
+    DeterministicObservationBundleGenerator(
+        sample_schedule=((0, 0.0), (150, 15.0), (300, 30.0))
+    ).generate(observations, tmp_path / "bundle", "1" * 64)
+    intervals = load_bundle(tmp_path / "bundle").relation_intervals
+
+    assert len(intervals) == 4
+    assert all(interval.start_frame_id == interval.end_frame_id for interval in intervals)
+
+
+def test_replay_observations_accepts_complete_sample_schedule(tmp_path: Path) -> None:
+    left = BoundingBox2D(x_min=0.1, y_min=0.2, x_max=0.2, y_max=0.4)
+    right = BoundingBox2D(x_min=0.7, y_min=0.2, x_max=0.8, y_max=0.4)
+    observations = tuple(
+        _observation(frame_id=frame_id, object_id=object_id, box=box)
+        for frame_id in (0, 150)
+        for object_id, box in (("left", left), ("right", right))
+    )
+    observations_path = tmp_path / "observations.jsonl"
+    write_observations(observations_path, observations)
+
+    replay_observations(
+        observations_path,
+        tmp_path / "bundle",
+        "1" * 64,
+        sample_schedule=((0, 0.0), (150, 15.0)),
+    )
+
+    assert len(load_bundle(tmp_path / "bundle").relation_intervals) == 2
+
+
 @pytest.mark.parametrize(
     ("observations", "expected_code", "expected_guidance"),
     [

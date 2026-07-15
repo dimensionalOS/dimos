@@ -78,9 +78,34 @@ def _build_interval(facts: Sequence[RelationFact]) -> RelationInterval:
     )
 
 
-def build_relation_intervals(facts: Sequence[RelationFact]) -> tuple[RelationInterval, ...]:
-    """Coalesce consecutive facts that share episode and relation identity."""
+def _sample_positions(
+    facts: Sequence[RelationFact], sample_schedule: Sequence[tuple[int, float]]
+) -> dict[int, int]:
+    if any(
+        current_frame >= next_frame or current_timestamp >= next_timestamp
+        for (current_frame, current_timestamp), (next_frame, next_timestamp) in pairwise(
+            sample_schedule
+        )
+    ):
+        raise ValueError("conflicting sample schedule")
+    schedule_by_frame = dict(sample_schedule)
+    if len(schedule_by_frame) != len(sample_schedule):
+        raise ValueError("conflicting sample schedule")
+    if any(schedule_by_frame.get(fact.frame_id) != fact.timestamp_s for fact in facts):
+        raise ValueError("fact is absent from sample schedule")
+    return {frame_id: index for index, (frame_id, _) in enumerate(sample_schedule)}
+
+
+def build_relation_intervals(
+    facts: Sequence[RelationFact],
+    *,
+    sample_schedule: Sequence[tuple[int, float]] | None = None,
+) -> tuple[RelationInterval, ...]:
+    """Coalesce stable relations across adjacent sampled frames."""
     _validate_sample_schedules(facts)
+    sample_positions = (
+        _sample_positions(facts, sample_schedule) if sample_schedule is not None else None
+    )
     ordered = sorted(
         facts,
         key=lambda fact: (
@@ -92,11 +117,17 @@ def build_relation_intervals(facts: Sequence[RelationFact]) -> tuple[RelationInt
     )
     groups: list[list[RelationFact]] = []
     for fact in ordered:
+        previous = groups[-1][-1] if groups else None
+        adjacent = (
+            sample_positions[fact.frame_id] == sample_positions[previous.frame_id] + 1
+            if sample_positions is not None and previous is not None
+            else previous is not None and fact.frame_id == previous.frame_id + 1
+        )
         if (
-            groups
-            and fact.episode_id == groups[-1][-1].episode_id
-            and fact.relation_id == groups[-1][-1].relation_id
-            and fact.frame_id == groups[-1][-1].frame_id + 1
+            previous is not None
+            and fact.episode_id == previous.episode_id
+            and fact.relation_id == previous.relation_id
+            and adjacent
         ):
             groups[-1].append(fact)
         else:

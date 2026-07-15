@@ -57,6 +57,34 @@ def _fact(
     )
 
 
+def test_coalesces_relations_at_consecutive_sparse_samples() -> None:
+    from dimos.benchmark.spatiotemporal.intervals import build_relation_intervals
+
+    intervals = build_relation_intervals(
+        (_fact(0, 0.0), _fact(150, 5.0)),
+        sample_schedule=((0, 0.0), (150, 5.0), (300, 10.0)),
+    )
+
+    assert len(intervals) == 1
+    assert intervals[0].start_frame_id == 0
+    assert intervals[0].end_frame_id == 150
+    assert intervals[0].evidence_frame_ids == (0, 150)
+
+
+def test_relation_absent_at_intervening_sample_breaks_interval() -> None:
+    from dimos.benchmark.spatiotemporal.intervals import build_relation_intervals
+
+    intervals = build_relation_intervals(
+        (_fact(0, 0.0), _fact(300, 10.0)),
+        sample_schedule=((0, 0.0), (150, 5.0), (300, 10.0)),
+    )
+
+    assert [(interval.start_frame_id, interval.end_frame_id) for interval in intervals] == [
+        (0, 0),
+        (300, 300),
+    ]
+
+
 def test_coalesces_only_consecutive_samples_with_stable_relation_identity() -> None:
     from dimos.benchmark.spatiotemporal.intervals import build_relation_intervals
 

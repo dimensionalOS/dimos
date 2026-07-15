@@ -220,12 +220,16 @@ def _detector_factory() -> Yoloe2DDetector:
 
 def _sample_observations(
     video: Path, frame_stride: int
-) -> tuple[tuple[ObjectObservation, ...], YoloeAdapterStatistics]:
+) -> tuple[
+    tuple[ObjectObservation, ...],
+    YoloeAdapterStatistics,
+    tuple[tuple[int, float], ...],
+]:
     detector = YoloeObservationDetector(prompts=DEFAULT_PROMPTS, detector_factory=_detector_factory)
     sampler = OpenCVVideoSampler(detector=detector, frame_stride=frame_stride)
     try:
         observations = sampler.sample(video, "office_robot_25s")
-        return observations, detector.statistics
+        return observations, detector.statistics, sampler.sample_schedule
     finally:
         sampler.close()
 
@@ -240,9 +244,15 @@ def _teacher_run(
     second_root = _safe_child(output_root, "bundle-b")
     _reset_directory(first_root)
     _reset_directory(second_root)
-    observations, detector_statistics = _sample_observations(video, frame_stride)
-    repeated_observations, repeated_statistics = _sample_observations(video, frame_stride)
-    if observations != repeated_observations or detector_statistics != repeated_statistics:
+    observations, detector_statistics, sample_schedule = _sample_observations(video, frame_stride)
+    repeated_observations, repeated_statistics, repeated_schedule = _sample_observations(
+        video, frame_stride
+    )
+    if (
+        observations != repeated_observations
+        or detector_statistics != repeated_statistics
+        or sample_schedule != repeated_schedule
+    ):
         raise RuntimeError("YOLO-E observations differ across independent detector runs")
     write_observations(observations_path, observations)
     source_video_sha256 = sha256(video.read_bytes()).hexdigest()
@@ -250,11 +260,13 @@ def _teacher_run(
         observations_path,
         first_root,
         source_video_sha256,
+        sample_schedule=sample_schedule,
     )
     second = replay_observations(
         observations_path,
         second_root,
         source_video_sha256,
+        sample_schedule=sample_schedule,
     )
     if first.logical_sha256 != second.logical_sha256:
         raise RuntimeError("bundle logical hashes differ across output roots")
@@ -275,7 +287,7 @@ def _teacher_run(
         "questions": len(first_bundle.questions),
         "relation_facts": len(first_bundle.relation_facts),
         "relation_intervals": len(first_bundle.relation_intervals),
-        "sampled_frames": len({observation.frame_id for observation in observations}),
+        "sampled_frames": len(sample_schedule),
         "source_video_sha256": source_video_sha256,
         "spatial_questions": sum(
             question.question_kind.value == "spatial" for question in first_bundle.questions

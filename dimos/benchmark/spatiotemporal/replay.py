@@ -116,8 +116,14 @@ def _spatial_answer(question: Question, facts: Sequence[RelationFact]) -> Oracle
 class DeterministicObservationBundleGenerator:
     """Generate deterministic bundles from canonical object observations."""
 
-    def __init__(self, *, relation_margin: float = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        relation_margin: float = 0.0,
+        sample_schedule: Sequence[tuple[int, float]] | None = None,
+    ) -> None:
         self._relation_margin = relation_margin
+        self._sample_schedule = tuple(sample_schedule) if sample_schedule is not None else None
 
     def generate(
         self,
@@ -144,7 +150,7 @@ class DeterministicObservationBundleGenerator:
                 ReplayInsufficiencyCode.NO_RELATIONS,
                 "saved observations contain no spatially separated object pairs",
             )
-        intervals = build_relation_intervals(facts)
+        intervals = build_relation_intervals(facts, sample_schedule=self._sample_schedule)
         spatial_questions = generate_spatial_questions(facts)
         temporal_cases = generate_temporal_question_cases(intervals)
         questions = tuple(
@@ -191,10 +197,13 @@ def replay_observations(
     output_root: Path,
     source_video_sha256: str,
     *,
+    sample_schedule: Sequence[tuple[int, float]] | None = None,
     generator: ObservationBundleGenerator | None = None,
 ) -> ReplayBundleResult:
     """Read canonical saved observations and generate an evaluation bundle."""
+    if generator is not None and sample_schedule is not None:
+        raise ValueError("sample_schedule cannot be combined with a custom generator")
     observations = read_observations(observations_path)
     if generator is None:
-        generator = DeterministicObservationBundleGenerator()
+        generator = DeterministicObservationBundleGenerator(sample_schedule=sample_schedule)
     return generator.generate(observations, output_root, source_video_sha256)

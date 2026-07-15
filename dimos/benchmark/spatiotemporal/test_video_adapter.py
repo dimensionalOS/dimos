@@ -79,6 +79,25 @@ class _FakeDetector:
         self.closed = True
 
 
+class _EmptyDetector(_FakeDetector):
+    def detect(self, image: Image) -> tuple[DetectedObject, ...]:
+        self.images.append(image)
+        return ()
+
+
+def test_sampler_preserves_schedule_for_zero_detection_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _FakeCapture([np.zeros((2, 3, 3), dtype=np.uint8) for _ in range(3)])
+    detector = _EmptyDetector()
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _: capture)
+
+    sampler = OpenCVVideoSampler(detector=detector)
+
+    assert sampler.sample(Path("episode.mp4"), episode_id="episode-1") == ()
+    assert sampler.sample_schedule == ((0, 0.0), (1, 0.5), (2, 1.0))
+
+
 def test_sampler_deterministically_normalizes_sampled_frames_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

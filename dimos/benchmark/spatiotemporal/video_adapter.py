@@ -32,12 +32,14 @@ class OpenCVVideoSampler:
             raise ValueError("frame_stride must be positive")
         self._detector = detector
         self._frame_stride = frame_stride
+        self._sample_schedule: tuple[tuple[int, float], ...] = ()
         self._closed = False
 
     def sample(self, video_path: Path, episode_id: str) -> tuple[ObjectObservation, ...]:
         """Return detector observations for every selected source frame."""
         capture = cv2.VideoCapture(str(video_path))
         observations: list[ObjectObservation] = []
+        sample_schedule: list[tuple[int, float]] = []
         try:
             if not capture.isOpened():
                 raise RuntimeError(f"failed to open video: {video_path}")
@@ -58,6 +60,7 @@ class OpenCVVideoSampler:
                     raise ValueError(f"decoded frame {frame_id} must have BGR dimensions")
                 if frame_id % self._frame_stride == 0:
                     timestamp_s = frame_id / fps
+                    sample_schedule.append((frame_id, timestamp_s))
                     image = Image.from_numpy(
                         cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
                         format=ImageFormat.RGB,
@@ -79,7 +82,13 @@ class OpenCVVideoSampler:
                 frame_id += 1
         finally:
             capture.release()
+        self._sample_schedule = tuple(sample_schedule)
         return tuple(observations)
+
+    @property
+    def sample_schedule(self) -> tuple[tuple[int, float], ...]:
+        """Return every selected frame, including frames with no detections."""
+        return self._sample_schedule
 
     def close(self) -> None:
         """Release the detector owned by this sampler."""
