@@ -27,6 +27,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.fiducial.marker_localization import (
+    MAP_FRAME,
     OPTICAL_FRAME,
     LocalizationConfig,
     detect_markers,
@@ -53,6 +54,11 @@ class MarkerLocalizationModuleConfig(ModuleConfig):
     ambiguity_ratio_min: float = Field(2.0, ge=1.0)
     camera_info: CameraInfo | None = None  # static, MarkerDetectionStreamModule convention
     camera_optical_frame: str = OPTICAL_FRAME
+    # target frame for the published correction TF (world -> map_frame) and the pose output's
+    # frame_id; unchanged default keeps this module's publish identical to RelocalizationModule's
+    # world -> map. Override (e.g. "map_marker") to run this module in shadow mode alongside
+    # RelocalizationModule (which owns "map") for side-by-side evaluation of the two correctors.
+    map_frame: str = MAP_FRAME
 
 
 class MarkerLocalizationModule(Module):
@@ -89,6 +95,7 @@ class MarkerLocalizationModule(Module):
         if pose is None:
             logger.warning(f"MarkerLocalizationModule: gate rejected ({len(detections)} tags seen)")
             return
+        pose.frame_id = self.config.map_frame  # retarget map_T_optical before inverting/publishing
         optical = self.config.camera_optical_frame
         if (world_T_optical := self.tf.get(WORLD_FRAME, optical, time_point=msg.ts)) is None:
             logger.warning(

@@ -430,6 +430,38 @@ def test_module_config_threads_ambiguity_ratio_into_gate() -> None:
         MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=0.5)
 
 
+async def test_module_config_map_frame_defaults_to_map() -> None:
+    """Default config leaves the published TF's target frame unchanged (``MAP_FRAME``), so
+    existing deployments and RelocalizationModule's own ``world -> map`` publish see identical
+    behavior when this option is left untouched."""
+    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    assert module.config.map_frame == MAP_FRAME
+    module._marker_map = _MARKER_MAP
+    try:
+        module.tf.publish(world_T_optical())
+        await module.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
+        assert module.tf.get("world", MAP_FRAME) is not None
+    finally:
+        module.stop()
+
+
+async def test_module_config_map_frame_retargets_published_tf() -> None:
+    """A custom ``map_frame`` (e.g. ``-o markerlocalizationmodule.map_frame=map_marker``) retargets
+    the published correction TF, enabling shadow-mode side-by-side evaluation against
+    RelocalizationModule (which continues to own the default ``map`` frame)."""
+    module = MarkerLocalizationModule(
+        marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info(), map_frame="map_marker"
+    )
+    module._marker_map = _MARKER_MAP
+    try:
+        module.tf.publish(world_T_optical())
+        await module.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
+        assert module.tf.get("world", "map_marker") is not None
+        assert module.tf.get("world", MAP_FRAME) is None  # default target untouched
+    finally:
+        module.stop()
+
+
 async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> None:
     """A non-default ``camera_optical_frame`` is used for the TF lookup, and a lookup miss
     (mis-named frame, missing static chain) warns instead of going dark."""
