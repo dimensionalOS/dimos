@@ -134,7 +134,7 @@ class HostedTeleopModule(Module):
         self._state_back_channel: RTCDataChannel | None = None
         self._state_back_channel_id: int | None = None
 
-        self._video_track = CameraVideoTrack()
+        self._video_track: CameraVideoTrack | None = None
         self._cmd_stats = LiveStreamStats()
 
         self._control_loop_thread: threading.Thread | None = None
@@ -152,8 +152,6 @@ class HostedTeleopModule(Module):
     def start(self) -> None:
         super().start()
         self._stop_event.clear()
-        unsub = self.color_image.subscribe(self._video_track.set_latest)
-        self.register_disposable(Disposable(unsub))
         self._connect_blocking()
         self._start_heartbeat()
         self._start_telemetry()
@@ -183,6 +181,9 @@ class HostedTeleopModule(Module):
         self.spawn(self._connect()).result(timeout=45.0)
 
     async def _connect(self) -> None:
+        self._video_track = CameraVideoTrack(asyncio.get_running_loop())
+        unsub = self.color_image.subscribe(self._video_track.set_latest)
+        self.register_disposable(Disposable(unsub))
         self._http = httpx.AsyncClient(timeout=30.0)
 
         ice_servers = [RTCIceServer(urls=u) for u in self.config.stun_urls]
@@ -214,7 +215,7 @@ class HostedTeleopModule(Module):
                 return
             cs = self._pc.connectionState
             logger.info(f"PC state: {cs}")
-            if cs == "connected":
+            if cs == "connected" and self._video_track is not None:
                 self._video_track.arm()
             elif cs in ("failed", "closed"):
                 # Terminal — orchestrator decides whether to reconnect.

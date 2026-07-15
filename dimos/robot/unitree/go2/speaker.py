@@ -42,20 +42,17 @@ class PCMAudioTrack(MediaStreamTrack):
 
     kind = "audio"
 
-    def __init__(self) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: asyncio.AbstractEventLoop = loop
         self._queue: asyncio.Queue[tuple[bytes, int, int]] = asyncio.Queue(
             maxsize=_MAX_QUEUED_FRAMES
         )
         self._pts = 0
 
     def push(self, pcm: bytes, sample_rate: int, channels: int) -> None:
-        """Queue one interleaved-s16 frame. Thread-safe; drops until recv()
-        has bound the loop, and drops oldest when the queue is full."""
+        """Queue one interleaved-s16 frame; drops oldest when full. Thread-safe."""
         loop = self._loop
-        if loop is None or not loop.is_running():
-            return
 
         def _put() -> None:
             if self._queue.full():
@@ -65,13 +62,13 @@ class PCMAudioTrack(MediaStreamTrack):
                     pass
             self._queue.put_nowait((pcm, sample_rate, channels))
 
-        loop.call_soon_threadsafe(_put)
+        try:
+            loop.call_soon_threadsafe(_put)
+        except RuntimeError:
+            return
 
     async def recv(self) -> Any:
         import av
-
-        if self._loop is None:
-            self._loop = asyncio.get_running_loop()
 
         # Skip malformed frames rather than raise out of recv() — aiortc treats
         # that as fatal and kills operator audio for the session.
@@ -138,7 +135,7 @@ class Go2Speaker:
             if sender is None:
                 logger.warning("speaker: dog PC has no audio transceiver")
                 return False
-            self._track = PCMAudioTrack()
+            self._track = PCMAudioTrack(loop)
             loop.call_soon_threadsafe(sender.replaceTrack, self._track)
             loop.call_soon_threadsafe(drv.datachannel.switchAudioChannel, True)
             logger.debug("speaker: operator audio track attached")

@@ -56,6 +56,8 @@ if TYPE_CHECKING:
     from aiortc import RTCDataChannel, RTCIceServer, RTCPeerConnection
     import httpx
 
+    from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
+
 
 class BrokerConfig(ProviderConfig):
     """Hosted teleop broker access. ``api_key`` is required; the rest defaults."""
@@ -120,11 +122,8 @@ class BrokerProvider(AsyncProviderBase):
         self._dc_ids: dict[str, int | None] = {}
         self._callbacks: dict[str, list[Callable[[bytes, str], None]]] = defaultdict(list)
         self._dropped_publish_warned = False
-        # Camera track is built here (not lazily) so it's in the initial offer —
-        # lets the broker bridge video without renegotiating the robot side.
-        from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
-
-        self._video_track = CameraVideoTrack()
+        # Built in _connect (on the loop thread, for cross-thread set_latest).
+        self._video_track: CameraVideoTrack | None = None
         # Operator-audio sink; None drops frames until set_audio_frame_callback().
         self._audio_frame_cb: Callable[[bytes, int, int], None] | None = None
         self._audio_task: asyncio.Task[None] | None = None
@@ -186,6 +185,10 @@ class BrokerProvider(AsyncProviderBase):
                     bundlePolicy=RTCBundlePolicy.MAX_BUNDLE,
                 )
             )
+            # On the loop thread so the track's loop ref is correct for set_latest.
+            from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
+
+            self._video_track = CameraVideoTrack(asyncio.get_running_loop())
             # addTrack must precede createDataChannel (CF/aiortc workaround).
             self._pc.addTrack(self._video_track)
             if self._config.video_codec:
@@ -232,6 +235,7 @@ class BrokerProvider(AsyncProviderBase):
                 )
             )
             await wait_connected(self._pc)
+            assert self._video_track is not None  # built above
             self._video_track.arm()  # deliver frames from "now", not boot
             logger.info(
                 "Broker provider connected: session=%s robot=%s",
@@ -333,6 +337,7 @@ class BrokerProvider(AsyncProviderBase):
         if self._pc:
             await self._pc.close()
             self._pc = None
+        self._video_track = None
         if self._http:
             await self._http.aclose()
             self._http = None
@@ -564,9 +569,12 @@ class BrokerProvider(AsyncProviderBase):
     def set_video_frame(self, img: Any) -> None:
         """Robot → operator video: publish the latest camera frame.
 
-        Thread-safe; frames are dropped until the PC is connected and armed.
+        Thread-safe; frames are dropped until the PC is connected and armed
+        (the track doesn't exist before _connect / after _disconnect).
         """
-        self._video_track.set_latest(img)
+        track = self._video_track
+        if track is not None:
+            track.set_latest(img)
 
     def subscribe(self, topic: str, callback: Callable[[bytes, str], None]) -> Callable[[], None]:
         """Subscribers receive the bytes of the inbound channel matching

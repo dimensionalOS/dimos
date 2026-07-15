@@ -28,18 +28,22 @@ _SR = 48_000
 _FRAME = b"\x01\x02" * 960
 
 
-def test_push_before_loop_is_dropped() -> None:
-    """Frames pushed before recv() has bound a loop must be silently dropped
-    (drain mode: an idle/unattached track costs nothing and never buffers)."""
-    track = PCMAudioTrack()
-    track.push(_FRAME, _SR, 1)
-    assert track._queue.empty()
+def test_push_before_recv_is_queued() -> None:
+    """The loop is injected at construction, so a frame pushed before the first
+    recv() is queued (no startup drop window) — it's delivered once recv runs."""
+
+    async def scenario() -> None:
+        track = PCMAudioTrack(asyncio.get_running_loop())
+        track.push(_FRAME, _SR, 1)
+        await asyncio.sleep(0)  # let the call_soon_threadsafe _put run
+        assert track._queue.qsize() == 1
+
+    asyncio.run(scenario())
 
 
 def test_recv_yields_frame_with_pts_progression() -> None:
     async def scenario() -> None:
-        track = PCMAudioTrack()
-        track._loop = asyncio.get_running_loop()
+        track = PCMAudioTrack(asyncio.get_running_loop())
         track.push(_FRAME, _SR, 1)
         track.push(_FRAME, _SR, 1)
         await asyncio.sleep(0)  # let call_soon_threadsafe callbacks run
@@ -57,8 +61,7 @@ def test_recv_yields_frame_with_pts_progression() -> None:
 
 def test_stereo_layout_and_sample_count() -> None:
     async def scenario() -> None:
-        track = PCMAudioTrack()
-        track._loop = asyncio.get_running_loop()
+        track = PCMAudioTrack(asyncio.get_running_loop())
         track.push(_FRAME, _SR, 2)  # same bytes, 2 channels → half the samples
         await asyncio.sleep(0)
 
@@ -75,8 +78,7 @@ def test_ragged_pcm_is_trimmed_not_fatal() -> None:
     operator audio for the rest of the session)."""
 
     async def scenario() -> None:
-        track = PCMAudioTrack()
-        track._loop = asyncio.get_running_loop()
+        track = PCMAudioTrack(asyncio.get_running_loop())
         track.push(_FRAME + b"\x07", _SR, 1)  # odd trailing byte
         await asyncio.sleep(0)
 
@@ -91,8 +93,7 @@ def test_unusable_frame_is_skipped() -> None:
     frame instead of raising or yielding a degenerate frame."""
 
     async def scenario() -> None:
-        track = PCMAudioTrack()
-        track._loop = asyncio.get_running_loop()
+        track = PCMAudioTrack(asyncio.get_running_loop())
         track.push(b"", _SR, 1)  # empty → skipped
         track.push(_FRAME, 0, 1)  # zero sample rate → skipped
         track.push(_FRAME, _SR, 1)  # good
@@ -110,8 +111,7 @@ def test_overflow_drops_oldest_keeps_link_live() -> None:
     _MAX_QUEUED_FRAMES and evicts the oldest frame, not the newest."""
 
     async def scenario() -> None:
-        track = PCMAudioTrack()
-        track._loop = asyncio.get_running_loop()
+        track = PCMAudioTrack(asyncio.get_running_loop())
         for i in range(_MAX_QUEUED_FRAMES + 3):
             track.push(bytes([i % 256]) * 4, _SR, 1)
         await asyncio.sleep(0)
