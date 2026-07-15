@@ -498,10 +498,11 @@ class UnitreeWebRTCConnection(Resource):
         return self.video_stream()
 
     def stop_movement(self) -> None:
-        """Cancel the auto-stop timer (used by move() for continuous commands)."""
+        """Halt the base: publish a zero twist and cancel the auto-stop timer."""
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
+        self._publish_movement(0, 0, 0)
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

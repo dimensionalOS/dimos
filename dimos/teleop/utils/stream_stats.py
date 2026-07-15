@@ -80,5 +80,5 @@ class LiveStreamStats:
             "latency_ms": e2e["p50"] if e2e else None,
             "jitter_ms": jit["p50"] if jit else None,
             "rate_hz": (len(samples) - 1) / span if span > 0 else None,
-            "throughput_bps": (sum(sizes) / span) if (sizes and span > 0) else None,
+            "throughput_bps": (sum(sizes) * 8 / span) if (sizes and span > 0) else None,
         }
