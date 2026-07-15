@@ -88,8 +88,9 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
-    dimsim_scene: str = "apt"
+    dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
+    dimsim_headless: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
