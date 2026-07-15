@@ -1,12 +1,20 @@
 ---
 title: "Remote Teleop"
+description: "Drive robots from anywhere in the world, with low latency, from a browser, phone, or VR headset."
 ---
 
-Operate a DimOS robot remotely from any browser or Quest headset over WebRTC.
+**dimTELE** is hosted teleoperation for DimOS robots: operate them remotely
+from any browser or Quest headset over WebRTC.
 The robot dials out to a hosted Cloudflare Realtime SFU broker
 ([teleop.dimensionalos.com](https://teleop.dimensionalos.com)), so you don't
 need to open any inbound ports on the robot's network — it works behind a home
 router, on Wi-Fi, or wired LAN.
+
+How low is the latency in practice? With the World Cup on, four Dimensional teammates across the globe; San Francisco, Bangalore, Buenos Aires, and Shanghai played soccer with Go2s hosted in SF, over the public internet. 
+
+Below are the latencies recorded:
+
+![Round-trip command latency to robots hosted in San Francisco: ~15 ms from San Francisco, ~114 ms from Bangalore, ~134 ms from Buenos Aires, ~160 ms from Shanghai — every route under the ~200 ms delay of a typical video call](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/teleoperation/assets/latency_four_continents.png)
 
 ## Quick Start
 
