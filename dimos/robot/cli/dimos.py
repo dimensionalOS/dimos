@@ -804,6 +804,78 @@ from dimos.memory2.cli.app import mem_app
 main.add_typer(mem_app, name="mem")
 
 
+benchmark_app = typer.Typer(
+    help="Marker/lidar localization benchmark devtool -- attach to a running "
+    "DimOS stack, record a run, and score it (dimos/mapping/benchmark/)."
+)
+main.add_typer(benchmark_app, name="benchmark")
+
+
+@benchmark_app.command("run")
+def benchmark_run(
+    mode: str = typer.Option(
+        ...,
+        "--mode",
+        help="odom | lidar | visual (marker-localization mode; 'marker' also accepted)",
+    ),
+    route: str = typer.Option(
+        ..., "--route", help="route/card name, e.g. drift-recovery, kidnapped-robot, long-corridor"
+    ),
+    variant: str | None = typer.Option(
+        None,
+        "--variant",
+        help="clean | kidnap -- optional scenario tag, folded into the scored route",
+    ),
+    notes: str = typer.Option("", "--notes", help="free-text note, stored with the run"),
+    marker_map: Path | None = typer.Option(
+        None,
+        "--marker-map",
+        help="marker-map YAML -- excludes its ids from start/end tag auto-adoption. "
+        "Omit to let any stable tag adopt.",
+    ),
+    start_end_tag: int | None = typer.Option(
+        None, "--start-end-tag", help="pin the start/end tag id and skip auto-adoption"
+    ),
+    results_dir: Path = typer.Option(
+        Path("benchmark_results"),
+        "--results-dir",
+        help="directory for the run log, CSV, and RESULTS.md (default ./benchmark_results)",
+    ),
+) -> None:
+    """Attach to a running DimOS stack, record a benchmark run, and score it.
+
+    Catches the start/end tag at runtime: with --start-end-tag, that id is
+    pinned; otherwise the first stable (seen in >=8 of the last 10 frames)
+    tag not in --marker-map (or, with no --marker-map, any stable tag) is
+    auto-adopted and printed. Ctrl+C stops, scores, and appends the row.
+    """
+    from dimos.mapping.benchmark.cli import run_benchmark
+
+    run_benchmark(
+        mode=mode,
+        route=route,
+        variant=variant,
+        notes=notes,
+        marker_map=marker_map,
+        start_end_tag=start_end_tag,
+        results_dir=results_dir,
+    )
+
+
+@benchmark_app.command("report")
+def benchmark_report(
+    results_dir: Path = typer.Option(
+        Path("benchmark_results"),
+        "--results-dir",
+        help="directory holding the benchmark CSV/RESULTS.md",
+    ),
+) -> None:
+    """Regenerate RESULTS.md from the benchmark CSV."""
+    from dimos.mapping.benchmark.cli import report_benchmark
+
+    report_benchmark(results_dir)
+
+
 @main.command()
 def cameracalibrate(
     source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
