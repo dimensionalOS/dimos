@@ -26,7 +26,11 @@ ENV CIBUILDWHEEL=1
 # produces an UNKNOWN-0.0.0 wheel with no packages (find_packages() finds
 # nothing — the repo has no __init__.py files, so the name/packages MUST
 # come from pyproject). Pinning setuptools>=70 here makes that impossible.
-RUN pip install --no-cache-dir "setuptools>=70" wheel "pybind11>=2.12" tomli
+# packaging>=24 is not optional: setuptools>=70 calls canonicalize_version()
+# with a kwarg jammy's packaging 21.3 doesn't have (TypeError at metadata
+# generation). pip is upgraded too — jammy's 22.0.2 predates PEP 660 fixes.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir "setuptools>=70" "packaging>=24" wheel "pybind11>=2.12" tomli
 COPY . /src
 RUN pip wheel --no-deps --no-build-isolation --wheel-dir /wheels /src \
     && ls -l /wheels \
