@@ -1936,6 +1936,7 @@ tests = [
     { name = "pytest-env" },
     { name = "pytest-error-for-skips" },
     { name = "pytest-mock" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "python-can" },
@@ -1984,6 +1985,7 @@ tests-self-hosted = [
     { name = "pytest-env" },
     { name = "pytest-error-for-skips" },
     { name = "pytest-mock" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "python-can" },
@@ -2215,6 +2217,7 @@ tests = [
     { name = "pytest-env", specifier = "==1.1.5" },
     { name = "pytest-error-for-skips", specifier = ">=2.0.2" },
     { name = "pytest-mock", specifier = "==3.15.0" },
+    { name = "pytest-rerunfailures", specifier = ">=15.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "python-can", specifier = ">=4" },
@@ -2265,6 +2268,7 @@ tests-self-hosted = [
     { name = "pytest-env", specifier = "==1.1.5" },
     { name = "pytest-error-for-skips", specifier = ">=2.0.2" },
     { name = "pytest-mock", specifier = "==3.15.0" },
+    { name = "pytest-rerunfailures", specifier = ">=15.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "python-can", specifier = ">=4" },
@@ -7137,6 +7141,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/99/3323ee5c16b3637b4d941c362182d3e749c11e400bea31018c42219f3a98/pytest_mock-3.15.0.tar.gz", hash = "sha256:ab896bd190316b9d5d87b277569dfcdf718b2d049a2ccff5f7aca279c002a1cf", size = 33838, upload-time = "2025-09-04T20:57:48.679Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/b3/7fefc43fb706380144bcd293cc6e446e6f637ddfa8b83f48d1734156b529/pytest_mock-3.15.0-py3-none-any.whl", hash = "sha256:ef2219485fb1bd256b00e7ad7466ce26729b30eadfc7cbcdb4fa9a92ca68db6f", size = 10050, upload-time = "2025-09-04T20:57:47.274Z" },
+]
+
+[[package]]
+name = "pytest-rerunfailures"
+version = "16.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/47/60/a90ca1cc6cffcb97b4260ed0ad2b7934b999d7c48abe4ea0840344862a3b/pytest_rerunfailures-16.4.tar.gz", hash = "sha256:8222d17c37eb7b9e4d6fc96a3c724ff4e1a5c97a5cc7cbb2c19e9282cfd21a11", size = 36635, upload-time = "2026-07-01T06:30:56.813Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/93/3cdcc4033444e822e01b573414b03fd37fd5533070c750477b8f5fa5224b/pytest_rerunfailures-16.4-py3-none-any.whl", hash = "sha256:f69b5beb39622c90d1e44bd945d826eff6db545dcf0b68f52b7e4ad15eaf6d6c", size = 16955, upload-time = "2026-07-01T06:30:55.333Z" },
 ]
 
 [[package]]

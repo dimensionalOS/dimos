@@ -13,6 +13,7 @@
  */
 
 import { LCM } from "../vendor/lcm/lcm.ts";
+import { parseUrl } from "../vendor/lcm/url.ts";
 import { decodePacket } from "../vendor/lcm/transport.ts";
 import { MAGIC_SHORT, SHORT_HEADER_SIZE } from "../vendor/lcm/types.ts";
 import { serveDir } from "@std/http/file-server";
@@ -21,8 +22,16 @@ import { ServerPhysics } from "./physics.ts";
 
 // Magic prefix for Rapier world snapshot (ASCII "DSSN")
 const SNAPSHOT_MAGIC = 0x4453534E;
-const DEFAULT_LCM_PORT = 7667;
-const DEFAULT_LCM_HOST = "239.255.76.67";
+
+// Honor LCM_DEFAULT_URL (the env var liblcm itself uses) so callers such as
+// pytest sessions can point the bridge at their private bus.
+function envLcmUrl(): string {
+  const q = Deno.permissions.querySync({ name: "env", variable: "LCM_DEFAULT_URL" });
+  return q.state === "granted" ? (Deno.env.get("LCM_DEFAULT_URL") ?? "") : "";
+}
+const envLcm = parseUrl(envLcmUrl());
+const DEFAULT_LCM_PORT = envLcm.port;
+const DEFAULT_LCM_HOST = envLcm.host;
 
 const SCENE_MIME: Record<string, string> = {
   js: "application/javascript; charset=utf-8",
