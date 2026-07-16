@@ -34,6 +34,7 @@ from dimos.robot.booster.b1.python_camera import (
     BoosterCameraPython,
     _FrameAgeMetrics,
     _FrameAgeSnapshot,
+    _PublishRateLimiter,
     booster_camera_info_to_dimos,
     booster_compressed_image_to_dimos,
     booster_depth_image_to_dimos,
@@ -93,6 +94,20 @@ def test_frame_age_metrics_aggregate_source_age_and_reset(mocker) -> None:
     assert empty_snapshot.frames == 0
     assert empty_snapshot.frame_age_ms is None
     assert empty_snapshot.bridge_ms is None
+
+
+def test_publish_rate_limiter_drops_frames_until_interval_elapses() -> None:
+    limiter = _PublishRateLimiter(rate_hz=10.0)
+
+    decisions = [limiter.allow(now) for now in (1.0, 1.05, 1.099, 1.1, 1.15, 1.201)]
+
+    assert decisions == [True, False, False, True, False, True]
+
+
+def test_publish_rate_limiter_is_disabled_when_rate_is_unset() -> None:
+    limiter = _PublishRateLimiter(rate_hz=None)
+
+    assert [limiter.allow(1.0), limiter.allow(1.0)] == [True, True]
 
 
 def test_raw_color_conversion_handles_padded_rows() -> None:
@@ -223,7 +238,9 @@ def started_camera(
     factory = mocker.Mock()
     channel_factory = mocker.patch.object(python_camera_module.booster, "ChannelFactory")
     channel_factory.Instance.return_value = factory
-    depth_enabled = getattr(request, "param", False)
+    requested_config = getattr(request, "param", {})
+    if isinstance(requested_config, bool):
+        requested_config = {"depth_enabled": requested_config}
 
     subscribers = [
         mocker.Mock(spec=["InitChannel", "CloseChannel"]),
@@ -249,10 +266,12 @@ def started_camera(
 
     camera = BoosterCameraPython(
         network_interface="eth-test",
-        depth_enabled=depth_enabled,
         rpc_transport=_FixtureRPC,
+        **requested_config,
     )
-    active_subscribers = subscribers if depth_enabled else [subscribers[0], subscribers[2]]
+    active_subscribers = (
+        subscribers if camera.config.depth_enabled else [subscribers[0], subscribers[2]]
+    )
     try:
         camera.start()
         yield (
@@ -331,6 +350,43 @@ def test_color_callback_records_metrics_after_publish(started_camera, mocker) ->
     image = publish.call_args.args[0]
     assert events == ["publish", "record"]
     record.assert_called_once_with(image.ts, 42.0, image.data.nbytes)
+
+
+@pytest.mark.parametrize(
+    "started_camera",
+    [{"publish_rate_hz": 10.0}],
+    indirect=True,
+)
+def test_color_callback_drops_frames_before_conversion(started_camera, mocker) -> None:
+    camera, _, _ = started_camera
+    message = booster.Image()
+    set_header(message)
+    message.height = 1
+    message.width = 1
+    message.encoding = "rgb8"
+    message.is_bigendian = 0
+    message.step = 3
+    message.data = [1, 2, 3]
+    conversion = mocker.patch.object(
+        python_camera_module,
+        "booster_image_to_dimos",
+        wraps=booster_image_to_dimos,
+    )
+    publish = mocker.patch.object(camera.color_image, "publish")
+    mocker.patch.object(camera._color_metrics, "record")
+    mocker.patch.object(camera, "_maybe_log_metrics")
+    mocker.patch.object(
+        python_camera_module.time,
+        "perf_counter",
+        side_effect=[1.0, 1.05, 1.1],
+    )
+
+    camera._handle_color(message)
+    camera._handle_color(message)
+    camera._handle_color(message)
+
+    assert conversion.call_count == 2
+    assert publish.call_count == 2
 
 
 @pytest.mark.parametrize(

@@ -56,6 +56,7 @@ class BoosterCameraPythonConfig(ModuleConfig):
     network_interface: str | None = Field(default_factory=camera_network_interface_from_env)
     depth_scale: float = Field(default=DEFAULT_DEPTH_SCALE, gt=0.0)
     metrics_interval_seconds: float = Field(default=1.0, gt=0.0)
+    publish_rate_hz: float | None = Field(default=None, gt=0.0)
     color_compressed: bool = True
     depth_enabled: bool = False
     color_topic: str = DEFAULT_COLOR_TOPIC
@@ -68,6 +69,25 @@ class _Subscriber(Protocol):
     def InitChannel(self) -> None: ...
 
     def CloseChannel(self) -> None: ...
+
+
+class _PublishRateLimiter:
+    """Thread-safe, non-blocking rate limiter for one image stream."""
+
+    def __init__(self, rate_hz: float | None) -> None:
+        self._minimum_interval = 0.0 if rate_hz is None else 1.0 / rate_hz
+        self._next_allowed_at = 0.0
+        self._lock = threading.Lock()
+
+    def allow(self, now: float) -> bool:
+        """Return whether a frame arriving at the monotonic time should publish."""
+        if self._minimum_interval == 0.0:
+            return True
+        with self._lock:
+            if now < self._next_allowed_at:
+                return False
+            self._next_allowed_at = now + self._minimum_interval
+            return True
 
 
 @dataclass(frozen=True)
@@ -305,6 +325,7 @@ class BoosterCameraPython(Module, perception.DepthCamera):
         self._metrics_log_lock = threading.Lock()
         self._started = threading.Event()
         self._reset_metrics()
+        self._reset_publish_rate_limiters()
 
     @rpc
     def start(self) -> None:
@@ -313,6 +334,7 @@ class BoosterCameraPython(Module, perception.DepthCamera):
                 return
             super().start()
             self._reset_metrics()
+            self._reset_publish_rate_limiters()
             booster.ChannelFactory.Instance().Init(0, self.config.network_interface or "")
 
             if self.config.color_compressed:
@@ -375,6 +397,10 @@ class BoosterCameraPython(Module, perception.DepthCamera):
         self._depth_camera_info_metrics = _FrameAgeMetrics()
         self._last_metrics_log = time.perf_counter()
 
+    def _reset_publish_rate_limiters(self) -> None:
+        self._color_publish_rate = _PublishRateLimiter(self.config.publish_rate_hz)
+        self._depth_publish_rate = _PublishRateLimiter(self.config.publish_rate_hz)
+
     def _log_metrics(self, stream: str, snapshot: _FrameAgeSnapshot) -> None:
         window_seconds = max(snapshot.window_seconds, 0.001)
         frame_age_ms = snapshot.frame_age_ms or {"p50": 0.0, "p95": 0.0, "max": 0.0}
@@ -428,6 +454,8 @@ class BoosterCameraPython(Module, perception.DepthCamera):
 
     def _handle_color(self, message: Any) -> None:
         processing_started = time.perf_counter()
+        if not self._color_publish_rate.allow(processing_started):
+            return
         try:
             image = booster_image_to_dimos(message)
             self.color_image.publish(image)
@@ -438,6 +466,8 @@ class BoosterCameraPython(Module, perception.DepthCamera):
 
     def _handle_compressed_color(self, message: Any) -> None:
         processing_started = time.perf_counter()
+        if not self._color_publish_rate.allow(processing_started):
+            return
         try:
             image = booster_compressed_image_to_dimos(message)
             self.color_image.publish(image)
@@ -448,6 +478,8 @@ class BoosterCameraPython(Module, perception.DepthCamera):
 
     def _handle_depth(self, message: Any) -> None:
         processing_started = time.perf_counter()
+        if not self._depth_publish_rate.allow(processing_started):
+            return
         try:
             image = booster_depth_image_to_dimos(message, self.config.depth_scale)
             self.depth_image.publish(image)

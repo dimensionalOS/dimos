@@ -99,6 +99,15 @@ ROBOT_INTERFACE=<iface> dimos run booster-b1-camera-python \
   -o boostercamerapython.depth_enabled=true
 ```
 
+To cap each enabled image stream's DimOS publishing rate, set
+`publish_rate_hz`. Excess frames are dropped before decoding or conversion;
+camera-info messages are not throttled:
+
+```bash
+ROBOT_INTERFACE=<iface> dimos run booster-b1-camera-python \
+  -o boostercamerapython.publish_rate_hz=10
+```
+
 As with the native camera, leave `ROBOT_INTERFACE` unset when running directly
 on the robot. The Python bridge decodes compressed color frames into NumPy
 images, preserves raw color formats and source timestamps, converts integer
