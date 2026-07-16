@@ -78,9 +78,7 @@ class XArmAdapter(ManipulatorAdapter):
                 print(f"ERROR: XArm at {self._ip} not reachable (connected=False)")
                 return False
 
-            # Clear any stale controller warn/error left by a previous session
-            # (e.g. a teleop fault) — otherwise set_mode/set_state below won't
-            # take and the arm starts degraded.
+            # Clear stale warn/error from a previous session, else set_mode/set_state won't take.
             if self._arm.warn_code != 0:
                 self._arm.clean_warn()
             if self._arm.error_code != 0:
@@ -248,12 +246,7 @@ class XArmAdapter(ManipulatorAdapter):
         return self.set_control_mode(ControlMode.SERVO_POSITION)
 
     def deactivate(self) -> bool:
-        """Move the arm to its initial joint pose, then disable motion + stop.
-
-        Motion is ALWAYS disabled — even if the homing move fails (e.g. the arm
-        is in a warning state) — so a failed home never leaves a real arm
-        energized. Returns True only if every step succeeded.
-        """
+        """Move the arm to its initial joint pose and enter stopped state."""
         if not self._arm:
             return False
 
