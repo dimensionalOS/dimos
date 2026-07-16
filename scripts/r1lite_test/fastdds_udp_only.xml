@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+FastDDS profile: disable the shared-memory transport, use UDPv4 only.
+
+WHY (hardware-root-caused 2026-07-17, R1 Lite onboard):
+FastDDS delivers same-host data by writing into the READER's shared-memory
+segment under /dev/shm. The Galaxea stack runs as `r1lite` (uid 1000); a
+container running as root creates its reader segments owned by root, so the
+vendor's publishers cannot write into them. Discovery (UDP multicast) still
+works, so `ros2 topic list` shows all 67 /hdas topics while `ros2 topic hz`
+reports NOTHING — the "topics visible, zero messages" trap. Sharing /dev/shm
+into the container does NOT fix this; the block is uid ownership, not the mount.
+
+Two fixes work, both hardware-verified at 200 Hz on /hdas/feedback_arm_left:
+  1. run the container as the vendor's uid (see scripts/galaxea compose `user:`)
+     — keeps SHM zero-copy, best for large payloads (pointclouds).
+  2. this profile — root-safe and uid-agnostic, at the cost of SHM. Fine for
+     the R1 Lite's traffic (200 Hz JointStates + compressed 15 Hz images) and
+     immune to whatever uid a customer's vendor stack happens to use.
+
+Use: export FASTRTPS_DEFAULT_PROFILES_FILE=/app/scripts/r1lite_test/fastdds_udp_only.xml
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>udp_only_transport</transport_id>
+            <type>UDPv4</type>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="udp_only_participant" is_default_profile="true">
+        <rtps>
+            <userTransports>
+                <transport_id>udp_only_transport</transport_id>
+            </userTransports>
+            <!-- false: do not add the default SHM+UDP builtin transports back -->
+            <useBuiltinTransports>false</useBuiltinTransports>
+        </rtps>
+    </participant>
+</profiles>
