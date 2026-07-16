@@ -18,18 +18,15 @@ from collections import defaultdict
 from collections.abc import Sequence
 from itertools import permutations
 from pathlib import Path
-from typing import cast
 
 from dimos.benchmark.spatiotemporal.bundles import load_bundle, write_bundle
 from dimos.benchmark.spatiotemporal.generation import (
-    generate_spatial_questions,
+    generate_spatial_question_cases,
     generate_temporal_question_cases,
 )
 from dimos.benchmark.spatiotemporal.intervals import build_relation_intervals
 from dimos.benchmark.spatiotemporal.models import (
     ObjectObservation,
-    OracleAnswer,
-    Question,
     RelationFact,
 )
 from dimos.benchmark.spatiotemporal.observation_io import read_observations
@@ -43,13 +40,11 @@ from dimos.benchmark.spatiotemporal.ports import (
 from dimos.benchmark.spatiotemporal.relations import (
     SpatialRelationCandidate,
     derive_above,
-    derive_below,
     derive_left_of,
-    derive_right_of,
 )
 from dimos.benchmark.spatiotemporal.utilities import SCHEMA_VERSION, stable_id
 
-_RELATION_DERIVERS = (derive_left_of, derive_right_of, derive_above, derive_below)
+_RELATION_DERIVERS = (derive_left_of, derive_above)
 
 
 def _relation_facts(
@@ -94,25 +89,6 @@ def _relation_fact(candidate: SpatialRelationCandidate) -> RelationFact:
     )
 
 
-def _spatial_answer(question: Question, facts: Sequence[RelationFact]) -> OracleAnswer:
-    subject_id, object_id = cast("tuple[str, str]", question.object_ids)
-    return OracleAnswer(
-        question_id=question.question_id,
-        expected=True,
-        evidence_frame_ids=tuple(
-            sorted(
-                {
-                    fact.frame_id
-                    for fact in facts
-                    if fact.subject_id == subject_id
-                    and fact.object_id == object_id
-                    and fact.predicate == question.predicate
-                }
-            )
-        ),
-    )
-
-
 class DeterministicObservationBundleGenerator:
     """Generate deterministic bundles from canonical object observations."""
 
@@ -151,11 +127,19 @@ class DeterministicObservationBundleGenerator:
                 "saved observations contain no spatially separated object pairs",
             )
         intervals = build_relation_intervals(facts, sample_schedule=self._sample_schedule)
-        spatial_questions = generate_spatial_questions(facts)
+        sample_frame_ids = (
+            tuple(frame_id for frame_id, _ in self._sample_schedule)
+            if self._sample_schedule is not None
+            else tuple(sorted({observation.frame_id for observation in observations}))
+        )
+        spatial_cases = generate_spatial_question_cases(facts, sample_frame_ids=sample_frame_ids)
         temporal_cases = generate_temporal_question_cases(intervals)
         questions = tuple(
             sorted(
-                (*spatial_questions, *(question for question, _ in temporal_cases)),
+                (
+                    *(question for question, _ in spatial_cases),
+                    *(question for question, _ in temporal_cases),
+                ),
                 key=lambda question: question.question_id,
             )
         )
@@ -164,10 +148,12 @@ class DeterministicObservationBundleGenerator:
                 ReplayInsufficiencyCode.NO_QUESTIONS,
                 "accepted relations produced no evaluation questions; inspect generation inputs",
             )
-        spatial_answers = tuple(_spatial_answer(question, facts) for question in spatial_questions)
         answers = tuple(
             sorted(
-                (*spatial_answers, *(answer for _, answer in temporal_cases)),
+                (
+                    *(answer for _, answer in spatial_cases),
+                    *(answer for _, answer in temporal_cases),
+                ),
                 key=lambda answer: answer.question_id,
             )
         )

@@ -84,6 +84,73 @@ def _interval(
     )
 
 
+def test_generates_balanced_spatial_question_cases() -> None:
+    from dimos.benchmark.spatiotemporal.generation import generate_spatial_question_cases
+
+    relation_id = stable_id(
+        "relation",
+        {
+            "object_ids": ("obj_red", "obj_blue"),
+            "predicate": SpatialPredicate.LEFT_OF.value,
+            "schema_version": SCHEMA_VERSION,
+        },
+    )
+    fact = RelationFact(
+        relation_id=relation_id,
+        episode_id="episode_1",
+        frame_id=12,
+        timestamp_s=0.5,
+        subject_id="obj_red",
+        predicate=SpatialPredicate.LEFT_OF,
+        object_id="obj_blue",
+        evidence_frame_ids=(12,),
+    )
+
+    cases = generate_spatial_question_cases((fact,))
+
+    assert len(cases) == 2
+    assert Counter(answer.expected for _, answer in cases) == {True: 1, False: 1}
+    assert {(question.predicate, answer.expected) for question, answer in cases} == {
+        (SpatialPredicate.LEFT_OF, True),
+        (SpatialPredicate.RIGHT_OF, False),
+    }
+    assert all(answer.evidence_frame_ids == (12,) for _, answer in cases)
+
+
+def test_spatial_cases_are_order_independent_when_relation_flips() -> None:
+    def fact(predicate: SpatialPredicate, frame_id: int) -> RelationFact:
+        return RelationFact(
+            relation_id=stable_id(
+                "relation",
+                {
+                    "object_ids": ("obj_a", "obj_b"),
+                    "predicate": predicate.value,
+                    "schema_version": SCHEMA_VERSION,
+                },
+            ),
+            episode_id="episode_1",
+            frame_id=frame_id,
+            timestamp_s=frame_id / 10,
+            subject_id="obj_a",
+            predicate=predicate,
+            object_id="obj_b",
+            evidence_frame_ids=(frame_id,),
+        )
+
+    from dimos.benchmark.spatiotemporal.generation import generate_spatial_question_cases
+
+    facts = (fact(SpatialPredicate.LEFT_OF, 1), fact(SpatialPredicate.RIGHT_OF, 2))
+    forward = generate_spatial_question_cases(facts)
+    backward = generate_spatial_question_cases(tuple(reversed(facts)))
+
+    assert tuple(
+        (question.model_dump_json(), answer.model_dump_json()) for question, answer in forward
+    ) == tuple(
+        (question.model_dump_json(), answer.model_dump_json()) for question, answer in backward
+    )
+    assert Counter(answer.expected for _, answer in forward) == {True: 2}
+
+
 def test_generates_one_public_spatial_question_per_accepted_relation() -> None:
     relation_id = stable_id(
         "relation",
@@ -115,7 +182,7 @@ def test_generates_one_public_spatial_question_per_accepted_relation() -> None:
         question.question_id
         == "question_6c4562bfb3f21f38d6086b9331af250ebd473ce9162af6bf6cb8a28d94978f83"
     )
-    assert question.text == "Is obj_red left of obj_blue?"
+    assert question.text == "Did obj_red ever appear left of obj_blue?"
     assert question.object_ids == ("obj_red", "obj_blue")
     public_record = question.model_dump(mode="json")
     assert (
@@ -210,6 +277,17 @@ def test_generates_balanced_temporal_questions_in_byte_stable_order() -> None:
         (TemporalPredicate.AFTER, True): 1,
         (TemporalPredicate.AFTER, False): 1,
     }
+
+
+def test_temporal_questions_use_human_readable_relation_descriptions() -> None:
+    first = _interval("obj_red", SpatialPredicate.LEFT_OF, "obj_blue", 1, 2)
+    second = _interval("obj_green", SpatialPredicate.ABOVE, "obj_yellow", 4, 5)
+
+    questions = tuple(question for question, _ in generate_temporal_question_cases((first, second)))
+
+    assert all("relation_" not in question.text for question in questions)
+    assert all("obj_red left of obj_blue" in question.text for question in questions)
+    assert all("obj_green above obj_yellow" in question.text for question in questions)
 
 
 def test_temporal_question_ids_are_scoped_to_episode() -> None:

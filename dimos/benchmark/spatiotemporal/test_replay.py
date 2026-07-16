@@ -14,13 +14,18 @@
 
 """Behavioral tests for deterministic observation replay."""
 
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from dimos.benchmark.spatiotemporal import replay
 from dimos.benchmark.spatiotemporal.bundles import load_bundle
-from dimos.benchmark.spatiotemporal.models import BoundingBox2D, ObjectObservation
+from dimos.benchmark.spatiotemporal.models import (
+    BoundingBox2D,
+    ObjectObservation,
+    QuestionKind,
+)
 from dimos.benchmark.spatiotemporal.observation_io import read_observations, write_observations
 from dimos.benchmark.spatiotemporal.ports import (
     ReplayInsufficiencyCode,
@@ -107,10 +112,40 @@ def test_replay_coalesces_relations_across_consecutive_sparse_samples(tmp_path: 
     )
     intervals = load_bundle(tmp_path / "bundle").relation_intervals
 
-    assert len(intervals) == 2
+    assert len(intervals) == 1
     assert all(interval.start_frame_id == 0 for interval in intervals)
     assert all(interval.end_frame_id == 150 for interval in intervals)
     assert all(interval.evidence_frame_ids == (0, 150) for interval in intervals)
+
+
+def test_replay_writes_balanced_spatial_oracles(tmp_path: Path) -> None:
+    observations = (
+        _observation(
+            frame_id=1,
+            object_id="left",
+            box=BoundingBox2D(x_min=0.1, y_min=0.2, x_max=0.2, y_max=0.4),
+        ),
+        _observation(
+            frame_id=1,
+            object_id="right",
+            box=BoundingBox2D(x_min=0.7, y_min=0.2, x_max=0.8, y_max=0.4),
+        ),
+    )
+
+    DeterministicObservationBundleGenerator().generate(observations, tmp_path / "bundle", "1" * 64)
+    bundle = load_bundle(tmp_path / "bundle")
+    spatial_ids = {
+        question.question_id
+        for question in bundle.questions
+        if question.question_kind is QuestionKind.SPATIAL
+    }
+
+    assert len(bundle.relation_facts) == 1
+    assert bundle.relation_facts[0].predicate.value == "left-of"
+    assert len(spatial_ids) == 2
+    assert Counter(
+        answer.expected for answer in bundle.answers if answer.question_id in spatial_ids
+    ) == {True: 1, False: 1}
 
 
 def test_replay_does_not_bridge_an_empty_intervening_sample(tmp_path: Path) -> None:
@@ -127,7 +162,7 @@ def test_replay_does_not_bridge_an_empty_intervening_sample(tmp_path: Path) -> N
     ).generate(observations, tmp_path / "bundle", "1" * 64)
     intervals = load_bundle(tmp_path / "bundle").relation_intervals
 
-    assert len(intervals) == 4
+    assert len(intervals) == 2
     assert all(interval.start_frame_id == interval.end_frame_id for interval in intervals)
 
 
@@ -149,7 +184,7 @@ def test_replay_observations_accepts_complete_sample_schedule(tmp_path: Path) ->
         sample_schedule=((0, 0.0), (150, 15.0)),
     )
 
-    assert len(load_bundle(tmp_path / "bundle").relation_intervals) == 2
+    assert len(load_bundle(tmp_path / "bundle").relation_intervals) == 1
 
 
 @pytest.mark.parametrize(
@@ -216,7 +251,7 @@ def test_reports_when_accepted_relations_produce_no_questions(
             box=BoundingBox2D(x_min=0.7, y_min=0.1, x_max=0.8, y_max=0.2),
         ),
     )
-    monkeypatch.setattr(replay, "generate_spatial_questions", lambda facts: ())
+    monkeypatch.setattr(replay, "generate_spatial_question_cases", lambda facts, **kwargs: ())
 
     with pytest.raises(ReplayInsufficiencyError) as raised:
         DeterministicObservationBundleGenerator().generate(

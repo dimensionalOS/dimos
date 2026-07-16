@@ -22,37 +22,105 @@ from dimos.benchmark.spatiotemporal.models import (
     QuestionKind,
     RelationFact,
     RelationInterval,
+    SpatialPredicate,
     TemporalPredicate,
 )
 from dimos.benchmark.spatiotemporal.utilities import stable_question_id
 
+_OPPOSITE_SPATIAL_PREDICATE = {
+    SpatialPredicate.LEFT_OF: SpatialPredicate.RIGHT_OF,
+    SpatialPredicate.RIGHT_OF: SpatialPredicate.LEFT_OF,
+    SpatialPredicate.ABOVE: SpatialPredicate.BELOW,
+    SpatialPredicate.BELOW: SpatialPredicate.ABOVE,
+}
 
-def generate_spatial_questions(facts: Sequence[RelationFact]) -> tuple[Question, ...]:
-    """Generate one answer-free public question per accepted spatial relation."""
+
+def _canonical_spatial_relation(
+    subject_id: str, predicate: SpatialPredicate, object_id: str
+) -> tuple[str, SpatialPredicate, str]:
+    if predicate is SpatialPredicate.RIGHT_OF:
+        return object_id, SpatialPredicate.LEFT_OF, subject_id
+    if predicate is SpatialPredicate.BELOW:
+        return object_id, SpatialPredicate.ABOVE, subject_id
+    return subject_id, predicate, object_id
+
+
+def _describe_relation(interval: RelationInterval) -> str:
+    return (
+        f"{interval.subject_id} {interval.predicate.value.replace('-', ' ')} {interval.object_id}"
+    )
+
+
+def generate_spatial_question_cases(
+    facts: Sequence[RelationFact],
+    *,
+    sample_frame_ids: Sequence[int] | None = None,
+) -> tuple[tuple[Question, OracleAnswer], ...]:
+    """Generate episode-level positives and only globally absent negative controls."""
     if len({fact.episode_id for fact in facts}) > 1:
         raise ValueError("spatial questions must be generated from one episode")
 
-    questions: dict[str, Question] = {}
+    grouped: dict[tuple[str, str, SpatialPredicate, str], set[int]] = {}
     for fact in facts:
-        object_ids = (fact.subject_id, fact.object_id)
-        question_id = stable_question_id(
-            episode_id=fact.episode_id,
-            object_ids=object_ids,
-            predicate=fact.predicate.value,
-            question_kind=QuestionKind.SPATIAL.value,
+        subject_id, predicate, object_id = _canonical_spatial_relation(
+            fact.subject_id, fact.predicate, fact.object_id
         )
-        questions.setdefault(
-            question_id,
-            Question(
-                question_id=question_id,
-                episode_id=fact.episode_id,
-                text=f"Is {fact.subject_id} {fact.predicate.value.replace('-', ' ')} {fact.object_id}?",
-                question_kind=QuestionKind.SPATIAL,
-                predicate=fact.predicate,
+        key = (fact.episode_id, subject_id, predicate, object_id)
+        grouped.setdefault(key, set()).update(fact.evidence_frame_ids)
+    episode_evidence = tuple(
+        sorted(
+            set(sample_frame_ids)
+            if sample_frame_ids is not None
+            else {frame_id for evidence in grouped.values() for frame_id in evidence}
+        )
+    )
+
+    cases: dict[str, tuple[Question, OracleAnswer]] = {}
+    for (episode_id, subject_id, accepted_predicate, object_id), evidence in grouped.items():
+        question_specs = [(accepted_predicate, True, tuple(sorted(evidence)))]
+        inverse_key = (episode_id, object_id, accepted_predicate, subject_id)
+        if inverse_key not in grouped:
+            question_specs.append(
+                (
+                    _OPPOSITE_SPATIAL_PREDICATE[accepted_predicate],
+                    False,
+                    episode_evidence,
+                )
+            )
+        for predicate, expected, evidence_frame_ids in question_specs:
+            object_ids = (subject_id, object_id)
+            question_id = stable_question_id(
+                episode_id=episode_id,
                 object_ids=object_ids,
-            ),
-        )
-    return tuple(questions[question_id] for question_id in sorted(questions))
+                predicate=predicate.value,
+                question_kind=QuestionKind.SPATIAL.value,
+            )
+            cases[question_id] = (
+                Question(
+                    question_id=question_id,
+                    episode_id=episode_id,
+                    text=(
+                        f"Did {subject_id} ever appear "
+                        f"{predicate.value.replace('-', ' ')} {object_id}?"
+                    ),
+                    question_kind=QuestionKind.SPATIAL,
+                    predicate=predicate,
+                    object_ids=object_ids,
+                ),
+                OracleAnswer(
+                    question_id=question_id,
+                    expected=expected,
+                    evidence_frame_ids=evidence_frame_ids,
+                ),
+            )
+    return tuple(cases[question_id] for question_id in sorted(cases))
+
+
+def generate_spatial_questions(facts: Sequence[RelationFact]) -> tuple[Question, ...]:
+    """Generate one answer-free public question per accepted spatial relation."""
+    return tuple(
+        question for question, answer in generate_spatial_question_cases(facts) if answer.expected
+    )
 
 
 def generate_temporal_question_cases(
@@ -100,6 +168,10 @@ def generate_temporal_question_cases(
             interval_proofs,
             key=lambda proof: (proof[0].interval_id, proof[1].interval_id),
         )
+        descriptions = {
+            first.relation_id: _describe_relation(first),
+            second.relation_id: _describe_relation(second),
+        }
         for predicate, references, expected in (
             (
                 TemporalPredicate.BEFORE,
@@ -131,7 +203,10 @@ def generate_temporal_question_cases(
             question = Question(
                 question_id=question_id,
                 episode_id=first.episode_id,
-                text=(f"Did {references[0]} happen {predicate.value} {references[1]}?"),
+                text=(
+                    f'Did "{descriptions[references[0]]}" happen {predicate.value} '
+                    f'"{descriptions[references[1]]}"?'
+                ),
                 question_kind=QuestionKind.TEMPORAL,
                 predicate=predicate,
                 object_ids=(),
