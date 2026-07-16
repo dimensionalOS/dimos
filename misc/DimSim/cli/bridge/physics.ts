@@ -354,18 +354,9 @@ export class ServerPhysics {
     }
   }
 
-  /** Get current position in Three.js Y-up frame. */
-  getPosition(): { x: number; y: number; z: number } {
-    return this.body.translation();
-  }
-
   /** Get the agent's rigid body (for lidar exclusion). */
   getBody(): any {
     return this.body;
-  }
-
-  getYaw(): number {
-    return this.yaw;
   }
 
   private _step(): void {

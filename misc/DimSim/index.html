@@ -30,7 +30,6 @@
         </div>
 
         <div class="panel-content">
-            <div id="scene-info" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px;">No scene loaded</div>
             <input id="sim-level-import" type="file" accept=".json" style="display:none;" />
 
             <div style="margin-top:6px; display:flex; gap:6px;">
@@ -76,16 +75,12 @@
             </details>
           </div>
 
-          <!-- Agent sensor views (auto-opened in dimos mode) -->
-          <details class="agent-collapse" id="agent-vision-details">
+          <!-- Agent sensor views -->
+          <details class="agent-collapse">
             <summary>Agent Vision</summary>
             <div class="agent-vision">
               <div class="agent-sensor-label">RGB</div>
               <img id="agent-shot-img" class="agent-shot-img" alt="Agent POV" />
-              <div class="agent-sensor-label">Depth</div>
-              <canvas id="agent-depth-canvas" class="agent-sensor-canvas"></canvas>
-              <div class="agent-sensor-label">LiDAR</div>
-              <canvas id="agent-lidar-canvas" class="agent-sensor-canvas"></canvas>
             </div>
             <div class="agent-collapse-content">
               <div class="section-label">Last Decision</div>
