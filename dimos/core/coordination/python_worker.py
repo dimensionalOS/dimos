@@ -366,6 +366,15 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
+        try:
+            # Providers are process-scoped singletons Transport.stop() leaves
+            # running; disconnect them so the broker session's DELETE fires and
+            # the worker exits promptly instead of being reaped ~30s later.
+            from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
+
+            shutdown_all_providers()
+        except Exception:
+            logger.error("Error during worker provider shutdown", exc_info=True)
 
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
