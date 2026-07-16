@@ -47,3 +47,6 @@ class NativeCostMapper(NativeModule):
     global_map: In[PointCloud2]
     merged_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
+
+
+native_cost_mapper = NativeCostMapper.blueprint()

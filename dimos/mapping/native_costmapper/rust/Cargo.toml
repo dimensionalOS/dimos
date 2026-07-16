@@ -20,6 +20,8 @@ python = ["dep:pyo3"]
 
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }
+image = { version = "0.25", default-features = false }
+imageproc = { version = "0.27", default-features = false }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }

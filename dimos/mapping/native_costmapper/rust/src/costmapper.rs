@@ -15,6 +15,10 @@
 use std::fmt;
 
 use dimos_module::native_config;
+use image::{GrayImage, ImageBuffer, Luma, LumaA};
+use imageproc::filter::{filter, separable_filter_equal};
+use imageproc::kernel::Kernel;
+use imageproc::morphology::{grayscale_dilate, Mask};
 use lcm_msgs::geometry_msgs::{Point, Pose, Quaternion};
 use lcm_msgs::nav_msgs::{MapMetaData, OccupancyGrid};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -213,6 +217,11 @@ fn validate_algorithm(algorithm: &Algorithm) -> Result<(), CostmapError> {
                     "mark_free_radius must be finite and nonnegative",
                 ));
             }
+            if (config.mark_free_radius / config.resolution).ceil() > f64::from(u8::MAX) {
+                return Err(CostmapError::new(
+                    "mark_free_radius must not exceed 255 grid cells",
+                ));
+            }
         }
         Algorithm::Simple(config) => {
             validate_height_range(config.min_height, config.max_height)?;
@@ -352,7 +361,7 @@ fn height_cost_occupancy(
             }
         }
         let (smoothed_heights, smoothed_weights) =
-            gaussian_filter_pair(&heights, &weights, width, height, config.smoothing);
+            gaussian_filter_pair(&heights, &weights, width, height, config.smoothing)?;
         for index in 0..cell_count {
             if !observed[index] && smoothed_weights[index] > SMOOTHED_WEIGHT_MIN {
                 heights[index] = smoothed_heights[index] / smoothed_weights[index];
@@ -362,7 +371,7 @@ fn height_cost_occupancy(
     }
 
     let data = if observed.iter().any(|value| *value) {
-        height_costs(&heights, &observed, &bounds, config)
+        height_costs(&heights, &observed, &bounds, config)?
     } else {
         vec![UNKNOWN; cell_count]
     };
@@ -380,8 +389,8 @@ fn height_costs(
     observed: &[bool],
     bounds: &GridBounds,
     config: &HeightCostConfig,
-) -> Vec<i8> {
-    let (gradient_x, gradient_y) = sobel_pair(heights, bounds.width, bounds.height);
+) -> Result<Vec<i8>, CostmapError> {
+    let (gradient_x, gradient_y) = sobel_pair(heights, bounds.width, bounds.height)?;
     let resolution = config.resolution as f32;
     let ignore_noise = config.ignore_noise as f32;
     let can_climb = config.can_climb as f32;
@@ -413,7 +422,7 @@ fn height_costs(
             output[index] = cost as i8;
         }
     }
-    output
+    Ok(output)
 }
 
 fn general_occupancy(
@@ -446,7 +455,7 @@ fn general_occupancy(
             bounds.width,
             bounds.height,
             (config.mark_free_radius / config.resolution).ceil() as usize,
-        );
+        )?;
     }
 
     Ok(make_grid(
@@ -767,97 +776,25 @@ fn read_f32(data: &[u8], offset: usize, big_endian: bool) -> f32 {
     }
 }
 
-fn gaussian_kernel(sigma: f64) -> (Vec<f32>, usize) {
+fn gaussian_kernel(sigma: f64) -> Result<(Vec<f32>, usize), CostmapError> {
     let radius = (GAUSSIAN_TRUNCATE * sigma + 0.5).floor() as usize;
-    let mut kernel = Vec::with_capacity(radius * 2 + 1);
+    let kernel_size = radius
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| CostmapError::new("Gaussian kernel size overflow"))?;
+    let mut kernel = Vec::with_capacity(kernel_size);
     let mut sum = 0.0f64;
     for offset in -(radius as isize)..=(radius as isize) {
         let value = (-(offset as f64).powi(2) / (2.0 * sigma * sigma)).exp();
         kernel.push(value as f32);
         sum += value;
     }
+    debug_assert_eq!(kernel.len(), kernel_size);
     let inv_sum = (1.0 / sum) as f32;
     for value in &mut kernel {
         *value *= inv_sum;
     }
-    (kernel, radius)
-}
-
-fn convolve_rows_pair(
-    inputs: (&[f32], &[f32]),
-    outputs: (&mut [f32], &mut [f32]),
-    dimensions: (usize, usize),
-    kernel: &[f32],
-    radius: usize,
-) {
-    let (input_a, input_b) = inputs;
-    let (output_a, output_b) = outputs;
-    let (width, height) = dimensions;
-    let mut padded_a = vec![0.0f32; width + radius * 2];
-    let mut padded_b = vec![0.0f32; width + radius * 2];
-    for row in 0..height {
-        let row_start = row * width;
-        let input_range = row_start..row_start + width;
-        let padded_range = radius..radius + width;
-        padded_a[padded_range.clone()].copy_from_slice(&input_a[input_range.clone()]);
-        padded_b[padded_range].copy_from_slice(&input_b[input_range]);
-        for index in 0..radius {
-            let left = reflect_index(-(index as isize + 1), width);
-            let right = reflect_index((width + index) as isize, width);
-            padded_a[radius - 1 - index] = input_a[row_start + left];
-            padded_b[radius - 1 - index] = input_b[row_start + left];
-            padded_a[radius + width + index] = input_a[row_start + right];
-            padded_b[radius + width + index] = input_b[row_start + right];
-        }
-        for column in 0..width {
-            let mut value_a = 0.0f32;
-            let mut value_b = 0.0f32;
-            for (kernel_index, weight) in kernel.iter().enumerate() {
-                value_a += padded_a[column + kernel_index] * weight;
-                value_b += padded_b[column + kernel_index] * weight;
-            }
-            output_a[row_start + column] = value_a;
-            output_b[row_start + column] = value_b;
-        }
-    }
-}
-
-fn convolve_columns_pair(
-    inputs: (&[f32], &[f32]),
-    outputs: (&mut [f32], &mut [f32]),
-    dimensions: (usize, usize),
-    kernel: &[f32],
-    radius: usize,
-) {
-    let (input_a, input_b) = inputs;
-    let (output_a, output_b) = outputs;
-    let (width, height) = dimensions;
-    let mut padded_a = vec![0.0f32; height + radius * 2];
-    let mut padded_b = vec![0.0f32; height + radius * 2];
-    for column in 0..width {
-        for row in 0..height {
-            padded_a[radius + row] = input_a[row * width + column];
-            padded_b[radius + row] = input_b[row * width + column];
-        }
-        for index in 0..radius {
-            let top = reflect_index(-(index as isize + 1), height);
-            let bottom = reflect_index((height + index) as isize, height);
-            padded_a[radius - 1 - index] = input_a[top * width + column];
-            padded_b[radius - 1 - index] = input_b[top * width + column];
-            padded_a[radius + height + index] = input_a[bottom * width + column];
-            padded_b[radius + height + index] = input_b[bottom * width + column];
-        }
-        for row in 0..height {
-            let mut value_a = 0.0f32;
-            let mut value_b = 0.0f32;
-            for (kernel_index, weight) in kernel.iter().enumerate() {
-                value_a += padded_a[row + kernel_index] * weight;
-                value_b += padded_b[row + kernel_index] * weight;
-            }
-            output_a[row * width + column] = value_a;
-            output_b[row * width + column] = value_b;
-        }
-    }
+    Ok((kernel, radius))
 }
 
 fn gaussian_filter_pair(
@@ -866,61 +803,79 @@ fn gaussian_filter_pair(
     width: usize,
     height: usize,
     sigma: f64,
-) -> (Vec<f32>, Vec<f32>) {
-    let (kernel, radius) = gaussian_kernel(sigma);
+) -> Result<(Vec<f32>, Vec<f32>), CostmapError> {
     if width == 0 || height == 0 {
-        return (Vec::new(), Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
+    let (kernel, radius) = gaussian_kernel(sigma)?;
+    let padding = radius
+        .checked_mul(2)
+        .ok_or_else(|| CostmapError::new("Gaussian padding overflow"))?;
+    let padded_width = width
+        .checked_add(padding)
+        .ok_or_else(|| CostmapError::new("Gaussian image width overflow"))?;
+    let padded_height = height
+        .checked_add(padding)
+        .ok_or_else(|| CostmapError::new("Gaussian image height overflow"))?;
+    let channel_count = padded_width
+        .checked_mul(padded_height)
+        .and_then(|value| value.checked_mul(2))
+        .ok_or_else(|| CostmapError::new("Gaussian image allocation overflow"))?;
+    let padded_width_u32 = u32::try_from(padded_width)
+        .map_err(|_| CostmapError::new("Gaussian image width exceeds u32 limits"))?;
+    let padded_height_u32 = u32::try_from(padded_height)
+        .map_err(|_| CostmapError::new("Gaussian image height exceeds u32 limits"))?;
 
-    let mut horizontal_a = vec![0.0f32; input_a.len()];
-    let mut horizontal_b = vec![0.0f32; input_b.len()];
-    convolve_rows_pair(
-        (input_a, input_b),
-        (&mut horizontal_a, &mut horizontal_b),
-        (width, height),
-        &kernel,
-        radius,
-    );
-
-    let mut vertical_a = vec![0.0f32; input_a.len()];
-    let mut vertical_b = vec![0.0f32; input_b.len()];
-    convolve_columns_pair(
-        (&horizontal_a, &horizontal_b),
-        (&mut vertical_a, &mut vertical_b),
-        (width, height),
-        &kernel,
-        radius,
-    );
-    (vertical_a, vertical_b)
-}
-
-fn sobel_pair(input: &[f32], width: usize, height: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut gradient_x = vec![0.0f32; input.len()];
-    let mut gradient_y = vec![0.0f32; input.len()];
-    if width < 3 || height < 3 {
-        return (gradient_x, gradient_y);
-    }
-
-    // Interior cells only — border gradients are unused by height_costs.
-    for row in 1..height - 1 {
-        let above = (row - 1) * width;
-        let middle = row * width;
-        let below = (row + 1) * width;
-        for column in 1..width - 1 {
-            let index = middle + column;
-            let a0 = input[above + column - 1];
-            let a1 = input[above + column];
-            let a2 = input[above + column + 1];
-            let m0 = input[middle + column - 1];
-            let m2 = input[middle + column + 1];
-            let b0 = input[below + column - 1];
-            let b1 = input[below + column];
-            let b2 = input[below + column + 1];
-            gradient_x[index] = (a2 + 2.0 * m2 + b2) - (a0 + 2.0 * m0 + b0);
-            gradient_y[index] = (b0 + 2.0 * b1 + b2) - (a0 + 2.0 * a1 + a2);
+    // imageproc pads by continuity. Reflect-pad explicitly before filtering so
+    // the cropped result retains scipy.ndimage's half-sample symmetry.
+    let radius = radius as isize;
+    let mut pixels = Vec::with_capacity(channel_count);
+    for padded_row in 0..padded_height {
+        let row = reflect_index(padded_row as isize - radius, height);
+        for padded_column in 0..padded_width {
+            let column = reflect_index(padded_column as isize - radius, width);
+            let index = row * width + column;
+            pixels.push(input_a[index]);
+            pixels.push(input_b[index]);
         }
     }
-    (gradient_x, gradient_y)
+    let image =
+        ImageBuffer::<LumaA<f32>, Vec<f32>>::from_raw(padded_width_u32, padded_height_u32, pixels)
+            .ok_or_else(|| CostmapError::new("failed to construct Gaussian image"))?;
+    let filtered = separable_filter_equal(&image, &kernel);
+    let filtered = filtered.as_raw();
+
+    let mut output_a = Vec::with_capacity(input_a.len());
+    let mut output_b = Vec::with_capacity(input_b.len());
+    for row in 0..height {
+        for column in 0..width {
+            let index = ((row + radius as usize) * padded_width + column + radius as usize) * 2;
+            output_a.push(filtered[index]);
+            output_b.push(filtered[index + 1]);
+        }
+    }
+    Ok((output_a, output_b))
+}
+
+fn sobel_pair(
+    input: &[f32],
+    width: usize,
+    height: usize,
+) -> Result<(Vec<f32>, Vec<f32>), CostmapError> {
+    if width < 3 || height < 3 {
+        return Ok((vec![0.0; input.len()], vec![0.0; input.len()]));
+    }
+    let width = u32::try_from(width)
+        .map_err(|_| CostmapError::new("Sobel image width exceeds u32 limits"))?;
+    let height = u32::try_from(height)
+        .map_err(|_| CostmapError::new("Sobel image height exceeds u32 limits"))?;
+    let image = ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(width, height, input.to_vec())
+        .ok_or_else(|| CostmapError::new("failed to construct Sobel image"))?;
+    let horizontal = Kernel::new(&[-1.0f32, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0], 3, 3);
+    let vertical = Kernel::new(&[-1.0f32, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0], 3, 3);
+    let gradient_x: ImageBuffer<Luma<f32>, Vec<f32>> = filter(&image, horizontal, |value| value);
+    let gradient_y: ImageBuffer<Luma<f32>, Vec<f32>> = filter(&image, vertical, |value| value);
+    Ok((gradient_x.into_raw(), gradient_y.into_raw()))
 }
 
 fn reflect_index(index: isize, length: usize) -> usize {
@@ -936,42 +891,34 @@ fn reflect_index(index: isize, length: usize) -> usize {
     }
 }
 
-fn dilate_free_space(data: &mut [i8], width: usize, height: usize, radius: usize) {
-    let free_cells: Vec<usize> = data
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| (*value == FREE).then_some(index))
-        .collect();
-    let mut expanded = vec![false; data.len()];
-    let radius = radius as isize;
-    let radius_squared = radius * radius;
+fn dilate_free_space(
+    data: &mut [i8],
+    width: usize,
+    height: usize,
+    radius: usize,
+) -> Result<(), CostmapError> {
+    let width = u32::try_from(width)
+        .map_err(|_| CostmapError::new("morphology image width exceeds u32 limits"))?;
+    let height = u32::try_from(height)
+        .map_err(|_| CostmapError::new("morphology image height exceeds u32 limits"))?;
+    let radius = u8::try_from(radius)
+        .map_err(|_| CostmapError::new("free-space dilation radius exceeds 255 cells"))?;
+    let mask = GrayImage::from_raw(
+        width,
+        height,
+        data.iter()
+            .map(|value| if *value == FREE { u8::MAX } else { 0 })
+            .collect(),
+    )
+    .ok_or_else(|| CostmapError::new("failed to construct morphology image"))?;
+    let expanded = grayscale_dilate(&mask, &Mask::disk(radius));
 
-    for index in free_cells {
-        let row = (index / width) as isize;
-        let column = (index % width) as isize;
-        for row_offset in -radius..=radius {
-            for column_offset in -radius..=radius {
-                if row_offset * row_offset + column_offset * column_offset > radius_squared {
-                    continue;
-                }
-                let expanded_row = row + row_offset;
-                let expanded_column = column + column_offset;
-                if expanded_row >= 0
-                    && expanded_row < height as isize
-                    && expanded_column >= 0
-                    && expanded_column < width as isize
-                {
-                    expanded[expanded_row as usize * width + expanded_column as usize] = true;
-                }
-            }
-        }
-    }
-
-    for (value, is_expanded) in data.iter_mut().zip(expanded) {
-        if is_expanded && *value != OCCUPIED {
+    for (value, is_expanded) in data.iter_mut().zip(expanded.into_raw()) {
+        if is_expanded != 0 && *value != OCCUPIED {
             *value = FREE;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1089,6 +1036,25 @@ mod tests {
     fn invalid_algorithm_is_rejected() {
         let error = CostmapCalculator::new(&config("missing", serde_json::json!({}))).unwrap_err();
         assert!(error.to_string().contains("unknown occupancy algorithm"));
+    }
+
+    #[test]
+    fn dilation_radius_larger_than_imageproc_supports_is_rejected() {
+        let error = CostmapCalculator::new(&config(
+            "general",
+            serde_json::json!({
+                "resolution": 0.01,
+                "frame_id": null,
+                "min_height": 0.1,
+                "max_height": 2.0,
+                "mark_free_radius": 2.56
+            }),
+        ))
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("mark_free_radius must not exceed 255 grid cells"));
     }
 
     #[test]
