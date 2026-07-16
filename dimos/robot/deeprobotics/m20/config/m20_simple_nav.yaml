@@ -2,10 +2,10 @@
 #
 # Run with:
 #   dimos --transport=zenoh --zenoh-connect tcp/<aos_ip>:7447 \
-#     run m20-simple-nav --config \
-#     dimos/robot/deeprobotics/m20/config/m20_simple_nav.yaml
+#     run m20-simple-nav
 #
-# Values are validated against ReplanningAStarPlannerConfig at startup.
+# The m20-simple-nav blueprint loads this profile automatically. Values are
+# validated against ReplanningAStarPlannerConfig at startup.
 # Restart DimOS after editing this file. This first profile intentionally covers
 # only the A* objective and final-path diagnostics/smoothing introduced by the
 # M20 Simple Nav planning upgrades.

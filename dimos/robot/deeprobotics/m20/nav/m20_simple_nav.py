@@ -21,14 +21,19 @@ front/rear raw lidar topics directly.
 """
 
 from pathlib import Path
+from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.replanning_a_star.module import (
+    ReplanningAStarPlanner,
+    ReplanningAStarPlannerConfig,
+)
 from dimos.robot.deeprobotics.m20.blueprints.basic import m20
+from dimos.utils.config import load_config_mapping
 
 voxel_size = 0.05
 m20_width_clearance = 0.45
@@ -42,6 +47,23 @@ m20_rotation_diameter = 1.2
 m20_safe_radius_margin = 0.1
 map_save_dir = Path(__file__).resolve().parent / "map_save"
 map_save_path = map_save_dir / "m20_accumulated_map.pcd"
+M20_SIMPLE_NAV_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config/m20_simple_nav.yaml"
+
+
+def _load_m20_simple_nav_planner_config() -> dict[str, Any]:
+    payload = load_config_mapping(M20_SIMPLE_NAV_CONFIG_PATH)
+    try:
+        planner_values = payload["replanningastarplanner"]
+    except KeyError:
+        raise ValueError(
+            f"Config file {M20_SIMPLE_NAV_CONFIG_PATH} must define replanningastarplanner"
+        ) from None
+
+    planner_config = ReplanningAStarPlannerConfig.model_validate(planner_values)
+    return planner_config.model_dump(include=set(planner_values))
+
+
+M20_SIMPLE_NAV_PLANNER_CONFIG = _load_m20_simple_nav_planner_config()
 
 _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     executable="target/release/voxel_ray_tracing",
@@ -94,6 +116,7 @@ m20_simple_nav = autoconnect(
     ReplanningAStarPlanner.blueprint(
         robot_width=m20_width_clearance,
         robot_rotation_diameter=m20_rotation_diameter,
+        **M20_SIMPLE_NAV_PLANNER_CONFIG,
     ).remappings([(ReplanningAStarPlanner, "odometry", "slam_odom")]),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="m20")

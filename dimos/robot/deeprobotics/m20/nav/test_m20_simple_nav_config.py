@@ -14,6 +14,10 @@
 
 from pathlib import Path
 
+from dimos.navigation.replanning_a_star.module import (
+    ReplanningAStarPlanner,
+    ReplanningAStarPlannerConfig,
+)
 from dimos.robot.get_all_blueprints import get_by_name
 from dimos.utils.config import load_config_mapping
 
@@ -36,23 +40,26 @@ EXPECTED_PLANNER_CONFIG = {
 }
 
 
+def _planner_config_from_blueprint() -> ReplanningAStarPlannerConfig:
+    blueprint = get_by_name("m20-simple-nav")
+    planner_atom = next(
+        atom for atom in blueprint.blueprints if atom.module is ReplanningAStarPlanner
+    )
+    return ReplanningAStarPlannerConfig.model_validate(planner_atom.kwargs)
+
+
 def test_m20_simple_nav_profile_matches_blueprint_config() -> None:
     payload = load_config_mapping(M20_SIMPLE_NAV_CONFIG_PATH)
 
     assert set(payload) == {"replanningastarplanner"}
     assert payload["replanningastarplanner"] == EXPECTED_PLANNER_CONFIG
 
-    blueprint_config = get_by_name("m20-simple-nav").config()
-    validated = blueprint_config.model_validate(payload)
-    planner = validated.replanningastarplanner
-
-    assert planner is not None
+    planner = _planner_config_from_blueprint()
     assert planner.model_dump(include=set(EXPECTED_PLANNER_CONFIG)) == EXPECTED_PLANNER_CONFIG
 
 
 def test_m20_simple_nav_profile_enables_diagnostics_and_smoothing() -> None:
-    payload = load_config_mapping(M20_SIMPLE_NAV_CONFIG_PATH)
-    planner = payload["replanningastarplanner"]
+    planner = _planner_config_from_blueprint()
 
-    assert planner["publish_raw_path"] is True
-    assert planner["constrained_path_smoothing_enabled"] is True
+    assert planner.publish_raw_path is True
+    assert planner.constrained_path_smoothing_enabled is True
