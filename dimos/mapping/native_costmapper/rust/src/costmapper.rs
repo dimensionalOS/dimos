@@ -63,7 +63,7 @@ struct FrameId(Option<String>);
 
 impl FrameId {
     fn as_deref(&self) -> Option<&str> {
-        self.0.as_deref()
+        self.0.as_deref().filter(|frame_id| !frame_id.is_empty())
     }
 }
 
@@ -996,6 +996,17 @@ mod tests {
         assert_eq!(result.data[2 * 5 + 2], OCCUPIED);
         assert_eq!(result.data[2 * 5 + 3], UNKNOWN);
         assert_eq!(result.header.stamp, message.header.stamp);
+    }
+
+    #[test]
+    fn empty_configured_frame_id_uses_cloud_frame() {
+        let message = cloud(&[[0.0, 0.0, 0.0]]);
+        let mut config = simple_config(0.5);
+        config.config["frame_id"] = serde_json::Value::String(String::new());
+
+        let result = calculate(&message, &config).unwrap();
+
+        assert_eq!(result.header.frame_id, message.header.frame_id);
     }
 
     #[test]
