@@ -84,9 +84,12 @@ def load_recordings(recordings_dir: str | Path) -> list[RunRecording]:
             skipped += 1
             continue
         try:
-            recs.append(RunRecording(**data))
-        except TypeError:
+            rec = RunRecording(**data)
+            rec.speed = float(rec.speed)  # a non-numeric speed breaks the later sort
+        except (TypeError, ValueError):
             skipped += 1
+            continue
+        recs.append(rec)
     if skipped:
         logger.info(f"skipped {skipped} non-recording JSON file(s) in {d}")
     return recs

@@ -123,6 +123,30 @@ def test_malformed_recording_is_skipped_not_fatal(tmp_path):
     assert len(opm.points) == 1
 
 
+def test_non_numeric_speed_recording_is_skipped(tmp_path):
+    """A recording with a string speed must not reach the float-vs-str sort of
+    the speed set — skip it at load, score the rest."""
+    import json
+
+    _write_recording(
+        tmp_path / "go2_good_v0.50_000.json",
+        name="straight_line",
+        ticks=[[i * 0.1, i * 0.1, 0.0, 0.0, 0.5, 0.0, 0.0] for i in range(20)],
+    )
+    bad = tmp_path / "go2_badspeed_001.json"
+    _write_recording(
+        bad,
+        name="straight_line",
+        ticks=[[i * 0.1, i * 0.1, 0.0, 0.0, 0.5, 0.0, 0.0] for i in range(20)],
+    )
+    data = json.loads(bad.read_text())
+    data["speed"] = "fast"
+    bad.write_text(json.dumps(data))
+
+    opm = score_dir(tmp_path, tolerances_cm=[10], plots=False)
+    assert len(opm.points) == 1
+
+
 def test_path_set_is_the_full_battery():
     names = set(path_set())
     assert names == {
