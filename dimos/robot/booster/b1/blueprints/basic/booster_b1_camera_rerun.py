@@ -19,4 +19,8 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 booster_b1_camera_rerun = RerunBridgeModule.blueprint(
     blueprint=booster_camera_rerun_blueprint,
+    max_hz={
+        "world/color_image": 8.0,
+        "world/depth_image": 3.0,
+    },
 )

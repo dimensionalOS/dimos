@@ -57,6 +57,7 @@ class BoosterCameraPythonConfig(ModuleConfig):
     depth_scale: float = Field(default=DEFAULT_DEPTH_SCALE, gt=0.0)
     metrics_interval_seconds: float = Field(default=1.0, gt=0.0)
     color_compressed: bool = True
+    depth_enabled: bool = False
     color_topic: str = DEFAULT_COLOR_TOPIC
     depth_topic: str = DEFAULT_DEPTH_TOPIC
     color_camera_info_topic: str = DEFAULT_COLOR_CAMERA_INFO_TOPIC
@@ -325,18 +326,24 @@ class BoosterCameraPython(Module, perception.DepthCamera):
                     self.config.color_topic,
                 )
 
-            subscribers: list[_Subscriber] = [
-                color_subscriber,
-                booster.ImageSubscriber(self._handle_depth, self.config.depth_topic),
+            subscribers: list[_Subscriber] = [color_subscriber]
+            if self.config.depth_enabled:
+                subscribers.append(
+                    booster.ImageSubscriber(self._handle_depth, self.config.depth_topic)
+                )
+            subscribers.append(
                 booster.CameraInfoSubscriber(
                     self._handle_color_camera_info,
                     self.config.color_camera_info_topic,
-                ),
-                booster.CameraInfoSubscriber(
-                    self._handle_depth_camera_info,
-                    self.config.depth_camera_info_topic,
-                ),
-            ]
+                )
+            )
+            if self.config.depth_enabled:
+                subscribers.append(
+                    booster.CameraInfoSubscriber(
+                        self._handle_depth_camera_info,
+                        self.config.depth_camera_info_topic,
+                    )
+                )
             try:
                 for subscriber in subscribers:
                     self._subscribers.append(subscriber)
@@ -374,23 +381,6 @@ class BoosterCameraPython(Module, perception.DepthCamera):
         bridge_ms = snapshot.bridge_ms or {"p50": 0.0, "p95": 0.0, "max": 0.0}
         fps = snapshot.frames / window_seconds
         payload_mbps = snapshot.payload_bytes * 8.0 / window_seconds / 1_000_000.0
-        logger.info(
-            "Camera metrics: stream=%s fps=%.1f payload_mbps=%.1f "
-            "frame_age_ms[p50=%.1f,p95=%.1f,max=%.1f] "
-            "bridge_ms[p50=%.1f,p95=%.1f,max=%.1f] "
-            "invalid_timestamps=%d negative_ages=%d",
-            stream,
-            fps,
-            payload_mbps,
-            frame_age_ms["p50"],
-            frame_age_ms["p95"],
-            frame_age_ms["max"],
-            bridge_ms["p50"],
-            bridge_ms["p95"],
-            bridge_ms["max"],
-            snapshot.invalid_timestamps,
-            snapshot.negative_ages,
-        )
         values = {
             "fps": fps,
             "payload_mbps": payload_mbps,
@@ -424,15 +414,17 @@ class BoosterCameraPython(Module, perception.DepthCamera):
                 return
             self._last_metrics_log = now
             self._log_metrics("color", self._color_metrics.snapshot_and_reset())
-            self._log_metrics("depth", self._depth_metrics.snapshot_and_reset())
+            if self.config.depth_enabled:
+                self._log_metrics("depth", self._depth_metrics.snapshot_and_reset())
             self._log_metrics(
                 "color_camera_info",
                 self._color_camera_info_metrics.snapshot_and_reset(),
             )
-            self._log_metrics(
-                "depth_camera_info",
-                self._depth_camera_info_metrics.snapshot_and_reset(),
-            )
+            if self.config.depth_enabled:
+                self._log_metrics(
+                    "depth_camera_info",
+                    self._depth_camera_info_metrics.snapshot_and_reset(),
+                )
 
     def _handle_color(self, message: Any) -> None:
         processing_started = time.perf_counter()

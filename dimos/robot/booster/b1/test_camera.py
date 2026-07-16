@@ -32,7 +32,7 @@ def test_camera_configures_booster_sdk_native_bridge(monkeypatch) -> None:
     assert config.build_command == "nix build .#booster-camera-native"
     assert config.log_format == LogFormat.TEXT
     assert config.depth_scale == 0.001
-    assert config.image_reliable is True
+    assert config.image_reliable is False
 
 
 def test_camera_defaults_to_sdk_transports_without_robot_interface(monkeypatch) -> None:

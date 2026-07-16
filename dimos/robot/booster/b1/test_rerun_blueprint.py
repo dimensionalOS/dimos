@@ -118,6 +118,10 @@ def test_booster_camera_rerun_is_an_opt_in_bridge_blueprint() -> None:
 
     assert atom.module is RerunBridgeModule
     assert atom.kwargs["blueprint"] is booster_camera_rerun_blueprint
+    assert atom.kwargs["max_hz"] == {
+        "world/color_image": 8.0,
+        "world/depth_image": 3.0,
+    }
     assert "visual_override" not in atom.kwargs
     assert all_blueprints["booster-b1-camera-rerun"].endswith(":booster_b1_camera_rerun")
     assert get_blueprint_by_name("booster-b1-camera-rerun") is booster_b1_camera_rerun

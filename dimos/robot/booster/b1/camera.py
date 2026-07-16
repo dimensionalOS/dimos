@@ -44,7 +44,7 @@ class BoosterCameraConfig(NativeModuleConfig):
     log_format: LogFormat = LogFormat.TEXT
     network_interface: str | None = Field(default_factory=camera_network_interface_from_env)
     depth_scale: float = Field(default=DEFAULT_DEPTH_SCALE, gt=0.0)
-    image_reliable: bool = True
+    image_reliable: bool = False
     color_compressed: bool = True
     color_topic: str = DEFAULT_COLOR_TOPIC
     depth_topic: str = DEFAULT_DEPTH_TOPIC

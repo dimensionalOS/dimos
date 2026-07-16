@@ -5,11 +5,9 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
-#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -36,6 +34,7 @@ namespace
 
     constexpr auto kMainLoopInterval = std::chrono::milliseconds(50);
     constexpr double kDefaultDepthScale = 0.001;
+    constexpr size_t kImageQueueCapacity = 1;
 
     volatile std::sig_atomic_t keep_running = 1;
 
@@ -205,51 +204,6 @@ namespace
         std::vector<double> bridge_processing_ms_;
     };
 
-    double percentile(std::vector<double> &samples, double quantile)
-    {
-        if (samples.empty())
-        {
-            return 0.0;
-        }
-        std::sort(samples.begin(), samples.end());
-        const size_t index = static_cast<size_t>(
-            std::ceil(quantile * static_cast<double>(samples.size()))) -
-                             1U;
-        return samples[std::min(index, samples.size() - 1U)];
-    }
-
-    void log_metrics(const std::string &stream, FrameAgeMetrics::Snapshot snapshot)
-    {
-        const double window_seconds = std::max(snapshot.window_seconds, 0.001);
-        const double fps = static_cast<double>(snapshot.frames) / window_seconds;
-        const double megabits_per_second =
-            static_cast<double>(snapshot.bytes) * 8.0 / window_seconds / 1000000.0;
-        const double age_p50 = percentile(snapshot.frame_age_ms, 0.50);
-        const double age_p95 = percentile(snapshot.frame_age_ms, 0.95);
-        const double age_max = snapshot.frame_age_ms.empty()
-                                   ? 0.0
-                                   : snapshot.frame_age_ms.back();
-        const double processing_p50 = percentile(snapshot.bridge_processing_ms, 0.50);
-        const double processing_p95 = percentile(snapshot.bridge_processing_ms, 0.95);
-        const double processing_max = snapshot.bridge_processing_ms.empty()
-                                          ? 0.0
-                                          : snapshot.bridge_processing_ms.back();
-
-        std::cout << std::fixed << std::setprecision(1)
-                  << "Camera metrics: stream=" << stream
-                  << " fps=" << fps
-                  << " payload_mbps=" << megabits_per_second
-                  << " frame_age_ms[p50=" << age_p50
-                  << ",p95=" << age_p95
-                  << ",max=" << age_max << "]"
-                  << " bridge_ms[p50=" << processing_p50
-                  << ",p95=" << processing_p95
-                  << ",max=" << processing_max << "]"
-                  << " invalid_timestamps=" << snapshot.invalid_timestamps
-                  << " negative_ages=" << snapshot.negative_ages
-                  << std::endl;
-    }
-
     class BoosterCameraBridge
     {
     public:
@@ -306,7 +260,7 @@ namespace
 
             booster::robot::ChannelSubscriberOptions image_options;
             image_options.reliable = image_reliable;
-            image_options.executor_options.queue_capacity = 4;
+            image_options.executor_options.queue_capacity = kImageQueueCapacity;
             image_options.executor_options.overflow_policy =
                 booster::robot::ChannelSubscriberOverflowPolicy::kDropOldest;
             image_options.executor_options.dispatch_mode =
@@ -369,8 +323,8 @@ namespace
                       << ", depth_info="
                       << depth_info_subscriber_->GetMatchedPublicationsCount()
                       << std::endl;
-            log_metrics("color", color_metrics_.snapshot_and_reset());
-            log_metrics("depth", depth_metrics_.snapshot_and_reset());
+            color_metrics_.snapshot_and_reset();
+            depth_metrics_.snapshot_and_reset();
         }
 
         void shutdown() noexcept
@@ -638,7 +592,7 @@ int main(int argc, char **argv)
         bridge.initialize(
             module.arg("network_interface"),
             module.arg_float("depth_scale", kDefaultDepthScale),
-            module.arg_bool("image_reliable", true),
+            module.arg_bool("image_reliable", false),
             module.arg_bool("color_compressed"),
             module.arg("color_topic"),
             module.arg("depth_topic"),

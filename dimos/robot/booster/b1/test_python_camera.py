@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import logging
 from typing import Any
 from unittest.mock import call
 
@@ -215,11 +216,14 @@ def test_camera_info_conversion_preserves_calibration_and_roi() -> None:
 
 
 @pytest.fixture
-def started_camera(mocker) -> Iterator[tuple[BoosterCameraPython, list[Any], Any]]:
+def started_camera(
+    request: pytest.FixtureRequest, mocker
+) -> Iterator[tuple[BoosterCameraPython, list[Any], Any]]:
     mocker.patch("dimos.core.module.get_loop", return_value=(mocker.Mock(), None))
     factory = mocker.Mock()
     channel_factory = mocker.patch.object(python_camera_module.booster, "ChannelFactory")
     channel_factory.Instance.return_value = factory
+    depth_enabled = getattr(request, "param", False)
 
     subscribers = [
         mocker.Mock(spec=["InitChannel", "CloseChannel"]),
@@ -232,30 +236,63 @@ def started_camera(mocker) -> Iterator[tuple[BoosterCameraPython, list[Any], Any
         "CompressedImageSubscriber",
         return_value=subscribers[0],
     )
-    mocker.patch.object(
+    image_subscriber = mocker.patch.object(
         python_camera_module.booster,
         "ImageSubscriber",
         return_value=subscribers[1],
     )
-    mocker.patch.object(
+    camera_info_subscriber = mocker.patch.object(
         python_camera_module.booster,
         "CameraInfoSubscriber",
         side_effect=subscribers[2:],
     )
 
-    camera = BoosterCameraPython(network_interface="eth-test", rpc_transport=_FixtureRPC)
+    camera = BoosterCameraPython(
+        network_interface="eth-test",
+        depth_enabled=depth_enabled,
+        rpc_transport=_FixtureRPC,
+    )
+    active_subscribers = subscribers if depth_enabled else [subscribers[0], subscribers[2]]
     try:
         camera.start()
-        yield camera, subscribers, (factory, compressed_subscriber)
+        yield (
+            camera,
+            active_subscribers,
+            (
+                factory,
+                compressed_subscriber,
+                image_subscriber,
+                camera_info_subscriber,
+            ),
+        )
     finally:
         camera.stop()
 
 
-def test_camera_starts_and_closes_all_sdk_subscribers(started_camera) -> None:
-    camera, subscribers, (factory, compressed_subscriber) = started_camera
+def test_camera_disables_depth_subscribers_by_default(started_camera) -> None:
+    camera, subscribers, constructors = started_camera
+    factory, compressed_subscriber, image_subscriber, camera_info_subscriber = constructors
 
     factory.Init.assert_called_once_with(0, "eth-test")
     assert compressed_subscriber.call_args.args[1] == "rt/booster_video_stream"
+    image_subscriber.assert_not_called()
+    assert camera_info_subscriber.call_count == 1
+    for subscriber in subscribers:
+        subscriber.InitChannel.assert_called_once_with()
+
+    camera.stop()
+
+    for subscriber in subscribers:
+        subscriber.CloseChannel.assert_called_once_with()
+
+
+@pytest.mark.parametrize("started_camera", [True], indirect=True)
+def test_camera_starts_depth_subscribers_when_enabled(started_camera) -> None:
+    camera, subscribers, constructors = started_camera
+    _, _, image_subscriber, camera_info_subscriber = constructors
+
+    assert image_subscriber.call_args.args[1] == "rt/boostercamera/head/depth"
+    assert camera_info_subscriber.call_count == 2
     for subscriber in subscribers:
         subscriber.InitChannel.assert_called_once_with()
 
@@ -350,7 +387,41 @@ def test_camera_info_callback_records_metrics_after_publish(
     maybe_log_metrics.assert_called_once_with()
 
 
-def test_metrics_logging_snapshots_all_camera_streams_once_per_interval(
+def test_metrics_logging_skips_disabled_depth_streams(started_camera, mocker) -> None:
+    camera, _, _ = started_camera
+    camera._last_metrics_log = 10.0
+    color_snapshot = _FrameAgeSnapshot(1.0, 1, 100, 0, 0, None, None)
+    color_info_snapshot = _FrameAgeSnapshot(1.0, 1, 300, 0, 0, None, None)
+    mocker.patch.object(python_camera_module.time, "perf_counter", return_value=11.0)
+    mocker.patch.object(
+        camera._color_metrics,
+        "snapshot_and_reset",
+        return_value=color_snapshot,
+    )
+    mocker.patch.object(
+        camera._color_camera_info_metrics,
+        "snapshot_and_reset",
+        return_value=color_info_snapshot,
+    )
+    depth_snapshot = mocker.patch.object(camera._depth_metrics, "snapshot_and_reset")
+    depth_info_snapshot = mocker.patch.object(
+        camera._depth_camera_info_metrics,
+        "snapshot_and_reset",
+    )
+    log_metrics = mocker.patch.object(camera, "_log_metrics")
+
+    camera._maybe_log_metrics()
+
+    assert log_metrics.call_args_list == [
+        call("color", color_snapshot),
+        call("color_camera_info", color_info_snapshot),
+    ]
+    depth_snapshot.assert_not_called()
+    depth_info_snapshot.assert_not_called()
+
+
+@pytest.mark.parametrize("started_camera", [True], indirect=True)
+def test_metrics_logging_snapshots_all_enabled_camera_streams_once_per_interval(
     started_camera, mocker
 ) -> None:
     camera, _, _ = started_camera
@@ -393,7 +464,9 @@ def test_metrics_logging_snapshots_all_camera_streams_once_per_interval(
     ]
 
 
-def test_metrics_publish_structured_diagnostic_stream(started_camera, mocker) -> None:
+def test_metrics_publish_structured_diagnostic_stream_without_logging(
+    started_camera, mocker, caplog
+) -> None:
     camera, _, _ = started_camera
     publish = mocker.patch.object(camera.camera_metrics, "publish")
     snapshot = _FrameAgeSnapshot(
@@ -406,7 +479,8 @@ def test_metrics_publish_structured_diagnostic_stream(started_camera, mocker) ->
         bridge_ms={"p50": 1.0, "p95": 2.0, "p99": 2.5, "max": 3.0},
     )
 
-    camera._log_metrics("color", snapshot)
+    with caplog.at_level(logging.INFO):
+        camera._log_metrics("color", snapshot)
 
     message = publish.call_args.args[0]
     assert isinstance(message, MetricsArray)
@@ -426,6 +500,7 @@ def test_metrics_publish_structured_diagnostic_stream(started_camera, mocker) ->
         "invalid_timestamps": 1.0,
         "negative_ages": 2.0,
     }
+    assert "Camera metrics:" not in caplog.text
 
 
 def test_python_camera_blueprint_uses_dedicated_python_module() -> None:
