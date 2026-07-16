@@ -82,6 +82,25 @@ def _overlay_style(width: int, height: int) -> _OverlayStyle:
     )
 
 
+def _label_origin(
+    label: str,
+    *,
+    x_min: int,
+    y_min: int,
+    width: int,
+    style: _OverlayStyle,
+) -> tuple[int, int]:
+    """Position a detection label without clipping either horizontal edge."""
+    (text_width, _), _ = cv2.getTextSize(
+        label,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        style.label_font_scale,
+        style.text_thickness,
+    )
+    x = max(style.padding, min(x_min, width - text_width - style.padding))
+    return x, max(style.line_height, y_min - style.padding // 2)
+
+
 def _box_center(detection: DetectedObject) -> tuple[float, float]:
     box = detection.box
     return ((box.x_min + box.x_max) / 2.0, (box.y_min + box.y_max) / 2.0)
@@ -158,7 +177,13 @@ def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
             style.text_thickness,
         )
         label = f"{detection.label} {detection.confidence:.2f}"
-        label_origin = (x_min, max(style.line_height, y_min - style.padding // 2))
+        label_origin = _label_origin(
+            label,
+            x_min=x_min,
+            y_min=y_min,
+            width=width,
+            style=style,
+        )
         cv2.putText(
             frame,
             label,

@@ -25,6 +25,7 @@ from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
     DEFAULT_PROMPTS,
     _default_detector_factory,
+    _label_origin,
     _overlay_style,
     derive_relationship_snapshot,
     main,
@@ -142,6 +143,22 @@ def test_overlay_style_keeps_portrait_hd_text_readable() -> None:
     assert style.panel_font_scale >= 0.85
     assert style.text_thickness >= 2
     assert style.line_height >= 32
+
+
+def test_detection_label_origin_stays_inside_right_frame_edge() -> None:
+    style = _overlay_style(width=1080, height=1920)
+    label = "trash can 0.56"
+
+    x, _ = _label_origin(label, x_min=1050, y_min=500, width=1080, style=style)
+    (text_width, _), _ = cv2.getTextSize(
+        label,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        style.label_font_scale,
+        style.text_thickness,
+    )
+
+    assert x >= style.padding
+    assert x + text_width + style.padding <= 1080
 
 
 class _ChangingDetector:
