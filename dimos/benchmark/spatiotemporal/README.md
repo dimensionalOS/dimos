@@ -13,6 +13,135 @@ The core contribution is the evaluator, not a new vision model:
 - an evaluator joins predictions to private answers and emits exact diagnostics; and
 - an evaluator-only HTML viewer makes every pseudo-label claim inspectable.
 
+## 1. This PR: reproducible evaluator foundation
+
+### Interviewer fast path
+
+From a PR checkout, one script materializes assets, installs the project and prompt dependency, runs every focused quality gate, executes the real CPU demo, and prints the result locations:
+
+```bash
+gh pr checkout 2989
+./dimos/benchmark/spatiotemporal/reproduce_reference.sh
+```
+
+If Git reports that the branch is already assigned to another worktree, enter the path shown by Git and run the same script there. If setup and tests already passed, rerun only the real demo with:
+
+```bash
+./dimos/benchmark/spatiotemporal/reproduce_reference.sh --skip-setup --skip-tests
+```
+
+Then open:
+
+```bash
+open .artifacts/spatiotemporal-video-qa/evidence-viewer/index.html
+```
+
+A reviewer should establish the feature in this order:
+
+1. **Reproduce:** run the script and confirm the summary gates pass.
+2. **See:** inspect the annotated evidence viewer rather than trusting aggregate scores.
+3. **Verify privacy:** compare `bundle-a/public/` with `bundle-a/oracle/`.
+4. **Verify replay:** confirm `bundle-a` and `bundle-b` have the same logical digest.
+5. **Understand scope:** treat YOLO-E as a pseudo-label teacher and the bundled candidate as a plumbing smoke test.
+
+### What the PR proposes
+
+The PR establishes a reusable evaluator contract:
+
+```text
+video
+  -> sampled observations
+  -> canonical relation facts
+  -> sample-aware intervals
+  -> public questions + private answers/evidence
+  -> isolated candidate predictions
+  -> exact report + inspectable evidence
+```
+
+The package is intentionally divided by responsibility:
+
+```text
+contracts       models.py, utilities.py
+teacher         video_adapter.py, yoloe_adapter.py, relations.py, intervals.py
+generation      generation.py, observation_io.py, replay.py
+release         bundles.py, ports.py
+candidate       temporal_memory_answerer.py, candidate_worker.py
+evaluation      runner.py, scoring.py
+review          evidence_viewer.py
+acceptance      demo.py, reproduce_reference.sh, test_*.py
+```
+
+This PR stops at a deterministic and inspectable evaluator. It does not hide teacher defects, automatically promote generated pseudo-labels to ground truth, or claim that the smoke-candidate score measures visual intelligence.
+
+## 2. Further directions: from videos to gated self-improvement
+
+The evaluator can become the data engine for continuous improvement:
+
+```text
+new videos
+  -> generated challenge episodes
+  -> quality and disagreement gates
+  -> candidate failure clustering
+  -> human review/correction
+  -> training-data export
+  -> candidate N+1
+  -> frozen holdout evaluation
+```
+
+The next proposed components are:
+
+1. **Episode admission report:** detector confidence, track continuity, label consistency, relation contradictions, evidence coverage, and replay determinism.
+2. **Three-set registry:** a frozen reviewed regression set, a reviewed improvement set, and an unreviewed challenge pool.
+3. **Failure miner:** cluster spatial, temporal, identity, label, missing-detection, and long-horizon-memory failures.
+4. **Review workflow:** accept, correct, or reject generated episodes using the existing evidence viewer as the starting interface.
+5. **Training export:** emit only reviewed examples, with provenance back to video, teacher version, schema, and evidence.
+6. **Promotion policy:** replace a candidate only when frozen accuracy improves, critical families do not regress, and privacy, latency, and resource gates pass.
+
+Automatically generated data may enter the challenge pool immediately, but it must not enter a trusted benchmark or training set without explicit quality gates.
+
+## 3. Production path
+
+Productionization should happen in explicit stages:
+
+### Stage A — repeatable local and CI evaluation
+
+- Pin model weights, dependencies, prompts, schema, and reference assets.
+- Run package tests and a small reviewed fixture in CI.
+- Publish manifests, summary, and viewer as build artifacts.
+- Preserve candidate subprocess and public/private filesystem isolation.
+
+### Stage B — versioned episode service
+
+- Store immutable source-video hashes and schema-versioned bundles.
+- Register teacher version, prompts, thresholds, and sampling schedule.
+- Make generation idempotent by episode key.
+- Add retention and access policies for private video and oracle evidence.
+
+### Stage C — quality-gated curation
+
+- Compute automatic admission metrics.
+- Route uncertain identity, label, or relation cases to review.
+- Record reviewer corrections separately from teacher output.
+- Promote only reviewed episodes into frozen evaluation sets.
+
+### Stage D — continuous candidate evaluation
+
+- Evaluate every candidate against the same frozen set.
+- Run new videos as a separate challenge stream.
+- Track per-family accuracy, missing or invalid answers, latency, memory, and regressions.
+- Keep oracle data inaccessible to candidate containers and services.
+
+### Stage E — controlled self-improvement
+
+- Select high-value reviewed failures for training.
+- Train or tune a new candidate with complete data provenance.
+- Compare against the incumbent on untouched frozen holdouts.
+- Require policy approval before promotion and support immediate rollback.
+
+Production readiness therefore means more than deploying the demo: it requires trusted data admission, immutable versioning, observability, privacy controls, candidate promotion gates, and rollback.
+
+# Detailed implementation reference
+
 ## What this demonstrates
 
 The reference demo exercises real:
