@@ -32,6 +32,7 @@ from typing import Any
 import cv2
 
 from dimos.benchmark.spatiotemporal.bundles import EvaluationBundle, load_bundle
+from dimos.benchmark.spatiotemporal.evidence_viewer import write_evidence_viewer
 from dimos.benchmark.spatiotemporal.models import ObjectObservation, Question, QuestionId
 from dimos.benchmark.spatiotemporal.observation_io import write_observations
 from dimos.benchmark.spatiotemporal.replay import replay_observations
@@ -431,8 +432,18 @@ def run_demo(
             duration_s,
         )
     candidate = _score_candidate(bundle, predictions, runtime)
+    viewer_result = write_evidence_viewer(
+        video,
+        bundle,
+        _safe_child(output_root, "evidence-viewer"),
+    )
     summary = {
         "candidate": candidate,
+        "review": {
+            "evidence_frame_count": viewer_result.evidence_frame_count,
+            "index_path": f"evidence-viewer/{viewer_result.index_path}",
+            "question_count": viewer_result.question_count,
+        },
         "teacher": teacher,
         "video": {
             "duration_s": duration_s,

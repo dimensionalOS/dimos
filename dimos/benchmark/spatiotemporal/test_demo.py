@@ -102,11 +102,55 @@ def test_demo_uses_ephemeral_candidate_root_outside_teacher_output(
 
     monkeypatch.setattr(demo, "_run_temporal_memory_candidate", candidate)
     monkeypatch.setattr(demo, "_score_candidate", lambda *_: {})
+    monkeypatch.setattr(
+        demo,
+        "write_evidence_viewer",
+        lambda *_: SimpleNamespace(
+            index_path="index.html", evidence_frame_count=0, question_count=0
+        ),
+    )
 
     run_demo(source, output_root)
 
     assert not observed["root"].exists()
     assert not observed["video"].exists()
+
+
+def test_demo_writes_evaluator_evidence_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    output_root = tmp_path / "output"
+    bundle = SimpleNamespace(questions=())
+    observed: dict[str, object] = {}
+
+    def trim(_source: Path, target: Path, _duration_s: float) -> tuple[float, int]:
+        target.write_bytes(b"trimmed video")
+        return 1.0, 25
+
+    def viewer(video: Path, private_bundle: object, root: Path) -> SimpleNamespace:
+        observed.update(video=video, bundle=private_bundle, root=root)
+        return SimpleNamespace(index_path="index.html", evidence_frame_count=3, question_count=7)
+
+    monkeypatch.setattr(demo, "_trim_video", trim)
+    monkeypatch.setattr(demo, "_teacher_run", lambda *_: (bundle, {}))
+    monkeypatch.setattr(demo, "_run_temporal_memory_candidate", lambda *_: ({}, {}))
+    monkeypatch.setattr(demo, "_score_candidate", lambda *_: {})
+    monkeypatch.setattr(demo, "write_evidence_viewer", viewer)
+
+    summary = run_demo(source, output_root)
+
+    assert observed == {
+        "video": output_root / "office_robot_25s.mp4",
+        "bundle": bundle,
+        "root": output_root / "evidence-viewer",
+    }
+    assert summary["review"] == {
+        "evidence_frame_count": 3,
+        "index_path": "evidence-viewer/index.html",
+        "question_count": 7,
+    }
 
 
 def test_invalid_stride_has_no_output_side_effect(tmp_path: Path) -> None:
