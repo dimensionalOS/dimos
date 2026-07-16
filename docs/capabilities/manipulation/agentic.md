@@ -62,21 +62,26 @@ one session.
 
 ### Try these prompts
 
-Start with non-motion state and perception checks:
+Start with a non-motion state check:
 
 ```text
 Report the current robot state without moving.
 ```
 
+Scan the scene for objects. This moves the arm to its observation pose:
+
 ```text
-Without moving anything, use the current camera view to report which objects are visible.
+Scan for objects.
 ```
 
-If a fresh snapshot is needed, and repositioning the simulated arm is
-acceptable:
+Try basic motion commands:
 
 ```text
-Scan the scene once for visible objects. The scan may move the arm to its init pose; do not perform pick, place, or other motion afterward.
+Move 10 cm to the left.
+```
+
+```text
+Move 10 cm above the detected object's pose.
 ```
 
 ## Debugging and testing interfaces
