@@ -120,7 +120,6 @@ class AsyncProviderBase:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._stop_ev: asyncio.Event | None = None
-        self._thread_stop: threading.Event | None = None
         self._started = False
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -176,9 +175,7 @@ class AsyncProviderBase:
             self._teardown()
 
     def _teardown(self) -> None:
-        loop, stop_ev, thread_stop = self._loop, self._stop_ev, self._thread_stop
-        if thread_stop is not None:
-            thread_stop.set()
+        loop, stop_ev = self._loop, self._stop_ev
         if loop is not None and stop_ev is not None and loop.is_running():
             loop.call_soon_threadsafe(stop_ev.set)
         if self._thread is not None:
@@ -186,19 +183,16 @@ class AsyncProviderBase:
         self._thread = None
         self._loop = None
         self._stop_ev = None
-        self._thread_stop = None
 
     def _run_loop(self, ready: threading.Event) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
         self._stop_ev = asyncio.Event()
-        self._thread_stop = threading.Event()
         ready.set()
 
         try:
-            while self._thread_stop is not None and not self._thread_stop.is_set():
-                loop.run_until_complete(asyncio.sleep(0.01))
+            loop.run_until_complete(self._stop_ev.wait())
         finally:
             tasks = asyncio.all_tasks(loop)
             for task in tasks:
