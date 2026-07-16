@@ -46,7 +46,7 @@ drawing.to_svg("assets/color_image.svg")
 
 our drawing system applies turbo color scheme to timestamps by default
 
-![output](assets/color_image.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/color_image.svg)
 
 we can create new streams by querying existing streams, and we can save, further transform or draw those
 
@@ -65,7 +65,7 @@ drawing.add(
 drawing.to_svg("assets/speed.svg")
 ```
 
-![output](assets/speed.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/speed.svg)
 
 we can do all kinds of things with this, for example map out room lighting
 
@@ -85,7 +85,7 @@ drawing.add(
 drawing.to_svg("assets/brightness.svg")
 ```
 
-![output](assets/brightness.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/brightness.svg)
 
 So knowing above, we can create embeddings for the full stream,
 
@@ -132,7 +132,7 @@ drawing.add(store.streams.color_image_embedded.search(search_vector))
 drawing.to_svg("assets/embedding.svg")
 ```
 
-![output](assets/embedding.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/embedding.svg)
 
 We don't really have to deal with the whole global map actually, let's get top 10 embeddings, and render only lidar around those.
 
@@ -163,7 +163,7 @@ Stream("color_image_embedded") | vector_search(k=30)
 13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
-![output](assets/embedding_focused.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/embedding_focused.svg)
 
 <details>
 <summary>Python</summary>
@@ -205,4 +205,4 @@ let's view those images
 plot_mosaic(matches.map(lambda obs: obs.data).to_list(), "assets/grid.png")
 ```
 
-![output](assets/grid.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/grid.png)
