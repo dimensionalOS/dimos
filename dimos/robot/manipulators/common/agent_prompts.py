@@ -104,9 +104,6 @@ World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
 Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 
 # Error Recovery
-Current limitation: after any planning failure, call **reset** before issuing another \
-planning or motion command, even when the failed plan did not move the robot. After an \
-execution failure, reset when the robot state may be uncertain.
 If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
 **reset**, then retry.
 """

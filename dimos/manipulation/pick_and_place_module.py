@@ -34,17 +34,13 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.detection.type.detection3d.object import (
     Object as DetObject,
 )
-from dimos.perception.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -83,7 +79,6 @@ class PickAndPlaceModule(ManipulationModule):
 
     # Input: Objects from perception (for obstacle integration)
     objects: In[list[DetObject]]
-    _scene_registration: ObjectSceneRegistrationSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -95,11 +90,6 @@ class PickAndPlaceModule(ManipulationModule):
         # The live detection cache is volatile (labels change every frame),
         # so pick/place use this stable snapshot instead.
         self._detection_snapshot: list[DetObject] = []
-
-        # A failed scene resynchronization is fail-closed: the target may still
-        # be absent from collision checking, so no subsequent plan is allowed.
-        self._scene_reconciliation_error: str | None = None
-        self._excluded_target_object_id: str | None = None
 
     @rpc
     def start(self) -> None:
@@ -200,126 +190,6 @@ class PickAndPlaceModule(ManipulationModule):
         from dimos.utils.transform_utils import offset_distance
 
         return offset_distance(grasp_pose, offset)
-
-    def _restore_target_obstacle(self) -> str | None:
-        """Re-synchronize perception obstacles after an abandoned final grasp.
-
-        The selected object is excluded only while the final grasp is being
-        planned and executed.  If either operation fails before the gripper is
-        closed, restore the complete cached perception scene so the target is
-        not left permanently absent from collision checking.
-        """
-        if self._world_monitor is None:
-            if self._scene_reconciliation_error is not None:
-                self._latch_scene_reconciliation("world monitor unavailable")
-                return self._scene_reconciliation_error
-            return None
-        try:
-            added_obstacles = self._world_monitor.refresh_obstacles(0.0)
-        except Exception as error:
-            logger.error(f"Failed to restore target perception obstacle: {error}")
-            self._latch_scene_reconciliation(str(error))
-            return self._scene_reconciliation_error
-
-        target_id = self._excluded_target_object_id
-        if target_id is not None and not any(
-            obstacle.get("object_id") == target_id for obstacle in added_obstacles
-        ):
-            error = f"target object '{target_id}' was not re-added"
-            self._latch_scene_reconciliation(error)
-            return error
-
-        self._excluded_target_object_id = None
-        self._scene_reconciliation_error = None
-        return None
-
-    def _latch_scene_reconciliation(self, error: str) -> None:
-        """Invalidate motion plans and block motion until the scene is verified."""
-        self._scene_reconciliation_error = error
-        getattr(self, "_planned_paths", {}).clear()
-        getattr(self, "_planned_trajectories", {}).clear()
-
-    def _planning_is_blocked(self) -> bool:
-        """Return whether planning must wait for scene reconciliation."""
-        if self._scene_reconciliation_error is None:
-            return False
-        self._error_message = (
-            f"Scene reconciliation required before planning: {self._scene_reconciliation_error}"
-        )
-        return True
-
-    @rpc
-    def plan_to_pose(self, pose: Pose, robot_name: str | None = None) -> bool:
-        """Plan only when the perception scene is known to be reconciled."""
-        if self._planning_is_blocked():
-            logger.error(self._error_message)
-            return False
-        return super().plan_to_pose(pose, robot_name)
-
-    @rpc
-    def plan_to_joints(self, joints: JointState, robot_name: str | None = None) -> bool:
-        """Plan to joints only when the perception scene is reconciled."""
-        if self._planning_is_blocked():
-            logger.error(self._error_message)
-            return False
-        return super().plan_to_joints(joints, robot_name)
-
-    @rpc
-    def solve_ik(
-        self,
-        pose: Pose,
-        robot_name: str | None = None,
-        check_collision: bool = True,
-        seed: JointState | None = None,
-    ) -> IKResult:
-        """Refuse IK while the perception scene is not reconciled."""
-        if self._planning_is_blocked():
-            return IKResult(status=IKStatus.NO_SOLUTION, message=self._error_message)
-        return super().solve_ik(pose, robot_name, check_collision, seed)
-
-    @rpc
-    def preview_path(
-        self,
-        duration: float | None = None,
-        robot_name: str | None = None,
-        target_fps: float = 30.0,
-    ) -> bool:
-        """Refuse path preview while the perception scene is not reconciled."""
-        if self._planning_is_blocked():
-            return False
-        return super().preview_path(duration, robot_name, target_fps)
-
-    @rpc
-    def execute(self, robot_name: str | None = None) -> bool:
-        """Refuse trajectory execution while the perception scene is uncertain."""
-        if self._planning_is_blocked():
-            return False
-        return super().execute(robot_name)
-
-    @rpc
-    @skill
-    def reset(self) -> SkillResult[ManipulationSkillError]:
-        """Reconcile the perception scene before clearing a scene fault."""
-        if self._scene_reconciliation_error is not None:
-            restoration_error = self._restore_target_obstacle()
-            if restoration_error is not None:
-                return SkillResult.fail(
-                    "GRIPPER_FAILED",
-                    f"Cannot reset until target obstacle is restored: {restoration_error}",
-                )
-        return super().reset()
-
-    def _fail_after_target_exclusion(
-        self, error_code: str, message: str
-    ) -> SkillResult[ManipulationSkillError]:
-        """Restore the target obstacle and make restoration failure observable."""
-        restoration_error = self._restore_target_obstacle()
-        if restoration_error is not None:
-            return SkillResult.fail(
-                "GRIPPER_FAILED",
-                f"{message}; failed to restore target obstacle: {restoration_error}",
-            )
-        return SkillResult.fail(error_code, message)
 
     def _find_object_in_detections(
         self, object_name: str, object_id: str | None = None
@@ -559,11 +429,8 @@ class PickAndPlaceModule(ManipulationModule):
         min_duration: float = 0.0,
         robot_name: str | None = None,
     ) -> SkillResult[ManipulationSkillError]:
-        """Scan for permanently registered objects from the init viewpoint.
-
-        The registered snapshot is applied to the obstacle monitor before the
-        existing stability filter runs. This uses the producer's permanent
-        object database rather than relying on an asynchronous stream callback.
+        """Scan for objects — moves to init position first for a clear camera view, \
+then refreshes perception obstacles.
 
         Use this before pick/place operations or after a failed attempt.
 
@@ -576,20 +443,11 @@ class PickAndPlaceModule(ManipulationModule):
         if not init_result.is_success():
             return init_result
 
-        try:
-            registered_objects = self._scene_registration.get_registered_objects()
-        except Exception as e:
-            logger.error(f"Failed to query registered perception objects: {e}")
-            return SkillResult.fail(
-                "PERCEPTION_UNAVAILABLE",
-                f"Unable to query registered perception objects: {e}",
-            )
-
-        if self._world_monitor is not None:
-            self._world_monitor.on_objects(registered_objects)
         obstacles = self.refresh_obstacles(min_duration)
+
         detections = self._detection_snapshot
         if not detections:
+            # See look(): an empty scan is a valid observation, not a failure.
             return SkillResult.ok("No objects detected in scene")
 
         lines = [f"Detected {len(detections)} object(s):"]
@@ -621,8 +479,6 @@ class PickAndPlaceModule(ManipulationModule):
             object_id: Optional unique object ID from perception for precise identification.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        if self._planning_is_blocked():
-            return SkillResult.fail("GRIPPER_FAILED", self._error_message)
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
@@ -637,6 +493,7 @@ class PickAndPlaceModule(ManipulationModule):
                 "GRASP_GENERATION_FAILED",
                 f"No grasp poses found for '{object_name}'. Object may not be detected.",
             )
+
         # Lift if EE is low before approaching
         lift = self._lift_if_low(rname)
         if not lift.is_success():
@@ -644,7 +501,6 @@ class PickAndPlaceModule(ManipulationModule):
 
         # 2. Try each grasp candidate
         max_attempts = min(len(grasp_poses), 5)
-        first_planning_error: str | None = None
         for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
             # Reduce pre-grasp height for far objects (arm can't reach high + far)
             gp = grasp_pose.position
@@ -654,8 +510,6 @@ class PickAndPlaceModule(ManipulationModule):
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                if first_planning_error is None:
-                    first_planning_error = self.get_error()
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
@@ -669,36 +523,17 @@ class PickAndPlaceModule(ManipulationModule):
             if not exec_result.is_success():
                 return exec_result
 
-            selected_object = self._find_object_in_detections(object_name, object_id)
-            if selected_object is None:
-                return SkillResult.fail(
-                    "GRASP_GENERATION_FAILED",
-                    f"No grasp poses found for '{object_name}'. Object may not be detected.",
-                )
-
-            # Remove only the selected object after reaching the pre-grasp. Keep
-            # all other perception obstacles active while planning the grasp.
-            if self._world_monitor is not None:
-                if self._world_monitor.remove_object_obstacle(selected_object.object_id):
-                    self._excluded_target_object_id = selected_object.object_id
-
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
-                return self._fail_after_target_exclusion(
-                    "PLANNING_FAILED",
-                    f"Grasp pose planning failed: {self.get_error()}",
-                )
+                return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
-                return self._fail_after_target_exclusion("EXECUTION_FAILED", exec_result.message)
+                return exec_result
 
             # 6. Close gripper
             logger.info("Closing gripper...")
-            if not self._set_gripper_position(0.0, rname):
-                return self._fail_after_target_exclusion(
-                    "GRIPPER_FAILED", "Failed to close gripper"
-                )
+            self._set_gripper_position(0.0, rname)
             time.sleep(1.5)  # Wait for gripper to close
 
             # 7. Retract to pre-grasp
@@ -714,12 +549,6 @@ class PickAndPlaceModule(ManipulationModule):
 
             return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
 
-        if first_planning_error:
-            return SkillResult.fail(
-                "PLANNING_FAILED",
-                f"All {max_attempts} grasp attempts failed for '{object_name}'. "
-                f"First planning failure: {first_planning_error}",
-            )
         return SkillResult.fail(
             "GRASP_ATTEMPTS_EXHAUSTED",
             f"All {max_attempts} grasp attempts failed for '{object_name}'",
@@ -757,8 +586,6 @@ class PickAndPlaceModule(ManipulationModule):
         robot_name: str | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Internal place with explicit orientation."""
-        if self._planning_is_blocked():
-            return SkillResult.fail("GRIPPER_FAILED", self._error_message)
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")

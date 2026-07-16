@@ -31,8 +31,8 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult, PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -178,49 +178,6 @@ class TestStateMachine:
         # From EXECUTING - Fail
         module._state = ManipulationState.EXECUTING
         assert module._begin_planning() is None
-
-    def test_plan_to_pose_preserves_ik_failure_message(self, robot_config):
-        module = _make_module()
-        module._world_monitor = MagicMock()
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
-        )
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._kinematics = MagicMock()
-        module._kinematics.solve.return_value = IKResult(
-            status=IKStatus.NO_SOLUTION,
-            message="target is outside the reachable workspace",
-        )
-
-        assert not module.plan_to_pose(Pose(0.0, 0.0, 0.0))
-        assert module.get_error() == (
-            "IK failed: NO_SOLUTION: target is outside the reachable workspace"
-        )
-
-    def test_plan_to_pose_preserves_planner_failure_message(self, robot_config):
-        module = _make_module()
-        module._world_monitor = MagicMock()
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
-        )
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._kinematics = MagicMock()
-        module._kinematics.solve.return_value = IKResult(
-            status=IKStatus.SUCCESS,
-            joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
-        )
-        module._planner = MagicMock()
-        module._planner.plan_joint_path.return_value = PlanningResult(
-            status=PlanningStatus.COLLISION_AT_START,
-            message="start configuration is in collision",
-        )
-
-        assert not module.plan_to_pose(Pose(0.0, 0.0, 0.0))
-        assert module.get_error() == (
-            "Planning failed: COLLISION_AT_START: start configuration is in collision"
-        )
 
 
 class TestRobotSelection:

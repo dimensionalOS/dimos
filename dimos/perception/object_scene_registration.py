@@ -156,11 +156,6 @@ class ObjectSceneRegistrationModule(Module):
         return [obj.agent_encode() for obj in self._object_db.get_all_objects()]
 
     @rpc
-    def get_registered_objects(self) -> list[DetObject]:
-        """Get the currently registered permanent objects."""
-        return self._object_db.get_objects()
-
-    @rpc
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None:
         """Get pointcloud for an object by class name."""
         objects = self._object_db.find_by_name(name)

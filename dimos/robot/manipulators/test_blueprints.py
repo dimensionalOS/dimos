@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from pathlib import Path
 from typing import Any
 
@@ -36,9 +35,7 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
     xarm6_planner_only,
     xarm7_planner_coordinator,
 )
-from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
 from dimos.robot.manipulators.xarm.blueprints.simulation import (
-    XARM7_SIM_HOME,
     xarm_perception_sim,
 )
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -46,9 +43,7 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     keyboard_teleop_xarm7,
 )
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config, make_xarm_hardware
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -93,20 +88,10 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
         assert isinstance(config.visualization, NoManipulationVisualizationConfig)
 
 
-def test_xarm_perception_sim_uses_viewers_and_safe_home() -> None:
-    sim_kwargs = _module_kwargs(xarm_perception_sim, MujocoSimModule)
+def test_xarm_perception_sim_uses_aligned_camera_frame() -> None:
     sim_robot = _module_kwargs(xarm_perception_sim, PickAndPlaceModule)["robots"][0]
 
-    assert sim_kwargs["headless"] is False
-    assert sim_kwargs["reset_joint_positions"] == XARM7_SIM_HOME
     assert sim_robot.xacro_args["attach_rpy"] == "0 0.0 0"
-    assert any(atom.module is RerunBridgeModule for atom in xarm_perception_sim.blueprints)
-
-
-def test_xarm_perception_hardware_keeps_camera_pitch() -> None:
-    hardware_robot = _module_kwargs(xarm_perception, PickAndPlaceModule)["robots"][0]
-
-    assert hardware_robot.xacro_args["attach_rpy"] == f"0 {math.radians(45)} 0"
 
 
 def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:

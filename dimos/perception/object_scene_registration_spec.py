@@ -15,13 +15,10 @@
 from typing import Protocol
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.detection.type.detection3d.object import Object as DetObject
 from dimos.spec.utils import Spec
 
 
 class ObjectSceneRegistrationSpec(Spec, Protocol):
-    def get_registered_objects(self) -> list[DetObject]: ...
-
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
     def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
     def get_full_scene_pointcloud(
