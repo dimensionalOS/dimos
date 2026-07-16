@@ -73,6 +73,95 @@ acceptance      demo.py, reproduce_reference.sh, test_*.py
 
 This PR stops at a deterministic and inspectable evaluator. It does not hide teacher defects, automatically promote generated pseudo-labels to ground truth, or claim that the smoke-candidate score measures visual intelligence.
 
+### Concrete examples from the verified reference video
+
+The examples below are copied from the generated schema-v2 artifacts, not invented documentation fixtures.
+
+#### Spatial positive and negative controls
+
+At sampled frame `0`, the teacher derives:
+
+```json
+{
+  "frame_id": 0,
+  "timestamp_s": 0.0,
+  "subject_id": "1",
+  "predicate": "left-of",
+  "object_id": "2",
+  "evidence_frame_ids": [0]
+}
+```
+
+That one accepted fact produces a public positive question and a private answer:
+
+```json
+{"text":"Did 1 ever appear left of 2?","predicate":"left-of","object_ids":["1","2"]}
+{"expected":true,"evidence_frame_ids":[0]}
+```
+
+It also produces the opposite negative control. The public question remains answer-free; the private oracle cites the complete sample schedule to support episode-level absence:
+
+```json
+{"text":"Did 1 ever appear right of 2?","predicate":"right-of","object_ids":["1","2"]}
+{"expected":false,"evidence_frame_ids":[0,150,300,450,600]}
+```
+
+Across the reference run, 3 accepted canonical spatial facts produce 6 spatial questions: 3 positive and 3 negative.
+
+#### Temporal ordering
+
+The private intervals include:
+
+```text
+frame 0 / 0.000 s:   "1 left of 2"
+frame 300 / 10.001 s: "1 above 3"
+frame 600 / 20.002 s: "1 left of 8"
+```
+
+From those intervals, generation emits paired temporal checks. For example:
+
+```json
+{"text":"Did \"1 left of 2\" happen before \"1 above 3\"?","predicate":"before"}
+{"expected":true,"evidence_interval_ids":["interval@frame-0","interval@frame-300"]}
+
+{"text":"Did \"1 left of 2\" happen after \"1 above 3\"?","predicate":"after"}
+{"expected":false,"evidence_interval_ids":["interval@frame-0","interval@frame-300"]}
+```
+
+The readable aliases above shorten stable SHA-256 interval IDs only for presentation; generated artifacts contain the full IDs. With 3 unanimously ordered relation pairs, the reference run produces 12 balanced temporal questions: before/after positives and their inverse negative controls.
+
+#### Public/private proof
+
+Candidate-visible `public/questions.jsonl` contains only question semantics:
+
+```json
+{
+  "episode_id": "office_robot_25s",
+  "question_kind": "spatial",
+  "predicate": "left-of",
+  "object_ids": ["1", "2"],
+  "reference_ids": [],
+  "text": "Did 1 ever appear left of 2?"
+}
+```
+
+It does not contain `expected`, `evidence_frame_ids`, `evidence_interval_ids`, observations, facts, or intervals. The parent evaluator retains those fields under `oracle/`; it never serializes them into the reference candidate's explicit input or temporary root, and it uses them for scoring after candidate execution.
+
+### Proof matrix
+
+| Claim | Reproducible artifact | Reference evidence |
+|---|---|---|
+| A video automatically becomes an eval | `observations.jsonl`, `bundle-a/` | 5 sampled frames → 8 observations → 3 facts → 3 intervals → 18 questions |
+| Spatial cases are balanced | public questions + private answers | 6 spatial questions: 3 true, 3 false |
+| Temporal cases are strict and balanced | interval and answer JSONL | frames 0, 300, 600 → 12 temporal questions: 6 true, 6 false |
+| Reference candidate input excludes answers | candidate subprocess and bundle layout | only copied video + public questions are serialized into candidate root |
+| Replay is deterministic | `bundle-a`, `bundle-b`, `summary.json` | equal manifests and logical SHA-256 `07b7b998…eaaf0` |
+| Results are inspectable | `evidence-viewer/index.html` | 18 oracle rows linked to 5 annotated evidence frames |
+| The smoke score is not overclaimed | `summary.json` | `visually_grounded=false`, `score_interpretation=not_model_quality` |
+| Teacher defects remain visible | evidence viewer and README | robot ID changes `2`→`3`, missed detections, oven/cabinet mislabeled `refrigerator` |
+
+The reproduction script verifies generated counts, balanced expected values, absence of answer/evidence fields from public question records, summary gates, and representative examples. This proves the trusted reference candidate's explicit-input boundary, evaluator mechanics, and repeatability. It does not provide an OS security sandbox: an untrusted candidate must run in a container or worker with repository and oracle paths unmounted. It also intentionally does not prove that the current pseudo-label teacher or smoke candidate is production-accurate.
+
 ## 2. Further directions: from videos to gated self-improvement
 
 The evaluator can become the data engine for continuous improvement:

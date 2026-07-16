@@ -98,6 +98,49 @@ assert candidate["status_counts"]["invalid"] == 0
 assert review["question_count"] == teacher["questions"]
 assert (root / review["index_path"]).is_file()
 
+questions = [
+    json.loads(line)
+    for line in (root / "bundle-a/public/questions.jsonl")
+    .read_text(encoding="utf-8")
+    .splitlines()
+]
+answers = [
+    json.loads(line)
+    for line in (root / "bundle-a/oracle/answers.jsonl")
+    .read_text(encoding="utf-8")
+    .splitlines()
+]
+assert len(questions) == len(answers) == teacher["questions"]
+for question in questions:
+    assert "expected" not in question
+    assert "evidence_frame_ids" not in question
+    assert "evidence_interval_ids" not in question
+
+answers_by_id = {answer["question_id"]: answer for answer in answers}
+for family in ("spatial", "temporal"):
+    expected = [
+        answers_by_id[question["question_id"]]["expected"]
+        for question in questions
+        if question["question_kind"] == family
+    ]
+    assert expected.count(True) == expected.count(False)
+
+print("GENERATED_EXAMPLES")
+for family, expected in (("spatial", True), ("spatial", False), ("temporal", True)):
+    question = next(
+        question
+        for question in questions
+        if question["question_kind"] == family
+        and answers_by_id[question["question_id"]]["expected"] is expected
+    )
+    answer = answers_by_id[question["question_id"]]
+    print(f"  [{family} expected={str(expected).lower()}] {question['text']}")
+    print(
+        "    evidence_frames="
+        f"{answer['evidence_frame_ids']} evidence_intervals="
+        f"{answer['evidence_interval_ids']}"
+    )
+
 digest = hashlib.sha256(summary_path.read_bytes()).hexdigest()
 print(f"SUMMARY_GATES=PASS sha256={digest}")
 PY
