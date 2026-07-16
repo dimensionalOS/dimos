@@ -84,9 +84,9 @@ delta_plot.to_svg("assets/plot_brightness_algo_delta.svg")
 
 ```
 
-![output](assets/plot_brightness_algo.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_brightness_algo.svg)
 
-![output](assets/plot_brightness_algo_delta.svg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_brightness_algo_delta.svg)
 
 We see that new algo is strictly better.
 

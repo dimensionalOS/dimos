@@ -5,7 +5,7 @@ description: "Live column-carving navigation and premap relocalization for the U
 
 The Go2 navigation stack uses a simple **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations. Map live as you drive, or return to a known space using a saved premap and relocalization.
 
-![Live Go2 navigation in Rerun](assets/noros_nav.gif)
+![Live Go2 navigation in Rerun](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
 
 ## Choose your workflow
 
