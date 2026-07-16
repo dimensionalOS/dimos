@@ -25,6 +25,7 @@ from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
     DEFAULT_PROMPTS,
     _default_detector_factory,
+    _overlay_style,
     derive_relationship_snapshot,
     main,
     render_relationship_video,
@@ -132,6 +133,15 @@ def test_relationship_snapshot_contract_is_deterministic_and_explicit() -> None:
         derive_relationship_snapshot((detections[2],), robot_label="quadruped robot").message
         == "No other objects detected"
     )
+
+
+def test_overlay_style_keeps_portrait_hd_text_readable() -> None:
+    style = _overlay_style(width=1080, height=1920)
+
+    assert style.label_font_scale >= 0.75
+    assert style.panel_font_scale >= 0.85
+    assert style.text_thickness >= 2
+    assert style.line_height >= 32
 
 
 class _ChangingDetector:

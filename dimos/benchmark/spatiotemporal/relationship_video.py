@@ -59,6 +59,29 @@ class RelationshipSnapshot:
     message: str | None
 
 
+@dataclass(frozen=True)
+class _OverlayStyle:
+    """Resolution-aware text metrics for generated relationship videos."""
+
+    label_font_scale: float
+    panel_font_scale: float
+    text_thickness: int
+    line_height: int
+    padding: int
+
+
+def _overlay_style(width: int, height: int) -> _OverlayStyle:
+    """Keep annotations readable while remaining usable for tiny test videos."""
+    scale = max(0.75, min(width, height) / 1080.0)
+    return _OverlayStyle(
+        label_font_scale=0.8 * scale,
+        panel_font_scale=0.9 * scale,
+        text_thickness=max(2, round(2 * scale)),
+        line_height=max(24, round(34 * scale)),
+        padding=max(8, round(10 * scale)),
+    )
+
+
 def _box_center(detection: DetectedObject) -> tuple[float, float]:
     box = detection.box
     return ((box.x_min + box.x_max) / 2.0, (box.y_min + box.y_max) / 2.0)
@@ -120,21 +143,40 @@ def _box_pixels(detection: DetectedObject, width: int, height: int) -> tuple[int
 
 def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
     height, width = frame.shape[:2]
+    style = _overlay_style(width, height)
     detections = (() if snapshot.robot is None else (snapshot.robot,)) + tuple(
         relationship.object for relationship in snapshot.relationships
     )
     for detection in detections:
         color = (80, 220, 80) if detection is snapshot.robot else (0, 170, 255)
         x_min, y_min, x_max, y_max = _box_pixels(detection, width, height)
-        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)
+        cv2.rectangle(
+            frame,
+            (x_min, y_min),
+            (x_max, y_max),
+            color,
+            style.text_thickness,
+        )
+        label = f"{detection.label} {detection.confidence:.2f}"
+        label_origin = (x_min, max(style.line_height, y_min - style.padding // 2))
         cv2.putText(
             frame,
-            f"{detection.label} {detection.confidence:.2f}",
-            (x_min, max(12, y_min - 4)),
+            label,
+            label_origin,
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
+            style.label_font_scale,
+            (0, 0, 0),
+            style.text_thickness + 2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            label,
+            label_origin,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            style.label_font_scale,
             color,
-            1,
+            style.text_thickness,
             cv2.LINE_AA,
         )
 
@@ -147,7 +189,7 @@ def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
             for relationship in snapshot.relationships
         ]
     )
-    panel_height = min(height, 12 + 18 * len(lines))
+    panel_height = min(height, style.padding + style.line_height * len(lines))
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (width, panel_height), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.65, frame, 0.35, 0.0, frame)
@@ -155,11 +197,14 @@ def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
         cv2.putText(
             frame,
             line,
-            (6, 17 + 18 * index),
+            (
+                style.padding,
+                style.padding + round(style.line_height * 0.72) + style.line_height * index,
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
+            style.panel_font_scale,
             (255, 255, 255),
-            1,
+            style.text_thickness,
             cv2.LINE_AA,
         )
 
