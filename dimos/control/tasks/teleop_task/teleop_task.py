@@ -78,7 +78,7 @@ class TeleopIKTaskConfig:
     ee_joint_id: int
     priority: int = 10
     timeout: float = 0.5
-    max_joint_delta_deg: float = 5.0  # ~500°/s at 100Hz
+    max_joint_delta_deg: float = 50.0  # per-tick cap; ~5000°/s at 100Hz
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -361,6 +361,7 @@ class TeleopIKTaskParams(BaseConfig):
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
+    max_joint_delta_deg: float = TeleopIKTaskConfig.max_joint_delta_deg
 
 
 def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
@@ -376,5 +377,6 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
             gripper_closed_pos=params.gripper_closed_pos,
+            max_joint_delta_deg=params.max_joint_delta_deg,
         ),
     )

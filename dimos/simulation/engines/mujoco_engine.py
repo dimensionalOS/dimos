@@ -359,6 +359,16 @@ class MujocoEngine(SimulationEngine):
 
     def _init_cameras(self) -> dict[str, _CameraRendererState]:
         """Create renderers for all configured cameras"""
+        # Grow the offscreen framebuffer to fit the largest camera — MJCF
+        # <visual><global offwidth/offheight> defaults to 640x480 and
+        # mujoco.Renderer refuses to render larger than the framebuffer.
+        if self._camera_configs:
+            self._model.vis.global_.offwidth = max(
+                self._model.vis.global_.offwidth, max(c.width for c in self._camera_configs)
+            )
+            self._model.vis.global_.offheight = max(
+                self._model.vis.global_.offheight, max(c.height for c in self._camera_configs)
+            )
         cam_renderers: dict[str, _CameraRendererState] = {}
         for cfg in self._camera_configs:
             cam_id = self._camera_id(cfg.name)
@@ -573,6 +583,8 @@ class MujocoEngine(SimulationEngine):
                 self._data.qpos[mapping.qpos_adr] = float(position)
             if mapping.dof_adr is not None:
                 self._data.qvel[mapping.dof_adr] = 0.0
+            if mapping.actuator_id is not None:
+                self._data.ctrl[mapping.actuator_id] = float(position)
         mujoco.mj_forward(self._model, self._data)
 
     def _sim_loop(self) -> None:

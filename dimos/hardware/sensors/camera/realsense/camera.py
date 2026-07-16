@@ -70,6 +70,10 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
+    # Color stream pixel format. "bgr8" is the RealSense default; some units /
+    # resolutions only advertise "yuyv" (pipeline.start() then fails to resolve
+    # a bgr8 profile). Set -o ...color_format=yuyv for those.
+    color_format: str = "bgr8"
 
 
 class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
@@ -126,11 +130,14 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.serial_number:
             config.enable_device(self.config.serial_number)
 
+        # Map the configured color format to the RealSense enum. Unknown → bgr8.
+        _rs_color_formats = {"bgr8": rs.format.bgr8, "yuyv": rs.format.yuyv}
+        color_fmt = _rs_color_formats.get(self.config.color_format.lower(), rs.format.bgr8)
         config.enable_stream(
             rs.stream.color,
             self.config.width,
             self.config.height,
-            rs.format.bgr8,
+            color_fmt,
             self.config.fps,
         )
 
@@ -284,11 +291,15 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             color_frame = frames.get_color_frame()
             depth_frame = frames.get_depth_frame() if self.config.enable_depth else None
 
-            # Process color
+            # Process color → RGB. YUYV frames arrive packed (2 bytes/pixel) and
+            # need a different conversion than the default BGR8 path.
             color_img = None
             if color_frame:
                 color_data = np.asanyarray(color_frame.get_data())
-                color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
+                if self.config.color_format.lower() == "yuyv":
+                    color_data = cv2.cvtColor(color_data, cv2.COLOR_YUV2RGB_YUYV)
+                else:
+                    color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
                 color_img = Image(
                     data=color_data,
                     format=ImageFormat.RGB,

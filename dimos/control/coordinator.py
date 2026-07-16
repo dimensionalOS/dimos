@@ -58,6 +58,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -162,6 +163,9 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
+    # Input: Gripper toggle (True = closed) routed to eef_twist tasks' gripper.
+    gripper_command: In[Bool]
+
     # Arming and dry-run are one-shot RPCs, not streams.
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -187,6 +191,7 @@ class ControlCoordinator(Module):
         self._ee_twist_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
+        self._gripper_command_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -509,6 +514,15 @@ class ControlCoordinator(Module):
                 return
             task.on_ee_twist_command(msg, t_now)
 
+    def _on_gripper_command(self, msg: Bool) -> None:
+        """Route a gripper toggle to any task that handles it (e.g. EEFTwistTask),
+        which appends the gripper target to its own joint output."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "on_gripper_command", None)
+                if callable(handler):
+                    handler(msg.data)
+
     def _on_twist_command(self, msg: Twist) -> None:
         """Convert Twist → virtual joint velocities and route via _on_joint_command.
 
@@ -719,6 +733,13 @@ class ControlCoordinator(Module):
                     "EEFTwist tasks configured but could not subscribe to "
                     "coordinator_ee_twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
+            try:
+                self._gripper_command_unsub = self.gripper_command.subscribe(
+                    self._on_gripper_command
+                )
+                logger.info("Subscribed to gripper_command for EEFTwist tasks")
+            except Exception:
+                logger.debug("No gripper_command transport bound; gripper toggle unavailable")
 
         # Twist commands drive either base hardware or velocity-capable tasks.
         has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
@@ -737,11 +758,12 @@ class ControlCoordinator(Module):
                     "to twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
-        if has_teleop_ik:
+        # Subscribe to buttons for tasks that consume them (teleop_ik engage/gripper,
+        # eef_twist gripper).
+        has_button_task = any(t.type in ("teleop_ik", "eef_twist") for t in self.config.tasks)
+        if has_button_task:
             self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
-            logger.info("Subscribed to buttons for engage/disengage")
+            logger.info("Subscribed to buttons for engage/disengage/gripper")
 
         # Arming + dry-run are RPC-only; no stream subscription here.
 
@@ -768,6 +790,9 @@ class ControlCoordinator(Module):
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None
+        if self._gripper_command_unsub:
+            self._gripper_command_unsub()
+            self._gripper_command_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()

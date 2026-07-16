@@ -110,17 +110,21 @@ def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_positio
     assert fake_ik.solve_calls[0].translation[0] > 0.0
 
 
-def test_integration_uses_current_fk_and_coordinator_dt(
+def test_jog_integrates_from_commanded_anchor_not_live_state(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
+    # The jog must build on the previous commanded target (anchor), NOT the live
+    # joint state — so a sagging arm can't drag the target down. Even when the
+    # reported live positions jump around, consecutive jogs advance the EE target.
     assert task.on_ee_twist_command(_twist(1.0), t_now=1.0)
 
     first = task.compute(_state(1.01, dt=0.01))
-    fake_ik.solution = np.array([0.51, 0.0, 0.0], dtype=np.float64)
     second = task.compute(_state(1.04, positions=[0.5, 0.0, 0.0], dt=0.01))
 
     assert first is not None
     assert second is not None
+    # Second jog's FK anchor is the first jog's solution, then +twist*dt again →
+    # its target advances further in +X than the first.
     assert fake_ik.solve_calls[1].translation[0] > fake_ik.solve_calls[0].translation[0]
 
 
@@ -146,14 +150,13 @@ def test_non_finite_ik_solution_is_rejected(task: EEFTwistTask, fake_ik: FakeIK)
     assert output is None
 
 
-def test_non_finite_twist_is_rejected_without_activating_task(task: EEFTwistTask) -> None:
+def test_non_finite_twist_is_rejected(task: EEFTwistTask) -> None:
     accepted = task.on_ee_twist_command(
         TwistStamped(frame_id="eef", linear=[np.nan, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
         t_now=1.0,
     )
 
     assert accepted is False
-    assert not task.is_active()
 
 
 def test_missing_joint_state_skips_fk_and_ik(task: EEFTwistTask, fake_ik: FakeIK) -> None:
@@ -175,19 +178,67 @@ def test_joint_delta_rejection_returns_none(task: EEFTwistTask, fake_ik: FakeIK)
     assert rejected is None
 
 
-def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds(
+def test_active_from_spawn_holds_current_pose_when_idle(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
+    # Active before any command — holds the current joints (no IK) so a gravity-
+    # loaded arm doesn't sag on spawn.
+    assert task.is_active()
+    held = task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
+    assert held is not None
+    assert held.mode == ControlMode.SERVO_POSITION
+    assert held.positions == [0.1, 0.2, 0.3]
+    assert fake_ik.solve_calls == []  # hold path skips IK
+
+
+def test_zero_twist_holds_the_commanded_anchor_not_live_state(
+    task: EEFTwistTask, fake_ik: FakeIK
+) -> None:
+    # After a jog, the anchor is the jogged solution. A zero twist then holds
+    # THAT commanded anchor — not the live (possibly sagging) joint state.
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.compute(_state(1.01)) is not None
+    assert task.compute(_state(1.01)) is not None  # anchor advances to solution
 
-    assert task.compute(_state(1.5)) is None
-    assert not task.is_active()
+    assert task.on_ee_twist_command(_twist(0.0), t_now=1.5)
+    assert task.is_active()
+    # Live state reports [0.4,0,0] (e.g. sagged), but hold commands the anchor.
+    held = task.compute(_state(1.51, positions=[0.4, 0.0, 0.0]))
+    assert held is not None
+    assert held.positions == fake_ik.solution.tolist()  # the commanded anchor
 
-    fake_ik.solution = np.array([1.01, 0.0, 0.0], dtype=np.float64)
+    # A new non-zero twist resumes integration from the anchor.
+    prev_calls = len(fake_ik.solve_calls)
     assert task.on_ee_twist_command(_twist(), t_now=2.0)
     assert task.compute(_state(2.01, positions=[1.0, 0.0, 0.0])) is not None
-    assert fake_ik.solve_calls[-1].translation[0] > 1.0
+    assert len(fake_ik.solve_calls) > prev_calls
 
-    assert task.on_ee_twist_command(_twist(0.0), t_now=2.02)
-    assert not task.is_active()
+
+def test_stale_jog_times_out_and_holds(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    # A jog is active but the command stream goes silent past timeout (operator
+    # disconnected mid-jog): the task drops the twist and holds instead of
+    # integrating the stale twist forever.
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert task.compute(_state(1.01)) is not None  # jog runs, anchor advances
+    jog_calls = len(fake_ik.solve_calls)
+
+    # No new command for > timeout (0.3s): the next compute holds (no new IK).
+    held = task.compute(_state(1.5))
+    assert held is not None
+    assert len(fake_ik.solve_calls) == jog_calls  # hold path skips IK
+    assert held.positions == fake_ik.solution.tolist()  # holds the commanded anchor
+
+
+def test_preempt_reseeds_anchor_from_live_pose(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    # After a jog sets the anchor, a higher-priority task preempts and moves the
+    # arm. When this task regains control it must hold the arm's ACTUAL current
+    # pose, not the stale pre-preempt anchor (else it would snap the arm back).
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert task.compute(_state(1.01)) is not None  # anchor = jogged solution
+
+    task.on_preempted("teleop_xarm", frozenset(["arm/joint1"]))
+
+    # The other task moved the arm to a new pose; on the next idle tick we hold
+    # THAT live pose (anchor was cleared → re-seeded from current joints).
+    held = task.compute(_state(2.0, positions=[0.7, 0.8, 0.9]))
+    assert held is not None
+    assert held.positions == [0.7, 0.8, 0.9]

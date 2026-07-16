@@ -230,6 +230,9 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
+    # Optional second color-only camera (e.g. "env_camera" for an overview
+    # view) published on color_image2. No depth/TF/camera_info for it.
+    camera2_name: str | None = None
     width: int = 640
     height: int = 480
     fps: int = 15
@@ -297,6 +300,7 @@ class MujocoSimModule(
 
     config: MujocoSimModuleConfig
     color_image: Out[Image]
+    color_image2: Out[Image]  # second camera (config.camera2_name), color only
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
@@ -396,7 +400,7 @@ class MujocoSimModule(
         raycast_lidars: list[RaycastLidarConfig] = []
 
         def add_camera(
-            name: str,
+            name: str | None,
             *,
             geom_groups: list[int] | None = None,
             max_geom: int | None = 10000,
@@ -426,6 +430,10 @@ class MujocoSimModule(
         )
         if primary_needed:
             add_camera(self.config.camera_name)
+
+        # Second color-only camera (no depth/TF/pointcloud); add_camera no-ops
+        # on an empty name, so this is a no-op unless camera2_name is set.
+        add_camera(self.config.camera2_name)
 
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
@@ -834,6 +842,7 @@ class MujocoSimModule(
 
         interval = 1.0 / self.config.fps
         last_timestamp = 0.0
+        last_timestamp2 = 0.0
         published_count = 0
 
         # Wait for engine to actually be connected (sim thread may take a tick).
@@ -882,6 +891,22 @@ class MujocoSimModule(
                     ts=ts,
                 )
                 self.depth_image.publish(depth_img)
+
+            # Second camera: color only (no depth/TF/camera_info). read_camera
+            # returns None until rendered (or if the name is absent from the
+            # MJCF — the engine warns once at init).
+            if self.config.camera2_name:
+                frame2 = engine.read_camera(self.config.camera2_name)
+                if frame2 is not None and frame2.timestamp > last_timestamp2:
+                    last_timestamp2 = frame2.timestamp
+                    self.color_image2.publish(
+                        Image(
+                            data=frame2.rgb,
+                            format=ImageFormat.RGB,
+                            frame_id=f"{self.config.camera2_name}_color_optical_frame",
+                            ts=ts,
+                        )
+                    )
 
             self._publish_tf(ts, frame)
 
