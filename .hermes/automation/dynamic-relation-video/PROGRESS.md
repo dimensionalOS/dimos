@@ -1,6 +1,6 @@
 AUTOMATION_STATUS: READY
-CURRENT_STEP: 03
-LAST_COMPLETED_STEP: 02
+CURRENT_STEP: 04
+LAST_COMPLETED_STEP: 03
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -9,7 +9,7 @@ LAST_COMPLETED_STEP: 02
 | 00 | COMPLETE | control plane | Branch/worktree isolated; fork dry-run passed; baseline 127 tests passed. |
 | 01 | COMPLETE | `feat(benchmark): derive robot relationship snapshots` | RED observed missing module; focused 1 passed; package 128 passed; Ruff and mypy passed; read-only review passed. |
 | 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
-| 03 | PENDING | `feat(benchmark): add relationship video CLI` | — |
+| 03 | COMPLETE | `feat(benchmark): add relationship video CLI` | CLI/safety RED and review-driven temp-reservation RED observed; focused 4 passed; package 131 passed; Ruff/mypy passed; foreground review passed. |
 | 04 | PENDING | real YOLO-E acceptance | — |
 | 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
 
@@ -48,3 +48,18 @@ LAST_COMPLETED_STEP: 02
 - Scope: sequential full-rate MP4 decode/encode, one-second detector refresh, persistent boxes/labels/relationship panel, exact output decode-count verification, and guaranteed capture/writer/detector cleanup attempts.
 - Generated artifacts: test videos were confined to pytest temporary paths; no generated media was retained or staged.
 - Next: Step 03.
+
+### Step 03 — COMPLETE
+
+- RED: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py::test_cli_contract_is_configurable_safe_and_atomic -v` failed with the expected missing `main` import.
+- GREEN: the CLI contract passed for configurable robot label, update period, and prompts; source/output alias, symlink output, invalid period, unreadable input, and writer-open failures; atomic output cleanup; and a clear frame-count summary.
+- Command gate: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video --help` succeeded and exposed the positional input/output and required options.
+- Review-driven RED: the first synchronous foreground Hermes review returned `BLOCK` for unlinking the reserved `mkstemp` path and incomplete existing-destination coverage; the strengthened test then failed because the renderer received an unreserved path.
+- Review-driven GREEN: the temporary file remains reserved through writer initialization, failed rendering preserves an existing destination byte-for-byte, and no temporary output remains.
+- Focused: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py -q` → `4 passed in 0.19s`.
+- Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `131 passed in 3.70s`.
+- Ruff: touched source and test were already formatted and passed `ruff check`.
+- Mypy: `uv run --with mypy mypy dimos/benchmark/spatiotemporal/relationship_video.py` → no issues.
+- Read-only review: a second separate foreground Hermes process returned `PASS` with no blocking findings and confirmed reserved temporary output plus preservation of an existing destination on failure.
+- Generated artifacts: test videos remained in pytest temporary paths; no media, model weights, or logs were retained or staged.
+- Next: Step 04.

@@ -24,6 +24,7 @@ from dimos.benchmark.spatiotemporal.models import BoundingBox2D, SpatialPredicat
 from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
     derive_relationship_snapshot,
+    main,
     render_relationship_video,
 )
 from dimos.msgs.sensor_msgs.Image import Image
@@ -198,3 +199,99 @@ def test_renderer_attempts_all_cleanup_when_processing_and_release_fail(
     assert capture.released
     assert writer.released
     assert detector.closed
+
+
+def test_cli_contract_is_configurable_safe_and_atomic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "relationships.mp4"
+    _write_video(source, fps=2.0, frame_count=2, size=(64, 48))
+    detector = _ChangingDetector()
+    configured_prompts: list[tuple[str, ...]] = []
+    render_options: list[tuple[str, float]] = []
+
+    def detector_factory(prompts: tuple[str, ...]) -> _ChangingDetector:
+        configured_prompts.append(prompts)
+        return detector
+
+    def recording_render(
+        source_path: Path,
+        output_path: Path,
+        configured_detector: _ChangingDetector,
+        robot_label: str = "quadruped robot",
+        update_period_s: float = 1.0,
+    ) -> None:
+        assert output_path.is_file()
+        assert not output_path.is_symlink()
+        render_options.append((robot_label, update_period_s))
+        render_relationship_video(
+            source_path,
+            output_path,
+            configured_detector,
+            robot_label,
+            update_period_s,
+        )
+
+    monkeypatch.setattr(
+        "dimos.benchmark.spatiotemporal.relationship_video.render_relationship_video",
+        recording_render,
+    )
+
+    main(
+        [
+            str(source),
+            str(output),
+            "--robot-label",
+            "robot dog",
+            "--update-period",
+            "0.5",
+            "--prompts",
+            "robot dog",
+            "refrigerator",
+        ],
+        detector_factory=detector_factory,
+    )
+
+    assert configured_prompts == [("robot dog", "refrigerator")]
+    assert render_options == [("robot dog", 0.5)]
+    assert output.is_file()
+    assert "Wrote 2 frames" in capsys.readouterr().out
+
+    with pytest.raises(ValueError, match="different files"):
+        main([str(source), str(source)], detector_factory=detector_factory)
+
+    symlink_output = tmp_path / "symlink.mp4"
+    symlink_output.symlink_to(output)
+    with pytest.raises(ValueError, match="symlink"):
+        main([str(source), str(symlink_output)], detector_factory=detector_factory)
+
+    with pytest.raises(SystemExit):
+        main(
+            [str(source), str(tmp_path / "invalid-period.mp4"), "--update-period", "0"],
+            detector_factory=detector_factory,
+        )
+
+    unreadable = tmp_path / "not-video.mp4"
+    unreadable.write_text("not a video", encoding="utf-8")
+    unreadable_output = tmp_path / "unreadable-output.mp4"
+    with pytest.raises(RuntimeError, match="failed to open source video"):
+        main([str(unreadable), str(unreadable_output)], detector_factory=detector_factory)
+    assert not unreadable_output.exists()
+
+    class ClosedWriter:
+        def isOpened(self) -> bool:
+            return False
+
+        def release(self) -> None:
+            pass
+
+    failed_output = tmp_path / "writer-failure.mp4"
+    failed_output.write_bytes(b"existing output")
+    monkeypatch.setattr(cv2, "VideoWriter", lambda *_args: ClosedWriter())
+    with pytest.raises(RuntimeError, match="failed to open output video writer"):
+        main([str(source), str(failed_output)], detector_factory=detector_factory)
+    assert failed_output.read_bytes() == b"existing output"
+    assert not list(tmp_path.glob(".*.tmp.mp4"))

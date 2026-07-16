@@ -23,7 +23,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 | 00 | Baseline and control-plane verification | COMPLETE |
 | 01 | Pure robot-to-object relationship snapshots | COMPLETE |
 | 02 | Full-rate annotated MP4 renderer with one-second refresh | COMPLETE |
-| 03 | CLI, path safety, decode/encode verification | PENDING |
+| 03 | CLI, path safety, decode/encode verification | COMPLETE |
 | 04 | Real YOLO-E reference-video acceptance | PENDING |
 | 05 | README, focused review, final gates, and PR preparation | PENDING |
 
@@ -57,13 +57,13 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 
 **Files:** `relationship_video.py`, `test_relationship_video.py`, optionally `__main__` wiring only if needed.
 
-- [ ] RED: CLI accepts input, output, robot label, update period, and prompts.
-- [ ] RED: reject source/output aliases, symlink output, invalid periods, unreadable video, and writer failure.
-- [ ] RED: failed runs leave no partial final output.
-- [ ] GREEN: atomic temporary output and clear summary output.
-- [ ] Command: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video ...`.
-- [ ] Focused tests/static checks/review.
-- [ ] Update progress, commit `feat(benchmark): add relationship video CLI`, push, verify SHA.
+- [x] RED: CLI accepts input, output, robot label, update period, and prompts.
+- [x] RED: reject source/output aliases, symlink output, invalid periods, unreadable video, and writer failure.
+- [x] RED: failed runs leave no partial final output.
+- [x] GREEN: atomic temporary output and clear summary output.
+- [x] Command: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video ...`.
+- [x] Focused tests/static checks/review.
+- [x] Update progress, commit `feat(benchmark): add relationship video CLI`, push, verify SHA.
 
 ## Micro-spec 04 — Real YOLO-E acceptance
 

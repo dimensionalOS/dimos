@@ -14,10 +14,13 @@
 
 """Robot-to-object image-plane snapshots and annotated video rendering."""
 
-from collections.abc import Sequence
+import argparse
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
+import tempfile
 
 import cv2
 import numpy as np
@@ -176,10 +179,15 @@ def render_relationship_video(
     update_period_s: float = 1.0,
 ) -> None:
     """Render full-rate overlays while refreshing detections at a fixed period."""
+    if not math.isfinite(update_period_s) or update_period_s <= 0.0:
+        raise ValueError("update period must be finite and positive")
     capture = cv2.VideoCapture(str(source_path))
     writer: cv2.VideoWriter | None = None
     frame_count = 0
     try:
+        capture_open = getattr(capture, "isOpened", None)
+        if capture_open is not None and not capture_open():
+            raise RuntimeError(f"failed to open source video: {source_path}")
         fps = capture.get(cv2.CAP_PROP_FPS)
         if not math.isfinite(fps) or fps <= 0.0:
             raise ValueError("video FPS must be finite and positive")
@@ -191,6 +199,9 @@ def render_relationship_video(
             fps,
             (width, height),
         )
+        writer_open = getattr(writer, "isOpened", None)
+        if writer_open is not None and not writer_open():
+            raise RuntimeError(f"failed to open output video writer: {output_path}")
         next_refresh_s = 0.0
         snapshot: RelationshipSnapshot | None = None
         while True:
@@ -212,6 +223,8 @@ def render_relationship_video(
             _draw_snapshot(frame, snapshot)
             writer.write(frame)
             frame_count += 1
+        if frame_count == 0:
+            raise RuntimeError(f"source video contains no decodable frames: {source_path}")
     finally:
         try:
             capture.release()
@@ -222,3 +235,87 @@ def render_relationship_video(
             finally:
                 detector.close()
     _verify_decoded_frame_count(output_path, frame_count)
+
+
+def _positive_period(value: str) -> float:
+    period = float(value)
+    if not math.isfinite(period) or period <= 0.0:
+        raise argparse.ArgumentTypeError("update period must be finite and positive")
+    return period
+
+
+def _default_detector_factory(prompts: tuple[str, ...]) -> ObservationDetector:
+    from dimos.benchmark.spatiotemporal.yoloe_adapter import YoloeObservationDetector
+
+    return YoloeObservationDetector(prompts=prompts)
+
+
+def _decoded_frame_count(video_path: Path) -> int:
+    capture = cv2.VideoCapture(str(video_path))
+    decoded_frame_count = 0
+    try:
+        while capture.read()[0]:
+            decoded_frame_count += 1
+    finally:
+        capture.release()
+    return decoded_frame_count
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    detector_factory: Callable[[tuple[str, ...]], ObservationDetector] = _default_detector_factory,
+) -> None:
+    """Render one dynamic relationship video from command-line arguments."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--robot-label", default="quadruped robot")
+    parser.add_argument("--update-period", type=_positive_period, default=1.0)
+    parser.add_argument(
+        "--prompts",
+        nargs="+",
+        default=("quadruped robot", "refrigerator"),
+    )
+    args = parser.parse_args(argv)
+
+    source_path = args.input
+    output_path = args.output
+    if not source_path.is_file():
+        raise ValueError(f"input must be a regular file: {source_path}")
+    if output_path.is_symlink():
+        raise ValueError(f"output must not be a symlink: {output_path}")
+    if output_path.exists() and os.path.samefile(source_path, output_path):
+        raise ValueError("input and output must be different files")
+    if source_path.resolve() == output_path.resolve():
+        raise ValueError("input and output must be different files")
+    if not output_path.parent.is_dir():
+        raise ValueError(f"output parent must be an existing directory: {output_path.parent}")
+
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.stem}-",
+        suffix=".tmp.mp4",
+        dir=output_path.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        detector = detector_factory(tuple(args.prompts))
+        render_relationship_video(
+            source_path,
+            temporary_path,
+            detector,
+            robot_label=args.robot_label,
+            update_period_s=args.update_period,
+        )
+        os.replace(temporary_path, output_path)
+    except BaseException:
+        if temporary_path.exists():
+            temporary_path.unlink()
+        raise
+
+    print(f"Wrote {_decoded_frame_count(output_path)} frames to {output_path}")
+
+
+if __name__ == "__main__":
+    main()
