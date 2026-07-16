@@ -1,0 +1,30 @@
+# direnv template for R1 Pro work.
+#
+# Activate via:
+#     ln -sf .envrc.r1pro .envrc
+#     direnv allow
+#
+# Why a separate template:
+#
+# ROS 2 Humble's rclpy is compiled against Ubuntu 22.04's system Python
+# 3.10 (cp310 ABI). The dev container runs Humble, so dimos modules that
+# import rclpy (e.g. R1ProConnection) must run on Python 3.10 too. uv,
+# left to itself, picks the highest installed interpreter (often 3.12)
+# and the rclpy import then fails at module start with:
+#
+#     ImportError: rclpy is not installed. ROS pubsub requires ROS 2.
+#
+# Setting UV_PYTHON here forces uv venv / uv sync / uv run to pick 3.10
+# for any shell where this .envrc is active — i.e. only inside the dimos
+# checkout, only for devs who opted in via the symlink above. No effect
+# on Jazzy / non-r1pro work.
+#
+# When dimos retires Humble, drop this template and remove the export.
+export UV_PYTHON=3.10
+
+for venv in venv .venv env; do
+  if [[ -f "$venv/bin/activate" ]]; then
+    source "$venv/bin/activate"
+    break
+  fi
+done
