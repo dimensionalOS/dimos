@@ -1,0 +1,27 @@
+# dimos on a Galaxea R1 Lite — deployed state, installed to /opt/dimos by
+# setup.sh. The image tag lives in .env (DIMOS_IMAGE); updating a robot is:
+# edit .env to the new tag -> `docker compose up -d`. Rollback: revert .env.
+#
+# network_mode: host  -> DDS discovery/multicast with the vendor stack
+# ipc: host           -> FastDDS same-host SHARED MEMORY (without this:
+#                        topics visible, zero messages)
+# restart: unless-stopped -> survives crashes and robot reboots
+
+services:
+  dimos:
+    image: ${DIMOS_IMAGE:?set in /opt/dimos/.env}
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    env_file: .env
+    command: ["run", "r1lite-coordinator"]
+
+  viewer:
+    # rerun web viewer as its own process/container (dimos' in-process
+    # rerun-web mode GIL-deadlocks in forkserver workers — known bug).
+    # Browser: http://<robot-ip>:9090?url=rerun%2Bhttp%3A%2F%2F<robot-ip>%3A9877%2Fproxy
+    image: ${DIMOS_IMAGE:?set in /opt/dimos/.env}
+    network_mode: host
+    restart: unless-stopped
+    entrypoint: ["rerun"]
+    command: ["--serve-web", "--port", "9877", "--memory-limit", "2GB"]
