@@ -74,7 +74,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.13.post1"
+version = "0.0.14b1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -656,4 +656,5 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "misc/DimSim/src/engine.js",
 ]
