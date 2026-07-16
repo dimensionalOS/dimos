@@ -367,7 +367,7 @@ Transform tree:
 
 You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
-![transforms](assets/transforms.png)
+![transforms](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/transforms.png)
 
 Key points:
 

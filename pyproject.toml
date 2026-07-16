@@ -74,7 +74,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.13.post1"
+version = "0.0.14b1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -111,6 +111,9 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
+    "packaging>=24.0",
+    "annotation-protocol>=1.4.0",
+    "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
     # Logging
@@ -393,6 +396,7 @@ tests = [
     "pytest-xdist>=3.5.0",
     "pytest-cov>=5.0",
     "pytest-error-for-skips>=2.0.2",
+    "pytest-rerunfailures>=15.0",
     "coverage>=7.0",
     "requests-mock==1.12.1",
 
@@ -653,4 +657,5 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "misc/DimSim/src/engine.js",
 ]
