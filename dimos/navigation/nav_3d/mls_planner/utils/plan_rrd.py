@@ -215,15 +215,16 @@ def _log_shared(
     # Walls are already drawn by the voxel map; the surface layer only answers
     # "how much room is there", which is only a question where the robot fits.
     passable = surface[surface[:, 3] >= hard_clearance] if surface.size else surface
-    if passable.size:
-        rr.log(
-            "world/surface_map",
-            rr.Points3D(
-                passable[:, :3],
-                colors=_clearance_colors(passable[:, 3], clearance_clamp),
-                radii=render_voxel / 2,
-            ),
-        )
+    # Always log, even when empty: an unconditional update clears the prior
+    # frame's floor so a newly blocked region doesn't keep showing stale cells.
+    rr.log(
+        "world/surface_map",
+        rr.Points3D(
+            passable[:, :3],
+            colors=_clearance_colors(passable[:, 3], clearance_clamp),
+            radii=render_voxel / 2,
+        ),
+    )
 
     nodes = planner.nodes()
     if nodes.size:
