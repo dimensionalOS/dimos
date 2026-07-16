@@ -35,6 +35,15 @@ def test_camera_configures_booster_sdk_native_bridge(monkeypatch) -> None:
     assert config.image_reliable is True
 
 
+def test_camera_defaults_to_sdk_transports_without_robot_interface(monkeypatch) -> None:
+    monkeypatch.delenv("ROBOT_INTERFACE", raising=False)
+
+    config = BoosterCameraConfig()
+
+    assert config.network_interface is None
+    assert "--network_interface" not in config.to_cli_args()
+
+
 def test_camera_blueprint_exposes_rgb_depth_and_calibration_streams() -> None:
     [atom] = booster_b1_camera.blueprints
 

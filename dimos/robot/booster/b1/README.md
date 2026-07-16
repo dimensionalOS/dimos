@@ -49,6 +49,16 @@ Image subscriptions are reliable by default so fragmented RGB-D samples can be
 reassembled across the robot link. For a best-effort-only ROS 2 publisher, set
 `-o boostercamera.image_reliable=false`.
 
+On the robot, leave `ROBOT_INTERFACE` unset so the SDK uses its default local
+transports:
+
+```bash
+unset ROBOT_INTERFACE
+dimos run booster-b1-camera
+```
+
+For an offboard host, restrict DDS to the interface connected to the robot:
+
 ```bash
 ROBOT_INTERFACE=<iface> dimos run booster-b1-camera
 ```

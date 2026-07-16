@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+import os
+
 from pydantic import Field
 
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.booster.b1.connection import network_interface_from_env
 from dimos.spec import perception
 
 _BUILD_COMMAND = "nix build .#booster-camera-native"
@@ -39,7 +40,7 @@ class BoosterCameraConfig(NativeModuleConfig):
     executable: str = "result/bin/booster_camera_native"
     build_command: str | None = _BUILD_COMMAND
     log_format: LogFormat = LogFormat.TEXT
-    network_interface: str = Field(default_factory=network_interface_from_env)
+    network_interface: str | None = Field(default_factory=lambda: os.environ.get("ROBOT_INTERFACE"))
     depth_scale: float = Field(default=0.001, gt=0.0)
     image_reliable: bool = True
     color_compressed: bool = True

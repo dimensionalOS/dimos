@@ -147,7 +147,18 @@ namespace
                 booster_eprosima::fastdds::dds::Log::Kind::Info);
             booster_eprosima::fastdds::dds::Log::ReportFilenames(true);
             booster_eprosima::fastdds::dds::Log::ReportFunctions(true);
-            booster::robot::ChannelFactory::Instance()->Init(0, network_interface);
+            if (network_interface.empty())
+            {
+                booster::robot::ChannelFactory::Instance()->InitDefault(0);
+                std::cout << "Initialized Booster DDS with default transports"
+                          << std::endl;
+            }
+            else
+            {
+                booster::robot::ChannelFactory::Instance()->Init(0, network_interface);
+                std::cout << "Initialized Booster DDS on interface " << network_interface
+                          << std::endl;
+            }
             depth_scale_ = configured_depth_scale;
             require_topic(configured_color_topic, "color image");
             require_topic(configured_depth_topic, "depth image");
@@ -489,7 +500,7 @@ int main(int argc, char **argv)
             module.topic("camera_info"),
             module.topic("depth_camera_info"));
         bridge.initialize(
-            module.arg_required("network_interface"),
+            module.arg("network_interface"),
             module.arg_float("depth_scale", kDefaultDepthScale),
             module.arg_bool("image_reliable", true),
             module.arg_bool("color_compressed"),
