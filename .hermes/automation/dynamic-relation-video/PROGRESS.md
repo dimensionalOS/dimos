@@ -1,6 +1,6 @@
 AUTOMATION_STATUS: READY
-CURRENT_STEP: 05
-LAST_COMPLETED_STEP: 04
+CURRENT_STEP: 04
+LAST_COMPLETED_STEP: 03
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -10,7 +10,7 @@ LAST_COMPLETED_STEP: 04
 | 01 | COMPLETE | `feat(benchmark): derive robot relationship snapshots` | RED observed missing module; focused 1 passed; package 128 passed; Ruff and mypy passed; read-only review passed. |
 | 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
 | 03 | COMPLETE | `feat(benchmark): add relationship video CLI` | CLI/safety RED and review-driven temp-reservation RED observed; focused 4 passed; package 131 passed; Ruff/mypy passed; foreground review passed. |
-| 04 | COMPLETE | real YOLO-E acceptance | Real YOLO-E rendered 1,380 frames; MP4 metadata matched source within container precision; five sampled seconds showed changing explicit states; package/static gates and foreground review passed. |
+| 04 | PENDING | real YOLO-E acceptance | First run produced a valid MP4 but no inspected robot-to-object relationship; acceptance reopened. |
 | 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
 
 ## Evidence log
@@ -76,7 +76,8 @@ LAST_COMPLETED_STEP: 04
 - Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `131 passed in 3.05s`.
 - Ruff: source and test were already formatted and passed `ruff check`.
 - Mypy: `uv run --with mypy mypy dimos/benchmark/spatiotemporal/relationship_video.py` → no issues.
-- Read-only review: separate synchronous foreground Hermes process returned `PASS`; refrigerator absence was not a defect because acceptance requires the prompt and honest missing-object behavior, not guaranteed model recall.
-- TDD disposition: no evidence-backed implementation defect was found, so no production code or behavior test changed.
+- Supervisor disposition: rejected as semantically insufficient despite the read-only reviewer returning `PASS`; inspected frames contained only missing states or a robot with no other object.
+- Root cause evidence: the relationship-video CLI used `Yoloe2DDetector` defaults (`conf=0.6`, limited prompts), while the verified reference demo uses `conf=0.15`, `max_area_ratio=0.8`, CPU, and a broader object prompt set.
+- Required correction: add a RED test for the default detector configuration, match the proven reference settings, rerun inference, and require at least one real robot-to-object relationship overlay.
 - Staging safety: generated MP4/JPEG frames, model weights, virtual-environment packages, and the machine-local model symlink remain ignored and unstaged.
-- Next: Step 05.
+- Next: retry Step 04; Step 05 remains blocked until semantic acceptance passes.

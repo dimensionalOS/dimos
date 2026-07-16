@@ -24,7 +24,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 | 01 | Pure robot-to-object relationship snapshots | COMPLETE |
 | 02 | Full-rate annotated MP4 renderer with one-second refresh | COMPLETE |
 | 03 | CLI, path safety, decode/encode verification | COMPLETE |
-| 04 | Real YOLO-E reference-video acceptance | COMPLETE |
+| 04 | Real YOLO-E reference-video acceptance | PENDING |
 | 05 | README, focused review, final gates, and PR preparation | PENDING |
 
 ## Micro-spec 01 — Relationship snapshots
@@ -73,13 +73,13 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 - Model directory: `/Users/tian/dimos-worktrees/replayable-video-relation-evals/data/models_yoloe`
 - Output root: `/Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations`
 
-- [x] Run the real detector with prompts including `quadruped robot` and `refrigerator`.
-- [x] Produce `robot-relationships.mp4` outside tracked paths.
-- [x] Verify the artifact is a real MP4, decodes every expected frame, retains source FPS/dimensions, and has multiple relationship refreshes.
-- [x] Inspect at least three frames at different seconds and confirm overlay changes or explicit missing-robot state.
-- [x] Record exact artifact path, byte size, frame count, duration, and observed labels in progress.
-- [x] Fix only evidence-backed defects using RED-GREEN TDD; acceptance found no defect requiring a code change.
-- [x] Update progress, commit the acceptance ledger, push, and verify SHA.
+- [ ] Configure the real detector with the reference demo's low-confidence settings and broad object prompts.
+- [ ] Produce `robot-relationships.mp4` outside tracked paths.
+- [ ] Verify the artifact is a real MP4, decodes every expected frame, retains source FPS/dimensions, and has multiple relationship refreshes.
+- [ ] Inspect frames across the video and prove at least one overlay contains the robot, another detected object, and rendered `robot ... object` relationship text. Missing-only states do not satisfy acceptance.
+- [ ] Record exact artifact path, byte size, frame count, duration, observed labels, and relationship-bearing timestamps in progress.
+- [ ] Fix the sparse default-detector configuration using RED-GREEN TDD; do not fabricate detections or weaken the semantic gate.
+- [ ] Update progress, commit the corrected real acceptance evidence, push, and verify SHA.
 
 ## Micro-spec 05 — Documentation and final handoff
 
