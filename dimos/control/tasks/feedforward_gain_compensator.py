@@ -31,6 +31,7 @@ feedback.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -60,15 +61,16 @@ class FeedforwardGainConfig:
 
 
 def validate_plant_gains(K_vx: float, K_vy: float, K_wz: float) -> None:
-    """Reject a near-zero plant gain: dividing by it (u_cmd = u_phys / K, or the
-    envelope/K output limits) would ZeroDivisionError or explode. A K of 0 means
-    the axis does not move — an invalid calibration artifact. Call before any
-    division by these gains, not just at compensator construction."""
+    """Reject an unusable plant gain before dividing by it (u_cmd = u_phys / K,
+    or the envelope/K output limits). Near-zero divides-by-zero; NaN/inf (which
+    slip past a magnitude check) poison the derived limits and every command.
+    Either means an invalid calibration artifact. Call before any division by
+    these gains, not just at compensator construction."""
     for axis, k in (("vx", K_vx), ("vy", K_vy), ("wz", K_wz)):
-        if abs(k) < 1e-6:
+        if not math.isfinite(k) or abs(k) < 1e-6:
             raise ValueError(
-                f"plant gain K_{axis}={k} is ~0; a zero plant gain is an "
-                f"invalid calibration artifact (axis does not move)."
+                f"plant gain K_{axis}={k} is not usable (must be finite and "
+                f"non-zero); invalid calibration artifact."
             )
 
 
