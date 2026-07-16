@@ -93,6 +93,7 @@ def test_demo_uses_ephemeral_candidate_root_outside_teacher_output(
         del questions, duration_s
         observed["root"] = candidate_root
         observed["video"] = video
+        assert candidate_root == candidate_root.resolve()
         assert not candidate_root.is_relative_to(output_root.resolve())
         assert video.parent == candidate_root
         assert not video.is_relative_to(output_root.resolve())

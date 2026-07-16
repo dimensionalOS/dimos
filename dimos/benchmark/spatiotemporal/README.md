@@ -199,6 +199,23 @@ The command uses CPU for reproducibility. Duration must be 15–30 seconds and s
 
 The viewer is evaluator-only because it contains expected answers and private evidence. It is generated atomically, escapes untrusted text, rejects symlinked path components, preserves an existing viewer on failure, and never writes into the candidate directory.
 
+## Verified reference run
+
+The schema-v2 acceptance run on macOS CPU completed twice with byte-identical `summary.json` files:
+
+- 750 decoded frames over 25 seconds;
+- 5 sampled frames per independent detector run;
+- 8 YOLO-E observations with 4 native tracker IDs and no fallback IDs;
+- 3 canonical relation facts and 3 sampled-frame intervals;
+- 18 questions and answers: 6 spatial and 12 temporal;
+- 5 annotated evidence frames;
+- detector observations equal across two fresh YOLO-E instances;
+- bundle logical SHA-256 `07b7b99844b01badbbdecd65227144cdee7d7ef1e6d6671f2f022bc7498eaaf0`;
+- full-summary SHA-256 `9a679fe7b1689d5d988f567c87c8be636b7e35d55079c377f58dda79a0e1948c`; and
+- 18/18 valid smoke-baseline predictions with zero missing or invalid responses.
+
+Visual inspection confirmed that the boxes are geometrically aligned where detections exist. It also exposed the intended pseudo-label caveats: the same physical robot changes tracker identity from `2` to `3`, the teacher calls a built-in oven/cabinet column a `refrigerator`, and the visible robot is not detected in every sampled frame. These labels are suitable for demonstrating evaluator mechanics, not for claiming a clean human-annotated benchmark.
+
 ## Five-minute reviewer walkthrough
 
 1. Open `evidence-viewer/index.html`.

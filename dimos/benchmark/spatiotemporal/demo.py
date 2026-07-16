@@ -425,7 +425,7 @@ def run_demo(
     fps, frames = _trim_video(source_video, video, float(duration_s))
     bundle, teacher = _teacher_run(video, output_root, frame_stride)
     with TemporaryDirectory(prefix="dimos-stqa-candidate-") as candidate_directory:
-        candidate_root = Path(candidate_directory)
+        candidate_root = Path(candidate_directory).resolve()
         candidate_video = candidate_root / video.name
         shutil.copyfile(video, candidate_video)
         predictions, runtime = _run_temporal_memory_candidate(
