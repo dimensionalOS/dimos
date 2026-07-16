@@ -1,6 +1,6 @@
 AUTOMATION_STATUS: READY
-CURRENT_STEP: 02
-LAST_COMPLETED_STEP: 01
+CURRENT_STEP: 03
+LAST_COMPLETED_STEP: 02
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -8,7 +8,7 @@ LAST_COMPLETED_STEP: 01
 |---|---|---|---|
 | 00 | COMPLETE | control plane | Branch/worktree isolated; fork dry-run passed; baseline 127 tests passed. |
 | 01 | COMPLETE | `feat(benchmark): derive robot relationship snapshots` | RED observed missing module; focused 1 passed; package 128 passed; Ruff and mypy passed; read-only review passed. |
-| 02 | PENDING | `feat(benchmark): render dynamic relationship video` | — |
+| 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
 | 03 | PENDING | `feat(benchmark): add relationship video CLI` | — |
 | 04 | PENDING | real YOLO-E acceptance | — |
 | 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
@@ -34,3 +34,17 @@ LAST_COMPLETED_STEP: 01
 - Read-only review: separate foreground Hermes process returned `PASS` with no blocking findings; low-priority notes concerned additional boundary tests only.
 - Scope: immutable relationship/snapshot records, highest-confidence configured robot selection, deterministic object ordering, center-based horizontal/vertical labels, and explicit missing states.
 - Next: Step 02.
+
+### Step 02 — COMPLETE
+
+- RED: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py::test_renderer_refreshes_once_per_second_and_preserves_full_rate_overlay -v` failed with the expected missing `render_relationship_video` import.
+- GREEN: the renderer behavior passed and proved detector refreshes at frames `0`, `2`, and `4` for a 2 FPS source while preserving full-rate overlays, FPS, dimensions, and six decoded frames.
+- Review-driven RED: the first synchronous foreground Hermes review returned `BLOCK` because one failing release could skip later cleanup; `test_renderer_attempts_all_cleanup_when_processing_and_release_fail` reproduced the skipped writer release.
+- Cleanup GREEN: nested cleanup attempts passed the new failure-path test; final focused file gate: `3 passed in 0.33s`.
+- Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `130 passed in 3.25s`.
+- Ruff: touched source and test passed format and check gates.
+- Mypy: `uv run --with mypy mypy dimos/benchmark/spatiotemporal/relationship_video.py` → no issues.
+- Read-only review: a second separate foreground Hermes process returned `PASS` with no blocking findings.
+- Scope: sequential full-rate MP4 decode/encode, one-second detector refresh, persistent boxes/labels/relationship panel, exact output decode-count verification, and guaranteed capture/writer/detector cleanup attempts.
+- Generated artifacts: test videos were confined to pytest temporary paths; no generated media was retained or staged.
+- Next: Step 03.

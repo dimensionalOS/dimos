@@ -22,7 +22,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 |---|---|---|
 | 00 | Baseline and control-plane verification | COMPLETE |
 | 01 | Pure robot-to-object relationship snapshots | COMPLETE |
-| 02 | Full-rate annotated MP4 renderer with one-second refresh | PENDING |
+| 02 | Full-rate annotated MP4 renderer with one-second refresh | COMPLETE |
 | 03 | CLI, path safety, decode/encode verification | PENDING |
 | 04 | Real YOLO-E reference-video acceptance | PENDING |
 | 05 | README, focused review, final gates, and PR preparation | PENDING |
@@ -44,14 +44,14 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 
 **Files:** `relationship_video.py`, `test_relationship_video.py`.
 
-- [ ] RED: fake-detector fixture proves refreshes occur at 0s, 1s, 2s rather than every frame.
-- [ ] RED: output preserves source FPS, dimensions, and decoded frame count.
-- [ ] RED: overlays persist between refreshes and change at the next refresh.
-- [ ] GREEN: decode sequentially, call detector once per second, draw boxes/labels/panel, encode MP4.
-- [ ] Always close capture, writer, and detector on success/failure.
-- [ ] Decode the generated artifact to verify exact frame count.
-- [ ] Focused tests/static checks/review.
-- [ ] Update progress, commit `feat(benchmark): render dynamic relationship video`, push, verify SHA.
+- [x] RED: fake-detector fixture proves refreshes occur at 0s, 1s, 2s rather than every frame.
+- [x] RED: output preserves source FPS, dimensions, and decoded frame count.
+- [x] RED: overlays persist between refreshes and change at the next refresh.
+- [x] GREEN: decode sequentially, call detector once per second, draw boxes/labels/panel, encode MP4.
+- [x] Always close capture, writer, and detector on success/failure.
+- [x] Decode the generated artifact to verify exact frame count.
+- [x] Focused tests/static checks/review.
+- [x] Update progress, commit `feat(benchmark): render dynamic relationship video`, push, verify SHA.
 
 ## Micro-spec 03 — CLI and safety
 
