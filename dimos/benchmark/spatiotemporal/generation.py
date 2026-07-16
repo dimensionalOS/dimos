@@ -15,6 +15,7 @@
 """Deterministic public question generation from accepted relation facts."""
 
 from collections.abc import Sequence
+from itertools import combinations, product
 
 from dimos.benchmark.spatiotemporal.models import (
     OracleAnswer,
@@ -130,14 +131,15 @@ def generate_temporal_question_cases(
     if len({interval.episode_id for interval in intervals}) > 1:
         raise ValueError("temporal questions must be generated from one episode")
 
-    proofs: dict[
-        tuple[str, str],
-        dict[tuple[str, str], list[tuple[RelationInterval, RelationInterval]]],
-    ] = {}
-    for index, left in enumerate(intervals):
-        for right in intervals[index + 1 :]:
-            if left.relation_id == right.relation_id:
-                continue
+    by_relation: dict[str, list[RelationInterval]] = {}
+    for interval in intervals:
+        by_relation.setdefault(interval.relation_id, []).append(interval)
+
+    proofs: dict[tuple[str, str], list[tuple[RelationInterval, RelationInterval]]] = {}
+    for left_id, right_id in combinations(sorted(by_relation), 2):
+        interval_proofs: list[tuple[RelationInterval, RelationInterval]] = []
+        orientations: set[tuple[str, str]] = set()
+        for left, right in product(by_relation[left_id], by_relation[right_id]):
             if (
                 left.end_frame_id < right.start_frame_id
                 and left.end_timestamp_s < right.start_timestamp_s
@@ -149,21 +151,16 @@ def generate_temporal_question_cases(
             ):
                 first, second = right, left
             else:
-                continue
-
-            relation_pair = (
-                min(first.relation_id, second.relation_id),
-                max(first.relation_id, second.relation_id),
-            )
-            orientation = (first.relation_id, second.relation_id)
-            proofs.setdefault(relation_pair, {}).setdefault(orientation, []).append((first, second))
+                interval_proofs = []
+                break
+            interval_proofs.append((first, second))
+            orientations.add((first.relation_id, second.relation_id))
+        if interval_proofs and len(orientations) == 1:
+            proofs[(left_id, right_id)] = interval_proofs
 
     cases: dict[str, tuple[Question, OracleAnswer]] = {}
     for relation_pair in sorted(proofs):
-        orientations = proofs[relation_pair]
-        if len(orientations) != 1:
-            continue
-        interval_proofs = next(iter(orientations.values()))
+        interval_proofs = proofs[relation_pair]
         first, second = min(
             interval_proofs,
             key=lambda proof: (proof[0].interval_id, proof[1].interval_id),

@@ -366,10 +366,13 @@ def _run_temporal_memory_candidate(
             question.question_id: answerer.answer(question) for question in questions
         }
         runtime = {
+            "baseline_kind": "public_only_plumbing_smoke_test",
             "no_answers": sum(answer == "no" for answer in candidate_answers.values()),
             "questions_answered": len(candidate_answers),
             "readiness": readiness.model_dump(mode="json"),
+            "score_interpretation": "not_model_quality",
             "temporal_memory_state": state,
+            "visually_grounded": False,
             "vlm_mode": "timestamp_scripted_temporal_memory_plumbing",
             "yes_answers": sum(answer == "yes" for answer in candidate_answers.values()),
         }

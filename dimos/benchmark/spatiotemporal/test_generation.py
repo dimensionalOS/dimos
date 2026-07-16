@@ -316,6 +316,16 @@ def test_temporal_question_ids_are_scoped_to_episode() -> None:
     assert question_ids("episode_1").isdisjoint(question_ids("episode_2"))
 
 
+def test_omits_temporal_questions_when_any_interval_pair_is_non_strict() -> None:
+    relation_a_early = _interval("obj_red", SpatialPredicate.LEFT_OF, "obj_blue", 1, 2)
+    relation_a_overlap = _interval("obj_red", SpatialPredicate.LEFT_OF, "obj_blue", 4, 7)
+    relation_b = _interval("obj_green", SpatialPredicate.ABOVE, "obj_yellow", 5, 6)
+
+    assert (
+        generate_temporal_question_cases((relation_a_early, relation_a_overlap, relation_b)) == ()
+    )
+
+
 def test_omits_temporal_questions_with_bidirectional_interval_proofs() -> None:
     relation_a_early = _interval("obj_red", SpatialPredicate.LEFT_OF, "obj_blue", 1, 2)
     relation_b_early = _interval("obj_green", SpatialPredicate.ABOVE, "obj_yellow", 4, 5)
