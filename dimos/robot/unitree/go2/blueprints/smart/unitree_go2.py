@@ -35,6 +35,7 @@ from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
+from dimos.perception.fiducial.visual_relocalization_module import VisualRelocalizationModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
 
@@ -93,6 +94,20 @@ unitree_go2_markers = (
     )
     .global_config(n_workers=11, robot_model="unitree_go2")
 )
+
+# marker_map_file defaults to a bare name resolved via `resolve_named_path`
+# (checked, in order: as given / relative to DIMOS_PROJECT_ROOT / the shared
+# data dir, downloading from LFS if it's registered there) -- never a
+# user-specific absolute path. Point it at a real survey map with, e.g.:
+#   -o visualrelocalizationmodule.marker_map_file=/abs/path/to/office_markers.yaml
+unitree_go2_visual_relocalization = autoconnect(
+    unitree_go2,
+    VisualRelocalizationModule.blueprint(
+        marker_map_file="office_markers.yaml",
+        marker_length_m=0.10,
+        camera_info=GO2Connection.camera_info_static,
+    ),
+).global_config(n_workers=11, robot_model="unitree_go2")
 
 unitree_go2_relocalization = autoconnect(
     unitree_go2,

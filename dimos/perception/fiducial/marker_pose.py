@@ -132,7 +132,7 @@ def estimate_marker_pose_candidates(
     perspective the *wrong* mirror pose can reproject as well as the right one,
     which :func:`estimate_marker_pose` (best-solution-only) silently hides.
     Callers that must not trust a flipped pose compare the candidates'
-    reprojection errors (see ``marker_localization.localize_from_detections``).
+    reprojection errors (see ``visual_relocalization.localize_from_detections``).
     Non-finite solver output (observed on degenerate corner input) is dropped.
     """
     obj = _aruco_marker_object_points(marker_length_m)
