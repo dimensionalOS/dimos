@@ -3,10 +3,9 @@
  *
  * Usage (in a scene module at scenes/<name>/index.js):
  *
- *     import { scene, THREE, agent, physics, loadJson } from '@dimsim/scene-api';
+ *     import { scene, THREE, agent, physics } from '@dimsim/scene-api';
  *
  *     export default async function build() {
- *       await loadJson('./apt.json');
  *       scene.add(new THREE.DirectionalLight(0xffffff, 1.2));
  *       return { embodiment: 'unitree-go2', spawnPoint: { x: 2, y: 0.5, z: 3 } };
  *     }
@@ -30,14 +29,12 @@ export interface SceneApiContext {
   renderer: any;
   camera: any;
   agent: any;
-  assets: any[];
-  assetsGroup: any;
   gltfLoader: any;
   /** Browser → bridge WS send.  Used for physicsColliderAdd / Remove. */
   sendPhysics: (msg: Record<string, any>) => void;
-  /** Where the scene module lives (e.g. "/scenes/apartment/").  loadJson resolves against this. */
+  /** Where the scene module lives (e.g. "/scenes/apartment/").  loadGLTF resolves against this. */
   sceneBaseUrl: string;
-  /** Engine's existing JSON scene loader, kept so `loadJson` can populate primitives. */
+  /** Engine's existing JSON scene loader, kept so `loadLevel` can populate primitives. */
   importLevelFromJSON: (json: any) => Promise<void>;
   /** Apply sky settings ({topColor, horizonColor, bottomColor, brightness, softness, sunStrength, sunHeight, enabled?}). */
   setSky: (opts: Record<string, any>) => void;
@@ -52,8 +49,6 @@ export let rapierWorld: any = null;
 export let renderer: any = null;
 export let camera: any = null;
 export let agent: any = null;
-export let assets: any[] = [];
-export let assetsGroup: any = null;
 export let gltfLoader: any = null;
 
 // ── Internal state ───────────────────────────────────────────────────────────
@@ -79,8 +74,6 @@ export function _init(ctx: SceneApiContext): void {
   renderer = ctx.renderer;
   camera = ctx.camera;
   agent = ctx.agent;
-  assets = ctx.assets;
-  assetsGroup = ctx.assetsGroup;
   gltfLoader = ctx.gltfLoader;
   _sendPhysics = ctx.sendPhysics;
   _sceneBaseUrl = ctx.sceneBaseUrl;
@@ -139,17 +132,6 @@ export function _flushPendingEmbodiment(): void {
   setEmbodiment(cfg);
 }
 
-/** Engine.js calls this before loading a new scene, to refresh the base url. */
-export function _setSceneBaseUrl(url: string): void {
-  _sceneBaseUrl = url;
-}
-
-/** Engine.js calls this when Rapier finishes loading (it's lazy). */
-export function _setRapier(R: any, world: any): void {
-  RAPIER = R;
-  rapierWorld = world;
-}
-
 /** Engine.js calls this once the agent is constructed (post-scene-build). */
 export function _setAgent(a: any): void {
   agent = a;
@@ -162,23 +144,6 @@ export function loadGLTF(url: string): Promise<any> {
   return new Promise((resolve, reject) =>
     gltfLoader.load(abs, resolve, undefined, reject),
   );
-}
-
-/**
- * Load an existing JSON scene blob into the engine.  Idempotent — calling
- * twice with the same URL is a no-op.
- */
-export async function loadJson(path: string): Promise<void> {
-  if (!_importLevelFromJSON) throw new Error("scene-api not initialized");
-  const url = new URL(path, _sceneBaseUrl).toString();
-  const key = `json:${url}`;
-  if (_lastLoadedKey === key) return;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`loadJson(${path}): HTTP ${resp.status}`);
-  const json = await resp.json();
-  _rewriteTexturePaths(json);
-  await _importLevelFromJSON(json);
-  _lastLoadedKey = key;
 }
 
 /**
@@ -382,44 +347,10 @@ export function removeCollider(obj: any): boolean {
  * Returns the Rapier RigidBody handle (so the caller can drive it).  The body
  * is also registered for cleanup via removeCollider(mesh).
  */
-export function kinematicCollider(
-  mesh: any,
-  opts: { shape?: "box" | "sphere"; radius?: number } = {},
-): any {
-  if (!RAPIER || !rapierWorld) throw new Error("rapier not loaded");
-  removeCollider(mesh);
-  mesh.updateMatrixWorld(true);
-  const bbox = new THREE.Box3().setFromObject(mesh);
-  const size = new THREE.Vector3(); bbox.getSize(size);
-  const center = new THREE.Vector3(); bbox.getCenter(center);
-  const offset = center.clone().sub(mesh.position);
-
-  const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
-    mesh.position.x, mesh.position.y, mesh.position.z,
-  );
-  const body = rapierWorld.createRigidBody(bodyDesc);
-
-  let desc: any;
-  if (opts.shape === "sphere") {
-    const r = opts.radius ?? Math.max(size.x, size.z) / 2;
-    desc = RAPIER.ColliderDesc.ball(Math.max(r, 0.01));
-  } else {
-    desc = RAPIER.ColliderDesc.cuboid(
-      Math.max(size.x / 2, 0.01), Math.max(size.y / 2, 0.01), Math.max(size.z / 2, 0.01),
-    );
-  }
-  desc.setTranslation(offset.x, offset.y, offset.z);
-  desc.setFriction(0.9);
-  const collider = rapierWorld.createCollider(desc, body);
-  _colliderMap.set(mesh.uuid, collider);
-  return body;
-}
-
 /** Bundled namespace so scene modules can `import { physics } from '@dimsim/scene-api'`. */
 export const physics = {
   staticCollider,
   dynamicCollider,
-  kinematicCollider,
   addCollider,
   removeCollider,
 };
@@ -442,24 +373,6 @@ function _ensureDynamicSyncLoop(): void {
     _dynamicSyncRaf = requestAnimationFrame(tick);
   };
   _dynamicSyncRaf = requestAnimationFrame(tick);
-}
-
-// ── autoScale (kept verbatim from sceneEditor) ───────────────────────────────
-
-export function autoScale(obj: any, targetMaxDim = 50): number {
-  const bbox = new THREE.Box3().setFromObject(obj);
-  const size = new THREE.Vector3();
-  bbox.getSize(size);
-  const maxDim = Math.max(size.x, size.y, size.z);
-  if (maxDim <= 0.001) return 1.0;
-  let scaleFactor = 1.0;
-  if (maxDim > targetMaxDim * 2) scaleFactor = 0.01;
-  else if (maxDim > targetMaxDim) scaleFactor = targetMaxDim / maxDim;
-  if (scaleFactor !== 1.0) {
-    obj.scale.multiplyScalar(scaleFactor);
-    obj.updateMatrixWorld(true);
-  }
-  return scaleFactor;
 }
 
 // Remove the engine's default lamps + image-based light so the scene lights

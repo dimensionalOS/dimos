@@ -2,9 +2,9 @@
 
 import type { ParsedUrl } from "./types.ts";
 
-export const DEFAULT_MULTICAST_GROUP = "239.255.76.67";
-export const DEFAULT_PORT = 7667;
-export const DEFAULT_TTL = 0;
+const DEFAULT_MULTICAST_GROUP = "239.255.76.67";
+const DEFAULT_PORT = 7667;
+const DEFAULT_TTL = 0;
 
 /**
  * Parse an LCM URL into its components.
