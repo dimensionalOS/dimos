@@ -26,8 +26,10 @@ import math
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 import cv2
 
@@ -38,6 +40,7 @@ from dimos.benchmark.spatiotemporal.observation_io import write_observations
 from dimos.benchmark.spatiotemporal.replay import replay_observations
 from dimos.benchmark.spatiotemporal.runner import build_evaluation_report
 from dimos.benchmark.spatiotemporal.temporal_memory_answerer import TemporalMemoryAnswerer
+from dimos.benchmark.spatiotemporal.utilities import canonical_model_json
 from dimos.benchmark.spatiotemporal.video_adapter import OpenCVVideoSampler
 from dimos.benchmark.spatiotemporal.yoloe_adapter import (
     YoloeAdapterStatistics,
@@ -301,16 +304,9 @@ def _teacher_run(
     return first_bundle, summary
 
 
-def _run_temporal_memory_candidate(
-    video: Path,
-    questions: Sequence[Question],
-    output_root: Path,
-    duration_s: int,
-) -> tuple[dict[QuestionId, str | bool | None], dict[str, Any]]:
-    """Run a public-only candidate and return predictions without oracle access."""
-    database_root = _safe_child(output_root, "temporal-memory")
-    _reset_directory(database_root)
-    temporal_memory = TemporalMemory(
+def _build_temporal_memory(database_root: Path, duration_s: int) -> TemporalMemory:
+    """Construct TemporalMemory with persistent paths selected by the worker environment."""
+    return TemporalMemory(
         vlm=TimestampScriptedPublicVlModel(),
         db_dir=str(database_root),
         new_memory=True,
@@ -324,6 +320,18 @@ def _run_temporal_memory_candidate(
         visualize=False,
         use_clip_filtering=False,
     )
+
+
+def _run_temporal_memory_candidate_in_process(
+    video: Path,
+    questions: Sequence[Question],
+    output_root: Path,
+    duration_s: int,
+) -> tuple[dict[QuestionId, str | bool | None], dict[str, Any]]:
+    """Run a public-only candidate and return predictions without oracle access."""
+    database_root = _safe_child(output_root, "temporal-memory")
+    _reset_directory(database_root)
+    temporal_memory = _build_temporal_memory(database_root, duration_s)
 
     def ingest(path: Path) -> int:
         temporal_memory._accumulator.set_start_time(0.0)
@@ -379,6 +387,53 @@ def _run_temporal_memory_candidate(
         return candidate_answers, runtime
     finally:
         answerer.close()
+
+
+def _run_temporal_memory_candidate(
+    video: Path,
+    questions: Sequence[Question],
+    output_root: Path,
+    duration_s: int,
+) -> tuple[dict[QuestionId, str | bool | None], dict[str, Any]]:
+    """Run the public-only candidate in a subprocess with isolated logs and storage."""
+    questions_path = _safe_child(output_root, "candidate-questions.jsonl")
+    result_path = _safe_child(output_root, "candidate-result.json")
+    questions_path.write_text(
+        "".join(f"{canonical_model_json(question)}\n" for question in questions),
+        encoding="utf-8",
+    )
+    child_env = os.environ.copy()
+    child_env["DIMOS_RUN_LOG_DIR"] = str(_safe_child(output_root, "run-logs"))
+    command = [
+        sys.executable,
+        "-m",
+        "dimos.benchmark.spatiotemporal.candidate_worker",
+        "--video",
+        str(video),
+        "--questions",
+        str(questions_path),
+        "--output-root",
+        str(output_root),
+        "--duration-s",
+        str(duration_s),
+        "--result",
+        str(result_path),
+    ]
+    subprocess.run(command, check=True, cwd=Path.cwd(), env=child_env)
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("candidate worker result must be an object")
+    raw_answers = payload.get("answers")
+    runtime = payload.get("runtime")
+    if not isinstance(raw_answers, dict) or not isinstance(runtime, dict):
+        raise ValueError("candidate worker result has invalid answers or runtime")
+    expected_ids = {question.question_id for question in questions}
+    if set(raw_answers) != expected_ids:
+        raise ValueError("candidate worker answers do not match public questions")
+    for answer in raw_answers.values():
+        if answer is not None and not isinstance(answer, str | bool):
+            raise ValueError("candidate worker returned an invalid answer type")
+    return cast("dict[QuestionId, str | bool | None]", raw_answers), cast("dict[str, Any]", runtime)
 
 
 def _score_candidate(

@@ -15,6 +15,8 @@
 """Tests for the one-command spatiotemporal video-QA demonstration."""
 
 import inspect
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,6 +68,47 @@ def test_candidate_boundary_accepts_no_private_bundle() -> None:
         "output_root",
         "duration_s",
     )
+
+
+def test_temporal_memory_subprocess_overrides_ambient_log_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path / "ambient-logs"
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    video = candidate_root / "video.mp4"
+    video.write_bytes(b"video")
+    observed: dict[str, object] = {}
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(outside))
+
+    def fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        cwd: Path,
+        env: dict[str, str],
+    ) -> SimpleNamespace:
+        observed.update(command=command, check=check, cwd=cwd, env=env)
+        questions_path = Path(command[command.index("--questions") + 1])
+        result_path = Path(command[command.index("--result") + 1])
+        assert questions_path.read_text(encoding="utf-8") == ""
+        result_path.write_text(
+            json.dumps({"answers": {}, "runtime": {"ready": True}}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run)
+
+    answers, runtime = _run_temporal_memory_candidate(video, (), candidate_root, 25)
+
+    child_env = observed["env"]
+    assert isinstance(child_env, dict)
+    assert child_env["DIMOS_RUN_LOG_DIR"] == str(candidate_root / "run-logs")
+    assert os.environ["DIMOS_RUN_LOG_DIR"] == str(outside)
+    assert answers == {}
+    assert runtime == {"ready": True}
+    assert not outside.exists()
 
 
 def test_demo_uses_ephemeral_candidate_root_outside_teacher_output(
