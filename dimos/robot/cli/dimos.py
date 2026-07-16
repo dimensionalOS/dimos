@@ -163,9 +163,12 @@ def arg_help(
     _atom: BlueprintAtom | None = None,
     _defaults: BaseModel | dict[str, Any] | None = None,
 ) -> str:
+    # Imported here for performance reasons.
+    from dimos.core.coordination.blueprints import config_key
+
     output = ""
     for k, info in config.model_fields.items():
-        if k == "g":
+        if k in ("g", "instance_name"):
             continue
         t: object = info.annotation
         if isinstance(t, types.GenericAlias):
@@ -181,7 +184,7 @@ def arg_help(
             if _atom is None:
                 # Root BlueprintConfig fields are blueprint atoms, except schema
                 # branches such as transports.* that have no backing atom.
-                bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
+                bp = next((bp for bp in blueprint.blueprints if config_key(bp.name) == k), None)
                 defaults = bp.kwargs if bp is not None else field_defaults
             else:
                 # Nested BaseModel fields belong to the current atom and must not
@@ -282,7 +285,9 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
 
     for arg in args:
         k, _, v = arg.partition("=")
-        parts = k.split(".")
+        # Accept namespaced instance names in both forms: robot0/sensor.ip
+        # and robot0_sensor.ip (config keys escape "/" to "_").
+        parts = [p.replace("/", "_") for p in k.split(".")]
         d = kwargs
         for p in parts[:-1]:
             d = d.setdefault(p, {})
@@ -686,19 +691,57 @@ def show_config() -> None:
 def list_blueprints() -> None:
     """List all available blueprints."""
     from dimos.robot.all_blueprints import all_blueprints
+    from dimos.robot.external_blueprints import (
+        ExternalBlueprintError,
+        list_external_blueprint_names,
+    )
 
     blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
+    typer.echo("Built-in blueprints:")
     for blueprint_name in sorted(blueprints):
-        typer.echo(blueprint_name)
+        typer.echo(f"  {blueprint_name}")
+
+    try:
+        external_blueprints = list_external_blueprint_names()
+    except ExternalBlueprintError as exc:
+        typer.echo(typer.style(str(exc), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1) from exc
+
+    if external_blueprints:
+        typer.echo("")
+        typer.echo("External blueprints:")
+        for blueprint_name in external_blueprints:
+            typer.echo(f"  {blueprint_name}")
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def spy(ctx: typer.Context) -> None:
+    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
+    # A root-level `--transport` (before the subcommand) sets the stack's pubsub
+    # backend — which single transport dimos processes participate on. The spy is an
+    # observer: it watches every transport and takes its own repeatable `--transport`
+    # filter *after* the subcommand. The two look alike but mean different things, so
+    # reject the root placement rather than silently ignoring the requested filter.
+    if (ctx.obj or {}).get("transport") is not None:
+        typer.echo(
+            "Error: `--transport` before `spy` sets the stack backend, which the spy "
+            "ignores. Put the filter after the subcommand: `dimos spy --transport <name>`.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    from dimos.utils.cli.spy.run_spy import main as spy_main
+
+    sys.argv = ["spy", *ctx.args]
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def lcmspy(ctx: typer.Context) -> None:
-    """LCM spy tool for monitoring LCM messages."""
-    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+    """Alias for `dimos spy --transport lcm`."""
+    from dimos.utils.cli.spy.run_spy import lcm_only_argv, main as spy_main
 
-    sys.argv = ["lcmspy", *ctx.args]
-    lcmspy_main()
+    sys.argv = lcm_only_argv(list(ctx.args))
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

@@ -48,6 +48,10 @@ WHITELIST = [
         "dimos/visualization/rerun/websocket_server.py",
         'ws_logger = logging.getLogger("websockets.server")',
     ),
+    (
+        "dimos/utils/cli/spy/conftest.py",
+        "lg = logging.getLogger(_CORE_LOGGER)",
+    ),
 ]
 
 

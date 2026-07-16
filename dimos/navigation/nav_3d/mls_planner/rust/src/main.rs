@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -553,10 +553,7 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("failed to create LCM transport");
-    run::<MlsPlanner, _>(transport).await;
+    run_with_transport::<MlsPlanner>().await;
 }
 
 #[cfg(test)]

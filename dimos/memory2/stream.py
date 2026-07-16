@@ -174,6 +174,14 @@ class Stream(CompositeResource, Generic[T, O]):
             current = current._source
         return None if current is None else cast("str", current.name)
 
+    @property
+    def data_type(self) -> type | None:
+        """Backing stream's payload type (``None`` if unbound), inherited through transforms."""
+        current: Any = self
+        while isinstance(current, Stream):
+            current = current._source
+        return None if current is None else cast("type", current.data_type)
+
     def is_live(self) -> bool:
         """True if this stream (or any ancestor in the chain) is in live mode."""
         if self._query.live_buffer is not None:

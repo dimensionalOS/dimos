@@ -570,8 +570,11 @@ class MujocoSimModule(
         )
 
     def _compose_model(self) -> mujoco.MjModel:
-        """Compose optional scene package MJCF + robot MJCF + entities."""
-        from dimos.simulation.mujoco.entity_scene import add_entities_to_spec, spawn_penetrators
+        """Compose optional scene package MJCF + robot MJCF + scene-package entities."""
+        from dimos.simulation.mujoco.scene_package_entity_composer import (
+            add_scene_package_entities_to_spec,
+            find_scene_package_entity_spawn_penetrators,
+        )
 
         if self.config.robot_mjcf is None:
             raise RuntimeError("MujocoSimModule: robot_mjcf is required for composition")
@@ -605,7 +608,7 @@ class MujocoSimModule(
             spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
 
             if self.config.scene_entities:
-                add_entities_to_spec(
+                add_scene_package_entities_to_spec(
                     spec_scene, self.config.scene_entities, force_static=force_static
                 )
             return spec_scene
@@ -613,10 +616,10 @@ class MujocoSimModule(
         spec_scene = build_spec()
         model = spec_scene.compile()
         if self.config.scene_entities:
-            penetrators = spawn_penetrators(model)
+            penetrators = find_scene_package_entity_spawn_penetrators(model)
             if penetrators:
                 logger.warning(
-                    "MujocoSimModule: scene entities spawn in deep contact; welding static",
+                    "MujocoSimModule: scene-package entities spawn in deep contact; welding static",
                     count=len(penetrators),
                     samples=sorted(penetrators)[:20],
                 )

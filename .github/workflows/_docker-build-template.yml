@@ -134,7 +134,7 @@ jobs:
           driver: docker-container
           use: true
 
-      - uses: docker/build-push-action@v7.2.0
+      - uses: docker/build-push-action@v7.3.0
         if: ${{ inputs.should-run }}
         with:
           push: true

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from pathlib import Path
 import re
 from unittest.mock import MagicMock
@@ -424,19 +423,6 @@ def test_capture_frames_from_webcam_no_display_false_calls_imshow(
     capture_frames_from_webcam(0, 1, cols, rows, no_display=False)
     mock_imshow.assert_called()
     mock_destroy.assert_called_once()
-
-
-@pytest.mark.skipif(
-    os.environ.get("DIMOS_TEST_REAL_CAMERA") != "1",
-    reason="Set DIMOS_TEST_REAL_CAMERA=1 to run this hardware webcam smoke test.",
-)
-def test_opencv_video_capture_device_zero_opens_when_camera_available() -> None:
-    """Smoke check for a real webcam when explicitly opted in."""
-    cap = cv2.VideoCapture(0)
-    try:
-        assert cap.isOpened()
-    finally:
-        cap.release()
 
 
 class _FakeTopicTransport:

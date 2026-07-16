@@ -83,19 +83,24 @@ class PubSubTransport(Transport[T]):
     def __init__(self, topic: Any) -> None:
         self.topic = topic
 
-    @classmethod
-    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
-        """Defer construction: capture ctor args for the coordinator to build later."""
-        from dimos.core.coordination.blueprints import TransportSpec
-
-        return TransportSpec(cls, args, kwargs)
-
     def __str__(self) -> str:
         return (
             colors.green(f"{self.__class__.__name__}(")
             + colors.blue(self.topic)
             + colors.green(")")
         )
+
+    @property
+    def channel(self) -> str:
+        """The channel string this transport publishes and subscribes on."""
+        return str(self.topic)
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
 
 
 class pLCMTransport(PubSubTransport[T]):
@@ -543,6 +548,15 @@ class ZenohTransport(PubSubTransport[T]):
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
 
+    @property
+    def channel(self) -> str:
+        return cast("str", self.topic.key_expr)
+
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self.topic.qos
+        return qos.to_wire() if qos is not None else None
+
     def __reduce__(self) -> tuple[Any, ...]:
         return (ZenohTransport, (self.topic,))
 
@@ -585,6 +599,15 @@ class pZenohTransport(PubSubTransport[T]):
         super().__init__(self._zenoh_topic.pattern)
         self.zenoh = PickleZenoh(**kwargs)
         self._start_lock = threading.RLock()
+
+    @property
+    def channel(self) -> str:
+        return self._zenoh_topic.key_expr
+
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self._zenoh_topic.qos
+        return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (pZenohTransport, (self._zenoh_topic,))

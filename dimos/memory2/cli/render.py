@@ -28,26 +28,8 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
-from dimos.utils.data import resolve_named_path
-
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
-
-
-def open_store(path: str) -> Store:
-    """Open a store by name or path (``.db`` -> SqliteStore, ``.mcap`` -> Go2 mcap).
-
-    Bare names resolve like the other db verbs: cwd, then ``data/``, then an
-    LFS pull — defaulting to ``.db`` unless the name says ``.mcap``.
-    """
-    resolved = resolve_named_path(path, ".mcap" if str(path).endswith(".mcap") else ".db")
-    if resolved.suffix == ".mcap":
-        from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set
-
-        return Go2McapStore(path=str(resolved))
-    from dimos.memory2.store.sqlite import SqliteStore
-
-    return SqliteStore(path=str(resolved), must_exist=True)
 
 
 def _open_viewer(rrd: str) -> None:
@@ -65,11 +47,14 @@ def render_store(
     out: str | None = None,
     seconds: float | None = None,
     no_gui: bool = False,
+    root: str | None = None,
 ) -> str:
     """Render ``store`` to a ``.rrd`` and (unless ``no_gui``) open the rerun viewer.
 
     Logs every observation (full res); ``seconds`` bounds the time window from
-    the start. Returns the ``.rrd`` path.
+    the start. ``root`` nests every stream under that entity path
+    (``<root>/<name>``) — except a stream whose name matches ``root``'s last
+    segment, which stays at ``<root>`` itself. Returns the ``.rrd`` path.
     """
     import rerun as rr
 
@@ -79,6 +64,14 @@ def render_store(
     if out is None:
         src = getattr(store.config, "path", None) or "store"
         out = str(Path(src).with_suffix(".rrd"))
+
+    base = root.strip("/") if root else ""
+
+    def entity(name: str) -> str:
+        # <root>/<name>, but a stream named like root's last segment stays at <root>.
+        if not base:
+            return name
+        return base if name == base.rsplit("/", 1)[-1] else f"{base}/{name}"
 
     # Discover renderable streams (payload has a working to_rerun) + shared anchor.
     renderable = []
@@ -118,11 +111,12 @@ def render_store(
                     continue
                 rr.set_time("time", duration=obs.ts - t0)
                 data = obs.data.to_rerun()
+                path = entity(name)
                 if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
                     for sub, arch in data:
-                        rr.log(f"{name}/{sub}", arch)
+                        rr.log(f"{path}/{sub}", arch)
                 else:
-                    rr.log(name, data)
+                    rr.log(path, data)
                 report(obs)
 
     rr.rerun_shutdown()  # flush + close the .rrd before opening it

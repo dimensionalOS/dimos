@@ -15,7 +15,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
     batch_local_bounds, emit_points, update_map, Config, LocalBounds, VoxelMap,
 };
@@ -362,10 +362,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("failed to create LCM transport");
-    run::<RayTracingVoxelMap, _>(transport).await;
+    run_with_transport::<RayTracingVoxelMap>().await;
 }
 
 #[cfg(test)]

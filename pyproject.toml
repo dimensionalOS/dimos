@@ -74,7 +74,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.13.post1"
+version = "0.0.14b1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -111,6 +111,9 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
+    "packaging>=24.0",
+    "annotation-protocol>=1.4.0",
+    "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
     # Logging
@@ -152,7 +155,7 @@ dependencies = [
 
 
 [project.scripts]
-lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
+lcmspy = "dimos.utils.cli.spy.run_spy:lcm_main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:cli_main"
@@ -341,8 +344,18 @@ apriltag = [
     "reportlab>=4.5.0",
 ]
 
+# Offline scene-package cooking + loading: USD import (usd-core), convex
+# decomposition for collision (coacd), and mesh ops (trimesh). open3d is
+# already a core dependency. The Blender visual bake is an optional external
+# `blender` binary, not a wheel.
+scene = [
+    "trimesh>=4.0.0",
+    "coacd>=1.0.0",
+    "usd-core>=23.11",
+]
+
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -383,6 +396,7 @@ tests = [
     "pytest-xdist>=3.5.0",
     "pytest-cov>=5.0",
     "pytest-error-for-skips>=2.0.2",
+    "pytest-rerunfailures>=15.0",
     "coverage>=7.0",
     "requests-mock==1.12.1",
 
@@ -401,6 +415,10 @@ tests = [
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
     "dimos[apriltag,mapping,drone,cpu,learning]",
+    # Scene-cooking tests need these two from the `scene` extra. The full
+    # extra can't be included: usd-core ships no linux-aarch64 wheel.
+    "coacd>=1.0.0",
+    "trimesh>=4.0.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -586,6 +604,13 @@ module = [
     "websocket",
     "xarm.*",
     "ament_index_python.*",
+    "coacd",
+    "open3d",
+    "open3d.*",
+    "pxr",
+    "pxr.*",
+    "trimesh",
+    "trimesh.*",
 ]
 ignore_missing_imports = true
 
@@ -630,5 +655,8 @@ max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/package-lock.json",
+    "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "misc/DimSim/src/engine.js",
+    "misc/DimSim/scenes/apartment/objects/manifest.json",
 ]

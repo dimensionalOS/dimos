@@ -30,8 +30,12 @@ def rerun(
     out: str = typer.Option(None, "--out", help="Output .rrd (default: alongside the source)"),
     seconds: float = typer.Option(None, "--seconds", help="Only the first N seconds"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),
+    root: str = typer.Option(
+        None, "--root", help="Nest every stream under this entity path (<root>/<name>)"
+    ),
 ) -> None:
     """Render a memory2 store into rerun (writes a .rrd, then opens the viewer)."""
-    from dimos.memory2.cli.render import open_store, render_store
+    from dimos.memory2.cli.dataset import open_dataset
+    from dimos.memory2.cli.render import render_store
 
-    render_store(open_store(path), out=out, seconds=seconds, no_gui=no_gui)
+    render_store(open_dataset(path), out=out, seconds=seconds, no_gui=no_gui, root=root)
