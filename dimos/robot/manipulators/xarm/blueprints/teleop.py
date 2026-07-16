@@ -39,16 +39,8 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-# xarm{6,7}_hardware pick the adapter by context: --simulation → sim_mujoco (with
-# the MujocoSimModule companion from mujoco_if_sim), an IP → real xarm, else mock.
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
-
-# Folded ready pose (radians) to spawn the sim at — the all-zeros default is
-# horizontal/extended and reads as "collapsed". Matches the xarm adapter's
-# _XARM{6,7}_INITIAL_JOINTS_DEG.
-_XARM6_READY = [0.0, -0.698, -0.873, 0.0, 1.571, 0.0]
-_XARM7_READY = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
 
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -74,7 +66,6 @@ keyboard_teleop_xarm6 = autoconnect(
         robots=[make_xarm6_model_config(add_gripper=True)],
         visualization={"backend": "meshcat"},
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_hw.joints), reset_joint_positions=_XARM6_READY),
 )
 
 keyboard_teleop_xarm7 = autoconnect(
@@ -101,7 +92,6 @@ keyboard_teleop_xarm7 = autoconnect(
         robots=[make_xarm7_model_config(add_gripper=True)],
         visualization={"backend": "meshcat"},
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_hw.joints), reset_joint_positions=_XARM7_READY),
 )
 
 _xarm6_control_hw = make_xarm_hardware(

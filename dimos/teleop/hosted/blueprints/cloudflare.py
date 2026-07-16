@@ -36,9 +36,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
-from dimos.core.global_config import global_config
-from dimos.core.module import ModuleBase
+from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.stream import Transport
 from dimos.core.transport import (
     CloudflareTransport,
@@ -59,10 +57,7 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
-from dimos.robot.manipulators.xarm.config import XARM6_SIM_PATH, XARM7_SIM_PATH
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.spec.utils import Spec
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
 from dimos.teleop.hosted.go2_command import Go2CommandModule
@@ -125,8 +120,7 @@ teleop_hosted_go2_transport = (
 # battery, so HostedStatsModule.go2 is left unbound → soc omitted).
 #
 # Two cameras: front/overview = cam1, wrist = cam2, operator-selectable via the
-# mux. Real hardware uses two RealSense units; --simulation renders both from the
-# MuJoCo scene. Run with -o transports.broker.api_key=dtk_live_...
+# mux, fed by two RealSense units. Run with -o transports.broker.api_key=dtk_live_...
 
 
 # Distinct classes so two RealSense units coexist in one blueprint: module
@@ -143,8 +137,6 @@ class WristCamera(RealSenseCamera):
 # The LCM topics that feed the coordinator (cartesian_command, ee_twist, gripper)
 # MUST carry a leading slash to match its default "/"-prefixed inputs — without
 # it the arm engages but never moves.
-_Remaps = list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]]
-
 _ARM_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     # inbound operator planes
     ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
@@ -170,75 +162,25 @@ _ARM_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
 }
 
 
-_xarm6_cameras: tuple[Blueprint, ...]
-_xarm6_remaps: _Remaps
-if global_config.simulation:
-    _xarm6_cameras = (
-        MujocoSimModule.blueprint(
-            address=str(XARM6_SIM_PATH),
-            headless=False,
-            dof=6,
-            camera_name="wrist_camera",
-            camera2_name="env_camera",
-            width=848,
-            height=480,
-        ),
-    )
-    _xarm6_remaps = [
-        (MujocoSimModule, "color_image2", "cam1"),  # env overview → cam1
-        (MujocoSimModule, "color_image", "cam2"),  # wrist → cam2
-    ]
-else:
-    _xarm6_cameras = (
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
-    )
-    _xarm6_remaps = [
-        (FrontCamera, "color_image", "cam1"),
-        (WristCamera, "color_image", "cam2"),
-    ]
-
 teleop_hosted_xarm6 = (
     autoconnect(
         ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm6,
-        *_xarm6_cameras,
+        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
     )
-    .remappings(_xarm6_remaps)
+    .remappings(
+        [
+            (FrontCamera, "color_image", "cam1"),
+            (WristCamera, "color_image", "cam2"),
+        ]
+    )
     .transports(_ARM_TRANSPORTS)
     .global_config(viewer="none", n_workers=1)  # one process → one CF session
 )
 
-
-_xarm7_cameras: tuple[Blueprint, ...]
-_xarm7_remaps: _Remaps
-if global_config.simulation:
-    _xarm7_cameras = (
-        MujocoSimModule.blueprint(
-            address=str(XARM7_SIM_PATH),
-            headless=False,
-            dof=7,
-            camera_name="wrist_camera",
-            camera2_name="env_camera",
-            width=848,
-            height=480,
-        ),
-    )
-    _xarm7_remaps = [
-        (MujocoSimModule, "color_image2", "cam1"),  # env overview → cam1
-        (MujocoSimModule, "color_image", "cam2"),  # wrist → cam2
-    ]
-else:
-    _xarm7_cameras = (
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
-    )
-    _xarm7_remaps = [
-        (FrontCamera, "color_image", "cam1"),
-        (WristCamera, "color_image", "cam2"),
-    ]
 
 teleop_hosted_xarm7 = (
     autoconnect(
@@ -246,9 +188,15 @@ teleop_hosted_xarm7 = (
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm7,
-        *_xarm7_cameras,
+        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
     )
-    .remappings(_xarm7_remaps)
+    .remappings(
+        [
+            (FrontCamera, "color_image", "cam1"),
+            (WristCamera, "color_image", "cam2"),
+        ]
+    )
     .transports(_ARM_TRANSPORTS)
     .global_config(viewer="none", n_workers=1)  # one process → one CF session
 )
