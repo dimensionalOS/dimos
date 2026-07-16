@@ -21,7 +21,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 | Step | Behavior | Status |
 |---|---|---|
 | 00 | Baseline and control-plane verification | COMPLETE |
-| 01 | Pure robot-to-object relationship snapshots | PENDING |
+| 01 | Pure robot-to-object relationship snapshots | COMPLETE |
 | 02 | Full-rate annotated MP4 renderer with one-second refresh | PENDING |
 | 03 | CLI, path safety, decode/encode verification | PENDING |
 | 04 | Real YOLO-E reference-video acceptance | PENDING |
@@ -31,14 +31,14 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 
 **Files:** create `relationship_video.py` and `test_relationship_video.py`.
 
-- [ ] RED: highest-confidence configured robot is selected.
-- [ ] RED: each non-robot object yields horizontal and vertical relationships from robot to object.
-- [ ] RED: missing robot and no-other-object states are explicit.
-- [ ] RED: ordering is deterministic by object ID/label.
-- [ ] GREEN: add immutable snapshot/relationship records and pure computation.
-- [ ] Run focused pytest, Ruff, and mypy for touched files.
-- [ ] Focused read-only review.
-- [ ] Update progress, commit `feat(benchmark): derive robot relationship snapshots`, push, verify SHA.
+- [x] RED: highest-confidence configured robot is selected.
+- [x] RED: each non-robot object yields horizontal and vertical relationships from robot to object.
+- [x] RED: missing robot and no-other-object states are explicit.
+- [x] RED: ordering is deterministic by object ID/label.
+- [x] GREEN: add immutable snapshot/relationship records and pure computation.
+- [x] Run focused pytest, Ruff, and mypy for touched files.
+- [x] Focused read-only review.
+- [x] Update progress, commit `feat(benchmark): derive robot relationship snapshots`, push, verify SHA.
 
 ## Micro-spec 02 — Annotated MP4 renderer
 
