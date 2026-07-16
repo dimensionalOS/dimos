@@ -71,6 +71,7 @@ yolo11n.pt
 
 /logs
 /recordings
+/MUJOCO_LOG.TXT
 
 *.so
 
