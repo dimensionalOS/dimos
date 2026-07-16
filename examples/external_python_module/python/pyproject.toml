@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "example-external-runtime"
+version = "0.1.0"
+description = "Local runtime for the DimOS external Python module example"
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos"]
+
+[tool.uv.sources]
+dimos = { path = "../../..", editable = true }
+
+[tool.setuptools.packages.find]
+where = ["."]

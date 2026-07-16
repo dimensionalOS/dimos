@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
+from dimos.core.coordination.worker_manager_external_python import WorkerManagerExternalPython
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -69,10 +70,14 @@ class ModuleCoordinator(Resource):
         g: GlobalConfig = global_config,
     ) -> None:
         self._global_config = g
-        manager_types: list[type[WorkerManager]] = [WorkerManagerPython]
+        manager_types: list[type[WorkerManager]] = [
+            WorkerManagerPython,
+            WorkerManagerExternalPython,
+        ]
         self._managers = {cls.deployment_identifier: cls(g=g) for cls in manager_types}
         self._deployed_modules = {}
         self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
+        self._deployed_kwargs: dict[type[ModuleBase], dict[str, Any]] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
         self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
@@ -180,6 +185,7 @@ class ModuleCoordinator(Resource):
         )
         with self._modules_lock:
             self._deployed_modules[module_class] = deployed_module
+            self._deployed_kwargs[module_class] = dict(kwargs)
         return deployed_module  # type: ignore[return-value]
 
     def deploy_parallel(
@@ -216,6 +222,15 @@ class ModuleCoordinator(Resource):
                     cls: mod
                     for (cls, _, _), mod in zip(module_specs, results, strict=True)
                     if mod is not None
+                }
+            )
+            self._deployed_kwargs.update(
+                {
+                    cls: {
+                        **kwargs,
+                        **dict(blueprint_args.get(cls.name, {})),
+                    }
+                    for cls, _, kwargs in module_specs
                 }
             )
         return results
@@ -357,11 +372,8 @@ class ModuleCoordinator(Resource):
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
-        if n_extra:
-            python_wm.add_workers(n_extra)
-        if not python_wm.workers and blueprint.active_blueprints:
-            python_wm.add_workers(1)
+        for manager in self._managers.values():
+            manager.prepare_for_load(n_extra, bool(blueprint.active_blueprints))
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -412,11 +424,6 @@ class ModuleCoordinator(Resource):
         module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
-        if module_class.deployment != "python":
-            raise NotImplementedError(
-                f"unload_module only supports python deployment, got {module_class.deployment!r}"
-            )
-
         proxy = self._deployed_modules[module_class]
 
         try:
@@ -428,9 +435,9 @@ class ModuleCoordinator(Resource):
                 exc_info=True,
             )
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
+        manager = self._managers[module_class.deployment]
         try:
-            python_wm.undeploy(proxy)
+            manager.undeploy(proxy)
         except Exception:
             logger.error(
                 "Error undeploying module from worker",
@@ -439,6 +446,7 @@ class ModuleCoordinator(Resource):
             )
 
         del self._deployed_modules[module_class]
+        self._deployed_kwargs.pop(module_class, None)
         self._deployed_atoms.pop(module_class, None)
         self._module_transports.pop(module_class, None)
         self._class_aliases = {
@@ -489,13 +497,8 @@ class ModuleCoordinator(Resource):
         module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
-        if module_class.deployment != "python":
-            raise NotImplementedError(
-                f"restart_module only supports python deployment, got {module_class.deployment!r}"
-            )
-
         old_atom = self._deployed_atoms[module_class]
-        kwargs = dict(old_atom.kwargs)
+        kwargs = dict(self._deployed_kwargs.get(module_class, old_atom.kwargs))
         saved_transports = dict(self._module_transports.get(module_class, {}))
         inbound_refs = [
             (consumer, ref_name)
@@ -513,7 +516,7 @@ class ModuleCoordinator(Resource):
         if reload_source:
             source_mod = sys.modules.get(module_class.__module__)
             if source_mod is None:
-                source_mod = importlib.import_module(module_class.__module__)
+                raise RuntimeError(f"Cannot reload unavailable module {module_class.__module__!r}")
             importlib.reload(source_mod)
             new_class = cast("type[ModuleBase]", getattr(source_mod, module_class.__name__))
         else:
@@ -525,9 +528,10 @@ class ModuleCoordinator(Resource):
                     self._class_aliases[old_cls] = new_class
             self._class_aliases[module_class] = new_class
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
-        new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
+        manager = self._managers[new_class.deployment]
+        new_proxy = manager.deploy_fresh(new_class, self._global_config, kwargs)
         self._deployed_modules[new_class] = new_proxy
+        self._deployed_kwargs[new_class] = dict(kwargs)
 
         new_bp = new_class.blueprint(**kwargs)
         new_atom = new_bp.active_blueprints[0]

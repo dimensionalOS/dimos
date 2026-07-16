@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.core.coordination.python_worker import PythonWorker
+from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
@@ -41,7 +42,7 @@ def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) 
     return merged
 
 
-class WorkerManagerPython:
+class WorkerManagerPython(WorkerManager):
     deployment_identifier: str = "python"
 
     def __init__(self, g: GlobalConfig) -> None:
@@ -96,7 +97,7 @@ class WorkerManagerPython:
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class)
+        return cast("ModuleProxyProtocol", RPCClient(actor, module_class))
 
     def deploy_fresh(
         self,
@@ -122,7 +123,7 @@ class WorkerManagerPython:
         if module_class.dedicated_worker:
             worker.dedicated = True
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class)
+        return cast("ModuleProxyProtocol", RPCClient(actor, module_class))
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
@@ -179,8 +180,9 @@ class WorkerManagerPython:
 
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
             worker, (module_class, global_config, kwargs) = item
-            return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs), module_class
+            return cast(
+                "ModuleProxyProtocol",
+                RPCClient(worker.deploy_module(module_class, global_config, kwargs), module_class),
             )
 
         try:
@@ -191,8 +193,7 @@ class WorkerManagerPython:
 
     def health_check(self) -> bool:
         if len(self._workers) == 0:
-            logger.error("health_check: no workers found")
-            return False
+            return True
         for w in self._workers:
             if w.pid is None:
                 logger.error("health_check: worker died", worker_id=w.worker_id)
@@ -227,6 +228,12 @@ class WorkerManagerPython:
         self._workers.clear()
 
         logger.info("All workers shut down")
+
+    def prepare_for_load(self, n_extra: int, has_modules: bool) -> None:
+        if n_extra:
+            self.add_workers(n_extra)
+        if not self._workers and has_modules:
+            self.add_workers(1)
 
     def _select_worker(self, dedicated: bool = False) -> PythonWorker:
         """Pick a worker for a new module and mark it dedicated if needed."""

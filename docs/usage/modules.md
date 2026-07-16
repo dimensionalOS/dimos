@@ -53,6 +53,7 @@ print(CameraModule.io())
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
@@ -204,6 +205,93 @@ class Counter(Module):
 `In.subscribe(cb)` returns an *unsubscribe function*, not a `DisposableBase`. Wrap it in `Disposable(...)` so `register_disposable` can dispose it on `stop()`. Without this, your handler keeps running after `stop()` and tests will fail thread-leak checks.
 
 The callback runs on whatever thread emits the message, so guard mutable state with a lock if multiple inputs share it.
+
+## External Python Modules
+
+An external Python module keeps its declaration in the host DimOS project and
+runs its implementation in a separately prepared local Python environment.
+The declaration is still an ordinary Blueprint participant: its typed streams,
+RPC methods, skills, configuration, and `Spec` module references are declared
+the same way as for any other `Module`. The only external-runtime setting is
+the implementation import reference:
+
+```python
+from dimos.core.external_python_module import ExternalPythonModule
+
+
+class MyFeature(ExternalPythonModule):
+    implementation = "my_feature_runtime.runtime:MyFeatureRuntime"
+```
+
+Configuration belongs to the declaration contract and is inherited by the
+runtime implementation. Declare a module-specific `Config(ModuleConfig)`,
+annotate the declaration's `config` with it, and read it from the runtime:
+
+```python
+from dimos.core.external_python_module import ExternalPythonModule
+from dimos.core.module import ModuleConfig
+
+class Config(ModuleConfig):
+    initial_multiplier: int = 2
+
+class MyFeature(ExternalPythonModule):
+    config: Config
+```
+
+Blueprint callers override declaration configuration in the usual way:
+`MyFeature.blueprint(initial_multiplier=3)`. The runtime reads the resolved
+value from `self.config.initial_multiplier` and may copy it into private
+mutable state during initialization. Restarting the module creates a fresh
+runtime, so that private state starts from the configured value again.
+
+Use the fixed sibling-project layout. The declaration source can have any
+filename; this example uses `run.py`:
+
+```text
+external_python_module/
+├── run.py
+└── python/
+    ├── pyproject.toml       # required
+    ├── pixi.toml            # optional outer environment for uv
+    └── my_feature_runtime/
+        └── runtime.py
+```
+
+The source-checkout example keeps both runtime manifests in the sibling
+project. The example does not check in either a `uv.lock` or `pixi.lock`; both
+may be generated locally when preparing the runtime project and are ignored by
+git. uv and Pixi have separate lockfiles.
+
+The runtime class subclasses the declaration. Compose the declaration with
+regular modules using `autoconnect`; do not add a deployment plan, target, or
+special external-module API:
+
+```python
+from examples.external_python_module.contract import ExampleExternal
+from examples.external_python_module.run import ExampleConsumer
+from dimos.core.coordination.blueprints import autoconnect
+
+stack = autoconnect(ExampleExternal.blueprint(), ExampleConsumer.blueprint())
+```
+
+`python/pyproject.toml` is mandatory and must declare every Python dependency
+needed by the runtime, including its compatible DimOS package. In a source
+checkout, import the contract directly (for example, `from
+examples.external_python_module.contract import ExampleExternal`); the
+example is not part of the DimOS distribution. DimOS prepares and runs this
+project with uv. If `python/pixi.toml` is present, Pixi supplies the outer tool
+environment and runs uv; it does not replace the uv Python project or its
+dependency declarations.
+
+If the sibling `python/pixi.toml` is present, local preparation requires Pixi
+to be installed; Pixi is not supplied by DimOS. Preparation happens before the
+module starts. A missing `python/` directory or
+`pyproject.toml`, a failed uv/Pixi preparation, an unavailable dependency, or
+an invalid implementation import reference aborts deployment with diagnostics
+from the failed step. A runtime that does not fulfill the declaration contract
+is rejected and cleaned up before the rest of the Blueprint starts. There is
+no remote deployment, package transfer, SSH, or deployment-specific CLI in
+this API; use the normal local Blueprint and coordinator lifecycle.
 
 ## Triggering side effects via Specs
 

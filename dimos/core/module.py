@@ -100,7 +100,7 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
         return loop, thr
 
 
-Deployment = Literal["python", "docker"]
+Deployment = Literal["python", "docker", "external-python"]
 
 
 class ModuleConfig(BaseConfig):
