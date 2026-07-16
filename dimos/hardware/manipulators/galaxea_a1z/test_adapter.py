@@ -457,6 +457,66 @@ def test_socketcan_transport_leaves_can_bus_untouched(
     assert can.interface.Bus is original_bus
 
 
+def test_auto_transport_is_gs_usb_on_macos(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Darwin")
+
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
+    assert adapter._transport == "gs_usb"
+
+
+def test_auto_transport_prefers_socketcan_when_channel_is_up(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: True)
+    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: True)
+
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
+    assert adapter._transport == "socketcan"
+
+
+def test_auto_transport_falls_back_to_gs_usb_when_channel_down(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: False)
+    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: True)
+
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
+    assert adapter._transport == "gs_usb"
+
+
+def test_auto_transport_stays_socketcan_without_claimable_adapter(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: False)
+    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: False)
+
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
+    assert adapter._transport == "socketcan"
+
+
+def test_explicit_transport_bypasses_auto_detection(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*args: Any) -> bool:
+        raise AssertionError("auto detection must not run for explicit transports")
+
+    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", _boom)
+    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", _boom)
+
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0", transport="socketcan")
+    assert adapter._transport == "socketcan"
+
+
 def test_registry_entry_resolves() -> None:
     from dimos.hardware.manipulators.galaxea_a1z._registry import ADAPTER_FACTORIES
 

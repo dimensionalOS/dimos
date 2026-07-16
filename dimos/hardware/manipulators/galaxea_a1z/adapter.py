@@ -76,6 +76,74 @@ _HEALTHY_MOTOR_CODES = (0, 1)
 _GRIPPER_MAX_OPENING_M = 0.1
 
 
+def _socketcan_channel_is_up(channel: str) -> bool:
+    """True if the channel exists as a network interface and is IFF_UP."""
+    try:
+        flags = int(Path("/sys/class/net", channel, "flags").read_text(), 16)
+    except (OSError, ValueError):
+        return False
+    return bool(flags & 0x1)
+
+
+def _gs_usb_adapter_claimable() -> bool:
+    """True if the HHS USB-CANFD adapter is on the USB bus and no kernel
+    driver owns it (a bound kernel driver means socketcan is the right path
+    and userspace could not claim the interface anyway)."""
+    try:
+        import usb.core
+
+        from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import (
+            GALAXEA_PRODUCT_ID,
+            GALAXEA_VENDOR_ID,
+        )
+
+        device = usb.core.find(idVendor=GALAXEA_VENDOR_ID, idProduct=GALAXEA_PRODUCT_ID)
+        if device is None:
+            return False
+        try:
+            return not device.is_kernel_driver_active(0)
+        except NotImplementedError:
+            return True
+        except usb.core.USBError:
+            print(
+                "Galaxea A1Z: found the USB-CANFD adapter but cannot open it "
+                "(insufficient permissions). Grant access with a udev rule: "
+                'echo \'SUBSYSTEM=="usb", ATTRS{idVendor}=="a8fa", '
+                'ATTRS{idProduct}=="8598", MODE="0666"\' | '
+                "sudo tee /etc/udev/rules.d/99-canfd.rules && "
+                "sudo udevadm control --reload-rules && sudo udevadm trigger"
+            )
+            return False
+    except Exception:
+        return False
+
+
+def _resolve_auto_transport(channel: str) -> str:
+    """Pick the CAN transport for transport="auto".
+
+    socketcan stays the default whenever the channel is up (stock Linux
+    kernels bind gs_usb adapters through socketcan). When it is not, fall
+    back to the userspace gs_usb transport if the HHS adapter is on the USB
+    bus with no kernel driver bound - some kernels ship a gs_usb driver that
+    cannot drive this device (VID/PID not in its table, and pre-6.x gs_usb
+    hardcodes TX endpoint 0x02 where this adapter uses 0x01). A channel that
+    merely exists is not enough: an unrelated on-board CAN controller can
+    expose the same name with nothing wired to it.
+    """
+    if platform.system() == "Darwin":
+        return "gs_usb"
+    if _socketcan_channel_is_up(channel):
+        return "socketcan"
+    if _gs_usb_adapter_claimable():
+        print(
+            f"Galaxea A1Z: socketcan channel {channel!r} is not up but the "
+            "HHS USB-CANFD adapter is present with no kernel driver bound - "
+            "falling back to the userspace gs_usb transport"
+        )
+        return "gs_usb"
+    return "socketcan"
+
+
 @contextlib.contextmanager
 def _gs_usb_can_bus() -> Iterator[None]:
     """Route the SDK's CAN bus construction through GsUsbMacBus.
@@ -144,7 +212,7 @@ class GalaxeaA1ZAdapter:
         self._gripper_max_torque = gripper_max_torque
         self._gripper_max_opening_m = gripper_max_opening_m
         if transport == "auto":
-            transport = "gs_usb" if platform.system() == "Darwin" else "socketcan"
+            transport = _resolve_auto_transport(address)
         self._transport = transport
         # Dimensional addition on top of the vendor SDK (not Galaxea behavior):
         # verified zero-force startup that prevents the enable-snap described
