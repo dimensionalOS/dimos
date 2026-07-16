@@ -78,6 +78,23 @@ Open the custom result at:
 .artifacts/my-video-eval/evidence-viewer/index.html
 ```
 
+#### Render a dynamic robot-relationship video
+
+After materializing the LFS source video and YOLO-E model described below, render a playable annotated MP4 with:
+
+```bash
+mkdir -p .artifacts/dynamic-robot-relations
+uv run python -m dimos.benchmark.spatiotemporal.relationship_video \
+  assets/simple_demo.mp4 \
+  .artifacts/dynamic-robot-relations/robot-relationships.mp4 \
+  --robot-label 'quadruped robot' \
+  --update-period 1
+```
+
+The command detects the highest-confidence configured robot and other prompted objects once per second, derives deterministic `left-of`/`right-of` and `above`/`below` relations from 2D box centers, and retains that overlay between refreshes so the output preserves the source frame rate. The generated video is `.artifacts/dynamic-robot-relations/robot-relationships.mp4`.
+
+These annotations are image-plane YOLO-E pseudo-labels, not 3D or world-coordinate relationships. They do not interpolate motion, and detections can be missing or mislabeled; the overlay reports `Robot not detected` or `No other objects detected` rather than inventing a relationship.
+
 #### Common setup failures
 
 - **LFS authentication or pointer-sized assets:** obtain access to the configured DimOS LFS endpoint, then rerun `git lfs pull --include='assets/simple_demo.mp4,data/.lfs/models_yoloe.tar.gz'`. The reproduction script rejects either asset if it remains an LFS pointer.

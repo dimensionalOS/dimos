@@ -1,6 +1,6 @@
-AUTOMATION_STATUS: READY
-CURRENT_STEP: 05
-LAST_COMPLETED_STEP: 04
+AUTOMATION_STATUS: COMPLETE
+CURRENT_STEP: NONE
+LAST_COMPLETED_STEP: 05
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -11,7 +11,7 @@ LAST_COMPLETED_STEP: 04
 | 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
 | 03 | COMPLETE | `feat(benchmark): add relationship video CLI` | CLI/safety RED and review-driven temp-reservation RED observed; focused 4 passed; package 131 passed; Ruff/mypy passed; foreground review passed. |
 | 04 | COMPLETE | `fix(benchmark): require real relationship evidence` | RED caught sparse defaults; corrected real run yielded 26 relationship-bearing refreshes; 0s/15s/30s overlays visually accepted; focused 5 and package 132 passed; Ruff/mypy/review passed. |
-| 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
+| 05 | COMPLETE | `docs(benchmark): document dynamic relationship video` | README command and 2D/one-second semantics documented; package 132 passed; Ruff/mypy/final review and staging-safety checks passed. |
 
 ## Evidence log
 
@@ -80,3 +80,14 @@ LAST_COMPLETED_STEP: 04
 - Read-only review: a separate synchronous foreground Hermes process returned `PASS`, confirming reference settings, lazy construction and prompt propagation coverage, scoped changes, and artifact staging safety.
 - Staging safety: generated MP4/JPEG frames, model weights, virtual-environment packages, and the machine-local model symlink remain ignored and unstaged.
 - Next: Step 05.
+
+### Step 05 — COMPLETE
+
+- Documentation: added one runnable `relationship_video` command, generated MP4 path, full-rate overlay behavior, one-second refresh semantics, deterministic 2D box-center relations, explicit missing states, and honest pseudo-label/no-interpolation/no-3D limitations.
+- Package suite: `uv run pytest dimos/benchmark/spatiotemporal -q` → `132 passed in 2.55s`.
+- Ruff: `uv run ruff format --check dimos/benchmark/spatiotemporal` → 35 files already formatted; `uv run ruff check dimos/benchmark/spatiotemporal` → all checks passed.
+- Mypy: `uv run --group lint mypy dimos/benchmark/spatiotemporal` → no issues in 18 source files.
+- Read-only review: a separate synchronous foreground Hermes process returned `PASS` with no blocking findings; it confirmed command/prerequisite accuracy, implementation-aligned semantics and limitations, path/atomic-output safety, and exact scope compliance.
+- Final diff safety: no source videos, generated MP4/JPEG files, model weights, virtual environments, logs, secrets, or machine-local links are tracked or staged; `.artifacts/` remains ignored.
+- Handoff: automation complete on `feat/dynamic-robot-relation-video`; no upstream PR was opened while #2989 remains unmerged. Branch is ready for the parent session to prepare a clean follow-up PR.
+- Next: none.

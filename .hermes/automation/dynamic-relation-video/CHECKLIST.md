@@ -25,7 +25,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 | 02 | Full-rate annotated MP4 renderer with one-second refresh | COMPLETE |
 | 03 | CLI, path safety, decode/encode verification | COMPLETE |
 | 04 | Real YOLO-E reference-video acceptance | COMPLETE |
-| 05 | README, focused review, final gates, and PR preparation | PENDING |
+| 05 | README, focused review, final gates, and PR preparation | COMPLETE |
 
 ## Micro-spec 01 — Relationship snapshots
 
@@ -85,13 +85,13 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 
 **Files:** package `README.md`, tests only if documentation claims need executable gates.
 
-- [ ] Add one concise command and explain 2D/one-second semantics.
-- [ ] Add generated-video output path and honest limitations.
-- [ ] Run all `dimos/benchmark/spatiotemporal` tests, Ruff format/check, and package mypy.
-- [ ] Independent read-only review for correctness, safety, and overclaims.
-- [ ] Confirm final diff does not contain source videos, generated MP4s, model weights, `.venv`, logs, or secrets.
-- [ ] Mark `AUTOMATION_STATUS: COMPLETE`, commit `docs(benchmark): document dynamic relationship video`, push, verify SHA.
-- [ ] Do not open an upstream PR while #2989 is unmerged; report branch ready for clean follow-up PR preparation.
+- [x] Add one concise command and explain 2D/one-second semantics.
+- [x] Add generated-video output path and honest limitations.
+- [x] Run all `dimos/benchmark/spatiotemporal` tests, Ruff format/check, and package mypy.
+- [x] Independent read-only review for correctness, safety, and overclaims.
+- [x] Confirm final diff does not contain source videos, generated MP4s, model weights, `.venv`, logs, or secrets.
+- [x] Mark `AUTOMATION_STATUS: COMPLETE`, commit `docs(benchmark): document dynamic relationship video`, push, verify SHA.
+- [x] Do not open an upstream PR while #2989 is unmerged; report branch ready for clean follow-up PR preparation.
 
 ## Baseline evidence
 
