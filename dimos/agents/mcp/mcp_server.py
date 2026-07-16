@@ -345,10 +345,6 @@ async def mcp_sse_endpoint() -> StreamingResponse:
 
 
 class McpServer(Module):
-    # The HTTP listener must remain responsive while robot modules perform
-    # synchronous planning, simulation, or perception work.
-    dedicated_worker = True
-
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
