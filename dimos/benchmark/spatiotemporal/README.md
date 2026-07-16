@@ -17,6 +17,19 @@ The core contribution is the evaluator, not a new vision model:
 
 ### Interviewer fast path
 
+#### Prerequisites
+
+A fresh checkout needs:
+
+- `git` and `git-lfs`;
+- access to the DimOS LFS endpoint for `assets/simple_demo.mp4` and the YOLO-E archive;
+- `uv`; and
+- `gh` only when using the `gh pr checkout` command below.
+
+The reference path runs on macOS or Linux and supports CPU execution. GitHub repository access does not necessarily grant access to the separately configured DimOS LFS endpoint.
+
+#### Reproduce the reference episode
+
 From a PR checkout, one script materializes assets, installs the project and prompt dependency, runs every focused quality gate, executes the real CPU demo, and prints the result locations:
 
 ```bash
@@ -30,11 +43,45 @@ If Git reports that the branch is already assigned to another worktree, enter th
 ./dimos/benchmark/spatiotemporal/reproduce_reference.sh --skip-setup --skip-tests
 ```
 
+A successful run prints both:
+
+```text
+SUMMARY_GATES=PASS
+Reproduction complete.
+```
+
 Then open:
 
 ```bash
 open .artifacts/spatiotemporal-video-qa/evidence-viewer/index.html
 ```
+
+On Linux, open the same `index.html` in a browser.
+
+#### Try another video
+
+After the initial setup, reuse the pipeline with a different video:
+
+```bash
+uv run python -m dimos.benchmark.spatiotemporal.demo \
+  --source-video /path/to/video.mp4 \
+  --output-root .artifacts/my-video-eval \
+  --duration-s 25 \
+  --frame-stride 150
+```
+
+Use a regular 15–30-second video that OpenCV can decode. Useful episodes contain multiple visible, spatially separated objects and at least one relationship change. Arbitrary videos are not guaranteed to yield accepted relations or questions because YOLO-E labels and tracks remain teacher pseudo-labels.
+
+Open the custom result at:
+
+```text
+.artifacts/my-video-eval/evidence-viewer/index.html
+```
+
+#### Common setup failures
+
+- **LFS authentication or pointer-sized assets:** obtain access to the configured DimOS LFS endpoint, then rerun `git lfs pull --include='assets/simple_demo.mp4,data/.lfs/models_yoloe.tar.gz'`. The reproduction script rejects either asset if it remains an LFS pointer.
+- **No relations or questions from a custom video:** choose a clearer clip or adjust its duration and sampling stride. Inspect detection labels, confidence, identity continuity, and object separation rather than weakening privacy or determinism checks.
 
 A reviewer should establish the feature in this order:
 
