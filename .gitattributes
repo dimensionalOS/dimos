@@ -24,3 +24,8 @@ docs/assets/dimensional-logo-master-transparent.png -filter -diff -merge
 docs/assets/favicon.png -filter -diff -merge
 # Keep small PR walkthrough images directly renderable without private LFS credentials.
 docs/assets/spatiotemporal/** -filter -diff -merge
+# DimSim scene data and agent model
+misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text
