@@ -96,17 +96,23 @@ else
     $DOCKER exec "$CONTAINER" bash -c 'cd /app && rm -rf .venv && UV_PYTHON=3.10 uv sync --all-extras --no-extra dds --no-extra unitree-dds'
 fi
 
-step 7 "Host sysctls (/etc/sysctl.d/60-dimos.conf: UDP buffers, lo multicast)"
-if [ -f /etc/sysctl.d/60-dimos.conf ]; then
-    echo "    already applied"
-elif confirm; then
+step 7 "Host network (UDP buffers + loopback multicast for dimos' LCM bus)"
+if [ ! -f /etc/sysctl.d/60-dimos.conf ] && confirm; then
     sudo tee /etc/sysctl.d/60-dimos.conf >/dev/null <<'EOF'
 net.core.rmem_max=67108864
 net.core.rmem_default=67108864
 EOF
     sudo sysctl --system >/dev/null
-    sudo ip link set lo multicast on
+else
+    echo "    sysctls already applied"
 fi
+# These two live in the HOST's network namespace (the container shares it via
+# --network host) and do NOT persist across reboot. dimos' LCM configurator
+# demands both; it cannot apply them itself from inside the container, which
+# has no CAP_NET_ADMIN -> "RTNETLINK answers: Operation not permitted".
+sudo ip link set lo multicast on
+ip route show | grep -q '^224.0.0.0/4' || sudo ip route add 224.0.0.0/4 dev lo
+echo "    lo multicast + 224.0.0.0/4 route present"
 
 step 8 "Verification"
 # `docker exec bash -c` is non-interactive: it does not read the image's
