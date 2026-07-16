@@ -175,7 +175,7 @@ class DroneTrackingModule(Module):
             tracker = cv2.TrackerCSRT.create()  # type: ignore[attr-defined]
 
             # Convert bbox format from [x1, y1, x2, y2] to [x, y, w, h]
-            x1, y1, x2, y2 = bbox
+            x1, y1, x2, y2 = map(int, bbox)
             x, y, w, h = x1, y1, x2 - x1, y2 - y1
 
             # Initialize tracker
