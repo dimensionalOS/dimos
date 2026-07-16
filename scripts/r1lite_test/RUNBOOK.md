@@ -120,18 +120,26 @@ Then, with the robot stack up (see every-session bring-up above):
 ./scripts/r1lite_test/run_r1lite.sh r1lite-keyboard-teleop # teleop (RC mode 5!)
 ```
 The script starts the laptop rerun viewer (:9877) if needed, starts the
-container, and runs the blueprint with VIEWER=rerun-connect.
+container, and runs the blueprint with `VIEWER=rerun RERUN_OPEN=none`.
 
 Manual equivalent: [laptop] `rerun --port 9877` · [container]
-`VIEWER=rerun-connect dimos run r1lite-coordinator`.
+`VIEWER=rerun RERUN_OPEN=none dimos run r1lite-coordinator`.
+
+> **Viewer mode names changed (2026-07-16).** dimos now takes
+> `--viewer rerun|none` plus a separate `--rerun-open native|web|both|none`.
+> The old combined values are gone and now fail validation at startup:
+> `rerun-connect` → `--viewer rerun --rerun-open none`; `rerun-web` →
+> `--viewer rerun --rerun-open web`.
 
 Viewer rules learned the hard way (BRINGUP_LOG Day 3): never launch GUI
 viewers inside the container (X11/GL crashes); `dimos run` defaults to
 viewer=rerun (NOT headless — use `--viewer none` for headless);
-**rerun-web is KNOWN-BROKEN in-container** — root-caused via py-spy:
-rr.serve_grpc() GIL-spins inside dimos forkserver workers, starving every
-thread in worker 0 (dimos-core × rerun 0.29.2 bug, affects all robots'
-web mode; evidence in BRINGUP_LOG). Use rerun-connect.
+**web mode (`--rerun-open web`) is KNOWN-BROKEN in-container** —
+root-caused via py-spy: rr.serve_grpc() GIL-spins inside dimos forkserver
+workers, starving every thread in worker 0 (dimos-core × rerun 0.29.2 bug,
+affects all robots' web mode; evidence in BRINGUP_LOG). Connect an
+external viewer instead (`--rerun-open none`). Worth re-testing against
+the newer rerun on main before trusting the old verdict.
 
 ## Not yet done
 

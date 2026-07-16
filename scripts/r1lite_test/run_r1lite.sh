@@ -11,9 +11,10 @@
 #      fails (X11 auth + software-GL crashes — see BRINGUP_LOG Day 3).
 #      Install once with: uv tool install rerun-sdk==0.29.2
 #   2. Ensures the dev container is running.
-#   3. Runs the blueprint inside the container with VIEWER=rerun-connect,
-#      so the bridge streams to the laptop viewer (host networking makes
-#      127.0.0.1:9877 the same place for both).
+#   3. Runs the blueprint inside the container with VIEWER=rerun and
+#      RERUN_OPEN=none, so the bridge serves gRPC but spawns no viewer of
+#      its own and streams to the laptop viewer instead (host networking
+#      makes 127.0.0.1:9877 the same place for both).
 #
 # Robot-side prerequisites are NOT handled here (stack up, RC mode 5 for
 # chassis) — see RUNBOOK.md.
@@ -130,6 +131,6 @@ exec $DOCKER exec -it -e DISPLAY="$DISPLAY" \
     source .venv/bin/activate &&
     source /opt/ros/humble/setup.bash &&
     export ROS_DOMAIN_ID=2 &&
-    export VIEWER=rerun-connect &&
+    export VIEWER=rerun RERUN_OPEN=none &&
     dimos run $BLUEPRINT
 "

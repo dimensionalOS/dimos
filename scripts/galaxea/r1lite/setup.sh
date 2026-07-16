@@ -90,9 +90,10 @@ if [ ! -f "$DEPLOY_DIR/.env" ]; then
     sudo tee "$DEPLOY_DIR/.env" >/dev/null <<EOF
 DIMOS_IMAGE=$TAG
 ROS_DOMAIN_ID=2
-VIEWER=rerun-connect
+VIEWER=rerun
+RERUN_OPEN=none
 EOF
-    echo "    wrote .env (image tag, domain 2, rerun-connect viewer)"
+    echo "    wrote .env (image tag, domain 2, connect-only rerun viewer)"
 else
     echo "    .env exists — leaving it (edit DIMOS_IMAGE there to update/rollback)"
 fi
