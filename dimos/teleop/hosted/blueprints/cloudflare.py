@@ -34,10 +34,7 @@ HostedStatsModule and Go2CommandModule.
 
 from __future__ import annotations
 
-from typing import Any
-
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
-from dimos.core.stream import Transport
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import (
     CloudflareTransport,
     CloudflareVideoTransport,
@@ -46,11 +43,9 @@ from dimos.core.transport import (
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -63,7 +58,6 @@ from dimos.teleop.hosted.camera_mux import CameraMuxModule
 from dimos.teleop.hosted.go2_command import Go2CommandModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.map_compress import MapCompressModule
-from dimos.teleop.quest.quest_types import Buttons
 
 # Single camera: only the Go2's front camera feeds the video track.
 teleop_hosted_go2_transport = (
@@ -113,18 +107,12 @@ teleop_hosted_go2_transport = (
 
 # ─── XArm hosted manipulation (coordinator-driven, WebXR + browser operator) ──
 #
-# The arm analog of the Go2 hosted blueprints. ArmCommandModule (the operator
-# command/E-STOP plane + engage/delta-pose control loop) replaces Go2CommandModule;
-# there's no robot driver — actuation runs through the ControlCoordinator, fed
-# over LCM. CameraMuxModule + HostedStatsModule are reused as-is (the arm has no
-# battery, so HostedStatsModule.go2 is left unbound → soc omitted).
-#
-# Two cameras: front/overview = cam1, wrist = cam2, operator-selectable via the
-# mux, fed by two RealSense units. Run with -o transports.broker.api_key=dtk_live_...
+# Arm analog of the Go2 blueprints: ArmCommandModule is the operator command
+# plane; actuation runs through the ControlCoordinator over LCM. Two RealSense
+# cameras (front = cam1, wrist = cam2), operator-selectable via the mux.
 
 
-# Distinct classes so two RealSense units coexist in one blueprint: module
-# identity is the class throughout the stack. Configure serials with
+# Distinct classes so two RealSense units coexist in one blueprint. Serials:
 # -o frontcamera.serial_number=... -o wristcamera.serial_number=...
 class FrontCamera(RealSenseCamera):
     pass
@@ -132,34 +120,6 @@ class FrontCamera(RealSenseCamera):
 
 class WristCamera(RealSenseCamera):
     pass
-
-
-# The LCM topics that feed the coordinator (cartesian_command, ee_twist, gripper)
-# MUST carry a leading slash to match its default "/"-prefixed inputs — without
-# it the arm engages but never moves.
-_ARM_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
-    # inbound operator planes
-    ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-    ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → command + stats
-    ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
-    # outbound operator planes
-    ("mux_image", Image): CloudflareVideoTransport.spec(),
-    ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
-    ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
-    # command → coordinator over LCM (leading slash — see note above)
-    ("right_controller_output", PoseStamped): LCMTransport.spec(
-        "/coordinator_cartesian_command", PoseStamped
-    ),
-    ("teleop_buttons", Buttons): LCMTransport.spec("teleop_buttons", Buttons),
-    ("coordinator_ee_twist_command", TwistStamped): LCMTransport.spec(
-        "/coordinator_ee_twist_command", TwistStamped
-    ),
-    ("gripper_command", Bool): LCMTransport.spec("/gripper_command", Bool),
-    # robot_state (command → stats), robot_telemetry + cmd_vel_stamped (stats →
-    # recorder) are bytes/intra-process streams: with n_workers=1 autoconnect
-    # wires them in-process, so no transport binding is needed here (a bytes
-    # stream can't be bound to a typed LCM topic anyway).
-}
 
 
 teleop_hosted_xarm6 = (
@@ -175,9 +135,19 @@ teleop_hosted_xarm6 = (
         [
             (FrontCamera, "color_image", "cam1"),
             (WristCamera, "color_image", "cam2"),
+            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
         ]
     )
-    .transports(_ARM_TRANSPORTS)
+    .transports(
+        {
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
+        }
+    )
     .global_config(viewer="none", n_workers=1)  # one process → one CF session
 )
 
@@ -195,9 +165,19 @@ teleop_hosted_xarm7 = (
         [
             (FrontCamera, "color_image", "cam1"),
             (WristCamera, "color_image", "cam2"),
+            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
         ]
     )
-    .transports(_ARM_TRANSPORTS)
+    .transports(
+        {
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
+        }
+    )
     .global_config(viewer="none", n_workers=1)  # one process → one CF session
 )
 
