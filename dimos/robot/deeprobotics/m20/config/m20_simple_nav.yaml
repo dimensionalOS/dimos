@@ -1,0 +1,66 @@
+# Real-robot trajectory generation and smoothing profile for `m20-simple-nav`.
+#
+# Run with:
+#   dimos --transport=zenoh --zenoh-connect tcp/<aos_ip>:7447 \
+#     run m20-simple-nav --config \
+#     dimos/robot/deeprobotics/m20/config/m20_simple_nav.yaml
+#
+# Values are validated against ReplanningAStarPlannerConfig at startup.
+# Restart DimOS after editing this file. This first profile intentionally covers
+# only the A* objective and final-path diagnostics/smoothing introduced by the
+# M20 Simple Nav planning upgrades.
+
+replanningastarplanner:
+  # A* objective = geometric path length + normalized costmap cell cost.
+  # Increasing this value favors shorter routes more strongly. Must be >= 0.
+  path_length_weight: 1.0
+
+  # Weight for normalized costmap values in the A* objective. Increasing this
+  # value favors lower-cost clearance corridors even when they are longer.
+  # Must be >= 0.
+  path_cell_cost_weight: 3.0
+
+  # Publish the raw grid-cell A* path on /raw_path for Rerun comparison.
+  # This does not change the controller path. This profile enables the stream so
+  # operators can compare raw and final paths during physical M20 validation.
+  publish_raw_path: true
+
+  # Select costmap-aware constrained smoothing. This profile enables validation,
+  # fractional backtracking, and safe fallback to the raw-resampled A* path.
+  constrained_path_smoothing_enabled: true
+
+  # Maximum constrained-smoothing iterations. More iterations may improve
+  # convergence but increase planning latency. Must be an integer >= 0.
+  path_smoothing_iterations: 40
+
+  # Attraction to each original A* point, range [0.0, 1.0]. Larger values keep
+  # more grid geometry; smaller values let neighboring-point smoothing dominate.
+  path_smoothing_data_weight: 0.02
+
+  # Neighbor/Laplacian smoothing strength, range [0.0, 0.5]. A value of 0
+  # disables the neighbor update; the upper bound prevents unstable oscillation.
+  path_smoothing_smoothness_weight: 0.45
+
+  # Hard maximum displacement of each adjusted point from its corresponding
+  # raw A* point, in metres. A value of 0 disables geometric adjustment.
+  path_smoothing_max_deviation_m: 0.10
+
+  # Distance between costmap validation samples along candidate path segments,
+  # in metres. Smaller values detect thinner obstacles but use more CPU. Must be > 0.
+  path_smoothing_collision_sample_spacing_m: 0.05
+
+  # Maximum permitted increase in mean costmap cost over the aligned raw path.
+  # Lethal and out-of-map cells are always rejected. Must be >= 0.
+  path_smoothing_max_cost_increase: 2.0
+
+  # Fraction retained after each failed full-path validation, range (0.0, 1.0).
+  # With 0.5, candidates retain 100%, 50%, 25%, then 12.5% of smoothing.
+  path_smoothing_backtracking_factor: 0.5
+
+  # Number of reduced-fraction retries after the full smoothing candidate.
+  # Three retries with factor 0.5 evaluate 1.0, 0.5, 0.25, and 0.125.
+  path_smoothing_max_backtracking_steps: 3
+
+  # Approximate spacing between final controller waypoints, in metres.
+  # Smaller values preserve curves but increase message and controller work.
+  path_resample_spacing_m: 0.10
