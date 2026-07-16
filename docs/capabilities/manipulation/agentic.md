@@ -8,6 +8,9 @@ title: "Agentic xArm Simulation"
 simulation, MCP server, and built-in agent together. It is **simulation-only**;
 it does not control a physical arm.
 
+See the [manipulation capability overview](/docs/capabilities/manipulation/) for
+the underlying planning and perception stack.
+
 ## Prerequisites
 
 Install the manipulation dependencies:
