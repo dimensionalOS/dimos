@@ -19,9 +19,6 @@ Swaps the whole-body servo task for per-arm trajectory tasks; planned
 trajectories execute through ``traj_left_arm`` / ``traj_right_arm``. The
 torso holds position; grippers are not driven yet.
 
-Requires the ``r1_pro_description`` package — set ``R1PRO_DESCRIPTION`` to a
-local checkout until the asset lands in the LFS store (see ``config.py``).
-
 Usage:
     dimos run r1pro-manipulation
 """

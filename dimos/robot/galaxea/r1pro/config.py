@@ -15,8 +15,8 @@
 """Galaxea R1 Pro planning-model configuration (Drake side; hardware wiring
 lives in ``connection.py``).
 
-The full-body description is not in the LFS store yet; until it is uploaded,
-point ``R1PRO_DESCRIPTION`` at a local checkout of ``r1_pro_description``.
+The full-body description (vendor ``r1pro_2026`` URDF + meshes) lives in the
+LFS store; set ``R1PRO_DESCRIPTION`` to override with a local checkout.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _description_root() -> Path:
     return LfsPath("r1_pro_description")
 
 
-R1PRO_MODEL_PATH = _description_root() / "urdf" / "r1_pro.urdf"
+R1PRO_MODEL_PATH = _description_root() / "urdf" / "r1pro_2026.urdf"
 
 # Collision exclusion pairs — structural mesh overlaps in the full-body URDF
 # plus gripper parallel-linkage exclusions.
@@ -61,15 +61,15 @@ R1PRO_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("left_gripper_link", "left_gripper_finger_link1"),
     ("left_gripper_link", "left_gripper_finger_link2"),
     ("left_gripper_finger_link1", "left_gripper_finger_link2"),
-    ("left_gripper_link", "left_D405_link"),
-    ("left_arm_link7", "left_D405_link"),
+    ("left_gripper_link", "left_realsense_link"),
+    ("left_arm_link7", "left_realsense_link"),
     # Right gripper
     ("right_arm_link7", "right_gripper_link"),
     ("right_gripper_link", "right_gripper_finger_link1"),
     ("right_gripper_link", "right_gripper_finger_link2"),
     ("right_gripper_finger_link1", "right_gripper_finger_link2"),
-    ("right_gripper_link", "right_D405_link"),
-    ("right_arm_link7", "right_D405_link"),
+    ("right_gripper_link", "right_realsense_link"),
+    ("right_arm_link7", "right_realsense_link"),
 ]
 
 
@@ -87,10 +87,8 @@ def make_r1pro_arm_model_config(side: str = "left") -> RobotModelConfig:
         joint_names=urdf_joints,
         end_effector_link=f"{side}_arm_link7",
         base_link="base_link",
-        package_paths={
-            "r1_pro_description": root,
-            "mobiman": root,
-        },
+        # The vendor URDF references its meshes via package://r1pro_urdf.
+        package_paths={"r1pro_urdf": root},
         auto_convert_meshes=True,
         collision_exclusion_pairs=R1PRO_COLLISION_EXCLUSIONS,
         max_velocity=0.5,
