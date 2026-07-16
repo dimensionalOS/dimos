@@ -24,6 +24,8 @@ Keyboard controls:
     R/F: +Roll/-Roll
     T/G: +Pitch/-Pitch
     Y/H: +Yaw/-Yaw
+    Space: Toggle the Bool output (robot-agnostic — wire toggle_command to
+           whatever the blueprint drives, e.g. an arm gripper)
     ESC: Quit
 """
 
@@ -46,6 +48,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.utils.logging_config import setup_logger
 
@@ -54,9 +57,10 @@ logger = setup_logger()
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
-# Jog speeds
-LINEAR_SPEED = 0.05  # m/s
-ANGULAR_SPEED = 0.5  # rad/s
+# Jog speeds. 0.05 m/s was imperceptibly slow (~1mm/tick) — the arm barely moved
+# per keypress and read as "not responding / sagging". These give visible motion.
+LINEAR_SPEED = 0.15  # m/s
+ANGULAR_SPEED = 1.0  # rad/s
 
 TwistVector = tuple[float, float, float]
 
@@ -74,6 +78,9 @@ class KeyboardTeleopModule(Module):
     config: KeyboardTeleopConfig
 
     coordinator_ee_twist_command: Out[TwistStamped]
+    # Space-toggled Bool, robot-agnostic: the blueprint's wiring gives it
+    # meaning (arm gripper open/close today; any Go2 Bool toggle tomorrow).
+    toggle_command: Out[Bool]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
@@ -109,6 +116,7 @@ class KeyboardTeleopModule(Module):
         font = pygame.font.Font(None, 28)
         clock = pygame.time.Clock()
         was_moving = False
+        toggle_on = False
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
@@ -117,6 +125,9 @@ class KeyboardTeleopModule(Module):
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         self._stop_event.set()
+                    elif event.key == pygame.K_SPACE:
+                        toggle_on = not toggle_on
+                        self.toggle_command.publish(Bool(data=toggle_on))
 
             linear, angular = _twist_from_keys(pygame.key.get_pressed())
             linear_x, linear_y, linear_z = linear
@@ -147,6 +158,11 @@ class KeyboardTeleopModule(Module):
                 f"Angular twist: R={angular_x:.3f}  P={angular_y:.3f}  Y={angular_z:.3f} rad/s"
             )
             screen.blit(font.render(angular_text, True, (100, 200, 255)), (20, y_pos))
+            y_pos += 30
+
+            toggle_text = f"Toggle: {'ON' if toggle_on else 'OFF'}"
+            toggle_color = (255, 180, 100) if toggle_on else (150, 220, 150)
+            screen.blit(font.render(toggle_text, True, toggle_color), (20, y_pos))
             y_pos += 40
 
             controls = [
@@ -156,6 +172,7 @@ class KeyboardTeleopModule(Module):
                 ("R/F", "+Roll/-Roll"),
                 ("T/G", "+Pitch/-Pitch"),
                 ("Y/H", "+Yaw/-Yaw"),
+                ("Space", "Toggle Bool output"),
                 ("ESC", "Quit"),
             ]
             for key, desc in controls:
