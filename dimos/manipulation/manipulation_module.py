@@ -451,9 +451,8 @@ class ManipulationModule(Module):
                     if unresolved:
                         self._possibly_active_tasks = unresolved
                         self._state = ManipulationState.FAULT
-                        self._error_message = (
-                            "Failed to cancel coordinator tasks: "
-                            + ", ".join(sorted(unresolved))
+                        self._error_message = "Failed to cancel coordinator tasks: " + ", ".join(
+                            sorted(unresolved)
                         )
                         logger.error(self._error_message)
                         return False
@@ -1486,7 +1485,9 @@ class ManipulationModule(Module):
                 self._restore_execution_gate(token, previous_state, prepared)
                 return False
         except Exception as exc:
-            self._restore_execution_gate(token, previous_state, f"Failed to prepare execution: {exc}")
+            self._restore_execution_gate(
+                token, previous_state, f"Failed to prepare execution: {exc}"
+            )
             return False
         return self._dispatch_prepared_plan(prepared, token)
 

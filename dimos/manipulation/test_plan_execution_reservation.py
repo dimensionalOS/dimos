@@ -239,7 +239,9 @@ def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
     executing.start()
     assert execute_finished.wait(timeout=1.0)
     assert execute_result == [False]
-    assert not any(call.args[1] == "execute" for call in module._coordinator_client.task_invoke.call_args_list)
+    assert not any(
+        call.args[1] == "execute" for call in module._coordinator_client.task_invoke.call_args_list
+    )
     release_cancel.set()
     cancelling.join(timeout=1.0)
     executing.join(timeout=1.0)
