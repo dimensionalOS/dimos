@@ -7,7 +7,7 @@ Dimensional is a fast-moving, pre-release robotics OS maintained by a small team
 > [!NOTE]
 > This document covers the process: how to report, propose, and get changes accepted.
 >
-> For the technical mechanics, see `[AGENTS.md](AGENTS.md)`. That covers building, testing, and running dimOS, the repo layout, the module and blueprint system, code style, the git workflow, and how to add a skill. The two documents are meant to be read together.
+> For the technical mechanics, see [AGENTS.md](AGENTS.md). That covers building, testing, and running dimOS, the repo layout, the module and blueprint system, code style, the git workflow, and how to add a skill. The two documents are meant to be read together.
 
 ## Table of contents
 
@@ -51,7 +51,7 @@ We want people to use Dimensional, learn it, and help us build it. You do not ne
 Browse [open issues labeled](https://github.com/dimensionalOS/dimos/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) `good first issue`. These are scoped tasks that maintainers have marked as approachable for newcomers. Pick one, read the description, and comment if you want to work on it or need clarification. Maintainers are happy to point you in the right direction.
 
 **Get set up.**
-Follow `[AGENTS.md](AGENTS.md)` for install (`uv sync --extra all`), running blueprints in simulation or replay, and the test workflow (`uv run pytest`). Most changes can be developed and validated without a physical robot.
+Follow [AGENTS.md](AGENTS.md) for install (`uv sync --extra all`), running blueprints in simulation or replay, and the test workflow (`uv run pytest`). Most changes can be developed and validated without a physical robot.
 
 **This still applies to you.**
 The [critical rule](#the-critical-rule) and [AI policy](AI_POLICY.md) apply to every outside contribution, including yours. Use AI tools if they help you learn the codebase, but understand what you submit. Link your PR to the issue you are working on.
