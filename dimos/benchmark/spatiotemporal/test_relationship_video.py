@@ -25,10 +25,12 @@ from dimos.benchmark.spatiotemporal.models import BoundingBox2D, SpatialPredicat
 from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
     DEFAULT_PROMPTS,
+    RelationshipSnapshot,
     _default_detector_factory,
     _detection_label,
     _label_origin,
     _overlay_style,
+    _snapshot_lines,
     derive_relationship_snapshot,
     main,
     render_relationship_video,
@@ -144,6 +146,20 @@ def test_detection_label_links_box_to_relationship_object_id() -> None:
     assert _detection_label(detection) == "refrigerator [track-17] 0.57"
 
 
+def test_stale_relationship_panel_discloses_last_observation_age() -> None:
+    snapshot = derive_relationship_snapshot(
+        (
+            _detection("robot", "quadruped robot", (0.4, 0.4, 0.6, 0.6), 0.9),
+            _detection("chair", "chair", (0.7, 0.1, 0.9, 0.3), 0.8),
+        )
+    )
+
+    assert _snapshot_lines(snapshot, stale_age_s=1.26) == [
+        "STALE - last observed 1.3s ago",
+        "robot left-of / below chair [chair]",
+    ]
+
+
 def test_overlay_style_keeps_portrait_hd_text_readable() -> None:
     style = _overlay_style(width=1080, height=1920)
 
@@ -184,6 +200,31 @@ class _ChangingDetector:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _SparseDetector(_ChangingDetector):
+    def detect(self, image: Image) -> tuple[DetectedObject, ...]:
+        self.frame_ids.append(image.frame_id)
+        if image.frame_id != "0":
+            return ()
+        return (
+            _detection("robot", "quadruped robot", (0.4, 0.4, 0.6, 0.6), 0.9),
+            _detection("chair", "chair", (0.7, 0.1, 0.9, 0.3), 0.8),
+        )
+
+
+class _SnapshotRecorder:
+    def __init__(self) -> None:
+        self.displayed: list[tuple[str | None, int, float | None]] = []
+
+    def __call__(
+        self,
+        frame: np.ndarray,
+        snapshot: RelationshipSnapshot,
+        stale_age_s: float | None = None,
+    ) -> None:
+        del frame
+        self.displayed.append((snapshot.message, len(snapshot.relationships), stale_age_s))
 
 
 def _write_video(path: Path, *, fps: float, frame_count: int, size: tuple[int, int]) -> None:
@@ -240,6 +281,49 @@ def test_renderer_refreshes_once_per_second_and_preserves_full_rate_overlay(
     assert np.mean(cv2.absdiff(frames[0], frames[1])) < 2.0
     assert np.mean(cv2.absdiff(frames[1], frames[2])) > 2.0
     assert np.mean(cv2.absdiff(frames[2], frames[3])) < 2.0
+
+
+def test_renderer_retains_last_relationship_for_bounded_detector_misses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "retained.mp4"
+    _write_video(source, fps=1.0, frame_count=4, size=(128, 96))
+    detector = _SparseDetector()
+    recorder = _SnapshotRecorder()
+    monkeypatch.setattr(
+        "dimos.benchmark.spatiotemporal.relationship_video._draw_snapshot",
+        recorder,
+    )
+
+    render_relationship_video(source, output, detector, hold_period_s=2.0)
+
+    assert recorder.displayed == [
+        (None, 1, None),
+        (None, 1, 1.0),
+        (None, 1, 2.0),
+        ("Robot not detected", 0, None),
+    ]
+
+
+def test_hold_window_tolerates_fractional_fps_refresh_quantization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "retained.mp4"
+    _write_video(source, fps=29.997, frame_count=91, size=(64, 48))
+    recorder = _SnapshotRecorder()
+    monkeypatch.setattr(
+        "dimos.benchmark.spatiotemporal.relationship_video._draw_snapshot",
+        recorder,
+    )
+    render_relationship_video(source, output, _SparseDetector(), hold_period_s=2.0)
+
+    assert recorder.displayed[60][0:2] == (None, 1)
+    assert recorder.displayed[60][2] == pytest.approx(60 / 29.997)
+    assert recorder.displayed[90] == ("Robot not detected", 0, None)
 
 
 def test_renderer_attempts_all_cleanup_when_processing_and_release_fail(
@@ -315,7 +399,7 @@ def test_cli_contract_is_configurable_safe_and_atomic(
     _write_video(source, fps=2.0, frame_count=2, size=(64, 48))
     detector = _ChangingDetector()
     configured_prompts: list[tuple[str, ...]] = []
-    render_options: list[tuple[str, float]] = []
+    render_options: list[tuple[str, float, float]] = []
 
     def detector_factory(prompts: tuple[str, ...]) -> _ChangingDetector:
         configured_prompts.append(prompts)
@@ -327,16 +411,18 @@ def test_cli_contract_is_configurable_safe_and_atomic(
         configured_detector: _ChangingDetector,
         robot_label: str = "quadruped robot",
         update_period_s: float = 1.0,
+        hold_period_s: float = 0.0,
     ) -> None:
         assert output_path.is_file()
         assert not output_path.is_symlink()
-        render_options.append((robot_label, update_period_s))
+        render_options.append((robot_label, update_period_s, hold_period_s))
         render_relationship_video(
             source_path,
             output_path,
             configured_detector,
             robot_label,
             update_period_s,
+            hold_period_s,
         )
 
     monkeypatch.setattr(
@@ -352,6 +438,8 @@ def test_cli_contract_is_configurable_safe_and_atomic(
             "robot dog",
             "--update-period",
             "0.5",
+            "--hold-period",
+            "2.5",
             "--prompts",
             "robot dog",
             "refrigerator",
@@ -360,7 +448,7 @@ def test_cli_contract_is_configurable_safe_and_atomic(
     )
 
     assert configured_prompts == [("robot dog", "refrigerator")]
-    assert render_options == [("robot dog", 0.5)]
+    assert render_options == [("robot dog", 0.5, 2.5)]
     assert output.is_file()
     assert stat.S_IMODE(output.stat().st_mode) == 0o644
     assert "Wrote 2 frames" in capsys.readouterr().out

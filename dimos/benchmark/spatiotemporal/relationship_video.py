@@ -166,7 +166,30 @@ def _detection_label(detection: DetectedObject) -> str:
     return f"{detection.label} [{detection.object_id}] {detection.confidence:.2f}"
 
 
-def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
+def _snapshot_lines(
+    snapshot: RelationshipSnapshot,
+    stale_age_s: float | None = None,
+) -> list[str]:
+    """Build panel text while explicitly disclosing retained evidence age."""
+    lines = (
+        [snapshot.message]
+        if snapshot.message is not None
+        else [
+            f"robot {relationship.horizontal.value} / {relationship.vertical.value} "
+            f"{relationship.object.label} [{relationship.object.object_id}]"
+            for relationship in snapshot.relationships
+        ]
+    )
+    if stale_age_s is not None:
+        lines.insert(0, f"STALE - last observed {stale_age_s:.1f}s ago")
+    return lines
+
+
+def _draw_snapshot(
+    frame: np.ndarray,
+    snapshot: RelationshipSnapshot,
+    stale_age_s: float | None = None,
+) -> None:
     height, width = frame.shape[:2]
     style = _overlay_style(width, height)
     detections = (() if snapshot.robot is None else (snapshot.robot,)) + tuple(
@@ -211,15 +234,7 @@ def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
             cv2.LINE_AA,
         )
 
-    lines = (
-        [snapshot.message]
-        if snapshot.message is not None
-        else [
-            f"robot {relationship.horizontal.value} / {relationship.vertical.value} "
-            f"{relationship.object.label} [{relationship.object.object_id}]"
-            for relationship in snapshot.relationships
-        ]
-    )
+    lines = _snapshot_lines(snapshot, stale_age_s)
     panel_height = min(height, style.padding + style.line_height * len(lines))
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (width, panel_height), (0, 0, 0), -1)
@@ -264,10 +279,13 @@ def render_relationship_video(
     detector: ObservationDetector,
     robot_label: str = "quadruped robot",
     update_period_s: float = 1.0,
+    hold_period_s: float = 0.0,
 ) -> None:
     """Render full-rate overlays while refreshing detections at a fixed period."""
     if not math.isfinite(update_period_s) or update_period_s <= 0.0:
         raise ValueError("update period must be finite and positive")
+    if not math.isfinite(hold_period_s) or hold_period_s < 0.0:
+        raise ValueError("hold period must be finite and non-negative")
     capture: cv2.VideoCapture | None = None
     writer: cv2.VideoWriter | None = None
     frame_count = 0
@@ -292,6 +310,9 @@ def render_relationship_video(
             raise RuntimeError(f"failed to open output video writer: {output_path}")
         next_refresh_s = 0.0
         snapshot: RelationshipSnapshot | None = None
+        last_relationship_snapshot: RelationshipSnapshot | None = None
+        last_relationship_timestamp_s: float | None = None
+        using_retained_snapshot = False
         while True:
             decoded, frame = capture.read()
             if not decoded:
@@ -304,11 +325,32 @@ def render_relationship_video(
                     frame_id=str(frame_count),
                     ts=timestamp_s,
                 )
-                snapshot = derive_relationship_snapshot(detector.detect(image), robot_label)
+                current_snapshot = derive_relationship_snapshot(detector.detect(image), robot_label)
+                if current_snapshot.relationships:
+                    snapshot = current_snapshot
+                    last_relationship_snapshot = current_snapshot
+                    last_relationship_timestamp_s = timestamp_s
+                    using_retained_snapshot = False
+                elif (
+                    last_relationship_snapshot is not None
+                    and last_relationship_timestamp_s is not None
+                    and timestamp_s - last_relationship_timestamp_s
+                    <= hold_period_s + min(1.0 / fps, 0.05)
+                ):
+                    snapshot = last_relationship_snapshot
+                    using_retained_snapshot = True
+                else:
+                    snapshot = current_snapshot
+                    using_retained_snapshot = False
                 next_refresh_s += update_period_s
             if snapshot is None:
                 raise RuntimeError("first video frame did not produce an overlay snapshot")
-            _draw_snapshot(frame, snapshot)
+            stale_age_s = (
+                timestamp_s - last_relationship_timestamp_s
+                if using_retained_snapshot and last_relationship_timestamp_s is not None
+                else None
+            )
+            _draw_snapshot(frame, snapshot, stale_age_s)
             writer.write(frame)
             frame_count += 1
         if frame_count == 0:
@@ -330,6 +372,13 @@ def _positive_period(value: str) -> float:
     period = float(value)
     if not math.isfinite(period) or period <= 0.0:
         raise argparse.ArgumentTypeError("update period must be finite and positive")
+    return period
+
+
+def _non_negative_period(value: str) -> float:
+    period = float(value)
+    if not math.isfinite(period) or period < 0.0:
+        raise argparse.ArgumentTypeError("hold period must be finite and non-negative")
     return period
 
 
@@ -370,6 +419,7 @@ def main(
     parser.add_argument("output", type=Path)
     parser.add_argument("--robot-label", default="quadruped robot")
     parser.add_argument("--update-period", type=_positive_period, default=1.0)
+    parser.add_argument("--hold-period", type=_non_negative_period, default=0.0)
     parser.add_argument(
         "--prompts",
         nargs="+",
@@ -409,6 +459,7 @@ def main(
             detector,
             robot_label=args.robot_label,
             update_period_s=args.update_period,
+            hold_period_s=args.hold_period,
         )
         os.replace(temporary_path, output_path)
     except BaseException:

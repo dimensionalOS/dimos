@@ -92,10 +92,11 @@ uv run python -m dimos.benchmark.spatiotemporal.relationship_video \
   assets/simple_demo.mp4 \
   .artifacts/dynamic-robot-relations/robot-relationships.mp4 \
   --robot-label 'quadruped robot' \
-  --update-period 1
+  --update-period 1 \
+  --hold-period 2
 ```
 
-The command detects the highest-confidence configured robot and other prompted objects once per second, derives deterministic `left-of`/`right-of` and `above`/`below` relations from 2D box centers, and retains that overlay between refreshes so the output preserves the source frame rate. The generated video is `.artifacts/dynamic-robot-relations/robot-relationships.mp4`.
+The command detects the highest-confidence configured robot and other prompted objects once per second, derives deterministic `left-of`/`right-of` and `above`/`below` relations from 2D box centers, and retains that overlay between refreshes so the output preserves the source frame rate. `--hold-period 2` also carries the latest valid relationship through detector-only misses for at most two seconds; retained overlays are prefixed with `STALE` and their exact age, then expire back to an explicit missing state. The generated video is `.artifacts/dynamic-robot-relations/robot-relationships.mp4`.
 
 These annotations are image-plane YOLO-E pseudo-labels, not 3D or world-coordinate relationships. They do not interpolate motion, and detections can be missing or mislabeled; the overlay reports `Robot not detected` or `No other objects detected` rather than inventing a relationship.
 
