@@ -206,6 +206,48 @@ def test_execute_and_execute_plan_race_without_consuming_latest_plan():
     assert module._coordinator_client.task_invoke.call_count == 1
 
 
+def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
+    module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
+    module._last_plan = _plan()
+    module._state = ManipulationState.COMPLETED
+    module._possibly_active_tasks = {"traj_arm"}
+    cancel_started = threading.Event()
+    execute_finished = threading.Event()
+    release_cancel = threading.Event()
+    cancel_result: list[bool] = []
+    execute_result: list[bool] = []
+
+    def invoke(task_name: str, method: str, _payload: dict[str, object]) -> bool:
+        assert task_name == "traj_arm"
+        if method == "cancel":
+            cancel_started.set()
+            assert release_cancel.wait(timeout=1.0)
+            return False
+        assert method == "execute"
+        raise AssertionError("execution dispatched during cancellation")
+
+    module._coordinator_client.task_invoke.side_effect = invoke
+    cancelling = threading.Thread(target=lambda: cancel_result.append(module.cancel()))
+    cancelling.start()
+    assert cancel_started.wait(timeout=1.0)
+
+    def run_execute() -> None:
+        execute_result.append(module.execute_plan())
+        execute_finished.set()
+
+    executing = threading.Thread(target=run_execute)
+    executing.start()
+    assert execute_finished.wait(timeout=1.0)
+    assert execute_result == [False]
+    assert not any(call.args[1] == "execute" for call in module._coordinator_client.task_invoke.call_args_list)
+    release_cancel.set()
+    cancelling.join(timeout=1.0)
+    executing.join(timeout=1.0)
+
+    assert cancel_result == [True]
+    module._coordinator_client.task_invoke.assert_called_once_with("traj_arm", "cancel", {})
+
+
 def test_execute_plan_accepts_a_direct_plan_without_reserving_stored_plan():
     module = make_module()
     direct_plan = _plan()
@@ -268,4 +310,5 @@ def test_execute_plan_dispatch_exception_faults_without_sticking_executing():
     assert module.execute_plan() is False
 
     assert module._state == ManipulationState.FAULT
-    assert module._error_message == "Failed to dispatch trajectory: rpc exploded"
+    assert module._error_message.startswith("Failed to dispatch trajectory: rpc exploded")
+    assert "traj_arm" in module._error_message

@@ -228,6 +228,20 @@ class TestStateMachine:
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
+    def test_cancel_completed_execution_cancels_coordinator_task(self):
+        module = _make_module()
+        module._state = ManipulationState.COMPLETED
+        module._possibly_active_tasks = {"traj_arm"}
+        module._robots = {
+            "arm": ("arm_id", MagicMock(coordinator_task_name="traj_arm"), MagicMock())
+        }
+        module._coordinator_client = MagicMock()
+        module._coordinator_client.task_invoke.return_value = False
+
+        assert module.cancel() is True
+        module._coordinator_client.task_invoke.assert_called_once_with("traj_arm", "cancel", {})
+        assert module._state == ManipulationState.IDLE
+
     def test_reset_not_during_execution(self):
         """Reset works in any state except EXECUTING."""
         module = _make_module()

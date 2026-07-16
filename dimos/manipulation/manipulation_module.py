@@ -155,6 +155,13 @@ class ManipulationModule(Module):
         # State machine
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
+        # State transitions are local, but coordinator calls must be serialized
+        # with cancellation.  In particular, do not let cancel race between
+        # two arms of a multi-arm dispatch.
+        self._execution_dispatch_lock = threading.Lock()
+        self._execution_generation = 0
+        self._possibly_active_tasks: set[str] = set()
+        self._cancellation_in_progress = False
         self._error_message = ""
         self._planning_epoch = 0
 
@@ -181,6 +188,17 @@ class ManipulationModule(Module):
         self._tf_thread: threading.Thread | None = None
 
         logger.info("ManipulationModule initialized")
+
+    def _ensure_execution_transaction_state(self) -> None:
+        """Initialize transaction fields for lightweight test harness subclasses."""
+        if not hasattr(self, "_execution_dispatch_lock"):
+            self._execution_dispatch_lock = threading.Lock()
+        if not hasattr(self, "_execution_generation"):
+            self._execution_generation = 0
+        if not hasattr(self, "_possibly_active_tasks"):
+            self._possibly_active_tasks = set()
+        if not hasattr(self, "_cancellation_in_progress"):
+            self._cancellation_in_progress = False
 
     @rpc
     def start(self) -> None:
@@ -407,15 +425,43 @@ class ManipulationModule(Module):
     @rpc
     def cancel(self) -> bool:
         """Cancel current motion or invalidate an in-progress plan."""
+        self._ensure_execution_transaction_state()
+        # Publish the cancellation gate before waiting for dispatch. An
+        # execution that arrives while cancellation is in flight must not
+        # become a new transaction behind the cancellation barrier.
         with self._lock:
-            if self._state == ManipulationState.PLANNING:
-                self._planning_epoch += 1
-                self._state = ManipulationState.IDLE
-            elif self._state == ManipulationState.EXECUTING:
-                self._state = ManipulationState.IDLE
-            else:
-                return False
-            plan = self._last_plan
+            self._cancellation_in_progress = True
+        # Holding this lock waits for an in-flight execute RPC to resolve and
+        # prevents another arm from being dispatched after cancellation.
+        try:
+            with self._execution_dispatch_lock:
+                with self._lock:
+                    task_names = set(self._possibly_active_tasks)
+                    is_planning = self._state == ManipulationState.PLANNING
+                    is_executing = self._state == ManipulationState.EXECUTING
+                    if not (is_planning or is_executing or task_names):
+                        return False
+                    self._execution_generation += 1
+                    if is_planning:
+                        self._planning_epoch += 1
+                    plan = self._last_plan
+
+                unresolved = self._cancel_tasks(task_names)
+                with self._lock:
+                    if unresolved:
+                        self._possibly_active_tasks = unresolved
+                        self._state = ManipulationState.FAULT
+                        self._error_message = (
+                            "Failed to cancel coordinator tasks: "
+                            + ", ".join(sorted(unresolved))
+                        )
+                        logger.error(self._error_message)
+                        return False
+                    self._possibly_active_tasks.clear()
+                    self._state = ManipulationState.IDLE
+        finally:
+            with self._lock:
+                self._cancellation_in_progress = False
         if plan is not None:
             self._dismiss_preview(plan.group_ids)
         logger.info("Motion cancelled")
@@ -1429,26 +1475,30 @@ class ManipulationModule(Module):
         execution = self._begin_execution(plan)
         if execution is None:
             return False
-        previous_state, target_plan = execution
+        previous_state, target_plan, token = execution
         try:
             freshness_error = self._stored_plan_freshness_error(target_plan)
             if freshness_error is not None:
-                self._restore_execution_gate(previous_state, freshness_error)
+                self._restore_execution_gate(token, previous_state, freshness_error)
                 return False
             prepared = self._prepare_execution(target_plan, robot_name)
             if isinstance(prepared, str):
-                self._restore_execution_gate(previous_state, prepared)
+                self._restore_execution_gate(token, previous_state, prepared)
                 return False
         except Exception as exc:
-            self._restore_execution_gate(previous_state, f"Failed to prepare execution: {exc}")
+            self._restore_execution_gate(token, previous_state, f"Failed to prepare execution: {exc}")
             return False
-        return self._dispatch_prepared_plan(prepared)
+        return self._dispatch_prepared_plan(prepared, token)
 
     def _begin_execution(
         self, plan: GeneratedPlan | None
-    ) -> tuple[ManipulationState, GeneratedPlan] | None:
+    ) -> tuple[ManipulationState, GeneratedPlan, int] | None:
         """Enter EXECUTING if the module is idle enough to dispatch."""
+        self._ensure_execution_transaction_state()
         with self._lock:
+            if self._cancellation_in_progress:
+                logger.warning("Cancellation is in progress; rejecting execution")
+                return None
             target_plan = plan or self._last_plan
             if target_plan is None or not target_plan.path or not target_plan.trajectory.points:
                 logger.warning("Stored plan is invalid or not executable")
@@ -1458,14 +1508,19 @@ class ManipulationModule(Module):
                 logger.warning("Manipulation state is not executable")
                 return None
             previous_state = self._state
+            self._execution_generation += 1
+            token = self._execution_generation
             self._state = ManipulationState.EXECUTING
-            return previous_state, target_plan
+            return previous_state, target_plan, token
 
-    def _restore_execution_gate(self, previous_state: ManipulationState, msg: str) -> None:
+    def _restore_execution_gate(
+        self, token: int, previous_state: ManipulationState, msg: str
+    ) -> None:
         logger.warning(msg)
         with self._lock:
-            self._state = previous_state
-            self._error_message = msg
+            if self._execution_generation == token and self._state == ManipulationState.EXECUTING:
+                self._state = previous_state
+                self._error_message = msg
 
     def _stored_plan_freshness_error(
         self, plan: GeneratedPlan, tolerance: float = 1e-6
@@ -1552,34 +1607,92 @@ class ManipulationModule(Module):
         return tuple(prepared)
 
     def _dispatch_prepared_plan(
-        self, prepared: Sequence[tuple[RobotName, RobotModelConfig, JointTrajectory]]
+        self,
+        prepared: Sequence[tuple[RobotName, RobotModelConfig, JointTrajectory]],
+        token: int,
     ) -> bool:
         """Dispatch already-validated robot trajectories; failures here fault."""
-        if (client := self._get_coordinator_client()) is None:
-            logger.error("No coordinator client")
-            return False
+        self._ensure_execution_transaction_state()
+        with self._execution_dispatch_lock:
+            if (client := self._get_coordinator_client()) is None:
+                return self._fault_execution(token, "No coordinator client")
 
-        for _robot_name, config, traj in prepared:
+            for _robot_name, config, traj in prepared:
+                task_name = config.coordinator_task_name
+                if task_name is None:
+                    return self._fault_execution(token, "No coordinator_task_name")
+                with self._lock:
+                    if (
+                        self._execution_generation != token
+                        or self._state != ManipulationState.EXECUTING
+                    ):
+                        return False
+                    # Add before the RPC: a rejected or raised execute may
+                    # have been accepted remotely.
+                    self._possibly_active_tasks.add(task_name)
+                try:
+                    translated = self._translate_trajectory_to_coordinator(traj, config)
+                    logger.info(
+                        "Executing: task='%s', %d pts, %.2fs",
+                        task_name,
+                        len(translated.points),
+                        translated.duration,
+                    )
+                    result = client.task_invoke(task_name, "execute", {"trajectory": translated})
+                except Exception as exc:
+                    return self._fault_execution(token, f"Failed to dispatch trajectory: {exc}")
+                if not result:
+                    return self._fault_execution(token, "Coordinator rejected trajectory")
+
+            logger.info("Trajectory accepted")
+            with self._lock:
+                if (
+                    self._execution_generation != token
+                    or self._state != ManipulationState.EXECUTING
+                ):
+                    return False
+                self._state = ManipulationState.COMPLETED
+            return True
+
+    def _cancel_tasks(self, task_names: set[str]) -> set[str]:
+        """Cancel possibly active tasks, returning names whose safety is unknown."""
+        if not task_names:
+            return set()
+        client = self._get_coordinator_client()
+        if client is None:
+            return set(task_names)
+        unresolved: set[str] = set()
+        for task_name in task_names:
             try:
-                translated = self._translate_trajectory_to_coordinator(traj, config)
-                logger.info(
-                    "Executing: task='%s', %d pts, %.2fs",
-                    config.coordinator_task_name,
-                    len(translated.points),
-                    translated.duration,
-                )
-                result = client.task_invoke(
-                    config.coordinator_task_name, "execute", {"trajectory": translated}
-                )
-            except Exception as exc:
-                return self._fail(f"Failed to dispatch trajectory: {exc}")
-            if not result:
-                return self._fail("Coordinator rejected trajectory")
+                result = client.task_invoke(task_name, "cancel", {})
+                # Coordinator cancel returns False when the task is already
+                # non-executing; that is a confirmed-safe result.
+                if result is None:
+                    unresolved.add(task_name)
+            except Exception:
+                unresolved.add(task_name)
+        return unresolved
 
-        logger.info("Trajectory accepted")
+    def _fault_execution(self, token: int, message: str) -> bool:
+        """Rollback attempted tasks and fault, without overwriting cancellation."""
+        self._ensure_execution_transaction_state()
         with self._lock:
-            self._state = ManipulationState.COMPLETED
-        return True
+            if self._execution_generation != token:
+                return False
+            task_names = set(self._possibly_active_tasks)
+        unresolved = self._cancel_tasks(task_names)
+        with self._lock:
+            if self._execution_generation != token:
+                return False
+            if unresolved:
+                self._possibly_active_tasks = unresolved
+                message += "; unresolved coordinator tasks: " + ", ".join(sorted(unresolved))
+            else:
+                self._possibly_active_tasks.clear()
+            self._state = ManipulationState.FAULT
+            self._error_message = message
+        logger.error(message)
+        return False
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
