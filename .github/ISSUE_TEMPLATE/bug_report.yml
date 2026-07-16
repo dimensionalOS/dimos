@@ -12,6 +12,12 @@ body:
 
         ## What did you expect?
 
+        ## System
+        <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
+
+        ## Robot / Sim / Hardware
+        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim, with firmware version -->
+
         ## Steps to reproduce
         <!-- the exact command you ran -->
 
@@ -20,19 +26,5 @@ body:
 
         ## Logs / screenshots
 
-    validations:
-      required: true
-  - type: input
-    id: os
-    attributes:
-      label: OS
-      placeholder: "e.g. Ubuntu 24.04, macOS 15.4"
-    validations:
-      required: true
-  - type: input
-    id: hardware
-    attributes:
-      label: Robot / Sim / Hardware (including firmware version)
-      placeholder: "e.g. Unitree Go2 EDU 1.1.7, or Unity sim"
     validations:
       required: true
