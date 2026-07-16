@@ -5,4 +5,4 @@ set -euo pipefail
 bin/build-test-natives
 
 . .venv/bin/activate
-exec pytest "$@" -m 'not (mujoco or self_hosted_large)' dimos
+exec pytest "$@" -m '' --error-for-skips dimos
