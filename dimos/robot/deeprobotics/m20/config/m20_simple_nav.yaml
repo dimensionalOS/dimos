@@ -21,13 +21,13 @@ replanningastarplanner:
   path_cell_cost_weight: 3.0
 
   # Publish the raw grid-cell A* path on /raw_path for Rerun comparison.
-  # This does not change the controller path. Keep false during normal operation
-  # to avoid extra diagnostic traffic; set true when comparing raw and final paths.
-  publish_raw_path: false
+  # This does not change the controller path. This profile enables the stream so
+  # operators can compare raw and final paths during physical M20 validation.
+  publish_raw_path: true
 
-  # Select costmap-aware constrained smoothing. False preserves the existing
-  # legacy smoothing behavior. Keep false until physical M20 validation is complete.
-  constrained_path_smoothing_enabled: false
+  # Select costmap-aware constrained smoothing. This profile enables validation,
+  # fractional backtracking, and safe fallback to the raw-resampled A* path.
+  constrained_path_smoothing_enabled: true
 
   # Maximum constrained-smoothing iterations. More iterations may improve
   # convergence but increase planning latency. Must be an integer >= 0.

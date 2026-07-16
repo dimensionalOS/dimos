@@ -22,8 +22,8 @@ M20_SIMPLE_NAV_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config/m20_s
 EXPECTED_PLANNER_CONFIG = {
     "path_length_weight": 1.0,
     "path_cell_cost_weight": 3.0,
-    "publish_raw_path": False,
-    "constrained_path_smoothing_enabled": False,
+    "publish_raw_path": True,
+    "constrained_path_smoothing_enabled": True,
     "path_smoothing_iterations": 40,
     "path_smoothing_data_weight": 0.02,
     "path_smoothing_smoothness_weight": 0.45,
@@ -50,9 +50,9 @@ def test_m20_simple_nav_profile_matches_blueprint_config() -> None:
     assert planner.model_dump(include=set(EXPECTED_PLANNER_CONFIG)) == EXPECTED_PLANNER_CONFIG
 
 
-def test_m20_simple_nav_profile_keeps_new_runtime_features_opt_in() -> None:
+def test_m20_simple_nav_profile_enables_diagnostics_and_smoothing() -> None:
     payload = load_config_mapping(M20_SIMPLE_NAV_CONFIG_PATH)
     planner = payload["replanningastarplanner"]
 
-    assert planner["publish_raw_path"] is False
-    assert planner["constrained_path_smoothing_enabled"] is False
+    assert planner["publish_raw_path"] is True
+    assert planner["constrained_path_smoothing_enabled"] is True
