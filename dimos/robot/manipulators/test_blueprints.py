@@ -91,7 +91,10 @@ def test_xarm_perception_sim_uses_aligned_camera_frame() -> None:
     sim_robot = _module_kwargs(xarm_perception_sim, PickAndPlaceModule)["robots"][0]
 
     assert sim_robot.xacro_args["attach_rpy"] == "0 0.0 0"
-    assert _module_kwargs(xarm_perception_sim, MujocoSimModule)["reset_joint_positions"] == XARM7_SIM_HOME
+    assert (
+        _module_kwargs(xarm_perception_sim, MujocoSimModule)["reset_joint_positions"]
+        == XARM7_SIM_HOME
+    )
 
 
 def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:
