@@ -138,6 +138,14 @@ def test_writes_deterministic_escaped_pseudo_label_evidence(
     assert outputs[0] == outputs[1]
     html = (roots[0] / "index.html").read_text(encoding="utf-8")
     assert "teacher pseudo-labels, not ground truth" in html
+    assert "One generated proof chain" in html
+    assert "Robot-motion verification" in html
+    assert "Motion evidence incomplete; review required" in html
+    assert 'aria-pressed="true">All' in html
+    assert 'aria-pressed="false">Spatial' in html
+    assert "Relation timeline" in html
+    assert "Future-project leverage" in html
+    assert "Questions and private oracle" in html
     assert "Did &lt;oven&gt; ever appear left of robot?" in html
     assert "&lt;oven&gt;" in html
     assert "<oven>" not in html
@@ -175,7 +183,21 @@ def test_resolves_temporal_interval_to_sparse_nonzero_frame(
                 ),
             ),
             observations=base.observations,
-            relation_intervals=(SimpleNamespace(interval_id=interval_id, evidence_frame_ids=(2,)),),
+            relation_intervals=(
+                SimpleNamespace(
+                    interval_id=interval_id,
+                    relation_id=f"relation_{'2' * 64}",
+                    episode_id="episode_1",
+                    subject_id="oven",
+                    predicate=SpatialPredicate.LEFT_OF,
+                    object_id="robot",
+                    start_frame_id=2,
+                    end_frame_id=2,
+                    start_timestamp_s=0.2,
+                    end_timestamp_s=0.2,
+                    evidence_frame_ids=(2,),
+                ),
+            ),
         ),
     )
     monkeypatch.setattr(cv2, "VideoCapture", lambda _: _FakeCapture(frame_count=3))

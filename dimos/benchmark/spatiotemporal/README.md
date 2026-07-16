@@ -436,15 +436,23 @@ Visual inspection confirmed that the boxes are geometrically aligned where detec
 
 ## Five-minute reviewer walkthrough
 
-1. Open `evidence-viewer/index.html`.
-2. Confirm boxes and IDs follow the same physical objects across sampled frames.
-3. Treat labels as pseudo-labels; note any semantically weak detection.
-4. Check positive and negative spatial questions against the linked frames.
-5. Check temporal wording and interval evidence.
-6. Inspect `bundle-a/public/questions.jsonl`: it must contain no expected answers or evidence.
-7. Inspect `bundle-a/oracle/answers.jsonl`: it must remain private.
-8. Compare `bundle-a` and `bundle-b` manifests and the logical digest in `summary.json`.
-9. Confirm `summary.json` labels the candidate as a non-visual plumbing smoke test.
+1. Open `evidence-viewer/index.html` and confirm the header metrics match the reference run: 5 evidence frames, 4 track IDs, 3 relation intervals, 6 spatial and 12 temporal questions, and a balanced 9/9 oracle split.
+2. Follow **One generated proof chain** from frame → derived relation → answer-free public question → private expected answer and evidence. This is the shortest proof of what the evaluator creates.
+3. Read **Robot-motion verification** before claiming motion quality. A trustworthy motion claim requires all four checks:
+   - relation events are linked to evidence frames;
+   - relation intervals have strict temporal order;
+   - the robot keeps one identity across those events; and
+   - robot detections cover the evidence schedule sufficiently.
+4. For this reference clip, confirm the honest verdict: relation ordering is evaluable, but the full robot-motion claim needs review because the robot changes ID `2` → `3` and appears in only 2/5 evidence frames.
+5. Use **What changed, and when** to inspect the sampled sequence: `1 left of 2` at 0.000 s, `1 above 3` at 10.001 s, and `1 left of 8` at 20.002 s. The 5.001 s and 15.002 s gaps remain visible and are not interpolated.
+6. Inspect all five annotated frames. Confirm box placement, label semantics, confidence, identity continuity, and the relation chip shown for each accepted event. Click any frame for the full-resolution lightbox.
+7. Filter **Questions and private oracle** by spatial, temporal, true, or false. Follow evidence chips back to frames and verify both positive cases and inverse negative controls.
+8. Read **Reusable motion-evaluation patterns** to connect the same contract to locomotion/patrol, manipulation, long-horizon memory, and release regression gates.
+9. Inspect `bundle-a/public/questions.jsonl`: it must contain no expected answers or evidence. Keep `bundle-a/oracle/answers.jsonl` private.
+10. Compare `bundle-a` and `bundle-b` manifests and the logical digest in `summary.json` to verify deterministic replay.
+11. Confirm `summary.json` labels the candidate as a non-visual plumbing smoke test.
+
+The viewer intentionally distinguishes **relation-order evidence** from a stronger **continuous robot-motion claim**. The current evaluator can prove sampled spatial predicates and strict before/after ordering. Production trajectory claims additionally need stable identity, higher detection coverage, denser sampling, and task-specific motion predicates or pose data.
 
 ## Quality gates
 

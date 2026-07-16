@@ -18,6 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from hashlib import sha256
 from html import escape
+from itertools import pairwise
 from pathlib import Path
 import shutil
 from tempfile import mkdtemp
@@ -197,8 +198,90 @@ def _render_html(
     for observation in bundle.observations:
         observations_by_frame[observation.frame_id].append(observation)
 
+    questions = sorted(bundle.questions, key=lambda item: item.question_id)
+    evidence_frame_ids = sorted(
+        {frame_id for frame_ids in evidence_by_question.values() for frame_id in frame_ids}
+    )
+    episode_id = questions[0].episode_id if questions else "unknown"
+    object_ids = sorted({observation.object_id for observation in bundle.observations})
+    spatial_count = sum(question.question_kind.value == "spatial" for question in questions)
+    temporal_count = len(questions) - spatial_count
+    positive_count = sum(answer.expected for answer in bundle.answers)
+
+    timestamps_by_frame: dict[int, float] = {}
+    for observation in bundle.observations:
+        timestamps_by_frame.setdefault(observation.frame_id, observation.timestamp_s)
+    for interval in bundle.relation_intervals:
+        timestamps_by_frame.setdefault(interval.start_frame_id, interval.start_timestamp_s)
+        timestamps_by_frame.setdefault(interval.end_frame_id, interval.end_timestamp_s)
+
+    relations_by_frame: dict[int, list[str]] = defaultdict(list)
+    for interval in bundle.relation_intervals:
+        relation = (
+            f"{interval.subject_id} {interval.predicate.value.replace('-', ' ')} "
+            f"{interval.object_id}"
+        )
+        for frame_id in interval.evidence_frame_ids:
+            relations_by_frame[frame_id].append(relation)
+
+    robot_observations = [
+        observation
+        for observation in bundle.observations
+        if "robot" in observation.label.casefold()
+    ]
+    robot_ids = sorted({observation.object_id for observation in robot_observations})
+    robot_frames = sorted({observation.frame_id for observation in robot_observations})
+    robot_coverage = len(robot_frames) / len(evidence_frame_ids) if evidence_frame_ids else 0.0
+    referenced_interval_ids = {
+        interval_id for answer in bundle.answers for interval_id in answer.evidence_interval_ids
+    }
+    displayed_frames = set(evidence_frame_ids)
+    linked_intervals = [
+        interval
+        for interval in bundle.relation_intervals
+        if interval.interval_id in referenced_interval_ids
+        and bool(displayed_frames.intersection(interval.evidence_frame_ids))
+    ]
+    relation_status = (
+        "pass"
+        if linked_intervals and len(linked_intervals) == len(bundle.relation_intervals)
+        else "review"
+    )
+    ordered_intervals = sorted(
+        linked_intervals,
+        key=lambda interval: (interval.start_timestamp_s, interval.interval_id),
+    )
+    strict_order = len(ordered_intervals) > 1 and all(
+        left.end_frame_id < right.start_frame_id and left.end_timestamp_s < right.start_timestamp_s
+        for left, right in pairwise(ordered_intervals)
+    )
+    proof_question = next(
+        (
+            question
+            for question in questions
+            if question.question_kind.value == "spatial"
+            and answers[question.question_id].expected
+            and evidence_by_question.get(question.question_id)
+        ),
+        None,
+    )
+    if proof_question is not None and len(proof_question.object_ids) == 2:
+        proof_frame = evidence_by_question[proof_question.question_id][0]
+        subject_id, object_id = proof_question.object_ids
+        proof_relation = (
+            f"{subject_id} {proof_question.predicate.value.replace('-', ' ')} {object_id}"
+        )
+        proof_chain = (
+            f"<div><strong>01 · evidence</strong><span>frame {proof_frame}</span></div>"
+            f"<div><strong>02 · derived fact</strong><span>{escape(proof_relation)}</span></div>"
+            f"<div><strong>03 · public test</strong><span>{escape(proof_question.text)}</span></div>"
+            f"<div><strong>04 · private oracle</strong><span>true · evidence f{proof_frame}</span></div>"
+        )
+    else:
+        proof_chain = "<p class=muted>No positive spatial proof is available.</p>"
+
     rows: list[str] = []
-    for question in sorted(bundle.questions, key=lambda item: item.question_id):
+    for question in questions:
         try:
             answer = answers[question.question_id]
         except KeyError as error:
@@ -207,36 +290,74 @@ def _render_html(
             ) from error
         frame_ids = evidence_by_question.get(question.question_id, ())
         links = " ".join(
-            f'<a href="frames/frame_{frame_id:06d}.jpg">frame {frame_id}</a>'
+            f'<a class="frame-link" href="#frame-{frame_id}">f{frame_id}</a>'
             for frame_id in frame_ids
         )
+        expected = str(answer.expected).lower()
         rows.append(
-            "<tr>"
-            f"<td><code>{escape(question.question_id)}</code></td>"
-            f"<td>{escape(question.text)}</td>"
-            f"<td>{str(answer.expected).lower()}</td>"
-            f"<td>{links or 'none'}</td>"
+            f'<tr data-kind="{question.question_kind.value}" data-expected="{expected}" '
+            f'data-search="{escape(question.text.casefold())}">'
+            f'<td><span class="kind kind-{question.question_kind.value}">'
+            f"{question.question_kind.value}</span></td>"
+            f"<td><strong>{escape(question.text)}</strong>"
+            f'<code title="{escape(question.question_id)}">…{escape(question.question_id[-10:])}</code></td>'
+            f'<td><span class="answer answer-{expected}">{expected}</span></td>'
+            f"<td>{links or '<span class=muted>none</span>'}</td>"
             "</tr>"
         )
 
+    timeline: list[str] = []
     cards: list[str] = []
-    evidence_frame_ids = sorted(
-        {frame_id for frame_ids in evidence_by_question.values() for frame_id in frame_ids}
-    )
     for frame_id in evidence_frame_ids:
-        labels = ", ".join(
-            f"{observation.object_id}: {observation.label}"
-            for observation in sorted(
-                observations_by_frame[frame_id], key=lambda item: item.object_id
+        observations = sorted(observations_by_frame[frame_id], key=lambda item: item.object_id)
+        timestamp_s = timestamps_by_frame.get(frame_id)
+        timestamp = f"{timestamp_s:.3f}s" if timestamp_s is not None else "time unknown"
+        relations = (
+            "".join(
+                f'<span class="relation-chip">{escape(relation)}</span>'
+                for relation in sorted(relations_by_frame[frame_id])
             )
+            or '<span class="muted">no accepted relation</span>'
+        )
+        timeline.append(
+            f'<button class="timeline-stop" data-frame="{frame_id}" '
+            f'aria-label="Show frame {frame_id}"><span class="timeline-dot"></span>'
+            f"<strong>{timestamp}</strong><small>frame {frame_id}</small>{relations}</button>"
+        )
+        labels = (
+            ", ".join(
+                f"#{observation.object_id} {observation.label} ({observation.confidence:.2f})"
+                for observation in observations
+            )
+            or "No accepted detections"
         )
         cards.append(
-            "<figure>"
-            f'<a href="frames/frame_{frame_id:06d}.jpg">'
-            f'<img src="frames/frame_{frame_id:06d}.jpg" alt="Evidence frame {frame_id}"></a>'
-            f"<figcaption>Frame {frame_id}: {escape(labels)}</figcaption>"
+            f'<figure id="frame-{frame_id}" data-frame="{frame_id}">'
+            f'<button class="image-button" data-image="frames/frame_{frame_id:06d}.jpg" '
+            f'data-alt="Evidence frame {frame_id}">'
+            f'<img src="frames/frame_{frame_id:06d}.jpg" alt="Evidence frame {frame_id}"></button>'
+            f"<figcaption><div><strong>{timestamp}</strong><span>frame {frame_id}</span></div>"
+            f"<p>{escape(labels)}</p><div class=chip-row>{relations}</div></figcaption>"
             "</figure>"
         )
+
+    identity_status = "pass" if len(robot_ids) == 1 else "review"
+    identity_detail = (
+        f"one robot track ({robot_ids[0]})"
+        if len(robot_ids) == 1
+        else (
+            f"robot label spans IDs {', '.join(robot_ids)}"
+            if robot_ids
+            else "no robot-labeled detection"
+        )
+    )
+    coverage_status = "pass" if robot_coverage >= 0.8 else "review"
+    if relation_status == "review" or not strict_order:
+        motion_verdict = "Motion evidence incomplete; review required"
+    elif identity_status == "review" or coverage_status == "review":
+        motion_verdict = "Relation-order eval ready; motion claim needs review"
+    else:
+        motion_verdict = "Motion evidence ready for review"
 
     return (
         """<!doctype html>
@@ -244,30 +365,77 @@ def _render_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spatiotemporal relationship evidence</title>
+<title>Video → Eval evidence</title>
 <style>
-body{font:15px system-ui,sans-serif;margin:2rem;line-height:1.45;color:#172033}
-.warning{padding:1rem;background:#fff3cd;border:1px solid #e3bd59;border-radius:8px}
-table{border-collapse:collapse;width:100%;margin:1.5rem 0}th,td{border:1px solid #ccd2dc;padding:.55rem;text-align:left;vertical-align:top}th{background:#eef2f7}
-code{font-size:11px;word-break:break-all}figure{display:inline-block;width:min(420px,100%);margin:0 1rem 1rem 0;vertical-align:top}img{width:100%;height:auto;border:1px solid #ccd2dc}figcaption{padding:.35rem 0}
+:root{--bg:#09110f;--panel:#101b18;--panel2:#15231f;--ink:#edf7f2;--muted:#91a69e;--line:#294039;--mint:#62e6ae;--cyan:#6ccfe6;--amber:#f4c66a;--red:#ff8d7b;--radius:12px}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Avenir Next","Segoe UI",sans-serif}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(98,230,174,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(98,230,174,.025) 1px,transparent 1px);background-size:32px 32px}.shell{width:min(1440px,calc(100% - 40px));margin:auto;padding:28px 0 64px}.topbar{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:22px}.eyebrow,.section-label{color:var(--mint);font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}h1{font-size:clamp(30px,5vw,58px);line-height:1;letter-spacing:-.045em;margin:8px 0 12px;max-width:760px}h2{font-size:24px;letter-spacing:-.025em;margin:6px 0}h3{font-size:16px;margin:0 0 8px}.lede{color:var(--muted);font-size:16px;max-width:760px;margin:0}.episode{font:12px ui-monospace,monospace;color:var(--muted);text-align:right}.episode strong{display:block;color:var(--ink);font-size:14px;margin-top:5px}.metrics{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:var(--radius);margin:22px 0;overflow:hidden;background:var(--panel)}.metric{padding:16px 18px;border-right:1px solid var(--line)}.metric:last-child{border:0}.metric strong{font:700 24px ui-monospace,monospace;display:block}.metric span{color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,.85fr);gap:18px;margin:18px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}.pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:0;margin-top:18px}.pipeline div{position:relative;padding:12px 10px;border:1px solid var(--line);background:var(--panel2);font-size:12px}.pipeline div:not(:last-child):after{content:"→";position:absolute;right:-9px;top:11px;color:var(--mint);z-index:2}.pipeline strong{display:block;font:700 11px ui-monospace,monospace;color:var(--mint);margin-bottom:4px}.warning{background:#281f10;border:1px solid #6d5526;color:#f9e6bc}.warning strong{color:var(--amber)}.warning p{margin:7px 0 0}.example-chain{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:14px}.example-chain div{position:relative;padding:14px;border:1px solid var(--line);background:var(--panel2)}.example-chain div:not(:last-child):after{content:"→";position:absolute;right:-9px;top:24px;color:var(--mint);z-index:2}.example-chain strong,.example-chain span{display:block}.example-chain strong{font:700 10px ui-monospace,monospace;color:var(--mint);text-transform:uppercase;margin-bottom:6px}.example-chain span{font-size:12px}.proof-list{display:grid;gap:9px;margin-top:14px}.proof{display:grid;grid-template-columns:90px 1fr;gap:12px;align-items:start;border-top:1px solid var(--line);padding-top:9px}.status{font:700 10px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em}.status-pass{color:var(--mint)}.status-review{color:var(--amber)}.timeline{display:grid;grid-template-columns:repeat(var(--timeline-count),minmax(150px,1fr));overflow:auto;padding:22px 4px 5px}.timeline-stop{position:relative;min-width:150px;text-align:left;color:var(--ink);background:transparent;border:0;border-top:2px solid var(--line);padding:20px 12px 8px;cursor:pointer}.timeline-stop:hover{background:var(--panel2)}.timeline-stop:focus-visible{background:var(--panel2);outline:2px solid var(--mint);outline-offset:2px}.timeline-dot{position:absolute;width:12px;height:12px;border:2px solid var(--mint);background:var(--bg);border-radius:50%;top:-7px;left:12px}.timeline-stop strong,.timeline-stop small{display:block}.timeline-stop small{color:var(--muted);margin-bottom:8px}.relation-chip,.object-chip,.frame-link{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 7px;margin:2px;font:11px ui-monospace,monospace;color:var(--cyan);text-decoration:none}.object-chip{color:var(--ink)}.frame-link:hover{border-color:var(--mint);color:var(--mint)}.section-head{display:flex;align-items:end;justify-content:space-between;gap:20px;margin:38px 0 14px}.section-head p{color:var(--muted);margin:0;max-width:660px}.future-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.future{padding:16px;border-top:2px solid var(--mint);background:var(--panel)}.future strong{display:block;margin-bottom:6px}.future span{color:var(--muted);font-size:12px}.gallery{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.gallery figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;scroll-margin-top:20px}.gallery figure.highlight{border-color:var(--mint);box-shadow:0 0 0 2px rgba(98,230,174,.2)}.image-button{display:block;width:100%;border:0;padding:0;background:#000;cursor:zoom-in}.gallery img{display:block;width:100%;aspect-ratio:9/16;object-fit:cover}.gallery figcaption{padding:12px}.gallery figcaption>div:first-child{display:flex;justify-content:space-between}.gallery figcaption span,.gallery figcaption p{color:var(--muted);font-size:12px}.gallery figcaption p{margin:5px 0}.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.filter{border:1px solid var(--line);color:var(--muted);background:var(--panel);padding:8px 11px;border-radius:999px;cursor:pointer}.filter.active{border-color:var(--mint);color:var(--ink)}#search{margin-left:auto;min-width:260px;background:var(--panel);border:1px solid var(--line);color:var(--ink);padding:9px 12px;border-radius:8px}table{border-collapse:separate;border-spacing:0;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{font:700 10px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--panel2)}tr:last-child td{border:0}td code{display:block;color:var(--muted);font-size:10px;margin-top:3px}.kind,.answer{font:700 10px ui-monospace,monospace;text-transform:uppercase;border-radius:999px;padding:4px 7px}.kind-spatial{color:var(--mint);background:#143127}.kind-temporal{color:var(--cyan);background:#132c32}.answer-true{color:var(--mint)}.answer-false{color:var(--red)}.muted{color:var(--muted)}dialog{border:1px solid var(--line);background:var(--panel);padding:8px;border-radius:var(--radius);max-width:min(90vw,900px)}dialog::backdrop{background:rgba(0,0,0,.85)}dialog img{display:block;max-width:100%;max-height:85vh}.close{position:absolute;right:14px;top:14px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:999px;width:36px;height:36px;cursor:pointer}@media(max-width:1100px){.gallery{grid-template-columns:repeat(3,1fr)}}@media(max-width:900px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.metric{border-bottom:1px solid var(--line)}.pipeline{grid-template-columns:repeat(2,1fr)}.example-chain{grid-template-columns:1fr 1fr}.future-grid{grid-template-columns:1fr 1fr}.topbar{display:block}.episode{text-align:left;margin-top:18px}#search{margin-left:0;width:100%}}@media(max-width:650px){.gallery{grid-template-columns:1fr 1fr}}@media(max-width:560px){.shell{width:min(100% - 24px,1440px)}.metrics,.future-grid,.example-chain,.gallery{grid-template-columns:1fr}th:first-child,td:first-child{display:none}}
 </style>
 </head>
 <body>
-<h1>Spatiotemporal relationship evidence</h1>
-<p class="warning"><strong>Review required:</strong> These are teacher pseudo-labels, not ground truth. Inspect boxes, identities, labels, and relationships before using the episode for model-quality claims.</p>
-<h2>Questions and private oracle</h2>
-<table><thead><tr><th>ID</th><th>Question</th><th>Expected</th><th>Evidence</th></tr></thead><tbody>
-"""
-        + "\n".join(rows)
-        + """
-</tbody></table>
-<h2>Annotated evidence frames</h2>
-<div>"""
-        + "\n".join(cards)
-        + """</div>
-</body>
-</html>
-"""
+<main class="shell">
+<header class="topbar"><div><div class="eyebrow">Evaluator-only review surface</div><h1>Video → relationship eval evidence</h1><p class="lede">Trace how sampled robot-video observations become spatial and temporal tests, then inspect the exact frames supporting each oracle answer.</p></div><div class="episode">EPISODE<strong>"""
+        + escape(episode_id)
+        + """</strong></div></header>
+<section class="metrics" aria-label="Evaluation counts">
+<div class="metric"><strong>"""
+        + str(len(evidence_frame_ids))
+        + """</strong><span>evidence frames</span></div><div class="metric"><strong>"""
+        + str(len(object_ids))
+        + """</strong><span>tracked IDs</span></div><div class="metric"><strong>"""
+        + str(len(bundle.relation_intervals))
+        + """</strong><span>relation intervals</span></div><div class="metric"><strong>"""
+        + str(spatial_count)
+        + """ / """
+        + str(temporal_count)
+        + """</strong><span>spatial / temporal</span></div><div class="metric"><strong>"""
+        + str(positive_count)
+        + """ / """
+        + str(len(bundle.answers) - positive_count)
+        + """</strong><span>true / false</span></div></section>
+<section class="grid"><div class="panel"><div class="section-label">What the system does</div><h2>Turns observed relations into replayable tests</h2><div class="pipeline"><div><strong>01</strong>Video</div><div><strong>02</strong>Sample</div><div><strong>03</strong>Track</div><div><strong>04</strong>Relations</div><div><strong>05</strong>Questions</div><div><strong>06</strong>Score + evidence</div></div></div><aside class="panel warning"><div class="section-label">Evidence policy</div><h3>Teacher pseudo-labels, not ground truth</h3><p>These are teacher pseudo-labels, not ground truth. Inspect boxes, identity continuity, labels, and temporal ordering before making model-quality or robot-motion claims.</p></aside></section>
+<section class="panel"><div class="section-label">One generated proof chain</div><h2>From a sampled frame to a scored evaluation</h2><div class="example-chain">"""
+        + proof_chain
+        + """</div></section>
+<section class="panel"><div class="section-label">Robot-motion verification</div><h2>"""
+        + escape(motion_verdict)
+        + """</h2><div class="proof-list"><div class="proof"><span class="status status-"""
+        + relation_status
+        + """">"""
+        + relation_status
+        + """</span><div><strong>Relation events derived</strong><br><span class="muted">"""
+        + f"{len(linked_intervals)}/{len(bundle.relation_intervals)}"
+        + """ intervals are referenced by oracle answers and linked to displayed frames.</span></div></div><div class="proof"><span class="status status-"""
+        + ("pass" if strict_order else "review")
+        + """">"""
+        + ("pass" if strict_order else "review")
+        + """</span><div><strong>Temporal order</strong><br><span class="muted">Strict non-overlap across the displayed relation sequence.</span></div></div><div class="proof"><span class="status status-"""
+        + identity_status
+        + """">"""
+        + identity_status
+        + """</span><div><strong>Robot identity continuity</strong><br><span class="muted">"""
+        + escape(identity_detail)
+        + """.</span></div></div><div class="proof"><span class="status status-"""
+        + coverage_status
+        + """">"""
+        + coverage_status
+        + """</span><div><strong>Robot detection coverage</strong><br><span class="muted">"""
+        + f"{len(robot_frames)}/{len(evidence_frame_ids)} evidence frames ({robot_coverage:.0%})"
+        + """.</span></div></div></div></section>
+<div class="section-head"><div><div class="section-label">Relation timeline</div><h2>What changed, and when</h2></div><p>Each stop is a sampled evidence frame. Relation labels come from private accepted intervals; gaps remain visible rather than interpolated.</p></div><section class="panel timeline" style="--timeline-count:"""
+        + str(max(1, len(evidence_frame_ids)))
+        + """">"""
+        + "".join(timeline)
+        + """</section>
+<div class="section-head"><div><div class="section-label">Future-project leverage</div><h2>Reusable motion-evaluation patterns</h2></div><p>The same contracts can evaluate new videos without changing candidate/oracle separation.</p></div><section class="future-grid"><div class="future"><strong>Locomotion & patrol</strong><span>Verify before/after ordering around tracked landmarks and objects.</span></div><div class="future"><strong>Manipulation</strong><span>Turn above/below and left/right object transitions into regression cases.</span></div><div class="future"><strong>Long-horizon memory</strong><span>Test whether a candidate recalls relation events separated in time.</span></div><div class="future"><strong>Model releases</strong><span>Replay frozen bundles and block spatial or temporal regressions.</span></div></section>
+<div class="section-head"><div><div class="section-label">Visual evidence</div><h2>Annotated sampled frames</h2></div><p>Click a frame to inspect full resolution. Colors are stable per object ID.</p></div><section class="gallery">"""
+        + "".join(cards)
+        + """</section>
+<div class="section-head"><div><div class="section-label">Generated evaluation</div><h2>Questions and private oracle</h2></div><p>Filter by family or expected value; evidence links jump back to the supporting frames.</p></div><div class="controls" role="group" aria-label="Question filters"><button class="filter active" data-filter="all" aria-pressed="true">All</button><button class="filter" data-filter="spatial" aria-pressed="false">Spatial</button><button class="filter" data-filter="temporal" aria-pressed="false">Temporal</button><button class="filter" data-filter="true" aria-pressed="false">True</button><button class="filter" data-filter="false" aria-pressed="false">False</button><input id="search" type="search" placeholder="Search questions…" aria-label="Search questions"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Family</th><th>Question</th><th>Expected</th><th>Evidence</th></tr></thead><tbody>"""
+        + "".join(rows)
+        + """</tbody></table></div>
+</main><dialog id="lightbox"><button class="close" aria-label="Close">&times;</button><img alt=""></dialog>
+<script>
+const rows=[...document.querySelectorAll('tbody tr')],filters=[...document.querySelectorAll('.filter')],search=document.querySelector('#search');let active='all';function apply(){const q=search.value.toLowerCase();rows.forEach(r=>{const matchFilter=active==='all'||r.dataset.kind===active||r.dataset.expected===active;const matchSearch=r.dataset.search.includes(q);r.hidden=!(matchFilter&&matchSearch)})}filters.forEach(b=>b.addEventListener('click',()=>{filters.forEach(x=>{x.classList.remove('active');x.setAttribute('aria-pressed','false')});b.classList.add('active');b.setAttribute('aria-pressed','true');active=b.dataset.filter;apply()}));search.addEventListener('input',apply);document.querySelectorAll('.timeline-stop').forEach(b=>b.addEventListener('click',()=>{const card=document.querySelector(`#frame-${b.dataset.frame}`);document.querySelectorAll('.gallery figure').forEach(x=>x.classList.remove('highlight'));card.classList.add('highlight');card.tabIndex=-1;card.focus()}));const box=document.querySelector('#lightbox'),boxImg=box.querySelector('img');document.querySelectorAll('.image-button').forEach(b=>b.addEventListener('click',()=>{boxImg.src=b.dataset.image;boxImg.alt=b.dataset.alt;box.showModal()}));box.querySelector('.close').addEventListener('click',()=>box.close());box.addEventListener('click',e=>{if(e.target===box)box.close()});
+</script></body></html>"""
     )
 
 
