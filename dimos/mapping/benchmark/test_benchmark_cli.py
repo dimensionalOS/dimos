@@ -214,7 +214,7 @@ def test_fixture_log_roundtrip_writes_csv_and_results_md(tmp_path: Path) -> None
     md_path = results_dir / RESULTS_MD_NAME
     md = md_path.read_text()
     assert case.route in md
-    assert "Start/End closure" in md
+    assert "Return error (vs fiducial GT)" in md
     assert "Holdout" not in md  # wording straggler must not resurface in the new tool
 
 

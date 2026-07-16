@@ -105,7 +105,13 @@ def nearest_match(
 def compute_ate(
     primary: Sequence[RunRecord], reference: Sequence[RunRecord], max_dt: float = 1.0
 ) -> dict[str, Any]:
-    """Ported from trial/scripts/report.py's compute_ate()."""
+    """Ported from trial/scripts/report.py's compute_ate(). Generic RMSE-
+    between-two-point-streams math -- kept as a math helper, but note the
+    ONLY caller in this file (compute_run_metrics below) feeds it a run's own
+    odom stream against its own corrected stream, i.e. self-consistency, not
+    a ground-truth-referenced ATE (see RunMetrics.self_consistency_rmse_m's
+    docstring for why that result is deliberately not named "ate" anywhere
+    it's surfaced)."""
     if not primary:
         return {"ate_rmse_m": None, "n_matched": 0, "reason": "no samples in primary trajectory"}
     if not reference:
@@ -370,6 +376,148 @@ def _start_end_referee_metrics(
     }
 
 
+# -- checkpoint series: max/RMS error across every GT-visible instant -------
+#
+# benchmark-metrics.md's ranked research (#3 max checkpoint error, #4 RMS
+# over checkpoints) asks for both computed over every instant the start/end
+# tag was visible, not just the first/last window _start_end_referee_metrics
+# uses for the primary return-error number above. When the tag is only ever
+# seen at drill-start and drill-end (the ordinary case), this degenerates to
+# N=2 and RMS is correctly left None -- redundant with return-error/max-error
+# per the research's own call.
+
+CHECKPOINT_GAP_S = 5.0  # tag_sighting readings closer together than this are
+# the same visit/checkpoint (one continuous dwell in front of the tag), not
+# separate ones -- comfortably larger than one camera frame period, small
+# enough that a route's single start-of-run and end-of-run dwells don't get
+# merged into one.
+
+
+def _cluster_sightings(
+    sightings: Sequence[RunRecord], gap_s: float = CHECKPOINT_GAP_S
+) -> list[list[RunRecord]]:
+    """Group a tag_sighting stream into visits: consecutive readings within
+    `gap_s` of each other are one visit/checkpoint."""
+    if not sightings:
+        return []
+    ordered = sorted(sightings, key=lambda r: r.ts)
+    clusters: list[list[RunRecord]] = [[ordered[0]]]
+    for r in ordered[1:]:
+        if r.ts - clusters[-1][-1].ts <= gap_s:
+            clusters[-1].append(r)
+        else:
+            clusters.append([r])
+    return clusters
+
+
+def _checkpoint_position_errors(
+    records: Sequence[RunRecord],
+    odom: Sequence[RunRecord],
+    corrected: Sequence[RunRecord],
+    max_dt: float = LOOP_CLOSURE_MAX_DT_S,
+) -> tuple[list[float], int]:
+    """One magnitude-difference position error (same frame-mismatch
+    reasoning as _start_end_referee_metrics -- the referee's poses live in
+    the tag's own fixed frame, the claim lives in world/map frame, and only a
+    distance stays honestly comparable across that uncalibrated-rotation
+    mismatch) per visit to the start/end tag after the first, relative to the
+    first visit as the zero-displacement anchor. Returns (errors,
+    checkpoint_count) where checkpoint_count is the total number of visits
+    found (including the anchor) -- callers gate RMS on checkpoint_count > 2.
+    """
+    sightings = by_type(records, "tag_sighting")
+    clusters = _cluster_sightings(sightings)
+    if len(clusters) < 2:
+        return [], len(clusters)
+
+    claim_source = corrected if corrected else odom
+    if not claim_source:
+        return [], len(clusters)
+    claim_sorted = sorted(claim_source, key=lambda r: r.ts)
+
+    def _claim_median(cluster: Sequence[RunRecord]) -> tuple[float, float, float] | None:
+        matched = [
+            m for s in cluster if (m := _nearest_record(s.ts, claim_sorted, max_dt)) is not None
+        ]
+        if not matched:
+            return None
+        t, _ = _median_pose(matched)
+        return t
+
+    anchor_measured_t, _ = _median_pose(clusters[0])
+    anchor_claimed_t = _claim_median(clusters[0])
+    if anchor_claimed_t is None:
+        return [], len(clusters)
+
+    errors: list[float] = []
+    for cluster in clusters[1:]:
+        measured_t, _ = _median_pose(cluster)
+        claimed_t = _claim_median(cluster)
+        if claimed_t is None:
+            continue
+        measured_delta = math.dist(measured_t, anchor_measured_t)
+        claimed_delta = math.dist(claimed_t, anchor_claimed_t)
+        errors.append(abs(claimed_delta - measured_delta))
+    return errors, len(clusters)
+
+
+# -- recovery time (kidnap variant) -----------------------------------------
+
+
+def _recovery_time_s(
+    odom: Sequence[RunRecord], new_corrections: Sequence[RunRecord], variant: str | None
+) -> float | None:
+    """Wall-clock delta from run-start to the first correction_new --
+    automatable ONLY for a `kidnap` variant run structured as a cold-start-
+    displaced boot (benchmarks.md's "cold-start it displaced" phrasing): the
+    kidnap instant IS the run's first odom_pose sample in that case. A
+    mid-run carry-and-drop kidnap (benchmarks.md's other phrasing) has no
+    logged "carried at ts=X" marker anywhere in this schema -- this function
+    can't see that instant and returns None rather than guess at it; that
+    variant still needs a stopwatch mark per benchmark-spec.md #4."""
+    if variant != "kidnap" or not odom or not new_corrections:
+        return None
+    first_correction = min(new_corrections, key=lambda r: r.ts)
+    if first_correction.ts < odom[0].ts:
+        return None
+    return round(first_correction.ts - odom[0].ts, 3)
+
+
+# -- bounded vs. unbounded drift classification (report-level) --------------
+#
+# benchmark-metrics.md research item #6: plot return-error vs path length
+# ACROSS TRIALS -- flat reads as bounded (anchored to the marker/premap),
+# growing reads as unbounded (dead-reckoning). This is inherently a
+# multi-run comparison, not a single RunMetrics field -- classify_bounded_vs_unbounded
+# takes (duration_s, return_error_m) pairs across every recorded run for one
+# mode. duration_s stands in for path length under benchmark-spec.md #5's own
+# fairness rule ("same route, same walking pace") -- fine within one route's
+# repeated trials, and across benchmarks.md's routes of deliberately
+# different lengths (Loop / Corridor) it's exactly the trend §6's pass bar
+# describes ("odom/lidar-only shows unbounded drift by the far end").
+
+
+def classify_bounded_vs_unbounded(points: Sequence[tuple[float, float]]) -> str:
+    """Coarse ratio-of-extremes heuristic, not a regression -- good enough to
+    flag the qualitative pattern, not a precision fit. Needs >=2 runs
+    spanning a real duration spread; otherwise reports why it can't say."""
+    if len(points) < 2:
+        return "insufficient data (need >=2 runs)"
+    durations = [d for d, _ in points]
+    if max(durations) - min(durations) < 1e-6:
+        return "insufficient data (all runs same duration)"
+    shortest = min(points, key=lambda p: p[0])
+    longest = max(points, key=lambda p: p[0])
+    duration_ratio = longest[0] / shortest[0]
+    if shortest[1] <= 1e-9:
+        growth = longest[1] - shortest[1]
+        return "unbounded (drift-like)" if growth > 0.05 else "bounded (anchored)"
+    error_ratio = longest[1] / shortest[1]
+    # Error growing roughly in step with duration reads as unbounded; error
+    # staying far flatter than duration reads as bounded.
+    return "unbounded (drift-like)" if error_ratio > 0.5 * duration_ratio else "bounded (anchored)"
+
+
 def compute_run_metrics(
     records: Sequence[RunRecord],
     *,
@@ -380,18 +528,23 @@ def compute_run_metrics(
     notes: str = "",
     log_path: str = "",
     start_end_tag: int | None = None,
+    variant: str | None = None,
 ) -> RunMetrics:
     """Ported from trial/scripts/bench.py's compute_run_metrics().
 
-    ATE-proxy = drift-vs-corrected divergence: report.py's own compute_ate,
-    fed this run's raw odom stream as "primary" and its own corrected stream
-    as "reference" -- an RMSE of how far dead-reckoning strays from the
-    corrected estimate over the run, with no external ground truth required.
-    Proxy, not real ATE (needs an outside reference for that).
+    self_consistency_rmse_m = drift-vs-corrected divergence: report.py's own
+    compute_ate, fed this run's raw odom stream as "primary" and its own
+    corrected stream as "reference" -- an RMSE of how far dead-reckoning
+    strays from the corrected estimate over the run, with no external ground
+    truth required. Self-consistency, not ATE (needs an outside reference for
+    that -- see the field's own docstring in type.py).
 
     start_end_tag: marker id deliberately excluded from every localization
     map under test (bench.py's --holdout-tag) -- omit to skip the referee, as
     before this port (RunMetrics.start_end_* fields stay None/0).
+
+    variant: the run's route variant (e.g. "kidnap"), if any -- only used to
+    gate recovery_time_s (see _recovery_time_s); omit for a clean run.
     """
     odom = by_type(records, "odom_pose")
     corrected = by_type(records, "corrected_pose")
@@ -400,7 +553,7 @@ def compute_run_metrics(
 
     det = detection_stats(records)
 
-    ate_proxy = (
+    self_consistency = (
         compute_ate(odom, corrected, max_dt=1.0)
         if corrected
         else {
@@ -425,6 +578,20 @@ def compute_run_metrics(
         }
     )
 
+    checkpoint_errors, checkpoint_count = (
+        _checkpoint_position_errors(records, odom, corrected)
+        if start_end_tag is not None
+        else ([], 0)
+    )
+    max_checkpoint_error_m = max(checkpoint_errors) if checkpoint_errors else None
+    checkpoint_error_rms_m = (
+        round(math.sqrt(sum(e * e for e in checkpoint_errors) / len(checkpoint_errors)), 4)
+        if checkpoint_errors and checkpoint_count > 2
+        else None
+    )
+
+    recovery_time_s = _recovery_time_s(odom, new, variant)
+
     return RunMetrics(
         run_id=run_id,
         route=route,
@@ -440,8 +607,8 @@ def compute_run_metrics(
         correction_mag_max_m=mag_max,
         loop_closure_error_odom_m=loop_odom_m,
         loop_closure_error_corrected_m=loop_corrected_m,
-        ate_proxy_rmse_m=ate_proxy.get("ate_rmse_m"),
-        ate_proxy_n_matched=ate_proxy.get("n_matched", 0),
+        self_consistency_rmse_m=self_consistency.get("ate_rmse_m"),
+        self_consistency_n_matched=self_consistency.get("n_matched", 0),
         marker_log_events=marker_events,
         lidar_log_events=lidar_events,
         notes=notes,
@@ -451,6 +618,12 @@ def compute_run_metrics(
         start_end_closure_error_deg=start_end["start_end_closure_error_deg"],
         start_end_readings_start=start_end["start_end_readings_start"],
         start_end_readings_end=start_end["start_end_readings_end"],
+        max_checkpoint_error_m=round(max_checkpoint_error_m, 4)
+        if max_checkpoint_error_m is not None
+        else None,
+        checkpoint_error_rms_m=checkpoint_error_rms_m,
+        checkpoint_count=checkpoint_count,
+        recovery_time_s=recovery_time_s,
     )
 
 

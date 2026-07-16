@@ -105,6 +105,15 @@ class RunMetrics:
     Ports trial/scripts/report.py's detection_stats()/compute_ate() and
     trial/scripts/bench.py's compute_run_metrics() (loop-closure error,
     correction-magnitude stats, marker/lidar log_event source breakdown).
+
+    Naming note (benchmark-metrics.md's ranked honest-metric research, folded
+    in here): this rig only has ground truth at discrete start/end-tag
+    sightings, never continuous per-frame -- so nothing here is named ATE or
+    RPE outright. The **primary** metric is `start_end_closure_error_m/_deg`
+    below ("return error vs fiducial GT" in that research's terms); the
+    self-consistency fields right below this comment measure odom-vs-
+    corrected agreement only, no external reference at all, and are named
+    accordingly (not "ate_proxy" -- see the 2026-07-15 rename note there).
     """
 
     run_id: str
@@ -121,29 +130,65 @@ class RunMetrics:
     correction_mag_max_m: float | None
     loop_closure_error_odom_m: float | None
     loop_closure_error_corrected_m: float | None
-    ate_proxy_rmse_m: float | None
-    ate_proxy_n_matched: int
-    marker_log_events: int
-    lidar_log_events: int
+    # Renamed 2026-07-15 from ate_proxy_rmse_m/ate_proxy_n_matched: this is
+    # RMSE between one run's own raw-odom stream and its own corrected
+    # stream -- self-consistency (how much correction moved the estimate),
+    # with no external ground truth anywhere in the computation. "ATE" (even
+    # hedged as "proxy") implies a ground-truth-referenced error, which this
+    # is not; benchmark-metrics.md's research is explicit that a real
+    # ATE-RMSE isn't claimable at all from start/end-tag-only GT. The
+    # ground-truth-referenced number is start_end_closure_error_m/_deg below.
+    self_consistency_rmse_m: float | None = None
+    self_consistency_n_matched: int = 0
+    marker_log_events: int = 0
+    lidar_log_events: int = 0
     notes: str = ""
     log_path: str = ""
 
-    # Start/end referee fields: a marker deliberately withheld from every
-    # localization map under test, scored against real ground truth instead
-    # of the ATE-proxy above (which only measures odom-vs-corrected
-    # self-consistency, no external reference). Ported from
-    # trial/scripts/bench.py's holdout-referee metrics (_median_pose /
-    # _quat_angle_deg / _holdout_referee_metrics), named start_end_* here
-    # since this typed field is the port's lasting home -- trial/scripts'
-    # internals (metrics_logger.py's --holdout-tag, RunRecord.marker_id) keep
-    # the historical "holdout" name. tag_id/closure_error_* are nullable:
-    # None when the run didn't set a start/end referee tag; readings_* stay 0
-    # in that case (a real count of zero, not "unknown").
+    # Start/end referee fields -- the PRIMARY metric (benchmark-metrics.md's
+    # ranked research, #1: "return error vs fiducial GT"). A marker
+    # deliberately withheld from every localization map under test, scored
+    # against real ground truth instead of the self-consistency fields above.
+    # Ported from trial/scripts/bench.py's holdout-referee metrics
+    # (_median_pose / _quat_angle_deg / _holdout_referee_metrics), named
+    # start_end_* here since this typed field is the port's lasting home --
+    # trial/scripts' internals (metrics_logger.py's --holdout-tag,
+    # RunRecord.marker_id) keep the historical "holdout" name. tag_id/
+    # closure_error_* are nullable: None when the run didn't set a start/end
+    # referee tag; readings_* stay 0 in that case (a real count of zero, not
+    # "unknown"). closure_error_m/_deg report a magnitude-only difference
+    # (claimed displacement distance/rotation-angle vs measured), not a full
+    # 6-DOF pose delta -- the referee's readings live in the tag's own fixed
+    # frame while the claim lives in world/map frame, two frames related by
+    # an uncalibrated rotation, so only frame-invariant scalars (a distance,
+    # a rotation angle) are honestly comparable across them; see
+    # _start_end_referee_metrics's docstring in tool_benchmark.py.
     start_end_tag_id: int | None = None
     start_end_closure_error_m: float | None = None
     start_end_closure_error_deg: float | None = None
     start_end_readings_start: int = 0
     start_end_readings_end: int = 0
+
+    # Added 2026-07-15 (benchmark-metrics.md research items #3/#4): max/RMS
+    # position error across every GT-visible instant the start/end tag was
+    # seen, not just the first/last window used for the primary return-error
+    # above -- see tool_benchmark.py's _checkpoint_position_errors(). Same
+    # magnitude-only reasoning as start_end_closure_error_m applies.
+    # checkpoint_count is the number of distinct visits to the tag found
+    # (clustered by time gap, see CHECKPOINT_GAP_S) -- checkpoint_error_rms_m
+    # is only populated when checkpoint_count > 2, matching the research's
+    # own call that RMS is redundant with max/return error at N<=2 (i.e. the
+    # ordinary case of a tag seen only at drill-start and drill-end).
+    max_checkpoint_error_m: float | None = None
+    checkpoint_error_rms_m: float | None = None
+    checkpoint_count: int = 0
+
+    # Added 2026-07-15 (benchmark-metrics.md research item #5): wall-clock
+    # delta from run-start to the first accepted correction, for a `kidnap`
+    # variant run only -- see tool_benchmark.py's _recovery_time_s() for the
+    # cold-start-displaced assumption this requires (a mid-run carry-and-drop
+    # kidnap has no logged instant to measure from and stays None).
+    recovery_time_s: float | None = None
 
 
 def _fmt_loop_closure(r: RunMetrics) -> str:
@@ -157,13 +202,17 @@ def _fmt_loop_closure(r: RunMetrics) -> str:
     return "n/a"
 
 
-def _fmt_ate_proxy(r: RunMetrics) -> str:
-    if r.ate_proxy_rmse_m is None:
+def _fmt_self_consistency(r: RunMetrics) -> str:
+    """Renamed from _fmt_ate_proxy (2026-07-15) -- see RunMetrics'
+    self_consistency_rmse_m docstring for why "ATE" doesn't belong in this
+    label."""
+    if r.self_consistency_rmse_m is None:
         return "n/a"
-    return f"{r.ate_proxy_rmse_m:.3f}m (n={r.ate_proxy_n_matched})"
+    return f"{r.self_consistency_rmse_m:.3f}m (n={r.self_consistency_n_matched})"
 
 
 def _fmt_start_end(r: RunMetrics) -> str:
+    """Formats the PRIMARY metric -- return error vs fiducial GT."""
     if r.start_end_tag_id is None:
         return "n/a"
     if r.start_end_closure_error_m is None:
@@ -174,6 +223,24 @@ def _fmt_start_end(r: RunMetrics) -> str:
         else ""
     )
     return f"{r.start_end_closure_error_m:.3f}m{deg}"
+
+
+def _fmt_max_checkpoint(r: RunMetrics) -> str:
+    if r.max_checkpoint_error_m is None:
+        return "n/a"
+    return f"{r.max_checkpoint_error_m:.3f}m (n={r.checkpoint_count})"
+
+
+def _fmt_checkpoint_rms(r: RunMetrics) -> str:
+    if r.checkpoint_error_rms_m is None:
+        return "n/a"
+    return f"{r.checkpoint_error_rms_m:.3f}m"
+
+
+def _fmt_recovery_time(r: RunMetrics) -> str:
+    if r.recovery_time_s is None:
+        return "n/a"
+    return f"{r.recovery_time_s:.1f}s"
 
 
 @dataclass
@@ -196,8 +263,11 @@ class BenchmarkResults:
         table.add_column("Route", style="cyan")
         table.add_column("Mode")
         table.add_column("Loop-closure (odom -> corrected)", justify="right")
-        table.add_column("Start/End closure", justify="right")
-        table.add_column("ATE-proxy", justify="right", style="green")
+        table.add_column("Return error (vs fiducial GT)", justify="right", style="bold")
+        table.add_column("Max checkpoint err", justify="right")
+        table.add_column("Checkpoint RMS", justify="right")
+        table.add_column("Recovery (kidnap)", justify="right")
+        table.add_column("Self-consistency", justify="right", style="green")
         table.add_column("Accepted", justify="right")
         table.add_column("Rejected", justify="right")
         table.add_column("Held", justify="right")
@@ -214,7 +284,10 @@ class BenchmarkResults:
                 r.mode,
                 _fmt_loop_closure(r),
                 _fmt_start_end(r),
-                _fmt_ate_proxy(r),
+                _fmt_max_checkpoint(r),
+                _fmt_checkpoint_rms(r),
+                _fmt_recovery_time(r),
+                _fmt_self_consistency(r),
                 str(r.corrections_accepted),
                 str(r.corrections_rejected),
                 str(r.corrections_held),
