@@ -46,7 +46,7 @@ from dimos.mapping.benchmark.type import BenchmarkResults, RunMetrics, RunRecord
 
 # How far a corrected_pose sample is allowed to be, in time, from the run's
 # start/end instant and still count as "the pose at that instant" -- ported
-# from bench.py's LOOP_CLOSURE_MAX_DT_S. MarkerLocalizationModule only
+# from bench.py's LOOP_CLOSURE_MAX_DT_S. VisualRelocalizationModule only
 # publishes on a fresh accept, not on a timer, so a correction can be many
 # seconds old and still be "the current one."
 LOOP_CLOSURE_MAX_DT_S = 30.0
@@ -205,16 +205,22 @@ def _correction_magnitude_stats(
 def _source_breakdown(log_events: Sequence[RunRecord]) -> tuple[int, int, int]:
     """Ported from trial/scripts/bench.py's _source_breakdown().
 
-    Correction TF (`world->map`) carries no source tag -- MarkerLocalizationModule
+    Correction TF (`world->map`) carries no source tag -- VisualRelocalizationModule
     and RelocalizationModule can't even run in the same process (see
     trial/day1-runbook.md Drill C), so this is the only place source is
     attributable at all, via the `logger`/`event` text metrics_logger.py
     already captures.
+
+    "fiducial" (VisualRelocalizationModule's home, dimos/perception/fiducial/)
+    is checked alongside "marker" -- since the module rename, its own
+    setup_logger()-derived `logger` path (visual_relocalization_module.py) no
+    longer contains "marker" but does contain "relocaliz", which would
+    otherwise misclassify it into the lidar bucket below.
     """
     marker = lidar = other = 0
     for r in log_events:
         blob = f"{r.logger or ''} {r.event or ''}".lower()
-        if "marker" in blob:
+        if "marker" in blob or "fiducial" in blob:
             marker += 1
         elif "relocaliz" in blob or "lidar" in blob:
             lidar += 1

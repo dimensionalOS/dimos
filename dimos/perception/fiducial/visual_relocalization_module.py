@@ -26,7 +26,8 @@ from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.fiducial.marker_localization import (
+from dimos.perception.fiducial.marker_pose import create_aruco_detector
+from dimos.perception.fiducial.visual_relocalization import (
     MAP_FRAME,
     OPTICAL_FRAME,
     LocalizationConfig,
@@ -34,7 +35,6 @@ from dimos.perception.fiducial.marker_localization import (
     load_marker_map,
     localize_from_detections,
 )
-from dimos.perception.fiducial.marker_pose import create_aruco_detector
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
@@ -43,7 +43,7 @@ logger = setup_logger()
 WORLD_FRAME = "world"  # mirrors RelocalizationModule.FRAME_WORLD
 
 
-class MarkerLocalizationModuleConfig(ModuleConfig):
+class VisualRelocalizationModuleConfig(ModuleConfig):
     marker_map_file: str | None = None  # via `resolve_named_path`, RelocalizationModule convention
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
     marker_length_m: float = Field(..., gt=0.0)
@@ -61,8 +61,8 @@ class MarkerLocalizationModuleConfig(ModuleConfig):
     map_frame: str = MAP_FRAME
 
 
-class MarkerLocalizationModule(Module):
-    config: MarkerLocalizationModuleConfig
+class VisualRelocalizationModule(Module):
+    config: VisualRelocalizationModuleConfig
     color_image: In[Image]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -93,13 +93,15 @@ class MarkerLocalizationModule(Module):
             return  # no tags in view: the normal case, not worth logging
         pose = localize_from_detections(detections, self._marker_map, info, self._cfg, msg.ts)
         if pose is None:
-            logger.warning(f"MarkerLocalizationModule: gate rejected ({len(detections)} tags seen)")
+            logger.warning(
+                f"VisualRelocalizationModule: gate rejected ({len(detections)} tags seen)"
+            )
             return
         pose.frame_id = self.config.map_frame  # retarget map_T_optical before inverting/publishing
         optical = self.config.camera_optical_frame
         if (world_T_optical := self.tf.get(WORLD_FRAME, optical, time_point=msg.ts)) is None:
             logger.warning(
-                f"MarkerLocalizationModule: no TF {WORLD_FRAME} -> {optical} at {msg.ts}; "
+                f"VisualRelocalizationModule: no TF {WORLD_FRAME} -> {optical} at {msg.ts}; "
                 "check camera_optical_frame against the camera's static TF chain"
             )
             return

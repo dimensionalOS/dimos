@@ -72,7 +72,6 @@ from dimos.mapping.benchmark.type import (
     _fmt_start_end,
 )
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.perception.fiducial.marker_localization import load_marker_map
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
     camera_optical_frame_id,
@@ -81,6 +80,7 @@ from dimos.perception.fiducial.marker_pose import (
     marker_reprojection_error,
     rvec_tvec_to_transform,
 )
+from dimos.perception.fiducial.visual_relocalization import load_marker_map
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -125,7 +125,7 @@ BASE_FRAME = "base_link"
 CORRECTION_EPS_M = 0.01
 
 # How far back the map->base_link lookup may search for a matching world->map
-# sample -- MarkerLocalizationModule only republishes on a fresh accept, not
+# sample -- VisualRelocalizationModule only republishes on a fresh accept, not
 # on a timer, so a correction can be many seconds old and still current.
 CORRECTED_POSE_LOOKUP_TOLERANCE_S = 30.0
 
@@ -252,7 +252,7 @@ def _solve_tag_pose(
 
     Ported from `holdout_overlay.py`'s `TagTracker.solve`: tries every IPPE
     candidate and keeps the min-reprojection one (the same planar
-    mirror-pose-ambiguity disambiguation MarkerLocalizationModule itself
+    mirror-pose-ambiguity disambiguation VisualRelocalizationModule itself
     applies) rather than trusting `estimate_marker_pose`'s single best guess,
     which can pick the flipped pose near the ambiguity.
     """
@@ -467,7 +467,7 @@ class BenchmarkLogger:
         )
 
     # -- dimos structured-log tail (ported from metrics_logger.py) --------
-    _WATCH_SUBSTRINGS = ("gate rejected", "relocalize", "MarkerLocalizationModule")
+    _WATCH_SUBSTRINGS = ("gate rejected", "relocalize", "VisualRelocalizationModule")
 
     def _tail_dimos_log(self) -> None:
         from dimos.core.log_viewer import follow_log

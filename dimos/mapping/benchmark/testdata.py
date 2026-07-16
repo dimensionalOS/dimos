@@ -169,7 +169,13 @@ _marker_drift_records = [
     _pose(0.0, "correction_new", (0.0, 0.0, 0.0), magnitude_m=None),  # first-ever, no prior
     _pose(2.5, "correction_new", (0.0, 0.0, 0.05), magnitude_m=0.05),  # accepted
     _pose(4.0, "correction_hold", (0.0, 0.0, 0.05), magnitude_m=0.005),  # unchanged republish
-    _log_event(1.5, "MarkerLocalizationModule", "gate rejected (2 tags seen)"),
+    # logger value shaped like setup_logger()'s real relative-file-path output
+    # for VisualRelocalizationModule.
+    _log_event(
+        1.5,
+        "dimos/perception/fiducial/visual_relocalization_module.py",
+        "gate rejected (2 tags seen)",
+    ),
 ]
 
 testcases.append(

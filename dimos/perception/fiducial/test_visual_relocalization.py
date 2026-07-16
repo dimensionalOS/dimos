@@ -26,15 +26,6 @@ import pytest
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.perception.fiducial.marker_localization import (
-    MAP_FRAME,
-    OPTICAL_FRAME,
-    LocalizationConfig,
-    detect_markers,
-    load_marker_map,
-    localize_from_detections,
-)
-from dimos.perception.fiducial.marker_localization_module import MarkerLocalizationModule
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
     create_aruco_detector,
@@ -47,6 +38,15 @@ from dimos.perception.fiducial.test_helpers import (
     synthetic_marker_image,
     world_T_optical,
 )
+from dimos.perception.fiducial.visual_relocalization import (
+    MAP_FRAME,
+    OPTICAL_FRAME,
+    LocalizationConfig,
+    detect_markers,
+    load_marker_map,
+    localize_from_detections,
+)
+from dimos.perception.fiducial.visual_relocalization_module import VisualRelocalizationModule
 
 _MARKER_LENGTH_M, _MARKER_ID = 0.15, 7
 _MARKER_MAP = {_MARKER_ID: Transform(frame_id=MAP_FRAME, child_frame_id=f"marker_{_MARKER_ID}")}
@@ -69,7 +69,7 @@ def test_localize_from_rendered_marker() -> None:
 
 
 async def test_module_publishes_world_map_tf() -> None:
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     module._marker_map = _MARKER_MAP
     try:
         module.tf.publish(Transform(frame_id="world", child_frame_id="camera_optical", ts=10.0))
@@ -323,11 +323,11 @@ def test_load_marker_map_malformed_values_raise(
         load_marker_map(yaml_path)
 
 
-# --- MarkerLocalizationModule ----------------------------------------------
+# --- VisualRelocalizationModule ----------------------------------------------
 
 
 async def test_handle_color_image_no_markers_in_frame_skips_publish() -> None:
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     module._marker_map = _MARKER_MAP
     try:
         module.tf.publish(world_T_optical())
@@ -339,7 +339,7 @@ async def test_handle_color_image_no_markers_in_frame_skips_publish() -> None:
 
 async def test_handle_color_image_unmapped_marker_skips_publish() -> None:
     """A detected tag whose id isn't in the loaded marker map is ignored cleanly."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     module._marker_map = {
         99: Transform(frame_id=MAP_FRAME, child_frame_id="marker_99")
     }  # id 7 not present
@@ -353,7 +353,7 @@ async def test_handle_color_image_unmapped_marker_skips_publish() -> None:
 
 async def test_handle_color_image_rejects_high_reprojection_error() -> None:
     """A corrupted detection (high reprojection error) makes the gate reject; publish is skipped."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     module._marker_map = _MARKER_MAP
     image = synthetic_marker_image(_MARKER_ID, ts=10.0)
     detections = detect_markers(
@@ -364,7 +364,7 @@ async def test_handle_color_image_rejects_high_reprojection_error() -> None:
     try:
         module.tf.publish(world_T_optical())
         with patch(
-            "dimos.perception.fiducial.marker_localization_module.detect_markers",
+            "dimos.perception.fiducial.visual_relocalization_module.detect_markers",
             return_value=corrupted,
         ):
             await module.handle_color_image(image)
@@ -375,7 +375,9 @@ async def test_handle_color_image_rejects_high_reprojection_error() -> None:
 
 async def test_handle_color_image_without_camera_info_is_noop() -> None:
     """Static camera_info config path: no camera_info configured -> frames are ignored, not crash."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M)  # camera_info left as None
+    module = VisualRelocalizationModule(
+        marker_length_m=_MARKER_LENGTH_M
+    )  # camera_info left as None
     module._marker_map = _MARKER_MAP
     try:
         module.tf.publish(world_T_optical())
@@ -387,7 +389,7 @@ async def test_handle_color_image_without_camera_info_is_noop() -> None:
 
 async def test_handle_color_image_without_marker_map_is_noop() -> None:
     """No marker map loaded (e.g. ``marker_map_file`` unset / ``start()`` never called) -> no-op."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     try:
         module.tf.publish(world_T_optical())
         await module.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
@@ -398,43 +400,43 @@ async def test_handle_color_image_without_marker_map_is_noop() -> None:
 
 def test_module_config_rejects_non_positive_marker_length() -> None:
     with pytest.raises(ValidationError):
-        MarkerLocalizationModule(marker_length_m=0.0)
+        VisualRelocalizationModule(marker_length_m=0.0)
 
 
 def test_module_config_rejects_non_positive_reprojection_threshold() -> None:
     with pytest.raises(ValidationError):
-        MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, max_reprojection_error_px=0.0)
+        VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, max_reprojection_error_px=0.0)
 
 
 def test_module_config_threads_min_tags_into_gate() -> None:
     """``min_tags`` is exposed on the module config and reaches the localization gate."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=2)
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=2)
     try:
         assert module._cfg.min_tags == 2
     finally:
         module.stop()
     with pytest.raises(ValidationError):
-        MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=0)
+        VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=0)
 
 
 def test_module_config_threads_ambiguity_ratio_into_gate() -> None:
     """``ambiguity_ratio_min`` is exposed on the module config, reaches the localization
     gate, and rejects sub-1.0 values (a ratio below 1 is meaningless — the best candidate
     always beats itself)."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=3.0)
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=3.0)
     try:
         assert module._cfg.ambiguity_ratio_min == 3.0
     finally:
         module.stop()
     with pytest.raises(ValidationError):
-        MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=0.5)
+        VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=0.5)
 
 
 async def test_module_config_map_frame_defaults_to_map() -> None:
     """Default config leaves the published TF's target frame unchanged (``MAP_FRAME``), so
     existing deployments and RelocalizationModule's own ``world -> map`` publish see identical
     behavior when this option is left untouched."""
-    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
     assert module.config.map_frame == MAP_FRAME
     module._marker_map = _MARKER_MAP
     try:
@@ -446,10 +448,11 @@ async def test_module_config_map_frame_defaults_to_map() -> None:
 
 
 async def test_module_config_map_frame_retargets_published_tf() -> None:
-    """A custom ``map_frame`` (e.g. ``-o markerlocalizationmodule.map_frame=map_marker``) retargets
-    the published correction TF, enabling shadow-mode side-by-side evaluation against
+    """A custom ``map_frame`` (e.g. ``-o
+    visualrelocalizationmodule.map_frame=map_marker``) retargets the published
+    correction TF, enabling shadow-mode side-by-side evaluation against
     RelocalizationModule (which continues to own the default ``map`` frame)."""
-    module = MarkerLocalizationModule(
+    module = VisualRelocalizationModule(
         marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info(), map_frame="map_marker"
     )
     module._marker_map = _MARKER_MAP
@@ -465,7 +468,7 @@ async def test_module_config_map_frame_retargets_published_tf() -> None:
 async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> None:
     """A non-default ``camera_optical_frame`` is used for the TF lookup, and a lookup miss
     (mis-named frame, missing static chain) warns instead of going dark."""
-    module = MarkerLocalizationModule(
+    module = VisualRelocalizationModule(
         marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info(), camera_optical_frame="cam_x"
     )
     module._marker_map = _MARKER_MAP
@@ -476,10 +479,14 @@ async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> Non
     finally:
         module.stop()
 
-    missing = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    missing = VisualRelocalizationModule(
+        marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info()
+    )
     missing._marker_map = _MARKER_MAP
     try:  # no world -> camera_optical TF published at all -> warning, no publish
-        with patch("dimos.perception.fiducial.marker_localization_module.logger.warning") as warned:
+        with patch(
+            "dimos.perception.fiducial.visual_relocalization_module.logger.warning"
+        ) as warned:
             await missing.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
         assert any("no TF" in str(c.args[0]) for c in warned.call_args_list)
         assert missing.tf.get("world", "map") is None
