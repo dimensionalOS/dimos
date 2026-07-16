@@ -33,7 +33,6 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory2.module import Recorder, RecorderConfig
-from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons
@@ -77,8 +76,7 @@ class TeleopRecorder(Recorder):
         self._db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         # Open the store ourselves so the base Recorder records into our path.
-        self._store = SqliteStore(path=str(self._db_path))
-        self._store.start()
+        self._open_store(self._db_path)
         super().start()
 
     @rpc

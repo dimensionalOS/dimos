@@ -21,10 +21,10 @@ from unittest.mock import MagicMock
 import pytest
 from reactivex.disposable import Disposable
 
+from dimos.memory2 import module as memory_module
 from dimos.memory2.module import Recorder
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.protocol.rpc.spec import Args, RPCSpec
-from dimos.teleop.utils import recorder as recorder_module
 from dimos.teleop.utils.recorder import TeleopRecorder
 
 
@@ -52,7 +52,7 @@ def test_teleop_recorder_leaves_store_open_until_subscriptions_stop(
     store.stop.side_effect = lambda: events.append("store-stopped")
     store.dispose.side_effect = lambda: events.append("store-disposed")
     store_factory = MagicMock(return_value=store)
-    monkeypatch.setattr(recorder_module, "SqliteStore", store_factory)
+    monkeypatch.setattr(memory_module, "SqliteStore", store_factory)
     monkeypatch.setattr(Recorder, "start", MagicMock())
     module = TeleopRecorder(
         db_path=tmp_path / "teleop.db",
