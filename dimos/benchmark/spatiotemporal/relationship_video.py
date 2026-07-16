@@ -29,6 +29,17 @@ from dimos.benchmark.spatiotemporal.models import SpatialPredicate
 from dimos.benchmark.spatiotemporal.ports import DetectedObject, ObservationDetector
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
+DEFAULT_PROMPTS = (
+    "quadruped robot",
+    "chair",
+    "whiteboard",
+    "table",
+    "trash can",
+    "refrigerator",
+    "door",
+    "cart",
+)
+
 
 @dataclass(frozen=True)
 class RobotRelationship:
@@ -246,8 +257,17 @@ def _positive_period(value: str) -> float:
 
 def _default_detector_factory(prompts: tuple[str, ...]) -> ObservationDetector:
     from dimos.benchmark.spatiotemporal.yoloe_adapter import YoloeObservationDetector
+    from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 
-    return YoloeObservationDetector(prompts=prompts)
+    def detector_factory() -> Yoloe2DDetector:
+        return Yoloe2DDetector(
+            prompt_mode=YoloePromptMode.PROMPT,
+            conf=0.15,
+            max_area_ratio=0.8,
+            device="cpu",
+        )
+
+    return YoloeObservationDetector(prompts=prompts, detector_factory=detector_factory)
 
 
 def _decoded_frame_count(video_path: Path) -> int:
@@ -275,7 +295,7 @@ def main(
     parser.add_argument(
         "--prompts",
         nargs="+",
-        default=("quadruped robot", "refrigerator"),
+        default=DEFAULT_PROMPTS,
     )
     args = parser.parse_args(argv)
 

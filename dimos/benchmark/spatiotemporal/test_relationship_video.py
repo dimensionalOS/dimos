@@ -23,11 +23,64 @@ import pytest
 from dimos.benchmark.spatiotemporal.models import BoundingBox2D, SpatialPredicate
 from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
+    DEFAULT_PROMPTS,
+    _default_detector_factory,
     derive_relationship_snapshot,
     main,
     render_relationship_video,
 )
 from dimos.msgs.sensor_msgs.Image import Image
+
+
+def test_default_detector_uses_reference_video_acceptance_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured: list[dict[str, object]] = []
+    prompt_sets: list[tuple[str, ...]] = []
+
+    class RecordingYoloeDetector:
+        def __init__(self, **kwargs: object) -> None:
+            configured.append(kwargs)
+
+        def set_prompts(self, text: list[str]) -> None:
+            prompt_sets.append(tuple(text))
+
+        def process_image(self, image: Image) -> object:
+            return type("Result", (), {"detections": ()})()
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "dimos.perception.detection.detectors.yoloe.Yoloe2DDetector",
+        RecordingYoloeDetector,
+    )
+    detector = _default_detector_factory(DEFAULT_PROMPTS)
+
+    detector.detect(Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8)))
+    detector.close()
+
+    from dimos.perception.detection.detectors.yoloe import YoloePromptMode
+
+    assert configured == [
+        {
+            "prompt_mode": YoloePromptMode.PROMPT,
+            "conf": 0.15,
+            "max_area_ratio": 0.8,
+            "device": "cpu",
+        }
+    ]
+    assert prompt_sets == [DEFAULT_PROMPTS]
+    assert DEFAULT_PROMPTS == (
+        "quadruped robot",
+        "chair",
+        "whiteboard",
+        "table",
+        "trash can",
+        "refrigerator",
+        "door",
+        "cart",
+    )
 
 
 def _detection(

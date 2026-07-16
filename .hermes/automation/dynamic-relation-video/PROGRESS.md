@@ -1,6 +1,6 @@
 AUTOMATION_STATUS: READY
-CURRENT_STEP: 04
-LAST_COMPLETED_STEP: 03
+CURRENT_STEP: 05
+LAST_COMPLETED_STEP: 04
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -10,7 +10,7 @@ LAST_COMPLETED_STEP: 03
 | 01 | COMPLETE | `feat(benchmark): derive robot relationship snapshots` | RED observed missing module; focused 1 passed; package 128 passed; Ruff and mypy passed; read-only review passed. |
 | 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
 | 03 | COMPLETE | `feat(benchmark): add relationship video CLI` | CLI/safety RED and review-driven temp-reservation RED observed; focused 4 passed; package 131 passed; Ruff/mypy passed; foreground review passed. |
-| 04 | PENDING | real YOLO-E acceptance | First run produced a valid MP4 but no inspected robot-to-object relationship; acceptance reopened. |
+| 04 | COMPLETE | `fix(benchmark): require real relationship evidence` | RED caught sparse defaults; corrected real run yielded 26 relationship-bearing refreshes; 0s/15s/30s overlays visually accepted; focused 5 and package 132 passed; Ruff/mypy/review passed. |
 | 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
 
 ## Evidence log
@@ -66,18 +66,17 @@ LAST_COMPLETED_STEP: 03
 
 ### Step 04 — COMPLETE
 
-- Real run: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video /Users/tian/dimos-worktrees/replayable-video-relation-evals/assets/simple_demo.mp4 /Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4 --robot-label 'quadruped robot' --update-period 1 --prompts 'quadruped robot' refrigerator` completed and wrote 1,380 frames using `yoloe-11s-seg.pt` on CPU.
-- Local prerequisites: the run used the supplied machine-local `models_yoloe` directory through an ignored `data/models_yoloe` symlink; the missing Ultralytics CLIP runtime was installed into the worktree virtual environment and its downloaded text model remained untracked.
-- Artifact: `/Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4`; 103,812,703 bytes; ISO Media MP4; 1,380 decoded frames; 1080×1920; 29.997 FPS; 46.00460046004601 seconds.
+- RED: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py::test_default_detector_uses_reference_video_acceptance_configuration -v` failed at collection with the expected missing `DEFAULT_PROMPTS` import before the corrected defaults existed.
+- GREEN: the default CLI now uses broad prompts (`quadruped robot`, `chair`, `whiteboard`, `table`, `trash can`, `refrigerator`, `door`, `cart`) and constructs prompt-mode YOLO-E with `conf=0.15`, `max_area_ratio=0.8`, and CPU, matching the proven reference-video configuration.
+- Real run: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video /Users/tian/dimos-worktrees/replayable-video-relation-evals/assets/simple_demo.mp4 /Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4 --robot-label 'quadruped robot' --update-period 1` completed and wrote 1,380 frames using `yoloe-11s-seg.pt` on CPU.
+- Artifact: `/Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4`; 106,076,067 bytes; ISO Media MP4; 1,380 decoded frames; 1080×1920; 29.997 FPS; 46.00460046004601 seconds.
 - Source comparison: 1,380 decoded frames; 1080×1920; 29.996739484838603 FPS; 46.005 seconds. Output deltas were 0.0002605151613970236 FPS and 0.0003995399539959976 seconds, within MP4 container precision.
-- Refresh evidence: the one-second schedule yielded 46 refresh opportunities at seconds 0–45. Inspection frames at seconds 0, 10, 20, 30, and 40 showed changing explicit states: `Robot not detected` at 0/10/20/40, and `No other objects detected` with a `quadruped robot` box at 30.
-- Observed labels: `quadruped robot` was detected at second 30; `refrigerator` was configured as a prompt but was not detected in the inspected frames.
-- Focused: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py -q` → `4 passed in 0.20s`.
-- Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `131 passed in 3.05s`.
-- Ruff: source and test were already formatted and passed `ruff check`.
+- Relationship refresh evidence: real inference produced robot-to-object relationships at 26 refreshes: 0, 1, 7, 8, 9, 10, 12, 14–19, 29–31, 33–35, 38–43, and 45 seconds. Observed relationship labels were `quadruped robot`, `refrigerator`, `chair`, `trash can`, and `table`.
+- Visual acceptance: extracted output frames at 0, 15, and 30 seconds visibly contained a green `quadruped robot` box, at least one orange non-robot box, and rendered `robot ... object` panel text. At 0 seconds the panel read `robot right-of / below refrigerator [1]`; at 15 seconds it contained five refrigerator/trash-can/chair relationship lines; at 30 seconds it read `robot left-of / below refrigerator [1]` and `robot left-of / below chair [7]`.
+- Focused: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py -q` → `5 passed in 1.08s`.
+- Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `132 passed in 2.87s`.
+- Ruff: touched source and test were already formatted and passed `ruff check`.
 - Mypy: `uv run --with mypy mypy dimos/benchmark/spatiotemporal/relationship_video.py` → no issues.
-- Supervisor disposition: rejected as semantically insufficient despite the read-only reviewer returning `PASS`; inspected frames contained only missing states or a robot with no other object.
-- Root cause evidence: the relationship-video CLI used `Yoloe2DDetector` defaults (`conf=0.6`, limited prompts), while the verified reference demo uses `conf=0.15`, `max_area_ratio=0.8`, CPU, and a broader object prompt set.
-- Required correction: add a RED test for the default detector configuration, match the proven reference settings, rerun inference, and require at least one real robot-to-object relationship overlay.
+- Read-only review: a separate synchronous foreground Hermes process returned `PASS`, confirming reference settings, lazy construction and prompt propagation coverage, scoped changes, and artifact staging safety.
 - Staging safety: generated MP4/JPEG frames, model weights, virtual-environment packages, and the machine-local model symlink remain ignored and unstaged.
-- Next: retry Step 04; Step 05 remains blocked until semantic acceptance passes.
+- Next: Step 05.
