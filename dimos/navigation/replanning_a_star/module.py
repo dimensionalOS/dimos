@@ -40,6 +40,17 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     robot_rotation_diameter: float | None = None
     path_length_weight: float = Field(default=1.0, ge=0.0)
     path_cell_cost_weight: float = Field(default=3.0, ge=0.0)
+    publish_raw_path: bool = False
+    constrained_path_smoothing_enabled: bool = False
+    path_smoothing_iterations: int = Field(default=40, ge=0)
+    path_smoothing_data_weight: float = Field(default=0.02, ge=0.0, le=1.0)
+    path_smoothing_smoothness_weight: float = Field(default=0.45, ge=0.0, le=0.5)
+    path_smoothing_max_deviation_m: float = Field(default=0.1, ge=0.0)
+    path_smoothing_collision_sample_spacing_m: float = Field(default=0.05, gt=0.0)
+    path_smoothing_max_cost_increase: float = Field(default=2.0, ge=0.0)
+    path_smoothing_backtracking_factor: float = Field(default=0.5, gt=0.0, lt=1.0)
+    path_smoothing_max_backtracking_steps: int = Field(default=3, ge=0)
+    path_resample_spacing_m: float = Field(default=0.1, gt=0.0)
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -57,6 +68,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     navigation_state: Out[String]  # TODO: set it
     nav_cmd_vel: Out[Twist]
     path: Out[Path]
+    raw_path: Out[Path]
     navigation_costmap: Out[OccupancyGrid]
 
     _planner: GlobalPlanner
@@ -78,6 +90,21 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             effective_global_config,
             path_length_weight=self.config.path_length_weight,
             path_cell_cost_weight=self.config.path_cell_cost_weight,
+            publish_raw_path=self.config.publish_raw_path,
+            constrained_path_smoothing_enabled=self.config.constrained_path_smoothing_enabled,
+            path_smoothing_iterations=self.config.path_smoothing_iterations,
+            path_smoothing_data_weight=self.config.path_smoothing_data_weight,
+            path_smoothing_smoothness_weight=self.config.path_smoothing_smoothness_weight,
+            path_smoothing_max_deviation_m=self.config.path_smoothing_max_deviation_m,
+            path_smoothing_collision_sample_spacing_m=(
+                self.config.path_smoothing_collision_sample_spacing_m
+            ),
+            path_smoothing_max_cost_increase=self.config.path_smoothing_max_cost_increase,
+            path_smoothing_backtracking_factor=self.config.path_smoothing_backtracking_factor,
+            path_smoothing_max_backtracking_steps=(
+                self.config.path_smoothing_max_backtracking_steps
+            ),
+            path_resample_spacing_m=self.config.path_resample_spacing_m,
         )
 
     @rpc
@@ -116,6 +143,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             )
 
         self.register_disposable(self._planner.path.subscribe(self.path.publish))
+        self.register_disposable(self._planner.raw_path.subscribe(self.raw_path.publish))
 
         self.register_disposable(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
