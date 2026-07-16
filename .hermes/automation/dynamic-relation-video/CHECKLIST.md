@@ -24,7 +24,7 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 | 01 | Pure robot-to-object relationship snapshots | COMPLETE |
 | 02 | Full-rate annotated MP4 renderer with one-second refresh | COMPLETE |
 | 03 | CLI, path safety, decode/encode verification | COMPLETE |
-| 04 | Real YOLO-E reference-video acceptance | PENDING |
+| 04 | Real YOLO-E reference-video acceptance | COMPLETE |
 | 05 | README, focused review, final gates, and PR preparation | PENDING |
 
 ## Micro-spec 01 — Relationship snapshots
@@ -73,13 +73,13 @@ Generate a playable annotated MP4 from an input video. Once per second, detect t
 - Model directory: `/Users/tian/dimos-worktrees/replayable-video-relation-evals/data/models_yoloe`
 - Output root: `/Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations`
 
-- [ ] Run the real detector with prompts including `quadruped robot` and `refrigerator`.
-- [ ] Produce `robot-relationships.mp4` outside tracked paths.
-- [ ] Verify the artifact is a real MP4, decodes every expected frame, retains source FPS/dimensions, and has multiple relationship refreshes.
-- [ ] Inspect at least three frames at different seconds and confirm overlay changes or explicit missing-robot state.
-- [ ] Record exact artifact path, byte size, frame count, duration, and observed labels in progress.
-- [ ] Fix only evidence-backed defects using RED-GREEN TDD.
-- [ ] Update progress, commit any necessary focused implementation fix, push, verify SHA.
+- [x] Run the real detector with prompts including `quadruped robot` and `refrigerator`.
+- [x] Produce `robot-relationships.mp4` outside tracked paths.
+- [x] Verify the artifact is a real MP4, decodes every expected frame, retains source FPS/dimensions, and has multiple relationship refreshes.
+- [x] Inspect at least three frames at different seconds and confirm overlay changes or explicit missing-robot state.
+- [x] Record exact artifact path, byte size, frame count, duration, and observed labels in progress.
+- [x] Fix only evidence-backed defects using RED-GREEN TDD; acceptance found no defect requiring a code change.
+- [x] Update progress, commit the acceptance ledger, push, and verify SHA.
 
 ## Micro-spec 05 — Documentation and final handoff
 

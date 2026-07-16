@@ -1,6 +1,6 @@
 AUTOMATION_STATUS: READY
-CURRENT_STEP: 04
-LAST_COMPLETED_STEP: 03
+CURRENT_STEP: 05
+LAST_COMPLETED_STEP: 04
 
 # Dynamic Robot-Relationship Video Progress
 
@@ -10,7 +10,7 @@ LAST_COMPLETED_STEP: 03
 | 01 | COMPLETE | `feat(benchmark): derive robot relationship snapshots` | RED observed missing module; focused 1 passed; package 128 passed; Ruff and mypy passed; read-only review passed. |
 | 02 | COMPLETE | `feat(benchmark): render dynamic relationship video` | RED missing renderer; cleanup RED reproduced skipped releases; focused 3 passed; package 130 passed; Ruff/mypy passed; foreground review passed. |
 | 03 | COMPLETE | `feat(benchmark): add relationship video CLI` | CLI/safety RED and review-driven temp-reservation RED observed; focused 4 passed; package 131 passed; Ruff/mypy passed; foreground review passed. |
-| 04 | PENDING | real YOLO-E acceptance | — |
+| 04 | COMPLETE | real YOLO-E acceptance | Real YOLO-E rendered 1,380 frames; MP4 metadata matched source within container precision; five sampled seconds showed changing explicit states; package/static gates and foreground review passed. |
 | 05 | PENDING | `docs(benchmark): document dynamic relationship video` | — |
 
 ## Evidence log
@@ -63,3 +63,20 @@ LAST_COMPLETED_STEP: 03
 - Read-only review: a second separate foreground Hermes process returned `PASS` with no blocking findings and confirmed reserved temporary output plus preservation of an existing destination on failure.
 - Generated artifacts: test videos remained in pytest temporary paths; no media, model weights, or logs were retained or staged.
 - Next: Step 04.
+
+### Step 04 — COMPLETE
+
+- Real run: `uv run python -m dimos.benchmark.spatiotemporal.relationship_video /Users/tian/dimos-worktrees/replayable-video-relation-evals/assets/simple_demo.mp4 /Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4 --robot-label 'quadruped robot' --update-period 1 --prompts 'quadruped robot' refrigerator` completed and wrote 1,380 frames using `yoloe-11s-seg.pt` on CPU.
+- Local prerequisites: the run used the supplied machine-local `models_yoloe` directory through an ignored `data/models_yoloe` symlink; the missing Ultralytics CLIP runtime was installed into the worktree virtual environment and its downloaded text model remained untracked.
+- Artifact: `/Users/tian/dimos-worktrees/dynamic-robot-relation-video/.artifacts/dynamic-robot-relations/robot-relationships.mp4`; 103,812,703 bytes; ISO Media MP4; 1,380 decoded frames; 1080×1920; 29.997 FPS; 46.00460046004601 seconds.
+- Source comparison: 1,380 decoded frames; 1080×1920; 29.996739484838603 FPS; 46.005 seconds. Output deltas were 0.0002605151613970236 FPS and 0.0003995399539959976 seconds, within MP4 container precision.
+- Refresh evidence: the one-second schedule yielded 46 refresh opportunities at seconds 0–45. Inspection frames at seconds 0, 10, 20, 30, and 40 showed changing explicit states: `Robot not detected` at 0/10/20/40, and `No other objects detected` with a `quadruped robot` box at 30.
+- Observed labels: `quadruped robot` was detected at second 30; `refrigerator` was configured as a prompt but was not detected in the inspected frames.
+- Focused: `uv run pytest dimos/benchmark/spatiotemporal/test_relationship_video.py -q` → `4 passed in 0.20s`.
+- Regression: `uv run pytest dimos/benchmark/spatiotemporal -q` → `131 passed in 3.05s`.
+- Ruff: source and test were already formatted and passed `ruff check`.
+- Mypy: `uv run --with mypy mypy dimos/benchmark/spatiotemporal/relationship_video.py` → no issues.
+- Read-only review: separate synchronous foreground Hermes process returned `PASS`; refrigerator absence was not a defect because acceptance requires the prompt and honest missing-object behavior, not guaranteed model recall.
+- TDD disposition: no evidence-backed implementation defect was found, so no production code or behavior test changed.
+- Staging safety: generated MP4/JPEG frames, model weights, virtual-environment packages, and the machine-local model symlink remain ignored and unstaged.
+- Next: Step 05.
