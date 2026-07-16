@@ -31,8 +31,8 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -374,6 +374,26 @@ class TestPlanningInitialization:
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.get_current_joint_state.assert_not_called()
 
+    def test_solve_ik_preserves_backend_failure_detail(self, robot_config):
+        """IK diagnostics include the backend's human-readable failure message."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.NO_SOLUTION, message="target is outside the workspace"
+        )
+
+        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
+
+        assert result.status == IKStatus.NO_SOLUTION
+        assert module.get_error() == "IK failed: NO_SOLUTION: target is outside the workspace"
+        assert module._state == ManipulationState.IDLE
+
 
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
@@ -394,6 +414,29 @@ class TestJointNameTranslation:
         )
         assert result.joint_names == ["left/joint1", "left/joint2", "left/joint3"]
         assert len(result.points) == 2  # Points preserved
+
+
+class TestPlanningDiagnostics:
+    def test_planner_failure_preserves_backend_detail(self, robot_config):
+        """Planning diagnostics include the backend message."""
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        module._planner = MagicMock()
+        module._planner.plan_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.TIMEOUT, message="planner timed out"
+        )
+
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        assert module._begin_planning("test_arm") == ("test_arm", "robot_id")
+        assert not module._plan_path_only(
+            "test_arm", "robot_id", JointState(position=[1.0, 1.0, 1.0]), 1
+        )
+
+        assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
+        assert module._state == ManipulationState.FAULT
 
 
 class TestExecute:

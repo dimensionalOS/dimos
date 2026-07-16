@@ -28,7 +28,7 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-XARM7_SIM_HOME = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
+XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
 _xarm7_sim_hw = make_xarm_hardware(
     "arm",
@@ -59,6 +59,7 @@ xarm_perception_sim = autoconnect(
         dof=7,
         camera_name="wrist_camera",
         base_frame_id="link7",
+        reset_joint_positions=XARM7_SIM_HOME,
     ),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(

@@ -49,31 +49,53 @@ uv run dimos stop
 
 Use `dimos log -f` to follow the log while the run is active.
 
-## Ask the built-in agent
+## Daily interaction
 
-Send text to the running agent over LCM:
+For normal interactive use, start the human-friendly terminal client:
+
+```bash
+uv run dimos humancli
+```
+
+It connects to the running agent so you can send prompts and read responses in
+one session.
+
+### Try these prompts
+
+Start with non-motion state and perception checks:
+
+```text
+Report the current robot state without moving.
+```
+
+```text
+Without moving anything, use the current camera view to report which objects are visible.
+```
+
+If a fresh snapshot is needed, and repositioning the simulated arm is
+acceptable:
+
+```text
+Scan the scene once for visible objects. The scan may move the arm to its init pose; do not perform pick, place, or other motion afterward.
+```
+
+## Debugging and testing interfaces
+
+Use `agent-send` for one-shot LCM input when testing or diagnosing the agent:
 
 ```bash
 uv run dimos agent-send "Report the current robot state and visible objects; do not move the arm or gripper."
 ```
 
-A minimal safe prompt for state and perception checks is:
-
-```text
-Do not move the arm, gripper, or any object. Report the current robot state and inspect perception only.
-```
-
-## Inspect through MCP
-
-The blueprint includes an MCP server. Check that it is running and inspect the
-available tools:
+The blueprint also includes an MCP server. Use these commands for direct
+server inspection and tool-level testing:
 
 ```bash
 uv run dimos mcp status
 uv run dimos mcp list-tools
 ```
 
-These inspection calls are useful for checking state and perception:
+For example:
 
 ```bash
 uv run dimos mcp call get_robot_state
@@ -84,15 +106,4 @@ uv run dimos mcp call scan_objects
 `look` observes the current camera view without moving the arm. `scan_objects`
 is a single initialization-viewpoint perception snapshot: it first moves the
 simulated arm to its init position and then refreshes detections. It is not a
-guaranteed object inventory. Detection and planning can fail, so inspect each
-result and reset or restart the simulation when needed rather than issuing
-repeated motion commands.
-
-## Motion and convergence
-
-An accepted command can complete before the MuJoCo joint positions have fully
-converged. Before issuing sequential manipulation commands, call
-`get_robot_state` and verify that the arm is at the expected pose. If a motion
-or plan fails, inspect the state and output, then reset or restart instead of
-blindly retrying commands. This page does not describe pick/place as a reliable
-workflow.
+guaranteed object inventory.

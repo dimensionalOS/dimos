@@ -414,6 +414,9 @@ class ManipulationModule(Module):
 
         Use this after an error or fault to allow new commands.
         Cannot reset while a motion is executing — cancel first.
+
+        TODO: Planning failures should not enter FAULT in the future; execution
+        failures may still require reset because the physical state is uncertain.
         """
         if self._state == ManipulationState.EXECUTING:
             return SkillResult.fail(
@@ -473,23 +476,29 @@ class ManipulationModule(Module):
             robot_name: Robot to plan for (required if multiple robots configured)
         """
         if self._world_monitor is None:
-            logger.error("Planning not initialized")
+            self._record_error("Planning not initialized")
             return None
         if (robot := self._get_robot(robot_name)) is None:
+            self._record_error("Robot not found or robot_name is required")
             return None
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                logger.warning(f"Cannot plan: state is {self._state.name}")
+                self._record_error(f"Cannot plan while state is {self._state.name}")
                 return None
             self._planning_epoch += 1
             self._state = ManipulationState.PLANNING
         return robot[0], robot[1]
 
+    def _record_error(self, message: str) -> bool:
+        """Record an error without changing the manipulation state."""
+        logger.warning(message)
+        self._error_message = message
+        return False
+
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
-        logger.warning(msg)
+        self._record_error(msg)
         self._state = ManipulationState.FAULT
-        self._error_message = msg
         return False
 
     def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
@@ -543,13 +552,16 @@ class ManipulationModule(Module):
             seed: Optional joint state to initialize local IK. Uses current state when omitted.
         """
         if self._kinematics is None or self._world_monitor is None:
+            self._record_error("Planning not initialized")
             return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         robot = self._get_robot(robot_name)
         if robot is None:
+            self._record_error("Robot not found or robot_name is required")
             return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
 
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
+                self._record_error(f"Cannot solve IK while state is {self._state.name}")
                 return IKResult(
                     status=IKStatus.NO_SOLUTION,
                     message=f"Cannot solve IK while state is {self._state.name}",
@@ -559,6 +571,7 @@ class ManipulationModule(Module):
         _, robot_id, _, _ = robot
         seed_state = seed or self._world_monitor.get_current_joint_state(robot_id)
         if seed_state is None:
+            self._record_error("No joint state")
             self._state = ManipulationState.IDLE
             return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
 
@@ -566,6 +579,9 @@ class ManipulationModule(Module):
         self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
         if result.is_success():
             logger.info(f"IK solved, error: {result.position_error:.4f}m")
+        else:
+            detail = f": {result.message}" if result.message else ""
+            self._record_error(f"IK failed: {result.status.name}{detail}")
         return result
 
     @rpc
@@ -576,7 +592,10 @@ class ManipulationModule(Module):
             pose: Target end-effector pose
             robot_name: Robot to plan for (required if multiple robots configured)
         """
-        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
+        if self._kinematics is None:
+            self._record_error("Planning not initialized")
+            return False
+        if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
         planning_epoch = self._planning_epoch
@@ -588,7 +607,8 @@ class ManipulationModule(Module):
 
         ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
         if not ik.is_success() or ik.joint_state is None:
-            return self._fail(f"IK failed: {ik.status.name}")
+            detail = f": {ik.message}" if ik.message else ""
+            return self._fail(f"IK failed: {ik.status.name}{detail}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_path_only(robot_name, robot_id, ik.joint_state, planning_epoch)
@@ -641,7 +661,8 @@ class ManipulationModule(Module):
             logger.info("Discarding cancelled planning result")
             return False
         if not result.is_success():
-            return self._fail(f"Planning failed: {result.status.name}")
+            detail = f": {result.message}" if result.message else ""
+            return self._fail(f"Planning failed: {result.status.name}{detail}")
 
         logger.info(f"Path: {len(result.path)} waypoints")
         self._planned_paths[robot_name] = result.path

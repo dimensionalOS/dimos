@@ -24,6 +24,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -63,7 +64,7 @@ class ObjectSceneRegistrationModule(Module):
     _object_db: ObjectDB
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
-    _latest_scene_snapshot: tuple[Image, Any] | None = None
+    _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
 
     def __init__(
         self,
