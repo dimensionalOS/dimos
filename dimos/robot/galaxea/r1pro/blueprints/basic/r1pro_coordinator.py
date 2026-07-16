@@ -161,7 +161,10 @@ _rerun_config = {
     "pubsubs": [LCM()],
     # Default is "25%" — ~4 GB of a 16 GB box reserved for rerun's recording
     # store. A live viewer needs only a small rolling buffer; cap it low.
-    "memory_limit": "1GB",
+    # 256MB (was 1GB): every viewer (re)connect replays this whole buffer
+    # before going live, and the store's GC churn competes with streaming —
+    # observed 2.4 GB RSS + 28s send stalls at 1GB (2026-07-17).
+    "memory_limit": "256MB",
     "max_hz": _RERUN_MAX_HZ,
     "visual_override": _RERUN_VISUAL_OVERRIDE,
 }

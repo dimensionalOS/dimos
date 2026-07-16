@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Force UDP-only DDS transport inside the on-robot container.
+
+     Fast DDS defaults to shared memory for same-host peers. With host IPC
+     (run.sh passes it so SHM *could* work) the segments are visible both
+     ways, but the vendor nodes run as user `nvidia` while the container runs
+     as root: the host publishers cannot write into the SHM ports our root
+     subscribers create, and Fast DDS does not fall back to UDP once an SHM
+     locator has matched. Result: discovery/topic lists work, QoS matches,
+     and no user data ever arrives, silently.
+
+     Loaded via FASTRTPS_DEFAULT_PROFILES_FILE (baked into the Dockerfile).
+     Verified 2026-07-17: with this profile the container receives the head
+     cams at the full 30 Hz source rate; without it, zero messages. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>udp_only</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="udp_only_participant" is_default_profile="true">
+    <rtps>
+      <userTransports><transport_id>udp_only</transport_id></userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

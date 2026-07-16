@@ -47,8 +47,12 @@ RUN pip3 install --no-cache-dir uv \
 # shell never sources ROS and rclpy imports fail ("rclpy is not installed. ROS
 # pubsub requires ROS 2") when you run a blueprint by hand. Source it from
 # .bashrc so manual `dimos run` in an exec shell — the default workflow, since
-# PID 1 idles — has rclpy on the path.
-RUN echo "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash" >> /root/.bashrc
+# PID 1 idles — has rclpy on the path. PREPEND (sed -i '1i') rather than
+# append: stock .bashrc returns early for non-interactive shells, so an
+# appended line never runs under `docker exec bash -lc "dimos run ..."`
+# (scripted/CI runs) and the coordinator dies with the same rclpy error
+# (2026-07-17 incident — the post-reboot "spawns no workers" mystery, part 1).
+RUN sed -i "1i source /opt/ros/${ROS_DISTRO:-humble}/setup.bash" /root/.bashrc
 
 COPY MANIFEST.in README.md /app/
 COPY dimos /app/dimos
@@ -76,12 +80,20 @@ COPY scripts /app/scripts
 #    where no domain reaches. Keep the multicast GROUP (239.255.76.67) matching
 #    the entrypoint's loopback route. Old-gen domain 41 put DDS at ~17650, so
 #    this never bit until the new-gen domain-1 move.
+#  - FASTRTPS_DEFAULT_PROFILES_FILE → force UDP-only DDS transport. With
+#    --ipc host both sides advertise SHM locators and Fast DDS prefers SHM for
+#    same-host peers, but the host publishers (user nvidia) can't write into
+#    SHM ports created by our root subscribers → endpoints MATCH (topics list
+#    fine, QoS visible) yet ZERO user data arrives, silently. It does NOT fall
+#    back to UDP per-endpoint. Symptom: coordinator up, all transports wired,
+#    nothing on LCM but /coordinator/joint_state (2026-07-17 incident, part 2).
 ENV ROS_DOMAIN_ID=1 \
     RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
     RERUN_OPEN=none \
     RERUN_HOST=0.0.0.0 \
     N_WORKERS=3 \
-    LCM_DEFAULT_URL="udpm://239.255.76.67:7300?ttl=0"
+    LCM_DEFAULT_URL="udpm://239.255.76.67:7300?ttl=0" \
+    FASTRTPS_DEFAULT_PROFILES_FILE=/app/scripts/r1pro_test/docker/fastdds_udp_only.xml
 
 ENTRYPOINT ["/app/scripts/r1pro_test/docker/entrypoint.sh"]
 # Idle by default so PID 1 doesn't auto-launch the coordinator: `dimos run`

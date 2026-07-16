@@ -146,6 +146,21 @@ class R1ProConnectionConfig(ModuleConfig):
     # Subscribe to the 5 chassis surround cameras. Off by default — see the
     # _CHASSIS_CAMERAS comment (CSI capture meltdown; absent on new chassis).
     enable_chassis_cameras: bool = Field(default=False)
+    # Subscribe to the aligned wrist depth streams. Off by default: raw 16-bit
+    # depth is ~1.5 MB/frame at up to 30 Hz PER WRIST — when the wrist cams
+    # came back healthy (2026-07-17) these streams alone re-saturated the
+    # on-robot CPU and the rerun link that the visual_override triage had
+    # bounded. Flip on for manipulation work that needs wrist depth; until
+    # Tier-2 passthrough lands the budget doesn't fit otherwise.
+    enable_wrist_depth: bool = Field(default=False)
+    # Max Hz at which decoded color frames are published per camera (0 = no
+    # cap). The rerun bridge shows at most 5 Hz (its max_hz cap) but must
+    # JPEG-decode every LCM frame BEFORE that cap applies; decoding 8-14 Hz
+    # x4 cams on both the connection and the bridge just to discard most of
+    # it starved the bridge and viewer lag grew unbounded (2026-07-17). The
+    # gate here runs BEFORE cv2.imdecode, so skipped frames cost ~nothing on
+    # either end. Raise only after Tier-2 passthrough.
+    color_publish_hz: float = Field(default=5.0)
 
 
 class R1ProConnection(Module):
@@ -552,12 +567,13 @@ class R1ProConnection(Module):
                 self._make_rx_cb(f"wrist_{side}_color", color_q),
                 qos,
             )
-            self._sensor_node.create_subscription(
-                RosImage,
-                f"/hdas/camera_wrist_{side}/aligned_depth_to_color/image_raw",
-                self._make_rx_cb(f"wrist_{side}_depth", depth_q),
-                qos,
-            )
+            if self.config.enable_wrist_depth:
+                self._sensor_node.create_subscription(
+                    RosImage,
+                    f"/hdas/camera_wrist_{side}/aligned_depth_to_color/image_raw",
+                    self._make_rx_cb(f"wrist_{side}_depth", depth_q),
+                    qos,
+                )
             self._sensor_workers.append(
                 Thread(
                     target=self._wrist_color_decode_loop,
@@ -566,14 +582,15 @@ class R1ProConnection(Module):
                     name=f"r1pro-wrist_{side}_color",
                 )
             )
-            self._sensor_workers.append(
-                Thread(
-                    target=self._wrist_depth_decode_loop,
-                    args=(side, depth_q),
-                    daemon=True,
-                    name=f"r1pro-wrist_{side}_depth",
+            if self.config.enable_wrist_depth:
+                self._sensor_workers.append(
+                    Thread(
+                        target=self._wrist_depth_decode_loop,
+                        args=(side, depth_q),
+                        daemon=True,
+                        name=f"r1pro-wrist_{side}_depth",
+                    )
                 )
-            )
 
         # Periodic per-stream stats reporter (joined on stop via _sensor_stop).
         if self.config.sensor_stats_interval_s > 0:
@@ -592,7 +609,9 @@ class R1ProConnection(Module):
         logger.info(
             f"R1Pro sensor streams up: {len(jpeg_cameras)} color cams "
             f"(chassis surround {'on' if self.config.enable_chassis_cameras else 'off'}) "
-            "+ head_depth + lidar + 2 imus + 4 wrist (isolated DDS)"
+            "+ head_depth + lidar + 2 imus + "
+            f"{'4' if self.config.enable_wrist_depth else '2'} wrist streams "
+            f"(depth {'on' if self.config.enable_wrist_depth else 'off'}, isolated DDS)"
         )
 
     def _sensor_spin(self) -> None:
@@ -913,6 +932,9 @@ class R1ProConnection(Module):
         from dimos.msgs.sensor_msgs.Image import ImageFormat
 
         out = getattr(self, stream_name)
+        hz = self.config.color_publish_hz
+        min_period = 1.0 / hz if hz > 0 else 0.0
+        last_pub = 0.0
         while not self._sensor_stop.is_set():
             try:
                 msg = q.get(timeout=0.5)
@@ -921,6 +943,10 @@ class R1ProConnection(Module):
             if msg is None:
                 break
             t0 = time.perf_counter()
+            # Rate gate BEFORE the decode — dropping here is ~free.
+            if min_period > 0.0 and t0 - last_pub < min_period:
+                continue
+            last_pub = t0
             try:
                 arr = np.frombuffer(bytes(msg.data), np.uint8)
                 bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -989,6 +1015,9 @@ class R1ProConnection(Module):
 
         out: Out[Image] = self.wrist_left_color if side == "left" else self.wrist_right_color
         frame_id = f"wrist_{side}_color"
+        hz = self.config.color_publish_hz
+        min_period = 1.0 / hz if hz > 0 else 0.0
+        last_pub = 0.0
         while not self._sensor_stop.is_set():
             try:
                 msg = q.get(timeout=0.5)
@@ -997,6 +1026,10 @@ class R1ProConnection(Module):
             if msg is None:
                 break
             t0 = time.perf_counter()
+            # Rate gate BEFORE the decode — dropping here is ~free.
+            if min_period > 0.0 and t0 - last_pub < min_period:
+                continue
+            last_pub = t0
             try:
                 arr = np.frombuffer(bytes(msg.data), np.uint8)
                 bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)

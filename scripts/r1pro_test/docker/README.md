@@ -162,7 +162,22 @@ see Known traps).
 - **`docker exec` shells don't source ROS.** The ENTRYPOINT sources
   `/opt/ros/humble/setup.bash` for PID 1 only; an `exec -it ... bash` shell
   starts fresh, so a hand-run `dimos run` can't import rclpy. The image sources
-  ROS from `/root/.bashrc` to cover this.
+  ROS from `/root/.bashrc` to cover this — **prepended** to line 1, because the
+  stock `.bashrc` returns early for non-interactive shells: an appended line
+  never runs under `docker exec bash -lc "dimos run ..."` and the coordinator
+  dies with `Exception in RPC handler for R1ProConnection/start: rclpy is not
+  installed` (2026-07-17 — the post-reboot "no workers" mystery, part 1).
+- **Fast DDS SHM silently blackholes host↔container data.** With `--ipc host`
+  the container and the vendor nodes match via SHM locators, but host
+  publishers (user `nvidia`) can't write into SHM ports created by our root
+  subscribers, and Fast DDS never falls back to UDP per-endpoint. Symptom:
+  `ros2 topic list` fine, endpoint QoS visible, coordinator wires everything —
+  and zero sensor data on LCM (only `/coordinator/joint_state` self-traffic);
+  feedback discovery times out (`torso=False left=False right=False`).
+  Pre-wired fix: the image bakes
+  `FASTRTPS_DEFAULT_PROFILES_FILE=/app/scripts/r1pro_test/docker/fastdds_udp_only.xml`
+  (UDP-only transport). Verified head cams at full 30 Hz through it
+  (2026-07-17 — part 2 of the same mystery).
 - `libturbojpeg` (apt) is a hidden native dep of `JpegLcmTransport` — its
   absence presents as "decode error" on every color stream.
 - LCM needs multicast routed via loopback; the entrypoint does it and needs

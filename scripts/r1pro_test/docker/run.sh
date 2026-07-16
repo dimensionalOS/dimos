@@ -31,8 +31,11 @@ fi
 docker rm -f "${NAME}" 2>/dev/null || true
 
 # --network host  DDS (to HDAS) + LCM multicast + rerun gRPC all need it
-# --ipc host      shared /dev/shm so FastDDS can use SHM with host HDAS
-#                 (falls back to UDP loopback if perms differ — also fine)
+# --ipc host      shared /dev/shm. NOTE: FastDDS SHM to the host HDAS nodes
+#                 still doesn't work (root-vs-nvidia SHM perms; it does NOT
+#                 fall back to UDP — it silently drops all user data), so the
+#                 image forces UDP-only via FASTRTPS_DEFAULT_PROFILES_FILE
+#                 (fastdds_udp_only.xml). Kept for /dev/shm headroom only.
 # --cap-add NET_ADMIN  entrypoint routes the LCM multicast group via lo
 docker run -d -t \
     --name "${NAME}" \

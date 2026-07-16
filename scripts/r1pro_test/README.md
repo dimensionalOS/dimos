@@ -23,13 +23,20 @@ elimination on the new gen in progress —
 **2026-07-10 (§15): on-robot docker image verified end-to-end once**
 (coordinator + all transports + rerun bridge on the robot), then a
 stream-rate collapse was diagnosed (3 causes, see §15) and fixes were
-committed — **but the post-reboot re-deploy is NOT currently working**:
-as of end-of-session the coordinator process starts but spawns no workers
-and publishes nothing on LCM port 7300, while something (likely a DDS
-participant again) holds 7667. Pickup point: confirm the running container
-was built from the current Dockerfile (`docker exec dimos-r1pro env | grep
-LCM_DEFAULT_URL` must show port 7300; empty = old image → rebuild), then
-re-run and check the coordinator's own terminal output for where it stalls.
+committed — but the post-reboot re-deploy was broken at end of session.
+
+**2026-07-17: post-reboot deploy debugged end-to-end and STABLE —
+see [PITFALLS.md](PITFALLS.md)** for every trap found and fixed that day:
+the no-workers mystery (non-interactive ROS sourcing + a Fast DDS SHM
+blackhole between host and container), the stock-tree-resurrecting
+pick-place watchdog, the wrist D405 USB wedge (recovery =
+`~/reset_wrist_cams.sh`, an xHCI power cycle — NOT initial_reset), the
+session-tied coordinator lifetime (`docker exec -d` or it dies with your
+shell), and the unbounded rerun viewer lag (producer-side caps:
+`color_publish_hz=5`, `enable_wrist_depth=false`, memory_limit 256MB;
+a lagging rerun viewer never catches up — reconnect fresh). Steady state:
+colors 4.6 Hz ×4, lidar 10 Hz, motor/IMU ~85 Hz, ~1 s bounded viewer
+latency. Tier-2 passthrough remains the structural fix for 30 Hz.
 
 ---
 
@@ -128,6 +135,12 @@ re-apply these (same recovery pattern as §13):
   `homogeneous_teleoperation` co-publishes zeros onto
   `/motion_target/target_speed_chassis` at 200 Hz, out-shouting external
   commands. Disabled so there's no RC competitor.
+- **`boot/modules/hdas/start_realsense_camera_r1pro.sh`** — adds
+  `initial_reset1:=true initial_reset2:=true` so both wrist D405s get a
+  firmware `hardware_reset()` before streaming (~7 s at boot). The wrists
+  wedge at the USB level (see SENSOR_DROP_RUNBOOK.md "Wrist D405 wedge");
+  once wedged, a plain node restart does NOT recover them — only a fw reset
+  or power cycle does. This makes every boot start clean (2026-07-17).
 
 Notes for the new gen:
 

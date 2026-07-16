@@ -212,10 +212,11 @@ carry uncompressed frames; EncodedImage makes it JPEG-sized.
       OUT of the robot image.
 - [ ] rerun `memory_limit` stays "1GB" (blueprint) — the gRPC server buffers
       on the robot when the WiFi viewer lags; 25% of an Orin is too much.
-- [ ] If HDAS runs outside the container, FastDDS SHM between host and
-      container needs a shared `/dev/shm` (`-v /dev/shm:/dev/shm`) and
-      compatible uid, else it silently falls back to UDP loopback (fine, just
-      slower — don't chase "why is SHM not used" unless CPU says to).
+- [x] If HDAS runs outside the container, FastDDS SHM between host and
+      container is a TRAP: with `--ipc host` the SHM locators match but the
+      uid mismatch (root container vs nvidia host) blackholes ALL user data —
+      it does NOT fall back to UDP (disproven 2026-07-17). Force UDP-only via
+      `FASTRTPS_DEFAULT_PROFILES_FILE` (docker/fastdds_udp_only.xml, baked).
 - [ ] Persist robot sysctls (`rmem_max`/`wmem_max` 40 MB were manual — check
       `/etc/sysctl.d/`, they may not survive reboot; also `txqueuelen` udev
       rule if T3 confirms).

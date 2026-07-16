@@ -47,6 +47,70 @@ Keep one terminal running `watch -n1 'nstat -az | grep -iE "UdpRcvbufErrors|UdpI
 
 ---
 
+## Unbounded rerun-viewer lag when wrist DEPTH publishes (2026-07-17)
+
+When the wrist cams are healthy, their aligned-depth streams put ~3 MB/s of
+raw 16-bit frames on LCM — and the rerun bridge **fully decodes every LCM
+message BEFORE its max_hz throttle and visual_override suppression run**
+(LCMEncoderMixin decodes in subscribe). The gRPC link budget stays fine
+(depth is suppressed, ~1.5 MB/s), but the bridge worker saturates on decode
+and the 64 MB LCM socket buffers become a many-seconds FIFO: every stream
+the bridge logs (heads included) queues behind the depth flood → viewer lag
+grows without bound. Fix: `enable_wrist_depth: bool = False` in
+R1ProConnectionConfig (connection.py) — wrist depth is not subscribed at
+all unless explicitly enabled. Until Tier-2 passthrough (and
+throttle-before-decode in the bridge), the budget does not fit wrist depth.
+
+## Wrist D405 wedge (works at boot → random "Frames Timeout" forever)
+
+Diagnosed 2026-07-17 on the new-gen R1 Pro; same signature previously seen on
+robot #1's right wrist — it is the PLATFORM, not a camera/cable/port:
+
+- Signature in `sudo dmesg -T`: `uvcvideo ... Non-zero status (-71) in video
+  completion handler` (EPROTO, USB3 link-level errors) escalating to
+  `Failed to resubmit video URB (-1)` — at that point uvcvideo's streaming
+  loop is dead and never recovers; realsense floods `Frames Timeout` at
+  0.0–0.3 Hz while `lsusb -t` still shows a healthy 5000M enumeration.
+- **Both wrists fail in the same second** every time — they share one PCIe
+  xHCI controller (`0004:01:00.0`, USB bus 3+4), so the fault is upstream of
+  the cameras.
+- Stack: librealsense 2.57.5 on the **V4L2 backend** over **stock, unpatched
+  uvcvideo 1.1.1** on the 5.15 RT Jetson kernel — the exact combination Intel
+  warns about (their guidance: patched kernel modules or an RSUSB build).
+- USB autosuspend was active on both cams (suspend/resume on a marginal link
+  is a classic EPROTO trigger). Disabled + persisted:
+  `/etc/udev/rules.d/99-realsense-no-autosuspend.rules`.
+
+**KEY refinement (2026-07-17): the fw reset only sticks when realsense
+restarts ALONE.** `initial_reset` is baked into the start script, but on a
+FULL tree boot the cams still frequently wedge — the reset fires (dmesg shows
+the USB disconnect/reconnect) yet re-wedges because it races the boot storm
+(HDAS + both head cams + realsense all enumerating at once = USB/CPU
+contention). Confirmed: standalone realsense relaunch recovered them every
+time (03:53, 03:57, 04:08); the 04:05 full-tree boot did not. So do NOT
+"kill the tmux and re-run robot_startup" to fix dead wrists — that recreates
+the storm. Instead bounce ONLY the realsense pane, after the rest has settled:
+
+```bash
+~/reset_wrist_cams.sh              # helper: C-c the realsense pane + relaunch
+# or manually — in the realsense pane (hdas:0.3):
+tmux send-keys -t hdas:0.3 C-c
+cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modules/hdas
+./start_realsense_camera_r1pro.sh  # reset baked in; sudo pw 'nvidia'
+```
+Watch for `Resetting device...` → `RealSense Node Is Up!`, no more Timeouts
+(~10 s). Verify: `python3 ~/dimos/scripts/r1pro_test/lcm_channel_rates.py 8 | grep wrist`.
+
+Candidate boot fix (untested): add a `sleep 15` at the top of
+start_realsense_camera_r1pro.sh so the cams enumerate AFTER the storm settles,
+making boot reliable without the manual bounce.
+
+Structural fix if wedges continue: rebuild librealsense with
+`-DFORCE_RSUSB_BACKEND=ON` (userspace libusb, no uvcvideo dependency) or
+install Intel's patched uvcvideo for this kernel.
+
+---
+
 ## Topic reference (exact strings used by current adapters)
 
 Pulled directly from `dimos/hardware/manipulators/r1pro/adapter.py` and `dimos/hardware/drive_trains/r1pro/adapter.py`. Use these exact strings with `ros2 topic hz` / `ros2 topic info -v`.
