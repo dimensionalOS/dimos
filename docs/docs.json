@@ -7,6 +7,13 @@
     "light": "#1682a3",
     "dark": "#1682a3"
   },
+  "appearance": {
+    "default": "dark"
+  },
+  "banner": {
+    "content": "\ud83d\ude80 dimTELE is live- drive your robot from anywhere over WebRTC. [Try Remote Teleop](/capabilities/teleoperation/hosted)",
+    "dismissible": true
+  },
   "favicon": "assets/favicon.png",
   "seo": {
     "metatags": {
