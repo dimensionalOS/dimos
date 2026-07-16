@@ -14,19 +14,13 @@
 
 """Run case suites through the ray tracer and MLS planner and score them.
 
-Every case is planned twice. The online plan runs on the incremental map:
-what the mapper had built by the moment the robot stood at the case's start,
-about to walk the demonstrated route back to a goal it already visited. The
-final plan runs on the final map: the same pipeline fed the whole recording.
-The final map is not ground truth, just the most complete map this pipeline
-produces, so a failure on it means the whole pipeline cannot solve the case
-even with all the data. The final path is gated against the full final
-occupancy; the online path only against the final obstacles the sensor had
-returns from by plan time: hitting a wall no lidar return ever came from is
-not an error, but hitting one the sensor saw and the mapper dropped is.
-Every path must also stand on final-map occupancy (no fabricated bridges)
-and stay within the robot's climb envelope. The headline score is
-validity-gated SPL on the incremental map.
+Every case is planned twice: online on the incremental map built up to the
+case's start time, and final on the map fed the whole recording. The final
+map is not ground truth, only the most complete map the pipeline produces.
+The final path is gated against full final occupancy, the online path only
+against obstacles the sensor had returns from by plan time. Every path must
+also stand on final-map occupancy and stay within the climb envelope. The
+headline score is validity-gated SPL on the incremental map.
 """
 
 from __future__ import annotations
@@ -72,7 +66,7 @@ class PlanOutcome:
     planned: bool
     reached: bool
     valid: bool
-    # Every sample stands on final-map occupancy; fabricated bridges fail.
+    # Every sample stands on final-map occupancy. Fabricated bridges fail.
     supported: bool
     # No segment rises steeper than the robot can climb.
     kinematic: bool
@@ -82,10 +76,10 @@ class PlanOutcome:
     length: float
     plan_ms: float
     spl: float
-    # How far the path end is from the goal; start-to-goal distance when no
+    # How far the path end is from the goal. Start-to-goal distance when no
     # path was planned. Smooth counterpart to the binary reached flag.
     goal_miss: float
-    # Gate margin along the path (see GateResult.min_clearance_m); None when
+    # Gate margin along the path (see GateResult.min_clearance_m). None when
     # no path was planned.
     min_clearance: float | None
     waypoints: list[list[float]]
@@ -154,7 +148,7 @@ class Report:
     n_cases: int
     n_success: int
     n_success_final: int
-    # The incremental and final runs are independent tests per case; these
+    # The incremental and final runs are independent tests per case. These
     # count the four pass/fail combinations.
     outcome_counts: dict[str, int]
     # Score sliced by case tag (stairs, flat, up, down, ...), so a config's
@@ -398,7 +392,7 @@ def run_suite(suite: Suite, cfg: EvalConfig, threads: int = 1) -> DatasetResult:
 
     def snapshot_stream() -> Iterator[tuple[int, NDArray[np.int64], NDArray[np.int64]]]:
         """Walk the delta chain once. The online gate only holds obstacles the
-        sensor had returns from by plan time; obstacles never observed are not
+        sensor had returns from by plan time. Obstacles never observed are not
         the planner's fault."""
         gate = np.array([], dtype=np.int64)
         for k, (keys, observed_new) in enumerate(checkpoints.iter_snapshots()):

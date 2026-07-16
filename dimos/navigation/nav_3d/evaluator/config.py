@@ -51,7 +51,7 @@ class EvalConfig:
     # Physical body envelope for the collision gate. The gate catches paths
     # that penetrate obstacles, not near-grazes, so the radius is the true
     # body half-width. The ground margin over the radius bounds the terrain
-    # slope the gate tolerates; keep margin/radius above the steepest stairs.
+    # slope the gate tolerates. Keep margin/radius above the steepest stairs.
     robot_radius: float = 0.16
     ground_margin: float = 0.25
     body_clearance: float = 0.45

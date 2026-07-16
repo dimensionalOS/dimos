@@ -203,6 +203,8 @@ visualization = [
     # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
     # which pulls embreex; embreex has no Linux aarch64 wheel.
     "yourdfpy>=0.0.60; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    # Browser point-picking for nav-3d evaluator case curation.
+    "viser[urdf]>=1.0.29",
 ]
 
 learning = [

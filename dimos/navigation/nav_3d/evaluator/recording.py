@@ -64,7 +64,7 @@ def iter_world_frames(
     """Yield lidar frames registered into the world by their aligned odometry pose.
 
     Clouds must be sensor-frame. Legacy recordings with pre-registered
-    world-frame clouds are rejected; re-record them.
+    world-frame clouds are rejected. Re-record them.
     """
     store = SqliteStore(path=str(db_path))
     with store:

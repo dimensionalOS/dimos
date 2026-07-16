@@ -15,15 +15,12 @@
 """Generate evaluation cases from a recorded trajectory.
 
 Candidate pairs are sampled along the walked path, so both endpoints are
-physically proven reachable. A pair is kept only when it is non-trivial:
-the straight start-goal line collides with final obstacles, the walked
-route detours well past the straight-line distance, or the pair climbs.
-Every case points backward in time: the goal is a spot the robot had
-already visited when it stood at the start, so an incremental map built up
-to the start time has seen the goal and a demonstrated route. The forward
-direction is emitted too when the start is revisited after the goal.
-Endpoints snap to the final surface so drift between passes cannot leave
-a case floating off the map. Generation is deterministic.
+physically proven reachable, and kept only when non-trivial (the straight
+line collides, the route detours, or the pair climbs). Cases point backward
+in time so an incremental map built to the start has already seen the goal
+and a demonstrated route, with the forward direction emitted when the start
+is revisited after the goal. Endpoints snap to the final surface so drift
+cannot leave a case floating off the map. Generation is deterministic.
 """
 
 from __future__ import annotations
@@ -162,7 +159,7 @@ def generate_cases(
             dz = float(sb[2] - sa[2])
             detour = float(w / e)
             if detour < params.detour_ratio_min and abs(dz) < STAIRS_DZ_M:
-                # A long near-straight flat pair is trivial; not worth a sweep.
+                # A long near-straight flat pair is trivial. Not worth a sweep.
                 if e > 30.0:
                     continue
                 # Only pairs not already qualified pay for the line sweep.
@@ -177,7 +174,7 @@ def generate_cases(
                 ).valid
                 if not blocked:
                     continue
-            # Backward in time is always causal; forward only when the start
+            # Backward in time is always causal. Forward only when the start
             # spot is revisited after the goal visit.
             directed = [(sb, sa, -dz)]
             if last_visit_a >= float(trajectory.ts[idx[bi]]):
@@ -217,14 +214,9 @@ def _is_duplicate(cand: Candidate, accepted: list[Candidate], radius: float) -> 
 def _select_diverse(
     ranked: list[Candidate], params: GenerationParams, max_cases: int
 ) -> list[Candidate]:
-    """Spread-greedy selection: each slot goes to the candidate whose score is
-    its priority plus how far its endpoints are from every endpoint already in
-    use. Coverage is the objective, not a filter, so cases spread across the
-    map instead of fanning out of the highest-priority spot. A sector-usage
-    cap bounds hub reuse outright, and the flat quota keeps stairs from
-    crowding out flats. When the strict pass yields fewer than min_cases,
-    sector-capped candidates are revived and a relaxed pass without sector
-    caps or the flat quota backfills up to the floor.
+    """Spread-greedy selection scored by priority plus endpoint distance from
+    already-used points, with a sector cap and flat quota. A relaxed pass
+    backfills to min_cases when the strict pass falls short.
     """
     if not ranked:
         return []

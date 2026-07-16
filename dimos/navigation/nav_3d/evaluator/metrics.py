@@ -48,7 +48,7 @@ def goal_reached(
 
 
 # Clearance margins are only measured out to this horizontal distance from
-# the body surface; anything farther reports the cap.
+# the body surface. Anything farther reports the cap.
 MARGIN_CAP_M = 0.3
 
 
@@ -60,7 +60,7 @@ class GateResult:
     collision_points: NDArray[np.float32]
     # Horizontal distance from the body surface to the nearest obstacle in
     # the gate's z band, minimized along the path. Negative is penetration
-    # depth; capped at MARGIN_CAP_M when nothing is near. Gives a smooth
+    # depth, capped at MARGIN_CAP_M when nothing is near. Gives a smooth
     # how-close-to-flipping signal next to the binary verdict.
     min_clearance_m: float
 
@@ -184,7 +184,7 @@ class Reference:
 
     length: float
     snapped: bool
-    # When the robot stood at the start about to walk the route; inf when
+    # When the robot stood at the start about to walk the route. Inf when
     # the endpoints are off the trajectory or no causal pair exists.
     start_ts: float
     # True when the goal was visited before the chosen start visit, so a

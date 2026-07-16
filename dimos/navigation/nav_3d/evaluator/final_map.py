@@ -168,11 +168,9 @@ def replay_frames(
     voxel_size: float,
     times: NDArray[np.float64],
 ) -> tuple[FinalMap, list[NDArray[np.int64]], list[NDArray[np.int64]]]:
-    """Feed frames through the mapper in order, snapshotting state as each
-    requested time is passed. A snapshot holds exactly the frames with
-    ts <= its time. Times past the last frame get the final state. Returns
-    the final map, the occupied-key snapshots, and the observed-key snapshots
-    (every voxel a raw lidar return had landed in by that time).
+    """Feed frames through the mapper in order, snapshotting at each requested
+    time. A snapshot holds exactly the frames with ts <= its time. Returns the
+    final map, the occupied-key snapshots, and the observed-key snapshots.
     """
     snapshots: list[NDArray[np.int64]] = []
     observed_snapshots: list[NDArray[np.int64]] = []

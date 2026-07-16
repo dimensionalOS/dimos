@@ -16,16 +16,18 @@
 
 Run every suite:      python -m dimos.navigation.nav_3d.evaluator run
 One dataset:          python -m dimos.navigation.nav_3d.evaluator run --dataset mid360_athens_stairs
+Only some cases:      python -m dimos.navigation.nav_3d.evaluator run --tag stairs --tag up
 Machine output:       python -m dimos.navigation.nav_3d.evaluator run --json report.json
 Override a knob:      python -m dimos.navigation.nav_3d.evaluator run --set wall_clearance_m=0.05
 New dataset:          python -m dimos.navigation.nav_3d.evaluator ingest recordings/.../mem2.db --name office_a
-Curate a case:        python -m dimos.navigation.nav_3d.evaluator add-case office_a --start x y z --goal x y z
+Pick cases by click:  python -m dimos.navigation.nav_3d.evaluator pick-case office_a
+Curate by coords:     python -m dimos.navigation.nav_3d.evaluator add-case office_a --start x y z --goal x y z
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
-import itertools
 import json
 import os
 from pathlib import Path
@@ -134,6 +136,7 @@ def run(
         None, "--set", help="Repeatable EvalConfig override, e.g. wall_clearance_m=0.05"
     ),
 ) -> None:
+    """Evaluate every case suite and print scores. The headline is incremental-map SPL."""
     suites = load_suites(manifests or None)
     if dataset is not None:
         wanted = Path(dataset).stem
@@ -158,6 +161,7 @@ def run(
         json_out.write_text(json.dumps(report.to_dict(), indent=2))
         print(f"wrote {json_out}")
     if rrd_out is not None:
+        # Lazy: viz pulls in rerun, only needed with --rrd.
         from dimos.navigation.nav_3d.evaluator.viz import write_rrd
 
         write_rrd(report, suites, cfg, rrd_out)
@@ -165,7 +169,10 @@ def run(
 
 def _copy_recording(src: Path, dest: Path) -> None:
     """Copy via the sqlite backup API so WAL sidecar content is never lost."""
-    with sqlite3.connect(src) as source, sqlite3.connect(dest) as target:
+    with (
+        contextlib.closing(sqlite3.connect(src)) as source,
+        contextlib.closing(sqlite3.connect(dest)) as target,
+    ):
         source.backup(target)
 
 
@@ -331,69 +338,75 @@ def add_case(
 @app.command("pick-case")
 def pick_case(
     dataset: str = typer.Argument(..., help="Dataset whose manifest gets the cases"),
-    expect_fail: bool = typer.Option(
-        False, "--expect-fail", help="Picked pairs are certified infeasible; planner must refuse"
-    ),
     weight: float = typer.Option(1.0, "--weight"),
     snap_max: float = typer.Option(1.0, "--snap-max", help="Max snap distance to surface (m)"),
 ) -> None:
-    """Pick cases by clicking the map: shift+click start then goal, repeat, then close.
+    """Pick cases by shift+clicking the map in a browser viewer.
 
-    Opens an Open3D window with the final map colored by height and the
-    walked path in white. Every consecutive pair of picked points becomes
-    one case, snapped and appended to the manifest.
+    Serves the final map and walked path with viser. Shift+click picks
+    start/goal pairs. The side panel tags negatives, undoes picks, and saves
+    pairs to the manifest, snapped like add-case.
     """
-    import open3d as o3d  # type: ignore[import-untyped]
-
-    from dimos.navigation.nav_3d.evaluator.viz import _turbo_by_height
+    # Lazy: picker/viz pull in viser and matplotlib, only needed for pick-case.
+    from dimos.navigation.nav_3d.evaluator.picker import pick_cases
+    from dimos.navigation.nav_3d.evaluator.viz import turbo_by_height
 
     suite, manifest, surface, cfg = _load_for_curation(dataset)
     final = load_or_build_final_map(resolve_named_path(dataset, ".db"), suite, cfg)
     trajectory = load_trajectory(resolve_named_path(dataset, ".db"), suite.odom_stream)
     foot = trajectory.positions - np.array([0.0, 0.0, cfg.robot_height], dtype=np.float32)
 
-    points = np.concatenate([final.occupied, foot])
-    colors = np.concatenate(
-        [_turbo_by_height(final.occupied), np.full((len(foot), 3), 255, dtype=np.uint8)]
+    def full_tags(negative: bool, extra: list[str]) -> list[str]:
+        tags = ["manual"] + (["negative"] if negative else [])
+        return tags + [t for t in extra if t not in tags]
+
+    def save_pair(
+        start: tuple[float, float, float],
+        goal: tuple[float, float, float],
+        negative: bool,
+        extra_tags: list[str],
+        case_id: str | None,
+    ) -> tuple[bool, str, str | None]:
+        try:
+            case = _append_case(
+                suite,
+                manifest,
+                surface,
+                start,
+                goal,
+                case_id,
+                full_tags(negative, extra_tags),
+                weight,
+                snap_max,
+                negative,
+            )
+        except typer.BadParameter as err:
+            return False, str(err), None
+        return True, f"saved {case.id} [{', '.join(case.tags)}]", case.id
+
+    def update_case(
+        saved_id: str, new_id: str, negative: bool, extra_tags: list[str]
+    ) -> tuple[bool, str, str | None]:
+        case = next((c for c in suite.cases if c.id == saved_id), None)
+        if case is None:
+            return False, f"case {saved_id!r} not found in manifest", None
+        if new_id != saved_id and any(c.id == new_id for c in suite.cases):
+            return False, f"case id {new_id!r} already exists", None
+        case.id = new_id
+        case.tags = full_tags(negative, extra_tags)
+        case.expect_fail = negative
+        save_suite(suite, manifest)
+        return True, f"updated {case.id} [{', '.join(case.tags)}]", case.id
+
+    pick_cases(
+        dataset, final.occupied, turbo_by_height(final.occupied), foot, save_pair, update_case
     )
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    cloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
-
-    print("shift+click START then GOAL for each case (shift+right-click undoes); close to save")
-    vis = o3d.visualization.VisualizerWithEditing()
-    vis.create_window(window_name=f"pick cases: {dataset}")
-    vis.add_geometry(cloud)
-    vis.run()
-    vis.destroy_window()
-    picked = vis.get_picked_points()
-
-    if len(picked) % 2:
-        print(f"odd number of picks ({len(picked)}); dropping the last one")
-        picked = picked[:-1]
-    if not picked:
-        print("no points picked; nothing added")
-        return
-    for start_idx, goal_idx in itertools.batched(picked, 2):
-        start = tuple(float(v) for v in points[start_idx])
-        goal = tuple(float(v) for v in points[goal_idx])
-        _append_case(
-            suite,
-            manifest,
-            surface,
-            (start[0], start[1], start[2]),
-            (goal[0], goal[1], goal[2]),
-            None,
-            ["manual", "negative"] if expect_fail else ["manual"],
-            weight,
-            snap_max,
-            expect_fail,
-        )
     print(f"\nrun with: python -m dimos.navigation.nav_3d.evaluator run --dataset {dataset}")
 
 
 @app.command("list")
 def list_cases() -> None:
+    """Print every dataset's cases with endpoints, weights, and tags."""
     for suite in load_suites():
         print(f"{suite.dataset} ({suite.path.name if suite.path else '?'})")
         for case in suite.cases:

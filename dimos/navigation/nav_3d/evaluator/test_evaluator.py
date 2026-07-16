@@ -15,7 +15,8 @@
 from __future__ import annotations
 
 import itertools
-from types import SimpleNamespace
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
@@ -42,6 +43,9 @@ from dimos.navigation.nav_3d.evaluator.generate import (
 )
 from dimos.navigation.nav_3d.evaluator.recording import Frame, Trajectory
 from dimos.navigation.nav_3d.evaluator.runner import _run_plan, score_negative
+
+if TYPE_CHECKING:
+    from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 
 VOXEL = 0.1
 
@@ -186,13 +190,7 @@ def test_generate_cases_around_wall() -> None:
     positions = np.column_stack([xy, np.full(len(xy), 0.3)]).astype(np.float32)
     traj = Trajectory(ts=np.linspace(0, 60, len(positions)), positions=positions)
 
-    cfg = SimpleNamespace(
-        robot_height=0.3,
-        voxel_size=VOXEL,
-        robot_radius=0.16,
-        ground_margin=0.25,
-        body_clearance=0.45,
-    )
+    cfg = EvalConfig(voxel_size=VOXEL)
     cases = generate_cases(traj, final, surface, cfg, GenerationParams(max_cases=10))
     assert cases
     assert len({c.id for c in cases}) == len(cases)
@@ -206,7 +204,13 @@ def test_generate_cases_around_wall() -> None:
 def test_select_diverse_backfills_to_min_cases() -> None:
     """Sector caps must not starve a dataset below the case floor."""
     candidates = [
-        Candidate(start=(x, 0.0, 0.0), goal=(x, 20.0, 0.0), walked_m=30.0, detour_ratio=1.5, dz=0.0)
+        Candidate(
+            start=(float(x), 0.0, 0.0),
+            goal=(float(x), 20.0, 0.0),
+            walked_m=30.0,
+            detour_ratio=1.5,
+            dz=0.0,
+        )
         for x in np.arange(0.0, 16.0, 2.0)
     ]
     strict = _select_diverse(candidates, GenerationParams(min_cases=0), max_cases=12)
@@ -314,6 +318,10 @@ class _StubPlanner:
         return self._waypoints
 
 
+def _stub(waypoints: np.ndarray | None) -> MLSPlanner:
+    return cast("MLSPlanner", _StubPlanner(waypoints))
+
+
 def _floor(x_lo: float = 0.0, x_hi: float = 20.0) -> np.ndarray:
     xs, ys = np.meshgrid(np.arange(x_lo, x_hi, VOXEL), np.arange(-2, 6, VOXEL))
     return np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, -0.05)], axis=1, dtype=np.float32)
@@ -339,7 +347,7 @@ def test_meta_straight_line_cheat_scores_zero() -> None:
     """A planner that ignores the map and beelines must not score."""
     keys, cfg, case = _meta_scene()
     line = np.array([case.start, case.goal], dtype=np.float32)
-    out, _ = _run_plan(_StubPlanner(line), case, 24.0, keys, keys, cfg)
+    out, _ = _run_plan(_stub(line), case, 24.0, keys, keys, cfg)
     assert out.planned and out.reached and out.supported
     assert not out.valid
     assert out.spl == 0.0
@@ -349,7 +357,7 @@ def test_meta_straight_line_cheat_scores_zero() -> None:
 
 def test_meta_no_path_scores_zero_with_miss() -> None:
     keys, cfg, case = _meta_scene()
-    out, _ = _run_plan(_StubPlanner(None), case, 24.0, keys, keys, cfg)
+    out, _ = _run_plan(_stub(None), case, 24.0, keys, keys, cfg)
     assert not out.planned
     assert out.spl == 0.0
     assert out.goal_miss == pytest.approx(16.0)
@@ -361,7 +369,7 @@ def test_meta_demonstrated_route_scores_full() -> None:
     keys, cfg, case = _meta_scene()
     route = _u_route()
     l_ref = metrics.path_length(route)
-    out, _ = _run_plan(_StubPlanner(route), case, l_ref, keys, keys, cfg)
+    out, _ = _run_plan(_stub(route), case, l_ref, keys, keys, cfg)
     assert out.success
     assert out.spl == pytest.approx(1.0)
     assert out.goal_miss == 0.0
@@ -376,7 +384,7 @@ def test_meta_everything_occupied_fails_even_good_routes() -> None:
     everything = np.stack([xs.ravel(), ys.ravel(), zs.ravel()], axis=1, dtype=np.float32)
     keys = np.unique(voxel_keys(np.concatenate([_floor(), everything]), VOXEL))
     _, cfg, case = _meta_scene()
-    out, _ = _run_plan(_StubPlanner(_u_route()), case, 24.0, keys, keys, cfg)
+    out, _ = _run_plan(_stub(_u_route()), case, 24.0, keys, keys, cfg)
     assert out.planned and out.reached
     assert not out.valid
     assert out.spl == 0.0
@@ -388,7 +396,7 @@ def test_meta_floating_bridge_fails_support() -> None:
     keys = np.unique(voxel_keys(gapped, VOXEL))
     _, cfg, case = _meta_scene()
     line = np.array([case.start, case.goal], dtype=np.float32)
-    out, _ = _run_plan(_StubPlanner(line), case, 24.0, keys, keys, cfg)
+    out, _ = _run_plan(_stub(line), case, 24.0, keys, keys, cfg)
     assert out.planned and out.reached and out.valid
     assert not out.supported
     assert out.spl == 0.0
@@ -400,17 +408,17 @@ def test_meta_floating_bridge_fails_support() -> None:
 def test_meta_negative_case_scoring() -> None:
     """A certified-infeasible case scores 1.0 for refusal, 0.0 for any claim."""
     keys, cfg, case = _meta_scene()
-    refused, _ = _run_plan(_StubPlanner(None), case, 16.0, keys, keys, cfg)
+    refused, _ = _run_plan(_stub(None), case, 16.0, keys, keys, cfg)
     out = score_negative(refused)
     assert out.success
     assert out.spl == 1.0
-    claimed, _ = _run_plan(_StubPlanner(_u_route()), case, 16.0, keys, keys, cfg)
+    claimed, _ = _run_plan(_stub(_u_route()), case, 16.0, keys, keys, cfg)
     out = score_negative(claimed)
     assert not out.success
     assert out.spl == 0.0
     # A path that wanders but never reaches the goal is still a refusal.
     wander = np.array([case.start, [4.0, 2.0, 0.0]], dtype=np.float32)
-    partial, _ = _run_plan(_StubPlanner(wander), case, 16.0, keys, keys, cfg)
+    partial, _ = _run_plan(_stub(wander), case, 16.0, keys, keys, cfg)
     assert score_negative(partial).success
 
 
@@ -430,7 +438,28 @@ def test_check_kinematics_rejects_cliff_jumps() -> None:
     assert len(result.violation_points) >= 1
 
 
-def test_save_suite_roundtrip(tmp_path) -> None:
+def test_pick_along_ray() -> None:
+    from dimos.navigation.nav_3d.evaluator.picker import pick_along_ray
+
+    wall = _wall(10.0)
+    origin = np.array([0.0, 0.0, 0.5])
+    target = np.array([10.0, 0.35, 0.75])
+    direction = target - origin
+    direction /= np.linalg.norm(direction)
+    picked = pick_along_ray(wall, origin, direction)
+    assert picked is not None
+    assert np.linalg.norm(picked - target) < 0.15
+    # The nearest surface along the ray wins over one behind it.
+    two_walls = np.concatenate([_wall(10.0), _wall(15.0)])
+    picked = pick_along_ray(two_walls, origin, direction)
+    assert picked is not None
+    assert abs(picked[0] - 10.0) < 0.2
+    # A ray into empty space picks nothing.
+    up = np.array([0.0, 0.0, 1.0])
+    assert pick_along_ray(wall, origin, up) is None
+
+
+def test_save_suite_roundtrip(tmp_path: Path) -> None:
     suite = Suite(
         dataset="demo",
         cases=[
@@ -450,7 +479,7 @@ def test_save_suite_roundtrip(tmp_path) -> None:
     assert loaded.cases[1].expect_fail
 
 
-def test_load_suite(tmp_path) -> None:
+def test_load_suite(tmp_path: Path) -> None:
     manifest = tmp_path / "demo.yaml"
     manifest.write_text(
         "dataset: demo\n"

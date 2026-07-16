@@ -64,7 +64,8 @@ UNREACHED_PATH_COLOR = [255, 200, 0]
 CLEARANCE_CLAMP_M = 1.0
 
 
-def _turbo_by_height(points: NDArray[np.float32]) -> NDArray[np.uint8]:
+def turbo_by_height(points: NDArray[np.float32]) -> NDArray[np.uint8]:
+    # Lazy: matplotlib is a heavy viz-only dependency.
     import matplotlib.pyplot as plt
 
     z = points[:, 2].astype(np.float64)
@@ -180,7 +181,7 @@ def write_rrd(report: Report, suites: list[Suite], cfg: EvalConfig, out: Path) -
             f"{root}/map/obstacles",
             rr.Points3D(
                 final.occupied,
-                colors=_turbo_by_height(final.occupied),
+                colors=turbo_by_height(final.occupied),
                 radii=cfg.voxel_size / 4,
             ),
             static=True,
