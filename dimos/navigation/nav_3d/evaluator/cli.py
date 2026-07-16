@@ -19,6 +19,7 @@ One dataset:          python -m dimos.navigation.nav_3d.evaluator run --dataset 
 Only some cases:      python -m dimos.navigation.nav_3d.evaluator run --tag stairs --tag up
 Machine output:       python -m dimos.navigation.nav_3d.evaluator run --json report.json
 Override a knob:      python -m dimos.navigation.nav_3d.evaluator run --set wall_clearance_m=0.05
+Compare two runs:     python -m dimos.navigation.nav_3d.evaluator diff old.json new.json
 New dataset:          python -m dimos.navigation.nav_3d.evaluator ingest recordings/.../mem2.db --name office_a
 Pick cases by click:  python -m dimos.navigation.nav_3d.evaluator pick-case office_a
 Curate by coords:     python -m dimos.navigation.nav_3d.evaluator add-case office_a --start x y z --goal x y z
@@ -37,6 +38,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import typer
 
+from dimos.navigation.nav_3d.evaluator import tripwire
 from dimos.navigation.nav_3d.evaluator.cases import (
     CASES_DIR,
     Case,
@@ -114,6 +116,35 @@ def _print_report(report: Report) -> None:
         f"plan p95 {report.plan_ms['p95']:.1f}ms | "
         f"map update p95 {report.map_update_ms['p95']:.0f}ms"
     )
+
+
+@app.command("diff")
+def diff_reports(
+    old: Path = typer.Argument(..., help="Baseline report JSON from `run --json`"),
+    new: Path = typer.Argument(..., help="Candidate report JSON from `run --json`"),
+) -> None:
+    """Name every case whose pass/fail flipped between two runs.
+
+    Exits 1 when any case regressed, so a keep/discard loop can gate on it.
+    """
+    old_report = json.loads(old.read_text())
+    new_report = json.loads(new.read_text())
+    print(
+        f"score {old_report['score']:.3f} -> {new_report['score']:.3f} | "
+        f"final {old_report['final_score']:.3f} -> {new_report['final_score']:.3f}"
+    )
+    d = tripwire.diff(old_report, new_report)
+    print(f"{len(d.fixed)} fixed, {len(d.broke)} broke")
+    for flip in d.fixed:
+        print(f"  fixed: {flip.key} ({flip.test})")
+    for flip in d.broke:
+        print(f"  BROKE: {flip.key} ({flip.test}: pass -> fail)")
+    for key in d.added:
+        print(f"  new case: {key}")
+    for key in d.removed:
+        print(f"  case gone: {key}")
+    if d.broke:
+        raise typer.Exit(code=1)
 
 
 @app.command()

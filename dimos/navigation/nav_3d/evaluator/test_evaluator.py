@@ -14,14 +14,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import itertools
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
 
-from dimos.navigation.nav_3d.evaluator import metrics
+from dimos.navigation.nav_3d.evaluator import metrics, tripwire
 from dimos.navigation.nav_3d.evaluator.cases import Case, Suite, load_suite, save_suite
 from dimos.navigation.nav_3d.evaluator.config import EvalConfig
 from dimos.navigation.nav_3d.evaluator.final_map import (
@@ -42,7 +44,14 @@ from dimos.navigation.nav_3d.evaluator.generate import (
     snap_to_surface,
 )
 from dimos.navigation.nav_3d.evaluator.recording import Frame, Trajectory
-from dimos.navigation.nav_3d.evaluator.runner import _run_plan, score_negative
+from dimos.navigation.nav_3d.evaluator.runner import (
+    CaseResult,
+    DatasetResult,
+    Report,
+    _no_plan,
+    _run_plan,
+    score_negative,
+)
 
 if TYPE_CHECKING:
     from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
@@ -502,3 +511,79 @@ def test_load_suite(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="duplicate"):
         load_suite(manifest)
+
+
+def _tripwire_report(spec: dict[str, dict[str, tuple[bool, bool]]]) -> dict[str, object]:
+    """Report JSON from a {dataset: {case_id: (inc, fin)}} pass/fail spec."""
+    datasets = []
+    for dataset, cases in spec.items():
+        results = []
+        for case_id, (inc, fin) in cases.items():
+            case = Case(id=case_id, start=(0.0, 0.0, 0.0), goal=(1.0, 0.0, 0.0))
+            results.append(
+                CaseResult(
+                    id=case_id,
+                    dataset=dataset,
+                    start=case.start,
+                    goal=case.goal,
+                    weight=1.0,
+                    tags=[],
+                    l_ref=1.0,
+                    l_ref_snapped=False,
+                    plan_ts=0.0,
+                    online_voxels=0,
+                    map_update_ms=0.0,
+                    goal_seen=True,
+                    expect_fail=False,
+                    online=replace(_no_plan(case, 0.0), success=inc),
+                    final=replace(_no_plan(case, 0.0), success=fin),
+                    soft_progress=0.0,
+                )
+            )
+        datasets.append(
+            DatasetResult(
+                dataset=dataset,
+                cases=results,
+                final_voxels=0,
+                map_build_ms=0.0,
+                add_frame_ms={},
+                frames=0,
+            )
+        )
+    report = Report(
+        score=0.0,
+        score_soft=0.0,
+        final_score=0.0,
+        n_cases=0,
+        n_success=0,
+        n_success_final=0,
+        outcome_counts={},
+        by_tag={},
+        plan_ms={},
+        map_update_ms={},
+        datasets=datasets,
+    )
+    return json.loads(json.dumps(report.to_dict()))
+
+
+def test_tripwire_outcomes() -> None:
+    report = _tripwire_report({"office": {"a": (True, False), "b": (False, True)}})
+    assert tripwire.outcomes(report) == {
+        "office": {"a": {"inc": True, "fin": False}, "b": {"inc": False, "fin": True}}
+    }
+    d = tripwire.diff(report, report)
+    assert d.fixed == [] and d.broke == [] and d.added == [] and d.removed == []
+
+
+def test_tripwire_diff_names_every_flip() -> None:
+    old = _tripwire_report(
+        {"office": {"a": (False, True), "b": (True, True), "gone": (True, True)}}
+    )
+    new = _tripwire_report(
+        {"office": {"a": (True, True), "b": (False, False), "fresh": (True, True)}}
+    )
+    d = tripwire.diff(old, new)
+    assert [(f.key, f.test) for f in d.fixed] == [("office/a", "inc")]
+    assert [(f.key, f.test) for f in d.broke] == [("office/b", "inc"), ("office/b", "fin")]
+    assert d.added == ["office/fresh"]
+    assert d.removed == ["office/gone"]
