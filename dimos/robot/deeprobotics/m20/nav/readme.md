@@ -107,6 +107,20 @@ dimos --transport=zenoh \
   run m20-simple-nav
 ```
 
+To load the checked-in real-robot trajectory generation and smoothing profile:
+
+```bash
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<aos_ip>:7447 \
+  run m20-simple-nav \
+  --config dimos/robot/deeprobotics/m20/config/m20_simple_nav.yaml
+```
+
+The initial profile covers the A* objective and final-path diagnostics/smoothing.
+Raw-path publication and constrained smoothing are disabled by default. Edit the
+profile and restart DimOS to enable them during controlled physical validation.
+The profile does not change mapping, CostMapper, local-controller, or MuJoCo settings.
+
 
 
 ---
