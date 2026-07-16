@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from dimos_lcm.geometry_msgs import (
     PoseStamped as LCMPoseStamped,
@@ -57,10 +58,13 @@ def _bare_module() -> ArmCommandModule:
         LCMTwistStamped._get_packed_fingerprint(): s._on_twist_bytes,
     }
     s._estopped = False
+    s._last_twist_ts = 0.0
+    s._last_stale_warn = 0.0
     s._task_names = {Hand.RIGHT: "teleop_xarm"}
     s.config = SimpleNamespace(
         task_names={"right": "teleop_xarm"},
         control_loop_hz=50.0,
+        cmd_stale_after_sec=0.5,
     )
     s.left_controller_output = MagicMock()
     s.right_controller_output = MagicMock()
@@ -81,8 +85,10 @@ def _pose_bytes(frame_id: str, ts: float = 1.0) -> bytes:
     return PoseStamped(ts=ts, frame_id=frame_id).lcm_encode()
 
 
-def _twist_bytes(x: float = 0.1) -> bytes:
-    return TwistStamped(frame_id="eef_twist_arm", linear=[x, 0.0, 0.0]).lcm_encode()
+def _twist_bytes(x: float = 0.1, ts: float | None = None) -> bytes:
+    # ts=None keeps TwistStamped's default stamp (now) — a fresh command.
+    kwargs = {} if ts is None else {"ts": ts}
+    return TwistStamped(frame_id="eef_twist_arm", linear=[x, 0.0, 0.0], **kwargs).lcm_encode()
 
 
 def _tick(s: ArmCommandModule) -> None:
@@ -147,6 +153,33 @@ def test_twist_dropped_while_estopped(cmd: ArmCommandModule) -> None:
     cmd._estopped = True
     cmd._on_cmd_raw(_twist_bytes(0.2))
     cmd.coordinator_ee_twist_command.publish.assert_not_called()
+
+
+def test_stale_twist_dropped(cmd: ArmCommandModule) -> None:
+    cmd._on_cmd_raw(_twist_bytes(0.2, ts=time.time() - 1.0))  # > cmd_stale_after_sec
+    cmd.coordinator_ee_twist_command.publish.assert_not_called()
+
+
+def test_future_stamped_twist_dropped(cmd: ArmCommandModule) -> None:
+    cmd._on_cmd_raw(_twist_bytes(0.2, ts=time.time() + 5.0))
+    cmd.coordinator_ee_twist_command.publish.assert_not_called()
+    # ...and it must not advance the ordering watermark (would stall real cmds).
+    cmd._on_cmd_raw(_twist_bytes(0.3))
+    cmd.coordinator_ee_twist_command.publish.assert_called_once()
+
+
+def test_out_of_order_twist_dropped(cmd: ArmCommandModule) -> None:
+    t = time.time()
+    cmd._on_cmd_raw(_twist_bytes(0.2, ts=t))
+    cmd._on_cmd_raw(_twist_bytes(0.3, ts=t - 0.1))  # older than the last accepted
+    assert cmd.coordinator_ee_twist_command.publish.call_count == 1
+
+
+def test_stale_twist_warning_rate_limited(cmd: ArmCommandModule) -> None:
+    with patch("dimos.teleop.hosted.arm_command.logger") as log:
+        for _ in range(5):
+            cmd._on_cmd_raw(_twist_bytes(0.2, ts=time.time() - 1.0))
+    assert log.warning.call_count == 1  # burst of stale frames → one warning per second
 
 
 # ─── Gripper toggle (state_reliable JSON) ──────────────────────────────

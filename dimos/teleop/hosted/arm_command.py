@@ -39,6 +39,8 @@ clock_report by ``HostedStatsModule``. This module owns estop / gripper.
 from __future__ import annotations
 
 import json
+import math
+import time
 from typing import Any
 
 from reactivex.disposable import Disposable
@@ -61,7 +63,7 @@ logger = setup_logger()
 class ArmCommandConfig(ArmTeleopConfig):
     # task_names ("left"/"right" → coordinator task name) and control_loop_hz
     # come from ArmTeleopConfig; server_port is unused (no local web server).
-    pass
+    cmd_stale_after_sec: float = 0.5
 
 
 class ArmCommandModule(ArmTeleopModule):
@@ -83,6 +85,8 @@ class ArmCommandModule(ArmTeleopModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._estopped = False
+        self._last_twist_ts = 0.0
+        self._last_stale_warn = 0.0
         # Browser keyboard EE-twist rides cmd_unreliable alongside the VR pose:
         # register its LCM fingerprint on the inherited dispatch table.
         from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
@@ -148,10 +152,28 @@ class ArmCommandModule(ArmTeleopModule):
     def _on_twist_bytes(self, data: bytes) -> None:
         """Browser keyboard EE-twist → coordinator's eef_twist task. Re-stamp
         frame_id with the task name so the coordinator routes it, and drop it
-        while E-STOP is latched (mirrors the pose gate)."""
+        while E-STOP is latched (mirrors the pose gate). Stale / future-stamped /
+        out-of-order twists are dropped like the Go2 drive guard — the eef_twist
+        task integrates each twist until the next one, so a late frame would
+        jog the arm on an input the operator released long ago."""
         if self._estopped:
             return
         msg = TwistStamped.lcm_decode(data)
+        ts = float(msg.ts)
+        if not math.isfinite(ts):
+            return
+        age = time.time() - ts
+        if age > self.config.cmd_stale_after_sec:
+            now = time.monotonic()
+            if now - self._last_stale_warn >= 1.0:
+                self._last_stale_warn = now
+                logger.warning("dropping stale ee_twist: age=%.2fs — operator link lagging", age)
+            return
+        if age < 0:  # future-stamped: don't advance _last_twist_ts (would stall the jog)
+            return
+        if ts <= self._last_twist_ts:  # out-of-order
+            return
+        self._last_twist_ts = ts
         self.coordinator_ee_twist_command.publish(
             TwistStamped(
                 frame_id=EEF_TWIST_TASK_NAME,
