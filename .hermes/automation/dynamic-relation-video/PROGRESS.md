@@ -91,3 +91,12 @@ LAST_COMPLETED_STEP: 05
 - Final diff safety: no source videos, generated MP4/JPEG files, model weights, virtual environments, logs, secrets, or machine-local links are tracked or staged; `.artifacts/` remains ignored.
 - Handoff: automation complete on `feat/dynamic-robot-relation-video`; no upstream PR was opened while #2989 remains unmerged. Branch is ready for the parent session to prepare a clean follow-up PR.
 - Next: none.
+
+### Post-completion readability polish — COMPLETE
+
+- User feedback: relationship and detection text was too small at normal playback size.
+- TDD: added failing HD overlay-style and right-edge label tests, then implemented resolution-aware text sizing and in-frame label placement.
+- Rendering: relationship panel scale increased to `0.9` and detection label scale to `0.8` at 1080-pixel width, with two-pixel text, label outlines, larger line spacing, and edge clamping.
+- Real artifact: regenerated `.artifacts/dynamic-robot-relations/robot-relationships.mp4`; 1,380 frames encoded and decoded successfully.
+- Visual QA: inspected 0s, 15s, and 30s frames; panel and object labels were readable, and right-edge trash-can labels were no longer clipped.
+- Verification: package `134 passed`; Ruff format/check passed; mypy passed; worktree clean; local/fork heads matched after each implementation commit.
