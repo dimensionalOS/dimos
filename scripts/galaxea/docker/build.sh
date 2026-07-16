@@ -22,7 +22,9 @@ trap 'rm -rf "$CTX"' EXIT
 echo "[build] staging clean context from HEAD ($(git rev-parse --short HEAD)) -> $CTX"
 git archive HEAD | tar -x -C "$CTX"
 
-docker build \
+# --network=host: build steps use the host's own DNS/network — guest/corp
+# networks (e.g. on-site at vendors) often block docker's default 8.8.8.8.
+docker build --network=host \
     -f "$CTX/scripts/galaxea/docker/Dockerfile" \
     -t "$TAG" \
     --label org.opencontainers.image.source="https://github.com/dimensionalOS/dimos" \
