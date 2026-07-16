@@ -41,6 +41,13 @@ def _node_edges_on_surface(msg: Any) -> Any:
     return msg.to_rerun(z_offset=0.0)
 
 
+def _convert_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image",
+        optical_frame="camera_optical",
+    )
+
+
 def m20_rerun_blueprint() -> Any:
     import rerun as rr
     import rerun.blueprint as rrb
@@ -77,6 +84,7 @@ rerun = autoconnect(
             "world/local_map": 2.0,
         },
         visual_override={
+            "world/camera_info": _convert_camera_info,
             "world/node_edges": _node_edges_on_surface,
         },
     ),

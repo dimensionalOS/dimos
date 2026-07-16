@@ -325,7 +325,11 @@ class M20Connection(Module, VideoSource):
 
         ip = self.config.ip
         cameras = (
-            (self.config.rtsp_url or f"rtsp://{ip}:8554/video1", self.color_image, "m20_front"),
+            (
+                self.config.rtsp_url or f"rtsp://{ip}:8554/video1",
+                self.color_image,
+                "camera_optical",
+            ),
             (
                 self.config.rtsp_url_rear or f"rtsp://{ip}:8554/video2",
                 self.color_image_rear,
