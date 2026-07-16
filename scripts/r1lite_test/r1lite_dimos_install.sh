@@ -57,8 +57,13 @@ fi
 step 4 "Container image"
 while ! $DOCKER image inspect "$IMAGE" >/dev/null 2>&1; do
     if $DOCKER pull "$IMAGE" 2>/dev/null; then break; fi
+    # Do NOT pipe a password into sudo here: `echo 1 | sudo -S docker load`
+    # hands docker-load the echo pipe as stdin, so the image stream from the
+    # laptop is discarded ("unrecognized image format"). ssh's stdin must go
+    # straight into docker load. (Hardware-confirmed 2026-07-17.)
     echo "    Pull failed (image is private). From the LAPTOP, run:"
-    echo "        docker save $IMAGE | ssh r1lite \"echo 1 | sudo -S docker load\""
+    echo "        docker save $IMAGE | ssh r1lite \"docker load\""
+    echo "    (if docker needs root there: ssh r1lite \"sudo -n docker load\")"
     echo "    (~15GB over the cable, several minutes)"
     read -r -p "    Press Enter when the transfer is done (or Ctrl-C to abort)... " _
 done
