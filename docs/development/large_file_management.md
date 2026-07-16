@@ -201,3 +201,15 @@ When running from:
   - Linux: `~/.local/share/dimos/repo/data/`
   - macOS: `~/Library/Application Support/dimos/repo/data/`
   - Fallback: `/tmp/dimos/repo/data/`
+
+## Docs media assets
+
+Binary media displayed by the docs (screenshots, plots, GIFs) is LFS-tracked here under `docs/**/assets/`, but Mintlify deploys the docs site without fetching Git LFS.
+
+So content behind those LFS pointers is hosted as plain git blobs in [dimensionalOS/dimos-docs-assets](https://github.com/dimensionalOS/dimos-docs-assets) (mirroring the `docs` tree, minus the `docs/` prefix), and docs pages reference that copy with an absolute URL:
+
+```markdown
+![Coverage](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/coverage.png)
+```
+
+Small text SVGs emitted by pikchr and `to_svg` are exempt: they are committed here as plain text and referenced relatively.

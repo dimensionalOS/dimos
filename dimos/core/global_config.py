@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import platform
 import re
 from typing import Literal, TypeAlias
@@ -88,8 +89,9 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
-    dimsim_scene: str = "apt"
+    dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
+    dimsim_headless: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -123,6 +125,14 @@ class GlobalConfig(BaseSettings):
         if self.mujoco_camera_position is None:
             return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
         return tuple(_get_all_numbers(self.mujoco_camera_position))
+
+    @property
+    def processed_robot_ips(self) -> tuple[str, ...]:
+        ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
+        is_running_tests = "PYTEST_CURRENT_TEST" in os.environ
+        if not ips and not is_running_tests:
+            raise ValueError("No robot IPs specified. Must have at least one IP.")
+        return tuple(ips)
 
 
 global_config = GlobalConfig()

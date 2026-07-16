@@ -84,6 +84,50 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Publishing external blueprints
+
+DimOS can discover runnable blueprints from installed Python packages. External
+packages declare entry points in the `dimos.blueprints` group:
+
+```toml
+[project]
+name = "my-robot-stack"
+
+[project.entry-points."dimos.blueprints"]
+go2 = "my_robot_stack.go2:go2_blueprint"
+keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
+```
+
+After the package is installed in the same Python environment as DimOS, users can run
+those blueprints by fully qualified name:
+
+```bash
+dimos run my-robot-stack.go2
+dimos run unitree-go2 my-robot-stack.keyboard-teleop
+```
+
+External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
+
+- The namespace comes from the installed distribution name. DimOS lowercases it and
+  collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
+  `my-robot-stack`.
+- The local blueprint name is the entry point name. It must be lowercase kebab-case
+  matching `^[a-z0-9]+(-[a-z0-9]+)*$`, such as `go2` or `keyboard-teleop`.
+
+Entry point targets may be either:
+
+- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a DimOS `Module` class, such as `KeyboardTeleop`, which DimOS converts with
+  `.blueprint()`.
+
+`dimos list` includes external names from package metadata without importing the target
+modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
+
+Remote coordinator resolution happens in the coordinator environment. If a client asks
+a coordinator to load `my-robot-stack.go2`, the `my-robot-stack` package must be
+installed where the coordinator performs name resolution; installing it only in the
+client environment is not enough.
+
 ### Duplicate module handling
 
 If the same module appears multiple times in `autoconnect`, the **later blueprint wins** and overrides earlier ones:
@@ -207,6 +251,85 @@ blueprint.remappings([
 ]).transports({
     ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
 })
+```
+
+## Multi-robot blueprints (namespaces)
+
+You can use namespaces to control several robot instances.
+
+Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
+under a name prefix so several copies can coexist. Because blueprints are plain
+Python values, a variable-size (and mixed-type) fleet is just a loop:
+
+```python session=blueprint-ns
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+
+class SensorConfig(ModuleConfig):
+    ip: str = ""
+
+class Sensor(Module):
+    config: SensorConfig
+    pointcloud: Out[str]
+
+class AggregateMapper(Module):
+    pointcloud: In[str]
+
+robot_ips = ["10.0.0.1", "10.0.0.2"]
+
+fleet = autoconnect(
+    AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
+    *[
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+        for i, ip in enumerate(robot_ips)
+    ],
+)
+```
+
+Inside a namespace everything is prefixed:
+
+* instance names (`robot0/go2connection`),
+* stream names and topics (`/robot0/lidar`),
+* TF frames (`frame_id_prefix`, unless you set one yourself),
+* and RPC topics (`robot0/go2connection/move`).
+
+Prefixed streams only connect within their namespace.
+
+Stream names listed in `expose` are left unprefixed, so they connect globally.
+That is how data crosses the boundary.
+
+In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
+
+If you want to manually redirect to a namespaced name, you can use the namespaced prefix:  `.remappings([(FleetPlanner, "cmd_r0", "robot0/cmd_vel")])`
+
+Module references (Specs or direct classes) resolve within the consumer's
+namespace first, then enclosing namespaces, then globally, so per-robot
+consumers bind to their own robot's providers.
+
+Configuration addresses instances with `/` escaped to `_`:
+`-o robot0/go2connection.ip=10.0.0.5` (or `-o robot0_go2connection.ip=...`),
+env `ROBOT0_GO2CONNECTION__IP=...`. `.remappings` accepts an instance name
+string wherever it accepts a module class.
+
+The downside of this is that the number of modules is fixed at blueprint creation. But it can be easily overcome by using a global variable. For example you can invoke with this:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos run blueprint-name
+```
+
+and construct `robot_ips` from the environment variable:
+
+```python skip
+robot_ips = (global_config.robot_ips or "").split(",")
+```
+
+For convenience `global_config.processed_robot_ips` is available which automatically splits the string and errors if no IPs are present.
+
+This works in simulation too: adding `--simulation` starts one MuJoCo instance per robot and the IPs are ignored. For example, to run two simulated Go2 robots:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
 ```
 
 ## Overriding global configuration.

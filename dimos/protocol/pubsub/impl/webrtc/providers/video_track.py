@@ -46,11 +46,9 @@ class CameraVideoTrack(VideoStreamTrack):
     encoder and the browser would play the burst in fast-forward).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
-        # All state below is only mutated on the event loop (set_latest marshals
-        # onto it via call_soon_threadsafe), so no lock is needed.
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: asyncio.AbstractEventLoop = loop
         self._latest: Image | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
@@ -73,21 +71,18 @@ class CameraVideoTrack(VideoStreamTrack):
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
         notification onto the loop instead of locking it from this thread.
         """
-        loop = self._loop
-        if loop is None or not loop.is_running():
-            return  # recv hasn't bound the loop yet; pre-arm frames are dropped anyway
 
         def _set() -> None:
             self._latest = img
             self._frame_seq += 1
             self._new_frame.set()
 
-        loop.call_soon_threadsafe(_set)
+        try:
+            self._loop.call_soon_threadsafe(_set)
+        except RuntimeError:
+            return
 
     async def recv(self) -> av.VideoFrame:
-        if self._loop is None:
-            self._loop = asyncio.get_running_loop()
-
         # Wait (no busy-poll) for a fresh, post-arm frame.
         while True:
             await self._new_frame.wait()

@@ -255,7 +255,7 @@ class ManipulationModule(Module):
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
-            _ = self.tf  # Eager init
+            logger.info(f"Eager-initializing TF: {self.tf}")
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
