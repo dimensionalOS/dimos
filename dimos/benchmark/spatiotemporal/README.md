@@ -80,9 +80,10 @@ Open the custom result at:
 
 #### Render a dynamic robot-relationship video
 
-After materializing the LFS source video and YOLO-E model described below, render a playable annotated MP4 with:
+After materializing the LFS source video and YOLO-E model described below, install the prompt-mode CLIP runtime if it is not already present, then render a playable annotated MP4:
 
 ```bash
+uv pip install 'git+https://github.com/ultralytics/CLIP.git@0fa238b2ba553fe76dc158348d8e34625e3e2470'
 mkdir -p .artifacts/dynamic-robot-relations
 uv run python -m dimos.benchmark.spatiotemporal.relationship_video \
   assets/simple_demo.mp4 \
