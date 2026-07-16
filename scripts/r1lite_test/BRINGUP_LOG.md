@@ -646,3 +646,79 @@ buffers history until RAM (hit 1GiB in 38s of cameras).
 run_r1lite.sh now has --web mode implementing this. Proper core fix
 proposal stands: bridge.py web mode should spawn the server subprocess +
 connect_grpc instead of in-process serve_grpc.
+
+---
+
+# Day 4 — 2026-07-17: onboard install executed end-to-end (PASS)
+
+First real execution of `r1lite_dimos_install.sh` on the robot. Everything
+below is a bug the flow shipped with and nobody could have found by reading
+it: each one only exists because the robot's environment differs from the
+laptop's. All fixed and pushed the same session.
+
+**Result: dimos runs ON the R1 Lite.** `r1lite-coordinator` up, 16 joints +
+chassis registered, TickLoop 100Hz, 6 camera streams bridged, browser viewer
+on the laptop showing live wrist/head cameras. DDS gauntlet: 1344 msgs/8s.
+
+## 1. Image transfer: the printed command ate its own stdin
+`docker save … | ssh r1lite "echo 1 | sudo -S docker load"` → *unrecognized
+image format*, instantly. `echo 1 |` feeds SUDO's stdin, which `docker load`
+inherits — so load read the literal "1", and the 15GB stream went nowhere.
+Fix: `docker save … | ssh r1lite "docker load"` (docker group is active after
+a re-login anyway). NEVER pipe a password into a command whose stdin is data.
+
+## 2. Step-8 import check: `docker exec bash -c` does not read .bashrc
+`import rclpy` → ModuleNotFoundError. The check sourced the venv but not ROS;
+the image's .bashrc (which sources Humble) is skipped by non-interactive,
+non-login shells. Same root cause bit the rerun sidecar (below).
+
+## 3. **DDS: root container cannot RECEIVE via shared memory (the big one)**
+Symptom: `feedback_arm_left msgs in 8s: 0`, but `ros2 topic list` inside the
+container showed all 67 /hdas topics. Host `ros2 topic hz` = 199.96Hz.
+The classic "topics visible, zero messages" — and our documented cause
+(**/dev/shm not shared**) was WRONG. Verified /dev/shm IS shared: a file
+written on the host was readable in the container, and both saw the same 106
+`fastrtps_*` segments.
+
+Real cause: FastDDS delivers same-host data by writing into the READER's
+/dev/shm segment. Vendor stack runs as `r1lite` (uid 1000); segments are
+`-rw-r--r-- r1lite r1lite`. Our container runs as **root**, so the segments IT
+creates are root-owned — and the vendor's uid-1000 publishers cannot write
+into them. Discovery is UDP (works); data delivery dies silently, no error.
+
+Two fixes, both hardware-verified at 200Hz on /hdas/feedback_arm_left:
+1. `docker exec --user 1000:1000` → SHM works (keeps zero-copy).
+2. FastDDS profile with `useBuiltinTransports=false` + UDPv4 only → root-safe
+   and uid-agnostic. Committed as `fastdds_udp_only.xml`; run_r1lite.sh and
+   the installer's step-8 apply it automatically when ON_ROBOT.
+Chosen for the dev flow: (2) — the dev container is root and X11/teleop is
+wired to /root. For the production image: (1), via compose `user:`, so future
+pointcloud payloads keep SHM.
+
+## 4. rerun sidecar: `executable file not found in $PATH`
+`docker exec -d $CONTAINER rerun --serve-web` — rerun exists ONLY at
+`/app/.venv/bin/rerun`; non-login shell → no venv on PATH. Fixed to the full
+path. (Same family as #2.)
+
+## 5. dimos' LCM configurator needs host network settings it cannot apply
+`ip route add 224.0.0.0/4 dev lo` → *RTNETLINK answers: Operation not
+permitted*: containers have no CAP_NET_ADMIN. With `--network host` the route
+belongs to the HOST anyway → installer now runs, on the host:
+    sudo ip link set lo multicast on
+    sudo ip route add 224.0.0.0/4 dev lo
+**Neither persists across reboot** (sysctls do; `ip` state does not) — the
+installer re-applies them every run. The production setup.sh must persist them
+(systemd oneshot / networkd drop-in) or the first customer reboot silently
+kills the LCM bus and dimos prompts for a sudo it cannot use.
+
+## Other observations
+- Galaxea stack does NOT autostart on power-on: after a reboot `tmux ls` was
+  empty. roslaunch.sh boots it; the runtime image's entrypoint waits for
+  /hdas/* so container start order never matters.
+- Robot's `.bashrc`: `ROS_DOMAIN_ID=02`; a `FASTRTPS_DEFAULT_PROFILES_FILE`
+  pointing at `/opt/galaxea/find_server/super_client_configuration_file.xml`
+  is present but **commented out** — vendor discovery is plain multicast.
+- 3D pane in the viewer is empty: r1lite URDF/meshes are not in the repo yet
+  (pending PR item). Cameras/joints are unaffected.
+- Laptop docker 29.6 uses the containerd image store → `docker save` emits an
+  OCI archive; robot docker 29.1.3 loaded it without complaint.
