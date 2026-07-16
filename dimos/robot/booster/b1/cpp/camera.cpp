@@ -5,9 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -111,6 +113,143 @@ namespace
                (static_cast<uint32_t>(source[3]) << 24U);
     }
 
+    class FrameAgeMetrics
+    {
+    public:
+        struct Snapshot
+        {
+            double window_seconds{0.0};
+            size_t frames{0};
+            size_t bytes{0};
+            size_t invalid_timestamps{0};
+            size_t negative_ages{0};
+            std::vector<double> frame_age_ms;
+            std::vector<double> bridge_processing_ms;
+        };
+
+        void record(
+            const std_msgs::msg::Header &header,
+            std::chrono::steady_clock::time_point processing_started,
+            size_t bytes)
+        {
+            const auto published_at = std::chrono::system_clock::now();
+            const auto processing_finished = std::chrono::steady_clock::now();
+            const double processing_ms = std::chrono::duration<double, std::milli>(
+                                             processing_finished - processing_started)
+                                             .count();
+
+            bool valid_timestamp = false;
+            double frame_age_ms = 0.0;
+            const auto seconds = header.stamp().sec();
+            const auto nanoseconds = header.stamp().nanosec();
+            if (seconds > 0 && nanoseconds < 1000000000U)
+            {
+                const auto captured_at = std::chrono::system_clock::time_point(
+                    std::chrono::seconds(seconds) + std::chrono::nanoseconds(nanoseconds));
+                frame_age_ms = std::chrono::duration<double, std::milli>(
+                                   published_at - captured_at)
+                                   .count();
+                valid_timestamp = true;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++frames_;
+            bytes_ += bytes;
+            bridge_processing_ms_.push_back(processing_ms);
+            if (valid_timestamp)
+            {
+                frame_age_ms_.push_back(frame_age_ms);
+                if (frame_age_ms < 0.0)
+                {
+                    ++negative_ages_;
+                }
+            }
+            else
+            {
+                ++invalid_timestamps_;
+            }
+        }
+
+        Snapshot snapshot_and_reset()
+        {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            Snapshot snapshot;
+            snapshot.window_seconds =
+                std::chrono::duration<double>(now - window_started_).count();
+            snapshot.frames = frames_;
+            snapshot.bytes = bytes_;
+            snapshot.invalid_timestamps = invalid_timestamps_;
+            snapshot.negative_ages = negative_ages_;
+            snapshot.frame_age_ms = std::move(frame_age_ms_);
+            snapshot.bridge_processing_ms = std::move(bridge_processing_ms_);
+
+            window_started_ = now;
+            frames_ = 0;
+            bytes_ = 0;
+            invalid_timestamps_ = 0;
+            negative_ages_ = 0;
+            return snapshot;
+        }
+
+    private:
+        std::mutex mutex_;
+        std::chrono::steady_clock::time_point window_started_{
+            std::chrono::steady_clock::now()};
+        size_t frames_{0};
+        size_t bytes_{0};
+        size_t invalid_timestamps_{0};
+        size_t negative_ages_{0};
+        std::vector<double> frame_age_ms_;
+        std::vector<double> bridge_processing_ms_;
+    };
+
+    double percentile(std::vector<double> &samples, double quantile)
+    {
+        if (samples.empty())
+        {
+            return 0.0;
+        }
+        std::sort(samples.begin(), samples.end());
+        const size_t index = static_cast<size_t>(
+            std::ceil(quantile * static_cast<double>(samples.size()))) -
+                             1U;
+        return samples[std::min(index, samples.size() - 1U)];
+    }
+
+    void log_metrics(const std::string &stream, FrameAgeMetrics::Snapshot snapshot)
+    {
+        const double window_seconds = std::max(snapshot.window_seconds, 0.001);
+        const double fps = static_cast<double>(snapshot.frames) / window_seconds;
+        const double megabits_per_second =
+            static_cast<double>(snapshot.bytes) * 8.0 / window_seconds / 1000000.0;
+        const double age_p50 = percentile(snapshot.frame_age_ms, 0.50);
+        const double age_p95 = percentile(snapshot.frame_age_ms, 0.95);
+        const double age_max = snapshot.frame_age_ms.empty()
+                                   ? 0.0
+                                   : snapshot.frame_age_ms.back();
+        const double processing_p50 = percentile(snapshot.bridge_processing_ms, 0.50);
+        const double processing_p95 = percentile(snapshot.bridge_processing_ms, 0.95);
+        const double processing_max = snapshot.bridge_processing_ms.empty()
+                                          ? 0.0
+                                          : snapshot.bridge_processing_ms.back();
+
+        std::cout << std::fixed << std::setprecision(1)
+                  << "Camera metrics: stream=" << stream
+                  << " fps=" << fps
+                  << " payload_mbps=" << megabits_per_second
+                  << " frame_age_ms[p50=" << age_p50
+                  << ",p95=" << age_p95
+                  << ",max=" << age_max << "]"
+                  << " bridge_ms[p50=" << processing_p50
+                  << ",p95=" << processing_p95
+                  << ",max=" << processing_max << "]"
+                  << " invalid_timestamps=" << snapshot.invalid_timestamps
+                  << " negative_ages=" << snapshot.negative_ages
+                  << std::endl;
+    }
+
     class BoosterCameraBridge
     {
     public:
@@ -212,6 +351,9 @@ namespace
 
             std::cout << "Streaming Booster camera (color=" << configured_color_topic
                       << ", depth=" << configured_depth_topic << ")" << std::endl;
+            std::cout << "Frame age uses the source header clock; synchronize robot and host "
+                         "with PTP or chrony before interpreting it"
+                      << std::endl;
         }
 
         void log_dds_status()
@@ -227,6 +369,8 @@ namespace
                       << ", depth_info="
                       << depth_info_subscriber_->GetMatchedPublicationsCount()
                       << std::endl;
+            log_metrics("color", color_metrics_.snapshot_and_reset());
+            log_metrics("depth", depth_metrics_.snapshot_and_reset());
         }
 
         void shutdown() noexcept
@@ -266,14 +410,8 @@ namespace
         {
             try
             {
+                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
-
-                std::cout << "RGB callback: "
-                          << source.width() << "x" << source.height()
-                          << " encoding=" << source.encoding()
-                          << " step=" << source.step()
-                          << " bytes=" << source.data().size()
-                          << std::endl;
 
                 sensor_msgs::Image result;
                 result.header = convert_header(source.header());
@@ -285,6 +423,7 @@ namespace
                 result.data = source.data();
                 result.data_length = static_cast<int32_t>(result.data.size());
                 publish(color_output_, result);
+                color_metrics_.record(source.header(), processing_started, source.data().size());
             }
             catch (const std::exception &error)
             {
@@ -296,12 +435,9 @@ namespace
         {
             try
             {
+                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source =
                     *static_cast<const sensor_msgs::msg::CompressedImage *>(raw_message);
-
-                std::cout << "Compressed RGB callback: format=" << source.format()
-                          << " bytes=" << source.data().size()
-                          << std::endl;
 
                 sensor_msgs::Image result;
                 result.header = convert_header(source.header());
@@ -313,6 +449,7 @@ namespace
                 result.data = source.data();
                 result.data_length = static_cast<int32_t>(result.data.size());
                 publish(color_output_, result);
+                color_metrics_.record(source.header(), processing_started, source.data().size());
             }
             catch (const std::exception &error)
             {
@@ -324,18 +461,13 @@ namespace
         {
             try
             {
+                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
 
-                std::cout << "Depth callback: "
-                          << source.width() << "x" << source.height()
-                          << " encoding=" << source.encoding()
-                          << " step=" << source.step()
-                          << " bytes=" << source.data().size()
-                          << std::endl;
-
-                publish_depth(
+                const size_t published_bytes = publish_depth(
                     source.header(), source.width(), source.height(), source.encoding(),
                     source.is_bigendian() != 0, source.step(), source.data());
+                depth_metrics_.record(source.header(), processing_started, published_bytes);
             }
             catch (const std::exception &error)
             {
@@ -343,7 +475,7 @@ namespace
             }
         }
 
-        void publish_depth(
+        size_t publish_depth(
             const std_msgs::msg::Header &header,
             uint32_t width,
             uint32_t height,
@@ -395,7 +527,9 @@ namespace
                         &value, sizeof(value));
                 }
             }
+            const size_t published_bytes = meters.size();
             publish_depth_meters(header, width, height, std::move(meters));
+            return published_bytes;
         }
 
         void publish_depth_meters(
@@ -473,6 +607,8 @@ namespace
             color_info_subscriber_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>
             depth_info_subscriber_;
+        FrameAgeMetrics color_metrics_;
+        FrameAgeMetrics depth_metrics_;
         std::mutex lcm_mutex_;
         std::atomic_bool shutdown_started_{false};
     };

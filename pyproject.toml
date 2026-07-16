@@ -261,6 +261,10 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
+booster = [
+    "booster-robotics-sdk-python>=1.5.6; sys_platform == 'linux' and platform_machine == 'x86_64' or sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
 manipulation = [
     # Planning (Drake)
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
@@ -355,7 +359,7 @@ scene = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,booster,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -551,6 +555,8 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 module = [
     "a750_control",
     "a750_control.*",
+    "booster_robotics_sdk_python",
+    "booster_robotics_sdk_python.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",

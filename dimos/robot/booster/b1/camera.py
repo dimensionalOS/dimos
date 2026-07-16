@@ -16,21 +16,23 @@
 
 from __future__ import annotations
 
-import os
-
 from pydantic import Field
 
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.booster.b1.camera_config import (
+    DEFAULT_COLOR_CAMERA_INFO_TOPIC,
+    DEFAULT_COLOR_TOPIC,
+    DEFAULT_DEPTH_CAMERA_INFO_TOPIC,
+    DEFAULT_DEPTH_SCALE,
+    DEFAULT_DEPTH_TOPIC,
+    camera_network_interface_from_env,
+)
 from dimos.spec import perception
 
 _BUILD_COMMAND = "nix build .#booster-camera-native"
-_DEFAULT_COLOR_TOPIC = "rt/booster_video_stream"
-_DEFAULT_DEPTH_TOPIC = "rt/boostercamera/head/depth"
-_DEFAULT_COLOR_CAMERA_INFO_TOPIC = "rt/boostercamera/head/rgb/camera_info"
-_DEFAULT_DEPTH_CAMERA_INFO_TOPIC = "rt/boostercamera/head/depth/camera_info"
 
 
 class BoosterCameraConfig(NativeModuleConfig):
@@ -40,14 +42,14 @@ class BoosterCameraConfig(NativeModuleConfig):
     executable: str = "result/bin/booster_camera_native"
     build_command: str | None = _BUILD_COMMAND
     log_format: LogFormat = LogFormat.TEXT
-    network_interface: str | None = Field(default_factory=lambda: os.environ.get("ROBOT_INTERFACE"))
-    depth_scale: float = Field(default=0.001, gt=0.0)
+    network_interface: str | None = Field(default_factory=camera_network_interface_from_env)
+    depth_scale: float = Field(default=DEFAULT_DEPTH_SCALE, gt=0.0)
     image_reliable: bool = True
     color_compressed: bool = True
-    color_topic: str = _DEFAULT_COLOR_TOPIC
-    depth_topic: str = _DEFAULT_DEPTH_TOPIC
-    color_camera_info_topic: str = _DEFAULT_COLOR_CAMERA_INFO_TOPIC
-    depth_camera_info_topic: str = _DEFAULT_DEPTH_CAMERA_INFO_TOPIC
+    color_topic: str = DEFAULT_COLOR_TOPIC
+    depth_topic: str = DEFAULT_DEPTH_TOPIC
+    color_camera_info_topic: str = DEFAULT_COLOR_CAMERA_INFO_TOPIC
+    depth_camera_info_topic: str = DEFAULT_DEPTH_CAMERA_INFO_TOPIC
 
 
 class BoosterCamera(NativeModule, perception.DepthCamera):

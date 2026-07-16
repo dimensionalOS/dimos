@@ -518,6 +518,19 @@ wheels = [
 ]
 
 [[package]]
+name = "booster-robotics-sdk-python"
+version = "1.5.6"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/bf/12d1323c6c3e164ba29891266bbbb55b3e196839949e4aab328f6d4989b1/booster_robotics_sdk_python-1.5.6-cp310-cp310-manylinux_2_34_aarch64.whl", hash = "sha256:c7672f99866aab76dcc084f171c9d7f3e37a587377f4fce73490028272239da8", size = 6810206, upload-time = "2026-07-08T06:56:06.849Z" },
+    { url = "https://files.pythonhosted.org/packages/67/36/417cdae70f6c9437c8e85ea4dcf01fced672fa6e2dc4ef168f6bb9e80ea1/booster_robotics_sdk_python-1.5.6-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:40f3b2b01f1d63ff881fa395bb3b8cec60df9f8be0976844cffa6af075866aeb", size = 7462123, upload-time = "2026-07-08T06:56:08.964Z" },
+    { url = "https://files.pythonhosted.org/packages/03/7d/7ed42de5c0aa01570014bd0b47360dbbdebafcba9a9671cc3150b29e3a19/booster_robotics_sdk_python-1.5.6-cp311-cp311-manylinux_2_34_aarch64.whl", hash = "sha256:a06ca2d990bb6b72a12d930b4f3aa8695059b91af4212284b26020b7eb1e8eea", size = 6811353, upload-time = "2026-07-08T06:56:10.984Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/63/21a3afbe131bbbb89a23123f5de3e0c9436b0aeb545514b66e4d039014cf/booster_robotics_sdk_python-1.5.6-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:2ee5118955ecd54a0a16811667f0bce43676e7e419c4ee434f40c24bfecdd5a3", size = 7466757, upload-time = "2026-07-08T06:56:12.896Z" },
+    { url = "https://files.pythonhosted.org/packages/18/fb/c873809d949110d3f3f621ead0a834f3c33d02ac6f9300a52f87e62ead15/booster_robotics_sdk_python-1.5.6-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:e322f8f9696fa1ed2e1df1bf986164ca26c80afa8cc0b34dc258033dcfd677bf", size = 6812960, upload-time = "2026-07-08T06:56:14.925Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/9e/f7959e82e05b4d1075c1fd7cb3725c2c6815caecfb8e2889180f3ee650c3/booster_robotics_sdk_python-1.5.6-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:e5387a61b7cf6cfb3c09dc47cf133088f099607cb9caf63ad4c7bcc5171c51e7", size = 7470955, upload-time = "2026-07-08T06:56:16.836Z" },
+]
+
+[[package]]
 name = "brax"
 version = "0.14.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1589,6 +1602,7 @@ agents = [
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aiortc" },
+    { name = "booster-robotics-sdk-python", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
@@ -1685,6 +1699,9 @@ base = [
     { name = "ultralytics" },
     { name = "uvicorn" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+]
+booster = [
+    { name = "booster-robotics-sdk-python", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
 cpu = [
     { name = "onnxruntime" },
@@ -2008,13 +2025,14 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
+    { name = "booster-robotics-sdk-python", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'booster') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'booster')", specifier = ">=1.5.6" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "booster", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -2121,7 +2139,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "booster", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
