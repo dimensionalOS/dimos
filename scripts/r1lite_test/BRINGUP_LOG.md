@@ -722,3 +722,56 @@ kills the LCM bus and dimos prompts for a sudo it cannot use.
   (pending PR item). Cameras/joints are unaffected.
 - Laptop docker 29.6 uses the containerd image store → `docker save` emits an
   OCI archive; robot docker 29.1.3 loaded it without complaint.
+
+## Day 4 (cont.) — full test suite re-run ONBOARD: all PASS, + RC mode map extended
+
+All tests run from the robot's own container (not the laptop), with
+`FASTRTPS_DEFAULT_PROFILES_FILE=/app/scripts/r1lite_test/fastdds_udp_only.xml`:
+
+| Test | Result |
+|---|---|
+| test_00 recon / test_01 topics / test_02 arm feedback | PASS |
+| test_04 arm wrist roll | **PASS** — `wrist at +0.236 (target +0.236)`, returned `+0.036 (home +0.036)` |
+| test_03 chassis | FAIL → **PASS** after RC → mode 5 |
+
+### The chassis FAIL was our own docstring
+First run: `Peak measured speed during move: 0.0003 m/s` — the exact 0.3mm/s
+creep of the Day-2 saga. But the VCU was NOT latched. `test_03`'s header and
+safety prompt said **"RC idle/off"** — written before the Day-2 RC mode map and
+never corrected. RC OFF is the one state that guarantees a veto.
+Fixed in `82f87e0af` (header + prompt now demand RC ON / all switches pos 1 and
+show the verify command, with the history inline so it isn't "cleaned up").
+
+### RC mode map — new data point, Day-2 entry was situational
+Measured this session on `/controller`:
+
+| RC state | mode | axes | Day-2 note |
+|---|---|---|---|
+| **RC OFF** | **0** | 0.0 | Day 2 recorded **3** ("receiver failsafe") — so RC-off is NOT always 3. |
+| RC ON, manual combo (sw1@2+sw2@3+sw3@mid) | 3 | 1024.0 (centered) | matches |
+| RC ON, all switches position 1 | 5 | — | matches; test_03 then PASSED |
+
+Take the map as *indicative*; the reliable rule is **verify `mode: 5` before
+blaming anything else**. Plausible reading: 3 = bound receiver failing safe with
+the transmitter off; 0 = no controller signal at all. Not worth resolving —
+the operational rule is unaffected.
+
+### Diagnostic that separates veto from latched VCU in seconds
+Veto (mode≠5) and latched VCU produce the **identical** 0.3mm/s creep — this is
+what cost Day 2 an entire day. They are trivially distinguishable:
+1. `ros2 topic echo /controller --once` → mode≠5 ⇒ veto, fix the RC, done.
+2. **Does RC manual drive the wheels?** Yes ⇒ VCU healthy (a latched VCU
+   eventually kills RC manual too). Confirmed live this session: manual drove.
+3. mode 5 + still creeping + RC manual dead ⇒ latched VCU ⇒ power cycle.
+
+### `hdas_msg` does not exist in our container
+`ros2 topic echo /controller` inside the container:
+`The message type 'hdas_msg/msg/ControllerSignalStamped' is invalid`.
+Vendor custom types live only in the Galaxea workspace. Echo them from the HOST:
+```
+source /opt/ros/humble/setup.bash && source ~/galaxea/install/setup.bash
+export ROS_DOMAIN_ID=2 && ros2 topic echo /controller --once
+```
+(dimos itself is unaffected — it defines its own message classes and reads
+/hdas/* fine; it is only the ROS **CLI** inside the container that can't decode
+vendor types.)
