@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 import importlib
+import importlib.resources
 import importlib.util
 import inspect
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -39,27 +39,51 @@ OPTIONAL_TASK_MODULES = {"onnxruntime", "pinocchio"}
 UNREGISTERED_TASK_DIRS: set[str] = set()
 
 
+def _task_dirs() -> list[Any]:
+    """Task subpackage directories under ``dimos.control.tasks``.
+
+    Enumerated via ``importlib.resources`` so the guard sees the same dirs
+    however dimos is installed (editable, wheel, or zip), not only a source
+    checkout. The result is intentionally independent of the registry's own
+    discovery: these tests exist to catch dirs the registry silently skips.
+    """
+    root = importlib.resources.files("dimos.control.tasks")
+    dirs = (
+        child
+        for child in root.iterdir()
+        if child.is_dir() and not child.name.startswith(("_", "."))
+    )
+    return sorted(dirs, key=lambda child: child.name)
+
+
+def _contains_task_code(directory: Any) -> bool:
+    """True if the dir tree holds a non-underscore ``.py`` module (real task code)."""
+    for child in directory.iterdir():
+        if child.is_dir():
+            if _contains_task_code(child):
+                return True
+        elif child.name.endswith(".py") and not child.name.startswith("_"):
+            return True
+    return False
+
+
 def test_every_task_dir_has_a_manifest() -> None:
-    pkg = importlib.import_module("dimos.control.tasks")
     checked = 0
-    for root in pkg.__path__:
-        for child in sorted(Path(root).iterdir()):
-            if not child.is_dir() or child.name.startswith(("_", ".")):
-                continue
-            if not any(not f.name.startswith("_") for f in child.rglob("*.py")):
-                continue
-            if child.name in UNREGISTERED_TASK_DIRS:
-                continue
-            manifest = child / "_registry.py"
-            assert manifest.exists(), (
-                f"{child} contains task code but no _registry.py; discover() would silently skip it"
-            )
-            manifest_mod = importlib.import_module(f"dimos.control.tasks.{child.name}._registry")
-            names = set(manifest_mod.TASK_FACTORIES)
-            assert names, f"{manifest} declares no tasks"
-            missing = names - set(control_task_registry.available())
-            assert not missing, f"{manifest} declares {missing} missing from available()"
-            checked += 1
+    for child in _task_dirs():
+        if not _contains_task_code(child):
+            continue
+        if child.name in UNREGISTERED_TASK_DIRS:
+            continue
+        assert (child / "_registry.py").is_file(), (
+            f"{child.name} contains task code but no _registry.py; "
+            "discover() would silently skip it"
+        )
+        manifest_mod = importlib.import_module(f"dimos.control.tasks.{child.name}._registry")
+        names = set(manifest_mod.TASK_FACTORIES)
+        assert names, f"{child.name}/_registry.py declares no tasks"
+        missing = names - set(control_task_registry.available())
+        assert not missing, f"{child.name}/_registry.py declares {missing} missing from available()"
+        checked += 1
     assert checked > 0
 
 
@@ -79,15 +103,11 @@ def test_declared_task_factory_paths_resolve() -> None:
 
 
 def _manifest_modules() -> list[ModuleType]:
-    pkg = importlib.import_module("dimos.control.tasks")
     modules = []
-    for root in pkg.__path__:
-        for child in sorted(Path(root).iterdir()):
-            if not child.is_dir() or child.name.startswith(("_", ".")):
-                continue
-            if not (child / "_registry.py").exists():
-                continue
-            modules.append(importlib.import_module(f"dimos.control.tasks.{child.name}._registry"))
+    for child in _task_dirs():
+        if not (child / "_registry.py").is_file():
+            continue
+        modules.append(importlib.import_module(f"dimos.control.tasks.{child.name}._registry"))
     return modules
 
 
