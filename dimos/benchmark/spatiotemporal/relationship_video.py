@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
+import stat
 import tempfile
 
 import cv2
@@ -160,6 +161,11 @@ def _box_pixels(detection: DetectedObject, width: int, height: int) -> tuple[int
     )
 
 
+def _detection_label(detection: DetectedObject) -> str:
+    """Join a box label to the object ID referenced by relation text."""
+    return f"{detection.label} [{detection.object_id}] {detection.confidence:.2f}"
+
+
 def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
     height, width = frame.shape[:2]
     style = _overlay_style(width, height)
@@ -176,7 +182,7 @@ def _draw_snapshot(frame: np.ndarray, snapshot: RelationshipSnapshot) -> None:
             color,
             style.text_thickness,
         )
-        label = f"{detection.label} {detection.confidence:.2f}"
+        label = _detection_label(detection)
         label_origin = _label_origin(
             label,
             x_min=x_min,
@@ -262,10 +268,11 @@ def render_relationship_video(
     """Render full-rate overlays while refreshing detections at a fixed period."""
     if not math.isfinite(update_period_s) or update_period_s <= 0.0:
         raise ValueError("update period must be finite and positive")
-    capture = cv2.VideoCapture(str(source_path))
+    capture: cv2.VideoCapture | None = None
     writer: cv2.VideoWriter | None = None
     frame_count = 0
     try:
+        capture = cv2.VideoCapture(str(source_path))
         capture_open = getattr(capture, "isOpened", None)
         if capture_open is not None and not capture_open():
             raise RuntimeError(f"failed to open source video: {source_path}")
@@ -308,7 +315,8 @@ def render_relationship_video(
             raise RuntimeError(f"source video contains no decodable frames: {source_path}")
     finally:
         try:
-            capture.release()
+            if capture is not None:
+                capture.release()
         finally:
             try:
                 if writer is not None:
@@ -375,6 +383,8 @@ def main(
         raise ValueError(f"input must be a regular file: {source_path}")
     if output_path.is_symlink():
         raise ValueError(f"output must not be a symlink: {output_path}")
+    if output_path.exists() and not output_path.is_file():
+        raise ValueError(f"output must be a regular file path: {output_path}")
     if output_path.exists() and os.path.samefile(source_path, output_path):
         raise ValueError("input and output must be different files")
     if source_path.resolve() == output_path.resolve():
@@ -382,6 +392,7 @@ def main(
     if not output_path.parent.is_dir():
         raise ValueError(f"output parent must be an existing directory: {output_path.parent}")
 
+    output_mode = stat.S_IMODE(output_path.stat().st_mode) if output_path.exists() else 0o644
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{output_path.stem}-",
         suffix=".tmp.mp4",
@@ -390,6 +401,7 @@ def main(
     os.close(file_descriptor)
     temporary_path = Path(temporary_name)
     try:
+        os.chmod(temporary_path, output_mode)
         detector = detector_factory(tuple(args.prompts))
         render_relationship_video(
             source_path,

@@ -15,6 +15,7 @@
 """Tests for dynamic robot-relationship video snapshots."""
 
 from pathlib import Path
+import stat
 
 import cv2
 import numpy as np
@@ -25,6 +26,7 @@ from dimos.benchmark.spatiotemporal.ports import DetectedObject
 from dimos.benchmark.spatiotemporal.relationship_video import (
     DEFAULT_PROMPTS,
     _default_detector_factory,
+    _detection_label,
     _label_origin,
     _overlay_style,
     derive_relationship_snapshot,
@@ -134,6 +136,12 @@ def test_relationship_snapshot_contract_is_deterministic_and_explicit() -> None:
         derive_relationship_snapshot((detections[2],), robot_label="quadruped robot").message
         == "No other objects detected"
     )
+
+
+def test_detection_label_links_box_to_relationship_object_id() -> None:
+    detection = _detection("track-17", "refrigerator", (0.1, 0.1, 0.2, 0.2), 0.57)
+
+    assert _detection_label(detection) == "refrigerator [track-17] 0.57"
 
 
 def test_overlay_style_keeps_portrait_hd_text_readable() -> None:
@@ -281,6 +289,22 @@ def test_renderer_attempts_all_cleanup_when_processing_and_release_fail(
     assert detector.closed
 
 
+def test_renderer_closes_detector_when_capture_construction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detector = _ChangingDetector()
+
+    def fail_capture(_: str) -> None:
+        raise RuntimeError("capture construction failed")
+
+    monkeypatch.setattr(cv2, "VideoCapture", fail_capture)
+
+    with pytest.raises(RuntimeError, match="capture construction failed"):
+        render_relationship_video(Path("source.mp4"), Path("output.mp4"), detector)
+
+    assert detector.closed
+
+
 def test_cli_contract_is_configurable_safe_and_atomic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -338,6 +362,7 @@ def test_cli_contract_is_configurable_safe_and_atomic(
     assert configured_prompts == [("robot dog", "refrigerator")]
     assert render_options == [("robot dog", 0.5)]
     assert output.is_file()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o644
     assert "Wrote 2 frames" in capsys.readouterr().out
 
     with pytest.raises(ValueError, match="different files"):
@@ -347,6 +372,11 @@ def test_cli_contract_is_configurable_safe_and_atomic(
     symlink_output.symlink_to(output)
     with pytest.raises(ValueError, match="symlink"):
         main([str(source), str(symlink_output)], detector_factory=detector_factory)
+
+    directory_output = tmp_path / "output-directory"
+    directory_output.mkdir()
+    with pytest.raises(ValueError, match="regular file path"):
+        main([str(source), str(directory_output)], detector_factory=detector_factory)
 
     with pytest.raises(SystemExit):
         main(
