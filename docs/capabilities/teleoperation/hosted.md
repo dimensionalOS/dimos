@@ -40,7 +40,7 @@ All broker-facing modules share a single broker session, so there's exactly
 one video track and one control plane per robot — see
 [How it connects](#how-it-connects) for the channel-level detail.
 
-How low is the latency in practice? With the World Cup on, four Dimensional teammates across the globe; San Francisco, Bangalore, Buenos Aires, and Shanghai played soccer with Go2s hosted in SF, over the public internet. 
+How low is the latency in practice? With the World Cup on, four Dimensional teammates across the globe; San Francisco, Bangalore, Buenos Aires, and Shanghai played soccer with Go2s hosted in SF, over the public internet.
 
 Below are the latencies recorded:
 
