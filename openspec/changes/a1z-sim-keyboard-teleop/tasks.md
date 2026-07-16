@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Hydrate and unpack the tracked A1Z description, convert the G1Z fixed finger joints into a 0–0.015 m driver/follower prismatic pair with the accepted opposing outward diagonal axes, preserve source mesh names and fixed closed pose at zero, add the follower URDF mimic declaration, and repack the local LFS asset deliberately.
 - [ ] 1.2 Add a repeatable A1Z URDF-to-MJCF generation path that preserves repository-relative mesh resolution, emits seven ordered arm-plus-driver actuators, and emits the equivalent MuJoCo equality for the follower mimic.
-- [x] 1.3 Add the deterministic MuJoCo tabletop scene: table-edge arm mount, fixed lighting, a 5 cm cube, visual-only finger meshes, heuristic primitive finger collision pads, and an offset wrist RGB camera configured for 640×480 at 30 FPS.
+- [x] 1.3 Add the deterministic MuJoCo tabletop scene: table-edge arm mount, fixed lighting, a 5 cm cube, explicit visible physical A1Z finger-pad inserts with matching render/collision geometry, and an offset wrist RGB camera configured for 640×480 at 30 FPS. The inserts are non-vendor CAD fixtures.
 - [ ] 1.4 Compile the final scene from its repository location and add focused structural validation for arm/gripper joint order, driver range, equality coupling, seven-actuator mapping, camera availability, and asset resolution.
 - [ ] 1.5 Establish provisional A1Z home, table/base, cube, camera, and collision-pad transforms; apply the home to simulator startup/planning; configure runtime 30 FPS; then adjust scene transforms only from observed manual simulation results.
 
@@ -28,5 +28,5 @@
 - [ ] 5.1 Run `openspec validate a1z-sim-keyboard-teleop`.
 - [ ] 5.2 Run focused pytest targets for the keyboard module, A1Z configuration/blueprint, control-task integration, and MuJoCo scene validation.
 - [ ] 5.3 Run the applicable documentation link/Markdown validation for the updated user documentation.
-- [ ] 5.4 Manually run `dimos --simulation run keyboard-teleop-a1z` and verify the wrist RGB view, deterministic table/cube scene, arm motion, latched gripper endpoints, full finger opening sweep without unintended collision, and manual cube contact.
+- [ ] 5.4 Manually run `dimos --simulation run keyboard-teleop-a1z` and verify the wrist RGB view, deterministic table/cube scene, arm motion, latched gripper endpoints, visible physical A1Z finger-pad inserts with matching render/collision geometry, full finger opening sweep without unintended collision, and manual cube contact. Treat the inserts as non-vendor CAD fixtures; do not infer hardware/data parity.
 - [ ] 5.5 Manually restart the simulated process and verify restoration of the documented initial Stage 1 scene; do not add episode lifecycle or persistence controls.

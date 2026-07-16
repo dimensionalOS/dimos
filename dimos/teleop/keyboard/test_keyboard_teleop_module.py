@@ -91,6 +91,47 @@ def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
     assert angular == (ANGULAR_SPEED, -ANGULAR_SPEED, ANGULAR_SPEED)
 
 
+def test_keyup_of_last_motion_key_publishes_zero_immediately(
+    module: KeyboardTeleopModule, mocker
+) -> None:
+    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    held = {keyboard_mod.pygame.K_w}
+    event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
+
+    assert not module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+
+    assert held == set()
+    assert publish.call_count == 1
+    msg = publish.call_args.args[0]
+    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
+    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+
+
+def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
+    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    held = {keyboard_mod.pygame.K_w, keyboard_mod.pygame.K_a}
+    event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
+
+    module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+
+    assert held == {keyboard_mod.pygame.K_a}
+    assert publish.call_count == 1
+    msg = publish.call_args.args[0]
+    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, LINEAR_SPEED, 0.0]
+
+
+def test_keyup_publishes_directly_without_timeout_wait(
+    module: KeyboardTeleopModule, mocker
+) -> None:
+    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    held = {keyboard_mod.pygame.K_w}
+    event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
+
+    module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+
+    publish.assert_called_once()
+
+
 def test_set_gripper_position_publishes_partial_joint_state_only_on_change(
     module: KeyboardTeleopModule, mocker
 ) -> None:

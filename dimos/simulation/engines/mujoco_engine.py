@@ -157,6 +157,7 @@ class MujocoEngine(SimulationEngine):
         raycast_lidars: list[RaycastLidarConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
+        post_integrate: StepHook | None = None,
         assets: dict[str, bytes] | None = None,
         model: mujoco.MjModel | None = None,
         robot_sim_spec: RobotSimSpec | None = None,
@@ -168,6 +169,7 @@ class MujocoEngine(SimulationEngine):
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
+        self._post_integrate: StepHook | None = post_integrate
         self._spawn_xy = spawn_xy
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
@@ -246,14 +248,19 @@ class MujocoEngine(SimulationEngine):
         self,
         before: StepHook | None = None,
         after: StepHook | None = None,
+        post_integrate: StepHook | None = None,
     ) -> None:
         """Install pre/post step hooks after construction.
 
         Use when the hooks depend on engine state (joint count, gripper
-        index) that isn't known until the model is loaded.
+        index) that isn't known until the model is loaded. ``post_integrate``
+        runs immediately after ``mj_step`` and before any cached state,
+        publication, or rendering. Exceptions from this hook stop the
+        simulation thread rather than allowing unsafe state to continue.
         """
         self._on_before_step = before
         self._on_after_step = after
+        self._post_integrate = post_integrate
 
     def _resolve_model_path(self, config_path: Path) -> Path:
         if config_path is None:
@@ -610,6 +617,8 @@ class MujocoEngine(SimulationEngine):
                     logger.error("on_before_step failed", error=str(exc))
             self._apply_control()
             mujoco.mj_step(self._model, self._data)
+            if self._post_integrate is not None:
+                self._post_integrate(self)
             if sync_viewer:
                 assert m_viewer is not None
                 m_viewer.sync()  # type: ignore[attr-defined]

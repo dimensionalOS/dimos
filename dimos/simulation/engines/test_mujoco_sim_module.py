@@ -127,7 +127,9 @@ def test_engine_disconnect_reports_timeout_and_keeps_live_thread() -> None:
     assert engine.connected is False
 
 
-def test_module_stop_concurrent_calls_cleanup_once_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_module_stop_concurrent_calls_cleanup_once_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     entered_disconnect = threading.Event()
     release_disconnect = threading.Event()
     events: list[str] = []
@@ -348,6 +350,101 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
         thread.join(timeout=1.0)
         assert not thread.is_alive()
     assert results == [True, True]
+
+
+def _write_hook_test_xml(path: Path) -> None:
+    path.write_text(
+        """
+<mujoco model="hook-test">
+  <option timestep="0.001"/>
+  <worldbody>
+    <body name="arm">
+      <joint name="joint1" type="hinge" axis="0 0 1"/>
+      <geom type="box" size="0.1 0.1 0.1" mass="1"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="act1" joint="joint1"/>
+  </actuator>
+</mujoco>
+""".strip()
+    )
+
+
+def _wait_for_engine_stop(engine: MujocoEngine) -> None:
+    deadline = time.monotonic() + 1.0
+    while engine.connected and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert not engine.connected
+
+
+@pytest.mark.mujoco
+def test_post_integrate_runs_before_state_update_and_after_hook(
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "hook-test.xml"
+    _write_hook_test_xml(model_path)
+    events: list[str] = []
+    observed_after: list[float] = []
+
+    def before(engine: MujocoEngine) -> None:
+        del engine
+        events.append("before")
+
+    def post_integrate(engine: MujocoEngine) -> None:
+        events.append("post_integrate")
+        engine.data.qpos[0] = 0.75
+
+    def after(engine: MujocoEngine) -> None:
+        events.append("after")
+        observed_after.append(engine.joint_positions[0])
+        engine.request_stop()
+
+    engine = MujocoEngine(
+        config_path=model_path,
+        headless=True,
+        on_before_step=before,
+        on_after_step=after,
+        post_integrate=post_integrate,
+    )
+    assert engine.connect()
+    try:
+        _wait_for_engine_stop(engine)
+    finally:
+        engine.disconnect()
+
+    assert events == ["before", "post_integrate", "after"]
+    assert observed_after == [pytest.approx(0.75)]
+
+
+@pytest.mark.mujoco
+def test_post_integrate_exception_stops_without_after_publication(tmp_path: Path) -> None:
+    model_path = tmp_path / "hook-test.xml"
+    _write_hook_test_xml(model_path)
+    after_called = False
+
+    def post_integrate(engine: MujocoEngine) -> None:
+        del engine
+        raise RuntimeError("unsafe post-integrate mutation")
+
+    def after(engine: MujocoEngine) -> None:
+        del engine
+        nonlocal after_called
+        after_called = True
+
+    engine = MujocoEngine(
+        config_path=model_path,
+        headless=True,
+        post_integrate=post_integrate,
+        on_after_step=after,
+    )
+    assert engine.connect()
+    try:
+        _wait_for_engine_stop(engine)
+    finally:
+        engine.disconnect()
+
+    assert not after_called
 
 
 def _write_scene_xml(path: Path) -> None:

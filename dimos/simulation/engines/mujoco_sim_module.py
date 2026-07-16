@@ -364,6 +364,19 @@ class MujocoSimModule(
     def _depth_optical_frame(self) -> str:
         return f"{self.config.camera_name}_depth_optical_frame"
 
+    def _post_integrate(self, engine: MujocoEngine) -> None:
+        """Model-specific extension point before state publication."""
+        del engine
+
+    def _pre_integrate(self, engine: MujocoEngine) -> None:
+        """Model-specific extension point after commands and before physics."""
+        del engine
+
+    def _before_step(self, engine: MujocoEngine) -> None:
+        if self._sim_hooks is not None:
+            self._sim_hooks.pre_step(engine)
+        self._pre_integrate(engine)
+
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
         if self._camera_info_base is None:
@@ -535,8 +548,9 @@ class MujocoSimModule(
             gripper_control_mapping=self.config.gripper_control_mapping,
         )
         self._engine.set_step_hooks(
-            before=self._sim_hooks.pre_step,
+            before=self._before_step,
             after=self._publish_shm_and_lcm,
+            post_integrate=self._post_integrate,
         )
 
         # Start physics (sim thread spawned inside engine.connect()).
@@ -698,7 +712,9 @@ class MujocoSimModule(
                     errors.append(("shm.cleanup", exc))
 
             if not publish_stopped or not engine_stopped:
-                errors.append(("stop", RuntimeError("simulation threads did not stop before deadline")))
+                errors.append(
+                    ("stop", RuntimeError("simulation threads did not stop before deadline"))
+                )
             else:
                 self._sim_hooks = None
                 self._camera_info_base = None

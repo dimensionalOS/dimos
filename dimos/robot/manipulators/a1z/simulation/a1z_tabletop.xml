@@ -1,55 +1,66 @@
 <mujoco model="a1z_tabletop">
-  <compiler angle="radian" meshdir="assets" />
-  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" />
+  <compiler angle="radian" meshdir="assets" balanceinertia="true" />
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="20" />
   <asset>
-    <mesh name="arm_link1.STL" file="arm_link1.STL" />
-    <mesh name="arm_link2.STL" file="arm_link2.STL" />
-    <mesh name="arm_link3.STL" file="arm_link3.STL" />
-    <mesh name="arm_link4.STL" file="arm_link4.STL" />
-    <mesh name="arm_link5.STL" file="arm_link5.STL" />
-    <mesh name="arm_link6.STL" file="arm_link6.STL" />
-    <mesh name="base_link.STL" file="base_link.STL" />
-    <mesh name="gripper_finger_left_link.STL" file="gripper_finger_left_link.STL" />
-    <mesh name="gripper_finger_rIght_link.STL" file="gripper_finger_rIght_link.STL" />
-    <texture name="cube_texture" type="2d" builtin="flat" width="32" height="32" rgb1="0.9 0.2 0.05" rgb2="0.9 0.2 0.05" />
-    <material name="cube_material" texture="cube_texture" />
+    <mesh name="arm_link1.STL" file="arm_link1.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="arm_link2.STL" file="arm_link2.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="arm_link3.STL" file="arm_link3.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="arm_link4.STL" file="arm_link4.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="arm_link5.STL" file="arm_link5.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="arm_link6.STL" file="arm_link6.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="base_link.STL" file="base_link.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="gripper_finger_left_link.STL" file="gripper_finger_left_link.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="gripper_finger_rIght_link.STL" file="gripper_finger_rIght_link.STL" refpos="0 0 0" refquat="1 0 0 0" />
+    <mesh name="a1z_simulation_pad" vertex="-0.0042 -0.00075 -0.007 0.0042 -0.00075 -0.007 0.005 -0.00075 -0.0062 0.005 -0.00075 0.0062 0.0042 -0.00075 0.007 -0.0042 -0.00075 0.007 -0.005 -0.00075 0.0062 -0.005 -0.00075 -0.0062 -0.0042 0.00075 -0.007 0.0042 0.00075 -0.007 0.005 0.00075 -0.0062 0.005 0.00075 0.0062 0.0042 0.00075 0.007 -0.0042 0.00075 0.007 -0.005 0.00075 0.0062 -0.005 0.00075 -0.0062" face="7 1 2 7 2 3 7 3 4 7 4 5 7 5 6 7 6 7 8 2 1 8 3 2 8 4 3 8 5 4 8 6 5 8 7 6 0 1 9 1 2 10 2 3 11 3 4 12 4 5 13 5 6 14 6 7 15 7 0 8 0 9 8 1 10 9 2 11 10 3 12 11 4 13 12 5 14 13 6 15 14 7 8 15" />
+    <material name="a1z_simulation_pad_material" rgba="0.08 0.55 0.95 1" />
+    <texture name="pillar_texture" type="2d" builtin="flat" width="32" height="32" rgb1="0.9 0.2 0.05" rgb2="0.9 0.2 0.05" />
+    <material name="pillar_material" texture="pillar_texture" />
   </asset>
   <worldbody>
     <light name="key_light" pos="1 -1 2.5" dir="-0.3 0.3 -1" directional="true" />
-    <body name="table" pos="0 0 0.38">
-      <geom name="tabletop" type="box" size="0.65 0.5 0.03" pos="0 0 0" friction="0.8 0.1 0.1" />
-      <geom name="table_leg" type="box" size="0.05 0.05 0.38" pos="-0.5 0  -0.38" />
+    <body name="table" pos="0.840000000 -0.000000000 0.384623320" euler="0 0 3.141592653589793">
+      <geom name="tabletop" type="box" size="0.65 0.5 0.03" pos="0 0 0" friction="1.2 0.1 0.1" contype="1" conaffinity="7" />
+      <geom name="table_leg" type="box" size="0.05 0.05 0.38" pos="0.5 0  -0.38" />
     </body>
     <body name="a1z" pos="0.42 0 0.41">
       <body name="base_link">
-        <geom name="base_link_visual" type="mesh" mesh="base_link.STL" contype="0" conaffinity="0" mass="0.1" />
+        <inertial mass="1.02443598" pos="3E-06 -4.871E-05 0.03017045" fullinertia="0.00175236 0.00088755 0.00159613 -1E-08 3E-08 1.98E-06" />
+        <geom name="base_link_visual" type="mesh" mesh="base_link.STL" contype="0" conaffinity="0" mass="0" />
         <body name="arm_link1" pos="0 0 0.075" euler="0 0 0">
+          <inertial mass="0.10959668" pos="0.0051248 0.00352265 0.01887119" fullinertia="0.00015534 4.537E-05 0.000148 -3.05E-06 -1.22E-05 -5.9E-06" />
           <joint name="arm_joint1" type="hinge" damping="1" axis="0 0 1" range="-2.094 2.094" />
-          <geom name="arm_link1_visual" type="mesh" mesh="arm_link1.STL" contype="0" conaffinity="0" mass="0.1" />
+          <geom name="arm_link1_visual" type="mesh" mesh="arm_link1.STL" contype="0" conaffinity="0" mass="0" />
           <body name="arm_link2" pos="0.02 0 0.043" euler="0 0 0">
+            <inertial mass="1.63304631" pos="-0.1316067 -0.00021276 2.29E-06" fullinertia="0.00097959 0.02376811 0.02397316 6.844E-05 -6.9E-07 4E-08" />
             <joint name="arm_joint2" type="hinge" damping="1" axis="0 1 0" range="0 3.142" />
-            <geom name="arm_link2_visual" type="mesh" mesh="arm_link2.STL" contype="0" conaffinity="0" mass="0.1" />
+            <geom name="arm_link2_visual" type="mesh" mesh="arm_link2.STL" contype="0" conaffinity="0" mass="0" />
             <body name="arm_link3" pos="-0.264 0 0" euler="0 0 0">
+              <inertial mass="0.99109270" pos="0.15940760 -0.00005646 0.05493054" fullinertia="0.00071333 0.00923813 0.00933122 -0.00008986 -0.00072729 -0.00001487" />
               <joint name="arm_joint3" type="hinge" damping="1" axis="0 1 0" range="-3.142 0" />
-              <geom name="arm_link3_visual" type="mesh" mesh="arm_link3.STL" contype="0" conaffinity="0" mass="0.1" />
+              <geom name="arm_link3_visual" type="mesh" mesh="arm_link3.STL" contype="0" conaffinity="0" mass="0" />
               <body name="arm_link4" pos="0.245 0 0.06" euler="0 0 0">
+                <inertial mass="0.48309874" pos="0.06143699 0.00107414 0.05309221" fullinertia="0.00043595 0.00059163 0.00047698 0.00003158 -0.00023452 0.00002754" />
                 <joint name="arm_joint4" type="hinge" damping="1" axis="0 1 0" range="-1.309 1.309" />
-                <geom name="arm_link4_visual" type="mesh" mesh="arm_link4.STL" contype="0" conaffinity="0" mass="0.1" />
+                <geom name="arm_link4_visual" type="mesh" mesh="arm_link4.STL" contype="0" conaffinity="0" mass="0" />
                 <body name="arm_link5" pos="0.074 0 0.042" euler="0 0 0">
+                  <inertial mass="0.36875049" pos="-0.00366248 -2.724E-05 -0.03904971" fullinertia="0.00010146 0.00011993 8.271E-05 -7E-08 5.55E-06 0" />
                   <joint name="arm_joint5" type="hinge" damping="1" axis="0 0 1" range="-1.484 1.484" />
-                  <geom name="arm_link5_visual" type="mesh" mesh="arm_link5.STL" contype="0" conaffinity="0" mass="0.1" />
+                  <geom name="arm_link5_visual" type="mesh" mesh="arm_link5.STL" contype="0" conaffinity="0" mass="0" />
                   <body name="arm_link6" pos="0.0235 0 -0.042" euler="0 0 0">
-                    <joint name="arm_joint6" type="hinge" damping="1" axis="1 0 0" range="-2.007 2.007" />
-                    <geom name="arm_link6_visual" type="mesh" mesh="arm_link6.STL" contype="0" conaffinity="0" mass="0.1" />
+                    <inertial mass="0.55665538" pos="0.04156509 0.00002475 -0.00009217" fullinertia="0.00030053 0.00037247 0.00041454 0.00030053 -0.00000170 -0.00000005" />
+                    <joint name="arm_joint6" type="hinge" damping="10" axis="1 0 0" range="-2.007 2.007" />
+                    <geom name="arm_link6_visual" type="mesh" mesh="arm_link6.STL" contype="0" conaffinity="0" mass="0" />
                     <body name="gripper_finger_left_link" pos="0.0727 -0.025 0.018" euler="0 0 0">
-                      <joint name="gripper_finger_left_joint" type="slide" damping="1" axis="0 -0.811 0.584" range="0 0.015" />
-                      <geom name="gripper_finger_left_link_visual" type="mesh" mesh="gripper_finger_left_link.STL" contype="0" conaffinity="0" mass="0.1" />
-                      <geom name="left_pad" type="box" size="0.025 0.004 0.012" pos="0.105 0 0" friction="0.8 0.1 0.1" />
+                      <inertial mass="0.13786800" pos="0.02727101 0.02205781 -0.00976829" fullinertia="0.00008166 0.00011031 0.00014642 -0.00004615 0.00002382 0.00002050" />
+                      <joint name="gripper_finger_left_joint" type="slide" damping="20" armature="0.05" axis="0 1 0" range="0 0.015" margin="0.0001" />
+                      <geom name="gripper_finger_left_link_visual" type="mesh" mesh="gripper_finger_left_link.STL" contype="0" conaffinity="0" mass="0" />
+                      <geom name="left_pad" type="mesh" mesh="a1z_simulation_pad" quat="0.719925517 0.252071023 -0.289473795 -0.578249402" pos="0.091205561 0.025889027 -0.021867675" contype="2" conaffinity="5" condim="4" friction="2 0.01 0.001" margin="0.001" priority="1" solimp="0.95 0.99 0.001" solref="0.02 1" mass="0" material="a1z_simulation_pad_material" />
                     </body>
                     <body name="gripper_finger_rIght_link" pos="0.0727 0.025 -0.018" euler="0 0 0">
-                      <joint name="gripper_finger_rIght_joint" type="slide" damping="1" axis="0 0.811 -0.584" range="0 0.015" />
-                      <geom name="gripper_finger_rIght_link_visual" type="mesh" mesh="gripper_finger_rIght_link.STL" contype="0" conaffinity="0" mass="0.1" />
-                      <geom name="right_pad" type="box" size="0.025 0.004 0.012" pos="0.105 0 0" friction="0.8 0.1 0.1" />
+                      <inertial mass="0.13786800" pos="0.02727101 -0.02205781 0.00984327" fullinertia="0.00008183 0.00011048 0.00014642 0.00004615 -0.00002398 0.00002070" />
+                      <joint name="gripper_finger_rIght_joint" type="slide" damping="20" armature="0.05" axis="0 -1 0" range="0 0.015" margin="0.0001" />
+                      <geom name="gripper_finger_rIght_link_visual" type="mesh" mesh="gripper_finger_rIght_link.STL" contype="0" conaffinity="0" mass="0" />
+                      <geom name="right_pad" type="mesh" mesh="a1z_simulation_pad" quat="0.578249402 -0.289473795 -0.252071023 0.719925517" pos="0.096198363 -0.027086063 0.017829364" contype="2" conaffinity="5" condim="4" friction="2 0.01 0.001" margin="0.001" priority="1" solimp="0.95 0.99 0.001" solref="0.02 1" mass="0" material="a1z_simulation_pad_material" />
                     </body>
                     <body name="gripper_eef_link" pos="0.0727 0 0" euler="0 0 0" />
                     <camera name="wrist_camera" pos="0.11 0 -0.02" euler="0 1.57 1.57" mode="fixed" fovy="65" />
@@ -61,22 +72,31 @@
         </body>
       </body>
     </body>
-    <body name="cube" pos="0.08 -0.05 0.46">
-      <freejoint name="cube_free" />
-      <geom name="cube_geom" type="box" size="0.025 0.025 0.025" mass="0.1" material="cube_material" friction="0.8 0.1 0.1" />
+    <body name="pillar" pos="0.700999552 0.001852509 0.444623320">
+      <freejoint name="pillar_free" />
+      <geom name="pillar_geom" type="cylinder" size="0.01 0.03" mass="0.05" material="pillar_material" contype="4" conaffinity="7" condim="4" friction="0.8 0.005 0.0001" margin="0.0001" />
     </body>
   </worldbody>
+  <contact>
+    <pair geom1="pillar_geom" geom2="tabletop" condim="6" friction="0.8 0.8 0.005 0.005 0.005" margin="0.0001" solref="0.005 1" solimp="0.99 0.999 0.0001" />
+  </contact>
   <actuator>
-    <position name="arm_joint1_motor" joint="arm_joint1" kp="500.0" kv="45.0" />
-    <position name="arm_joint2_motor" joint="arm_joint2" kp="500.0" kv="45.0" />
-    <position name="arm_joint3_motor" joint="arm_joint3" kp="500.0" kv="45.0" />
-    <position name="arm_joint4_motor" joint="arm_joint4" kp="500.0" kv="45.0" />
-    <position name="arm_joint5_motor" joint="arm_joint5" kp="500.0" kv="45.0" />
-    <position name="arm_joint6_motor" joint="arm_joint6" kp="500.0" kv="45.0" />
-    <position name="gripper_motor" joint="gripper_finger_left_joint" kp="10" kv="5" ctrlrange="0 0.015" />
+    <position name="arm_joint1_motor" joint="arm_joint1" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="-2.094 2.094" forcelimited="true" forcerange="-20 20" />
+    <position name="arm_joint2_motor" joint="arm_joint2" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="0 3.142" forcelimited="true" forcerange="-25 25" />
+    <position name="arm_joint3_motor" joint="arm_joint3" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="-3.142 0" forcelimited="true" forcerange="-20 20" />
+    <position name="arm_joint4_motor" joint="arm_joint4" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="-1.309 1.309" forcelimited="true" forcerange="-9 9" />
+    <position name="arm_joint5_motor" joint="arm_joint5" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="-1.484 1.484" forcelimited="true" forcerange="-3.5 3.5" />
+    <position name="arm_joint6_motor" joint="arm_joint6" kp="500.0" kv="45.0" ctrllimited="true" ctrlrange="-2.007 2.007" forcelimited="true" forcerange="-3.5 3.5" />
+    <position name="gripper_motor" tendon="finger_split" kp="200.0" kv="8.0" ctrlrange="0 0.015" forcelimited="true" forcerange="-20 20" />
   </actuator>
+  <tendon>
+    <fixed name="finger_split">
+      <joint joint="gripper_finger_left_joint" coef="0.5" />
+      <joint joint="gripper_finger_rIght_joint" coef="0.5" />
+    </fixed>
+  </tendon>
   <equality>
-    <joint name="gripper_mimic" joint1="gripper_finger_rIght_joint" joint2="gripper_finger_left_joint" polycoef="0 1 0 0 0" />
+    <joint name="gripper_mimic" joint1="gripper_finger_rIght_joint" joint2="gripper_finger_left_joint" polycoef="0 1 0 0 0" solref="0.005 1" solimp="0.95 0.99 0.001" />
   </equality>
   <visual>
     <global offwidth="640" offheight="480" />
@@ -85,6 +105,6 @@
     <numeric name="wrist_camera_fps" data="30" />
   </custom>
   <keyframe>
-    <key name="home" qpos="0.0 0.7 -1.2 0.5 0.0 0.0 0.0 0.0 0.08 -0.05 0.46 1.0 0.0 0.0 0.0" />
+    <key name="home" qpos="0.0 0.7 -1.2 0.5 0.0 0.0 0.0 0.0 0.700999552 0.0018525089999999655 0.44462332 1.0 0.0 0.0 0.0" />
   </keyframe>
 </mujoco>

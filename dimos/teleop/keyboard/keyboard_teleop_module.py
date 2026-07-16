@@ -69,6 +69,29 @@ TwistVector = tuple[float, float, float]
 
 class KeyboardTeleopConfig(ModuleConfig):
     task_name: str = EEF_TWIST_TASK_NAME
+    linear_speed: float = LINEAR_SPEED
+    angular_speed: float = ANGULAR_SPEED
+
+
+def _motion_key_codes() -> frozenset[int]:
+    if pygame is None:
+        return frozenset()
+    return frozenset(
+        (
+            pygame.K_w,
+            pygame.K_s,
+            pygame.K_a,
+            pygame.K_d,
+            pygame.K_q,
+            pygame.K_e,
+            pygame.K_r,
+            pygame.K_f,
+            pygame.K_t,
+            pygame.K_g,
+            pygame.K_y,
+            pygame.K_h,
+        )
+    )
 
 
 class KeyboardTeleopModule(Module):
@@ -117,21 +140,19 @@ class KeyboardTeleopModule(Module):
         pygame.display.set_caption(f"Keyboard Teleop — {task_name}")
         font = pygame.font.Font(None, 28)
         clock = pygame.time.Clock()
+        held_motion_keys: set[int] = set()
         was_moving = False
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+                if self._handle_pygame_event(event, held_motion_keys, task_name):
                     self._stop_event.set()
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        self._stop_event.set()
-                    elif event.key == pygame.K_LEFTBRACKET:
-                        self._set_gripper_position(GRIPPER_OPEN_POSITION)
-                    elif event.key == pygame.K_RIGHTBRACKET:
-                        self._set_gripper_position(GRIPPER_CLOSED_POSITION)
 
-            linear, angular = _twist_from_keys(pygame.key.get_pressed())
+            linear, angular = _twist_from_keys(
+                held_motion_keys,
+                linear_speed=self.config.linear_speed,
+                angular_speed=self.config.angular_speed,
+            )
             linear_x, linear_y, linear_z = linear
             angular_x, angular_y, angular_z = angular
 
@@ -182,6 +203,36 @@ class KeyboardTeleopModule(Module):
         self._publish_twist(task_name)
         pygame.quit()
 
+    def _handle_pygame_event(
+        self,
+        event: Any,
+        held_motion_keys: set[int],
+        task_name: str,
+    ) -> bool:
+        """Apply one pygame event and synchronously stop motion on KEYUP."""
+        if pygame is None:
+            return False
+        if event.type == pygame.QUIT:
+            return True
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                return True
+            if event.key in _motion_key_codes():
+                held_motion_keys.add(event.key)
+            elif event.key == pygame.K_LEFTBRACKET:
+                self._set_gripper_position(GRIPPER_OPEN_POSITION)
+            elif event.key == pygame.K_RIGHTBRACKET:
+                self._set_gripper_position(GRIPPER_CLOSED_POSITION)
+        elif event.type == pygame.KEYUP and event.key in _motion_key_codes():
+            held_motion_keys.discard(event.key)
+            linear, angular = _twist_from_keys(
+                held_motion_keys,
+                linear_speed=self.config.linear_speed,
+                angular_speed=self.config.angular_speed,
+            )
+            self._publish_twist(task_name, linear=linear, angular=angular)
+        return False
+
     def _publish_twist(
         self,
         task_name: str,
@@ -198,30 +249,33 @@ class KeyboardTeleopModule(Module):
         if self._gripper_position == position:
             return
         self._gripper_position = position
-        self.joint_command.publish(
-            JointState(name=[GRIPPER_JOINT_NAME], position=[position])
-        )
+        self.joint_command.publish(JointState(name=[GRIPPER_JOINT_NAME], position=[position]))
 
 
-def _twist_from_keys(keys: ScancodeWrapper) -> tuple[TwistVector, TwistVector]:
+def _twist_from_keys(
+    keys: ScancodeWrapper | set[int],
+    *,
+    linear_speed: float = LINEAR_SPEED,
+    angular_speed: float = ANGULAR_SPEED,
+) -> tuple[TwistVector, TwistVector]:
     linear = [0.0, 0.0, 0.0]
     angular = [0.0, 0.0, 0.0]
     bindings = {
-        pygame.K_w: (linear, 0, LINEAR_SPEED),
-        pygame.K_s: (linear, 0, -LINEAR_SPEED),
-        pygame.K_a: (linear, 1, LINEAR_SPEED),
-        pygame.K_d: (linear, 1, -LINEAR_SPEED),
-        pygame.K_q: (linear, 2, LINEAR_SPEED),
-        pygame.K_e: (linear, 2, -LINEAR_SPEED),
-        pygame.K_r: (angular, 0, ANGULAR_SPEED),
-        pygame.K_f: (angular, 0, -ANGULAR_SPEED),
-        pygame.K_t: (angular, 1, ANGULAR_SPEED),
-        pygame.K_g: (angular, 1, -ANGULAR_SPEED),
-        pygame.K_y: (angular, 2, ANGULAR_SPEED),
-        pygame.K_h: (angular, 2, -ANGULAR_SPEED),
+        pygame.K_w: (linear, 0, linear_speed),
+        pygame.K_s: (linear, 0, -linear_speed),
+        pygame.K_a: (linear, 1, linear_speed),
+        pygame.K_d: (linear, 1, -linear_speed),
+        pygame.K_q: (linear, 2, linear_speed),
+        pygame.K_e: (linear, 2, -linear_speed),
+        pygame.K_r: (angular, 0, angular_speed),
+        pygame.K_f: (angular, 0, -angular_speed),
+        pygame.K_t: (angular, 1, angular_speed),
+        pygame.K_g: (angular, 1, -angular_speed),
+        pygame.K_y: (angular, 2, angular_speed),
+        pygame.K_h: (angular, 2, -angular_speed),
     }
     for key, (vector, axis, delta) in bindings.items():
-        if keys[key]:
+        if key in keys if isinstance(keys, set) else keys[key]:
             vector[axis] += delta
 
     return (linear[0], linear[1], linear[2]), (angular[0], angular[1], angular[2])

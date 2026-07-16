@@ -37,7 +37,7 @@ The simulated keyboard teleoperation experience SHALL provide latched gripper en
 - **AND** the gripper SHALL retain its previously selected target.
 
 ### Requirement: Deterministic visual contact scene
-The simulation SHALL provide a deterministic tabletop environment for manual teleoperation validation.
+The simulation SHALL provide a deterministic tabletop environment for manual teleoperation validation, including explicit visible physical A1Z finger-pad inserts whose render and collision geometry match. The inserts SHALL be identified as non-vendor simulation fixtures and SHALL NOT imply hardware or data parity.
 
 #### Scenario: Inspect the initial scene
 - **GIVEN** simulated A1Z keyboard teleoperation has started
@@ -50,6 +50,8 @@ The simulation SHALL provide a deterministic tabletop environment for manual tel
 - **WHEN** an operator alternates between the open and closed endpoint controls
 - **THEN** the two visible fingers SHALL move in opposing directions over the configured range
 - **AND** the simulated finger contact geometry SHALL be present for subsequent manual cube-contact testing.
+- **AND** the visible pad inserts SHALL be the same geometry used for rendered appearance and collision contact.
+- **AND** manual validation SHALL include a full opening sweep, unintended-contact checks, and a cube-contact check.
 
 ### Requirement: Stage 1 manual reset boundary
 Stage 1 SHALL leave episode lifecycle and persistence out of the teleoperation interface.

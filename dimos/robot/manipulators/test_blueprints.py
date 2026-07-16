@@ -25,7 +25,6 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.robot.manipulators.a1z.blueprints.teleop import (
     _build_a1z_keyboard_components,
-    keyboard_teleop_a1z,
 )
 from dimos.robot.manipulators.a1z.config import A1Z_DOF, make_a1z_hardware
 from dimos.robot.manipulators.a1z.simulation import (
@@ -57,7 +56,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm_hardware,
 )
 from dimos.robot.manipulators.xarm.simulation import _XArm6MujocoSimModule
-from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopConfig, KeyboardTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -130,6 +129,27 @@ def test_a1z_keyboard_blueprint_modes_are_explicit() -> None:
     assert servo_tasks[0].joint_names == ["arm/gripper"]
     assert servo_tasks[0].priority != 10
     assert servo_tasks[0].params == {"timeout": 0.0, "default_positions": [0.0]}
+
+
+def test_a1z_keyboard_wires_directly_in_both_modes() -> None:
+    simulation = autoconnect(*_build_a1z_keyboard_components(simulation="mujoco"))
+    hardware = autoconnect(*_build_a1z_keyboard_components(simulation="dimsim"))
+
+    assert (KeyboardTeleopModule, "coordinator_ee_twist_command") not in simulation.remapping_map
+    assert (KeyboardTeleopModule, "coordinator_ee_twist_command") not in hardware.remapping_map
+
+
+@pytest.mark.parametrize("simulation", ["dimsim", "mujoco"])
+def test_a1z_keyboard_speed_overrides_are_bounded_to_a1z(
+    simulation: str,
+) -> None:
+    blueprint = autoconnect(*_build_a1z_keyboard_components(simulation))
+
+    keyboard_kwargs = _module_kwargs(blueprint, KeyboardTeleopModule)
+    config = KeyboardTeleopConfig(**keyboard_kwargs)
+
+    assert config.linear_speed == 0.05
+    assert config.angular_speed == 0.5
 
 
 def test_a1z_non_mujoco_mode_does_not_import_simulator(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,7 +252,6 @@ def test_xarm6_simulator_is_dedicated_and_registry_export_is_direct() -> None:
         pytest.param(keyboard_teleop_openarm_mock, id="openarm-mock"),
         pytest.param(keyboard_teleop_openarm, id="openarm"),
         pytest.param(keyboard_teleop_a750, id="a750"),
-        pytest.param(keyboard_teleop_a1z, id="a1z"),
     ],
 )
 def test_manipulator_keyboard_blueprint_uses_eef_twist_and_light_keyboard_kwargs(

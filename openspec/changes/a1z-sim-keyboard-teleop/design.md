@@ -25,7 +25,7 @@ The existing keyboard module continues to publish `TwistStamped` for EEF motion.
 
 The `keyboard-teleop-a1z` blueprint explicitly selects either the current mock-backed composition or a simulation composition from the resolved `--simulation` configuration. The simulation composition includes `MujocoSimModule` and A1Z hardware configured with the MuJoCo shared-memory adapter at the same address. It uses the same existing CLI blueprint name, so no registry addition is expected unless discovery output changes.
 
-The A1Z scene is an asset-relative MuJoCo XML scene derived from the local A1Z description. Its seven mapped actuators are ordered as the six arm joints followed immediately by the driver prismatic gripper joint; the passive follower finger is coupled by an MJCF equality. The abstract `arm/gripper` value is the driver displacement in meters: `0.0` closed and `0.015` open. The A1Z adapter uses an explicit identity gripper-command mapping so command and reported driver position share those raw units. Physical primitive finger pads support contact; visual finger meshes remain visual-only. A fixed wrist camera publishes RGB at 640×480 and 30 FPS.
+The A1Z scene is an asset-relative MuJoCo XML scene derived from the local A1Z description. Its seven mapped actuators are ordered as the six arm joints followed immediately by the driver prismatic gripper joint; the passive follower finger is coupled by an MJCF equality. The abstract `arm/gripper` value is the driver displacement in meters: `0.0` closed and `0.015` open. The A1Z adapter uses an explicit identity gripper-command mapping so command and reported driver position share those raw units. Each finger has an explicit visible physical A1Z pad insert with matching render and collision geometry; the inserts are simulation fixtures rather than vendor CAD, added so the visible contact surface is the same surface used for manual contact tests. A fixed wrist camera publishes RGB at 640×480 and 30 FPS.
 
 No new DimOS `Spec` Protocol, adapter Protocol, RPC method, skill, or MCP surface is required. The existing generic simulator adapter interface and coordinator joint command contract remain in use.
 
@@ -37,18 +37,19 @@ No new DimOS `Spec` Protocol, adapter Protocol, RPC method, skill, or MCP surfac
 - **Use seven actuator mappings but retain `dof=6`.** The generic bridge treats actuator mapping index 6 as the scalar gripper. Every arm joint must therefore have an ordered actuator before the driver, while the follower remains passive.
 - **Configure identity gripper mapping for A1Z.** Existing inverted-gripper behavior remains the generic default for compatibility. A1Z opts into identity mapping so its public raw-displacement semantics remain `0.0` closed and `0.015` open.
 - **Use a deterministic heuristic scene.** The scene has a table-edge mount, fixed lighting, one 5 cm cube, heuristic collision pads, and an offset wrist camera. Provisional transforms and home joints will be refined by manual simulation runs rather than treated as a vendor-validated setup.
+- **Make physical finger-pad inserts explicit.** The visible physical A1Z pad inserts deliberately share their render and collision geometry. This makes the operator-visible contact surface unambiguous while avoiding a claim that the local A1Z description contains vendor-validated pad CAD.
 - **Manual reset only.** Restarting the simulator/process is adequate for Stage 1 and avoids prematurely defining the Stage 2 episode lifecycle.
 - **Separate simulator and coordinator workers.** MuJoCo simulator startup must not share a serialized worker with the coordinator, whose adapter waits for the simulator. The composition assigns the simulator dedicated worker capacity/placement.
 
 ## Safety / Simulation / Replay
 
-The simulated gripper is not a hardware safety model. Its range is limited to 0–0.015 m and the finger collision pads must be inspected through a full opening sweep before contact tests. The initial scene/home pose, cube pose, and camera transform are implementation hypotheses that require manual validation for self-collision, table collision, reachability, and framing.
+The simulated gripper is not a hardware safety model. Its range is limited to 0–0.015 m and the visible finger-pad inserts must be inspected through a full opening sweep before contact tests. The initial scene/home pose, cube pose, camera transform, and insert transforms are implementation hypotheses that require manual validation for self-collision, table collision, reachability, framing, and cube contact.
 
 `--simulation` must be an explicit composition branch: it is not assumed to automatically replace mock hardware. The non-simulation blueprint remains untouched behaviorally, including the absence of a simulation-only gripper servo task. The simulator receives the same arm home vector as the simulated hardware and planning configuration, and is configured directly for 30 FPS. Replay and recording are intentionally absent from this stage.
 
 ## Risks / Trade-offs
 
-- Vendor geometry does not define an actuated gripper, so finger axes, travel, pads, and servo gains are heuristic. Manual visual and contact checks mitigate this but do not validate hardware equivalence.
+- Vendor geometry does not define an actuated gripper or finger-pad inserts, so finger axes, travel, insert shape/placement, and servo gains are heuristic. Manual visual and contact checks mitigate this but do not validate hardware equivalence or simulation-to-hardware/data parity.
 - The existing simulator bridge only exposes a single gripper scalar. The coupled model preserves that interface but precludes independently controlled fingers.
 - MuJoCo XML asset paths and generated keyframes can break after conversion or relocation. Keep the scene self-contained/path-relative and compile it from its final repository location.
 - A provisional home pose or scene transform can collide or leave the cube unreachable. Adjust these based on simulation runs and encode the validated values consistently in the scene and A1Z configuration.

@@ -33,6 +33,7 @@ def _build_a1z_keyboard_components(simulation: str) -> tuple[Blueprint, ...]:
     is_mujoco = simulation == "mujoco"
     if is_mujoco:
         from dimos.robot.manipulators.a1z.simulation import A1Z_SCENE_PATH, A1Z_SIM_HOME
+
         hardware = make_a1z_hardware(
             "arm",
             adapter_type="sim_mujoco",
@@ -48,7 +49,9 @@ def _build_a1z_keyboard_components(simulation: str) -> tuple[Blueprint, ...]:
         hardware.address = None
         hardware.adapter_kwargs = {}
     tasks = [eef_twist_task(hardware, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)]
-    modules: list[Blueprint] = [KeyboardTeleopModule.blueprint()]
+    modules: list[Blueprint] = [
+        KeyboardTeleopModule.blueprint(linear_speed=0.05, angular_speed=0.5)
+    ]
     if is_mujoco:
         from dimos.robot.manipulators.a1z.simulation import (
             A1Z_SCENE_PATH,
@@ -80,6 +83,4 @@ def _build_a1z_keyboard_components(simulation: str) -> tuple[Blueprint, ...]:
     return tuple(modules)
 
 
-keyboard_teleop_a1z = autoconnect(
-    *_build_a1z_keyboard_components(global_config.simulation)
-)
+keyboard_teleop_a1z = autoconnect(*_build_a1z_keyboard_components(global_config.simulation))
