@@ -41,6 +41,7 @@ class BoosterCameraConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/booster_camera_native"
     build_command: str | None = _BUILD_COMMAND
+    auto_build: bool = True
     log_format: LogFormat = LogFormat.TEXT
     network_interface: str | None = Field(default_factory=camera_network_interface_from_env)
     depth_scale: float = Field(default=DEFAULT_DEPTH_SCALE, gt=0.0)

@@ -30,6 +30,7 @@ def test_camera_configures_booster_sdk_native_bridge(monkeypatch) -> None:
     assert config.cwd == "cpp"
     assert config.executable == "result/bin/booster_camera_native"
     assert config.build_command == "nix build .#booster-camera-native"
+    assert config.auto_build is True
     assert config.log_format == LogFormat.TEXT
     assert config.depth_scale == 0.001
     assert config.publish_rate_hz is None
