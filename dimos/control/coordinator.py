@@ -474,19 +474,24 @@ class ControlCoordinator(Module):
         """Subscribe streams that gained consumers; drop those whose last consumer left.
 
         A consumer is a card-declared task route, or BASE hardware for
-        ``twist_command``. Locks are taken sequentially, never nested.
+        ``twist_command``. The whole compute+apply runs under
+        ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
+        sequentially inside it) so concurrent syncs cannot apply a stale
+        ``active`` set last. The nesting is deadlock-free: no code path
+        acquires ``_subscribe_lock`` while holding either inner lock.
         """
-        if not (self._tick_loop and self._tick_loop.is_running):
-            return
-        with self._task_lock:
-            active = {stream for stream, entries in self._routes.items() if entries}
-        with self._hardware_lock:
-            has_base = any(
-                hw.component.hardware_type == HardwareType.BASE for hw in self._hardware.values()
-            )
-        if has_base:
-            active.add("twist_command")
         with self._subscribe_lock:
+            if not (self._tick_loop and self._tick_loop.is_running):
+                return
+            with self._task_lock:
+                active = {stream for stream, entries in self._routes.items() if entries}
+            with self._hardware_lock:
+                has_base = any(
+                    hw.component.hardware_type == HardwareType.BASE
+                    for hw in self._hardware.values()
+                )
+            if has_base:
+                active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
                 try:
                     unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
