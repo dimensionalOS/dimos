@@ -77,17 +77,27 @@ def localize_from_detections(
     detection-order pick.
     """
     k, d = camera_info_to_cv_matrices(camera_info)
+    # distortion_model must reach the PnP helpers: the Go2 camera is
+    # equidistant fisheye, and without the model its 4 coefficients get
+    # misread as radtan k1,k2,p1,p2 (marker_detect.py passes it; this path
+    # didn't — poses were solved against the wrong lens).
+    model = camera_info.distortion_model
     good: list[tuple[float, Transform]] = []
     for marker_id, corners_px in detections:
         if (map_T_marker := marker_map.get(marker_id)) is None:
             continue
-        candidates = estimate_marker_pose_candidates(corners_px, config.marker_length_m, k, d)
+        candidates = estimate_marker_pose_candidates(
+            corners_px, config.marker_length_m, k, d, distortion_model=model
+        )
         if not candidates:
             continue
         scored = sorted(
             (
                 (
-                    marker_reprojection_error(corners_px, config.marker_length_m, k, d, rvec, tvec),
+                    marker_reprojection_error(
+                        corners_px, config.marker_length_m, k, d, rvec, tvec,
+                        distortion_model=model,
+                    ),
                     rvec,
                     tvec,
                 )

@@ -492,3 +492,45 @@ async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> Non
         assert missing.tf.get("world", "map") is None
     finally:
         missing.stop()
+
+
+def test_localize_fisheye_distortion_model_reaches_pnp() -> None:
+    """Regression: the Go2 camera is equidistant fisheye; localize_from_detections
+    must pass distortion_model through to the PnP helpers or the 4 fisheye
+    coefficients get misread as radtan k1,k2,p1,p2 and the solved pose is wrong.
+    Corners here are projected with cv2.fisheye (the real lens model), off-center
+    where the model mismatch is largest."""
+    fx, fy, cx, cy = 797.476, 796.487, 643.535, 349.278  # front_camera_720.yaml
+    d_fisheye = np.array([-0.0731, -0.0234, -0.0069, 0.0092], dtype=np.float64)
+    info = CameraInfo(
+        width=1280, height=720, distortion_model="equidistant",
+        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        D=list(d_fisheye), frame_id=OPTICAL_FRAME, ts=10.0,
+    )
+    length = 0.10
+    h = length / 2.0
+    obj = np.array(  # IPPE_SQUARE corner order (matches _aruco_marker_object_points)
+        [[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]], dtype=np.float64
+    ).reshape(4, 1, 3)
+    # Oblique view (beats the ambiguity gate), tag well off the optical axis.
+    rvec_true = np.array([[0.0], [0.6], [0.0]])
+    tvec_true = np.array([[0.55], [0.25], [1.2]])
+    corners, _ = cv2.fisheye.projectPoints(
+        obj, rvec_true, tvec_true, np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1.0]]), d_fisheye
+    )
+    marker_map = {5: Transform(frame_id=MAP_FRAME, child_frame_id="marker_5")}
+
+    result = localize_from_detections(
+        [(5, corners.reshape(4, 2))], marker_map, info,
+        LocalizationConfig(length, max_reprojection_error_px=1.0), ts=10.0
+    )
+    assert result is not None, "fisheye corners must survive the reprojection gate"
+    # Expected map_T_optical = identity_map_T_marker + (optical_T_marker)^-1
+    expected = rvec_tvec_to_transform(
+        rvec_true, tvec_true, frame_id=OPTICAL_FRAME, child_frame_id="marker_5", ts=10.0
+    ).inverse()
+    err = np.linalg.norm(
+        np.array([result.translation.x, result.translation.y, result.translation.z])
+        - np.array([expected.translation.x, expected.translation.y, expected.translation.z])
+    )
+    assert err < 0.02, f"fisheye pose off by {err:.4f} m — distortion model not applied?"
