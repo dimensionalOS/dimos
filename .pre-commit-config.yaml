@@ -96,6 +96,7 @@ repos:
         always_run: true
         pass_filenames: false
         entry: python bin/hooks/largefiles_check
+        args: [--all]
         language: python
         additional_dependencies: ['tomli']
 
