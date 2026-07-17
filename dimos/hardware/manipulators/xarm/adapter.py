@@ -246,8 +246,8 @@ class XArmAdapter(ManipulatorAdapter):
         homed = self._move_to_initial_pose()
         if not homed:
             logger.warning("xArm deactivate: move-to-initial-pose failed; disabling motion anyway")
-        self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
+        self._arm.motion_enable(enable=False)
         return homed and code == 0
 
     def _move_to_initial_pose(self) -> bool:
