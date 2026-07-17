@@ -4,20 +4,17 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cctype>
+#include <cstddef>
 #include <cmath>
 #include <csignal>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 
 #include <booster/idl/sensor_msgs/CameraInfo.h>
 #include <booster/idl/sensor_msgs/CompressedImage.h>
@@ -26,9 +23,8 @@
 #include <booster/robot/channel/channel_subscriber.hpp>
 #include <booster_fastdds/fastdds/dds/log/Log.hpp>
 #include <lcm/lcm-cpp.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
 
+#include "camera_conversion.hpp"
 #include "dimos_native_module.hpp"
 #include "sensor_msgs/CameraInfo.hpp"
 #include "sensor_msgs/Image.hpp"
@@ -40,28 +36,11 @@ namespace
     constexpr double kDefaultDepthScale = 0.001;
     constexpr size_t kImageQueueCapacity = 1;
 
-    struct CompressedDepthHeader
-    {
-        int32_t format;
-        float depth_params[2];
-    };
-
-    static_assert(sizeof(CompressedDepthHeader) == 12);
-
     volatile std::sig_atomic_t keep_running = 1;
 
     void handle_signal(int)
     {
         keep_running = 0;
-    }
-
-    std::string lowercase(std::string value)
-    {
-        std::transform(
-            value.begin(), value.end(), value.begin(),
-            [](unsigned char character)
-            { return static_cast<char>(std::tolower(character)); });
-        return value;
     }
 
     std_msgs::Header convert_header(const std_msgs::msg::Header &source)
@@ -73,55 +52,6 @@ namespace
         result.stamp.nsec = static_cast<int32_t>(source.stamp().nanosec());
         result.frame_id = source.frame_id();
         return result;
-    }
-
-    std::string canonical_encoding(const std::string &source)
-    {
-        const std::string normalized = lowercase(source);
-        if (normalized == "rgb8" || normalized == "bgr8" || normalized == "rgba8" ||
-            normalized == "bgra8" || normalized == "mono8" || normalized == "mono16")
-        {
-            return normalized;
-        }
-        if (normalized == "16uc1")
-        {
-            return "16UC1";
-        }
-        if (normalized == "16sc1")
-        {
-            return "16SC1";
-        }
-        if (normalized == "32fc1")
-        {
-            return "32FC1";
-        }
-        throw std::runtime_error("unsupported Booster image encoding '" + source + "'");
-    }
-
-    uint16_t read_uint16(const uint8_t *source, bool big_endian)
-    {
-        if (big_endian)
-        {
-            return static_cast<uint16_t>(
-                (static_cast<uint16_t>(source[0]) << 8U) | source[1]);
-        }
-        return static_cast<uint16_t>(
-            source[0] | (static_cast<uint16_t>(source[1]) << 8U));
-    }
-
-    uint32_t read_uint32(const uint8_t *source, bool big_endian)
-    {
-        if (big_endian)
-        {
-            return (static_cast<uint32_t>(source[0]) << 24U) |
-                   (static_cast<uint32_t>(source[1]) << 16U) |
-                   (static_cast<uint32_t>(source[2]) << 8U) |
-                   static_cast<uint32_t>(source[3]);
-        }
-        return static_cast<uint32_t>(source[0]) |
-               (static_cast<uint32_t>(source[1]) << 8U) |
-               (static_cast<uint32_t>(source[2]) << 16U) |
-               (static_cast<uint32_t>(source[3]) << 24U);
     }
 
     class PublishRateLimiter
@@ -336,17 +266,16 @@ namespace
                     return;
                 }
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
-
-                sensor_msgs::Image result;
-                result.header = convert_header(source.header());
-                result.height = static_cast<int32_t>(source.height());
-                result.width = static_cast<int32_t>(source.width());
-                result.encoding = canonical_encoding(source.encoding());
-                result.is_bigendian = source.is_bigendian();
-                result.step = static_cast<int32_t>(source.step());
-                result.data = source.data();
-                result.data_length = static_cast<int32_t>(result.data.size());
-                publish(color_output_, result);
+                publish_converted_image(
+                    source.header(),
+                    color_output_,
+                    dimos::booster::camera::convert_color_image(
+                        source.width(),
+                        source.height(),
+                        source.encoding(),
+                        source.is_bigendian() != 0,
+                        source.step(),
+                        source.data()));
             }
             catch (const std::exception &error)
             {
@@ -391,10 +320,17 @@ namespace
                     return;
                 }
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
-
-                publish_depth(
-                    source.header(), source.width(), source.height(), source.encoding(),
-                    source.is_bigendian() != 0, source.step(), source.data());
+                publish_converted_image(
+                    source.header(),
+                    depth_output_,
+                    dimos::booster::camera::convert_depth_image(
+                        source.width(),
+                        source.height(),
+                        source.encoding(),
+                        source.is_bigendian() != 0,
+                        source.step(),
+                        source.data(),
+                        depth_scale_));
             }
             catch (const std::exception &error)
             {
@@ -412,7 +348,11 @@ namespace
                 }
                 const auto &source =
                     *static_cast<const sensor_msgs::msg::CompressedImage *>(raw_message);
-                publish_compressed_depth(source.header(), source.format(), source.data());
+                publish_converted_image(
+                    source.header(),
+                    depth_output_,
+                    dimos::booster::camera::convert_compressed_depth_image(
+                        source.format(), source.data(), depth_scale_));
             }
             catch (const std::exception &error)
             {
@@ -421,153 +361,21 @@ namespace
             }
         }
 
-        void publish_compressed_depth(
+        void publish_converted_image(
             const std_msgs::msg::Header &header,
-            const std::string &source_format,
-            const std::vector<uint8_t> &source_data)
-        {
-            const size_t separator = source_format.find(';');
-            if (separator == std::string::npos)
-            {
-                throw std::runtime_error(
-                    "invalid compressed depth format '" + source_format + "'");
-            }
-            const std::string encoding = canonical_encoding(
-                source_format.substr(0, separator));
-            const std::string transport_format = source_format.substr(separator + 1);
-            if (transport_format.find("compressedDepth") == std::string::npos ||
-                transport_format.find("rvl") != std::string::npos)
-            {
-                throw std::runtime_error(
-                    "unsupported compressed depth format '" + source_format + "'");
-            }
-            if (encoding != "16UC1" && encoding != "32FC1")
-            {
-                throw std::runtime_error(
-                    "unsupported compressed depth encoding '" + encoding + "'");
-            }
-            if (source_data.size() <= sizeof(CompressedDepthHeader))
-            {
-                throw std::runtime_error("compressed depth payload is missing PNG data");
-            }
-
-            CompressedDepthHeader compression_header;
-            std::memcpy(
-                &compression_header, source_data.data(), sizeof(compression_header));
-            const std::vector<uint8_t> png_data(
-                source_data.begin() + sizeof(compression_header), source_data.end());
-            const cv::Mat decoded = cv::imdecode(png_data, cv::IMREAD_UNCHANGED);
-            if (decoded.empty() || decoded.type() != CV_16UC1)
-            {
-                throw std::runtime_error("compressed depth payload is not a uint16 PNG");
-            }
-
-            std::vector<uint8_t> meters(decoded.total() * sizeof(float));
-            for (int row = 0; row < decoded.rows; ++row)
-            {
-                const uint16_t *source_row = decoded.ptr<uint16_t>(row);
-                for (int column = 0; column < decoded.cols; ++column)
-                {
-                    float value;
-                    const uint16_t source_value = source_row[column];
-                    if (encoding == "16UC1")
-                    {
-                        value = static_cast<float>(source_value * depth_scale_);
-                    }
-                    else if (source_value == 0)
-                    {
-                        value = std::numeric_limits<float>::quiet_NaN();
-                    }
-                    else
-                    {
-                        value = compression_header.depth_params[0] /
-                                (static_cast<float>(source_value) -
-                                 compression_header.depth_params[1]);
-                    }
-                    std::memcpy(
-                        meters.data() +
-                            (static_cast<size_t>(row) * decoded.cols + column) * sizeof(value),
-                        &value, sizeof(value));
-                }
-            }
-            publish_depth_meters(
-                header,
-                static_cast<uint32_t>(decoded.cols),
-                static_cast<uint32_t>(decoded.rows),
-                std::move(meters));
-        }
-
-        void publish_depth(
-            const std_msgs::msg::Header &header,
-            uint32_t width,
-            uint32_t height,
-            const std::string &source_encoding,
-            bool source_big_endian,
-            uint32_t source_step_value,
-            const std::vector<uint8_t> &source_data)
-        {
-            const std::string encoding = canonical_encoding(source_encoding);
-            if (encoding != "16UC1" && encoding != "32FC1")
-            {
-                throw std::runtime_error("unsupported depth encoding '" + encoding + "'");
-            }
-
-            const size_t bytes_per_pixel = encoding == "16UC1" ? 2U : 4U;
-            const size_t packed_step = static_cast<size_t>(width) * bytes_per_pixel;
-            const size_t source_step =
-                source_step_value == 0 ? packed_step : source_step_value;
-            const size_t required_size = source_step * height;
-            if (source_data.size() < required_size)
-            {
-                throw std::runtime_error("depth frame data is shorter than height * step");
-            }
-
-            std::vector<uint8_t> meters(
-                static_cast<size_t>(width) * height * sizeof(float));
-            for (uint32_t row = 0; row < height; ++row)
-            {
-                const uint8_t *source_row = source_data.data() + row * source_step;
-                for (uint32_t column = 0; column < width; ++column)
-                {
-                    float value = 0.0F;
-                    if (encoding == "16UC1")
-                    {
-                        value = static_cast<float>(
-                            read_uint16(
-                                source_row + column * 2U, source_big_endian) *
-                            depth_scale_);
-                    }
-                    else
-                    {
-                        const uint32_t bits = read_uint32(
-                            source_row + column * 4U, source_big_endian);
-                        std::memcpy(&value, &bits, sizeof(value));
-                    }
-                    std::memcpy(
-                        meters.data() +
-                            (static_cast<size_t>(row) * width + column) * sizeof(value),
-                        &value, sizeof(value));
-                }
-            }
-            publish_depth_meters(header, width, height, std::move(meters));
-        }
-
-        void publish_depth_meters(
-            const std_msgs::msg::Header &header,
-            uint32_t width,
-            uint32_t height,
-            std::vector<uint8_t> meters)
+            const std::string &output,
+            dimos::booster::camera::ConvertedImage image)
         {
             sensor_msgs::Image result;
             result.header = convert_header(header);
-            result.height = static_cast<int32_t>(height);
-            result.width = static_cast<int32_t>(width);
-            result.encoding = "32FC1";
+            result.height = static_cast<int32_t>(image.height);
+            result.width = static_cast<int32_t>(image.width);
+            result.encoding = std::move(image.encoding);
             result.is_bigendian = 0;
-            result.step = static_cast<int32_t>(width * sizeof(float));
-            result.data = std::move(meters);
+            result.step = static_cast<int32_t>(image.step);
+            result.data = std::move(image.data);
             result.data_length = static_cast<int32_t>(result.data.size());
-            publish(depth_output_, result);
+            publish(output, result);
         }
 
         void on_camera_info(const void *raw_message, const std::string &output) noexcept

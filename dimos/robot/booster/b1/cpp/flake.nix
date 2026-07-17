@@ -1,5 +1,5 @@
 {
-  description = "Booster B1 native teleoperation module";
+  description = "Booster B1 native modules";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -87,6 +87,12 @@
             "-DDIMOS_LCM_SOURCE_DIR=${dimos-lcm}"
             "-DDIMOS_NATIVE_COMMON_DIR=${dimos-native-common}"
           ];
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            ctest --output-on-failure
+            runHook postCheck
+          '';
           meta = {
             description = "dimOS native locomotion driver for the Booster B1";
             license = pkgs.lib.licenses.asl20;

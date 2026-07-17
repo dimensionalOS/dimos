@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(booster_b1_teleop_native LANGUAGES CXX)
+project(booster_b1_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,6 +55,21 @@ add_executable(
   booster_camera_native
   camera.cpp
 )
+add_library(
+  booster_camera_conversion
+  STATIC
+  camera_conversion.cpp
+)
+target_include_directories(
+  booster_camera_conversion
+  PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(
+  booster_camera_conversion
+  PUBLIC
+  ${OpenCV_LIBS}
+)
 
 function(configure_booster_native_target target)
   target_include_directories(
@@ -79,5 +94,23 @@ endfunction()
 
 configure_booster_native_target(booster_b1_teleop_native)
 configure_booster_native_target(booster_camera_native)
+target_link_libraries(booster_camera_native PRIVATE booster_camera_conversion)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(
+    booster_camera_conversion_test
+    test_camera_conversion.cpp
+  )
+  target_link_libraries(
+    booster_camera_conversion_test
+    PRIVATE
+    booster_camera_conversion
+  )
+  add_test(
+    NAME booster_camera_conversion_test
+    COMMAND booster_camera_conversion_test
+  )
+endif()
 
 install(TARGETS booster_b1_teleop_native booster_camera_native DESTINATION bin)
