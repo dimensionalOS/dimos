@@ -69,7 +69,7 @@ dimos --transport=zenoh \
 
 Replace `<aos_ip>` with the IP address of the robot's **AOS module**.
 
-For the M20 robot, the AOS module IP address is 10.21.33.103. You can use this address directly.
+For the M20 robot, the AOS module IP address is 10.21.31.103. You can use this address directly.
 The examples below use the default M20 AOS module IP address (`10.21.31.103`). If your deployment uses a different IP address (for example, due to custom network routing or forwarding), simply replace it with the appropriate address for your setup.
 
 Such as:
