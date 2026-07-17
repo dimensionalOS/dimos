@@ -82,8 +82,9 @@ coordinator_teleop_piper = autoconnect(
                 name="teleop_piper",
                 params={
                     "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 0.0,
-                    "gripper_closed_pos": 0.035,
+                    "gripper_open_pos": 0.035,
+                    "gripper_closed_pos": 0.0,
+                    "max_joint_delta_deg": 15.0,
                 },
             ),
         ],

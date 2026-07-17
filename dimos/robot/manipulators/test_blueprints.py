@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.teleop_task.teleop_task import TeleopIKTaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
@@ -41,7 +42,10 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
 )
-from dimos.robot.manipulators.piper.blueprints.teleop import keyboard_teleop_piper
+from dimos.robot.manipulators.piper.blueprints.teleop import (
+    coordinator_teleop_piper,
+    keyboard_teleop_piper,
+)
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     xarm6_planner_only,
@@ -77,6 +81,13 @@ def _manipulation_config(blueprint: Blueprint) -> ManipulationModuleConfig:
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return _module_kwargs(blueprint, ControlCoordinator)["tasks"]
+
+
+def test_piper_teleop_uses_larger_joint_delta_limit_without_changing_default() -> None:
+    piper_task = _coordinator_tasks(coordinator_teleop_piper)[0]
+
+    assert piper_task.params["max_joint_delta_deg"] == 15.0
+    assert TeleopIKTaskConfig.__dataclass_fields__["max_joint_delta_deg"].default == 5.0
 
 
 def test_planner_helper_defaults_to_no_visualization() -> None:

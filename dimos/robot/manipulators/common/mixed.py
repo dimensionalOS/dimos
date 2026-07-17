@@ -75,7 +75,12 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
             type="teleop_ik",
             joint_names=_piper_teleop_hw.joints,
             priority=10,
-            params={"model_path": PIPER_FK_MODEL, "ee_joint_id": 6, "hand": "right"},
+            params={
+                "model_path": PIPER_FK_MODEL,
+                "ee_joint_id": 6,
+                "hand": "right",
+                "max_joint_delta_deg": 15.0,
+            },
         ),
     ],
 )

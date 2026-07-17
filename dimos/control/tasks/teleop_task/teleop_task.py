@@ -357,6 +357,7 @@ class TeleopIKTask(BaseControlTask):
 class TeleopIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6
+    max_joint_delta_deg: float = 5.0
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -371,6 +372,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             joint_names=cfg.joint_names,
             model_path=params.model_path,
             ee_joint_id=params.ee_joint_id,
+            max_joint_delta_deg=params.max_joint_delta_deg,
             priority=cfg.priority,
             hand=params.hand,
             gripper_joint=params.gripper_joint,
