@@ -272,6 +272,8 @@ class RecorderConfig(MemoryModuleConfig):
     # read the active remappings from inside the module (AFAIK), so this config
     # arg does the per-stream rename directly.
     stream_remapping: dict[str, str] = Field(default_factory=dict)
+    # In-port names to leave unrecorded (e.g. skip a bulky stream you don't need).
+    skip_ports: frozenset[str] = Field(default_factory=frozenset)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -358,6 +360,8 @@ class Recorder(MemoryModule):
             return
 
         for name, port in self.inputs.items():
+            if name in self.config.skip_ports:
+                continue
             stream_name = self.config.stream_remapping.get(name, name)
             stream: Stream[Any] = self.store.stream(stream_name, port.type)
             self._port_to_stream(name, port, stream)
@@ -399,7 +403,11 @@ class Recorder(MemoryModule):
         of duplicating, while leaving any other streams in the db untouched."""
         if self.config.on_existing is not OnExisting.APPEND:
             return
-        targets = {self.config.stream_remapping.get(name, name) for name in self.inputs}
+        targets = {
+            self.config.stream_remapping.get(name, name)
+            for name in self.inputs
+            if name not in self.config.skip_ports
+        }
         if self.config.record_tf:
             targets.add("tf")
         for stream in targets.intersection(self.store.list_streams()):
