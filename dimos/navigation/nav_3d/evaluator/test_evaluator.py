@@ -575,6 +575,17 @@ def test_tripwire_outcomes() -> None:
     assert d.fixed == [] and d.broke == [] and d.added == [] and d.removed == []
 
 
+def test_tripwire_exact_differences() -> None:
+    report = _tripwire_report({"office": {"a": (True, False)}})
+    assert tripwire.exact_differences(report, report) == []
+    changed = json.loads(json.dumps(report))
+    changed["datasets"][0]["cases"][0]["online"]["length"] = 12.34
+    changed["datasets"][0]["cases"][0]["online"]["plan_ms"] = 99.0
+    diffs = tripwire.exact_differences(report, changed)
+    assert len(diffs) == 1
+    assert "length" in diffs[0] and "12.34" in diffs[0]
+
+
 def test_tripwire_diff_names_every_flip() -> None:
     old = _tripwire_report(
         {"office": {"a": (False, True), "b": (True, True), "gone": (True, True)}}

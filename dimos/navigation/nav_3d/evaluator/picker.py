@@ -25,7 +25,7 @@ again to update the manifest. Plain clicks and drags only move the camera.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 
@@ -220,11 +220,11 @@ def pick_cases(
     server.gui.configure_theme(dark_mode=True)
     server.scene.set_background_image(np.full((1, 1, 3), 14, dtype=np.uint8))
     server.scene.set_up_direction("+z")
-    server.scene.add_point_cloud(
+    cloud = server.scene.add_point_cloud(
         "/map",
         map_points,
         map_colors,
-        point_size=0.035,
+        point_size=0.025,
         point_shape="circle",
         precision="float32",
     )
@@ -243,6 +243,29 @@ def pick_cases(
         client.camera.look_at = tuple(center)
 
     server.gui.add_markdown(INSTRUCTIONS)
+    with server.gui.add_folder("display", expand_by_default=False):
+        size_slider = server.gui.add_slider(
+            "point size", min=0.005, max=0.08, step=0.0025, initial_value=cloud.point_size
+        )
+        shape_dropdown = server.gui.add_dropdown(
+            "shape", ("circle", "rounded", "square", "diamond"), initial_value="circle"
+        )
+        shaded_box = server.gui.add_checkbox("shaded", True)
+
+        @size_slider.on_update
+        def _(_event: object) -> None:
+            cloud.point_size = size_slider.value
+
+        @shape_dropdown.on_update
+        def _(_event: object) -> None:
+            cloud.point_shape = cast(
+                "Literal['circle', 'rounded', 'square', 'diamond']", shape_dropdown.value
+            )
+
+        @shaded_box.on_update
+        def _(_event: object) -> None:
+            cloud.point_shading = "gradient" if shaded_box.value else "flat"
+
     undo_button = server.gui.add_button("undo last pick")
     save_all_button = server.gui.add_button("save all unsaved")
     exit_button = server.gui.add_button("save all & exit")

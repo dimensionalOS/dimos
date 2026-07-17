@@ -87,3 +87,44 @@ def diff(old_report: dict[str, object], new_report: dict[str, object]) -> Report
         if case_id not in new.get(dataset, {})
     ]
     return ReportDiff(fixed, broke, sorted(added), sorted(removed))
+
+
+# Wall-clock fields legitimately differ between runs of identical code.
+TIMING_KEYS = frozenset({"plan_ms", "map_update_ms", "map_build_ms", "add_frame_ms"})
+
+
+def _strip_timing(value: object) -> object:
+    if isinstance(value, dict):
+        return {k: _strip_timing(v) for k, v in value.items() if k not in TIMING_KEYS}
+    if isinstance(value, list):
+        return [_strip_timing(v) for v in value]
+    return value
+
+
+def _walk(path: str, old: object, new: object, out: list[str]) -> None:
+    if isinstance(old, dict) and isinstance(new, dict):
+        for key in sorted(old.keys() | new.keys()):
+            if key not in old or key not in new:
+                out.append(f"{path}.{key}: only in {'old' if key in old else 'new'}")
+            else:
+                _walk(f"{path}.{key}", old[key], new[key], out)
+    elif isinstance(old, list) and isinstance(new, list):
+        if len(old) != len(new):
+            out.append(f"{path}: length {len(old)} != {len(new)}")
+            return
+        for i, (o, n) in enumerate(zip(old, new, strict=True)):
+            _walk(f"{path}[{i}]", o, n, out)
+    elif old != new:
+        out.append(f"{path}: {old!r} != {new!r}")
+
+
+def exact_differences(old_report: dict[str, object], new_report: dict[str, object]) -> list[str]:
+    """Every non-timing field that differs between two reports, at full precision.
+
+    Two runs of identical code must produce an empty list. This is the
+    determinism gate: it holds for any algorithm under test, present or
+    future, because it checks the results rather than the implementation.
+    """
+    out: list[str] = []
+    _walk("report", _strip_timing(old_report), _strip_timing(new_report), out)
+    return out

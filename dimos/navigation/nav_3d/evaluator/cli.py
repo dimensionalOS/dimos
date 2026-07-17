@@ -20,6 +20,7 @@ Only some cases:      python -m dimos.navigation.nav_3d.evaluator run --tag stai
 Machine output:       python -m dimos.navigation.nav_3d.evaluator run --json report.json
 Override a knob:      python -m dimos.navigation.nav_3d.evaluator run --set wall_clearance_m=0.05
 Compare two runs:     python -m dimos.navigation.nav_3d.evaluator diff old.json new.json
+Determinism check:    run twice with --json, then diff a.json b.json --exact
 New dataset:          python -m dimos.navigation.nav_3d.evaluator ingest recordings/.../mem2.db --name office_a
 Pick cases by click:  python -m dimos.navigation.nav_3d.evaluator pick-case office_a
 Curate by coords:     python -m dimos.navigation.nav_3d.evaluator add-case office_a --start x y z --goal x y z
@@ -122,10 +123,18 @@ def _print_report(report: Report) -> None:
 def diff_reports(
     old: Path = typer.Argument(..., help="Baseline report JSON from `run --json`"),
     new: Path = typer.Argument(..., help="Candidate report JSON from `run --json`"),
+    exact: bool = typer.Option(
+        False,
+        "--exact",
+        help="Require bit-identical results (ignoring timings); "
+        "two runs of the same code must pass",
+    ),
 ) -> None:
     """Name every case whose pass/fail flipped between two runs.
 
     Exits 1 when any case regressed, so a keep/discard loop can gate on it.
+    With --exact, exits 1 on any non-timing difference at all; running the
+    suite twice and exact-diffing the reports is the determinism check.
     """
     old_report = json.loads(old.read_text())
     new_report = json.loads(new.read_text())
@@ -143,6 +152,17 @@ def diff_reports(
         print(f"  new case: {key}")
     for key in d.removed:
         print(f"  case gone: {key}")
+    if exact:
+        differences = tripwire.exact_differences(old_report, new_report)
+        if differences:
+            shown = 20
+            print(f"{len(differences)} exact difference(s):")
+            for line in differences[:shown]:
+                print(f"  {line}")
+            if len(differences) > shown:
+                print(f"  ... and {len(differences) - shown} more")
+            raise typer.Exit(code=1)
+        print("exact: reports identical")
     if d.broke:
         raise typer.Exit(code=1)
 
