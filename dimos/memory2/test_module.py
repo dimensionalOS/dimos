@@ -141,7 +141,7 @@ TFRecorderFixture = tuple[
     Callable[[TFMessage, Any], None],
     MagicMock,
 ]
-SYNC_TIMEOUT = 2.0
+SYNC_TIMEOUT: float = 2.0
 
 
 @pytest.fixture
@@ -171,6 +171,7 @@ def tf_recorder(tmp_path: Path) -> Iterator[TFRecorderFixture]:
 
 
 def test_recorder_stop_waits_for_active_tf_callback(
+    monkeypatch: pytest.MonkeyPatch,
     tf_recorder: TFRecorderFixture,
 ) -> None:
     module, store, tf_stream, callback, unsubscribe = tf_recorder
@@ -179,6 +180,11 @@ def test_recorder_stop_waits_for_active_tf_callback(
     append_finished = threading.Event()
     unsubscribed = threading.Event()
     store_stopped = threading.Event()
+    warning_logged = threading.Event()
+    test_logger = MagicMock()
+    test_logger.warning.side_effect = lambda *_args, **_kwargs: warning_logged.set()
+    monkeypatch.setattr(memory_module, "_TF_DRAIN_LOG_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(memory_module, "logger", test_logger)
 
     def append(*_args: Any, **_kwargs: Any) -> None:
         append_started.set()
@@ -201,6 +207,7 @@ def test_recorder_stop_waits_for_active_tf_callback(
         stop_future = pool.submit(module.stop)
         try:
             assert unsubscribed.wait(timeout=SYNC_TIMEOUT)
+            assert warning_logged.wait(timeout=SYNC_TIMEOUT)
             assert not store_stopped.is_set()
         finally:
             append_release.set()
@@ -214,6 +221,9 @@ def test_recorder_stop_waits_for_active_tf_callback(
     unsubscribe.assert_called_once_with()
     store.stop.assert_called_once_with()
     assert store_stopped.is_set()
+    test_logger.warning.assert_called()
+    assert test_logger.warning.call_args.args == ("Still waiting for tf callbacks",)
+    assert test_logger.warning.call_args.kwargs["active_callbacks"] == 1
 
 
 def test_recorder_rejects_tf_callback_when_stop_races_setup(
@@ -278,6 +288,62 @@ def test_recorder_rejects_tf_callback_when_stop_races_setup(
     unsubscribe.assert_called_once_with()
     store.stop.assert_called_once_with()
     assert store_stopped.is_set()
+    tf_stream.append.assert_not_called()
+
+
+def test_recorder_unsubscribes_when_stop_races_subscribe(
+    tmp_path: Path,
+) -> None:
+    store = MagicMock(spec=SqliteStore)
+    tf_stream = MagicMock(spec=Stream)
+    store.stream.return_value = tf_stream
+    subscribe_started = threading.Event()
+    subscribe_release = threading.Event()
+    store_stopped = threading.Event()
+    store.stop.side_effect = store_stopped.set
+    unsubscribe = MagicMock()
+    retained_callback: list[Callable[[TFMessage, Any], None]] = []
+    pubsub = MagicMock()
+
+    def subscribe(_topic: str, callback: Callable[[TFMessage, Any], None]) -> MagicMock:
+        retained_callback.append(callback)
+        subscribe_started.set()
+        assert subscribe_release.wait(timeout=SYNC_TIMEOUT)
+        return unsubscribe
+
+    pubsub.subscribe.side_effect = subscribe
+    tf = MagicMock()
+    tf.config.topic = "/tf"
+    tf.pubsub = pubsub
+    module = Recorder(
+        db_path=tmp_path / "recording.db",
+        rpc_transport=_TestRPC,
+    )
+    module._store = store
+    module._tf = tf
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            record_future = pool.submit(module._record_tf)
+            assert subscribe_started.wait(timeout=SYNC_TIMEOUT)
+            stop_future = pool.submit(module.stop)
+            try:
+                assert store_stopped.wait(timeout=SYNC_TIMEOUT)
+                unsubscribe.assert_not_called()
+            finally:
+                subscribe_release.set()
+
+            record_future.result(timeout=SYNC_TIMEOUT)
+            stop_future.result(timeout=SYNC_TIMEOUT)
+
+        assert len(retained_callback) == 1
+        retained_callback[0](TFMessage(Transform(ts=1.0)), "/tf")
+    finally:
+        subscribe_release.set()
+        module.stop()
+
+    unsubscribe.assert_called_once_with()
+    store.stop.assert_called_once_with()
     tf_stream.append.assert_not_called()
 
 

@@ -50,6 +50,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+_TF_DRAIN_LOG_INTERVAL_SECONDS: float = 5.0
+
 T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
@@ -540,12 +542,30 @@ class Recorder(MemoryModule):
             with callback_state:
                 accepting_callbacks = False
                 unsubscribe_now = unsubscribe
+                active_at_unsubscribe = active_callbacks
+            logger.info(
+                "Stopping tf recording",
+                active_callbacks=active_at_unsubscribe,
+                unsubscribe_installed=unsubscribe_now is not None,
+            )
             try:
                 if unsubscribe_now is not None:
                     unsubscribe_now()
             finally:
-                with callback_state:
-                    callback_state.wait_for(lambda: active_callbacks == 0)
+                wait_started = time.monotonic()
+                while True:
+                    with callback_state:
+                        if callback_state.wait_for(
+                            lambda: active_callbacks == 0,
+                            timeout=_TF_DRAIN_LOG_INTERVAL_SECONDS,
+                        ):
+                            break
+                        remaining_callbacks = active_callbacks
+                    logger.warning(
+                        "Still waiting for tf callbacks",
+                        active_callbacks=remaining_callbacks,
+                        elapsed_seconds=time.monotonic() - wait_started,
+                    )
 
         cleanup = Disposable(unsubscribe_and_drain)
         with self._memory_stop_lock:
