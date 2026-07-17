@@ -1,7 +1,20 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -10,6 +23,7 @@ import pytest
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.protocol.tf.tf import TFSpec
 
 
 class _FakeTF:
@@ -37,7 +51,7 @@ def _image(timestamp: float) -> Image:
 def _module(tf: _FakeTF) -> ObjectSceneRegistrationModule:
     module = ObjectSceneRegistrationModule(target_frame="map")
     module._camera_info = MagicMock(K=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-    module._tf = tf
+    module._tf = cast("TFSpec", tf)
     module._latest_scene_snapshot = None
     module._max_distance = 0.0
     module._use_aabb = False
