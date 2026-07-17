@@ -22,7 +22,7 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -64,6 +64,10 @@ class VisualRelocalizationModuleConfig(ModuleConfig):
 class VisualRelocalizationModule(Module):
     config: VisualRelocalizationModuleConfig
     color_image: In[Image]
+    # The same world->map fix that goes to TF, as a typed stream — so
+    # RelocalizationModule's FiducialPrior (`use_fiducial_prior`) can consume
+    # it by name/type autoconnect without scraping the TF tree.
+    world_map_fix: Out[Transform]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -105,4 +109,6 @@ class VisualRelocalizationModule(Module):
                 "check camera_optical_frame against the camera's static TF chain"
             )
             return
-        self.tf.publish((world_T_optical + pose.inverse()).now())
+        fix = (world_T_optical + pose.inverse()).now()
+        self.tf.publish(fix)
+        self.world_map_fix.publish(fix)

@@ -321,3 +321,65 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
     assert abs(fitness - _BASELINE_FITNESS) < 1e-6
     np.testing.assert_allclose(T, _BASELINE_T, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# FiducialPrior (Phase 2): age gating/decay + judge integrity
+# ---------------------------------------------------------------------------
+
+
+def test_fiducial_prior_unset_proposes_nothing() -> None:
+    from dimos.mapping.relocalization.priors import FiducialPrior
+
+    gm, lm, _ = _rect_room_scene(seed=11, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    assert FiducialPrior().propose(gm, lm) == []
+
+
+def test_fiducial_prior_fresh_fix_decays_with_age() -> None:
+    from dimos.mapping.relocalization.priors import FiducialPrior
+
+    gm, lm, T_true = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
+    clock = {"now": 100.0}
+    p = FiducialPrior(age_tau_s=30.0, age_max_s=120.0, conf_max=0.9,
+                      now_fn=lambda: clock["now"])
+    p.update(T_true, ts=100.0)
+
+    fresh = p.propose(gm, lm)
+    assert len(fresh) == 1 and fresh[0].source == "fiducial"
+    assert np.isclose(fresh[0].confidence, 0.9)
+    assert fresh[0].T is T_true
+
+    clock["now"] = 130.0  # age 30 s = one tau
+    aged = p.propose(gm, lm)
+    assert np.isclose(aged[0].confidence, 0.9 * np.exp(-1.0))
+
+    clock["now"] = 221.0  # age 121 s > cutoff
+    assert p.propose(gm, lm) == []
+
+
+def test_fiducial_prior_never_bypasses_judge() -> None:
+    """A wrong marker fix (stale map, moved tag, bad PnP) at maximum
+    confidence must lose to a correct low-confidence candidate — the fiducial
+    tier gets no special treatment from the judge."""
+    from dimos.mapping.relocalization.priors import FiducialPrior, relocalize_with_priors
+
+    gm, lm, T_true = _rect_room_scene(seed=13, yaw_deg=45.0, t=(2.0, 1.0, 0.0))
+    T_wrong = T_true.copy()
+    T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # confidently 6.4 m off
+
+    fid = FiducialPrior(conf_max=0.99, now_fn=lambda: 0.0)
+    fid.update(T_wrong, ts=0.0)
+
+    class NearTruthStub:
+        name = "stub_near_truth"
+
+        def propose(self, g: object, l: object) -> list:
+            from dimos.mapping.relocalization.priors import Candidate
+
+            T_near = T_true.copy()
+            T_near[:3, 3] += np.array([0.03, -0.02, 0.0])
+            return [Candidate(T=T_near, source=self.name, confidence=0.01)]
+
+    T, fitness, source = relocalize_with_priors(gm, lm, [fid, NearTruthStub()])
+    assert source == "stub_near_truth"
+    assert np.linalg.norm(T[:3, 3] - T_true[:3, 3]) < 0.15

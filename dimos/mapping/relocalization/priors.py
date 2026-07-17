@@ -24,8 +24,9 @@ forward pose) is meant to compete here too, not bypass the judge.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
@@ -123,6 +124,60 @@ class LastPosePrior:
         if self._last_T is None:
             return []
         return [Candidate(T=self._last_T, source=self.name, confidence=0.3)]
+
+
+class FiducialPrior:
+    """Visual (fiducial-marker) fixes as high-confidence seed candidates.
+
+    ``update()`` takes the fix in relocalize()'s own convention — map_T_world,
+    PRE-inversion, the same frame-direction rule as ``LastPosePrior`` (invert
+    a published world->map TF before passing it). ``ts`` is the fix time in
+    ``now_fn``'s own timebase; None stamps arrival time.
+
+    A marker fix is a fresh measurement of the world->map edge; its trust
+    decays with the odometry drift accumulated since the sighting. propose()
+    therefore hard-gates on ``age_max_s`` and decays the informational
+    confidence as ``conf_max * exp(-age / age_tau_s)``. The judge never reads
+    confidence — a stale or wrong fix still has to win on wall fitness, like
+    every other prior.
+
+    The decay/cutoff defaults are engineering guesses, not tuned values; the
+    Phase-4 autoresearch loop against the offline sections harness owns them.
+    """
+
+    name = "fiducial"
+
+    def __init__(
+        self,
+        *,
+        age_tau_s: float = 30.0,
+        age_max_s: float = 120.0,
+        conf_max: float = 0.9,
+        now_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._age_tau_s = age_tau_s
+        self._age_max_s = age_max_s
+        self._conf_max = conf_max
+        self._now_fn = now_fn
+        self._fix_T: np.ndarray | None = None
+        self._fix_ts: float = 0.0
+
+    def update(self, T: np.ndarray, ts: float | None = None) -> None:
+        self._fix_T = T
+        self._fix_ts = self._now_fn() if ts is None else ts
+
+    def propose(
+        self,
+        global_map: o3d.geometry.PointCloud,
+        local_map: o3d.geometry.PointCloud,
+    ) -> list[Candidate]:
+        if self._fix_T is None:
+            return []
+        age = self._now_fn() - self._fix_ts
+        if age > self._age_max_s:
+            return []
+        confidence = self._conf_max * float(np.exp(-max(age, 0.0) / self._age_tau_s))
+        return [Candidate(T=self._fix_T, source=self.name, confidence=confidence)]
 
 
 def relocalize_with_priors(

@@ -23,6 +23,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.priors import (
+    FiducialPrior,
     LastPosePrior,
     RansacPrior,
     relocalize_with_priors as _relocalize_with_priors,
@@ -59,11 +60,16 @@ class Config(ModuleConfig):
     # True = RANSAC + a carried-forward last-pose seed both propose candidates,
     # judged by the same fine-ICP tail (dimos/mapping/relocalization/priors.py).
     use_last_pose_seed: bool = False
+    # True = fixes arriving on the `world_map_fix` In stream (the visual/marker
+    # module's world->map estimate) also propose into the same judge as a
+    # high-confidence-tier, age-decayed prior. Never bypasses the judge.
+    use_fiducial_prior: bool = False
 
 
 class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
+    world_map_fix: In[Transform]  # visual/marker module's world->map estimate
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
 
@@ -73,6 +79,7 @@ class RelocalizationModule(Module):
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
         self._last_pose_prior = LastPosePrior()
+        self._fiducial_prior = FiducialPrior()
 
     @rpc
     def start(self) -> None:
@@ -113,6 +120,12 @@ class RelocalizationModule(Module):
             .subscribe(self._publish_periodic)
         )
 
+        self.register_disposable(
+            self.world_map_fix.observable().subscribe(  # type: ignore[no-untyped-call]
+                self._on_fiducial_fix
+            )
+        )
+
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
             f"loaded_map.frame_id={self._premap.frame_id!r}"
@@ -136,16 +149,28 @@ class RelocalizationModule(Module):
             return
         self._world_to_map.on_next(tf)
 
+    def _on_fiducial_fix(self, fix: Transform) -> None:
+        # The visual module publishes world->map; the prior stores relocalize()'s
+        # own convention (map_T_world) — invert here, once, at the boundary.
+        # Age is stamped at arrival in the prior's monotonic timebase (fix.ts is
+        # epoch); publish latency is negligible against the decay scales.
+        self._fiducial_prior.update(np.linalg.inv(fix.to_matrix()))
+
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
         assert self._premap is not None
         t0 = time.monotonic()
         winning_source: str | None = None
+        extra_priors: list[LastPosePrior | FiducialPrior] = []
+        if self.config.use_last_pose_seed:
+            extra_priors.append(self._last_pose_prior)
+        if self.config.use_fiducial_prior:
+            extra_priors.append(self._fiducial_prior)
         try:
-            if self.config.use_last_pose_seed:
+            if extra_priors:
                 T, fitness, winning_source = _relocalize_with_priors(
                     self._premap.pointcloud,
                     msg.pointcloud,
-                    [RansacPrior(), self._last_pose_prior],
+                    [RansacPrior(), *extra_priors],
                 )
             else:
                 T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
