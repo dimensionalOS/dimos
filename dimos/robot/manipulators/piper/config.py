@@ -42,6 +42,14 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
 }
 PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
+PIPER_HOME_JOINTS = [
+    0.793,
+    1.568186214614724,
+    -1.0290351975897356,
+    0.0008456548489068756,
+    0.9771515619106422,
+    -0.13286819850920156,
+]
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
@@ -110,6 +118,7 @@ def make_piper_model_config(
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     dof = 6
+    model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         name=name,
         model_path=PIPER_MODEL_PATH,
@@ -127,5 +136,6 @@ def make_piper_model_config(
         ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
-        home_joints=home_joints or [0.0] * dof,
+        home_joints=model_home_joints,
+        preset_poses={"home": list(model_home_joints)},
     )

@@ -50,6 +50,7 @@ class RobotModelConfig(ModuleConfig):
             corresponds to URDF's "joint1". If empty, names are assumed to match.
         coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
+        preset_poses: Named joint poses available for the robot.
     """
 
     name: str
@@ -76,6 +77,8 @@ class RobotModelConfig(ModuleConfig):
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
     home_joints: list[float] | None = None
+    # Named joint configurations, in the order defined by joint_names
+    preset_poses: dict[str, list[float]] = Field(default_factory=dict)
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

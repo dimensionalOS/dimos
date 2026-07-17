@@ -26,7 +26,10 @@ from dimos.learning.collection.blueprint import (
     learning_collect_quest_piper,
     learning_collect_quest_piper_rerun,
 )
-from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
+from dimos.learning.collection.episode_monitor import (
+    EpisodeMonitorModule,
+    EpisodeMonitorModuleConfig,
+)
 from dimos.learning.collection.recorder import CollectionRecorder, CollectionRecorderConfig
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
@@ -52,6 +55,7 @@ from dimos.robot.manipulators.piper.blueprints.teleop import (
     coordinator_teleop_piper,
     keyboard_teleop_piper,
 )
+from dimos.robot.manipulators.piper.config import make_piper_model_config
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     xarm6_planner_only,
@@ -105,20 +109,19 @@ def test_piper_rerun_collection_composes_hardware_observability_stack() -> None:
 
 
 def test_piper_rerun_collection_keeps_default_episode_controls() -> None:
-    monitor_config = _module_kwargs(learning_collect_quest_piper_rerun, EpisodeMonitorModule)[
-        "config"
-    ]
+    monitor_config = EpisodeMonitorModuleConfig(
+        **_module_kwargs(learning_collect_quest_piper_rerun, EpisodeMonitorModule)
+    )
     assert monitor_config.button_map == {"toggle": "B", "discard": "Y"}
 
 
 def test_piper_rerun_collection_propagates_task_label() -> None:
-    recorder_config = _module_kwargs(learning_collect_quest_piper_rerun, CollectionRecorder)[
-        "config"
-    ]
-    monitor_config = _module_kwargs(learning_collect_quest_piper_rerun, EpisodeMonitorModule)[
-        "config"
-    ]
-    assert isinstance(recorder_config, CollectionRecorderConfig)
+    recorder_config = CollectionRecorderConfig(
+        **_module_kwargs(learning_collect_quest_piper_rerun, CollectionRecorder)
+    )
+    monitor_config = EpisodeMonitorModuleConfig(
+        **_module_kwargs(learning_collect_quest_piper_rerun, EpisodeMonitorModule)
+    )
     assert recorder_config.task_label == "pick_and_place"
     assert monitor_config == recorder_config.episode_monitor_config()
     assert monitor_config.default_task_label == recorder_config.task_label
@@ -139,6 +142,28 @@ def test_quest_piper_teleop_composes_viser_manipulation() -> None:
 def test_piper_teleop_publishes_joint_state_for_manipulation() -> None:
     kwargs = _module_kwargs(coordinator_teleop_piper, ControlCoordinator)
     assert kwargs["publish_joint_state"] is True
+
+
+def test_piper_teleop_registers_trajectory_task_without_changing_streaming_task() -> None:
+    tasks = _coordinator_tasks(coordinator_teleop_piper)
+
+    assert [(task.name, task.type, task.priority) for task in tasks] == [
+        ("teleop_piper", "teleop_ik", 10),
+        ("traj_arm", "trajectory", 10),
+    ]
+
+
+def test_existing_piper_teleop_retains_original_task_list() -> None:
+    tasks = _coordinator_tasks(coordinator_teleop_piper)
+
+    assert [(task.name, task.type) for task in tasks] == [
+        ("teleop_piper", "teleop_ik"),
+        ("traj_arm", "trajectory"),
+    ]
+
+
+def test_piper_teleop_trajectory_task_matches_model_config() -> None:
+    assert make_piper_model_config().coordinator_task_name == "traj_arm"
 
 
 def test_piper_keyboard_keeps_meshcat_manipulation() -> None:

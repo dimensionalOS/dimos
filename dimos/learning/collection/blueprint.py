@@ -79,7 +79,12 @@ _piper_rerun_recorder_config = CollectionRecorderConfig(
 learning_collect_quest_piper_rerun = autoconnect(
     teleop_quest_piper,
     RealSenseCamera.blueprint(enable_pointcloud=False),
-    EpisodeMonitorModule.blueprint(config=_piper_rerun_recorder_config.episode_monitor_config()),
-    CollectionRecorder.blueprint(config=_piper_rerun_recorder_config),
+    EpisodeMonitorModule.blueprint(
+        default_task_label=_piper_rerun_recorder_config.task_label,
+    ),
+    CollectionRecorder.blueprint(
+        db_path=_piper_rerun_recorder_config.db_path,
+        task_label=_piper_rerun_recorder_config.task_label,
+    ),
     vis_module("rerun", rerun_config=dict(collection_status_rerun_config())),
 )
