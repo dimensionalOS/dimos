@@ -224,7 +224,7 @@ def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> N
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 7, "ok": True}]
 
 
-def test_estop_clear_rearms_but_does_not_resume(module: ArmCommandModule) -> None:
+def test_estop_clear_reengages_held_button_from_current_pose(module: ArmCommandModule) -> None:
     _engage_right(module)
     module._on_state_json(b'{"type": "estop", "nonce": 1}')
     module.right_controller_output.publish.reset_mock()
@@ -233,9 +233,9 @@ def test_estop_clear_rearms_but_does_not_resume(module: ArmCommandModule) -> Non
     assert not module._estopped
     module.coordinator.set_estop.assert_called_with(False)
 
-    # Button still held from before the estop: engaging again is allowed only
-    # because a held primary re-engages from the CURRENT pose (delta zero) —
-    # the arm doesn't jump.
+    # Button still held from before the estop: the next tick re-engages and
+    # rebaselines to the CURRENT pose (delta zero), so the arm resumes tracking
+    # from where it is — no jump.
     _tick(module)
     assert module._is_engaged[Hand.RIGHT]
 

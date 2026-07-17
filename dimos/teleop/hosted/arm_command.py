@@ -183,9 +183,8 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── E-STOP gating over the inherited control loop ────────────────
 
     def _handle_engage(self) -> None:
-        """While E-STOP is latched, refuse engagement (and drop any lingering
-        engage) so clearing the latch never resumes motion by itself — the
-        operator must release and re-press the engage button."""
+        """While E-STOP is latched, refuse engagement and drop any lingering
+        engage, so no motion happens until the latch clears."""
         if self._estopped:
             for hand in Hand:
                 if self._is_engaged[hand]:
@@ -212,9 +211,9 @@ class ArmCommandModule(ArmTeleopModule):
         self._send_ack(nonce, True)
 
     def _handle_estop_clear(self, nonce: Any) -> None:
-        """Re-arm. Deliberately does NOT resume motion — hands stay disengaged
-        until the operator releases and re-presses the engage button (which
-        recaptures the initial pose, so the delta restarts from zero)."""
+        """Re-arm. If the engage button is still held, the next tick re-engages
+        and recaptures the current pose as the new baseline, so the arm resumes
+        tracking from where it is (delta zero) — no jump."""
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
         self._set_coordinator_estop(False)
