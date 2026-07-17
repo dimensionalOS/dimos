@@ -179,6 +179,7 @@ def refine_candidates(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
     candidates: list[np.ndarray],
+    sources: list[str] | None = None,
 ) -> tuple[np.ndarray, float, int]:
     """Judge a pool of candidate local_map->global_map transforms and refine
     the winner. This is the single referee every relocalization prior's
@@ -203,8 +204,30 @@ def refine_candidates(
 
     # Gravity filter; fall back to all if everything is tilted (degenerate clouds).
     indexed = list(enumerate(candidates))
-    upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= GRAVITY_TILT_MAX_DEG]
-    pool = upright if upright else indexed
+    if sources is None:
+        upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= GRAVITY_TILT_MAX_DEG]
+        pool = upright if upright else indexed
+    else:
+        # Per-source gating: one source's upright candidate must not orphan
+        # another source's all-tilted pool (the gravity-gate walkover: a
+        # near-upright stale seed silently discarded all 34 tilted RANSAC
+        # candidates and won unopposed — found by the offline benchmark,
+        # repro hk_village1 frame 831). Each source falls back to its own
+        # tilted pool only when IT has no upright member, so single-source
+        # behavior is unchanged bit-for-bit.
+        if len(sources) != len(candidates):
+            raise ValueError(
+                f"sources ({len(sources)}) and candidates ({len(candidates)}) must align"
+            )
+        by_source: dict[str, list[tuple[int, np.ndarray]]] = {}
+        for item in indexed:
+            by_source.setdefault(sources[item[0]], []).append(item)
+        pool = []
+        for group in by_source.values():
+            group_upright = [
+                item for item in group if _gravity_tilt_deg(item[1]) <= GRAVITY_TILT_MAX_DEG
+            ]
+            pool.extend(group_upright if group_upright else group)
 
     # Build WALL-ONLY clouds for scoring + polish; the FULL clouds are still
     # used for the final refinement, so the gravity anchor and inlier density

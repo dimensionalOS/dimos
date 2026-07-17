@@ -206,5 +206,10 @@ def relocalize_with_priors(
     if not all_transforms:
         raise ValueError("relocalize_with_priors: no prior proposed any candidate")
 
-    T, fitness, winning_index = refine_candidates(global_map, local_map, all_transforms)
+    # sources= makes the judge's gravity gate per-source — a lone upright
+    # seed must never orphan another source's all-tilted pool (the
+    # gravity-gate walkover; see refine_candidates).
+    T, fitness, winning_index = refine_candidates(
+        global_map, local_map, all_transforms, sources=sources
+    )
     return T, fitness, sources[winning_index]

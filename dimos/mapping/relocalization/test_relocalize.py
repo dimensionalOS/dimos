@@ -383,3 +383,53 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
     T, fitness, source = relocalize_with_priors(gm, lm, [fid, NearTruthStub()])
     assert source == "stub_near_truth"
     assert np.linalg.norm(T[:3, 3] - T_true[:3, 3]) < 0.15
+
+
+def test_gravity_gate_is_per_source_no_walkover() -> None:
+    """The gravity-gate walkover (benchmark-found, repro hk_village1 frame
+    831): with a pool-global gate, one upright stale seed un-empties
+    `upright` and silently discards another source's ALL-TILTED candidates —
+    the seed wins unopposed. Per-source gating (sources=) must keep each
+    source's own fallback: the tilted-but-near-truth RANSAC candidate beats
+    the upright-but-6m-stale seed on wall fitness, as it always did before
+    the seed existed."""
+    from scipy.spatial.transform import Rotation as _R
+
+    gm, lm, T_true = _rect_room_scene(seed=31, yaw_deg=20.0, t=(1.0, -1.5, 0.0))
+
+    T_tilted = T_true.copy()  # near-truth but 15 deg off-gravity (> 10 deg gate)
+    tilt = np.eye(4)
+    tilt[:3, :3] = _R.from_euler("x", 15.0, degrees=True).as_matrix()
+    T_tilted = T_tilted @ tilt
+
+    T_stale = T_true.copy()  # perfectly upright, 7.8 m from the truth
+    T_stale[:3, 3] += np.array([6.0, -5.0, 0.0])
+
+    pool = [T_tilted, T_stale]
+    sources = ["ransac", "last_pose"]
+
+    # Old global gate: the upright stale seed orphans the tilted candidate
+    # and wins by walkover — the bug, reproduced.
+    _, _, walkover_idx = refine_candidates(gm, lm, pool)
+    assert walkover_idx == 1, "expected the walkover under the pool-global gate"
+
+    # Per-source gate: the tilted near-truth candidate stays in and wins.
+    T, fitness, idx = refine_candidates(gm, lm, pool, sources=sources)
+    assert idx == 0, "per-source gating must keep the all-tilted source's pool"
+    assert np.linalg.norm(T[:3, 3] - T_true[:3, 3]) < 1.0
+
+    # And the full priors entry point attributes the win to ransac.
+    class TiltedRansacStub:
+        name = "ransac"
+
+        def propose(self, g: object, l: object) -> list:
+            from dimos.mapping.relocalization.priors import Candidate
+
+            return [Candidate(T=T_tilted, source=self.name, confidence=0.5)]
+
+    lp = LastPosePrior()
+    lp.update(T_stale)
+    from dimos.mapping.relocalization.priors import relocalize_with_priors as rwp
+
+    _, _, source = rwp(gm, lm, [TiltedRansacStub(), lp])
+    assert source == "ransac"
