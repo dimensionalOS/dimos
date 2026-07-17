@@ -267,3 +267,16 @@ def test_gripper_command_toggles_target(gripper_task: EEFTwistTask) -> None:
 
 def test_gripper_command_rejected_without_gripper_joint(task: EEFTwistTask) -> None:
     assert task.on_gripper_command(closed=True) is False
+
+
+def test_estop_makes_task_inert(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert task.is_active()
+
+    task.set_estop(True)
+    assert not task.is_active()
+
+    task.set_estop(False)
+    held = task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
+    assert held is not None
+    assert held.positions == [0.1, 0.2, 0.3]

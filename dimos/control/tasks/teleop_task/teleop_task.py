@@ -151,6 +151,7 @@ class TeleopIKTask(BaseControlTask):
         self._target_pose: Pose | PoseStamped | None = None
         self._last_update_time: float = 0.0
         self._active = False
+        self._estopped = False
 
         # Initial EE pose for delta application
         self._initial_ee_pose: pinocchio.SE3 | None = None
@@ -182,7 +183,17 @@ class TeleopIKTask(BaseControlTask):
     def is_active(self) -> bool:
         """Check if task should run this tick."""
         with self._lock:
-            return self._active and self._target_pose is not None
+            return not self._estopped and self._active and self._target_pose is not None
+
+    def set_estop(self, estopped: bool) -> None:
+        """Latch/clear E-STOP. On latch, disengage and drop the target so the
+        task goes inert (is_active() False → compute() is skipped)."""
+        with self._lock:
+            self._estopped = estopped
+            if estopped:
+                self._active = False
+                self._target_pose = None
+                self._initial_ee_pose = None
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute IK and output joint positions.

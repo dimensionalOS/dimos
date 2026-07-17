@@ -566,6 +566,20 @@ class ControlCoordinator(Module):
                 task.on_buttons(msg)
 
     @rpc
+    def set_estop(self, estopped: bool) -> bool:
+        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
+        inert so the tick loop stops commanding the hardware within one tick.
+        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
+        if estopped:
+            logger.warning("E-STOP latched at coordinator")
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "set_estop", None)
+                if callable(handler):
+                    handler(estopped)
+        return True
+
+    @rpc
     def set_activated(self, engaged: bool) -> None:
         """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
         with self._task_lock:
@@ -739,7 +753,7 @@ class ControlCoordinator(Module):
                 )
                 logger.info("Subscribed to gripper_command for EEFTwist tasks")
             except Exception:
-                logger.debug("No gripper_command transport bound; gripper toggle unavailable")
+                logger.warning("No gripper_command transport bound; gripper toggle unavailable")
 
         # Twist commands drive either base hardware or velocity-capable tasks.
         has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
