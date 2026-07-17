@@ -28,6 +28,7 @@ EXPECTED_PLANNER_CONFIG = {
     "path_cell_cost_weight": 3.0,
     "publish_raw_path": True,
     "constrained_path_smoothing_enabled": True,
+    "path_smoothing_performance_logging_enabled": False,
     "path_smoothing_iterations": 40,
     "path_smoothing_data_weight": 0.02,
     "path_smoothing_smoothness_weight": 0.45,
@@ -63,3 +64,4 @@ def test_m20_simple_nav_profile_enables_diagnostics_and_smoothing() -> None:
 
     assert planner.publish_raw_path is True
     assert planner.constrained_path_smoothing_enabled is True
+    assert planner.path_smoothing_performance_logging_enabled is False
