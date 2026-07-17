@@ -1,0 +1,302 @@
+<?xml version="1.0" ?>
+<!-- =================================================================================== -->
+<!-- Boston Dynamics Spot base URDF. Flattened by xacro from the spot_description        -->
+<!-- package (github.com/clearpathrobotics/spot_ros). Mesh paths are relative (meshes/); -->
+<!-- the .dae/.stl assets are not vendored here. Arm/accessories/OutdoorNav are omitted. -->
+<!-- =================================================================================== -->
+<robot name="spot">
+  <link name="body">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/body.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/body_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="base_link"/>
+  <joint name="base_link_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="body"/>
+  </joint>
+  <link name="front_rail"/>
+  <joint name="front_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.223 0 0.0805"/>
+    <parent link="body"/>
+    <child link="front_rail"/>
+  </joint>
+  <link name="real_front_rail"/>
+  <joint name="real_front_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.2075 0 0.0805"/>
+    <parent link="body"/>
+    <child link="real_front_rail"/>
+  </joint>
+  <link name="rear_rail"/>
+  <joint name="rear_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.223 0 0.0805"/>
+    <parent link="body"/>
+    <child link="rear_rail"/>
+  </joint>
+  <link name="real_rear_rail"/>
+  <joint name="real_rear_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.415 0 0"/>
+    <parent link="real_front_rail"/>
+    <child link="real_rear_rail"/>
+  </joint>
+  <link name="front_left_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="0.29785 0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="front_left_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="front_left_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_left_hip"/>
+    <child link="front_left_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="front_left_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_left_upper_leg"/>
+    <child link="front_left_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.254801" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="0.29785 -0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="front_right_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 -0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_right_hip"/>
+    <child link="front_right_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_right_upper_leg"/>
+    <child link="front_right_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.247563" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.29785 0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="rear_left_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_left_hip"/>
+    <child link="rear_left_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_left_upper_leg"/>
+    <child link="rear_left_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.267153" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.29785 -0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="rear_right_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 -0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_right_hip"/>
+    <child link="rear_right_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_right_upper_leg"/>
+    <child link="rear_right_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.257725" velocity="1000.00"/>
+  </joint>
+  <link name="cover">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/spot_cover.stl"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.15 0.15 0.15 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/spot_cover.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cover to body_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.0429 0 0.0597"/>
+    <parent link="body"/>
+    <child link="cover"/>
+  </joint>
+  <!-- This file is a placeholder which is included by default from
+       spot.urdf.xacro. If a robot is being customized and requires
+       additional URDF, set the SPOT_URDF_EXTRAS environment variable
+       to the full path of the file you would like included. -->
+</robot>

@@ -12,24 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Boston Dynamics Spot: click/teleop driving plus full sensor streaming + Rerun.
+"""Spot: drive it from the Rerun web UI while recording every data stream.
 
-The Rerun web UI is the driver: `RerunWebSocketServer` turns clicks into
-`clicked_point` and browser keys into `tele_cmd_vel`. `MovementManager` muxes
-those (and any `nav_cmd_vel`) into a single `cmd_vel`, which `SpotHighLevel`
-executes. The same module streams the five fisheye + five depth cameras and body
-odometry. Because the browser is the input surface there is no on-main-thread
-pygame window, so this runs on macOS.
-
-The ip auto-detects: with no `-o spothighlevel.ip=` given, it probes Spot's WiFi
-AP address (192.168.80.3) then the Ethernet address (10.0.0.3) and uses
-whichever answers.
+The same click/teleop + camera stack as the default `spot` blueprint —
+`RerunWebSocketServer` turns browser clicks/keys into `clicked_point` /
+`tele_cmd_vel`, `MovementManager` muxes them into `cmd_vel`, and `SpotHighLevel`
+executes it while streaming the five fisheye + five depth cameras and odometry —
+with `SpotRecorder` added so every one of those streams (plus the live tf tree)
+is written to a memory2 SQLite db as you drive. `autoconnect` wires the
+recorder's In ports to `SpotHighLevel`'s outputs by name.
 
 Usage:
-    dimos run spot \
+    dimos run spot-record \
         -o spothighlevel.username=admin -o spothighlevel.password=<password>
-    # or force an address:
-    dimos run spot ... -o spothighlevel.ip=10.0.0.3
+    # choose where the recording lands:
+    dimos run spot-record ... -o spotrecorder.db_path=/path/to/spot.db
 """
 
 from __future__ import annotations
@@ -38,12 +35,14 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.bosdyn.spot.blueprints.spot_cameras import spot_camera_layout
 from dimos.robot.bosdyn.spot.effectors.high_level import SpotHighLevel
+from dimos.robot.bosdyn.spot.recorder import SpotRecorder
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-spot = autoconnect(
+spot_record = autoconnect(
     SpotHighLevel.blueprint(),
     MovementManager.blueprint(),
+    SpotRecorder.blueprint(),
     RerunBridgeModule.blueprint(blueprint=spot_camera_layout),
     RerunWebSocketServer.blueprint(),
 ).remappings(
