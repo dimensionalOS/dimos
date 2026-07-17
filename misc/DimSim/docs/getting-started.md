@@ -77,7 +77,6 @@ docs/       guides
 | Run all evals, JUnit XML | `dimsim eval --headless --output junit > junit.xml` |
 | Direct workflow execution | `deno run -A scenes/<env>/evals/<name>.js` |
 | Build the frontend manually | `cd misc/DimSim && npm run build` |
-| Verify cmd_vel → odom round-trip | `python cli/test/dimos_integration.py` |
 
 ## Troubleshooting
 
