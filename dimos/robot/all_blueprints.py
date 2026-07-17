@@ -115,6 +115,7 @@ all_blueprints = {
     "unitree-g1-shm": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_shm:unitree_g1_shm",
     "unitree-g1-sim": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_sim:unitree_g1_sim",
     "unitree-g1-teleop": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop:unitree_g1_teleop",
+    "unitree-g1-teleop-demo": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop_demo:unitree_g1_teleop_demo",
     "unitree-go2": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2",
     "unitree-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic:unitree_go2_agentic",
     "unitree-go2-agentic-huggingface": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_huggingface:unitree_go2_agentic_huggingface",
