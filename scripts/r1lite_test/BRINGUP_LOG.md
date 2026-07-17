@@ -1000,3 +1000,44 @@ wanted.
 - **No CI builds the 3.10 floor or a core-only install.** Four of today's bug
   classes would have been caught by one job: install core-only on 3.10, import
   every blueprint. Worth filing on its own merit.
+
+## 12. Onboard teleop — and an X11 regression the uid change caused
+
+`dimos run r1lite-keyboard-teleop` via the `/usr/local/bin/dimos` wrapper over
+`ssh -X`, with the always-on service stopped. **Works: pygame window forwards to
+the laptop, teleop drives the chassis from the runtime image.** Nothing
+laptop-side is in the control path.
+
+Two traps on the way, both worth knowing:
+
+**The service owns the ports.** The compose `dimos` service already runs
+`r1lite-coordinator`, and the teleop blueprint contains a *full* coordinator plus
+the vis modules — so it starts a **second** copy of everything and dies on
+`bind ('127.0.0.1', 3030): address already in use` (also 7779). Two coordinators
+would otherwise both command the chassis. Always:
+`docker compose -f /opt/dimos/compose.yaml stop dimos` first, and `start` it
+after.
+
+**The wrapper mounted the X cookie at `/root/.Xauthority`** — correct when the
+container ran as root. Running as uid 1000 (§4/§9, needed for FastDDS shared
+memory) moved `HOME` to `/home/dimos`, so X looked there, found nothing, and
+rejected the connection:
+
+    X11 connection rejected because of wrong authentication
+    pygame.error: x11 not available
+
+Note this is a *different* message from Day 5 §4's missing-cookie case — found
+and rejected, vs never presented. Both surface as SDL's useless "x11 not
+available".
+
+Fix: set `XAUTHORITY` to a fixed path explicitly and mount there, so the wrapper
+does not depend on which uid or `$HOME` the image uses. **Changing the container's
+identity silently broke everything keyed to root's home; nothing caught it.**
+
+Also: `ForwardX11 yes` + `ForwardX11Trusted yes` in `~/.ssh/config` for the
+`r1lite` host, so plain `ssh r1lite` forwards X11 (verified: `DISPLAY` =
+`localhost:11.0`). `Trusted` avoids the ~20-minute untrusted-cookie expiry and
+the X-extension restrictions that produce the same unhelpful SDL error. Cursor /
+VS Code Remote-SSH terminals are NOT a reliable place for this — they inherit a
+persistent remote server's environment, which has no `DISPLAY`. Use a plain
+terminal for the one command that opens a window.

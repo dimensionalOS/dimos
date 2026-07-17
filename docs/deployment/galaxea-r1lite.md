@@ -501,6 +501,7 @@ path in this document has been executed on the robot:
 | Zero-copy shared memory as uid 1000 | ✅ no UDP-only profile needed |
 | Live camera feed to a laptop viewer | ✅ no perceptible lag after throttling |
 | Chassis driven under dimos (dev path) | ✅ WASD → `/cmd_vel` → VCU |
+| **Teleop onboard from the runtime image** | ✅ `dimos run r1lite-keyboard-teleop` via the wrapper over `ssh -X` |
 
 Known gaps:
 
