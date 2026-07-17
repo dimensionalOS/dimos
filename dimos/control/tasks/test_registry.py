@@ -196,7 +196,8 @@ def _scannable_task_classes(task_type: str) -> list[type] | None:
 
 def test_declared_handlers_exist_on_task_classes() -> None:
     checked = 0
-    for task_type, bindings in sorted(control_task_registry._bindings.items()):
+    for task_type in control_task_registry.available():
+        bindings = control_task_registry.bindings_for(task_type)
         if not bindings.consumes:
             continue
         task_classes = _scannable_task_classes(task_type)
@@ -213,7 +214,8 @@ def test_declared_handlers_exist_on_task_classes() -> None:
 
 def test_declared_commands_exist_on_task_classes() -> None:
     checked = 0
-    for task_type, bindings in sorted(control_task_registry._bindings.items()):
+    for task_type in control_task_registry.available():
+        bindings = control_task_registry.bindings_for(task_type)
         if not bindings.exposes:
             continue
         task_classes = _scannable_task_classes(task_type)
