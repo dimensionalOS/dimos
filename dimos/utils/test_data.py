@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gzip
 import hashlib
+import io
 import os
 from pathlib import Path
-import shutil
 import subprocess
+import tarfile
 
 import pytest
 
@@ -435,7 +437,18 @@ def temp_data_environment(
     lfs_dir.mkdir(parents=True)
     real_archive = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
     temp_archive = lfs_dir / real_archive.name
-    shutil.copy2(real_archive, temp_archive)
+
+    tar_stream = io.BytesIO()
+    with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+        file_content = b"this is a dummy test dataset"
+        tarinfo = tarfile.TarInfo(name="a750_description/urdf/a750_rev1_no_gripper.urdf")
+        tarinfo.size = len(file_content)
+        tar.addfile(tarinfo, io.BytesIO(file_content))
+
+    tar_stream.seek(0)
+    with gzip.open(temp_archive, "wb") as f_out:
+        f_out.write(tar_stream.read())
+
     monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
     monkeypatch.setattr(data, "_get_lfs_dir", lambda: lfs_dir)
     monkeypatch.setattr(
@@ -472,23 +485,11 @@ def test_get_data_with_existing_extracted_path(temp_data_environment: tuple[Path
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    os.utime(
-        extracted_path,
-        ns=(
-            extracted_path.stat().st_atime_ns,
-            archive_file.stat().st_mtime_ns,
-        ),
-    )
-
-    before_mtime = extracted_path.stat().st_mtime_ns
-
     result = get_data(ARCHIVE_NAME)
-
-    after_mtime = extracted_path.stat().st_mtime_ns
-
     assert result == extracted_path
     assert result.exists()
-    assert before_mtime == after_mtime
+
+    assert data._read_archive_checksum(extracted_path) is not None
 
 
 def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path]) -> None:
@@ -500,21 +501,24 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    newer_mtime = extracted_path.stat().st_mtime_ns + 1_000_000_000
-    os.utime(
-        archive_file,
-        ns=(
-            archive_file.stat().st_atime_ns,
-            newer_mtime,
-        ),
-    )
+    old_md5 = data._calculate_md5(archive_file)
 
-    assert archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
+    with gzip.open(archive_file, "rb") as f:
+        old_data = f.read()
+
+    with gzip.open(archive_file, "wb") as f:
+        f.write(old_data + b"\x00")
+
+    new_md5 = data._calculate_md5(archive_file)
+
+    assert old_md5 != new_md5
 
     result = get_data(ARCHIVE_NAME)
-    assert result.exists()
+
     assert result == extracted_path
-    assert archive_file.stat().st_mtime_ns == extracted_path.stat().st_mtime_ns
+    assert result.exists()
+    stored_md5 = data._read_archive_checksum(extracted_path)
+    assert stored_md5 == new_md5
 
 
 def test_get_data_with_missing_archive(temp_data_environment: tuple[Path, Path]) -> None:

@@ -14,6 +14,8 @@
 
 from datetime import datetime
 from functools import cache
+import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -258,6 +260,45 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     return file_path
 
 
+def _calculate_md5(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.md5()
+
+    with file_path.open("rb") as file:
+        for chunk in iter(lambda: file.read(chunk_size), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def _write_archive_md5(extracted_path: Path, md5_str: str) -> None:
+    """Write the archive MD5 checksum to a metadata JSON file in the extracted directory."""
+
+    METADATA_FILENAME = ".archive_metadata.json"
+    metadata_path = extracted_path / METADATA_FILENAME
+    metadata = {"archive_md5": md5_str}
+
+    # Write the metadata as UTF-8 encoded JSON.
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _read_archive_checksum(extracted_path: Path) -> str | None:
+    """Read the archive MD5 checksum from the metadata JSON file in the extracted directory."""
+    METADATA_FILENAME = ".archive_metadata.json"
+    metadata_path = extracted_path / METADATA_FILENAME
+
+    if not metadata_path.exists():
+        return None
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        return metadata.get("archive_md5")
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
 def get_data(name: str | Path) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
@@ -294,8 +335,7 @@ def get_data(name: str | Path) -> Path:
     data_dir = get_data_dir()
     file_path = data_dir / name
 
-    # Extract the archive root from the first path component and preserve any
-    # remaining components as the nested path.
+    # Extract the archive root from the first path component and preserve any remaining components as the nested path.
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
@@ -306,21 +346,36 @@ def get_data(name: str | Path) -> Path:
     # Path to the corresponding Git LFS archive.
     archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
 
+    # pull lfs_file in advance
+    pull_path = _pull_lfs_archive(archive_name)
+
     # If the requested path already exists, compare the archive and extracted
     # root modification times to determine whether the extraction is stale.
     if file_path.exists():
         archive_is_newer = False
+        archive_checksum = None
 
         # If the archive is missing, preserve and return the existing usable
         # extracted data instead of raising FileNotFoundError from stat().
-        # file_path exists ⇒ extracted_path exists
         if archive_file.exists():
-            archive_is_newer = archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
+            if extracted_path.exists():
+                # calculate archive_file md5
+                archive_checksum = _calculate_md5(archive_file)
+
+                # read md5 from extracted_path if reading fail return None and decompress again.
+                extracted_checksum = _read_archive_checksum(extracted_path)
+
+                # compare md5
+                archive_is_newer = archive_checksum != extracted_checksum
+
+            else:
+                archive_is_newer = True
 
         if archive_is_newer:
-            # Pull the updated archive before modifying the existing extracted
-            # data.
-            pull_path = _pull_lfs_archive(archive_name)
+            logger.warning(
+                "Replacing stale extracted data at %s. A backup will be created first.",
+                extracted_path,
+            )
 
             # Extract the updated archive into a temporary staging directory so
             # the existing extraction remains usable if extraction fails.
@@ -367,16 +422,8 @@ def get_data(name: str | Path) -> Path:
                 elif backup_path.exists():
                     backup_path.unlink()
 
-                # Mark the extracted root with the archive modification time so
-                # the same archive is not repeatedly treated as newer.
-                archive_stat = pull_path.stat()
-                os.utime(
-                    extracted_path,
-                    ns=(
-                        extracted_path.stat().st_atime_ns,
-                        archive_stat.st_mtime_ns,
-                    ),
-                )
+                # write new md5 to extracted_path if succeed.
+                _write_archive_md5(extracted_path, archive_checksum)
 
                 # Return the requested nested path or the extracted root.
                 result_path = extracted_path / nested_path if nested_path else extracted_path
@@ -387,25 +434,17 @@ def get_data(name: str | Path) -> Path:
                 # Remove any remaining staging data after success or failure.
                 shutil.rmtree(staging_dir, ignore_errors=True)
 
-        # The archive is unchanged or unavailable, so return the existing
-        # extracted data.
+        # The archive is unchanged or unavailable, so return the existing extracted data.
         return file_path
 
-    # The requested data has not been extracted yet. Pull and decompress the
-    # archive using the normal extraction flow.
-    pull_path = _pull_lfs_archive(archive_name)
+    # calculate archive_file md5
+    archive_checksum = _calculate_md5(archive_file)
+
+    # decompress archive files to produce extract directory
     archive_path = _decompress_archive(pull_path)
 
-    # Mark the extracted root with the archive modification time so the next
-    # call does not repeatedly treat the same archive as newer.
-    archive_stat = pull_path.stat()
-    os.utime(
-        extracted_path,
-        ns=(
-            extracted_path.stat().st_atime_ns,
-            archive_stat.st_mtime_ns,
-        ),
-    )
+    # write current archive_file md5 to extract directory
+    _write_archive_md5(extracted_path, archive_checksum)
 
     # Return the requested nested path or the extracted archive root.
     if nested_path:
