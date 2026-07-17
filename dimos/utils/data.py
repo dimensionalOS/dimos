@@ -361,111 +361,123 @@ def get_data(name: str | Path) -> Path:
     archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
 
     # If the requested path already exists, compare the archive and extracted
-    # root modification times to determine whether the extraction is stale.
+    # root md5 to determine whether the extraction is stale.
     if file_path.exists():
+        if not archive_file.exists():
+            return file_path
+
         archive_is_newer = False
-        archive_checksum = None
+        # confirm archive file is not LFS pointer
+        pull_path = _pull_lfs_archive(archive_name)
 
-        # If the archive is missing, preserve and return the existing usable
-        # extracted data instead of raising FileNotFoundError from stat().
-        if archive_file.exists():
-            if extracted_path.exists():
-                # calculate archive_file md5
-                archive_checksum = _calculate_md5(archive_file)
+        # calculate archive_file md5
+        archive_checksum = _calculate_md5(pull_path)
 
-                # read md5 from extracted_path if reading fail return None and decompress again.
-                extracted_checksum = _read_archive_checksum(extracted_path)
+        # read md5 from extracted_path if reading fail return None and decompress again.
+        extracted_checksum = _read_archive_checksum(extracted_path)
 
-                # compare md5
-                archive_is_newer = archive_checksum != extracted_checksum
+        # compare md5 to decide which one is newer
+        archive_is_newer = archive_checksum != extracted_checksum
 
-            else:
-                archive_is_newer = True
+        if not archive_is_newer:
+            return file_path
 
-        if archive_is_newer:
-            logger.warning(
-                "Replacing stale extracted data at %s. A backup will be created first.",
-                extracted_path,
+        logger.warning(
+            "Replacing stale extracted data at %s. A backup will be created first.",
+            extracted_path,
+        )
+
+        # Extract the updated archive into a temporary staging directory so
+        # the existing extraction remains usable if extraction fails.
+        staging_dir = Path(
+            tempfile.mkdtemp(
+                dir=data_dir,
+                prefix=f"{archive_name}._staging_",
             )
+        )
 
-            pull_path = _pull_lfs_archive(archive_name)
+        # Use a unique backup path to avoid conflicts with stale backup
+        # directories from previous interrupted refresh operations.
+        backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
 
-            # Extract the updated archive into a temporary staging directory so
-            # the existing extraction remains usable if extraction fails.
-            staging_dir = Path(
-                tempfile.mkdtemp(
-                    dir=data_dir,
-                    prefix=f"{archive_name}._staging_",
-                )
-            )
+        # Archives are expected to contain a top-level directory whose
+        # name matches archive_name.
+        new_extracted = staging_dir / archive_name
 
-            # Use a unique backup path to avoid conflicts with stale backup
-            # directories from previous interrupted refresh operations.
-            backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
+        try:
+            with tarfile.open(pull_path, "r:gz") as tar:
+                tar.extractall(staging_dir)
+
+            if not new_extracted.exists():
+                raise FileNotFoundError(f"Archive does not contain expected root: {archive_name}")
+
+            # Preserve the current extraction as a backup before replacing
+            # it with the newly extracted data.
+            extracted_path.rename(backup_path)
 
             try:
-                with tarfile.open(pull_path, "r:gz") as tar:
-                    tar.extractall(staging_dir)
-
-                # Archives are expected to contain a top-level directory whose
-                # name matches archive_name.
-                new_extracted = staging_dir / archive_name
-
-                if not new_extracted.exists():
-                    raise FileNotFoundError(
-                        f"Archive does not contain expected root: {archive_name}"
-                    )
-
-                # Preserve the current extraction as a backup before replacing
-                # it with the newly extracted data.
-                extracted_path.rename(backup_path)
-
-                try:
-                    # Move the new extraction into the final location.
-                    new_extracted.rename(extracted_path)
-                except Exception:
-                    # Restore the previous extraction if replacement fails.
-                    backup_path.rename(extracted_path)
-                    raise
-
-                # The replacement succeeded, so the old extraction is no
-                # longer needed.
-                if backup_path.is_dir() and not backup_path.is_symlink():
-                    shutil.rmtree(backup_path)
-                elif backup_path.exists():
-                    backup_path.unlink()
-
+                # Move the new extraction into the final location.
+                new_extracted.rename(extracted_path)
                 # write new md5 to extracted_path if succeed.
                 _write_archive_md5(extracted_path, archive_checksum)
+            except Exception:
+                # Remove the incomplete replacement before restoring the backup.
+                if extracted_path.is_dir() and not extracted_path.is_symlink():
+                    shutil.rmtree(extracted_path)
+                elif extracted_path.exists() or extracted_path.is_symlink():
+                    extracted_path.unlink()
 
-                # Return the requested nested path or the extracted root.
-                result_path = extracted_path / nested_path if nested_path else extracted_path
+                # Restore the previous extraction if replacement fails.
+                backup_path.rename(extracted_path)
+                raise
 
-                return result_path
+            # The replacement succeeded, so the old extraction is no
+            # longer needed.
+            if backup_path.is_dir() and not backup_path.is_symlink():
+                shutil.rmtree(backup_path)
+            elif backup_path.exists():
+                backup_path.unlink()
 
-            finally:
-                # Remove any remaining staging data after success or failure.
-                shutil.rmtree(staging_dir, ignore_errors=True)
+            # Return the requested nested path or the extracted root.
+            result_path = extracted_path / nested_path if nested_path else extracted_path
 
-        # The archive is unchanged or unavailable, so return the existing extracted data.
-        return file_path
+            if not result_path.exists():
+                raise FileNotFoundError(
+                    f"Requested path does not exist in extracted archive: {result_path}"
+                )
+
+            return result_path
+
+        finally:
+            # Remove any remaining staging data after success or failure.
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     # pull archive file first.
     pull_path = _pull_lfs_archive(archive_name)
+
     # calculate archive_file md5
-    archive_checksum = _calculate_md5(archive_file)
+    archive_checksum = _calculate_md5(pull_path)
 
     # decompress archive files to produce extract directory
     archive_path = _decompress_archive(pull_path)
 
     # write current archive_file md5 to extract directory
-    _write_archive_md5(extracted_path, archive_checksum)
+    try:
+        _write_archive_md5(extracted_path, archive_checksum)
+    except Exception:
+        if extracted_path.is_dir() and not extracted_path.is_symlink():
+            shutil.rmtree(extracted_path)
+        elif extracted_path.exists() or extracted_path.is_symlink():
+            extracted_path.unlink()
+        raise
 
-    # Return the requested nested path or the extracted archive root.
-    if nested_path:
-        return archive_path / nested_path
+    result_path = archive_path / nested_path if nested_path else archive_path
+    if not result_path.exists():
+        raise FileNotFoundError(
+            f"Requested path does not exist in extracted archive: {result_path}"
+        )
 
-    return archive_path
+    return result_path
 
 
 class LfsPath(type(Path())):  # type: ignore[misc]
