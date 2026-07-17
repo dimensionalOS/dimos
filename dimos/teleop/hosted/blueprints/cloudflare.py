@@ -105,6 +105,50 @@ teleop_hosted_go2_transport = (
 )
 
 
+# Multicam: adds a RealSense as cam2 (operator-selectable in the mux). Needs the
+# RealSense wired in; use teleop-hosted-go2-transport otherwise.
+teleop_hosted_go2_multicam = (
+    autoconnect(
+        GO2Connection.blueprint(),  # driver AS-IS (+ @rpc command methods); no vis
+        Go2CommandModule.blueprint(),  # command/E-STOP dispatch + drive guard
+        CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),  # go2 + realsense → mux_image
+        HostedStatsModule.blueprint(),  # state stats dispatch + telemetry + acks
+        MapCompressModule.blueprint(),  # costmap (+odom) → map_out
+        RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False),
+        VoxelGridMapper.blueprint(emit_every=5),
+        CostMapper.blueprint(),
+        ReplanningAStarPlanner.blueprint(),
+        MovementManager.blueprint(),  # arbitrates manual vs nav → owns cmd_vel
+    )
+    .remappings(
+        [
+            (GO2Connection, "color_image", "cam1"),
+            (RealSenseCamera, "color_image", "cam2"),
+        ]
+    )
+    .transports(
+        {
+            # inbound operator planes
+            ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
+            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
+            ("cam2", Image): LCMTransport.spec("cam2", Image),  # realsense over LCM
+            # outbound operator planes
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("map_out", bytes): CloudflareTransport.spec("map_unreliable"),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
+            # robot-internal drive chain — namespaced LCM topics (see above).
+            ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
+            ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
+            ("cmd_vel", Twist): LCMTransport.spec("/hosted/cmd_vel", Twist),
+        }
+    )
+    .global_config(viewer="none", n_workers=2)  # go2 driver | broker+nav modules
+)
+
+
 # ─── XArm hosted manipulation (coordinator-driven, WebXR + browser operator) ──
 #
 # Arm analog of the Go2 blueprints: ArmCommandModule is the operator command
@@ -179,48 +223,4 @@ teleop_hosted_xarm7 = (
         }
     )
     .global_config(viewer="none", n_workers=1)  # one process → one CF session
-)
-
-
-# Multicam: adds a RealSense as cam2 (operator-selectable in the mux). Needs the
-# RealSense wired in; use teleop-hosted-go2-transport otherwise.
-teleop_hosted_go2_multicam = (
-    autoconnect(
-        GO2Connection.blueprint(),  # driver AS-IS (+ @rpc command methods); no vis
-        Go2CommandModule.blueprint(),  # command/E-STOP dispatch + drive guard
-        CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),  # go2 + realsense → mux_image
-        HostedStatsModule.blueprint(),  # state stats dispatch + telemetry + acks
-        MapCompressModule.blueprint(),  # costmap (+odom) → map_out
-        RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False),
-        VoxelGridMapper.blueprint(emit_every=5),
-        CostMapper.blueprint(),
-        ReplanningAStarPlanner.blueprint(),
-        MovementManager.blueprint(),  # arbitrates manual vs nav → owns cmd_vel
-    )
-    .remappings(
-        [
-            (GO2Connection, "color_image", "cam1"),
-            (RealSenseCamera, "color_image", "cam2"),
-        ]
-    )
-    .transports(
-        {
-            # inbound operator planes
-            ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
-            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
-            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
-            ("cam2", Image): LCMTransport.spec("cam2", Image),  # realsense over LCM
-            # outbound operator planes
-            ("mux_image", Image): CloudflareVideoTransport.spec(),
-            ("map_out", bytes): CloudflareTransport.spec("map_unreliable"),
-            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
-            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
-            # robot-internal drive chain — namespaced LCM topics (see above).
-            ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
-            ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
-            ("cmd_vel", Twist): LCMTransport.spec("/hosted/cmd_vel", Twist),
-        }
-    )
-    .global_config(viewer="none", n_workers=2)  # go2 driver | broker+nav modules
 )
