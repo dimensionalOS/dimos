@@ -34,6 +34,10 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.deeprobotics.m20.tf import (
+    FRONT_CAMERA_OPTICAL_FRAME,
+    REAR_CAMERA_OPTICAL_FRAME,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -150,7 +154,7 @@ def iter_rrd_events(path: str | Path) -> Iterator[ReplayEvent]:
             _IMAGE_FORMAT_COLUMN,
         }.issubset(columns):
             is_front = chunk.entity_path == _FRONT_IMAGE_ENTITY
-            frame_id = "camera_optical" if is_front else "m20_rear"
+            frame_id = FRONT_CAMERA_OPTICAL_FRAME if is_front else REAR_CAMERA_OPTICAL_FRAME
             kind: Literal["front_image", "rear_image"] = "front_image" if is_front else "rear_image"
             for row in range(batch.num_rows):
                 message = _image_from_batch(batch, row, frame_id)

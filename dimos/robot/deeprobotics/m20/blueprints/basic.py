@@ -24,12 +24,20 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.robot.deeprobotics.m20.connection import M20Connection
-from dimos.robot.deeprobotics.m20.tf import M20TF
+from dimos.robot.deeprobotics.m20.tf import (
+    FRONT_CAMERA_OPTICAL_FRAME,
+    M20TF,
+    REAR_CAMERA_OPTICAL_FRAME,
+    camera_mount_transforms,
+    front_camera_info,
+    rear_camera_info,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -44,8 +52,47 @@ def _node_edges_on_surface(msg: Any) -> Any:
 def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
-        optical_frame="camera_optical",
+        optical_frame=FRONT_CAMERA_OPTICAL_FRAME,
     )
+
+
+def _convert_rear_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image_rear",
+        optical_frame=REAR_CAMERA_OPTICAL_FRAME,
+    )
+
+
+_STATIC_CAMERA_EDGES = {
+    ("base_link", "camera_link"),
+    ("camera_link", FRONT_CAMERA_OPTICAL_FRAME),
+    ("base_link", "rear_camera_link"),
+    ("rear_camera_link", REAR_CAMERA_OPTICAL_FRAME),
+}
+
+
+def _dynamic_tf_for_rerun(msg: TFMessage) -> list[tuple[str, Any]]:
+    """Render dynamic TF edges while excluding the fixed camera mount."""
+    return [
+        (f"world/tf/{transform.child_frame_id}", transform.to_rerun())
+        for transform in msg.transforms
+        if (transform.frame_id, transform.child_frame_id) not in _STATIC_CAMERA_EDGES
+    ]
+
+
+def _m20_static_scene(rr: Any) -> list[tuple[str, Any]]:
+    """Build timeless base axes, camera extrinsics, and camera intrinsics."""
+    scene: list[tuple[str, Any]] = [
+        ("world/tf/base_link", rr.TransformAxes3D(axis_length=0.5)),
+    ]
+    scene.extend(
+        (f"world/tf/{transform.child_frame_id}", transform.to_rerun())
+        for transform in camera_mount_transforms()
+    )
+    scene.append((f"world/tf/{REAR_CAMERA_OPTICAL_FRAME}", rr.TransformAxes3D(axis_length=0.3)))
+    scene.extend(_convert_camera_info(front_camera_info()))
+    scene.extend(_convert_rear_camera_info(rear_camera_info()))
+    return scene
 
 
 def m20_rerun_blueprint() -> Any:
@@ -84,9 +131,15 @@ rerun = autoconnect(
             "world/local_map": 2.0,
         },
         visual_override={
-            "world/camera_info": _convert_camera_info,
+            # slam_odom is already represented by map -> base_link. Keeping a
+            # second pose gizmo creates an independently timed visual copy.
+            "world/slam_odom": None,
+            "world/tf": _dynamic_tf_for_rerun,
+            "world/camera_info": None,
+            "world/camera_info_rear": None,
             "world/node_edges": _node_edges_on_surface,
         },
+        static={"world/tf/base_link": _m20_static_scene},
     ),
     RerunWebSocketServer.blueprint(),
     WebsocketVisModule.blueprint(),

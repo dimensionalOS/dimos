@@ -23,12 +23,15 @@ front/rear raw lidar topics directly.
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.deeprobotics.m20.blueprints.basic import m20
+from dimos.robot.deeprobotics.m20.blueprints.basic import m20, rerun
+from dimos.robot.deeprobotics.m20.rrd_replay import M20RrdReplay
+from dimos.robot.deeprobotics.m20.tf import M20TF
 
 voxel_size = 0.05
 m20_width_clearance = 0.45
@@ -47,11 +50,12 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     executable="target/release/voxel_ray_tracing",
     build_command="cargo build --release --bin voxel_ray_tracing",
     voxel_size=voxel_size,
-    max_range=99.0,
+    max_range=5.0,
     shadow_depth=0.1,
     min_health=-1,
-    max_health=5,
+    max_health=8,
     emit_every=2,
+    ray_subsample=2,
     global_emit_every=10,
     auto_build=True,
     # M20's onboard SLAM publishes this cloud already registered in map frame.
@@ -76,8 +80,17 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
 #     ]
 # )
 
+if global_config.replay:
+    m20_source = autoconnect(
+        rerun,
+        M20RrdReplay.blueprint(),
+        M20TF.blueprint().remappings([(M20TF, "odometry", "slam_odom")]),
+    )
+else:
+    m20_source = m20
+
 m20_simple_nav = autoconnect(
-    m20,
+    m20_source,
     _m20_slam_ray_tracer,
     CostMapper.blueprint(
         config=HeightCostConfig(

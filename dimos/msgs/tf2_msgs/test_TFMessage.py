@@ -50,6 +50,16 @@ def test_tfmessage_empty() -> None:
     msg = TFMessage()
     assert len(msg) == 0
     assert list(msg) == []
+    assert msg.ts is None
+
+
+def test_tfmessage_uses_latest_transform_timestamp() -> None:
+    msg = TFMessage(
+        Transform(frame_id="map", child_frame_id="base_link", ts=100.0),
+        Transform(frame_id="base_link", child_frame_id="camera_link", ts=101.0),
+    )
+
+    assert msg.ts == 101.0
 
 
 def test_tfmessage_add_transform() -> None:

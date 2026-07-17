@@ -50,6 +50,13 @@ class TFMessage:
     def __init__(self, *transforms: Transform) -> None:
         self.transforms = list(transforms)
 
+    @property
+    def ts(self) -> float | None:
+        """Return the capture time for this transform batch."""
+        if not self.transforms:
+            return None
+        return max(transform.ts for transform in self.transforms)
+
     def add_transform(self, transform: Transform, child_frame_id: str = "base_link") -> None:
         """Add a transform to the message."""
         self.transforms.append(transform)

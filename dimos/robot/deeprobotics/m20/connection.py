@@ -52,6 +52,10 @@ from dimos.msgs.sensor_msgs.BatteryState import (
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.deeprobotics.m20.msgs.status import M20Status
+from dimos.robot.deeprobotics.m20.tf import (
+    FRONT_CAMERA_OPTICAL_FRAME,
+    REAR_CAMERA_OPTICAL_FRAME,
+)
 from dimos.spec.perception import Image as VideoSource
 from dimos.utils.logging_config import setup_logger
 
@@ -328,12 +332,12 @@ class M20Connection(Module, VideoSource):
             (
                 self.config.rtsp_url or f"rtsp://{ip}:8554/video1",
                 self.color_image,
-                "camera_optical",
+                FRONT_CAMERA_OPTICAL_FRAME,
             ),
             (
                 self.config.rtsp_url_rear or f"rtsp://{ip}:8554/video2",
                 self.color_image_rear,
-                "m20_rear",
+                REAR_CAMERA_OPTICAL_FRAME,
             ),
         )
         self._video_threads = [
