@@ -138,6 +138,8 @@ rerun = autoconnect(
             "world/camera_info": None,
             "world/camera_info_rear": None,
             "world/node_edges": _node_edges_on_surface,
+            "world/raw_path": _raw_path_for_rerun,
+            "world/path": _smooth_path_for_rerun,
         },
         static={"world/tf/base_link": _m20_static_scene},
     ),

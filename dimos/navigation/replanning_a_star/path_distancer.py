@@ -65,6 +65,20 @@ class PathDistancer:
     def distance_to_goal(self, current_pos: NDArray[np.float64]) -> float:
         return float(np.linalg.norm(self._path[-1] - current_pos))
 
+    @property
+    def path_length_m(self) -> float:
+        if len(self._path) < 2:
+            return 0.0
+        return float(self._cumulative_dists[-1])
+
+    def progress_at_index_m(self, index: int) -> float:
+        """Return the path arc length reached by a waypoint index."""
+        if index <= 0 or len(self._path) < 2:
+            return 0.0
+        if index >= len(self._path) - 1:
+            return self.path_length_m
+        return float(self._cumulative_dists[index - 1])
+
     def get_distance_to_path(self, pos: NDArray[np.float64]) -> float:
         index = self.find_closest_point_index(pos)
         return float(np.linalg.norm(self._path[index] - pos))

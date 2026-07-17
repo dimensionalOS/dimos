@@ -310,15 +310,23 @@ print(arg_help(base_blueprint.config(), base_blueprint))
       * module2.frame_id: str | None (default: None)
 ```
 
-Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
-argument dict for users from a config file, environment variables and CLI arguments:
+`dimos run --config` accepts YAML (recommended) and JSON configuration files. YAML
+keeps deployment settings readable because it supports comments; environment variables
+and `-o module.field=value` values override file settings. Another function,
+`dimos.robot.cli.dimos.load_config_args()`, creates the argument dict from those sources:
+
+```yaml
+# base-blueprint-config.yaml
+module1:
+  arg1: 5 # Deployment-specific override
+```
 
 ```python session=blueprint-ex1
 from pathlib import Path
 
 from dimos.robot.cli.dimos import load_config_args
 
-config_path = Path.home() / "base-blueprint-config.json"
+config_path = Path.home() / "base-blueprint-config.yaml"
 cli_args = ["module1.arg1=5"]
 blueprint_args = load_config_args(base_blueprint.config(), cli_args, config_path)
 # Test user input is valid
