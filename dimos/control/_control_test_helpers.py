@@ -41,10 +41,6 @@ class RecordingTask(BaseControlTask):
         self.ee_twist_calls: list[tuple[Any, float]] = []
         self.buttons_calls: list[Any] = []
 
-    @property
-    def name(self) -> str:
-        return self._name
-
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints=self._joints)
 

@@ -66,10 +66,6 @@ class CommandRecordingTask(BaseControlTask):
         self.t_now_seen: float | None = None
         self._state = "IDLE"
 
-    @property
-    def name(self) -> str:
-        return self._name
-
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints=self._joints)
 

@@ -163,11 +163,6 @@ class TeleopIKTask(BaseControlTask):
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
         )
 
-    @property
-    def name(self) -> str:
-        """Unique task identifier."""
-        return self._name
-
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
         joints = self._joint_names

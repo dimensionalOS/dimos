@@ -363,10 +363,6 @@ class G1GrootWBCTask(BaseControlTask):
         self._cmd = np.zeros(3, dtype=np.float32)
         self._last_cmd_time: float = 0.0
 
-    @property
-    def name(self) -> str:
-        return self._name
-
     def claim(self) -> ResourceClaim:
         return ResourceClaim(
             joints=self._joint_names_set,

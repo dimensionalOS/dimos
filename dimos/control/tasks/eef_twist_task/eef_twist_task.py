@@ -79,10 +79,6 @@ class EEFTwistTask(BaseControlTask):
         self._latest_twist: TwistStamped | None = None
         self._last_update_time = 0.0
 
-    @property
-    def name(self) -> str:
-        return self._name
-
     def claim(self) -> ResourceClaim:
         return ResourceClaim(self._joint_names, self._config.priority, ControlMode.SERVO_POSITION)
 

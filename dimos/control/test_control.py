@@ -307,11 +307,8 @@ class TestControlCoordinatorLifecycle:
     def test_reset_runtime_state_calls_task_hooks(self):
         class ResettableTask(BaseControlTask):
             def __init__(self) -> None:
+                self._name = "resettable"
                 self.reset_reactivate_args: list[bool | None] = []
-
-            @property
-            def name(self) -> str:
-                return "resettable"
 
             def claim(self) -> ResourceClaim:
                 return ResourceClaim(joints=frozenset())
