@@ -143,11 +143,7 @@ def verify(
                 for obj in objects
                 if isinstance(obj, dict) and isinstance(obj.get("oid"), str)
             }
-            unavailable = [
-                p
-                for p in batch
-                if _download_href(by_oid.get(p.oid)) is None
-            ]
+            unavailable = [p for p in batch if _download_href(by_oid.get(p.oid)) is None]
             if unavailable:
                 raise LFSVerificationError(
                     _diagnostic(unavailable, "Missing remote object or download action.")
