@@ -360,9 +360,6 @@ def get_data(name: str | Path) -> Path:
     # Path to the corresponding Git LFS archive.
     archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
 
-    # pull lfs_file in advance
-    pull_path = _pull_lfs_archive(archive_name)
-
     # If the requested path already exists, compare the archive and extracted
     # root modification times to determine whether the extraction is stale.
     if file_path.exists():
@@ -390,6 +387,8 @@ def get_data(name: str | Path) -> Path:
                 "Replacing stale extracted data at %s. A backup will be created first.",
                 extracted_path,
             )
+
+            pull_path = _pull_lfs_archive(archive_name)
 
             # Extract the updated archive into a temporary staging directory so
             # the existing extraction remains usable if extraction fails.
@@ -451,6 +450,8 @@ def get_data(name: str | Path) -> Path:
         # The archive is unchanged or unavailable, so return the existing extracted data.
         return file_path
 
+    # pull archive file first.
+    pull_path = _pull_lfs_archive(archive_name)
     # calculate archive_file md5
     archive_checksum = _calculate_md5(archive_file)
 
