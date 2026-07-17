@@ -60,6 +60,7 @@ def _bare_module() -> ArmCommandModule:
     s._estopped = False
     s._last_twist_ts = 0.0
     s._last_stale_warn = 0.0
+    s._last_future_warn = 0.0
     s._task_names = {Hand.RIGHT: "teleop_xarm"}
     s.config = SimpleNamespace(
         task_names={"right": "teleop_xarm"},

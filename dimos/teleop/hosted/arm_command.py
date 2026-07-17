@@ -43,6 +43,7 @@ import math
 import time
 from typing import Any
 
+from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -50,7 +51,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.quest.quest_extensions import ArmTeleopConfig, ArmTeleopModule
 from dimos.teleop.quest.quest_types import Hand
@@ -87,14 +87,9 @@ class ArmCommandModule(ArmTeleopModule):
         self._estopped = False
         self._last_twist_ts = 0.0
         self._last_stale_warn = 0.0
-        # Browser keyboard EE-twist rides cmd_unreliable alongside the VR pose:
-        # register its LCM fingerprint on the inherited dispatch table.
-        from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
+        self._last_future_warn = 0.0
 
         self._decoders[LCMTwistStamped._get_packed_fingerprint()] = self._on_twist_bytes
-        # While the E-STOP latch is set, hands are held disengaged and no poses
-        # are published — the coordinator's TeleopIKTask keeps its last target,
-        # so the arm freezes in place.
 
     # No local WebSocket server — the operator connects through the broker.
     def _start_server(self) -> None:
@@ -106,20 +101,12 @@ class ArmCommandModule(ArmTeleopModule):
     @rpc
     def start(self) -> None:
         super().start()  # Module start + control loop (web server no-op'd)
-        # Sync subscribes (not async handle_*): keep-latest would drop bursts.
         for stream, cb in (
             (self.cmd_raw, self._on_cmd_raw),
             (self.state_json, self._on_state_json),
         ):
             self.register_disposable(Disposable(stream.subscribe(cb)))
         self._publish_robot_state()
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()  # stops the control loop + Module teardown
-        # Graceful broker disconnect so the worker exits promptly instead of
-        # being force-killed and reaped ~30s later.
-        shutdown_all_providers()
 
     # ─── Inbound command plane (operator → robot) ─────────────────────
 
@@ -170,6 +157,10 @@ class ArmCommandModule(ArmTeleopModule):
                 logger.warning("dropping stale ee_twist: age=%.2fs — operator link lagging", age)
             return
         if age < 0:  # future-stamped: don't advance _last_twist_ts (would stall the jog)
+            now = time.monotonic()
+            if now - self._last_future_warn >= 1.0:
+                self._last_future_warn = now
+                logger.warning("dropping future-stamped ee_twist — operator clock sync likely off")
             return
         if ts <= self._last_twist_ts:  # out-of-order
             return
