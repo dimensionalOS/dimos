@@ -243,11 +243,10 @@ class XArmAdapter(ManipulatorAdapter):
             return False
 
         self._prepare_for_position_motion()
-        if not self._move_to_initial_pose():
-            return False
+        homed = self._move_to_initial_pose()
         self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
-        return code == 0
+        return homed and code == 0
 
     def _move_to_initial_pose(self) -> bool:
         if not self._arm:
