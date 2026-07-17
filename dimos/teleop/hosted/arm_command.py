@@ -27,6 +27,7 @@ from typing import Any
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
 from reactivex.disposable import Disposable
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -49,6 +50,8 @@ class ArmCommandModule(ArmTeleopModule):
     """Operator command/E-STOP plane for a coordinator-driven arm."""
 
     config: ArmCommandConfig
+
+    coordinator: ControlCoordinator
 
     # Broker-bound (bind Cloudflare* transports to these in the blueprint).
     cmd_raw: In[bytes]  # cmd_unreliable: LCM PoseStamped/Joy/TwistStamped, dispatched
@@ -99,7 +102,7 @@ class ArmCommandModule(ArmTeleopModule):
         try:
             decoder(data)
         except Exception:
-            logger.debug("cmd_raw decode failed", exc_info=True)
+            logger.warning("cmd_raw decode failed", exc_info=True)
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame. Overrides the quest version to drop
@@ -167,7 +170,7 @@ class ArmCommandModule(ArmTeleopModule):
             self._handle_estop_clear(msg.get("nonce"))
         elif kind == "operator_lost":  # synthetic, injected by the provider
             self._on_operator_lost()
-        elif kind == "gripper":
+        elif kind == "gripper" and not self._estopped:
             self.gripper_command.publish(Bool(data=bool(msg.get("closed", False))))
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
@@ -198,9 +201,11 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── E-STOP / operator-loss hooks ─────────────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
-        """Latch FIRST (gates the control loop immediately), then disengage."""
+        """Latch FIRST (gates operator input), halt the coordinator's tasks so the
+        arm stops being commanded, then disengage."""
         self._estopped = True
         logger.warning("E-STOP latched by operator")
+        self._set_coordinator_estop(True)
         with self._lock:
             self._disengage()
         self._publish_robot_state()  # UI must show estopped:true immediately
@@ -212,8 +217,16 @@ class ArmCommandModule(ArmTeleopModule):
         recaptures the initial pose, so the delta restarts from zero)."""
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
+        self._set_coordinator_estop(False)
         self._publish_robot_state()
         self._send_ack(nonce, True)
+
+    def _set_coordinator_estop(self, estopped: bool) -> None:
+        """Latch/clear E-STOP on the coordinator's tasks (best-effort RPC)."""
+        try:
+            self.coordinator.set_estop(estopped)
+        except Exception:
+            logger.exception("coordinator.set_estop(%s) failed", estopped)
 
     def _on_operator_lost(self) -> None:
         """Command plane gone: disengage so a stale engage can't keep streaming
@@ -239,7 +252,4 @@ class ArmCommandModule(ArmTeleopModule):
         try:
             self.robot_state.publish(json.dumps(state).encode())
         except Exception:
-            logger.debug("robot_state publish failed", exc_info=True)
-
-
-__all__ = ["ArmCommandConfig", "ArmCommandModule"]
+            logger.warning("robot_state publish failed", exc_info=True)

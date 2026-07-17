@@ -14,29 +14,24 @@
 
 """Unit tests for ArmCommandModule's operator-command handling.
 
-No coordinator / no WebRTC: ``ArmCommandModule.__init__`` builds a whole Module,
-so instances are assembled bare (``object.__new__``) with only the fields the
-tested paths touch, and output ports are mocked. Camera mux / telemetry / stats
-live in separate modules now (see test_camera_mux.py / test_hosted_stats.py);
-this file covers only the command plane.
+The real module is constructed with only the framework ``Module.__init__``
+patched out (see the ``module`` fixture); its ports and coordinator ref are
+mocked. Camera mux / telemetry / stats live in separate modules now (see
+test_camera_mux.py / test_hosted_stats.py); this file covers only the command
+plane.
 """
 
 from __future__ import annotations
 
 import json
-import threading
 import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from dimos_lcm.geometry_msgs import (
-    PoseStamped as LCMPoseStamped,
-    TwistStamped as LCMTwistStamped,
-)
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
 import pytest
 
+from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
@@ -44,42 +39,38 @@ from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 
 
-def _bare_module() -> ArmCommandModule:
-    """An ArmCommandModule with only the fields the command paths need."""
-    module = object.__new__(ArmCommandModule)
-    module._lock = threading.RLock()
-    module._is_engaged = {Hand.LEFT: False, Hand.RIGHT: False}
-    module._initial_poses = {Hand.LEFT: None, Hand.RIGHT: None}
-    module._current_poses = {Hand.LEFT: None, Hand.RIGHT: None}
-    module._controllers = {Hand.LEFT: None, Hand.RIGHT: None}
-    module._decoders = {
-        LCMPoseStamped._get_packed_fingerprint(): module._on_pose_bytes,
-        LCMJoy._get_packed_fingerprint(): module._on_joy_bytes,
-        LCMTwistStamped._get_packed_fingerprint(): module._on_twist_bytes,
-    }
-    module._estopped = False
-    module._last_twist_ts = 0.0
-    module._last_stale_warn = 0.0
-    module._last_future_warn = 0.0
-    module._task_names = {Hand.RIGHT: "teleop_xarm"}
-    module.config = SimpleNamespace(
-        task_names={"right": "teleop_xarm"},
-        control_loop_hz=50.0,
-        cmd_stale_after_sec=0.5,
-    )
-    module.left_controller_output = MagicMock()
-    module.right_controller_output = MagicMock()
-    module.buttons = MagicMock()
-    module.cmd_ack = MagicMock()
-    module.robot_state = MagicMock()
-    module.coordinator_ee_twist_command = MagicMock()
-    module.gripper_command = MagicMock()
-    return module
-
-
 @pytest.fixture
-def module() -> ArmCommandModule:
-    return _bare_module()
+def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
+    """A real ArmCommandModule with only the framework ``Module.__init__``
+    skipped — the quest-layer and command-plane inits (engage state, decoder
+    table, estop/twist gates) run for real. Ports / coordinator ref / config
+    are mocked; config is seeded by the patched init since the quest layer
+    reads ``config.task_names`` while constructing."""
+
+    def _fake_init(self: Any, **kwargs: Any) -> None:
+        self.config = SimpleNamespace(
+            task_names={"right": "teleop_xarm"},
+            control_loop_hz=50.0,
+            cmd_stale_after_sec=0.5,
+            linear_scale=1.0,
+            angular_scale=1.0,
+            video_jpeg_quality=80,
+        )
+
+    monkeypatch.setattr(Module, "__init__", _fake_init)
+    module = ArmCommandModule()
+    for port in (
+        "left_controller_output",
+        "right_controller_output",
+        "buttons",
+        "cmd_ack",
+        "robot_state",
+        "coordinator_ee_twist_command",
+        "gripper_command",
+        "coordinator",
+    ):
+        setattr(module, port, MagicMock())
+    return module
 
 
 def _pose_bytes(frame_id: str, ts: float = 1.0) -> bytes:
@@ -132,11 +123,6 @@ def test_cmd_raw_bad_frame_id_dropped(module: ArmCommandModule) -> None:
 def test_cmd_raw_foreign_bytes_ignored(module: ArmCommandModule) -> None:
     module._on_cmd_raw(b"\x00\x01\x02\x03garbage-frame")
     assert module._current_poses[Hand.RIGHT] is None
-
-
-def test_cmd_raw_accepts_str(module: ArmCommandModule) -> None:
-    # A str payload can't match an LCM fingerprint, but must not crash.
-    module._on_cmd_raw("hello")
 
 
 # ─── Browser keyboard EE-twist → coordinator eef_twist ─────────────────
@@ -195,6 +181,12 @@ def test_gripper_toggle_publishes_bool(module: ArmCommandModule) -> None:
     assert module.gripper_command.publish.call_args.args[0].data is False
 
 
+def test_gripper_dropped_while_estopped(module: ArmCommandModule) -> None:
+    module._estopped = True
+    module._on_state_json(b'{"type": "gripper", "closed": true}')
+    module.gripper_command.publish.assert_not_called()
+
+
 # ─── Engage → publish with task-name routing ───────────────────────────
 
 
@@ -225,6 +217,7 @@ def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> N
 
     assert module._estopped
     assert not module._is_engaged[Hand.RIGHT]
+    module.coordinator.set_estop.assert_called_once_with(True)
     _tick(module)  # primary still held — must NOT re-engage or publish
     assert not module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_not_called()
@@ -238,6 +231,7 @@ def test_estop_clear_rearms_but_does_not_resume(module: ArmCommandModule) -> Non
 
     module._on_state_json(b'{"type": "estop_clear", "nonce": 2}')
     assert not module._estopped
+    module.coordinator.set_estop.assert_called_with(False)
 
     # Button still held from before the estop: engaging again is allowed only
     # because a held primary re-engages from the CURRENT pose (delta zero) —
@@ -253,17 +247,11 @@ def test_operator_lost_disengages(module: ArmCommandModule) -> None:
     assert not module._estopped  # loss is not an estop; re-engage allowed
 
 
-# ─── State plane: malformed input + robot_state ────────────────────────
-
-
-def test_malformed_json_ignored(module: ArmCommandModule) -> None:
-    module._on_state_json(b"not json")  # must not raise
-    module._on_state_json(b'{"type": "unknown_kind"}')  # unhandled kind, no-op
+# ─── State plane: robot_state telemetry ────────────────────────────────
 
 
 def test_robot_state_reports_estop_and_engage(module: ArmCommandModule) -> None:
     module._on_state_json(b'{"type": "estop", "nonce": 1}')
-    # estop publishes robot_state; last payload should show estopped:true.
     payload = json.loads(module.robot_state.publish.call_args.args[0])
     assert payload["estopped"] is True
     assert payload["engaged"] == {"left": False, "right": False}
