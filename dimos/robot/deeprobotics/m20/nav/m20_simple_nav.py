@@ -53,9 +53,9 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     max_range=5.0,
     shadow_depth=0.1,
     min_health=-1,
-    max_health=8,
+    max_health=5,
     emit_every=2,
-    ray_subsample=2,
+    ray_subsample=1,
     global_emit_every=10,
     auto_build=True,
     # M20's onboard SLAM publishes this cloud already registered in map frame.
