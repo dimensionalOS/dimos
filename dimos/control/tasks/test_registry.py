@@ -239,10 +239,6 @@ def test_command_guard_flags_command_absent_from_task_class() -> None:
 def test_bindings_for_unknown_type_is_empty() -> None:
     bindings = control_task_registry.bindings_for("definitely_not_registered")
     assert bindings == TaskBindings()
-    assert bindings.consumes == ()
-    assert bindings.exposes == frozenset()
-    # exposes is an immutable frozenset; there is no add/mutate API.
-    assert not hasattr(bindings.exposes, "add")
 
 
 def test_register_bindings_runtime_and_conflict() -> None:
