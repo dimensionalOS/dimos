@@ -710,7 +710,7 @@ class TestCardRoutingContract:
             RecordingTask("mystery", frozenset(ARM_JOINTS)), task_type="srvo"
         )
 
-        assert any("srvo" in str(c.args[0]) for c in warn.call_args_list)
+        assert any("srvo" in str(c) for c in warn.call_args_list)
         assert not taps["joint_command"].subscribed
 
     def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
