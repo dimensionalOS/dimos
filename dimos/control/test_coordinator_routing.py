@@ -36,7 +36,11 @@ from dimos.control.components import (
     HardwareType,
     make_twist_base_joints,
 )
+import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.registry import control_task_registry
+from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
+from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -447,8 +451,6 @@ class TestTwistCardContract:
         assert bare.velocity_commands == []
 
     def test_runtime_base_add_remove_toggles_twist_subscription(self, make_coordinator):
-        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-
         coordinator, taps = make_coordinator()
         coordinator.start()
         assert not taps["twist_command"].subscribed
@@ -565,8 +567,6 @@ class RaisingProbeTask(ProbeTask):
 @pytest.fixture
 def probe_card_type() -> Iterator[str]:
     """Register a claim_overlap card bound to on_probe_command; clean up after."""
-    from dimos.control.tasks.registry import control_task_registry
-
     task_type = "routing_probe_task"
     control_task_registry.register_bindings(
         task_type,
@@ -618,11 +618,6 @@ class TestCardRoutingContract:
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
 
     def test_runtime_add_task_with_type_activates_routing(self, make_coordinator):
-        from dimos.control.tasks.servo_task.servo_task import (
-            JointServoTask,
-            JointServoTaskConfig,
-        )
-
         coordinator, taps = make_coordinator()
         coordinator.start()
         assert not taps["joint_command"].subscribed
@@ -699,8 +694,6 @@ class TestCardRoutingContract:
         taps["joint_command"].unsub.assert_called_once()  # last consumer gone
 
     def test_unknown_task_type_warns_and_sets_no_routing(self, make_coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
         warn = mocker.patch.object(coord_mod.logger, "warning")
         coordinator, taps = make_coordinator()
         coordinator.start()
@@ -714,8 +707,6 @@ class TestCardRoutingContract:
         assert not taps["joint_command"].subscribed
 
     def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
         warn = mocker.patch.object(coord_mod.logger, "warning")
         coordinator, _ = make_coordinator()
         coordinator.start()
