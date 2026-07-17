@@ -64,6 +64,7 @@ class GlobalPlanner(Resource):
     _replan_reason: StopMessage | None
     _lock: RLock
     _activation_lock: RLock
+    _lifecycle_lock: RLock
     _goal_epoch: int
     _plan_epoch: int
     _safe_goal_clearance: float
@@ -100,39 +101,49 @@ class GlobalPlanner(Resource):
         self._replan_reason = None
         self._lock = RLock()
         self._activation_lock = RLock()
+        self._lifecycle_lock = RLock()
         self._goal_epoch = 0
         self._plan_epoch = 0
         self._reset_safe_goal_clearance()
 
     def start(self) -> None:
-        self._local_planner.start()
-        self._disposables.add(
-            self._local_planner.stopped_navigating.subscribe(self._on_stopped_navigating)
-        )
-        self._stop_planner.clear()
-        self._thread = Thread(target=self._thread_entrypoint, daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            with self._activation_lock:
+                if self._stop_planner.is_set():
+                    raise RuntimeError("GlobalPlanner cannot be restarted after stop().")
+                if self._thread is not None:
+                    raise RuntimeError("GlobalPlanner monitor thread has already been started.")
+
+                self._local_planner.start()
+                self._disposables.add(
+                    self._local_planner.stopped_navigating.subscribe(self._on_stopped_navigating)
+                )
+                self._thread = Thread(target=self._thread_entrypoint, daemon=True)
+                self._thread.start()
 
     def stop(self) -> None:
-        self._stop_planner.set()
-        self._replan_event.set()
+        with self._lifecycle_lock:
+            self._stop_planner.set()
+            self._replan_event.set()
 
-        try:
-            self._disposables.dispose()
-        finally:
             try:
-                with self._activation_lock:
-                    # Stop motion before cancellation publishes to synchronous observers.
-                    try:
-                        self._local_planner.stop()
-                    finally:
-                        self.cancel_goal()
+                self._disposables.dispose()
             finally:
-                if self._thread is not None and self._thread is not current_thread():
-                    self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
-                    if self._thread.is_alive():
-                        logger.error("GlobalPlanner thread did not stop in time.")
-                    self._thread = None
+                try:
+                    with self._activation_lock:
+                        # Stop motion before cancellation publishes to synchronous observers.
+                        try:
+                            self._local_planner.stop()
+                        finally:
+                            self.cancel_goal()
+                finally:
+                    thread = self._thread
+                    if thread is not None and thread is not current_thread():
+                        thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
+                        if thread.is_alive():
+                            logger.error("GlobalPlanner thread did not stop in time.")
+                        else:
+                            self._thread = None
 
     def handle_odom(self, msg: PoseStamped) -> None:
         with self._lock:

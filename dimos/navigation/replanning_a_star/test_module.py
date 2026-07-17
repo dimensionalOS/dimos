@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.navigation.replanning_a_star import module as planner_module
@@ -29,3 +30,16 @@ def test_stop_delegates_goal_cleanup_to_global_planner(mocker: MockerFixture) ->
 
     planner_type.return_value.stop.assert_called_once_with()
     planner_type.return_value.cancel_goal.assert_not_called()
+
+
+def test_stop_closes_module_when_global_planner_stop_fails(mocker: MockerFixture) -> None:
+    planner_type = mocker.patch.object(planner_module, "GlobalPlanner", autospec=True)
+    planner_type.return_value.stop.side_effect = RuntimeError("planner stop failed")
+    module = ReplanningAStarPlanner()
+
+    try:
+        with pytest.raises(RuntimeError, match="planner stop failed"):
+            module.stop()
+        assert module._module_closed
+    finally:
+        module._close_module()

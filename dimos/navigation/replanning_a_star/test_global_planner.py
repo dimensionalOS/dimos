@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -73,6 +74,71 @@ def test_stop_cancels_goal_when_local_stop_fails(
         planner.stop()
 
     cancel_goal.assert_called_once_with()
+
+
+def test_stop_keeps_live_monitor_thread_handle(planner: GlobalPlanner) -> None:
+    planner._disposables = MagicMock()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    planner._thread = thread
+
+    planner.stop()
+
+    thread.join.assert_called_once_with(DEFAULT_THREAD_JOIN_TIMEOUT)
+    assert planner._thread is thread
+
+
+def test_start_rejects_live_monitor_thread(planner: GlobalPlanner) -> None:
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    planner._thread = thread
+
+    with pytest.raises(RuntimeError, match="monitor thread has already been started"):
+        planner.start()
+
+    cast("MagicMock", planner._local_planner.start).assert_not_called()
+
+
+def test_start_waits_for_stop_and_rejects_restart(
+    planner: GlobalPlanner, mocker: MockerFixture
+) -> None:
+    planner._disposables = MagicMock()
+    planner._local_planner = MagicMock()
+    old_thread = MagicMock()
+    old_thread.is_alive.return_value = False
+    thread_type = mocker.patch.object(planner_module, "Thread")
+    join_started = Event()
+    release_join = Event()
+    start_attempted = Event()
+
+    def pause_join(_timeout: float) -> None:
+        join_started.set()
+        if not release_join.wait(timeout=1.0):
+            raise TimeoutError("test did not release monitor join")
+
+    def start_planner() -> None:
+        start_attempted.set()
+        planner.start()
+
+    old_thread.join.side_effect = pause_join
+    planner._thread = old_thread
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            stop_future = executor.submit(planner.stop)
+            assert join_started.wait(timeout=1.0)
+            start_future = executor.submit(start_planner)
+            assert start_attempted.wait(timeout=1.0)
+            thread_type.assert_not_called()
+            release_join.set()
+            stop_future.result(timeout=1.0)
+            with pytest.raises(RuntimeError, match="cannot be restarted"):
+                start_future.result(timeout=1.0)
+    finally:
+        release_join.set()
+
+    assert planner._thread is None
+    thread_type.assert_not_called()
 
 
 def test_shutdown_rejects_goal_and_completion(
@@ -144,6 +210,7 @@ def test_stop_during_path_publication_prevents_local_start(
     planner.path = MagicMock()
     publication_started = Event()
     release_publication = Event()
+    publication_released: list[bool] = []
     resampled_path = MagicMock()
     mocker.patch.object(planner, "_find_safe_goal", return_value=MagicMock())
     mocker.patch.object(planner, "_find_wide_path", return_value=MagicMock())
@@ -152,7 +219,7 @@ def test_stop_during_path_publication_prevents_local_start(
     def pause_publication(path: Any) -> None:
         if path is resampled_path:
             publication_started.set()
-            assert release_publication.wait(timeout=1.0)
+            publication_released.append(release_publication.wait(timeout=1.0))
 
     planner.path.on_next.side_effect = pause_publication
 
@@ -172,6 +239,7 @@ def test_stop_during_path_publication_prevents_local_start(
         release_publication.set()
 
     start_planning.assert_not_called()
+    assert publication_released == [True]
 
 
 def test_path_observer_cancel_prevents_local_start(
