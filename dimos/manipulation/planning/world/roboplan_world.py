@@ -328,8 +328,48 @@ class RoboPlanWorld:
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
         start_time = time.time()
-        q_start = self._joint_state_to_q(robot_id, start)
-        q_goal = self._joint_state_to_q(robot_id, goal)
+        try:
+            q_start = self._joint_state_to_q(robot_id, start)
+        except ValueError as exc:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                planning_time=time.time() - start_time,
+                message=f"Invalid start configuration: {exc}",
+            )
+        try:
+            q_goal = self._joint_state_to_q(robot_id, goal)
+        except ValueError as exc:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                planning_time=time.time() - start_time,
+                message=f"Invalid goal configuration: {exc}",
+            )
+
+        if violation := self._joint_limit_violation(robot_id, q_start):
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                planning_time=time.time() - start_time,
+                message=f"Start configuration is outside joint limits: {violation}",
+            )
+        if violation := self._joint_limit_violation(robot_id, q_goal):
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                planning_time=time.time() - start_time,
+                message=f"Goal configuration is outside joint limits: {violation}",
+            )
+        if self._has_collisions(robot_id, q_start):
+            return PlanningResult(
+                status=PlanningStatus.COLLISION_AT_START,
+                planning_time=time.time() - start_time,
+                message="Start configuration is in collision",
+            )
+        if self._has_collisions(robot_id, q_goal):
+            return PlanningResult(
+                status=PlanningStatus.COLLISION_AT_GOAL,
+                planning_time=time.time() - start_time,
+                message="Goal configuration is in collision",
+            )
+
         try:
             path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
         except ValueError as exc:
@@ -339,6 +379,19 @@ class RoboPlanWorld:
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - start_time,
                 message=f"RoboPlan-native planning failed: {exc}",
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "Invalid start configuration" in message:
+                status = PlanningStatus.INVALID_START
+            elif "Invalid goal configuration" in message:
+                status = PlanningStatus.INVALID_GOAL
+            else:
+                raise
+            return PlanningResult(
+                status=status,
+                planning_time=time.time() - start_time,
+                message=f"RoboPlan-native planning failed: {message}",
             )
         if not path_arrays:
             return PlanningResult(
@@ -524,6 +577,23 @@ class RoboPlanWorld:
             raise ValueError(f"JointState missing joints for RoboPlanWorld: {missing}")
         return np.asarray(
             [name_to_pos[name] for name in robot.config.joint_names], dtype=np.float64
+        )
+
+    def _joint_limit_violation(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> str | None:
+        robot = self._get_robot(robot_id)
+        nonfinite = ~np.isfinite(q)
+        if np.any(nonfinite):
+            return ", ".join(
+                f"{robot.config.joint_names[i]}={q[i]} is not finite"
+                for i in np.flatnonzero(nonfinite)
+            )
+        outside = (q < robot.lower_limits) | (q > robot.upper_limits)
+        if not np.any(outside):
+            return None
+        return ", ".join(
+            f"{robot.config.joint_names[i]}={q[i]:.6f} outside "
+            f"[{robot.lower_limits[i]:.6f}, {robot.upper_limits[i]:.6f}]"
+            for i in np.flatnonzero(outside)
         )
 
     def _require_finalized(self) -> None:

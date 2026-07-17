@@ -75,71 +75,62 @@ _HEALTHY_MOTOR_CODES = (0, 1)
 # full open. Override via the gripper_max_opening_m constructor kwarg.
 _GRIPPER_MAX_OPENING_M = 0.1
 
+_STARTUP_FEEDBACK_TIMEOUT_S = 0.5
+_STARTUP_RAMP_DURATION_S = 1.0
+_STARTUP_SAMPLE_PERIOD_S = 0.02
+_STARTUP_MAX_VELOCITY_RAD_S = 0.5
+_STARTUP_SETTLED_VELOCITY_RAD_S = 0.1
+_STARTUP_SETTLING_TIMEOUT_S = 1.0
+_STARTUP_HOLD_SAMPLES = 5
+_STARTUP_SETTLED_SAMPLES = 5
 
-def _socketcan_channel_is_up(channel: str) -> bool:
-    """True if the channel exists as a network interface and is IFF_UP."""
+_SYS_CLASS_NET = Path("/sys/class/net")
+_A1Z_SOCKETCAN_DRIVER = "gs_usb"
+
+
+def _socketcan_channel_error(channel: str) -> str | None:
+    """Return why a channel is unsafe for A1Z SocketCAN, or None if ready."""
+    interface_path = _SYS_CLASS_NET / channel
     try:
-        flags = int(Path("/sys/class/net", channel, "flags").read_text(), 16)
-    except (OSError, ValueError):
-        return False
-    return bool(flags & 0x1)
-
-
-def _gs_usb_adapter_claimable() -> bool:
-    """True if the HHS USB-CANFD adapter is on the USB bus and no kernel
-    driver owns it (a bound kernel driver means socketcan is the right path
-    and userspace could not claim the interface anyway)."""
-    try:
-        import usb.core
-
-        from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import (
-            GALAXEA_PRODUCT_ID,
-            GALAXEA_VENDOR_ID,
+        flags = int((interface_path / "flags").read_text(), 16)
+    except FileNotFoundError:
+        return (
+            f"SocketCAN interface {channel!r} does not exist. The HHS adapter must be "
+            "bound to the Linux gs_usb driver; pass its interface with --can-port."
         )
+    except (OSError, ValueError) as exc:
+        return f"cannot read SocketCAN interface {channel!r}: {exc}"
 
-        device = usb.core.find(idVendor=GALAXEA_VENDOR_ID, idProduct=GALAXEA_PRODUCT_ID)
-        if device is None:
-            return False
-        try:
-            return not device.is_kernel_driver_active(0)
-        except NotImplementedError:
-            return True
-        except usb.core.USBError:
-            print(
-                "Galaxea A1Z: found the USB-CANFD adapter but cannot open it "
-                "(insufficient permissions). Grant access with a udev rule: "
-                'echo \'SUBSYSTEM=="usb", ATTRS{idVendor}=="a8fa", '
-                'ATTRS{idProduct}=="8598", MODE="0666"\' | '
-                "sudo tee /etc/udev/rules.d/99-canfd.rules && "
-                "sudo udevadm control --reload-rules && sudo udevadm trigger"
-            )
-            return False
-    except Exception:
-        return False
+    try:
+        driver = (interface_path / "device" / "driver").resolve(strict=True).name
+    except OSError as exc:
+        return f"cannot verify the kernel driver for SocketCAN interface {channel!r}: {exc}"
+
+    if driver != _A1Z_SOCKETCAN_DRIVER:
+        return (
+            f"SocketCAN interface {channel!r} belongs to kernel driver {driver!r}, not "
+            f"the HHS adapter driver {_A1Z_SOCKETCAN_DRIVER!r}. Pass the HHS SocketCAN "
+            "interface with --can-port."
+        )
+    if not flags & 0x1:
+        return (
+            f"SocketCAN interface {channel!r} is DOWN. Configure it for 1 Mbit/s and "
+            "bring it UP before starting DimOS."
+        )
+    return None
 
 
 def _resolve_auto_transport(channel: str) -> str:
     """Pick the CAN transport for transport="auto".
 
-    socketcan stays the default whenever the channel is up (stock Linux
-    kernels bind gs_usb adapters through socketcan). When it is not, fall
-    back to the userspace gs_usb transport if the HHS adapter is on the USB
-    bus with no kernel driver bound - some kernels ship a gs_usb driver that
-    cannot drive this device (VID/PID not in its table, and pre-6.x gs_usb
-    hardcodes TX endpoint 0x02 where this adapter uses 0x01). A channel that
-    merely exists is not enough: an unrelated on-board CAN controller can
-    expose the same name with nothing wired to it.
+    macOS uses the userspace bus because SocketCAN is unavailable there.
+    Every other platform uses native SocketCAN. There is deliberately no
+    Linux userspace fallback: connect() validates the selected kernel
+    interface and fails closed if it is missing, down, or not backed by the
+    HHS adapter's gs_usb driver.
     """
+    del channel
     if platform.system() == "Darwin":
-        return "gs_usb"
-    if _socketcan_channel_is_up(channel):
-        return "socketcan"
-    if _gs_usb_adapter_claimable():
-        print(
-            f"Galaxea A1Z: socketcan channel {channel!r} is not up but the "
-            "HHS USB-CANFD adapter is present with no kernel driver bound - "
-            "falling back to the userspace gs_usb transport"
-        )
         return "gs_usb"
     return "socketcan"
 
@@ -213,10 +204,14 @@ class GalaxeaA1ZAdapter:
         self._gripper_max_opening_m = gripper_max_opening_m
         if transport == "auto":
             transport = _resolve_auto_transport(address)
+        if transport == "gs_usb" and platform.system() != "Darwin":
+            raise ValueError(
+                "transport='gs_usb' is macOS-only; Linux A1Z must use native SocketCAN"
+            )
         self._transport = transport
         # Dimensional addition on top of the vendor SDK (not Galaxea behavior):
-        # verified zero-force startup that prevents the enable-snap described
-        # in _safe_start(). Set safe_start=False for vendor-stock start().
+        # staged startup that prevents the enable-snap described in
+        # _safe_start(). Set safe_start=False for vendor-stock start().
         self._safe_start_enabled = safe_start
         self._robot: Any = None
         self._connected: bool = False
@@ -227,6 +222,12 @@ class GalaxeaA1ZAdapter:
 
     def connect(self) -> bool:
         """Open the CAN bus and construct the robot. Motors stay unpowered."""
+        if self._transport == "socketcan":
+            channel_error = _socketcan_channel_error(self._can_channel)
+            if channel_error is not None:
+                print(f"ERROR: Galaxea A1Z SocketCAN configuration: {channel_error}")
+                return False
+
         try:
             from a1z.robots.get_robot import get_a1z_robot
         except ImportError:
@@ -630,20 +631,23 @@ class GalaxeaA1ZAdapter:
                     pass
 
     def _safe_start(self) -> None:
-        """Start the SDK control loop without ever commanding force toward
-        an unverified position.
+        """Start the SDK loop with measured-pose hold before model feedforward.
 
         The SDK's start() reads feedback once after a fixed 50 ms wait and
         position-holds whatever it read; if a motor's first report is late
         (typical on USB transports), the hold target defaults to zero and
         the arm snaps to neutral at full gain. Observed on hardware.
 
-        Sequence here: start with kp=0 (gravity comp only - a position snap
-        is physically impossible), wait until every motor has actually
-        reported, verify the pose is inside limits and near-stationary, then
-        engage the hold gains at the measured pose (zero error, zero jerk).
-        Raises RuntimeError (and disables) instead of moving if verification
-        fails.
+        Start with both position gain and model feedforward at zero, wait for
+        every motor to report, and validate the measured state. Establish a
+        measured-pose PD hold while feedforward is still zero, verify that
+        hold, and only then ramp the configured gravity factor. This ordering
+        matters: kp=0 alone is not zero force because the SDK's gravity
+        feedforward remains active independently of position gain.
+
+        The A1Z has no brakes. It must be supported during activation and any
+        failed activation disables the motors after first removing commanded
+        gain and model feedforward.
         """
         robot = self._robot
         dof = self._dof
@@ -656,40 +660,163 @@ class GalaxeaA1ZAdapter:
             dtype=float,
         )
 
-        robot.start(initial_kp=np.zeros(dof), initial_kd=default_kd * 0.5)
+        configured_gravity_factor = float(robot.gravity_comp_factor)
+        robot.gravity_comp_factor = 0.0
 
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and not self._all_motors_reported():
-            time.sleep(0.02)
-        if not self._all_motors_reported():
-            robot.stop()
-            raise RuntimeError("no feedback from all motors within 2 s; motors disabled")
+        try:
+            robot.start(initial_kp=np.zeros(dof), initial_kd=default_kd * 0.5)
 
-        state = robot.get_joint_state()
+            deadline = time.monotonic() + _STARTUP_FEEDBACK_TIMEOUT_S
+            while time.monotonic() < deadline and not self._all_motors_reported():
+                time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+            if not self._all_motors_reported():
+                raise RuntimeError(
+                    f"no feedback from all motors within {_STARTUP_FEEDBACK_TIMEOUT_S:.1f} s"
+                )
+
+            hold_pos, _ = self._validated_startup_state(
+                robot.get_joint_state(),
+                phase="initial feedback",
+                max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+            )
+
+            if not self._zero_gravity:
+                # The measured target has zero position error at this instant,
+                # so full holding gains add stiffness without requesting a
+                # position step. Establish this hold before applying any model
+                # torque. Teaching mode deliberately keeps kp at zero.
+                robot.command_joint_state(
+                    {
+                        "pos": hold_pos.copy(),
+                        "vel": np.zeros(dof),
+                        "kp": default_kp,
+                        "kd": default_kd,
+                    }
+                )
+                for sample in range(1, _STARTUP_HOLD_SAMPLES + 1):
+                    time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+                    self._validated_startup_state(
+                        robot.get_joint_state(),
+                        phase=f"position hold {sample}/{_STARTUP_HOLD_SAMPLES}",
+                        max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+                    )
+
+            ramp_steps = max(
+                1,
+                round(_STARTUP_RAMP_DURATION_S / _STARTUP_SAMPLE_PERIOD_S),
+            )
+            for step in range(1, ramp_steps + 1):
+                alpha = step / ramp_steps
+                robot.gravity_comp_factor = configured_gravity_factor * alpha
+                time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+                self._validated_startup_state(
+                    robot.get_joint_state(),
+                    phase=f"gravity ramp {step}/{ramp_steps}",
+                    max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+                )
+
+            self._wait_for_startup_settling()
+        except Exception:
+            self._quiesce_and_stop_after_failed_start()
+            raise
+
+    def _wait_for_startup_settling(self) -> None:
+        """Wait for consecutive stable samples after the gravity ramp.
+
+        Encoder-derived velocity occasionally contains an isolated sample just
+        above the settled threshold. Keep the hard startup velocity ceiling on
+        every sample, but only declare the arm settled after a consecutive
+        stable window. Sustained motion still fails within a bounded timeout.
+        """
+        max_samples = max(
+            _STARTUP_SETTLED_SAMPLES,
+            round(_STARTUP_SETTLING_TIMEOUT_S / _STARTUP_SAMPLE_PERIOD_S),
+        )
+        stable_samples = 0
+        last_pos = np.zeros(self._dof)
+        last_vel = np.zeros(self._dof)
+        for sample in range(1, max_samples + 1):
+            time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+            last_pos, last_vel = self._validated_startup_state(
+                self._robot.get_joint_state(),
+                phase=f"settling {sample}/{max_samples}",
+                max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+            )
+            if np.all(np.abs(last_vel) <= _STARTUP_SETTLED_VELOCITY_RAD_S):
+                stable_samples += 1
+                if stable_samples >= _STARTUP_SETTLED_SAMPLES:
+                    return
+            else:
+                stable_samples = 0
+
+        raise RuntimeError(
+            f"arm did not settle within {_STARTUP_SETTLING_TIMEOUT_S:.1f} s; "
+            f"required {_STARTUP_SETTLED_SAMPLES} consecutive samples at or below "
+            f"{_STARTUP_SETTLED_VELOCITY_RAD_S:.3f} rad/s; "
+            f"positions={np.round(last_pos, 3).tolist()}, "
+            f"velocities={np.round(last_vel, 3).tolist()}"
+        )
+
+    def _validated_startup_state(
+        self,
+        state: dict[str, Any],
+        *,
+        phase: str,
+        max_velocity: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Validate one startup sample and return position and velocity."""
+        if not self._robot or not self._robot.is_running:
+            raise RuntimeError(f"SDK control loop stopped during {phase}")
         pos = np.asarray(state["pos"], dtype=float)
         vel = np.asarray(state["vel"], dtype=float)
+        expected_shape = (self._dof,)
+        if pos.shape != expected_shape or vel.shape != expected_shape:
+            raise RuntimeError(
+                f"invalid state shape during {phase}: pos={pos.shape}, vel={vel.shape}"
+            )
+        if not np.all(np.isfinite(pos)) or not np.all(np.isfinite(vel)):
+            raise RuntimeError(
+                f"non-finite state during {phase}: "
+                f"pos={np.round(pos, 3).tolist()}, vel={np.round(vel, 3).tolist()}"
+            )
+
         lower = np.asarray(_POSITION_LOWER) - 0.15
         upper = np.asarray(_POSITION_UPPER) + 0.15
-        if np.any(pos < lower) or np.any(pos > upper):
-            robot.stop()
+        outside = (pos < lower) | (pos > upper)
+        if np.any(outside):
+            offenders = ", ".join(f"joint{i + 1}={pos[i]:.3f}" for i in np.flatnonzero(outside))
             raise RuntimeError(
-                f"start pose {np.round(pos, 3).tolist()} outside joint limits - "
-                "move the arm inside its range by hand, then retry; motors disabled"
+                f"start pose outside joint limits during {phase}: {offenders}; "
+                f"positions={np.round(pos, 3).tolist()}"
             )
-        if np.any(np.abs(vel) > 0.5):
-            robot.stop()
-            raise RuntimeError("arm is moving during startup; motors disabled")
 
-        if not self._zero_gravity:
-            # Engage hold gains at the *measured* pose: error ~0, no jerk.
-            robot.command_joint_state(
-                {
-                    "pos": pos.copy(),
-                    "vel": np.zeros(dof),
-                    "kp": default_kp,
-                    "kd": default_kd,
-                }
+        too_fast = np.abs(vel) > max_velocity
+        if np.any(too_fast):
+            offenders = ", ".join(
+                f"joint{i + 1}={vel[i]:.3f} rad/s" for i in np.flatnonzero(too_fast)
             )
+            raise RuntimeError(
+                f"arm moving during {phase}: {offenders} "
+                f"(limit {max_velocity:.3f} rad/s); "
+                f"positions={np.round(pos, 3).tolist()}, "
+                f"velocities={np.round(vel, 3).tolist()}"
+            )
+        return pos, vel
+
+    def _quiesce_and_stop_after_failed_start(self) -> None:
+        """Remove commanded force before disabling after activation failure."""
+        robot = self._robot
+        if robot is None:
+            return
+        robot.gravity_comp_factor = 0.0
+        try:
+            robot.estop()
+        except Exception:
+            pass
+        try:
+            robot.stop()
+        except Exception:
+            self._ensure_motors_disabled()
 
     def _all_motors_reported(self) -> bool:
         """True once every motor in the SDK chain has sent real feedback."""

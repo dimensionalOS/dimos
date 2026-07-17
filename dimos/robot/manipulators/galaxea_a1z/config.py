@@ -50,6 +50,7 @@ def galaxea_a1z_hardware(
     *,
     gripper: bool = True,
     mock_without_address: bool = False,
+    dynamics_urdf_path: str | None = None,
 ) -> HardwareComponent:
     if global_config.simulation:
         # TODO: Add sim support when A1Z MuJoCo model is available
@@ -62,4 +63,5 @@ def galaxea_a1z_hardware(
         adapter_type="galaxea_a1z",
         address=address,
         gripper=gripper,
+        adapter_kwargs={"urdf_path": dynamics_urdf_path} if dynamics_urdf_path else None,
     )

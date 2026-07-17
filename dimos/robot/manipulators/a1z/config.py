@@ -28,6 +28,7 @@ from dimos.robot.manipulators._modeling import (
 from dimos.utils.data import LfsPath
 
 A1Z_DOF = 6
+A1Z_MEASURED_STATE_LIMIT_TOLERANCE = 0.01
 
 A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("arm_link2", "arm_link5"),
@@ -71,6 +72,7 @@ def make_a1z_model_config(
     name: str = "arm",
     *,
     has_gripper: bool = True,
+    enable_gripper_control: bool = True,
     joint_prefix: str | None = None,
     coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
@@ -92,6 +94,7 @@ def make_a1z_model_config(
             urdf_joint_prefix="arm_",
         ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
-        gripper_hardware_id=name if has_gripper else None,
+        gripper_hardware_id=name if has_gripper and enable_gripper_control else None,
         home_joints=home_joints or [0.0] * A1Z_DOF,
+        measured_state_limit_tolerance=A1Z_MEASURED_STATE_LIMIT_TOLERANCE,
     )

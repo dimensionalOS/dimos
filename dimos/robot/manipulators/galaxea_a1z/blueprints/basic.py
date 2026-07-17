@@ -22,6 +22,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import (
     A1Z_DOF,
     A1Z_FK_MODEL,
+    A1Z_G1Z_MODEL_PATH,
     make_a1z_model_config,
 )
 from dimos.robot.manipulators.common.blueprints import (
@@ -33,12 +34,10 @@ from dimos.robot.manipulators.common.blueprints import (
 from dimos.robot.manipulators.galaxea_a1z.config import galaxea_a1z_hardware
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-# Arm-only stable configuration: the a1z SDK 'gripper' branch ships a G1Z
-# gravity model that mismatches this unit's mounting (pushes the arm during
-# zero-force startup; soft e-stop cannot catch the arm with comp disabled).
-# Until the model/mount is calibrated, run the SDK *main* branch with
-# gripper=False. Gripper code support remains in the adapter.
-_a1z_hw = galaxea_a1z_hardware("arm", gripper=False)
+# Gripper commands remain disabled, but the physical distal G1Z mass must be
+# present in the SDK dynamics model or joints 2-4 sag under the missing load.
+_A1Z_DYNAMICS_URDF = str(A1Z_G1Z_MODEL_PATH)
+_a1z_hw = galaxea_a1z_hardware("arm", gripper=False, dynamics_urdf_path=_A1Z_DYNAMICS_URDF)
 
 coordinator_galaxea_a1z = autoconnect(
     ControlCoordinator.blueprint(
@@ -54,12 +53,21 @@ coordinator_galaxea_a1z = autoconnect(
     ),
 )
 
-# Planner (ManipulationModule) on real hardware. Arm-only model (A1Z_Flange)
-# to stay consistent with the gripper=False hardware configuration above.
-_planner_hw = galaxea_a1z_hardware("arm", gripper=False)
+# Planner and Viser use the physical G1Z model, including its fixed gripper
+# geometry and TCP. Gripper commands stay disabled until the vendor SDK supports
+# that hardware branch.
+_planner_hw = galaxea_a1z_hardware("arm", gripper=False, dynamics_urdf_path=_A1Z_DYNAMICS_URDF)
 
 galaxea_a1z_planner_coordinator = autoconnect(
-    planner(robots=[make_a1z_model_config(name="arm", has_gripper=False)]),
+    planner(
+        robots=[
+            make_a1z_model_config(
+                name="arm",
+                has_gripper=True,
+                enable_gripper_control=False,
+            )
+        ]
+    ),
     coordinator(
         hardware=[_planner_hw],
         tasks=[trajectory_task(_planner_hw)],
@@ -67,7 +75,7 @@ galaxea_a1z_planner_coordinator = autoconnect(
 )
 
 # Keyboard teleop on real hardware (eef twist task from the FK model).
-_teleop_hw = galaxea_a1z_hardware("arm", gripper=False)
+_teleop_hw = galaxea_a1z_hardware("arm", gripper=False, dynamics_urdf_path=_A1Z_DYNAMICS_URDF)
 
 keyboard_teleop_galaxea_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -76,7 +84,13 @@ keyboard_teleop_galaxea_a1z = autoconnect(
         tasks=[eef_twist_task(_teleop_hw, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)],
     ),
     ManipulationModule.blueprint(
-        robots=[make_a1z_model_config(name="arm", has_gripper=False)],
+        robots=[
+            make_a1z_model_config(
+                name="arm",
+                has_gripper=True,
+                enable_gripper_control=False,
+            )
+        ],
         visualization={"backend": "viser"},
     ),
 )

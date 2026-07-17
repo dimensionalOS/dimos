@@ -50,6 +50,9 @@ class RobotModelConfig(ModuleConfig):
             corresponds to URDF's "joint1". If empty, names are assumed to match.
         coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
+        measured_state_limit_tolerance: Maximum measured-state limit overshoot
+            that may be projected onto the model limits for planning. This applies
+            only to planning seeds and starts, never to goals or hardware commands.
     """
 
     name: str
@@ -76,6 +79,8 @@ class RobotModelConfig(ModuleConfig):
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
     home_joints: list[float] | None = None
+    # Real encoder feedback can rest slightly beyond a modeled soft limit.
+    measured_state_limit_tolerance: float = Field(default=1e-3, ge=0.0)
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

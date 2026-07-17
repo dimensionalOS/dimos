@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import importlib
+from pathlib import Path
 import sys
 from types import ModuleType
 from typing import Any, ClassVar
@@ -60,8 +61,13 @@ class _FakeArmRobot:
         self._bus = _FakeBus()
         self._default_kp = np.array([30.0, 30.0, 30.0, 20.0, 5.0, 5.0])
         self._default_kd = np.array([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])
-        self._motor_chain = _FakeMotorChain()
         self.actions: list[Any] = []
+        self.gravity_factor_history: list[float] = []
+        self.gravity_comp_factor = float(factory_kwargs["gravity_comp_factor"])
+        self.full_gravity_velocity_samples: list[np.ndarray] = []
+        self._motor_chain = _FakeMotorChain()
+        self.move_during_gravity_ramp = False
+        self.stop_during_gravity_ramp = False
         self.state = {
             "pos": np.zeros(6),
             "vel": np.zeros(6),
@@ -70,6 +76,21 @@ class _FakeArmRobot:
             "temp_mos": np.full(6, 35.0),
             "temp_rotor": np.full(6, 40.0),
         }
+
+    @property
+    def gravity_comp_factor(self) -> float:
+        return self._gravity_comp_factor
+
+    @gravity_comp_factor.setter
+    def gravity_comp_factor(self, value: float) -> None:
+        self._gravity_comp_factor = value
+        self.gravity_factor_history.append(value)
+        if value <= 0 or not hasattr(self, "state"):
+            return
+        if self.move_during_gravity_ramp:
+            self.state["vel"][2] = 0.75
+        if self.stop_during_gravity_ramp:
+            self._running = False
 
     @property
     def is_running(self) -> bool:
@@ -82,11 +103,15 @@ class _FakeArmRobot:
     def start(self, initial_kp: Any = None, initial_kd: Any = None) -> None:
         self._running = True
         self._estopped = False
-        self.actions.append(("start", initial_kp, initial_kd))
+        # Model the real SDK boundary that caused the hardware regression:
+        # feedforward present when the loop starts can move the arm even at kp=0.
+        if self.gravity_comp_factor > 0 and initial_kp is not None and np.allclose(initial_kp, 0):
+            self.state["vel"][1] = self.gravity_comp_factor
+        self.actions.append(("start", initial_kp, initial_kd, self.gravity_comp_factor))
         self.actions.append("start")
 
     def command_joint_state(self, joint_state: dict[str, np.ndarray]) -> None:
-        self.actions.append(("command_joint_state", joint_state))
+        self.actions.append(("command_joint_state", joint_state, self.gravity_comp_factor))
 
     def stop(self) -> None:
         self._running = False
@@ -101,7 +126,13 @@ class _FakeArmRobot:
         self.actions.append("release")
 
     def get_joint_state(self) -> dict[str, np.ndarray]:
-        return dict(self.state)
+        state = dict(self.state)
+        configured_gravity = float(self.factory_kwargs["gravity_comp_factor"])
+        if self.full_gravity_velocity_samples and np.isclose(
+            self.gravity_comp_factor, configured_gravity
+        ):
+            state["vel"] = self.full_gravity_velocity_samples.pop(0).copy()
+        return state
 
     def command_joint_pos(self, pos: np.ndarray) -> None:
         self.actions.append(("command_joint_pos", pos.tolist()))
@@ -122,7 +153,10 @@ class _FakeArmRobot:
 
 
 @pytest.fixture
-def a1z_adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+def a1z_adapter_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[ModuleType]:
     _FakeArmRobot.instances.clear()
 
     a1z_pkg = ModuleType("a1z")
@@ -134,7 +168,17 @@ def a1z_adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     monkeypatch.setitem(sys.modules, "a1z.robots", a1z_robots)
     monkeypatch.setitem(sys.modules, "a1z.robots.get_robot", a1z_get_robot)
     sys.modules.pop("dimos.hardware.manipulators.galaxea_a1z.adapter", None)
-    yield importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
+    module = importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    sys_class_net = tmp_path / "net"
+    interface = sys_class_net / "can0"
+    driver_path = tmp_path / "drivers" / "gs_usb"
+    (interface / "device").mkdir(parents=True)
+    driver_path.mkdir(parents=True, exist_ok=True)
+    (interface / "flags").write_text("0x1\n")
+    (interface / "device" / "driver").symlink_to(driver_path, target_is_directory=True)
+    monkeypatch.setattr(module, "_SYS_CLASS_NET", sys_class_net)
+    yield module
     sys.modules.pop("dimos.hardware.manipulators.galaxea_a1z.adapter", None)
 
 
@@ -169,24 +213,140 @@ def test_activate_starts_control_loop_and_enables(
     assert adapter.read_enabled()
 
 
-def test_safe_start_never_commands_force_toward_unverified_pose(
+def test_safe_start_stages_measured_hold_before_gravity_feedforward(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
+    adapter = _connected_adapter(a1z_adapter_module, gravity_comp_factor=1.0)
     robot = _FakeArmRobot.instances[-1]
     robot.state["pos"] = np.array([0.1, 0.5, -0.5, 0.2, -0.1, 0.3])
 
     assert adapter.activate()
 
     start_call = next(a for a in robot.actions if isinstance(a, tuple) and a[0] == "start")
-    assert np.allclose(start_call[1], np.zeros(6))  # kp=0: snap impossible
+    assert np.allclose(start_call[1], np.zeros(6))
+    assert start_call[3] == 0.0
 
-    engage = next(
-        a for a in robot.actions if isinstance(a, tuple) and a[0] == "command_joint_state"
+    hold = [a for a in robot.actions if isinstance(a, tuple) and a[0] == "command_joint_state"]
+    assert len(hold) == 1
+    assert np.allclose(hold[0][1]["pos"], robot.state["pos"])
+    assert np.allclose(hold[0][1]["kp"], robot._default_kp)
+    assert hold[0][2] == 0.0
+    zero_index = robot.gravity_factor_history.index(0.0)
+    gravity_ramp = robot.gravity_factor_history[zero_index:]
+    assert gravity_ramp == sorted(gravity_ramp)
+    assert robot.gravity_comp_factor == 1.0
+
+
+def test_safe_start_tolerates_one_noisy_settling_velocity_sample(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module)
+    robot = _FakeArmRobot.instances[-1]
+    stable = np.full(6, 0.05)
+    noisy = stable.copy()
+    noisy[1] = 0.119
+    # The first sample is consumed by the final gravity-ramp validation.
+    robot.full_gravity_velocity_samples = [
+        np.zeros(6),
+        *[stable for _ in range(4)],
+        noisy,
+        *[stable for _ in range(5)],
+    ]
+
+    assert adapter.activate()
+    assert adapter.read_enabled()
+
+
+def test_safe_start_rejects_sustained_motion_during_settling(
+    a1z_adapter_module: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module)
+    robot = _FakeArmRobot.instances[-1]
+    moving = np.zeros(6)
+    moving[1] = 0.119
+    # Include the final gravity-ramp sample, then exceed the full settling window.
+    robot.full_gravity_velocity_samples = [np.zeros(6), *[moving for _ in range(100)]]
+
+    assert not adapter.activate()
+
+    output = capsys.readouterr().out
+    assert "arm did not settle within 1.0 s" in output
+    assert "velocities=[0.0, 0.119, 0.0, 0.0, 0.0, 0.0]" in output
+    assert robot.gravity_comp_factor == 0.0
+    assert robot.actions[-2:] == ["estop", "stop"]
+
+
+def test_safe_start_preserves_zero_gain_teaching_mode(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    adapter = _connected_adapter(
+        a1z_adapter_module,
+        gravity_comp_factor=0.7,
+        zero_gravity=True,
     )
-    js = engage[1]
-    assert np.allclose(js["pos"], robot.state["pos"])  # hold target = measured pose
-    assert np.allclose(js["kp"], robot._default_kp)
+    robot = _FakeArmRobot.instances[-1]
+
+    assert adapter.activate()
+
+    start_call = next(a for a in robot.actions if isinstance(a, tuple) and a[0] == "start")
+    assert np.allclose(start_call[1], np.zeros(6))
+    assert start_call[3] == 0.0
+    assert not any(
+        isinstance(action, tuple) and action[0] == "command_joint_state" for action in robot.actions
+    )
+    assert robot.gravity_comp_factor == 0.7
+
+
+def test_safe_start_reports_joint_motion_and_removes_force(
+    a1z_adapter_module: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module)
+    robot = _FakeArmRobot.instances[-1]
+    robot.state["pos"] = np.array([0.1, 0.5, -0.5, 0.2, -0.1, 0.3])
+    robot.state["vel"][2] = 0.75
+
+    assert not adapter.activate()
+
+    output = capsys.readouterr().out
+    assert "joint3=0.750 rad/s" in output
+    assert "positions=[0.1, 0.5, -0.5, 0.2, -0.1, 0.3]" in output
+    assert robot.gravity_comp_factor == 0.0
+    assert robot.actions[-2:] == ["estop", "stop"]
+
+
+def test_safe_start_aborts_motion_during_gravity_ramp(
+    a1z_adapter_module: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module)
+    robot = _FakeArmRobot.instances[-1]
+    robot.move_during_gravity_ramp = True
+
+    assert not adapter.activate()
+
+    output = capsys.readouterr().out
+    assert "arm moving during gravity ramp 1/50" in output
+    assert "joint3=0.750 rad/s" in output
+    assert robot.gravity_comp_factor == 0.0
+    assert robot.actions[-2:] == ["estop", "stop"]
+
+
+def test_safe_start_rejects_dead_sdk_control_loop(
+    a1z_adapter_module: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module)
+    robot = _FakeArmRobot.instances[-1]
+    robot.stop_during_gravity_ramp = True
+
+    assert not adapter.activate()
+
+    output = capsys.readouterr().out
+    assert "SDK control loop stopped during gravity ramp 1/50" in output
+    assert robot.gravity_comp_factor == 0.0
+    assert robot.actions[-2:] == ["estop", "stop"]
 
 
 def test_safe_start_false_uses_vendor_stock_startup(
@@ -409,6 +569,7 @@ def test_connect_fails_gracefully_without_sdk(
     monkeypatch.setitem(sys.modules, "a1z", None)  # force ImportError
     sys.modules.pop("dimos.hardware.manipulators.galaxea_a1z.adapter", None)
     module = importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
+    monkeypatch.setattr(module, "_socketcan_channel_error", lambda _channel: None)
 
     adapter = module.GalaxeaA1ZAdapter(address="can0")
     assert not adapter.connect()
@@ -420,6 +581,8 @@ def test_gs_usb_transport_swaps_bus_during_factory_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import can
+
+    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Darwin")
 
     class _FakeGsBus:
         def __init__(self, **kwargs: Any) -> None:
@@ -467,51 +630,86 @@ def test_auto_transport_is_gs_usb_on_macos(
     assert adapter._transport == "gs_usb"
 
 
-def test_auto_transport_prefers_socketcan_when_channel_is_up(
+def test_auto_transport_is_socketcan_on_linux_without_usb_detection(
     a1z_adapter_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: True)
-    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: True)
 
     adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
     assert adapter._transport == "socketcan"
 
 
-def test_auto_transport_falls_back_to_gs_usb_when_channel_down(
+def test_explicit_gs_usb_transport_is_rejected_on_linux(
     a1z_adapter_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: False)
-    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: True)
 
-    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
-    assert adapter._transport == "gs_usb"
+    with pytest.raises(ValueError, match="macOS-only"):
+        a1z_adapter_module.GalaxeaA1ZAdapter(address="can0", transport="gs_usb")
 
 
-def test_auto_transport_stays_socketcan_without_claimable_adapter(
+def test_socketcan_connect_fails_closed_before_sdk_construction(
     a1z_adapter_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", lambda channel: False)
-    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", lambda: False)
+    monkeypatch.setattr(
+        a1z_adapter_module,
+        "_socketcan_channel_error",
+        lambda channel: f"SocketCAN interface {channel!r} belongs to kernel driver 'mttcan'",
+    )
 
     adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
-    assert adapter._transport == "socketcan"
+    assert not adapter.connect()
+    assert not _FakeArmRobot.instances
+    assert "belongs to kernel driver 'mttcan'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("driver", "flags", "expected_error"),
+    [
+        ("mttcan", "0x1\n", "belongs to kernel driver 'mttcan'"),
+        ("gs_usb", "0x0\n", "interface 'can7' is DOWN"),
+        ("gs_usb", "0x1\n", None),
+    ],
+)
+def test_socketcan_channel_validation_requires_up_gs_usb_interface(
+    a1z_adapter_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    driver: str,
+    flags: str,
+    expected_error: str | None,
+) -> None:
+    sys_class_net = tmp_path / "net"
+    interface = sys_class_net / "can7"
+    driver_path = tmp_path / "drivers" / driver
+    (interface / "device").mkdir(parents=True)
+    driver_path.mkdir(parents=True, exist_ok=True)
+    (interface / "flags").write_text(flags)
+    (interface / "device" / "driver").symlink_to(driver_path, target_is_directory=True)
+    monkeypatch.setattr(a1z_adapter_module, "_SYS_CLASS_NET", sys_class_net)
+
+    error = a1z_adapter_module._socketcan_channel_error("can7")
+
+    if expected_error is None:
+        assert error is None
+    else:
+        assert error is not None
+        assert expected_error in error
 
 
 def test_explicit_transport_bypasses_auto_detection(
     a1z_adapter_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _boom(*args: Any) -> bool:
+    def _boom(*args: Any) -> str:
         raise AssertionError("auto detection must not run for explicit transports")
 
-    monkeypatch.setattr(a1z_adapter_module, "_socketcan_channel_is_up", _boom)
-    monkeypatch.setattr(a1z_adapter_module, "_gs_usb_adapter_claimable", _boom)
+    monkeypatch.setattr(a1z_adapter_module, "_resolve_auto_transport", _boom)
 
     adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0", transport="socketcan")
     assert adapter._transport == "socketcan"
