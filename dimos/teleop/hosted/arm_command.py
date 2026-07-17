@@ -12,29 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Arm hosted-teleop command module (module-based hosted pattern).
-
-The arm analog of ``Go2CommandModule`` — the operator command/E-STOP plane for a
-coordinator-driven arm. Unlike the Go2 (a stateless per-command RPC driver), the
-arm streams a continuous engage/delta-pose at ``control_loop_hz``, so this module
-SUBCLASSES ``ArmTeleopModule`` to inherit that control loop, engage handling, and
-the LCM fingerprint decoder table. There is no robot driver to hold an RPC ref
-to: actuation runs through the ControlCoordinator, fed over LCM.
-
-    operator (WebXR) ──cmd_unreliable──▶ cmd_raw ─┐  (PoseStamped/Joy/TwistStamped
-                                                  │   fingerprint-dispatched)
-                                                  ├─ engage/delta-pose loop
-    coordinator ◀── /coordinator_cartesian_command┘   (frame_id = task name)
-                ◀── /teleop_buttons                     (analog triggers → gripper)
-    coordinator ◀── /coordinator_ee_twist_command       (browser keyboard EE-twist)
-                ◀── /gripper_command                     (gripper toggle, Bool)
-
-The state plane (E-STOP / gripper JSON) arrives on ``state_json`` — the SAME
-broker ``state_reliable`` channel the stats + camera-mux modules also read (the
-provider fans one inbound channel to every subscriber); each filters for its own
-``type``. Camera selection is owned by ``CameraMuxModule``; video_stats /
-clock_report by ``HostedStatsModule``. This module owns estop / gripper.
-"""
 
 from __future__ import annotations
 
@@ -61,8 +38,6 @@ logger = setup_logger()
 
 
 class ArmCommandConfig(ArmTeleopConfig):
-    # task_names ("left"/"right" → coordinator task name) and control_loop_hz
-    # come from ArmTeleopConfig; server_port is unused (no local web server).
     cmd_stale_after_sec: float = 0.5
 
 
@@ -77,8 +52,6 @@ class ArmCommandModule(ArmTeleopModule):
     cmd_ack: Out[bytes]  # → state_reliable_back (command acks)
     robot_state: Out[bytes]  # robot-authoritative UI state → stats module telemetry
 
-    # Robot-internal, over LCM. left/right_controller_output + teleop_buttons are
-    # inherited from ArmTeleopModule (bound to the coordinator in the blueprint).
     coordinator_ee_twist_command: Out[TwistStamped]  # browser keyboard EE-twist
     gripper_command: Out[Bool]  # gripper toggle
 
@@ -100,7 +73,7 @@ class ArmCommandModule(ArmTeleopModule):
 
     @rpc
     def start(self) -> None:
-        super().start()  # Module start + control loop (web server no-op'd)
+        super().start()
         for stream, cb in (
             (self.cmd_raw, self._on_cmd_raw),
             (self.state_json, self._on_state_json),
@@ -137,12 +110,7 @@ class ArmCommandModule(ArmTeleopModule):
             self._current_poses[hand] = robot_pose
 
     def _on_twist_bytes(self, data: bytes) -> None:
-        """Browser keyboard EE-twist → coordinator's eef_twist task. Re-stamp
-        frame_id with the task name so the coordinator routes it, and drop it
-        while E-STOP is latched (mirrors the pose gate). Stale / future-stamped /
-        out-of-order twists are dropped like the Go2 drive guard — the eef_twist
-        task integrates each twist until the next one, so a late frame would
-        jog the arm on an input the operator released long ago."""
+        """Browser keyboard EE-twist → coordinator's eef_twist task."""
         if self._estopped:
             return
         msg = TwistStamped.lcm_decode(data)

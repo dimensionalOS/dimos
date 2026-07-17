@@ -79,8 +79,7 @@ class EEFTwistTask(BaseControlTask):
         self._lock = threading.Lock()
         self._latest_twist: TwistStamped | None = None
         self._last_update_time = 0.0
-        # Fixed joint target held when idle (not the live, sagging pose); seeded
-        # lazily and advanced by each jog.
+
         self._hold_target: NDArray[np.floating[Any]] | None = None
         self._gripper_target: float = config.gripper_open_pos
 
@@ -131,9 +130,6 @@ class EEFTwistTask(BaseControlTask):
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._lock:
-            # Safety: if a jog is active but the command stream went silent for
-            # longer than timeout (operator disconnected mid-jog), drop it so the
-            # arm holds instead of integrating the stale twist forever.
             if (
                 self._latest_twist is not None
                 and self._config.timeout > 0
@@ -147,8 +143,6 @@ class EEFTwistTask(BaseControlTask):
         if q_current is None or not np.all(np.isfinite(q_current)):
             return None
 
-        # Both hold and jog integrate from _hold_target, never the live (sagging)
-        # joint state, so tracking error can't ratchet the target down. Seed once.
         if anchor is None:
             anchor = q_current
             with self._lock:
@@ -192,12 +186,6 @@ class EEFTwistTask(BaseControlTask):
             logger.warning(
                 "EEFTwistTask preempted", task=self._name, by_task=by_task, joints=joints
             )
-            # A higher-priority task (e.g. VR TeleopIKTask) is now driving these
-            # joints. Drop our stale hold anchor and any pending jog so that when
-            # we regain control we re-seed _hold_target from the arm's ACTUAL
-            # pose — otherwise we'd command the pose captured before the other
-            # task moved the arm, snapping it back. (compute() re-seeds on the
-            # first tick after anchor is None.)
             with self._lock:
                 self._hold_target = None
                 self._latest_twist = None
