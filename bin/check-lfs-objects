@@ -1,0 +1,25 @@
+#!/bin/bash
+# Verify every LFS pointer at HEAD has its object on the LFS server.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+url="$(git config -f .lfsconfig lfs.url)/objects/batch"
+files=$(git lfs ls-files --json)
+
+missing=$(jq -c '[.files[] | {oid, size}] | unique_by(.oid) | _nwise(100)
+                 | {operation: "download", transfers: ["basic"], objects: .}' <<<"$files" |
+  while read -r req; do
+    curl -fsS --max-time 30 -X POST \
+      -H 'Accept: application/vnd.git-lfs+json' \
+      -H 'Content-Type: application/vnd.git-lfs+json' \
+      -d "$req" "$url" || exit 1
+  done | jq -r '.objects[] | select(.actions.download.href | not) | .oid')
+
+if [ -n "$missing" ]; then
+  echo "LFS objects missing on the server ($url):"
+  jq -r --arg oids "$missing" '($oids | split("\n")) as $m
+    | .files[] | select(.oid | IN($m[])) | "  \(.name) (oid \(.oid))"' <<<"$files"
+  echo "Upload them with bin/lfs_push, then retry."
+  exit 1
+fi
+echo "All $(jq '.files | length' <<<"$files") LFS pointers at HEAD have objects on the server."

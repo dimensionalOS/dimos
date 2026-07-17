@@ -58,6 +58,18 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
+  lfs-pointer-check:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Verify all LFS pointers exist on the LFS server
+        run: bin/check-lfs-objects
+
   rust:
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -726,6 +738,7 @@ jobs:
 
     needs:
     - lint
+    - lfs-pointer-check
     - rust
     - md-babel
     - docs-validate
