@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keyboard teleoperation for the Booster B1 native connection."""
+"""Keyboard teleoperation for the Booster B1 native teleop module."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.booster.b1.connection import BoosterB1Connection
+from dimos.robot.booster.b1.teleop import BoosterB1Teleop
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 booster_b1_keyboard_teleop = autoconnect(
     KeyboardTeleop.blueprint(linear_speed=0.2, angular_speed=1.0),
-    BoosterB1Connection.blueprint(),
+    BoosterB1Teleop.blueprint(),
 )

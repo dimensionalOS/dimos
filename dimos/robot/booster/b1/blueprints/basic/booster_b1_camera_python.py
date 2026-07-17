@@ -14,6 +14,6 @@
 
 """Booster B1 Python SDK RGB-D camera blueprint."""
 
-from dimos.robot.booster.b1.python_camera import BoosterCameraPython
+from dimos.robot.booster.b1.python.python_camera import BoosterCameraPython
 
 booster_b1_camera_python = BoosterCameraPython.blueprint()

@@ -12,17 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared Booster B1 camera configuration defaults."""
-
-import os
-
-DEFAULT_COLOR_TOPIC = "rt/booster_video_stream"
-DEFAULT_DEPTH_TOPIC = "rt/boostercamera/camera/aligned_depth_to_color/image_raw/compressedDepth"
-DEFAULT_COLOR_CAMERA_INFO_TOPIC = "rt/boostercamera/head/rgb/camera_info"
-DEFAULT_DEPTH_CAMERA_INFO_TOPIC = "rt/boostercamera/head/depth/camera_info"
-DEFAULT_DEPTH_SCALE = 0.001
-
-
-def camera_network_interface_from_env() -> str | None:
-    """Return the optional DDS interface selected for the robot connection."""
-    return os.environ.get("ROBOT_INTERFACE") or None
+"""Python implementations for Booster B1 modules."""

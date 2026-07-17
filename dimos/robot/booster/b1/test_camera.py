@@ -34,6 +34,12 @@ def test_camera_configures_booster_sdk_native_bridge(monkeypatch) -> None:
     assert config.depth_scale == 0.001
     assert config.publish_rate_hz is None
     assert config.image_reliable is False
+    assert config.depth_enabled is False
+    assert config.depth_compressed is True
+    assert (
+        config.depth_topic
+        == "rt/boostercamera/camera/aligned_depth_to_color/image_raw/compressedDepth"
+    )
 
 
 def test_camera_defaults_to_sdk_transports_without_robot_interface(monkeypatch) -> None:
@@ -52,10 +58,25 @@ def test_camera_forwards_publish_rate_limit_to_native_bridge() -> None:
     assert args[args.index("--publish_rate_hz") + 1] == "10.0"
 
 
+def test_camera_forwards_depth_enabled_to_native_bridge() -> None:
+    config = BoosterCameraConfig(depth_enabled=True)
+    args = config.to_cli_args()
+
+    assert args[args.index("--depth_enabled") + 1] == "true"
+
+
+def test_camera_can_disable_compressed_depth_for_native_bridge() -> None:
+    config = BoosterCameraConfig(depth_compressed=False)
+    args = config.to_cli_args()
+
+    assert args[args.index("--depth_compressed") + 1] == "false"
+
+
 def test_camera_blueprint_exposes_rgb_depth_and_calibration_streams() -> None:
     [atom] = booster_b1_camera.blueprints
 
     assert atom.module is BoosterCamera
+    assert atom.kwargs == {"depth_enabled": False}
     assert {(stream.name, stream.type, stream.direction) for stream in atom.streams} == {
         ("color_image", Image, "out"),
         ("depth_image", Image, "out"),

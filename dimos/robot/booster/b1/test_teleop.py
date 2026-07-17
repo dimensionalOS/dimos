@@ -20,25 +20,25 @@ from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop import (
     booster_b1_keyboard_teleop,
 )
-from dimos.robot.booster.b1.connection import (
-    BoosterB1Connection,
-    BoosterB1ConnectionConfig,
+from dimos.robot.booster.b1.teleop import (
+    BoosterB1Teleop,
+    BoosterB1TeleopConfig,
 )
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 
-def test_connection_configures_native_cmake_build(monkeypatch) -> None:
+def test_teleop_configures_native_cmake_build(monkeypatch) -> None:
     monkeypatch.setenv("ROBOT_INTERFACE", "eth-test")
 
-    config = BoosterB1ConnectionConfig()
+    config = BoosterB1TeleopConfig()
 
     assert config.network_interface == "eth-test"
     assert config.command_timeout_sec == 0.25
     assert config.cwd == "cpp"
-    assert config.executable == "result/bin/booster_b1_native"
+    assert config.executable == "result/bin/booster_b1_teleop_native"
     assert config.log_format == LogFormat.TEXT
-    assert config.build_command == "nix build .#booster-b1-native"
+    assert config.build_command == "nix build .#booster-b1-teleop-native"
 
 
 def test_cmake_links_self_contained_arch_specific_booster_sdk_archive() -> None:
@@ -75,10 +75,10 @@ def test_nix_flake_pins_booster_sdk_for_native_build() -> None:
     assert "tinyxml2" not in flake
 
 
-def test_keyboard_teleop_blueprint_wires_twist_to_native_connection() -> None:
+def test_keyboard_teleop_blueprint_wires_twist_to_native_teleop() -> None:
     atoms = booster_b1_keyboard_teleop.blueprints
 
-    assert [atom.module for atom in atoms] == [KeyboardTeleop, BoosterB1Connection]
+    assert [atom.module for atom in atoms] == [KeyboardTeleop, BoosterB1Teleop]
     assert atoms[0].streams[0].name == "cmd_vel"
     assert atoms[0].streams[0].type is Twist
     assert atoms[0].streams[0].direction == "out"

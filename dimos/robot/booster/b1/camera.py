@@ -47,6 +47,8 @@ class BoosterCameraConfig(NativeModuleConfig):
     publish_rate_hz: float | None = Field(default=None, gt=0.0)
     image_reliable: bool = False
     color_compressed: bool = True
+    depth_enabled: bool = False
+    depth_compressed: bool = True
     color_topic: str = DEFAULT_COLOR_TOPIC
     depth_topic: str = DEFAULT_DEPTH_TOPIC
     color_camera_info_topic: str = DEFAULT_COLOR_CAMERA_INFO_TOPIC

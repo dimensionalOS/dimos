@@ -1,5 +1,5 @@
 {
-  description = "Booster B1 native locomotion module";
+  description = "Booster B1 native teleoperation module";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -65,8 +65,8 @@
           };
         };
 
-        booster-b1-native = pkgs.stdenv.mkDerivation {
-          pname = "booster-b1-native";
+        booster-b1-teleop-native = pkgs.stdenv.mkDerivation {
+          pname = "booster-b1-teleop-native";
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
 
@@ -79,6 +79,7 @@
             booster-sdk-package
             lcm
             pkgs.glib
+            pkgs.opencv
           ];
 
           cmakeFlags = [
@@ -90,11 +91,11 @@
             description = "dimOS native locomotion driver for the Booster B1";
             license = pkgs.lib.licenses.asl20;
             platforms = [ "x86_64-linux" "aarch64-linux" ];
-            mainProgram = "booster_b1_native";
+            mainProgram = "booster_b1_teleop_native";
           };
         };
 
-        booster-camera-native = booster-b1-native.overrideAttrs (old: {
+        booster-camera-native = booster-b1-teleop-native.overrideAttrs (old: {
           pname = "booster-camera-native";
           installPhase = ''
             runHook preInstall
@@ -109,9 +110,9 @@
         });
       in {
         packages = {
-          default = booster-b1-native;
+          default = booster-b1-teleop-native;
           booster-sdk = booster-sdk-package;
-          inherit booster-b1-native booster-camera-native;
+          inherit booster-b1-teleop-native booster-camera-native;
         };
       });
 }

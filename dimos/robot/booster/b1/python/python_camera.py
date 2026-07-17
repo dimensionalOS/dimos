@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 import math
+import struct
 import threading
 import time
 from typing import Any, Protocol
@@ -59,6 +60,7 @@ class BoosterCameraPythonConfig(ModuleConfig):
     publish_rate_hz: float | None = Field(default=None, gt=0.0)
     color_compressed: bool = True
     depth_enabled: bool = False
+    depth_compressed: bool = True
     color_topic: str = DEFAULT_COLOR_TOPIC
     depth_topic: str = DEFAULT_DEPTH_TOPIC
     color_camera_info_topic: str = DEFAULT_COLOR_CAMERA_INFO_TOPIC
@@ -283,6 +285,51 @@ def booster_depth_image_to_dimos(message: Any, depth_scale: float) -> Image:
     )
 
 
+_COMPRESSED_DEPTH_HEADER = struct.Struct("=iff")
+
+
+def booster_compressed_depth_image_to_dimos(message: Any, depth_scale: float) -> Image:
+    """Decode a ROS compressedDepth PNG into float32 depth in meters."""
+    format_parts = str(message.format).split(";", maxsplit=1)
+    source_encoding = format_parts[0].strip().lower()
+    transport_format = format_parts[1].strip() if len(format_parts) == 2 else ""
+    if "compressedDepth" not in transport_format:
+        raise ValueError(f"unsupported Booster compressed depth format {message.format!r}")
+    if transport_format not in {"compressedDepth", "compressedDepth png"}:
+        raise ValueError(f"unsupported Booster compressed depth format {message.format!r}")
+
+    data = _byte_array(message.data)
+    if data.size <= _COMPRESSED_DEPTH_HEADER.size:
+        raise ValueError("Booster compressed depth payload is missing its PNG data")
+    _, depth_quant_a, depth_quant_b = _COMPRESSED_DEPTH_HEADER.unpack_from(data)
+    decoded = cv2.imdecode(
+        data[_COMPRESSED_DEPTH_HEADER.size :],
+        cv2.IMREAD_UNCHANGED,
+    )
+    if decoded is None or decoded.ndim != 2 or decoded.dtype != np.uint16:
+        raise ValueError("Booster compressed depth payload is not a uint16 PNG")
+
+    if source_encoding == "16uc1":
+        depth = decoded.astype(np.float32)
+        depth *= np.float32(depth_scale)
+    elif source_encoding == "32fc1":
+        inverse_depth = decoded.astype(np.float32)
+        depth = np.full(decoded.shape, np.nan, dtype=np.float32)
+        valid = decoded != 0
+        depth[valid] = np.float32(depth_quant_a) / (
+            inverse_depth[valid] - np.float32(depth_quant_b)
+        )
+    else:
+        raise ValueError(f"unsupported Booster depth encoding {source_encoding!r}")
+
+    return Image(
+        data=depth,
+        format=ImageFormat.DEPTH,
+        frame_id=str(message.header.frame_id),
+        ts=_timestamp(message.header),
+    )
+
+
 def booster_camera_info_to_dimos(message: Any) -> CameraInfo:
     """Convert Booster camera calibration and ROI data to DimOS."""
     result = CameraInfo(
@@ -350,9 +397,17 @@ class BoosterCameraPython(Module, perception.DepthCamera):
 
             subscribers: list[_Subscriber] = [color_subscriber]
             if self.config.depth_enabled:
-                subscribers.append(
-                    booster.ImageSubscriber(self._handle_depth, self.config.depth_topic)
-                )
+                if self.config.depth_compressed:
+                    depth_subscriber = booster.CompressedImageSubscriber(
+                        self._handle_compressed_depth,
+                        self.config.depth_topic,
+                    )
+                else:
+                    depth_subscriber = booster.ImageSubscriber(
+                        self._handle_depth,
+                        self.config.depth_topic,
+                    )
+                subscribers.append(depth_subscriber)
             subscribers.append(
                 booster.CameraInfoSubscriber(
                     self._handle_color_camera_info,
@@ -487,6 +542,21 @@ class BoosterCameraPython(Module, perception.DepthCamera):
             self._maybe_log_metrics()
         except Exception:
             logger.exception("Failed to process Booster depth frame")
+
+    def _handle_compressed_depth(self, message: Any) -> None:
+        processing_started = time.perf_counter()
+        if not self._depth_publish_rate.allow(processing_started):
+            return
+        try:
+            image = booster_compressed_depth_image_to_dimos(
+                message,
+                self.config.depth_scale,
+            )
+            self.depth_image.publish(image)
+            self._depth_metrics.record(image.ts, processing_started, image.data.nbytes)
+            self._maybe_log_metrics()
+        except Exception:
+            logger.exception("Failed to process Booster compressed depth frame")
 
     def _handle_color_camera_info(self, message: Any) -> None:
         processing_started = time.perf_counter()

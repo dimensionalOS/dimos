@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 import logging
+import struct
 from typing import Any
 from unittest.mock import call
 
@@ -26,16 +27,17 @@ from dimos.msgs.metrics_msgs.MetricsArray import MetricsArray
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.robot.all_blueprints import all_blueprints
-from dimos.robot.booster.b1 import python_camera as python_camera_module
 from dimos.robot.booster.b1.blueprints.basic.booster_b1_camera_python import (
     booster_b1_camera_python,
 )
-from dimos.robot.booster.b1.python_camera import (
+from dimos.robot.booster.b1.python import python_camera as python_camera_module
+from dimos.robot.booster.b1.python.python_camera import (
     BoosterCameraPython,
     _FrameAgeMetrics,
     _FrameAgeSnapshot,
     _PublishRateLimiter,
     booster_camera_info_to_dimos,
+    booster_compressed_depth_image_to_dimos,
     booster_compressed_image_to_dimos,
     booster_depth_image_to_dimos,
     booster_image_to_dimos,
@@ -191,6 +193,44 @@ def test_float32_depth_conversion_preserves_meter_values() -> None:
     np.testing.assert_array_equal(result.data, values.astype(np.float32))
 
 
+def test_compressed_uint16_depth_conversion_decodes_png_and_scale() -> None:
+    values = np.array([[1000, 250], [65535, 0]], dtype=np.uint16)
+    encoded_ok, encoded = cv2.imencode(".png", values)
+    assert encoded_ok
+    message = booster.CompressedImage()
+    set_header(message, frame_id="aligned_depth", ts=21.5)
+    message.format = "16UC1; compressedDepth png"
+    message.data = list(struct.pack("=iff", 0, 0.0, 0.0) + encoded.tobytes())
+
+    result = booster_compressed_depth_image_to_dimos(message, depth_scale=0.001)
+
+    assert result.format is ImageFormat.DEPTH
+    assert result.frame_id == "aligned_depth"
+    assert result.ts == 21.5
+    np.testing.assert_allclose(
+        result.data,
+        np.array([[1.0, 0.25], [65.535, 0.0]], dtype=np.float32),
+    )
+
+
+def test_compressed_float_depth_conversion_reverses_quantization() -> None:
+    inverse_depth = np.array([[50, 0], [25, 10]], dtype=np.uint16)
+    encoded_ok, encoded = cv2.imencode(".png", inverse_depth)
+    assert encoded_ok
+    message = booster.CompressedImage()
+    set_header(message)
+    message.format = "32FC1; compressedDepth png"
+    message.data = list(struct.pack("=iff", 0, 100.0, 0.0) + encoded.tobytes())
+
+    result = booster_compressed_depth_image_to_dimos(message, depth_scale=0.001)
+
+    np.testing.assert_allclose(
+        result.data,
+        np.array([[2.0, np.nan], [4.0, 10.0]], dtype=np.float32),
+        equal_nan=True,
+    )
+
+
 def test_camera_info_conversion_preserves_calibration_and_roi() -> None:
     message = booster.CameraInfo()
     set_header(message, frame_id="camera_calibration", ts=30.75)
@@ -251,7 +291,7 @@ def started_camera(
     compressed_subscriber = mocker.patch.object(
         python_camera_module.booster,
         "CompressedImageSubscriber",
-        return_value=subscribers[0],
+        side_effect=subscribers[:2],
     )
     image_subscriber = mocker.patch.object(
         python_camera_module.booster,
@@ -306,11 +346,15 @@ def test_camera_disables_depth_subscribers_by_default(started_camera) -> None:
 
 
 @pytest.mark.parametrize("started_camera", [True], indirect=True)
-def test_camera_starts_depth_subscribers_when_enabled(started_camera) -> None:
+def test_camera_defaults_to_compressed_depth_subscriber_when_enabled(started_camera) -> None:
     camera, subscribers, constructors = started_camera
-    _, _, image_subscriber, camera_info_subscriber = constructors
+    _, compressed_subscriber, image_subscriber, camera_info_subscriber = constructors
 
-    assert image_subscriber.call_args.args[1] == "rt/boostercamera/head/depth"
+    assert (
+        compressed_subscriber.call_args_list[1].args[1]
+        == "rt/boostercamera/camera/aligned_depth_to_color/image_raw/compressedDepth"
+    )
+    image_subscriber.assert_not_called()
     assert camera_info_subscriber.call_count == 2
     for subscriber in subscribers:
         subscriber.InitChannel.assert_called_once_with()
@@ -319,6 +363,28 @@ def test_camera_starts_depth_subscribers_when_enabled(started_camera) -> None:
 
     for subscriber in subscribers:
         subscriber.CloseChannel.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "started_camera",
+    [
+        {
+            "depth_enabled": True,
+            "depth_compressed": False,
+            "depth_topic": "rt/boostercamera/head/depth",
+        }
+    ],
+    indirect=True,
+)
+def test_camera_can_use_raw_depth_subscriber(started_camera) -> None:
+    camera, subscribers, constructors = started_camera
+    _, compressed_subscriber, image_subscriber, camera_info_subscriber = constructors
+
+    assert len(compressed_subscriber.call_args_list) == 1
+    assert image_subscriber.call_args.args[1] == "rt/boostercamera/head/depth"
+    assert camera_info_subscriber.call_count == 2
+    for subscriber in subscribers:
+        subscriber.InitChannel.assert_called_once_with()
 
 
 def test_color_callback_records_metrics_after_publish(started_camera, mocker) -> None:

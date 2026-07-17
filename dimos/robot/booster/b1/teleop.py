@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NativeModule wrapper for Booster B1 locomotion."""
+"""NativeModule wrapper for Booster B1 teleoperation."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 _DEFAULT_COMMAND_TIMEOUT_SEC = 0.25
-_BUILD_COMMAND = "nix build .#booster-b1-native"
+_BUILD_COMMAND = "nix build .#booster-b1-teleop-native"
 
 
 def network_interface_from_env() -> str:
@@ -37,18 +37,18 @@ def network_interface_from_env() -> str:
     return network_interface
 
 
-class BoosterB1ConnectionConfig(NativeModuleConfig):
+class BoosterB1TeleopConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
-    executable: str = "result/bin/booster_b1_native"
+    executable: str = "result/bin/booster_b1_teleop_native"
     build_command: str | None = _BUILD_COMMAND
     log_format: LogFormat = LogFormat.TEXT
     network_interface: str = Field(default_factory=network_interface_from_env)
     command_timeout_sec: float = Field(default=_DEFAULT_COMMAND_TIMEOUT_SEC, gt=0.0)
 
 
-class BoosterB1Connection(NativeModule):
-    """Booster B1 locomotion connection backed by the native C++ SDK."""
+class BoosterB1Teleop(NativeModule):
+    """Booster B1 teleoperation backed by the native C++ SDK."""
 
-    config: BoosterB1ConnectionConfig
+    config: BoosterB1TeleopConfig
 
     cmd_vel: In[Twist]

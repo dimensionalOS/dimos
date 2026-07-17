@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(booster_b1_native LANGUAGES CXX)
+project(booster_b1_teleop_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,14 +41,15 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(DIMOS_LCM REQUIRED IMPORTED_TARGET lcm)
 
 find_package(Threads REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
 
 if(NOT EXISTS "${DIMOS_NATIVE_COMMON_DIR}/dimos_native_module.hpp")
   message(FATAL_ERROR "dimOS native module headers not found: ${DIMOS_NATIVE_COMMON_DIR}")
 endif()
 
 add_executable(
-  booster_b1_native
-  main.cpp
+  booster_b1_teleop_native
+  teleop.cpp
 )
 add_executable(
   booster_camera_native
@@ -60,6 +61,7 @@ function(configure_booster_native_target target)
     ${target}
     BEFORE PRIVATE
     "${BOOSTER_SDK_ROOT}/include"
+    ${OpenCV_INCLUDE_DIRS}
     "${DIMOS_LCM_INCLUDE_DIR}"
     "${DIMOS_NATIVE_COMMON_DIR}"
   )
@@ -68,13 +70,14 @@ function(configure_booster_native_target target)
     PRIVATE
     "${BOOSTER_SDK_LIBRARY}"
     PkgConfig::DIMOS_LCM
+    ${OpenCV_LIBS}
     Threads::Threads
     ${CMAKE_DL_LIBS}
     rt
   )
 endfunction()
 
-configure_booster_native_target(booster_b1_native)
+configure_booster_native_target(booster_b1_teleop_native)
 configure_booster_native_target(booster_camera_native)
 
-install(TARGETS booster_b1_native booster_camera_native DESTINATION bin)
+install(TARGETS booster_b1_teleop_native booster_camera_native DESTINATION bin)

@@ -5,11 +5,12 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <cmath>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -25,6 +26,8 @@
 #include <booster/robot/channel/channel_subscriber.hpp>
 #include <booster_fastdds/fastdds/dds/log/Log.hpp>
 #include <lcm/lcm-cpp.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include "dimos_native_module.hpp"
 #include "sensor_msgs/CameraInfo.hpp"
@@ -36,6 +39,14 @@ namespace
     constexpr auto kMainLoopInterval = std::chrono::milliseconds(50);
     constexpr double kDefaultDepthScale = 0.001;
     constexpr size_t kImageQueueCapacity = 1;
+
+    struct CompressedDepthHeader
+    {
+        int32_t format;
+        float depth_params[2];
+    };
+
+    static_assert(sizeof(CompressedDepthHeader) == 12);
 
     volatile std::sig_atomic_t keep_running = 1;
 
@@ -113,98 +124,6 @@ namespace
                (static_cast<uint32_t>(source[3]) << 24U);
     }
 
-    class FrameAgeMetrics
-    {
-    public:
-        struct Snapshot
-        {
-            double window_seconds{0.0};
-            size_t frames{0};
-            size_t bytes{0};
-            size_t invalid_timestamps{0};
-            size_t negative_ages{0};
-            std::vector<double> frame_age_ms;
-            std::vector<double> bridge_processing_ms;
-        };
-
-        void record(
-            const std_msgs::msg::Header &header,
-            std::chrono::steady_clock::time_point processing_started,
-            size_t bytes)
-        {
-            const auto published_at = std::chrono::system_clock::now();
-            const auto processing_finished = std::chrono::steady_clock::now();
-            const double processing_ms = std::chrono::duration<double, std::milli>(
-                                             processing_finished - processing_started)
-                                             .count();
-
-            bool valid_timestamp = false;
-            double frame_age_ms = 0.0;
-            const auto seconds = header.stamp().sec();
-            const auto nanoseconds = header.stamp().nanosec();
-            if (seconds > 0 && nanoseconds < 1000000000U)
-            {
-                const auto captured_at = std::chrono::system_clock::time_point(
-                    std::chrono::seconds(seconds) + std::chrono::nanoseconds(nanoseconds));
-                frame_age_ms = std::chrono::duration<double, std::milli>(
-                                   published_at - captured_at)
-                                   .count();
-                valid_timestamp = true;
-            }
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            ++frames_;
-            bytes_ += bytes;
-            bridge_processing_ms_.push_back(processing_ms);
-            if (valid_timestamp)
-            {
-                frame_age_ms_.push_back(frame_age_ms);
-                if (frame_age_ms < 0.0)
-                {
-                    ++negative_ages_;
-                }
-            }
-            else
-            {
-                ++invalid_timestamps_;
-            }
-        }
-
-        Snapshot snapshot_and_reset()
-        {
-            const auto now = std::chrono::steady_clock::now();
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            Snapshot snapshot;
-            snapshot.window_seconds =
-                std::chrono::duration<double>(now - window_started_).count();
-            snapshot.frames = frames_;
-            snapshot.bytes = bytes_;
-            snapshot.invalid_timestamps = invalid_timestamps_;
-            snapshot.negative_ages = negative_ages_;
-            snapshot.frame_age_ms = std::move(frame_age_ms_);
-            snapshot.bridge_processing_ms = std::move(bridge_processing_ms_);
-
-            window_started_ = now;
-            frames_ = 0;
-            bytes_ = 0;
-            invalid_timestamps_ = 0;
-            negative_ages_ = 0;
-            return snapshot;
-        }
-
-    private:
-        std::mutex mutex_;
-        std::chrono::steady_clock::time_point window_started_{
-            std::chrono::steady_clock::now()};
-        size_t frames_{0};
-        size_t bytes_{0};
-        size_t invalid_timestamps_{0};
-        size_t negative_ages_{0};
-        std::vector<double> frame_age_ms_;
-        std::vector<double> bridge_processing_ms_;
-    };
-
     class PublishRateLimiter
     {
     public:
@@ -274,6 +193,8 @@ namespace
             double configured_publish_rate_hz,
             bool image_reliable,
             bool configured_color_compressed,
+            bool configured_depth_enabled,
+            bool configured_depth_compressed,
             const std::string &configured_color_topic,
             const std::string &configured_depth_topic,
             const std::string &configured_color_info_topic,
@@ -297,11 +218,14 @@ namespace
             }
             depth_scale_ = configured_depth_scale;
             color_rate_limiter_.configure(configured_publish_rate_hz);
-            depth_rate_limiter_.configure(configured_publish_rate_hz);
             require_topic(configured_color_topic, "color image");
-            require_topic(configured_depth_topic, "depth image");
             require_topic(configured_color_info_topic, "color camera info");
-            require_topic(configured_depth_info_topic, "depth camera info");
+            if (configured_depth_enabled)
+            {
+                depth_rate_limiter_.configure(configured_publish_rate_hz);
+                require_topic(configured_depth_topic, "depth image");
+                require_topic(configured_depth_info_topic, "depth camera info");
+            }
 
             booster::robot::ChannelSubscriberOptions image_options;
             image_options.reliable = image_reliable;
@@ -330,46 +254,43 @@ namespace
                     { on_color(message); });
             }
 
-            depth_subscriber_ =
-                std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::Image>>(
-                    configured_depth_topic, image_options);
-            depth_subscriber_->InitChannel([this](const void *message)
-                                           { on_depth(message); });
             color_info_subscriber_ =
                 std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>(
                     configured_color_info_topic, true);
-            depth_info_subscriber_ =
-                std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>(
-                    configured_depth_info_topic, true);
             color_info_subscriber_->InitChannel(
                 [this](const void *message)
                 { on_camera_info(message, color_info_output_); });
-            depth_info_subscriber_->InitChannel(
-                [this](const void *message)
-                { on_camera_info(message, depth_info_output_); });
+            if (configured_depth_enabled)
+            {
+                if (configured_depth_compressed)
+                {
+                    compressed_depth_subscriber_ =
+                        std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::CompressedImage>>(
+                            configured_depth_topic, image_options);
+                    compressed_depth_subscriber_->InitChannel(
+                        [this](const void *message)
+                        { on_compressed_depth(message); });
+                }
+                else
+                {
+                    depth_subscriber_ =
+                        std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::Image>>(
+                            configured_depth_topic, image_options);
+                    depth_subscriber_->InitChannel([this](const void *message)
+                                                   { on_depth(message); });
+                }
+                depth_info_subscriber_ =
+                    std::make_unique<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>(
+                        configured_depth_info_topic, true);
+                depth_info_subscriber_->InitChannel(
+                    [this](const void *message)
+                    { on_camera_info(message, depth_info_output_); });
+            }
 
             std::cout << "Streaming Booster camera (color=" << configured_color_topic
-                      << ", depth=" << configured_depth_topic << ")" << std::endl;
-            std::cout << "Frame age uses the source header clock; synchronize robot and host "
-                         "with PTP or chrony before interpreting it"
-                      << std::endl;
-        }
-
-        void log_dds_status()
-        {
-            const size_t color_matches =
-                color_subscriber_
-                    ? color_subscriber_->GetMatchedPublicationsCount()
-                    : compressed_color_subscriber_->GetMatchedPublicationsCount();
-            std::cout << "DDS matches: color=" << color_matches
-                      << ", depth=" << depth_subscriber_->GetMatchedPublicationsCount()
-                      << ", color_info="
-                      << color_info_subscriber_->GetMatchedPublicationsCount()
-                      << ", depth_info="
-                      << depth_info_subscriber_->GetMatchedPublicationsCount()
-                      << std::endl;
-            color_metrics_.snapshot_and_reset();
-            depth_metrics_.snapshot_and_reset();
+                      << ", depth="
+                      << (configured_depth_enabled ? configured_depth_topic : "disabled")
+                      << ")" << std::endl;
         }
 
         void shutdown() noexcept
@@ -380,6 +301,7 @@ namespace
             }
             close_subscriber(depth_info_subscriber_);
             close_subscriber(color_info_subscriber_);
+            close_subscriber(compressed_depth_subscriber_);
             close_subscriber(depth_subscriber_);
             close_subscriber(compressed_color_subscriber_);
             close_subscriber(color_subscriber_);
@@ -413,7 +335,6 @@ namespace
                 {
                     return;
                 }
-                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
 
                 sensor_msgs::Image result;
@@ -426,7 +347,6 @@ namespace
                 result.data = source.data();
                 result.data_length = static_cast<int32_t>(result.data.size());
                 publish(color_output_, result);
-                color_metrics_.record(source.header(), processing_started, source.data().size());
             }
             catch (const std::exception &error)
             {
@@ -442,7 +362,6 @@ namespace
                 {
                     return;
                 }
-                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source =
                     *static_cast<const sensor_msgs::msg::CompressedImage *>(raw_message);
 
@@ -456,7 +375,6 @@ namespace
                 result.data = source.data();
                 result.data_length = static_cast<int32_t>(result.data.size());
                 publish(color_output_, result);
-                color_metrics_.record(source.header(), processing_started, source.data().size());
             }
             catch (const std::exception &error)
             {
@@ -472,13 +390,11 @@ namespace
                 {
                     return;
                 }
-                const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
 
-                const size_t published_bytes = publish_depth(
+                publish_depth(
                     source.header(), source.width(), source.height(), source.encoding(),
                     source.is_bigendian() != 0, source.step(), source.data());
-                depth_metrics_.record(source.header(), processing_started, published_bytes);
             }
             catch (const std::exception &error)
             {
@@ -486,7 +402,102 @@ namespace
             }
         }
 
-        size_t publish_depth(
+        void on_compressed_depth(const void *raw_message) noexcept
+        {
+            try
+            {
+                if (!depth_rate_limiter_.allow(std::chrono::steady_clock::now()))
+                {
+                    return;
+                }
+                const auto &source =
+                    *static_cast<const sensor_msgs::msg::CompressedImage *>(raw_message);
+                publish_compressed_depth(source.header(), source.format(), source.data());
+            }
+            catch (const std::exception &error)
+            {
+                std::cerr << "Failed to bridge Booster compressed depth frame: "
+                          << error.what() << std::endl;
+            }
+        }
+
+        void publish_compressed_depth(
+            const std_msgs::msg::Header &header,
+            const std::string &source_format,
+            const std::vector<uint8_t> &source_data)
+        {
+            const size_t separator = source_format.find(';');
+            if (separator == std::string::npos)
+            {
+                throw std::runtime_error(
+                    "invalid compressed depth format '" + source_format + "'");
+            }
+            const std::string encoding = canonical_encoding(
+                source_format.substr(0, separator));
+            const std::string transport_format = source_format.substr(separator + 1);
+            if (transport_format.find("compressedDepth") == std::string::npos ||
+                transport_format.find("rvl") != std::string::npos)
+            {
+                throw std::runtime_error(
+                    "unsupported compressed depth format '" + source_format + "'");
+            }
+            if (encoding != "16UC1" && encoding != "32FC1")
+            {
+                throw std::runtime_error(
+                    "unsupported compressed depth encoding '" + encoding + "'");
+            }
+            if (source_data.size() <= sizeof(CompressedDepthHeader))
+            {
+                throw std::runtime_error("compressed depth payload is missing PNG data");
+            }
+
+            CompressedDepthHeader compression_header;
+            std::memcpy(
+                &compression_header, source_data.data(), sizeof(compression_header));
+            const std::vector<uint8_t> png_data(
+                source_data.begin() + sizeof(compression_header), source_data.end());
+            const cv::Mat decoded = cv::imdecode(png_data, cv::IMREAD_UNCHANGED);
+            if (decoded.empty() || decoded.type() != CV_16UC1)
+            {
+                throw std::runtime_error("compressed depth payload is not a uint16 PNG");
+            }
+
+            std::vector<uint8_t> meters(decoded.total() * sizeof(float));
+            for (int row = 0; row < decoded.rows; ++row)
+            {
+                const uint16_t *source_row = decoded.ptr<uint16_t>(row);
+                for (int column = 0; column < decoded.cols; ++column)
+                {
+                    float value;
+                    const uint16_t source_value = source_row[column];
+                    if (encoding == "16UC1")
+                    {
+                        value = static_cast<float>(source_value * depth_scale_);
+                    }
+                    else if (source_value == 0)
+                    {
+                        value = std::numeric_limits<float>::quiet_NaN();
+                    }
+                    else
+                    {
+                        value = compression_header.depth_params[0] /
+                                (static_cast<float>(source_value) -
+                                 compression_header.depth_params[1]);
+                    }
+                    std::memcpy(
+                        meters.data() +
+                            (static_cast<size_t>(row) * decoded.cols + column) * sizeof(value),
+                        &value, sizeof(value));
+                }
+            }
+            publish_depth_meters(
+                header,
+                static_cast<uint32_t>(decoded.cols),
+                static_cast<uint32_t>(decoded.rows),
+                std::move(meters));
+        }
+
+        void publish_depth(
             const std_msgs::msg::Header &header,
             uint32_t width,
             uint32_t height,
@@ -538,9 +549,7 @@ namespace
                         &value, sizeof(value));
                 }
             }
-            const size_t published_bytes = meters.size();
             publish_depth_meters(header, width, height, std::move(meters));
-            return published_bytes;
         }
 
         void publish_depth_meters(
@@ -616,12 +625,12 @@ namespace
             compressed_color_subscriber_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::Image>>
             depth_subscriber_;
+        std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::CompressedImage>>
+            compressed_depth_subscriber_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>
             color_info_subscriber_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::CameraInfo>>
             depth_info_subscriber_;
-        FrameAgeMetrics color_metrics_;
-        FrameAgeMetrics depth_metrics_;
         std::mutex lcm_mutex_;
         std::atomic_bool shutdown_started_{false};
     };
@@ -654,20 +663,15 @@ int main(int argc, char **argv)
             module.arg_float("publish_rate_hz", 0.0F),
             module.arg_bool("image_reliable", false),
             module.arg_bool("color_compressed"),
+            module.arg_bool("depth_enabled", false),
+            module.arg_bool("depth_compressed", true),
             module.arg("color_topic"),
             module.arg("depth_topic"),
             module.arg("color_camera_info_topic"),
             module.arg("depth_camera_info_topic"));
 
-        auto next_dds_status = std::chrono::steady_clock::now();
         while (keep_running != 0)
         {
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= next_dds_status)
-            {
-                bridge.log_dds_status();
-                next_dds_status = now + std::chrono::seconds(1);
-            }
             std::this_thread::sleep_for(kMainLoopInterval);
         }
         bridge.shutdown();

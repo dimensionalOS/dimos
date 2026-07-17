@@ -1,11 +1,11 @@
 # Booster B1 native integration
 
-The B1 locomotion connection uses Booster's C++ SDK through a dimOS
+The B1 teleop module uses Booster's C++ SDK through a dimOS
 `NativeModule`. It does not import or build `booster_robotics_sdk_python`.
 
 The Booster C++ SDK is pinned to an exact upstream commit and the native binary
 is built by the Nix flake in `cpp/`. The first blueprint start runs `nix build`;
-subsequent starts reuse `cpp/result/bin/booster_b1_native` and the Nix store
+subsequent starts reuse `cpp/result/bin/booster_b1_teleop_native` and the Nix store
 cache.
 
 ```bash
@@ -17,7 +17,7 @@ To build it directly:
 
 ```bash
 cd dimos/robot/booster/b1/cpp
-nix build .#booster-b1-native
+nix build .#booster-b1-teleop-native
 ```
 
 The repackaged, architecture-specific SDK closure is also available as
@@ -40,9 +40,12 @@ run in unit tests.
 ## Native RGB-D camera
 
 The camera bridge uses Booster SDK DDS subscribers for its configured color,
-depth, and calibration channels and publishes native dimOS streams. The topic
-defaults live in `camera_config.py`. Integer depth samples are converted to
-float32 meters using the configured `depth_scale` (0.001 by default).
+depth, and calibration channels and publishes native dimOS streams. Depth is
+disabled by default, so the bridge only subscribes to color and color-camera
+info until it is enabled with `-o boostercamera.depth_enabled=true`. The topic
+defaults live in `camera_config.py`. Depth defaults to the aligned
+`compressedDepth` topic and is decoded to float32 meters. Integer depth samples
+use the configured `depth_scale` (0.001 by default).
 
 Image subscriptions use best-effort delivery and a capacity-one, drop-oldest
 executor queue by default to minimize latency. For lossy links where complete
@@ -65,6 +68,11 @@ ROBOT_INTERFACE=<iface> dimos run booster-b1-camera
 
 The four topic config fields select the camera streams: `color_topic`,
 `depth_topic`, `color_camera_info_topic`, and `depth_camera_info_topic`.
+`depth_compressed` defaults to `true`, and `depth_topic` defaults to Booster's
+aligned ROS `sensor_msgs/msg/CompressedImage` `compressedDepth` PNG topic. Both
+`16UC1` and quantized `32FC1` payloads are decoded to float32 meters. To use a
+raw `sensor_msgs/msg/Image` topic instead, set `depth_compressed=false` and
+override `depth_topic`.
 Set `publish_rate_hz` to cap each image stream's DimOS publishing rate;
 excess frames are dropped before the native bridge converts or publishes them.
 Camera-info messages are not throttled:
@@ -74,14 +82,12 @@ ROBOT_INTERFACE=<iface> dimos run booster-b1-camera \
   -o boostercamera.publish_rate_hz=10
 ```
 
-The bridge collects aggregate color and depth latency once per second without
-writing the metrics to the process log. The
-`frame_age_ms` values measure from the camera's source header timestamp through
-the bridge's LCM publish, while `bridge_ms` isolates time spent in the bridge
-callback. It also reports frame rate, payload bandwidth, invalid timestamps,
-and negative ages. Source and host clocks must be synchronized for frame age to
-be meaningful; use PTP where supported, or chrony otherwise. A nonzero
-`negative_ages` count normally indicates clock skew or a clock adjustment.
+Enable depth and depth-camera-info streams for RGB-D consumers:
+
+```bash
+ROBOT_INTERFACE=<iface> dimos run booster-b1-camera \
+  -o boostercamera.depth_enabled=true
+```
 
 ## Python RGB-D camera
 
@@ -108,8 +114,8 @@ ROBOT_INTERFACE=<iface> dimos run booster-b1-camera-python \
 
 As with the native camera, leave `ROBOT_INTERFACE` unset when running directly
 on the robot. The Python bridge decodes compressed color frames into NumPy
-images, preserves raw color formats and source timestamps, converts integer
-depth to float32 meters, and forwards calibration and ROI fields. Its DDS
+images, preserves raw color formats and source timestamps, decodes raw or
+`compressedDepth` PNG depth to float32 meters, and forwards calibration and ROI fields. Its DDS
 subscriber bindings do not expose the native SDK's reliability and queue
 options, so `image_reliable` is available only on `booster-b1-camera`.
 

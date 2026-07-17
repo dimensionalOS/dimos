@@ -16,4 +16,4 @@
 
 from dimos.robot.booster.b1.camera import BoosterCamera
 
-booster_b1_camera = BoosterCamera.blueprint()
+booster_b1_camera = BoosterCamera.blueprint(depth_enabled=False)
