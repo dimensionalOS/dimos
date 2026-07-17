@@ -260,6 +260,15 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     return file_path
 
 
+def _get_archive_metadata_path(extracted_path: Path) -> Path:
+    """Return the metadata path for an extracted file or directory."""
+    METADATA_FILENAME = ".archive_metadata.json"
+    if extracted_path.is_dir():
+        return extracted_path / METADATA_FILENAME
+
+    return extracted_path.parent / (f".{extracted_path.name}.archive_metadata.json")
+
+
 def _calculate_md5(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.md5()
 
@@ -273,8 +282,8 @@ def _calculate_md5(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
 def _write_archive_md5(extracted_path: Path, md5_str: str) -> None:
     """Write the archive MD5 checksum to a metadata JSON file in the extracted directory."""
 
-    METADATA_FILENAME = ".archive_metadata.json"
-    metadata_path = extracted_path / METADATA_FILENAME
+    metadata_path = _get_archive_metadata_path(extracted_path)
+
     metadata = {"archive_md5": md5_str}
 
     # Write the metadata as UTF-8 encoded JSON.
@@ -286,8 +295,8 @@ def _write_archive_md5(extracted_path: Path, md5_str: str) -> None:
 
 def _read_archive_checksum(extracted_path: Path) -> str | None:
     """Read the archive MD5 checksum from the metadata JSON file in the extracted directory."""
-    METADATA_FILENAME = ".archive_metadata.json"
-    metadata_path = extracted_path / METADATA_FILENAME
+
+    metadata_path = _get_archive_metadata_path(extracted_path)
 
     if not metadata_path.exists():
         return None
@@ -295,7 +304,12 @@ def _read_archive_checksum(extracted_path: Path) -> str | None:
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         return metadata.get("archive_md5")
-    except (json.JSONDecodeError, KeyError):
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        json.JSONDecodeError,
+        OSError,
+    ):
         return None
 
 

@@ -552,3 +552,39 @@ def test_get_data_with_nested_path(temp_data_environment: tuple[Path, Path]) -> 
     assert result == expected_path
     assert result.exists()
     assert result.is_file()
+
+
+def test_get_data_with_single_file_archive(temp_data_environment: tuple[Path, Path]) -> None:
+    """Test get_data with a single-file archive (no directory)."""
+    data_dir, _ = temp_data_environment
+    archive_file = data_dir / ".lfs" / "cafe.jpg.tar.gz"
+
+    tar_stream = io.BytesIO()
+    with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+        file_content = b"this is a single file test"
+        tarinfo = tarfile.TarInfo(name="cafe.jpg")
+        tarinfo.size = len(file_content)
+        tar.addfile(tarinfo, io.BytesIO(file_content))
+
+    tar_stream.seek(0)
+    with gzip.open(archive_file, "wb") as f_out:
+        f_out.write(tar_stream.read())
+
+    expected_path = data_dir / "cafe.jpg"
+    assert not expected_path.exists()
+
+    result = get_data("cafe.jpg")
+
+    assert isinstance(result, Path)
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_file()
+    assert result.read_bytes() == b"this is a single file test"
+
+    metadata_path = data_dir / ".cafe.jpg.archive_metadata.json"
+    assert metadata_path.exists()
+
+    result2 = get_data("cafe.jpg")
+    assert result2 == expected_path
+    assert result2.exists()
+    assert data._read_archive_checksum(expected_path) == data._calculate_md5(archive_file)
