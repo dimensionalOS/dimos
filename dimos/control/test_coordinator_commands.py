@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 
+import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -158,8 +159,6 @@ class TestTaskInvoke:
         assert task.t_now_seen == result
 
     def test_unknown_task_warns_and_returns_none(self, coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
         warn = mocker.patch.object(coord_mod.logger, "warning")
 
         assert coordinator.task_invoke("nope", "execute", {}) is None
@@ -266,8 +265,6 @@ class TestValidatedDispatch:
         assert task.arm_calls == [None]
 
     def test_undeclared_existing_method_warns_but_dispatches(self, coordinator, mocker):
-        import dimos.control.coordinator as coord_mod
-
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
         warn = mocker.patch.object(coord_mod.logger, "warning")

@@ -291,12 +291,9 @@ class TestControlCoordinatorLifecycle:
         coordinator._hardware = {"base": ConnectedTwistBase(MagicMock(), component)}
         dispatch = mocker.patch.object(coordinator, "_dispatch")
 
-        try:
-            coordinator._map_twist_to_base_joints(
-                Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
-            )
-        finally:
-            coordinator.stop()
+        coordinator._map_twist_to_base_joints(
+            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+        )
 
         stream, joint_state = dispatch.call_args.args
         assert stream == "joint_command"
@@ -304,7 +301,7 @@ class TestControlCoordinatorLifecycle:
         assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
         assert joint_state.velocity == [1.0, 2.0, 3.0]
 
-    def test_reset_runtime_state_calls_task_hooks(self):
+    def test_reset_runtime_state_calls_task_hooks(self, make_coordinator):
         class ResettableTask(BaseControlTask):
             def __init__(self) -> None:
                 self._name = "resettable"
@@ -326,17 +323,14 @@ class TestControlCoordinatorLifecycle:
                 self.reset_reactivate_args.append(reactivate)
                 return True
 
-        coordinator = ControlCoordinator(publish_joint_state=False)
+        coordinator = make_coordinator()
         task = ResettableTask()
 
-        try:
-            # reset_runtime_state is card-gated; g1_groot_wbc declares it.
-            assert coordinator.add_task(task, task_type="g1_groot_wbc")
+        # reset_runtime_state is card-gated; g1_groot_wbc declares it.
+        assert coordinator.add_task(task, task_type="g1_groot_wbc")
 
-            assert coordinator.reset_runtime_state(reactivate=True) == {"resettable": True}
-            assert task.reset_reactivate_args == [True]
-        finally:
-            coordinator.stop()
+        assert coordinator.reset_runtime_state(reactivate=True) == {"resettable": True}
+        assert task.reset_reactivate_args == [True]
 
     def test_start_stop_calls_adapter_activate_and_deactivate(self):
         from dimos.hardware.manipulators.mock.adapter import MockAdapter

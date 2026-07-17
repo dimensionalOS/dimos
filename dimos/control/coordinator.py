@@ -449,6 +449,7 @@ class ControlCoordinator(Module):
         return True
 
     def _register_routes(self, task: ControlTask, task_type: str) -> None:
+        # Inline: importing the registry runs task-manifest discovery at import time.
         from dimos.control.tasks.registry import control_task_registry
 
         bindings = control_task_registry.bindings_for(task_type)
@@ -456,8 +457,10 @@ class ControlCoordinator(Module):
             # Distinct from a card-less-but-known type (e.g. trajectory): an
             # unknown type usually means a typo or a missing manifest.
             logger.warning(
-                f"Task {task.name!r} added with unknown task_type {task_type!r}; "
-                "no stream routing set up (typo, or missing task manifest?)."
+                "Task added with unknown task_type; no stream routing set up "
+                "(typo, or missing task manifest?)",
+                task_name=task.name,
+                task_type=task_type,
             )
         for binding in bindings.consumes:
             self._routes.setdefault(binding.stream, []).append(
@@ -466,6 +469,7 @@ class ControlCoordinator(Module):
 
     def _commands_for(self, task_type: str) -> frozenset[str]:
         """The command names the task type declares in its TASK_EXPOSES card."""
+        # Inline: importing the registry runs task-manifest discovery at import time.
         from dimos.control.tasks.registry import control_task_registry
 
         return control_task_registry.bindings_for(task_type).exposes
@@ -474,33 +478,42 @@ class ControlCoordinator(Module):
         """Subscribe streams that gained consumers; drop those whose last consumer left.
 
         A consumer is a card-declared task route, or BASE hardware for
-        ``twist_command``. Locks are taken sequentially, never nested.
+        ``twist_command``. The whole compute+apply runs under
+        ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
+        sequentially inside it) so concurrent syncs cannot apply a stale
+        ``active`` set last. The nesting is deadlock-free: no code path
+        acquires ``_subscribe_lock`` while holding either inner lock.
         """
-        if not (self._tick_loop and self._tick_loop.is_running):
-            return
-        with self._task_lock:
-            active = {stream for stream, entries in self._routes.items() if entries}
-        with self._hardware_lock:
-            has_base = any(
-                hw.component.hardware_type == HardwareType.BASE for hw in self._hardware.values()
-            )
-        if has_base:
-            active.add("twist_command")
         with self._subscribe_lock:
+            if not (self._tick_loop and self._tick_loop.is_running):
+                return
+            with self._task_lock:
+                active = {stream for stream, entries in self._routes.items() if entries}
+            with self._hardware_lock:
+                has_base = any(
+                    hw.component.hardware_type == HardwareType.BASE
+                    for hw in self._hardware.values()
+                )
+            if has_base:
+                active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
                 try:
                     unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
                 except Exception:
                     logger.warning(
-                        f"Tasks are bound to {stream} but the coordinator could not "
-                        "subscribe to it. Use task_invoke RPC or set transport via blueprint."
+                        "Tasks are bound to a stream but the coordinator could not "
+                        "subscribe to it; use task_invoke RPC or set transport via blueprint",
+                        stream=stream,
+                        exc_info=True,
                     )
                     continue
                 self._stream_unsubs[stream] = unsub
-                logger.info(f"Subscribed to {stream} for card-bound tasks")
+                logger.info("Subscribed to stream for card-bound tasks", stream=stream)
             for stream in self._stream_unsubs.keys() - active:
                 self._stream_unsubs.pop(stream)()
-                logger.info(f"Unsubscribed from {stream}; last card-bound consumer removed")
+                logger.info(
+                    "Unsubscribed from stream; last card-bound consumer removed", stream=stream
+                )
 
     def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
         pre_hook = self._stream_pre_hooks.get(stream)
@@ -558,14 +571,19 @@ class ControlCoordinator(Module):
                     getattr(task, handler_name)(msg, t_now)
                 except Exception:
                     logger.exception(
-                        f"{handler_name}() raised on task {task.name!r} for stream {stream!r}"
+                        "Stream handler raised on task",
+                        handler=handler_name,
+                        task_name=task.name,
+                        stream=stream,
                     )
 
             if by_name_bound and not by_name_matched:
                 if not frame_id:
-                    logger.warning(f"Received {stream} with empty frame_id (task name)")
+                    logger.warning("Stream message with empty frame_id (task name)", stream=stream)
                 else:
-                    logger.warning(f"{stream} for unknown task: {frame_id}")
+                    logger.warning(
+                        "Stream message for unknown task", stream=stream, task_name=frame_id
+                    )
 
     def _map_twist_to_base_joints(self, msg: Twist) -> None:
         """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_command."""
@@ -602,7 +620,9 @@ class ControlCoordinator(Module):
                 try:
                     self._invoke_declared(task, name, method, {})
                 except Exception:
-                    logger.exception(f"{method}() raised on task {name!r}")
+                    logger.exception(
+                        "Activation command raised on task", method=method, task_name=name
+                    )
 
     @rpc
     def set_dry_run(self, enabled: bool) -> None:
@@ -614,7 +634,7 @@ class ControlCoordinator(Module):
                 try:
                     self._invoke_declared(task, name, "set_dry_run", {"enabled": enabled})
                 except Exception:
-                    logger.exception(f"set_dry_run() raised on task {name!r}")
+                    logger.exception("set_dry_run() raised on task", task_name=name)
 
     @rpc
     def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
@@ -637,7 +657,7 @@ class ControlCoordinator(Module):
                         )
                     )
                 except Exception:
-                    logger.exception(f"reset_runtime_state() raised on task {name!r}")
+                    logger.exception("reset_runtime_state() raised on task", task_name=name)
                     results[name] = False
         return results
 
@@ -673,7 +693,9 @@ class ControlCoordinator(Module):
                     f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
                 )
             logger.warning(
-                f"undeclared task_invoke {task_name}.{method} — declare it in TASK_EXPOSES"
+                "undeclared task_invoke; declare it in TASK_EXPOSES",
+                task_name=task_name,
+                method=method,
             )
             return getattr(task, method)(**kwargs)
 
