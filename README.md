@@ -218,9 +218,18 @@ dimos stop                                # Shut down
 
 > Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
 
-# Remote Teleop
+# dimTELE: Remote Teleop
 
-**dimTELE** is hosted teleoperation for DimOS robots — drive them from anywhere in the world, with low latency, from a browser, phone, or VR headset. The robot dials out to a hosted broker over WebRTC, so no inbound ports or port forwarding are needed; it works behind any NAT (home router, Wi-Fi, wired LAN, or cellular).
+**dimTELE** is hosted teleoperation for DimOS robots: operate them remotely from any browser or Quest headset over WebRTC. The robot dials out to a hosted broker (teleop.dimensionalos.com), so you don't need to open any inbound ports on the robot's network. It works behind a home router, on Wi-Fi, wired LAN, or cellular.
+
+- Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, grab an API key and pass it as `TRANSPORTS__BROKER__API_KEY.`
+- Run a `teleop-hosted-go2-*` blueprint.
+- Your robot appears under **Available Robots** — click **Connect** and drive the robot from the browser.
+
+| Blueprint | Notes |
+|-----------|-------|
+| `teleop-hosted-go2-transport` | Drive + camera + minimap + click-to-nav (recommended) |
+| `teleop-hosted-go2-multicam` | Adds a second RealSense, operator-selectable, mux'd into one video track |
 
 ```bash
 # Robot dials out to the broker with your API key
@@ -228,14 +237,7 @@ TRANSPORTS__BROKER__API_KEY=dtk_live_... \
 dimos run teleop-hosted-go2-transport
 ```
 
-Then open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, and your robot appears under **Available Robots** — click **Connect** and you're driving. Grab an API key from the dashboard (**API Keys → + New Key**).
-
-| Blueprint | Notes |
-|-----------|-------|
-| `teleop-hosted-go2-transport` | Drive + camera + minimap + click-to-nav (recommended) |
-| `teleop-hosted-go2-multicam` | Adds a second RealSense, operator-selectable, mux'd into one video track |
-
-> Full guide: [docs/capabilities/teleoperation/hosted.md](docs/capabilities/teleoperation/hosted.md) • WebRTC internals: [dimos/teleop/hosted/README.md](dimos/teleop/hosted/README.md)
+> Full guide: [dimTELE](docs/capabilities/teleoperation/hosted.md) • [WebRTC internals](dimos/teleop/hosted/README.md)
 
 # Usage
 
