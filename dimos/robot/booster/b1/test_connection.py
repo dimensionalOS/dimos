@@ -20,10 +20,6 @@ from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop import (
     booster_b1_keyboard_teleop,
 )
-from dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop_camera import (
-    booster_b1_keyboard_teleop_camera,
-)
-from dimos.robot.booster.b1.camera import BoosterCamera
 from dimos.robot.booster.b1.connection import (
     BoosterB1Connection,
     BoosterB1ConnectionConfig,
@@ -97,23 +93,3 @@ def test_keyboard_teleop_blueprint_is_discoverable() -> None:
 
     assert registry_path.endswith(":booster_b1_keyboard_teleop")
     assert get_blueprint_by_name("booster-b1-keyboard-teleop") is booster_b1_keyboard_teleop
-
-
-def test_keyboard_teleop_camera_blueprint_composes_separate_modules() -> None:
-    atoms = booster_b1_keyboard_teleop_camera.blueprints
-
-    assert [atom.module for atom in atoms] == [
-        KeyboardTeleop,
-        BoosterB1Connection,
-        BoosterCamera,
-    ]
-
-
-def test_keyboard_teleop_camera_blueprint_is_discoverable() -> None:
-    registry_path = all_blueprints["booster-b1-keyboard-teleop-camera"]
-
-    assert registry_path.endswith(":booster_b1_keyboard_teleop_camera")
-    assert (
-        get_blueprint_by_name("booster-b1-keyboard-teleop-camera")
-        is booster_b1_keyboard_teleop_camera
-    )

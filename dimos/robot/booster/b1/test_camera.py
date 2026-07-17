@@ -32,6 +32,7 @@ def test_camera_configures_booster_sdk_native_bridge(monkeypatch) -> None:
     assert config.build_command == "nix build .#booster-camera-native"
     assert config.log_format == LogFormat.TEXT
     assert config.depth_scale == 0.001
+    assert config.publish_rate_hz is None
     assert config.image_reliable is False
 
 
@@ -42,6 +43,13 @@ def test_camera_defaults_to_sdk_transports_without_robot_interface(monkeypatch) 
 
     assert config.network_interface is None
     assert "--network_interface" not in config.to_cli_args()
+
+
+def test_camera_forwards_publish_rate_limit_to_native_bridge() -> None:
+    config = BoosterCameraConfig(publish_rate_hz=10)
+    args = config.to_cli_args()
+
+    assert args[args.index("--publish_rate_hz") + 1] == "10.0"
 
 
 def test_camera_blueprint_exposes_rgb_depth_and_calibration_streams() -> None:

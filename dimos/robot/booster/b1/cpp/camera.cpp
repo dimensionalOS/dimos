@@ -8,6 +8,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -204,6 +205,47 @@ namespace
         std::vector<double> bridge_processing_ms_;
     };
 
+    class PublishRateLimiter
+    {
+    public:
+        void configure(double rate_hz)
+        {
+            if (!std::isfinite(rate_hz) || rate_hz < 0.0)
+            {
+                throw std::runtime_error("publish_rate_hz must be finite and non-negative");
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            minimum_interval_ = rate_hz == 0.0
+                                    ? std::chrono::steady_clock::duration::zero()
+                                    : std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                          std::chrono::duration<double>(1.0 / rate_hz));
+            next_allowed_at_ = std::chrono::steady_clock::time_point::min();
+        }
+
+        bool allow(std::chrono::steady_clock::time_point now)
+        {
+            if (minimum_interval_ == std::chrono::steady_clock::duration::zero())
+            {
+                return true;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (now < next_allowed_at_)
+            {
+                return false;
+            }
+            next_allowed_at_ = now + minimum_interval_;
+            return true;
+        }
+
+    private:
+        std::mutex mutex_;
+        std::chrono::steady_clock::duration minimum_interval_{};
+        std::chrono::steady_clock::time_point next_allowed_at_{
+            std::chrono::steady_clock::time_point::min()};
+    };
+
     class BoosterCameraBridge
     {
     public:
@@ -229,6 +271,7 @@ namespace
         void initialize(
             const std::string &network_interface,
             double configured_depth_scale,
+            double configured_publish_rate_hz,
             bool image_reliable,
             bool configured_color_compressed,
             const std::string &configured_color_topic,
@@ -253,6 +296,8 @@ namespace
                           << std::endl;
             }
             depth_scale_ = configured_depth_scale;
+            color_rate_limiter_.configure(configured_publish_rate_hz);
+            depth_rate_limiter_.configure(configured_publish_rate_hz);
             require_topic(configured_color_topic, "color image");
             require_topic(configured_depth_topic, "depth image");
             require_topic(configured_color_info_topic, "color camera info");
@@ -364,6 +409,10 @@ namespace
         {
             try
             {
+                if (!color_rate_limiter_.allow(std::chrono::steady_clock::now()))
+                {
+                    return;
+                }
                 const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
 
@@ -389,6 +438,10 @@ namespace
         {
             try
             {
+                if (!color_rate_limiter_.allow(std::chrono::steady_clock::now()))
+                {
+                    return;
+                }
                 const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source =
                     *static_cast<const sensor_msgs::msg::CompressedImage *>(raw_message);
@@ -415,6 +468,10 @@ namespace
         {
             try
             {
+                if (!depth_rate_limiter_.allow(std::chrono::steady_clock::now()))
+                {
+                    return;
+                }
                 const auto processing_started = std::chrono::steady_clock::now();
                 const auto &source = *static_cast<const sensor_msgs::msg::Image *>(raw_message);
 
@@ -551,6 +608,8 @@ namespace
         std::string color_info_output_;
         std::string depth_info_output_;
         double depth_scale_{kDefaultDepthScale};
+        PublishRateLimiter color_rate_limiter_;
+        PublishRateLimiter depth_rate_limiter_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::Image>>
             color_subscriber_;
         std::unique_ptr<booster::robot::ChannelSubscriber<sensor_msgs::msg::CompressedImage>>
@@ -592,6 +651,7 @@ int main(int argc, char **argv)
         bridge.initialize(
             module.arg("network_interface"),
             module.arg_float("depth_scale", kDefaultDepthScale),
+            module.arg_float("publish_rate_hz", 0.0F),
             module.arg_bool("image_reliable", false),
             module.arg_bool("color_compressed"),
             module.arg("color_topic"),

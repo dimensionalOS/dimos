@@ -13,16 +13,6 @@ ROBOT_INTERFACE=<iface> \
 dimos run booster-b1-keyboard-teleop
 ```
 
-To run keyboard teleoperation and the RGB-D camera together:
-
-```bash
-ROBOT_INTERFACE=<iface> \
-dimos run booster-b1-keyboard-teleop-camera
-```
-
-The combined blueprint keeps locomotion and camera acquisition in separate
-native modules, so either subsystem can still be run and debugged independently.
-
 To build it directly:
 
 ```bash
@@ -75,6 +65,14 @@ ROBOT_INTERFACE=<iface> dimos run booster-b1-camera
 
 The four topic config fields select the camera streams: `color_topic`,
 `depth_topic`, `color_camera_info_topic`, and `depth_camera_info_topic`.
+Set `publish_rate_hz` to cap each image stream's DimOS publishing rate;
+excess frames are dropped before the native bridge converts or publishes them.
+Camera-info messages are not throttled:
+
+```bash
+ROBOT_INTERFACE=<iface> dimos run booster-b1-camera \
+  -o boostercamera.publish_rate_hz=10
+```
 
 The bridge collects aggregate color and depth latency once per second without
 writing the metrics to the process log. The

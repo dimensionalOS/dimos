@@ -22,7 +22,6 @@ all_blueprints = {
     "booster-b1-camera-python": "dimos.robot.booster.b1.blueprints.basic.booster_b1_camera_python:booster_b1_camera_python",
     "booster-b1-camera-rerun": "dimos.robot.booster.b1.blueprints.basic.booster_b1_camera_rerun:booster_b1_camera_rerun",
     "booster-b1-keyboard-teleop": "dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop:booster_b1_keyboard_teleop",
-    "booster-b1-keyboard-teleop-camera": "dimos.robot.booster.b1.blueprints.basic.booster_b1_keyboard_teleop_camera:booster_b1_keyboard_teleop_camera",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
