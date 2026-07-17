@@ -22,6 +22,11 @@ from reactivex import Subject, combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.relocalization.priors import (
+    LastPosePrior,
+    RansacPrior,
+    relocalize_with_priors as _relocalize_with_priors,
+)
 from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -50,6 +55,10 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     fitness_threshold: float = 0.45
     use_carving: bool = True
+    # False (default) = today's behavior exactly, via the unchanged relocalize().
+    # True = RANSAC + a carried-forward last-pose seed both propose candidates,
+    # judged by the same fine-ICP tail (dimos/mapping/relocalization/priors.py).
+    use_last_pose_seed: bool = False
 
 
 class RelocalizationModule(Module):
@@ -63,6 +72,7 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
+        self._last_pose_prior = LastPosePrior()
 
     @rpc
     def start(self) -> None:
@@ -129,8 +139,16 @@ class RelocalizationModule(Module):
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
         assert self._premap is not None
         t0 = time.monotonic()
+        winning_source: str | None = None
         try:
-            T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
+            if self.config.use_last_pose_seed:
+                T, fitness, winning_source = _relocalize_with_priors(
+                    self._premap.pointcloud,
+                    msg.pointcloud,
+                    [RansacPrior(), self._last_pose_prior],
+                )
+            else:
+                T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
         except Exception:
             logger.exception("relocalize() failed")
             return None
@@ -144,6 +162,13 @@ class RelocalizationModule(Module):
             )
             return None
 
+        if self.config.use_last_pose_seed:
+            # Seed the next call's LastPosePrior candidate with THIS T, in
+            # relocalize()'s own convention (map_T_world) -- pre-inversion,
+            # never the published world->map TF below. See LastPosePrior's
+            # docstring in priors.py for the full frame-direction note.
+            self._last_pose_prior.update(T)
+
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
         # so inverse the transform T here to get map_in_scan_frame
@@ -154,11 +179,13 @@ class RelocalizationModule(Module):
             frame_id=FRAME_WORLD,
             child_frame_id=FRAME_MAP,
         )
+        source_suffix = f" source={winning_source}" if winning_source is not None else ""
         logger.info(
             f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
             f"reloc_t={T[:3, 3].round(3).tolist()} "
             f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
-            f"published_t={T_inv[:3, 3].round(3).tolist()} "
+            f"published_t={T_inv[:3, 3].round(3).tolist()}"
+            f"{source_suffix}"
         )
         return new_tf
 
