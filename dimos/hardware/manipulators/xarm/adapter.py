@@ -243,23 +243,11 @@ class XArmAdapter(ManipulatorAdapter):
             return False
 
         self._prepare_for_position_motion()
-        homed = self._move_to_initial_pose()
-        if not homed:
-            logger.warning("xArm deactivate: move-to-initial-pose failed; disabling motion anyway")
-        stop_code: int = self._arm.set_state(4)
-        enable_code: int = self._arm.motion_enable(enable=False)
-        if stop_code != 0 or enable_code != 0:
-            logger.warning(
-                "xArm deactivate: set_state(4)=%s motion_enable(False)=%s "
-                "(state=%s mode=%s err=%s warn=%s)",
-                stop_code,
-                enable_code,
-                self._arm.state,
-                self._arm.mode,
-                self._arm.error_code,
-                self._arm.warn_code,
-            )
-        return homed and stop_code == 0
+        if not self._move_to_initial_pose():
+            return False
+        self._arm.motion_enable(enable=False)
+        code: int = self._arm.set_state(4)
+        return code == 0
 
     def _move_to_initial_pose(self) -> bool:
         if not self._arm:
