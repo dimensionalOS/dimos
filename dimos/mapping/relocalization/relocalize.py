@@ -120,23 +120,35 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(z_world[2], -1.0, 1.0))))
 
 
-def relocalize(
+def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+    """Roughly-horizontal-normal subset. Floor/ceiling points have vertical
+    normals; they fit equally well in any yaw rotation (flat planes are
+    rotationally symmetric), so a 180°-flipped candidate can hide its wall
+    misalignment behind perfect floor alignment if they're left in."""
+    nrm = np.asarray(cloud.normals)
+    mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
+    if mask.sum() < 100:
+        return cloud  # too sparse -> fall back to full cloud
+    sub = o3d.geometry.PointCloud()
+    sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
+    sub.normals = o3d.utility.Vector3dVector(nrm[mask])
+    return sub
+
+
+def generate_ransac_candidates(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
-) -> tuple[np.ndarray, float]:
-    """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
-
-    Multi-scale x multi-restart FPFH+RANSAC -> gravity-filtered, re-ranked by
-    fine-scale inlier ratio (not RANSAC's own fitness) -> fine ICP. The
-    rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
-    5m-off candidate has ~0 inliers while RANSAC reports it as fit.
+) -> list[np.ndarray]:
+    """Multi-scale x multi-restart FPFH+RANSAC candidate transforms placing
+    ``local_map`` into ``global_map``, plus their centroid-aware 180° yaw
+    flips. This is the RANSAC relocalization prior's raw proposal pool --
+    unfiltered, unranked, un-refined; ``refine_candidates`` is the judge.
     """
-    # Fine downsample once — used for both candidate scoring and the final ICP.
-    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
-    src_fine.estimate_normals(
-        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
-    )
-    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+    # Fine downsample of local_map, used only for the yaw-flip centroid below.
+    # refine_candidates repeats this (plus normals) for its own wall-subset
+    # scoring/polish -- cheap and deterministic, so recomputing costs nothing
+    # observable but keeps this function's contract to (global_map, local_map).
+    src_fine_pts = np.asarray(local_map.voxel_down_sample(FINE_VOXEL).points)
 
     candidates: list[np.ndarray] = []  # 4x4 transforms
     for vs, n_runs in SCALE_PLAN:
@@ -155,40 +167,54 @@ def relocalize(
     # Rotating around the cloud centroid keeps the flipped cloud in the same
     # approximate world location — the right reading of "same place, opposite
     # heading" for an indoor submap.
-    src_pts = np.asarray(src_fine.points)
-    c_body = np.array([src_pts[:, 0].mean(), src_pts[:, 1].mean(), 0.0])
+    c_body = np.array([src_fine_pts[:, 0].mean(), src_fine_pts[:, 1].mean(), 0.0])
     rz180 = np.diag([-1.0, -1.0, 1.0])
     t_body_flip = np.eye(4)
     t_body_flip[:3, :3] = rz180
     t_body_flip[:3, 3] = c_body - rz180 @ c_body  # = (2*Cx, 2*Cy, 0)
-    candidates = candidates + [T @ t_body_flip for T in candidates]
+    return candidates + [T @ t_body_flip for T in candidates]
+
+
+def refine_candidates(
+    global_map: o3d.geometry.PointCloud,
+    local_map: o3d.geometry.PointCloud,
+    candidates: list[np.ndarray],
+) -> tuple[np.ndarray, float, int]:
+    """Judge a pool of candidate local_map->global_map transforms and refine
+    the winner. This is the single referee every relocalization prior's
+    candidates go through -- gravity-filtered, then re-ranked by WALL-only
+    fine-scale inlier ratio (not any candidate's own reported confidence or
+    fitness), then per-candidate wall ICP polish, then final full-cloud ICP.
+    No source is trusted: a candidate wins by fitness here or not at all. The
+    rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a 5m-off
+    candidate has ~0 inliers even when its proposer reported it as fit.
+
+    Returns ``(T, fitness, winning_index)`` where ``winning_index`` is the
+    position in ``candidates`` of the proposal that survived to the final
+    polish -- callers pooling candidates from multiple priors use it to
+    attribute which prior's candidate actually won.
+    """
+    # Fine downsample once — used for both candidate scoring and the final ICP.
+    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
+    src_fine.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
+    )
+    tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
     # Gravity filter; fall back to all if everything is tilted (degenerate clouds).
-    upright = [T for T in candidates if _gravity_tilt_deg(T) <= GRAVITY_TILT_MAX_DEG]
-    pool = upright if upright else candidates
+    indexed = list(enumerate(candidates))
+    upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= GRAVITY_TILT_MAX_DEG]
+    pool = upright if upright else indexed
 
-    # Build WALL-ONLY clouds for scoring + polish. Floor/ceiling points have
-    # vertical normals; they fit equally well in any yaw rotation (flat planes
-    # are rotationally symmetric). Including them in scoring lets a 180°-flipped
-    # candidate hide its wall misalignment behind perfect floor alignment. The
-    # FULL clouds are still used for the final refinement, so the gravity
-    # anchor and inlier density are preserved in the output.
-    def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-        nrm = np.asarray(cloud.normals)
-        mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
-        if mask.sum() < 100:
-            return cloud  # too sparse -> fall back to full cloud
-        sub = o3d.geometry.PointCloud()
-        sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
-        sub.normals = o3d.utility.Vector3dVector(nrm[mask])
-        return sub
-
+    # Build WALL-ONLY clouds for scoring + polish; the FULL clouds are still
+    # used for the final refinement, so the gravity anchor and inlier density
+    # are preserved in the output.
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
 
     # Stage 1: rank all candidates by WALL-only fine-scale fitness.
-    def fine_fitness(T: np.ndarray) -> float:
-        r = _reg.evaluate_registration(src_walls, tgt_walls, RERANK_DIST, T)
+    def fine_fitness(item: tuple[int, np.ndarray]) -> float:
+        r = _reg.evaluate_registration(src_walls, tgt_walls, RERANK_DIST, item[1])
         return float(r.fitness)
 
     top_k = sorted(pool, key=fine_fitness, reverse=True)[:10]
@@ -197,8 +223,8 @@ def relocalize(
     # Wall correspondences drive yaw and xy; the rerank then picks the
     # candidate whose walls actually align (not the one whose floors agree).
     tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
-    polished: list[tuple[float, np.ndarray]] = []
-    for T0 in top_k:
+    polished: list[tuple[int, float, np.ndarray]] = []
+    for i, T0 in top_k:
         r = _reg.registration_icp(
             src_walls,
             tgt_walls,
@@ -207,8 +233,8 @@ def relocalize(
             tukey,
             _reg.ICPConvergenceCriteria(max_iteration=70),
         )
-        polished.append((float(r.fitness), np.asarray(r.transformation)))
-    best_fit, best_T = max(polished, key=lambda fT: fT[0])
+        polished.append((i, float(r.fitness), np.asarray(r.transformation)))
+    winning_index, best_fit, best_T = max(polished, key=lambda item: item[1])
 
     # Stage 3: final ICP on full clouds, incl. floor/ceiling
     final = _reg.registration_icp(
@@ -219,4 +245,20 @@ def relocalize(
         tukey,
         _reg.ICPConvergenceCriteria(max_iteration=50),
     )
-    return np.asarray(final.transformation), best_fit
+    return np.asarray(final.transformation), best_fit, winning_index
+
+
+def relocalize(
+    global_map: o3d.geometry.PointCloud,
+    local_map: o3d.geometry.PointCloud,
+) -> tuple[np.ndarray, float]:
+    """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
+
+    RANSAC candidate generation (``generate_ransac_candidates``) feeding the
+    shared judge (``refine_candidates``). Public contract preserved exactly --
+    this signature is relied on by callers outside this package (module.py's
+    ``_relocalize``, the #2137 offline eval harness).
+    """
+    candidates = generate_ransac_candidates(global_map, local_map)
+    T, fitness, _winning_index = refine_candidates(global_map, local_map, candidates)
+    return T, fitness
