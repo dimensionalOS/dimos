@@ -57,7 +57,9 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -162,6 +164,18 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
+    # Input: Planned path for tasks exposing ``set_path()``. Typical source is a
+    # nav-stack planner or a benchmark publishing a reference path. The coord
+    # forwards the path (with a fresh odom snapshot) to every such task; the
+    # tasks read their own latest odom from internal state populated each tick.
+    path: In[Path]
+
+    # Input: Target/cruise speed (m/s) for tasks exposing ``set_speed()``. An
+    # optional runtime override — by default the follower's configured speed
+    # governs; a source (e.g. a benchmark sweeping speeds) wires this to retune
+    # the follower over the transport without RPC.
+    speed: In[Float32]
+
     # Arming and dry-run are one-shot RPCs, not streams.
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -187,6 +201,8 @@ class ControlCoordinator(Module):
         self._ee_twist_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
+        self._path_unsub: Callable[[], None] | None = None
+        self._speed_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -551,6 +567,58 @@ class ControlCoordinator(Module):
             for task in self._tasks.values():
                 task.on_buttons(msg)
 
+    def _read_base_odom(self) -> PoseStamped | None:
+        """Snapshot the BASE adapter's current odom as a PoseStamped, or None."""
+        with self._hardware_lock:
+            for hw in self._hardware.values():
+                if hw.component.hardware_type != HardwareType.BASE:
+                    continue
+                read_odometry = getattr(hw.adapter, "read_odometry", None)
+                if not callable(read_odometry):
+                    continue
+                try:
+                    xyt = read_odometry()
+                except Exception:
+                    continue
+                if xyt is None or len(xyt) < 3:
+                    continue
+                from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+                from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+                return PoseStamped(
+                    ts=time.perf_counter(),
+                    position=Vector3(float(xyt[0]), float(xyt[1]), 0.0),
+                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(xyt[2]))),
+                )
+        return None
+
+    def _on_path(self, msg: Path) -> None:
+        """Forward a planned path + a fresh odom snapshot to any task exposing
+        ``set_path(path, odom)``. Single-arg ``set_path(path)`` callers still
+        work (TypeError fallback)."""
+        odom = self._read_base_odom()
+        with self._task_lock:
+            for task in self._tasks.values():
+                set_path = getattr(task, "set_path", None)
+                if set_path is None:
+                    continue
+                try:
+                    set_path(msg, odom)
+                except TypeError:
+                    set_path(msg)  # backwards compat with single-arg set_path
+
+    def _on_speed(self, msg: Float32) -> None:
+        """Forward a target/cruise speed to any task exposing ``set_speed()``."""
+        value = float(msg.data)
+        with self._task_lock:
+            for task in self._tasks.values():
+                set_speed = getattr(task, "set_speed", None)
+                if callable(set_speed):
+                    try:
+                        set_speed(value)
+                    except Exception:
+                        logger.exception(f"set_speed() raised on task {task.name!r}")
+
     @rpc
     def set_activated(self, engaged: bool) -> None:
         """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
@@ -743,6 +811,36 @@ class ControlCoordinator(Module):
             self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
+        # Subscribe to path if any task implements set_path (nav/benchmark-driven).
+        with self._task_lock:
+            has_path_task = any(
+                callable(getattr(task, "set_path", None)) for task in self._tasks.values()
+            )
+        if has_path_task:
+            try:
+                self._path_unsub = self.path.subscribe(self._on_path)
+                logger.info("Subscribed to path for path-stream-capable tasks")
+            except Exception:
+                logger.warning(
+                    "Path-stream-capable task configured but could not subscribe to path. "
+                    "Set transport via blueprint."
+                )
+
+        # Subscribe to speed if any task implements set_speed (runtime override).
+        with self._task_lock:
+            has_speed_task = any(
+                callable(getattr(task, "set_speed", None)) for task in self._tasks.values()
+            )
+        if has_speed_task:
+            try:
+                self._speed_unsub = self.speed.subscribe(self._on_speed)
+                logger.info("Subscribed to speed for speed-capable tasks")
+            except Exception:
+                logger.warning(
+                    "Speed-capable task configured but could not subscribe to speed. "
+                    "Set transport via blueprint."
+                )
+
         # Arming + dry-run are RPC-only; no stream subscription here.
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
@@ -768,6 +866,12 @@ class ControlCoordinator(Module):
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None
+        if self._path_unsub:
+            self._path_unsub()
+            self._path_unsub = None
+        if self._speed_unsub:
+            self._speed_unsub()
+            self._speed_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
