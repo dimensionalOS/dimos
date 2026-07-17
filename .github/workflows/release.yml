@@ -68,6 +68,193 @@ jobs:
             exit 1
           fi
 
+  compute-ros-pin:
+    # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
+    # so the test job can reference it from its `container:` field (which is
+    # evaluated at job-setup time and can't read step outputs from its own job).
+    # Dependabot bumps the digest in that Dockerfile when :latest moves.
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.read.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: read
+        run: |
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' docker/ros-dev-pin/Dockerfile)
+          if [ -z "$DIGEST" ]; then
+            echo "::error::No sha256 digest found in docker/ros-dev-pin/Dockerfile"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: [validate, compute-ros-pin]
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # Override skipif_in_ci so the release-tests job actually runs the
+      # heavier tests the normal CI matrix opts out of.
+      DIMOS_FULL_TEST_RUN: "1"
+    timeout-minutes: 300
+    runs-on: [self-hosted, Linux, large]
+    permissions:
+      contents: read  # For checkout
+      packages: read  # For pulling the ros-dev container from ghcr.io
+    container:
+      # Digest pinned via docker/ros-dev-pin/Dockerfile (Dependabot-managed).
+      # Mirrored in ci.yml — both workflows use the same digest so any image
+      # regression surfaces in CI before it reaches the release run.
+      image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+      # Expose the host's NVIDIA driver and GPU into the container. Needs
+      # nvidia-container-toolkit installed on the runner (configured by ops);
+      # without it, container start fails with `could not select device driver`.
+      options: --gpus all
+      # Mount the host's X11 socket so the live Unity test (TestLiveUnity) can
+      # render on the GPU-backed Xorg the large runner runs on DISPLAY=:0.
+      volumes:
+        - /tmp/.X11-unix:/tmp/.X11-unix
+      env:
+        # `--gpus all` enables only `compute` + `utility` capabilities by
+        # default. ZED SDK also pulls in libnvcuvid (video decode) and libGL
+        # (graphics) at dlopen time. `all` turns on every capability the host
+        # driver advertises (compute, utility, video, graphics, display).
+        NVIDIA_DRIVER_CAPABILITIES: all
+        # Unity is a graphical app; point it at the host's GPU-backed X server.
+        DISPLAY: ":0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx
+      - name: Install apt dependencies
+        # Workaround until the rebuilt ros-dev image ships libturbojpeg + zstd
+        # baked in (see docker/python/Dockerfile).
+        run: |
+          sudo apt-get update
+          sudo apt-get install libturbojpeg zstd -y
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --group tests-self-hosted --frozen
+      - name: Install Nix (with Cachix substituter)
+        # Sets up Nix pointed at the dimensionalos Cachix cache so the native
+        # module fetch below is a substitution, not a from-scratch build. The
+        # cache is populated by ci.yml's cmu-nav-natives job on main. Unlike
+        # ci.yml, release.yml has no cmu-nav-natives job of its own, so this
+        # relies on the cache already being warm from CI (falls back to a
+        # local build otherwise). install-nix.sh early-exits if nix is present
+        # WITHOUT writing the substituter config, so we (re-)write nix.conf.
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash docker/ros/install-nix.sh
+          sudo mkdir -p /etc/nix
+          sudo tee /etc/nix/nix.conf > /dev/null <<'EOF'
+          experimental-features = nix-command flakes
+          extra-substituters = https://dimensionalos.cachix.org
+          extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          always-allow-substitutes = true
+          build-users-group =
+          max-jobs = auto
+          EOF
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+      - name: Fetch cmu_nav native modules from Cachix
+        # Each cmu_nav module's *_rosbag.py test pre-flights the binary's
+        # existence and pytest.skip()s if absent. This discovers every module
+        # with a build_command and runs it (a fast Cachix substitution on a
+        # warm cache).
+        run: uv run bin/build-cmu-nav-natives
+      - name: Install ZED SDK
+        # Stereolabs proprietary SDK, distributed as a self-extracting .run
+        # installer (not on apt/pip). `runtime_only` skips samples/headers/docs;
+        # `skip_cuda` assumes libcuda/libcudart are already on the runner —
+        # the SDK's .so files dlopen them at process start.
+        # `get_python_api.py` is the SDK's installer for the `pyzed` Python
+        # bindings against the venv's interpreter, so this step has to run
+        # after `Install dependencies` (which provisions the venv).
+        # curl: -f errors on HTTP failure, -L follows redirects, --retry
+        # smooths transient network issues that would otherwise leave a
+        # truncated .run file that fails decompression at extract time.
+        run: |
+          curl -fL --retry 5 --retry-delay 5 \
+            -o /tmp/zed.run \
+            https://download.stereolabs.com/zedsdk/5.0/cu12/ubuntu24
+          chmod +x /tmp/zed.run
+          # `skip_python` stops the SDK installer from auto-installing pyzed
+          # for the system Python 3.10 (wasted — can't be reached from the
+          # uv venv). We install pyzed for the venv's Python below.
+          sudo /tmp/zed.run -- silent runtime_only skip_cuda skip_drivers skip_python
+          rm /tmp/zed.run
+          # Install pyzed directly into the venv via uv. Avoids
+          # `get_python_api.py` which uses `pip install --ignore-installed`
+          # and bulldozes the venv's numpy past the version numba can tolerate.
+          PY_TAG=$(uv run python -c 'v=__import__("sys").version_info; print(f"cp{v.major}{v.minor}")')
+          uv pip install --python .venv/bin/python \
+            "https://download.stereolabs.com/zedsdk/5.0/whl/linux_x86_64/pyzed-5.0-${PY_TAG}-${PY_TAG}-linux_x86_64.whl"
+          echo "LD_LIBRARY_PATH=/usr/local/zed/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+      - name: Verify ZED SDK Python import
+        # The test's compat.py swallows ImportError silently, so a broken
+        # pyzed shows up as "ZED SDK not installed" skips with no real cause.
+        # This step surfaces the actual error (missing libcudart, missing
+        # libsl_zed, ABI mismatch, etc.) instead of letting it hide.
+        env:
+          LD_LIBRARY_PATH: /usr/local/zed/lib:${{ env.LD_LIBRARY_PATH }}
+        run: |
+          ldd /usr/local/zed/lib/libsl_zed.so | head -30 || true
+          uv run python -c "import pyzed.sl; print('pyzed.sl loaded OK')"
+      - name: Build C++ extensions in-place
+        run: uv run python setup.py build_ext --inplace
+      - name: Source ROS environment
+        # The uv venv is sealed (include-system-site-packages = false), so
+        # `import rclpy` / `ament_index_python` would fail. Sourcing the ROS
+        # setup script and exporting PYTHONPATH/AMENT_PREFIX_PATH/etc into
+        # GITHUB_ENV makes them importable from `uv run`.
+        shell: bash
+        run: |
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          {
+            echo "PYTHONPATH=$PYTHONPATH"
+            echo "AMENT_PREFIX_PATH=$AMENT_PREFIX_PATH"
+            echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            echo "ROS_DISTRO=$ROS_DISTRO"
+            echo "ROS_VERSION=$ROS_VERSION"
+            echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Pre-warm HuggingFace cache
+        # Tests previously skipped via skipif_in_ci pull large model weights
+        # from HF at fixture setup time. Pre-fetch here so the cost is paid
+        # once and pytest doesn't trip its per-test timeout on the download.
+        run: |
+          for m in \
+            openai/clip-vit-base-patch32 \
+            microsoft/Florence-2-base \
+            vikhyatk/moondream2 \
+          ; do
+            uv run huggingface-cli download "$m"
+          done
+      - name: Run full test suite
+        # --error-for-skips ensures a misconfigured runner (missing env var /
+        # dep) fails the release rather than silently passing on a smaller
+        # subset. The marker excludes only `tool` (dev tooling).
+        # --timeout=3600 overrides the 600s baseline in pyproject.toml's
+        # addopts: formerly-skipped VLM tests run CPU inference on multi-GB
+        # models and need an hour each. (PYTEST_TIMEOUT env var is the
+        # lowest-priority knob and is shadowed by the addopts setting.)
+        run: uv run pytest -m 'not tool' --error-for-skips --timeout=3600
+      - name: Check disk space
+        if: failure()
+        run: df -h
+
   build-sdist:
     needs: validate
     runs-on: ubuntu-latest
@@ -134,7 +321,7 @@ jobs:
 
   publish-testpypi:
     if: ${{ inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels]
+    needs: [validate, test, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
       name: testpypi

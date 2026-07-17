@@ -21,15 +21,9 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 ## 2. Creating the release
 
-1. Run the full test suite locally on the release branch.
-
-   ```bash
-   uv run pytest -m '' --error-for-skips
-   ```
-
-2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
-3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
-4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1` — the tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
+1. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
+2. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
+3. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1` — the tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
 
 ## 3. Cleanup
 
