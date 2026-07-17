@@ -1,7 +1,6 @@
 ---
 title: "Agentic xArm Simulation"
 ---
-
 # Agentic xArm simulation
 
 `xarm-perception-sim-agent` runs the xArm perception, planning, MuJoCo

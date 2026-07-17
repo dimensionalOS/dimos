@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 
 class _FakeData:
@@ -80,7 +80,7 @@ class _FakeSimHooks:
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     events: list[str] = []
-    module = object.__new__(MujocoSimModule)
+    module = MujocoSimModule()
     module._shm_ready_signaled = False
     module._root_base_qpos_adr = 0
     module._imu_quat_slice = None
@@ -106,14 +106,15 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     module._sim_hooks = _FakeHooks()
     module._shm = _FakeShm()
 
-    module._publish_shm_and_lcm(_FakeEngine)
-
-    assert events == ["joint_state", "imu", "ready"]
+    try:
+        module._publish_shm_and_lcm(_FakeEngine)
+        assert events == ["joint_state", "imu", "ready"]
+    finally:
+        module._close_module()
 
 
 def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
-    module = object.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(base_frame_id="link7")
+    module = MujocoSimModule(base_frame_id="link7")
 
     class _FakeEngine:
         def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray]:
@@ -124,6 +125,9 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
 
         def publish(self, *transforms: Any) -> None:
             self.transforms = transforms
+
+        def stop(self) -> None:
+            pass
 
     fake_tf = _FakeTf()
     module._engine = _FakeEngine()
@@ -139,59 +143,62 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         base_mat=np.eye(3),
     )
 
-    module._publish_tf(10.0, frame)
+    try:
+        module._publish_tf(10.0, frame)
 
-    color_tf, depth_tf, camera_link_tf = fake_tf.transforms
-    assert color_tf.frame_id == "link7"
-    assert color_tf.child_frame_id == "wrist_camera_color_optical_frame"
-    assert np.allclose(color_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
-    assert depth_tf.frame_id == "link7"
-    assert depth_tf.child_frame_id == "wrist_camera_depth_optical_frame"
-    assert camera_link_tf.frame_id == "link7"
-    assert camera_link_tf.child_frame_id == "wrist_camera_link"
-    assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+        color_tf, depth_tf, camera_link_tf = fake_tf.transforms
+        assert color_tf.frame_id == "link7"
+        assert color_tf.child_frame_id == "wrist_camera_color_optical_frame"
+        assert np.allclose(color_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+        assert depth_tf.frame_id == "link7"
+        assert depth_tf.child_frame_id == "wrist_camera_depth_optical_frame"
+        assert camera_link_tf.frame_id == "link7"
+        assert camera_link_tf.child_frame_id == "wrist_camera_link"
+        assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+    finally:
+        module._close_module()
 
 
 def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
-    module = object.__new__(MujocoSimModule)
+    module = MujocoSimModule()
     engine = _FakeRespawnEngine()
     hooks = _FakeSimHooks()
     module._engine = engine
     module._sim_hooks = hooks
 
-    assert module.reset() is True
-
-    assert engine.reset_requested is True
-    assert hooks.cleared is True
+    try:
+        assert module.reset() is True
+        assert engine.reset_requested is True
+        assert hooks.cleared is True
+    finally:
+        module._close_module()
 
 
 def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
-    module = object.__new__(MujocoSimModule)
+    module = MujocoSimModule()
     engine = _FakeRespawnEngine(ground_z=0.08)
     hooks = _FakeSimHooks()
     module._engine = engine
     module._sim_hooks = hooks
     module._root_spawn_clearance_z = 0.793
 
-    assert module.respawn_at(2.6, 0.0, yaw=0.25) is True
+    try:
+        assert module.respawn_at(2.6, 0.0, yaw=0.25) is True
+        assert engine.reset_to_kwargs == {
+            "spawn_xy": (2.6, 0.0),
+            "spawn_z": pytest.approx(0.873),
+            "spawn_yaw": 0.25,
+            "wait": True,
+        }
+        assert hooks.cleared is True
+    finally:
+        module._close_module()
 
-    assert engine.reset_to_kwargs == {
-        "spawn_xy": (2.6, 0.0),
-        "spawn_z": pytest.approx(0.873),
-        "spawn_yaw": 0.25,
-        "wait": True,
-    }
-    assert hooks.cleared is True
 
-
-def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
-    engine = object.__new__(MujocoEngine)
-    engine._lock = threading.Lock()
-    engine._reset_requested = False
-    engine._reset_done_events = []
-    engine._spawn_xy = None
-    engine._spawn_z = None
-    engine._spawn_yaw = None
+def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: Path) -> None:
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
     results: list[bool] = []
 
     def _wait_until_waiters_ready() -> None:
@@ -352,8 +359,7 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
     _write_scene_xml(scene_xml)
     _write_robot_xml(robot_xml)
 
-    module = object.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(
+    module = MujocoSimModule(
         scene_xml=scene_xml,
         robot_mjcf=robot_xml,
         scene_entities=[_scene_entity("chair_000")],
@@ -361,7 +367,10 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
         spawn_z=0.8,
     )
 
-    model = MujocoSimModule._compose_model(module)
+    try:
+        model = MujocoSimModule._compose_model(module)
+    finally:
+        module._close_module()
 
     assert model.opt.timestep == pytest.approx(0.005)
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "static_scene_box") >= 0
@@ -396,8 +405,7 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
     _write_robot_xml(robot_xml)
     _write_hull_obj(hull_obj)
 
-    module = object.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(
+    module = MujocoSimModule(
         scene_xml=scene_xml,
         robot_mjcf=robot_xml,
         scene_entities=[
@@ -407,7 +415,10 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
         spawn_xy=(0.0, 0.0),
     )
 
-    model = MujocoSimModule._compose_model(module)
+    try:
+        model = MujocoSimModule._compose_model(module)
+    finally:
+        module._close_module()
 
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_000") >= 0
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_001") >= 0

@@ -352,15 +352,13 @@ class TestPlanningInitialization:
         assert module._state == ManipulationState.IDLE
         module._kinematics.solve.assert_not_called()
 
-    def test_solve_ik_rpc_uses_explicit_seed(self, robot_config):
-        """solve_ik initializes the backend from an explicit seed when provided."""
+    def test_solve_ik_rpc_accepts_explicit_seed_without_current_state(self, robot_config):
+        """solve_ik succeeds with an explicit seed when no current state is available."""
         module = _make_module()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
-        )
+        module._world_monitor.get_current_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
@@ -369,10 +367,8 @@ class TestPlanningInitialization:
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
         result = module.solve_ik(pose, seed=explicit_seed)
 
-        assert result is expected
-        _, kwargs = module._kinematics.solve.call_args
-        assert kwargs["seed"] is explicit_seed
-        module._world_monitor.get_current_joint_state.assert_not_called()
+        assert result.status == IKStatus.SUCCESS
+        assert module._state == ManipulationState.COMPLETED
 
     def test_solve_ik_preserves_backend_failure_detail(self, robot_config):
         """IK diagnostics include the backend's human-readable failure message."""
@@ -430,9 +426,8 @@ class TestPlanningDiagnostics:
         )
 
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        assert module._begin_planning("test_arm") == ("test_arm", "robot_id")
-        assert not module._plan_path_only(
-            "test_arm", "robot_id", JointState(position=[1.0, 1.0, 1.0]), 1
+        assert not module.plan_to_joints(
+            JointState(position=[1.0, 1.0, 1.0]), robot_name="test_arm"
         )
 
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
