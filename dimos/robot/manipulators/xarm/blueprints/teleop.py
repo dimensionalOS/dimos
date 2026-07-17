@@ -141,6 +141,8 @@ _xarm6_teleop_hw = xarm6_hardware("arm", gripper=True)
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
+# While engaged, VR also owns the gripper joint (trigger), so the browser
+# gripper toggle only takes effect when VR is disengaged.
 
 coordinator_teleop_xarm7 = autoconnect(
     ControlCoordinator.blueprint(

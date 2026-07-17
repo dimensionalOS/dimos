@@ -222,3 +222,48 @@ def test_preempt_reseeds_anchor_from_live_pose(task: EEFTwistTask, fake_ik: Fake
     held = task.compute(_state(2.0, positions=[0.7, 0.8, 0.9]))
     assert held is not None
     assert held.positions == [0.7, 0.8, 0.9]
+
+
+@pytest.fixture
+def gripper_task(fake_ik: FakeIK) -> EEFTwistTask:
+    return EEFTwistTask(
+        "eef",
+        EEFTwistTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            model_path="fake.urdf",
+            ee_joint_id=3,
+            timeout=0.3,
+            max_joint_delta_deg=15.0,
+            gripper_joint="arm/gripper",
+            gripper_open_pos=0.85,
+            gripper_closed_pos=0.0,
+        ),
+    )
+
+
+def test_claim_includes_gripper_joint(gripper_task: EEFTwistTask) -> None:
+    assert "arm/gripper" in gripper_task.claim().joints
+
+
+def test_gripper_defaults_open_and_appends_to_output(gripper_task: EEFTwistTask) -> None:
+    output = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
+
+    assert output is not None
+    assert output.joint_names[-1] == "arm/gripper"
+    assert output.positions[-1] == 0.85
+
+
+def test_gripper_command_toggles_target(gripper_task: EEFTwistTask) -> None:
+    assert gripper_task.on_gripper_command(closed=True)
+    closed = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
+    assert closed is not None
+    assert closed.positions[-1] == 0.0
+
+    assert gripper_task.on_gripper_command(closed=False)
+    opened = gripper_task.compute(_state(0.6, positions=[0.1, 0.2, 0.3]))
+    assert opened is not None
+    assert opened.positions[-1] == 0.85
+
+
+def test_gripper_command_rejected_without_gripper_joint(task: EEFTwistTask) -> None:
+    assert task.on_gripper_command(closed=True) is False

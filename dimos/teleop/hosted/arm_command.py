@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Operator command/E-STOP plane for the hosted arm — the arm analog of
+Go2CommandModule. Actuation runs through the ControlCoordinator over LCM;
+VR poses, browser EE-twists, and the gripper/E-STOP JSON plane arrive here
+from the broker."""
 
 from __future__ import annotations
 

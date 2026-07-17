@@ -758,12 +758,11 @@ class ControlCoordinator(Module):
                     "to twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to buttons for tasks that consume them (teleop_ik engage/gripper,
-        # eef_twist gripper).
-        has_button_task = any(t.type in ("teleop_ik", "eef_twist") for t in self.config.tasks)
-        if has_button_task:
+        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
+        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
+        if has_teleop_ik:
             self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
-            logger.info("Subscribed to buttons for engage/disengage/gripper")
+            logger.info("Subscribed to buttons for engage/disengage")
 
         # Arming + dry-run are RPC-only; no stream subscription here.
 

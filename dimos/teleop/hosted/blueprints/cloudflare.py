@@ -149,18 +149,19 @@ teleop_hosted_go2_multicam = (
 )
 
 
-# XArm hosted manipulation (coordinator-driven, WebXR + browser operator)
+# ─── XArm hosted manipulation (coordinator-driven, WebXR + browser operator) ──
 #
-# ArmCommandModule is the operator command
-# plane; actuation runs through the ControlCoordinator over LCM. Two RealSense
-# cameras (front = cam1, wrist = cam2), operator-selectable via the mux.
+# ArmCommandModule is the operator command plane; actuation runs through the
+# ControlCoordinator over LCM. Two RealSense cameras (front = cam1, wrist =
+# cam2), operator-selectable via the mux.
 
 
 # Distinct classes so two RealSense units coexist in one blueprint. Serials:
 # -o frontcamera.serial_number=... -o wristcamera.serial_number=...
 
 
-# Until blueprints support running multiple instances of the same module.
+# These subclasses exist only until blueprints support running multiple
+# instances of the same module.
 class FrontCamera(RealSenseCamera):
     pass
 

@@ -75,7 +75,7 @@ class XArmAdapter(ManipulatorAdapter):
             self._arm.connect()
 
             if not self._arm.connected:
-                print(f"ERROR: XArm at {self._ip} not reachable (connected=False)")
+                logger.error("XArm at %s not reachable (connected=False)", self._ip)
                 return False
 
             # Clear stale warn/error from a previous session, else set_mode/set_state won't take.
@@ -93,7 +93,7 @@ class XArmAdapter(ManipulatorAdapter):
 
             return True
         except Exception as e:
-            print(f"ERROR: Failed to connect to XArm at {self._ip}: {e}")
+            logger.error("Failed to connect to XArm at %s: %s", self._ip, e)
             return False
 
     def disconnect(self) -> None:
