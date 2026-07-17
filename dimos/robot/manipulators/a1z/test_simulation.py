@@ -1,5 +1,6 @@
 import itertools
 import math
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -132,12 +133,36 @@ def test_a1z_scene_compiles_and_has_stable_contract() -> None:
     assert model.vis.global_.offheight == 480
     fps_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_NUMERIC, "wrist_camera_fps")
     assert model.numeric_data[model.numeric_adr[fps_id]] == pytest.approx(30.0)
+    camera_xml = next(
+        camera
+        for camera in ET.parse(A1Z_SCENE_PATH).iter("camera")
+        if camera.attrib.get("name") == "wrist_camera"
+    )
+    assert "euler" not in camera_xml.attrib
+    assert camera_xml.attrib["pos"] == "0.11 0 0.04"
+    assert camera_xml.attrib["xyaxes"] == "0 -1 0 0 0 1"
     data = mujoco.MjData(model)
     for value in (0.0, 0.0075, 0.015):
         data.ctrl[6] = value
         for _ in range(20):
             mujoco.mj_step(model, data)
         assert data.qpos[6] == pytest.approx(data.qpos[7], abs=2e-3)
+
+
+def test_a1z_camera_orientation_points_forward_and_up_in_link6_frame() -> None:
+    model = mujoco.MjModel.from_xml_path(str(A1Z_SCENE_PATH))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist_camera")
+    link6_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "arm_link6")
+    camera_rotation = data.cam_xmat[camera_id].reshape(3, 3)
+    link6_rotation = data.xmat[link6_id].reshape(3, 3)
+
+    camera_forward = camera_rotation @ np.array([0.0, 0.0, -1.0])
+    camera_up = camera_rotation @ np.array([0.0, 1.0, 0.0])
+    assert camera_forward == pytest.approx(link6_rotation @ np.array([1.0, 0.0, 0.0]))
+    assert camera_up == pytest.approx(link6_rotation @ np.array([0.0, 0.0, 1.0]))
 
 
 def test_a1z_gripper_inward_pad_aperture_increases_to_safe_width() -> None:

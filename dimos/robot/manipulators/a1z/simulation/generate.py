@@ -584,8 +584,8 @@ def _scene_xml(
         sensor_body,
         "camera",
         name="wrist_camera",
-        pos="0.11 0 -0.02",
-        euler="0 1.57 1.57",
+        pos="0.11 0 0.04",
+        xyaxes="0 -1 0 0 0 1",
         mode="fixed",
         fovy="65",
     )

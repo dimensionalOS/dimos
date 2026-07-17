@@ -25,6 +25,8 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.robot.manipulators.a1z.blueprints.teleop import (
     _build_a1z_keyboard_components,
+    _convert_camera_info,
+    _convert_depth_camera_info,
 )
 from dimos.robot.manipulators.a1z.config import A1Z_DOF, make_a1z_hardware
 from dimos.robot.manipulators.a1z.simulation import (
@@ -57,6 +59,8 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.robot.manipulators.xarm.simulation import _XArm6MujocoSimModule
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopConfig, KeyboardTeleopModule
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -137,6 +141,51 @@ def test_a1z_keyboard_wires_directly_in_both_modes() -> None:
 
     assert (KeyboardTeleopModule, "coordinator_ee_twist_command") not in simulation.remapping_map
     assert (KeyboardTeleopModule, "coordinator_ee_twist_command") not in hardware.remapping_map
+
+
+def test_a1z_mujoco_includes_rerun_camera_and_world_views() -> None:
+    blueprint = autoconnect(*_build_a1z_keyboard_components(simulation="mujoco"))
+
+    rerun_atoms = [atom for atom in blueprint.blueprints if atom.module is RerunBridgeModule]
+    assert len(rerun_atoms) == 1
+    rerun_kwargs = rerun_atoms[0].kwargs
+    assert rerun_kwargs["blueprint"] is not None
+    assert rerun_kwargs["rerun_open"] == "web"
+    assert rerun_kwargs["rerun_web"] is True
+    assert "world/camera_info" in rerun_kwargs["visual_override"]
+    assert "world/depth_camera_info" in rerun_kwargs["visual_override"]
+
+
+def test_a1z_camera_info_overrides_use_message_optical_frame() -> None:
+    class CameraInfo:
+        def __init__(self, frame_id: str) -> None:
+            self.frame_id = frame_id
+
+        def to_rerun(self, **kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+    color_info = CameraInfo("wrist_camera_color_optical_frame")
+    depth_info = CameraInfo("wrist_camera_depth_optical_frame")
+
+    color = _convert_camera_info(color_info)
+    depth = _convert_depth_camera_info(depth_info)
+
+    assert color == {
+        "image_topic": "/world/color_image",
+        "optical_frame": "wrist_camera_color_optical_frame",
+    }
+    assert depth == {
+        "image_topic": "/world/depth_image",
+        "optical_frame": "wrist_camera_depth_optical_frame",
+    }
+
+
+def test_a1z_non_mujoco_excludes_visualization_stack() -> None:
+    blueprint = autoconnect(*_build_a1z_keyboard_components(simulation="dimsim"))
+
+    modules = {atom.module for atom in blueprint.blueprints}
+    assert RerunBridgeModule not in modules
+    assert WebsocketVisModule not in modules
 
 
 @pytest.mark.parametrize("simulation", ["dimsim", "mujoco"])

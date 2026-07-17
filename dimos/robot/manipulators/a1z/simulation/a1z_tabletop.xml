@@ -63,7 +63,7 @@
                       <geom name="right_pad" type="mesh" mesh="a1z_simulation_pad" quat="0.578249402 -0.289473795 -0.252071023 0.719925517" pos="0.096198363 -0.027086063 0.017829364" contype="2" conaffinity="5" condim="4" friction="2 0.01 0.001" margin="0.001" priority="1" solimp="0.95 0.99 0.001" solref="0.02 1" mass="0" material="a1z_simulation_pad_material" />
                     </body>
                     <body name="gripper_eef_link" pos="0.0727 0 0" euler="0 0 0" />
-                    <camera name="wrist_camera" pos="0.11 0 -0.02" euler="0 1.57 1.57" mode="fixed" fovy="65" />
+                    <camera name="wrist_camera" pos="0.11 0 0.04" xyaxes="0 -1 0 0 0 1" mode="fixed" fovy="65" />
                   </body>
                 </body>
               </body>

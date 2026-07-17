@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
@@ -26,6 +28,47 @@ from dimos.robot.manipulators.a1z.config import (
 )
 from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.visualization.vis_module import vis_module
+
+
+def _convert_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image",
+        optical_frame=camera_info.frame_id,
+    )
+
+
+def _convert_depth_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/depth_image",
+        optical_frame=camera_info.frame_id,
+    )
+
+
+def _a1z_rerun_blueprint() -> Any:
+    """Split the A1Z simulation view between the camera and the world."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(origin="world", name="3D"),
+            column_shares=[1, 2],
+        ),
+    )
+
+
+_a1z_rerun_config: dict[str, Any] = {
+    "blueprint": _a1z_rerun_blueprint,
+    # Match the installed rerun SDK in the browser instead of spawning the
+    # incompatible native dimos-viewer build.
+    "rerun_open": "web",
+    "rerun_web": True,
+    "visual_override": {
+        "world/camera_info": _convert_camera_info,
+        "world/depth_camera_info": _convert_depth_camera_info,
+    },
+}
 
 
 def _build_a1z_keyboard_components(simulation: str) -> tuple[Blueprint, ...]:
@@ -77,6 +120,12 @@ def _build_a1z_keyboard_components(simulation: str) -> tuple[Blueprint, ...]:
                 fps=30,
                 camera_name="wrist_camera",
                 gripper_control_mapping="identity",
+            )
+        )
+        modules.append(
+            vis_module(
+                viewer_backend=global_config.viewer,
+                rerun_config=_a1z_rerun_config,
             )
         )
     modules.append(ControlCoordinator.blueprint(hardware=[hardware], tasks=tasks))
