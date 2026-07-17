@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
@@ -89,6 +90,7 @@ class GlobalPlanner(Resource):
     _path_cell_cost_weight: float
     _publish_raw_path: bool
     _constrained_path_smoothing_enabled: bool
+    _path_smoothing_performance_logging_enabled: bool
     _path_smoothing_config: ConstrainedPathSmoothingConfig
 
     _safe_goal_tolerance: float = 4.0
@@ -109,6 +111,7 @@ class GlobalPlanner(Resource):
         path_cell_cost_weight: float = 3.0,
         publish_raw_path: bool = False,
         constrained_path_smoothing_enabled: bool = False,
+        path_smoothing_performance_logging_enabled: bool = False,
         path_smoothing_iterations: int = 40,
         path_smoothing_data_weight: float = 0.02,
         path_smoothing_smoothness_weight: float = 0.45,
@@ -128,6 +131,9 @@ class GlobalPlanner(Resource):
         self._path_cell_cost_weight = path_cell_cost_weight
         self._publish_raw_path = publish_raw_path
         self._constrained_path_smoothing_enabled = constrained_path_smoothing_enabled
+        self._path_smoothing_performance_logging_enabled = (
+            path_smoothing_performance_logging_enabled
+        )
         self._path_smoothing_config = ConstrainedPathSmoothingConfig(
             spacing_m=path_resample_spacing_m,
             max_iterations=path_smoothing_iterations,
@@ -431,14 +437,18 @@ class GlobalPlanner(Resource):
         path, costmap = found_path
         # Keep the grid path visible for diagnostics; only the resampled path
         # is consumed by LocalPlanner and sent to the movement stack.
+        smoothing_timing: dict[str, float | int] | None = None
         if self._publish_raw_path:
             self.raw_path.on_next(path)
         if self._constrained_path_smoothing_enabled:
+            if self._path_smoothing_performance_logging_enabled:
+                smoothing_timing = {}
             resampled_path = constrained_smooth_resample_path(
                 path,
                 current_goal,
                 costmap,
                 self._path_smoothing_config,
+                smoothing_timing,
             )
         else:
             resampled_path = smooth_resample_path(
@@ -447,9 +457,25 @@ class GlobalPlanner(Resource):
                 self._path_smoothing_config.spacing_m,
             )
 
-        self.path.on_next(resampled_path)
+        if smoothing_timing is None:
+            self.path.on_next(resampled_path)
+            self._local_planner.start_planning(resampled_path)
+        else:
+            path_publish_started = time.perf_counter()
+            self.path.on_next(resampled_path)
+            smoothing_timing["path_publish_ms"] = (
+                time.perf_counter() - path_publish_started
+            ) * 1000
 
-        self._local_planner.start_planning(resampled_path)
+            handoff_started = time.perf_counter()
+            self._local_planner.start_planning(resampled_path)
+            smoothing_timing["local_planner_handoff_ms"] = (
+                time.perf_counter() - handoff_started
+            ) * 1000
+            logger.info(
+                "Path smoothing performance.",
+                smoothing_timing=json.dumps(smoothing_timing, separators=(",", ":")),
+            )
 
     def _find_wide_path(
         self, goal: Vector3, robot_pos: Vector3

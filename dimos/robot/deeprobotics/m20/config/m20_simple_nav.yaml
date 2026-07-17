@@ -29,6 +29,10 @@ replanningastarplanner:
   # fractional backtracking, and safe fallback to the raw-resampled A* path.
   constrained_path_smoothing_enabled: true
 
+  # Collect and print one structured timing record for every smoothed path.
+  # Keep false during normal operation; enable only for latency debugging.
+  path_smoothing_performance_logging_enabled: false
+
   # Maximum constrained-smoothing iterations. More iterations may improve
   # convergence but increase planning latency. Must be an integer >= 0.
   path_smoothing_iterations: 40

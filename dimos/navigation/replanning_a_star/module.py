@@ -42,6 +42,7 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     path_cell_cost_weight: float = Field(default=3.0, ge=0.0)
     publish_raw_path: bool = False
     constrained_path_smoothing_enabled: bool = False
+    path_smoothing_performance_logging_enabled: bool = False
     path_smoothing_iterations: int = Field(default=40, ge=0)
     path_smoothing_data_weight: float = Field(default=0.02, ge=0.0, le=1.0)
     path_smoothing_smoothness_weight: float = Field(default=0.45, ge=0.0, le=0.5)
@@ -92,6 +93,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             path_cell_cost_weight=self.config.path_cell_cost_weight,
             publish_raw_path=self.config.publish_raw_path,
             constrained_path_smoothing_enabled=self.config.constrained_path_smoothing_enabled,
+            path_smoothing_performance_logging_enabled=(
+                self.config.path_smoothing_performance_logging_enabled
+            ),
             path_smoothing_iterations=self.config.path_smoothing_iterations,
             path_smoothing_data_weight=self.config.path_smoothing_data_weight,
             path_smoothing_smoothness_weight=self.config.path_smoothing_smoothness_weight,
