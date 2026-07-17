@@ -86,18 +86,11 @@ class Transport(Resource, ObservableMixin[T]):
     # means "no overridable config" (LCM/SHM transports).
     _config_cls: type[BaseModel] | None = None
 
-    # used by local Output; selfstream is None when publishing without a source stream
-    def broadcast(self, selfstream: Out[T] | None, value: T) -> None:
+    def publish(self, value: T) -> None:
         raise NotImplementedError
 
-    # used by local Input
-    def subscribe(
-        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
-    ) -> Callable[[], None]:
+    def subscribe(self, callback: Callable[[T], Any]) -> Callable[[], None]:
         raise NotImplementedError
-
-    def publish(self, msg: T) -> None:
-        self.broadcast(None, msg)
 
 
 class Stream(Generic[T]):
@@ -181,7 +174,7 @@ class Out(Stream[T], ObservableMixin[T]):
 
     def publish(self, msg: T) -> None:
         if hasattr(self, "_transport") and self._transport is not None:
-            self._transport.broadcast(self, msg)
+            self._transport.publish(msg)
         for cb in self._subscribers:
             cb(msg)
 
@@ -215,7 +208,7 @@ class RemoteOut(RemoteStream[T]):
         return other.connect(self)
 
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+        return self.transport.subscribe(cb)
 
 
 # representation of Input
@@ -256,7 +249,7 @@ class In(Stream[T], ObservableMixin[T]):
 
     # returns unsubscribe function
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+        return self.transport.subscribe(cb)
 
 
 # representation of input outside of module
@@ -271,7 +264,7 @@ class RemoteIn(RemoteStream[T]):
         return self._transport  # type: ignore[return-value]
 
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
-        self.transport.broadcast(self, msg)  # type: ignore[arg-type]
+        self.transport.publish(msg)
 
     @transport.setter  # type: ignore[attr-defined, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:

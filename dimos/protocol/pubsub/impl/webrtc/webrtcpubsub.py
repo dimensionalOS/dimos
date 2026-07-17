@@ -28,10 +28,7 @@ import threading
 from typing import Any
 
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import Provider
-from dimos.protocol.pubsub.spec import AllPubSub
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
+from dimos.protocol.pubsub.spec import AllPubSub, accept_all
 
 
 class WebRTCPubSub(AllPubSub[str, bytes]):
@@ -92,21 +89,24 @@ class WebRTCPubSub(AllPubSub[str, bytes]):
 
         def _dispatch(data: bytes, t: str) -> None:
             for all_cb in list(self._all_callbacks):
-                try:
-                    all_cb(data, t)
-                except Exception:
-                    logger.exception("subscribe_all callback error")
+                all_cb(data, t)
 
         self._provider.subscribe(topic, _dispatch)
 
-    def subscribe_all(self, callback: Callable[[bytes, str], Any]) -> Callable[[], None]:
+    def subscribe_all(
+        self,
+        callback: Callable[[bytes, str], Any],
+        accept: Callable[[str], bool] = accept_all,
+    ) -> Callable[[], None]:
         """Receive every message delivered to any subscribed topic."""
-        self._all_callbacks.append(callback)
+
+        def filtered(data: bytes, topic: str) -> None:
+            if accept(topic):
+                callback(data, topic)
+
+        self._all_callbacks.append(filtered)
 
         def _unsub() -> None:
-            try:
-                self._all_callbacks.remove(callback)
-            except ValueError:
-                pass
+            self._all_callbacks.remove(filtered)
 
         return _unsub

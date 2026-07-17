@@ -27,9 +27,10 @@ import pytest
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub
+from dimos.protocol.pubsub.topic import Topic
 from dimos.utils.testing.collector import CallbackCollector
 
 TopicT = TypeVar("TopicT")

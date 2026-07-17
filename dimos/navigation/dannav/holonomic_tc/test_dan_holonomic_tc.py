@@ -26,7 +26,7 @@ from typing import Any, Literal
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import pytest
 
-from dimos.core.stream import Stream, Transport
+from dimos.core.stream import Transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -43,13 +43,11 @@ class _DirectTransport(Transport):  # type: ignore[type-arg]
     def __init__(self) -> None:
         self._subscribers: list[Callable[[Any], Any]] = []
 
-    def broadcast(self, _selfstream: Any, value: Any) -> None:
+    def publish(self, value: Any) -> None:
         for callback in list(self._subscribers):
             callback(value)
 
-    def subscribe(
-        self, callback: Callable[[Any], Any], _selfstream: Stream[Any] | None = None
-    ) -> Callable[[], None]:
+    def subscribe(self, callback: Callable[[Any], Any]) -> Callable[[], None]:
         self._subscribers.append(callback)
 
         def _unsubscribe() -> None:
@@ -129,16 +127,16 @@ class _ModuleHarness:
         self._unsubs = unsubs
 
     def feed_odom(self, x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> None:
-        self.module.odom.transport.broadcast(None, _odom(x, y, yaw_rad, ts=ts))
+        self.module.odom.transport.publish(_odom(x, y, yaw_rad, ts=ts))
 
     def feed_path(self, path: Path) -> None:
-        self.module.path.transport.broadcast(None, path)
+        self.module.path.transport.publish(path)
 
     def feed_empty_path(self) -> None:
-        self.module.path.transport.broadcast(None, Path(frame_id="map", poses=[]))
+        self.module.path.transport.publish(Path(frame_id="map", poses=[]))
 
     def feed_stop(self, value: bool = True) -> None:
-        self.module.stop_movement.transport.broadcast(None, Bool(value))
+        self.module.stop_movement.transport.publish(Bool(value))
 
     def close(self) -> None:
         for unsub in self._unsubs:

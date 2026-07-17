@@ -20,7 +20,8 @@ from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.topic import Topic
 from dimos.robot.cli.topic import _build_eval_context, _decode_typed_lcm_message, topic_send
 from dimos.utils.testing.collector import CallbackCollector
 

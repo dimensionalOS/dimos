@@ -21,7 +21,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.topic import Topic
 from dimos.utils.testing.collector import CallbackCollector
 
 

@@ -140,7 +140,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
         self._validate_network()
         super().start()
         self.register_disposable(
-            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf))
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:

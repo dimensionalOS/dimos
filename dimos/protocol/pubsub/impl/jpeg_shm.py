@@ -17,27 +17,23 @@ from typing import Any
 from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 from dimos.protocol.pubsub.impl.shmpubsub import SharedMemoryPubSubBase
 
 
-class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):
+class JpegSharedMemory(SharedMemoryPubSubBase):
     def __init__(self, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         self.jpeg = TurboJPEG()
         self.quality = quality
 
-    def encode(self, msg: Any, _topic: str) -> bytes:
-        if not isinstance(msg, Image):
-            raise ValueError("Can only encode images.")
-
+    def publish(self, topic: str, msg: Any) -> None:
         bgr_image = msg.to_bgr().to_opencv()
-        return self.jpeg.encode(bgr_image, quality=self.quality)  # type: ignore[no-any-return]
+        super().publish(topic, self.jpeg.encode(bgr_image, quality=self.quality))
 
-    def decode(self, msg: bytes, _topic: str) -> Image:
-        bgr_array = self.jpeg.decode(msg)
-        return Image(data=bgr_array, format=ImageFormat.BGR)
-
-
-class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):  # type: ignore[misc]
-    pass
+    def subscribe(self, topic: str, callback):  # type: ignore[no-untyped-def]
+        return super().subscribe(
+            topic,
+            lambda message, name: callback(
+                Image(data=self.jpeg.decode(message), format=ImageFormat.BGR), name
+            ),
+        )

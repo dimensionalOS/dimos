@@ -75,7 +75,7 @@ class DirectCmdVelExplorer:
 
     def _stop(self) -> None:
         assert self._cmd_vel is not None
-        self._cmd_vel.broadcast(None, Twist(linear=Vector3(), angular=Vector3()))
+        self._cmd_vel.publish(Twist(linear=Vector3(), angular=Vector3()))
 
     def _drive_to(self, target_x: float, target_y: float) -> None:
         """Pursuit controller: steer toward the target while driving forward."""
@@ -95,9 +95,8 @@ class DirectCmdVelExplorer:
                 linear = self.linear_speed
             angular = max(-self.rotation_speed, min(self.rotation_speed, heading_error * 2.0))
             assert self._cmd_vel is not None
-            self._cmd_vel.broadcast(
-                None,
-                Twist(linear=Vector3(linear, 0, 0), angular=Vector3(0, 0, angular)),
+            self._cmd_vel.publish(
+                Twist(linear=Vector3(linear, 0, 0), angular=Vector3(0, 0, angular))
             )
         self._stop()
 

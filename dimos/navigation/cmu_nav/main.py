@@ -30,7 +30,6 @@ from dimos.navigation.cmu_nav.modules.simple_planner.simple_planner import Simpl
 from dimos.navigation.cmu_nav.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.cmu_nav.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.cmu_nav.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -208,7 +207,6 @@ def cmu_nav_rerun_config(
     """
     resolved = dict(user_config or {})
     resolved.setdefault("blueprint", _default_rerun_blueprint)
-    resolved.setdefault("pubsubs", [LCM()])
     resolved.setdefault("visual_override", {})
     resolved.setdefault("static", {})
     visual_override = dict(resolved["visual_override"])

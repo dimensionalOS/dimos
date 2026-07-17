@@ -23,8 +23,9 @@ import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
-from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.waiting import wait_until
 
@@ -34,7 +35,7 @@ try:
     DDS_AVAILABLE = True
 except ImportError:
     DDS_AVAILABLE = False
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.shmpubsub import (
     BytesSharedMemory,
@@ -73,8 +74,8 @@ def lcm_pubsub_channel() -> Generator[LCM, None, None]:
     lcm_pubsub.stop()
 
 
-def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
-    topic = LCMTopic(topic="benchmark/lcm", lcm_type=Image)
+def lcm_msggen(size: int) -> tuple[Topic, Image]:
+    topic = Topic(topic="benchmark/lcm", lcm_type=Image)
     return (topic, make_data_image(size))
 
 
@@ -95,9 +96,9 @@ def udp_bytes_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     lcm_pubsub.stop()
 
 
-def udp_bytes_msggen(size: int) -> tuple[LCMTopic, bytes]:
+def udp_bytes_msggen(size: int) -> tuple[Topic, bytes]:
     """Generate raw bytes for LCM transport benchmark."""
-    topic = LCMTopic(topic="benchmark/lcm_raw")
+    topic = Topic(topic="benchmark/lcm_raw")
     return (topic, make_data_bytes(size))
 
 
@@ -293,8 +294,8 @@ def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
     pool.close_all()
 
 
-def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
-    return (ZenohTopic("dimos/benchmark/zenoh", Image), make_data_image(size))
+def zenoh_msggen(size: int) -> tuple[Topic, Image]:
+    return (Topic("dimos/benchmark/zenoh", Image), make_data_image(size))
 
 
 testcases.append(

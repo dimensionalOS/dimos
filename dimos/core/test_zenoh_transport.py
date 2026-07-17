@@ -43,8 +43,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
-    Topic as ZenohTopic,
 )
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -187,31 +187,31 @@ def test_lcm_configurators_skipped_when_transport_is_zenoh(
     lcm_config_mock.assert_not_called()
 
 
-def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, collector) -> None:
+def test_zenoh_transport_publish_and_subscribe(retry_until, session_pool, collector) -> None:
     t = ZenohTransport("dimos/test/transport", Image, session_pool=session_pool)
     t.start()
     t.subscribe(collector.callback)
 
     test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
-    retry_until(collector.event, lambda: t.broadcast(None, test_img))
+    retry_until(collector.event, lambda: t.publish(test_img))
     assert isinstance(collector.received[0], Image)
     t.stop()
 
 
-def test_pzenoh_transport_broadcast_and_subscribe(retry_until, session_pool, collector) -> None:
+def test_pzenoh_transport_publish_and_subscribe(retry_until, session_pool, collector) -> None:
     t = pZenohTransport("dimos/test/pickle_transport", session_pool=session_pool)
     t.start()
     t.subscribe(collector.callback)
 
-    retry_until(collector.event, lambda: t.broadcast(None, {"key": "value"}))
+    retry_until(collector.event, lambda: t.publish({"key": "value"}))
     assert collector.received[0] == {"key": "value"}
     t.stop()
 
 
-def test_auto_start_on_broadcast(session_pool) -> None:
+def test_auto_start_on_publish(session_pool) -> None:
     t = pZenohTransport("dimos/test/autostart", session_pool=session_pool)
-    # Don't call start(); broadcast should auto-start
-    t.broadcast(None, "test")
+    # Don't call start(); publish should auto-start
+    t.publish("test")
     assert t._started
     t.stop()
 
@@ -228,14 +228,14 @@ def test_stop_and_restart(session_pool) -> None:
 
 
 def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
-    t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
+    t = ZenohTransport(Topic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
     t2 = pickle.loads(pickle.dumps(t))
     assert type(t2) is ZenohTransport
     assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
 
 
 def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:
-    t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
+    t = pZenohTransport(Topic("dimos/human_input", qos=QOS_NEVER_DROP))
     t2 = pickle.loads(pickle.dumps(t))
     assert type(t2) is pZenohTransport
     assert t2.topic == "dimos/human_input"

@@ -21,28 +21,21 @@ cv2 / rerun dependencies).
 
 from __future__ import annotations
 
-from typing import cast
-
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.encoders import DecodingError, LCMTopicProto, PubSubEncoderMixin
+from dimos.protocol.pubsub.encoders import DecodingError
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
-    """Encoder mixin for DimosMsg using JPEG encoding (for images)."""
-
-    def encode(self, msg: Image, _: LCMTopicProto) -> bytes:
-        return msg.lcm_jpeg_encode()
-
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> Image:
-        if topic.topic == "LCM_SELF_TEST":
-            raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return cast("type[Image]", topic.lcm_type).lcm_jpeg_decode(msg)
+def encode(message: Image, _: object) -> bytes:
+    return message.lcm_jpeg_encode()
 
 
-class JpegLCM(  # type: ignore[misc]
-    JpegEncoderMixin,
-    LCMPubSubBase,
-): ...
+def decode(message: bytes, topic: object) -> Image:
+    lcm_type = topic.lcm_type  # type: ignore[attr-defined]
+    if lcm_type is None:
+        raise DecodingError
+    return lcm_type.lcm_jpeg_decode(message)  # type: ignore[no-any-return]
+
+
+class JpegLCM(LCMPubSubBase):
+    codec = (encode, decode)

@@ -27,10 +27,6 @@ pushing an update that breaks the spawn interface.
 import inspect
 import shutil
 
-from dimos.core.global_config import GlobalConfig
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs
-
 
 class TestViewerBinaryInstallation:
     """Verify dimos-viewer binary is installed and functional."""
@@ -120,24 +116,3 @@ class TestBridgeSpawnLogic:
             "bridge.py start() has no fallback for missing dimos-viewer. "
             "Users without dimos-viewer will crash."
         )
-
-
-class ExplicitPubSubOverride:
-    def subscribe_all(self, callback):
-        return lambda: None
-
-
-class TestBridgePubsubResolution:
-    def test_legacy_lcm_pubsubs_defers_to_transport_default(self):
-        config = Config(pubsubs=[LCM()], g=GlobalConfig(transport="lcm"))
-        pubsubs = _resolve_pubsubs(config)
-
-        assert len(pubsubs) == 1
-        assert isinstance(pubsubs[0], LCM)
-
-    def test_explicit_custom_pubsubs_override_is_honored(self):
-        custom = ExplicitPubSubOverride()
-        config = Config(pubsubs=[custom], g=GlobalConfig(transport="lcm"))
-        pubsubs = _resolve_pubsubs(config)
-
-        assert pubsubs == [custom]

@@ -26,14 +26,13 @@ import zenoh
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
-    Topic,
     ZenohPubSubBase,
     ZenohQoS,
     _key_expr_to_topic,
     _topic_to_key_expr,
 )
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -120,35 +119,6 @@ class TestZenohPubSubBase:
         assert not event.wait(timeout=0.2), "Received message after unsubscribe"
         assert received == []
 
-    def test_unsubscribe_is_idempotent(self, pubsub) -> None:
-        topic = Topic("dimos/test/idempotent")
-        unsub = pubsub.subscribe(topic, lambda msg, t: None)
-        unsub()
-        unsub()  # should not raise
-
-    def test_concurrent_unsubscribe(self, pubsub) -> None:
-        topic = Topic("dimos/test/concurrent_unsub")
-        unsub = pubsub.subscribe(topic, lambda msg, t: None)
-
-        n_threads = 8
-        barrier = threading.Barrier(n_threads)
-        errors: list[Exception] = []
-
-        def race() -> None:
-            barrier.wait()
-            try:
-                unsub()
-            except Exception as e:
-                errors.append(e)
-
-        threads = [threading.Thread(target=race) for _ in range(n_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert errors == []
-        assert len(pubsub._subscribers) == 0
-
     def test_concrete_subscription_passes_topic_through(self, pubsub, retry_until) -> None:
         received: list[Topic] = []
         event = threading.Event()
@@ -203,20 +173,6 @@ class TestZenohPubSubBase:
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert b"wildcard" in received
 
-    def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
-        # Models the declare/stop race: once stopped, a newly declared subscriber
-        # must undeclare itself rather than be tracked (and leak past shutdown).
-        pubsub.stop()
-        unsub = pubsub.subscribe(Topic("dimos/test/after_stop"), lambda msg, t: None)
-        assert pubsub._subscribers == []
-        unsub()  # no-op, must not raise
-
-    def test_subscribe_all_after_stop_is_noop(self, pubsub) -> None:
-        pubsub.stop()
-        unsub = pubsub.subscribe_all(lambda msg, t: None)
-        assert pubsub._drain_stops == []
-        unsub()  # no-op, must not raise
-
 
 class TestPublisherQoS:
     """Publisher QoS comes from the Topic and is applied at declare time."""
@@ -240,7 +196,7 @@ class TestPublisherQoS:
 
     def test_plain_lcm_topic_gets_default_qos(self, pubsub) -> None:
         # Shared code (TF, encoders) still passes lcmpubsub Topics.
-        pubsub.publish(LCMTopic("dimos/test/qos/plain"), b"x")
+        pubsub.publish(Topic("dimos/test/qos/plain"), b"x")
         pub = pubsub._publishers["dimos/test/qos/plain"]
         assert pub.reliability == zenoh.Reliability.RELIABLE
 

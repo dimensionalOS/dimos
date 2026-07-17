@@ -12,137 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from collections.abc import Callable
-from dataclasses import dataclass
 import re
-import threading
-from typing import Any
+from typing import Any, ClassVar
 
-from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.encoders import (
-    LCMEncoderMixin,
-    PickleEncoderMixin,
-)
-from dimos.protocol.pubsub.patterns import Glob
-from dimos.protocol.pubsub.spec import AllPubSub
+from dimos.protocol.pubsub.encoders import LCM as LCM_CODEC, PICKLE, RAW, Codec, DecodingError
+from dimos.protocol.pubsub.spec import AllPubSub, accept_all
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.lcmservice import LCMService
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-
-@dataclass
-class Topic:
-    topic: str | re.Pattern[str] | Glob
-    lcm_type: type[DimosMsg] | None = None
-
-    @property
-    def is_pattern(self) -> bool:
-        return isinstance(self.topic, re.Pattern | Glob)
-
-    @property
-    def pattern(self) -> str:
-        if isinstance(self.topic, re.Pattern):
-            return self.topic.pattern
-        if isinstance(self.topic, Glob):
-            return self.topic.pattern
-        return self.topic
-
-    def __str__(self) -> str:
-        if self.lcm_type is None:
-            return self.pattern
-        return f"{self.pattern}#{self.lcm_type.msg_name}"
-
-    @staticmethod
-    def from_channel_str(channel: str, default_lcm_type: type[DimosMsg] | None = None) -> Topic:
-        """Create Topic from channel string.
-
-        Channel format: /topic#module.ClassName
-        Falls back to default_lcm_type if type cannot be parsed.
-        """
-        from dimos.msgs.helpers import resolve_msg_type
-
-        if "#" not in channel:
-            return Topic(topic=channel, lcm_type=default_lcm_type)
-
-        topic_str, type_name = channel.rsplit("#", 1)
-        lcm_type = resolve_msg_type(type_name)
-        return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
 
 
 class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
-    """LCM-based PubSub with native regex subscription support.
+    codec: ClassVar[Codec] = RAW
 
-    LCM natively supports regex patterns in subscribe(), so we implement
-    RegexSubscribable directly without needing discovery-based fallback.
-    """
+    def publish(self, topic: Topic | str, message: Any) -> None:
+        channel = str(topic)
+        self.handle.publish(channel, self.codec[0](message, topic))
 
-    _stop_event: threading.Event
-    _thread: threading.Thread | None
-
-    def publish(self, topic: Topic | str, message: bytes) -> None:
-        """Publish a message to the specified channel."""
-        if self.l is None:
-            logger.error("Tried to publish after LCM was closed")
-            return
-
-        topic_str = str(topic) if isinstance(topic, Topic) else topic
-        self.l.publish(topic_str, message)
-
-    def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
-        return self.subscribe(Topic(re.compile(".*")), callback)
-
-    def subscribe(
-        self, topic: Topic, callback: Callable[[bytes, Topic], None]
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, Topic], Any],
+        accept: Callable[[Topic], bool] = accept_all,
     ) -> Callable[[], None]:
-        if self.l is None:
-            logger.error("Tried to subscribe after LCM was closed")
+        def filtered(message: Any, topic: Topic) -> None:
+            if accept(topic):
+                callback(message, topic)
 
-            def noop() -> None:
-                pass
+        return self.subscribe(Topic(re.compile(".*")), filtered)
 
-            return noop
+    def subscribe(self, topic: Topic, callback: Callable[[Any, Topic], None]) -> Callable[[], None]:
+        def deliver(payload: bytes, received_topic: Topic) -> None:
+            try:
+                message = self.codec[1](payload, received_topic)
+            except DecodingError:
+                return
+            callback(message, received_topic)
 
         if topic.is_pattern:
 
-            def handler(channel: str, msg: bytes) -> None:
-                if channel == "LCM_SELF_TEST":
-                    return
-                callback(msg, Topic.from_channel_str(channel, topic.lcm_type))
+            def handler(channel: str, payload: bytes) -> None:
+                if channel != "LCM_SELF_TEST":
+                    deliver(payload, Topic.from_channel_str(channel, topic.lcm_type))
 
-            pattern_str = str(topic)
-            if not pattern_str.endswith("*"):
-                pattern_str = f"{pattern_str}(#.*)?"
-
-            lcm_subscription = self.l.subscribe(pattern_str, handler)
+            pattern = str(topic)
+            if not pattern.endswith("*"):
+                pattern += "(#.*)?"
+            subscription = self.handle.subscribe(pattern, handler)
         else:
-            topic_str = str(topic)
-            lcm_subscription = self.l.subscribe(topic_str, lambda _, msg: callback(msg, topic))
+            subscription = self.handle.subscribe(
+                str(topic), lambda _, payload: deliver(payload, topic)
+            )
 
-        # Set queue capacity to 10000 to handle high-volume bursts
-        lcm_subscription.set_queue_capacity(10000)
+        subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
-            if self.l is None:
-                return
-            self.l.unsubscribe(lcm_subscription)
+            self.handle.unsubscribe(subscription)
 
         return unsubscribe
 
 
-# these ignoress might be unsolvable
-# and should use composition not inheritance for encoding/decoding
+class LCM(LCMPubSubBase):
+    codec = LCM_CODEC
 
 
-class LCM(  # type: ignore[misc]
-    LCMEncoderMixin,
-    LCMPubSubBase,
-): ...
-
-
-class PickleLCM(
-    PickleEncoderMixin,  # type: ignore[type-arg]
-    LCMPubSubBase,
-): ...
+class PickleLCM(LCMPubSubBase):
+    codec = PICKLE

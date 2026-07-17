@@ -25,8 +25,9 @@ import typer
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic
-from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+from dimos.protocol.pubsub.topic import Topic
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
@@ -161,5 +162,5 @@ def topic_send(topic: str, message_expr: str) -> None:
     msg_type = type(message)
     transport: PubSubTransport[object] = make_transport(topic, msg_type)
 
-    transport.broadcast(None, message)
+    transport.publish(message)
     typer.echo(f"Sent to {topic}: {message}")

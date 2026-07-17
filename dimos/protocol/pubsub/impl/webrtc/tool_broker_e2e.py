@@ -106,8 +106,7 @@ def test_operator_to_transport_e2e() -> None:
 
     # The robot's own session id, straight from the shared provider — never
     # guess from the session list (stale sessions from aborted runs linger).
-    assert transport._pubsub is not None
-    session_id = transport._pubsub.provider.session_id
+    session_id = transport.pubsub.provider.session_id
     assert session_id, "provider did not register a session"
 
     async def operator() -> int:
@@ -133,7 +132,7 @@ def test_operator_to_transport_e2e() -> None:
 
         async def _feed() -> None:
             while feeding:
-                video_transport.broadcast(None, frame)
+                video_transport.publish(frame)
                 await asyncio.sleep(0.05)
 
         feed_task = asyncio.ensure_future(_feed())
@@ -178,7 +177,7 @@ def test_operator_to_transport_e2e() -> None:
         # The robot side opens its negotiated channels when its heartbeat
         # (1 Hz) delivers the subscriber ids. The robot provider runs in this
         # process — wait on its actual channel state, not a guessed sleep.
-        robot_provider = transport._pubsub.provider  # type: ignore[union-attr]
+        robot_provider = transport.pubsub.provider
         await _wait_for(
             lambda: all(
                 robot_provider._dcs.get(name) is not None
@@ -230,7 +229,7 @@ def test_operator_to_transport_e2e() -> None:
 
         # Robot → operator: telemetry through the broker-bridged back channel.
         for i in range(10):
-            back_transport.broadcast(None, TwistStamped(linear=[0.0, 0.0, 1.0 + i]))
+            back_transport.publish(TwistStamped(linear=[0.0, 0.0, 1.0 + i]))
             await asyncio.sleep(0.05)
         await _wait_for(lambda: bool(back_bytes), 5.0, "robot->operator telemetry")
         back_msg = TwistStamped.lcm_decode(back_bytes[-1])
@@ -268,5 +267,4 @@ def test_operator_to_transport_e2e() -> None:
         video_transport.stop()
         # transport.stop() deliberately leaves the process-scoped provider
         # running; stop it here so the test doesn't leak its loop thread.
-        if transport._pubsub is not None:
-            transport._pubsub.provider.stop()
+        transport.pubsub.provider.stop()

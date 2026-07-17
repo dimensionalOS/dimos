@@ -17,7 +17,6 @@ from collections.abc import Callable
 from typing import Any
 
 from dimos.protocol.encode import encoder as encode
-from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 from dimos.protocol.pubsub.spec import PubSub
 
 
@@ -33,29 +32,20 @@ class Memory(PubSub[str, Any]):
         self._map[topic].append(callback)
 
         def unsubscribe() -> None:
-            try:
-                self._map[topic].remove(callback)
-                if not self._map[topic]:
-                    del self._map[topic]
-            except (KeyError, ValueError):
-                pass
-
-        return unsubscribe
-
-    def unsubscribe(self, topic: str, callback: Callable[[Any, str], None]) -> None:
-        try:
             self._map[topic].remove(callback)
             if not self._map[topic]:
                 del self._map[topic]
-        except (KeyError, ValueError):
-            pass
+
+        return unsubscribe
 
 
-class MemoryWithJSONEncoder(PubSubEncoderMixin, Memory):  # type: ignore[type-arg]
+class MemoryWithJSONEncoder(Memory):
     """Memory PubSub with JSON encoding/decoding."""
 
-    def encode(self, msg: Any, topic: str) -> bytes:
-        return encode.JSON.encode(msg)
+    def publish(self, topic: str, message: Any) -> None:
+        super().publish(topic, encode.JSON.encode(message))
 
-    def decode(self, msg: bytes, topic: str) -> Any:
-        return encode.JSON.decode(msg)
+    def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> Callable[[], None]:
+        return super().subscribe(
+            topic, lambda message, name: callback(encode.JSON.decode(message), name)
+        )

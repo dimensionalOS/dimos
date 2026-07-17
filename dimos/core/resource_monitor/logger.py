@@ -75,10 +75,6 @@ class LCMResourceLogger:
         self._transport.stop()
 
     def log_stats(self, coordinator: ProcessStats, workers: list[WorkerStats]) -> None:
-        self._transport.broadcast(
-            None,
-            {
-                "coordinator": asdict(coordinator),
-                "workers": [asdict(w) for w in workers],
-            },
+        self._transport.publish(
+            {"coordinator": asdict(coordinator), "workers": [asdict(w) for w in workers]}
         )

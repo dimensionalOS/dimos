@@ -24,8 +24,8 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
     PickleLCM,
-    Topic,
 )
+from dimos.protocol.pubsub.topic import Topic
 from dimos.utils.testing.collector import CallbackCollector
 
 

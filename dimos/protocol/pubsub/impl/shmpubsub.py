@@ -29,10 +29,10 @@ import uuid
 import numpy as np
 import numpy.typing as npt
 
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
+from dimos.protocol.pubsub.encoders import lcm_decode, lcm_encode, pickle_decode, pickle_encode
 from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, FrameChannel
 from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.pubsub.topic import Topic
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -128,7 +128,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         self._lock = threading.Lock()
 
     def start(self) -> None:
-        pref = (self.config.prefer or "auto").lower()
+        pref = self.config.prefer.lower()
         backend = os.getenv("DIMOS_IPC_BACKEND", pref).lower()
         logger.debug(f"SharedMemory PubSub starting (backend={backend})")
         # No global thread needed; per-topic fanout starts on first subscribe.
@@ -136,29 +136,18 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     def stop(self) -> None:
         with self._lock:
             for _topic, st in list(self._topics.items()):
-                # stop fanout
-                try:
-                    if st.thread:
-                        st.stop.set()
-                        st.thread.join(timeout=0.5)
-                        st.thread = None
-                except Exception:
-                    pass
-                # close/unlink channels if configured
+                if st.thread:
+                    st.stop.set()
+                    st.thread.join()
+                    st.thread = None
                 if self.config.close_channels_on_stop:
-                    try:
-                        st.channel.close()
-                    except Exception:
-                        pass
+                    st.channel.close()
             self._topics.clear()
         logger.debug("SharedMemory PubSub stopped.")
 
     # PubSub API (bytes on the wire)
 
     def publish(self, topic: str, message: bytes) -> None:
-        if not isinstance(message, bytes | bytearray | memoryview):
-            raise TypeError(f"publish expects bytes-like, got {type(message)!r}")
-
         st = self._ensure_topic(topic)
 
         # Normalize once
@@ -176,11 +165,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         # Synchronous local delivery first (zero extra copies)
         for cb in list(st.subs):
-            try:
-                cb(payload_bytes, topic)
-            except Exception:
-                logger.warn(f"Payload couldn't be pushed to topic: {topic}")
-                pass
+            cb(payload_bytes, topic)
 
         # Build host frame [len:4] + [uuid:16] + payload and publish
         # We embed the message UUID in the frame for echo suppression
@@ -207,13 +192,10 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             st.thread.start()
 
         def _unsub() -> None:
-            try:
-                st.subs.remove(callback)
-            except ValueError:
-                pass
+            st.subs.remove(callback)
             if not st.subs and st.thread:
                 st.stop.set()
-                st.thread.join(timeout=0.5)
+                st.thread.join()
                 st.thread = None
                 st.stop.clear()
 
@@ -281,52 +263,41 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
             host = np.array(view, copy=True)
 
-            try:
-                # Read header: length(4) + uuid(16)
-                L = struct.unpack("<I", host[:4].tobytes())[0]
+            L = struct.unpack("<I", host[:4].tobytes())[0]
+            if L < 16 or L > st.capacity + 16:
+                continue
 
-                if L < 16 or L > st.capacity + 16:
-                    continue
+            message_id = host[4:20].tobytes()
+            payload_len = L - 16
+            if payload_len == 0:
+                continue
+            payload = host[20 : 20 + payload_len].tobytes()
 
-                # Extract UUID
-                message_id = host[4:20].tobytes()
-
-                # Extract actual payload (after removing the 16 bytes for uuid)
-                payload_len = L - 16
-                if payload_len > 0:
-                    payload = host[20 : 20 + payload_len].tobytes()
+            cnt = st.suppress_counts.get(message_id, 0)
+            if cnt > 0:
+                if cnt == 1:
+                    del st.suppress_counts[message_id]
                 else:
-                    continue
-
-                # Drop exactly the number of local echoes we created
-                cnt = st.suppress_counts.get(message_id, 0)
-                if cnt > 0:
-                    if cnt == 1:
-                        del st.suppress_counts[message_id]
-                    else:
-                        st.suppress_counts[message_id] = cnt - 1
-                    continue  # suppressed
-
-            except Exception:
+                    st.suppress_counts[message_id] = cnt - 1
                 continue
 
             for cb in list(st.subs):
-                try:
-                    cb(payload, topic)
-                except Exception:
-                    pass
+                cb(payload, topic)
 
 
 BytesSharedMemory = SharedMemoryPubSubBase
 
 
-class PickleSharedMemory(
-    PickleEncoderMixin[str, Any],
-    SharedMemoryPubSubBase,
-):
+class PickleSharedMemory(SharedMemoryPubSubBase):
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
-    ...
+    def publish(self, topic: str, message: Any) -> None:
+        super().publish(topic, pickle_encode(message, topic))
+
+    def subscribe(self, topic: str, callback: Callable[[Any, str], Any]) -> Callable[[], None]:
+        return super().subscribe(
+            topic, lambda message, name: callback(pickle_decode(message, name), name)
+        )
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
@@ -357,10 +328,13 @@ class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
         return self._shm.reconfigure(str(topic), capacity=capacity)
 
 
-class LCMSharedMemory(  # type: ignore[misc]
-    LCMEncoderMixin,
-    LCMSharedMemoryPubSubBase,
-):
+class LCMSharedMemory(LCMSharedMemoryPubSubBase):
     """SharedMemory pubsub that uses LCM binary encoding (no pickle overhead)."""
 
-    ...
+    def publish(self, topic: Topic, message: Any) -> None:
+        super().publish(topic, lcm_encode(message, topic))
+
+    def subscribe(self, topic: Topic, callback: Callable[[Any, Topic], Any]) -> Callable[[], None]:
+        return super().subscribe(
+            topic, lambda message, name: callback(lcm_decode(message, name), name)
+        )

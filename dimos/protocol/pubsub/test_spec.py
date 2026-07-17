@@ -23,9 +23,10 @@ from typing import Any
 import pytest
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh, Zenoh
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.collector import CallbackCollector
 

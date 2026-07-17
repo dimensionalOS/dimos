@@ -25,9 +25,10 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger

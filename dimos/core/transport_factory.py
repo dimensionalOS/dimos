@@ -30,9 +30,9 @@ from dimos.core.transport import (
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
-    Topic as ZenohTopic,
     ZenohQoS,
 )
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
 from dimos.protocol.tf.tf import LCMTF, ZenohTF
 
@@ -83,14 +83,14 @@ def make_transport(
     settings (Zenoh publisher QoS, for one) that live on their Topic objects.
     The factory fills those with `default_zenoh_qos`; a channel that needs more
     should pin an explicit transport built from a full Topic instead, e.g.
-    `ZenohTransport(ZenohTopic("bla", Image, qos=...))` in the blueprint's
+    `ZenohTransport(Topic("bla", Image, qos=...))` in the blueprint's
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
     use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
-        ztopic = ZenohTopic(
+        ztopic = Topic(
             topic, None if use_pickled else msg_type, qos=default_zenoh_qos(name, msg_type)
         )
         return pZenohTransport(ztopic) if use_pickled else ZenohTransport(ztopic)

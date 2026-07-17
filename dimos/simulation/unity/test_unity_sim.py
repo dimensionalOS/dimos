@@ -66,9 +66,6 @@ class _MockTransport:
         for cb in self._subscribers:
             cb(msg)
 
-    def broadcast(self, _s, msg):
-        self.publish(msg)
-
     def subscribe(self, cb, *_a):
         self._subscribers.append(cb)
         return lambda: self._subscribers.remove(cb)

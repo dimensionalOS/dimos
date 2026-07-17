@@ -155,7 +155,7 @@ class PersonTrackPublisher:
             position=[pos[0], pos[1], 0.0],
             orientation=[0.0, 0.0, s, c],  # x, y, z, w
         )
-        self._transport.broadcast(None, pose)
+        self._transport.publish(pose)
 
     def stop(self) -> None:
         self._transport.stop()

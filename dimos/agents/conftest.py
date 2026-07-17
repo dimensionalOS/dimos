@@ -99,8 +99,8 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
     if coordinator is not None:
         coordinator.stop()
 
-    for transport in transports:
-        transport.stop()
-
     for unsub in unsubs:
         unsub()
+
+    for transport in transports:
+        transport.stop()

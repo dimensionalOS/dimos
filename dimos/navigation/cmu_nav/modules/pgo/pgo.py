@@ -84,7 +84,7 @@ class PGO(NativeModule):
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction, self.pgo_tf))
+            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction))
         )
         # Seed identity TF so consumers can query map->body immediately.
         self._publish_tf(

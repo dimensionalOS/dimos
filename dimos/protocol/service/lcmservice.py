@@ -12,39 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
-from concurrent.futures import ThreadPoolExecutor
 import os
 import platform
 import threading
-import traceback
-from typing import Any
+from typing import Any, cast
 
 import lcm as lcm_mod
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.protocol.service.system_configurator.base import configure_system
 from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-_DEFAULT_LCM_HOST = "239.255.76.67"
-_DEFAULT_LCM_PORT = "7667"
-# LCM_DEFAULT_URL is used by LCM (we didn't pick that env var name)
-_DEFAULT_LCM_URL = os.getenv(
-    "LCM_DEFAULT_URL", f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
-)
+_DEFAULT_LCM_URL = os.getenv("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
+_LCM_LOOP_TIMEOUT_MS = 50
 
 
 def autoconf(check_only: bool = False) -> None:
     checks = lcm_configurators()
-    if not checks:
+    if checks:
+        configure_system(checks, check_only=check_only)
+    else:
         logger.error(f"System configuration not supported on {platform.system()}")
-        return
-    configure_system(checks, check_only=check_only)
 
 
 class LCMConfig(BaseConfig):
@@ -53,144 +43,59 @@ class LCMConfig(BaseConfig):
     lcm: lcm_mod.LCM | None = None
 
 
-_LCM_LOOP_TIMEOUT = 50
-
-
-# this class just sets up cpp LCM instance
-# and runs its handle loop in a thread
-# higher order stuff is done by pubsub/impl/lcmpubsub.py
 class LCMService(Service):
     config: LCMConfig
     l: lcm_mod.LCM | None
-    _stop_event: threading.Event
-    _loop_running: threading.Event
-    _l_lock: threading.Lock
-    _start_lock: threading.Lock
-    _thread: threading.Thread | None
-    _call_thread_pool: ThreadPoolExecutor | None = None
-    _call_thread_pool_lock: threading.RLock = threading.RLock()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-
-        # we support passing an existing LCM instance
-        if self.config.lcm:
-            self.l = self.config.lcm
-        else:
-            self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
-
-        self._l_lock = threading.Lock()
-        self._start_lock = threading.Lock()
+        self.l = self.config.lcm or lcm_mod.LCM(self.config.url)
         self._stop_event = threading.Event()
-        self._loop_running = threading.Event()
-        self._thread = None
+        self._start_lock = threading.Lock()
+        self._thread: threading.Thread | None = None
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Exclude unpicklable runtime attributes when serializing."""
+    def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("l", None)
-        state.pop("_stop_event", None)
-        state.pop("_loop_running", None)
-        state.pop("_thread", None)
-        state.pop("_l_lock", None)
-        state.pop("_start_lock", None)
-        state.pop("_call_thread_pool", None)
-        state.pop("_call_thread_pool_lock", None)
+        for name in ("l", "_stop_event", "_start_lock", "_thread"):
+            del state[name]
         return state
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        """Restore object from pickled state."""
+    def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
-        # Reinitialize runtime attributes
         self.l = None
         self._stop_event = threading.Event()
-        self._loop_running = threading.Event()
-        self._thread = None
-        self._l_lock = threading.Lock()
         self._start_lock = threading.Lock()
-        self._call_thread_pool = None
-        self._call_thread_pool_lock = threading.RLock()
+        self._thread = None
 
     def start(self) -> None:
         with self._start_lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._thread is not None:
                 return
-
-            # Reinitialize LCM if it's None (e.g., after unpickling)
             if self.l is None:
-                if self.config.lcm:
-                    self.l = self.config.lcm
-                else:
-                    self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
-
+                self.l = self.config.lcm or lcm_mod.LCM(self.config.url)
             self._stop_event.clear()
-            self._loop_running.clear()
-            self._thread = threading.Thread(target=self._lcm_loop)
-            self._thread.daemon = True
+            self._thread = threading.Thread(
+                target=self._run,
+                args=(self.l,),
+                name="lcm",
+                daemon=True,
+            )
             self._thread.start()
-            if not self._loop_running.wait(timeout=5.0):
-                raise RuntimeError("LCM handler thread failed to start within 5s")
 
-    def _lcm_loop(self) -> None:
-        """LCM message handling loop."""
-        primed = False
+    def _run(self, handle: lcm_mod.LCM) -> None:
         while not self._stop_event.is_set():
-            try:
-                with self._l_lock:
-                    if self.l is None:
-                        break
-                    self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                print(f"Error in LCM handling: {e}\n{stack_trace}")
-            if not primed:
-                # Signal start() only after one full poll cycle, so callers
-                # don't race the first handle_timeout dispatch.
-                primed = True
-                self._loop_running.set()
+            handle.handle_timeout(_LCM_LOOP_TIMEOUT_MS)
+
+    @property
+    def handle(self) -> lcm_mod.LCM:
+        return cast("lcm_mod.LCM", self.l)
 
     def stop(self) -> None:
         with self._start_lock:
             self._stop_event.set()
-
-            if self._thread is not None:
-                # Only join if we're not the LCM thread (avoid "cannot join current thread")
-                if threading.current_thread() != self._thread:
-                    self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                    if self._thread.is_alive():
-                        logger.warning("LCM thread did not stop cleanly within timeout")
-
-                    self._thread = None
-
-            # Clean up LCM instance if we created it
-            if not self.config.lcm:
-                with self._l_lock:
-                    if self.l is not None:
-                        del self.l
-                        self.l = None
-
-            with self._call_thread_pool_lock:
-                if self._call_thread_pool:
-                    # Check if we're being called from within the thread pool
-                    # If so, we can't wait for shutdown (would cause "cannot join current thread")
-                    current_thread = threading.current_thread()
-                    is_pool_thread = False
-
-                    # Check if current thread is one of the pool's threads
-                    # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
-                    if hasattr(self._call_thread_pool, "_threads"):
-                        is_pool_thread = current_thread in self._call_thread_pool._threads
-                    elif "ThreadPoolExecutor" in current_thread.name:
-                        # Fallback: check thread name pattern
-                        is_pool_thread = True
-
-                    # Don't wait if we're in a pool thread to avoid deadlock
-                    self._call_thread_pool.shutdown(wait=not is_pool_thread)
-                    self._call_thread_pool = None
-
-    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
-        with self._call_thread_pool_lock:
-            if self._call_thread_pool is None:
-                self._call_thread_pool = ThreadPoolExecutor(max_workers=4)
-            return self._call_thread_pool
+            thread = self._thread
+            if thread is not None:
+                thread.join()
+            self._thread = None
+            if self.config.lcm is None:
+                self.l = None

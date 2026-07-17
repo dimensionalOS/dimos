@@ -136,7 +136,7 @@ def test_raw_bytes_mode() -> None:
     transport = MockTransport("test_topic", name="raw")
     received: list[bytes] = []
     transport.subscribe(lambda msg: received.append(msg))
-    transport.broadcast(None, b"hello")
+    transport.publish(b"hello")
     assert received == [b"hello"]
 
 
@@ -144,7 +144,7 @@ def test_typed_encode_decode() -> None:
     transport = MockTransport("cmd_unreliable", FakeLCMMsg, name="typed")
     received: list[FakeLCMMsg] = []
     transport.subscribe(lambda msg: received.append(msg))
-    transport.broadcast(None, FakeLCMMsg(3.14))
+    transport.publish(FakeLCMMsg(3.14))
     assert len(received) == 1
     assert abs(received[0].value - 3.14) < 1e-9
 
@@ -158,8 +158,8 @@ def test_multiple_types_multiplexed() -> None:
     t1.subscribe(lambda msg: r1.append(msg))
     t2.subscribe(lambda msg: r2.append(msg))
 
-    t1.broadcast(None, FakeLCMMsg(1.0))
-    t2.broadcast(None, OtherLCMMsg("world"))
+    t1.publish(FakeLCMMsg(1.0))
+    t2.publish(OtherLCMMsg("world"))
     assert [m.value for m in r1] == [1.0]
     assert [m.text for m in r2] == ["world"]
 
@@ -200,7 +200,7 @@ def test_pickle_roundtrip_preserves_everything() -> None:
     # Same config → same per-process provider, so the two halves interoperate.
     received: list[FakeLCMMsg] = []
     t2.subscribe(lambda msg: received.append(msg))
-    t1.broadcast(None, FakeLCMMsg(42.0))
+    t1.publish(FakeLCMMsg(42.0))
     assert len(received) == 1
     assert abs(received[0].value - 42.0) < 1e-9
 

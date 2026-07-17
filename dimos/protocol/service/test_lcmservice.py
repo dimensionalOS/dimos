@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 from lcm import LCM
 
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
+from dimos.protocol.pubsub.topic import Topic
 from dimos.protocol.service.lcmservice import (
     _DEFAULT_LCM_URL,
     LCMConfig,
@@ -200,10 +200,6 @@ class TestLCMService:
             assert new_service.l is None
             assert isinstance(new_service._stop_event, threading.Event)
             assert new_service._thread is None
-            # threading.Lock is a factory function, not a type
-            # Just check that the lock exists and has acquire/release methods
-            assert hasattr(new_service._l_lock, "acquire")
-            assert hasattr(new_service._l_lock, "release")
 
     def test_start_reinitializes_lcm_after_unpickling(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
@@ -243,39 +239,3 @@ class TestLCMService:
 
         # External LCM instance should not be cleaned up
         assert service.l == mock_lcm_instance
-
-    def test_get_call_thread_pool_creates_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            assert service._call_thread_pool is None
-
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-            assert service._call_thread_pool == pool
-
-            # Should return same pool on subsequent calls
-            pool2 = service._get_call_thread_pool()
-            assert pool2 is pool
-
-            # Clean up
-            pool.shutdown(wait=False)
-
-    def test_stop_shuts_down_thread_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            service.start()
-
-            # Create thread pool
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-
-            service.stop()
-
-            # Pool should be cleaned up
-            assert service._call_thread_pool is None
