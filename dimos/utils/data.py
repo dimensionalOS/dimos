@@ -367,8 +367,20 @@ def get_data(name: str | Path) -> Path:
             return file_path
 
         archive_is_newer = False
-        # confirm archive file is not LFS pointer
-        pull_path = _pull_lfs_archive(archive_name)
+        pull_path = None
+        # Resolve the real archive before comparing checksums. If Git LFS is
+        # unavailable, preserve the existing usable extracted data.
+        try:
+            pull_path = _pull_lfs_archive(archive_name)
+        except (RuntimeError, FileNotFoundError) as exc:
+            logger.warning(
+                "Could not resolve the Git LFS archive for %s. "
+                "Using existing extracted data at %s: %s",
+                archive_name,
+                file_path,
+                exc,
+            )
+            return file_path
 
         # calculate archive_file md5
         archive_checksum = _calculate_md5(pull_path)
