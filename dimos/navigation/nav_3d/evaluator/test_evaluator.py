@@ -462,12 +462,15 @@ def test_save_suite_roundtrip(tmp_path: Path) -> None:
             Case(id="neg", start=(0.0, 0.0, 0.0), goal=(5.0, 5.0, 5.0), expect_fail=True),
         ],
         lidar_stream="other_lidar",
+        db="~/recordings/demo.db",
     )
     path = save_suite(suite, tmp_path / "demo.yaml")
     loaded = load_suite(path)
     assert loaded.dataset == "demo"
     assert loaded.lidar_stream == "other_lidar"
     assert loaded.odom_stream == "pointlio_odometry"
+    assert loaded.db == "~/recordings/demo.db"
+    assert loaded.db_path() == Path.home() / "recordings/demo.db"
     assert loaded.cases[0].goal == (1.0, 2.0, 3.0)
     assert loaded.cases[0].tags == ["x"]
     assert not loaded.cases[0].expect_fail

@@ -25,6 +25,8 @@ from pathlib import Path
 
 import yaml
 
+from dimos.utils.data import resolve_named_path
+
 CASES_DIR = Path(__file__).parent / "cases"
 
 
@@ -47,7 +49,15 @@ class Suite:
     cases: list[Case]
     lidar_stream: str = "pointlio_lidar"
     odom_stream: str = "pointlio_odometry"
+    # Recording location override. Default is data/<dataset>.db; set this to
+    # keep a recording outside data/, e.g. a private or holdout recording.
+    db: str | None = None
     path: Path | None = None
+
+    def db_path(self) -> Path:
+        if self.db is not None:
+            return Path(self.db).expanduser()
+        return resolve_named_path(self.dataset, ".db")
 
 
 def load_suite(path: Path) -> Suite:
@@ -79,6 +89,7 @@ def load_suite(path: Path) -> Suite:
         cases=cases,
         lidar_stream=str(raw.get("lidar_stream", "pointlio_lidar")),
         odom_stream=str(raw.get("odom_stream", "pointlio_odometry")),
+        db=str(raw["db"]) if "db" in raw else None,
         path=path,
     )
 
@@ -96,6 +107,8 @@ def save_suite(suite: Suite, path: Path | None = None) -> Path:
     """Write the suite manifest as YAML. Defaults to cases/<dataset>.yaml."""
     path = path or suite.path or CASES_DIR / f"{suite.dataset}.yaml"
     doc: dict[str, object] = {"dataset": suite.dataset}
+    if suite.db is not None:
+        doc["db"] = suite.db
     if suite.lidar_stream != "pointlio_lidar":
         doc["lidar_stream"] = suite.lidar_stream
     if suite.odom_stream != "pointlio_odometry":

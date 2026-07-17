@@ -57,7 +57,7 @@ from dimos.navigation.nav_3d.evaluator.generate import (
 )
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
 from dimos.navigation.nav_3d.evaluator.runner import Report, evaluate
-from dimos.utils.data import get_data_dir, resolve_named_path
+from dimos.utils.data import get_data_dir
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -132,8 +132,11 @@ def diff_reports(
     """Name every case whose pass/fail flipped between two runs.
 
     Exits 1 when any case regressed, so a keep/discard loop can gate on it.
-    With --exact, exits 1 on any non-timing difference at all; running the
-    suite twice and exact-diffing the reports is the determinism check.
+    Perf budget breaches always print but only exit 1 with --exact: parallel
+    runs inflate wall-clock ~20 percent, so the binding perf check belongs on
+    the serial confirmation run. With --exact, also exits 1 on any non-timing
+    difference at all; running the suite twice and exact-diffing the reports
+    is the determinism check.
     """
     old_report = json.loads(old.read_text())
     new_report = json.loads(new.read_text())
@@ -154,6 +157,8 @@ def diff_reports(
     violations = tripwire.perf_violations(new_report)
     for violation in violations:
         print(f"PERF BUDGET EXCEEDED: {violation}")
+    if violations and not exact:
+        print("  advisory here; the --exact confirmation run is the binding perf gate")
     if exact:
         differences = tripwire.exact_differences(old_report, new_report)
         if differences:
@@ -165,7 +170,7 @@ def diff_reports(
                 print(f"  ... and {len(differences) - shown} more")
             raise typer.Exit(code=1)
         print("exact: reports identical")
-    if d.broke or violations:
+    if d.broke or (exact and violations):
         raise typer.Exit(code=1)
 
 
@@ -257,6 +262,12 @@ def ingest(
     cases: int = typer.Option(
         0, "--cases", help="Exact auto-generated case count; 0 scales with recording length"
     ),
+    external: bool = typer.Option(
+        False,
+        "--external",
+        help="Reference the recording in place instead of copying it into data/; "
+        "keeps it out of the LFS flow",
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite dataset and manifest"),
 ) -> None:
     """Register a recording as a dataset: copy, map, generate cases."""
@@ -266,14 +277,23 @@ def ingest(
     manifest = CASES_DIR / f"{name}.yaml"
     if manifest.exists() and not force:
         raise typer.BadParameter(f"{manifest} already exists; pass --force to regenerate")
-    dest = get_data_dir() / f"{name}.db"
-    if src.resolve() != dest.resolve():
-        if dest.exists() and not force:
-            raise typer.BadParameter(f"{dest} already exists; pass --force to overwrite")
-        print(f"copying {src} -> {dest}")
-        _copy_recording(src, dest)
+    if external:
+        dest = src.resolve()
+    else:
+        dest = get_data_dir() / f"{name}.db"
+        if src.resolve() != dest.resolve():
+            if dest.exists() and not force:
+                raise typer.BadParameter(f"{dest} already exists; pass --force to overwrite")
+            print(f"copying {src} -> {dest}")
+            _copy_recording(src, dest)
 
-    suite = Suite(dataset=name, cases=[], lidar_stream=lidar_stream, odom_stream=odom_stream)
+    suite = Suite(
+        dataset=name,
+        cases=[],
+        lidar_stream=lidar_stream,
+        odom_stream=odom_stream,
+        db=str(dest) if external else None,
+    )
     trajectory = load_trajectory(dest, odom_stream)
     arcs = trajectory.arc_lengths()
     print(
@@ -348,7 +368,7 @@ def _load_for_curation(dataset: str) -> tuple[Suite, Path, NDArray[np.float32], 
         raise typer.BadParameter(f"no manifest {manifest}; run ingest first")
     suite = load_suite(manifest)
     cfg = EvalConfig()
-    final = load_or_build_final_map(resolve_named_path(dataset, ".db"), suite, cfg)
+    final = load_or_build_final_map(suite.db_path(), suite, cfg)
     planner = cfg.make_planner()
     planner.update_global_map(final.occupied)
     return suite, manifest, planner.surface_map(), cfg
@@ -402,8 +422,8 @@ def pick_case(
     from dimos.navigation.nav_3d.evaluator.viz import turbo_by_height
 
     suite, manifest, surface, cfg = _load_for_curation(dataset)
-    final = load_or_build_final_map(resolve_named_path(dataset, ".db"), suite, cfg)
-    trajectory = load_trajectory(resolve_named_path(dataset, ".db"), suite.odom_stream)
+    final = load_or_build_final_map(suite.db_path(), suite, cfg)
+    trajectory = load_trajectory(suite.db_path(), suite.odom_stream)
     foot = trajectory.positions - np.array([0.0, 0.0, cfg.robot_height], dtype=np.float32)
 
     def full_tags(negative: bool, extra: list[str]) -> list[str]:

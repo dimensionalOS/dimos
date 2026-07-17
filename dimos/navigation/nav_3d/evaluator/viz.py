@@ -38,7 +38,6 @@ import rerun.blueprint as rrb
 
 from dimos.navigation.nav_3d.evaluator.final_map import load_or_build_final_map
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
-from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -174,7 +173,7 @@ def write_rrd(report: Report, suites: list[Suite], cfg: EvalConfig, out: Path) -
     suites_by_dataset = {suite.dataset: suite for suite in suites}
     for dataset in report.datasets:
         suite = suites_by_dataset[dataset.dataset]
-        db_path = resolve_named_path(suite.dataset, ".db")
+        db_path = suite.db_path()
         final = load_or_build_final_map(db_path, suite, cfg)
         trajectory = load_trajectory(db_path, suite.odom_stream)
         root = dataset.dataset

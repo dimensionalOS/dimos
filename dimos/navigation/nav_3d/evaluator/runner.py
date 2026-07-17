@@ -42,7 +42,6 @@ from dimos.navigation.nav_3d.evaluator.final_map import (
     load_or_build_final_map,
 )
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
-from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -266,7 +265,7 @@ def _snapshot(planner: MLSPlanner) -> PlannerArtifacts:
 
 
 def run_suite(suite: Suite, cfg: EvalConfig, threads: int = 1) -> DatasetResult:
-    db_path = resolve_named_path(suite.dataset, ".db")
+    db_path = suite.db_path()
     trajectory = load_trajectory(db_path, suite.odom_stream)
     final = load_or_build_final_map(db_path, suite, cfg)
     obstacle_keys = final.occupied_keys
