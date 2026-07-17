@@ -449,6 +449,7 @@ class ControlCoordinator(Module):
         return True
 
     def _register_routes(self, task: ControlTask, task_type: str) -> None:
+        # Inline: importing the registry runs task-manifest discovery at import time.
         from dimos.control.tasks.registry import control_task_registry
 
         bindings = control_task_registry.bindings_for(task_type)
@@ -466,6 +467,7 @@ class ControlCoordinator(Module):
 
     def _commands_for(self, task_type: str) -> frozenset[str]:
         """The command names the task type declares in its TASK_EXPOSES card."""
+        # Inline: importing the registry runs task-manifest discovery at import time.
         from dimos.control.tasks.registry import control_task_registry
 
         return control_task_registry.bindings_for(task_type).exposes
