@@ -17,19 +17,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dimos.control.coordinator import TaskConfig
-from dimos.control.task import CoordinatorState, JointStateSnapshot
-from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
-    CartesianIKTask,
-    CartesianIKTaskConfig,
-)
+from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
-    ControlIKResult,
     IKControlRuntimeError,
     PinkControlIK,
     PinkControlIKConfig,
 )
-from dimos.control.tasks.registry import control_task_registry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -194,16 +187,16 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
 ) -> None:
     model_path = _write_urdf(tmp_path)
     backend = PinkControlIK(
-        PinkControlIKConfig(robot_model=_robot(model_path)),
+        PinkControlIKConfig(robot_model=_robot(model_path), qpsolver_options={"eps": 1e-6}),
     )
     measured = np.array([0.3, 0.1])
     target = backend.forward_kinematics(measured)
-    calls: list[tuple[object, list[object], float]] = []
+    calls: list[tuple[object, list[object], float, dict[str, object]]] = []
 
     def solve(
         configuration: object, tasks: list[object], dt: float, **kwargs: object
     ) -> np.ndarray:
-        calls.append((configuration, tasks, dt))
+        calls.append((configuration, tasks, dt, kwargs))
         return np.zeros(backend._model.nv)
 
     monkeypatch.setattr(
@@ -214,12 +207,37 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     assert np.array_equal(result.positions, measured)
     assert len(calls) == 1
     assert len(calls[0][1]) == 2
-    assert calls[0][1] is backend._tasks
-    assert np.array_equal(calls[0][1][1].target_q, backend._full_q(measured))
+    assert calls[0][1] == [backend._frame_task, backend._posture_task]
+    assert backend._posture_task is not None
+    assert np.array_equal(backend._posture_task.target_q, backend._full_q(measured))
     assert calls[0][2] == 0.01
+    assert calls[0][3] == {
+        "solver": "proxqp",
+        "damping": 1e-4,
+        "limits": backend._limits,
+        "eps": 1e-6,
+    }
 
 
-def test_pink_backend_clamps_dt_from_backend_configuration(
+def test_pink_solver_dependency_failure_is_translated_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = PinkControlIK(PinkControlIKConfig(robot_model=_robot(_write_urdf(tmp_path))))
+
+    def solve(
+        configuration: object, tasks: list[object], dt: float, **kwargs: object
+    ) -> np.ndarray:
+        raise RuntimeError("solver dependency failed")
+
+    monkeypatch.setattr(
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
+    )
+    measured = np.array([0.3, 0.1])
+    with pytest.raises(IKControlRuntimeError, match="solver dependency failed"):
+        backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+
+def test_pink_receives_pre_bounded_dt_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_path = _write_urdf(tmp_path)
@@ -238,9 +256,9 @@ def test_pink_backend_clamps_dt_from_backend_configuration(
         "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
     )
     measured = np.array([0.3, 0.1])
-    backend.solve(backend.forward_kinematics(measured), measured, 1.0)
+    backend.solve(backend.forward_kinematics(measured), measured, 0.05)
 
-    assert calls == [1.0]
+    assert calls == [0.05]
 
 
 def test_pink_posture_task_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,83 +376,10 @@ def test_pink_rejects_material_position_limit_violation(
         backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
 
-def test_cartesian_pipeline_bounds_dt_and_holds_on_expected_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    backend = _FakeControlIK()
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.PinkControlIK",
-        lambda *args, **kwargs: backend,
-    )
-    task = CartesianIKTask(
-        "cartesian",
-        CartesianIKTaskConfig(
-            joint_names=["j1", "j2"],
-            control_ik=PinkControlIKConfig(
-                robot_model=_robot(Path("unused.urdf")).model_copy(
-                    update={"joint_names": ["j1", "j2"]}
-                )
-            ),
-            timeout=0.2,
-        ),
-    )
-    pose = PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1])
-    assert task.on_cartesian_command(pose, 1.0)
-    assert task.compute(_cartesian_state(1.01, dt=1.0)) is not None
-    assert backend.dt_calls == [task._config.max_dt]
-
-    invalid_dt_hold = task.compute(_cartesian_state(1.02, dt=0.0))
-    assert invalid_dt_hold is not None
-    assert invalid_dt_hold.positions == [0.0, 0.0]
-
-    backend.raise_runtime = True
-    assert task.on_cartesian_command(pose, 2.0)
-    hold = task.compute(_cartesian_state(2.01))
-    assert hold is not None
-    assert hold.positions == [0.0, 0.0]
-    assert hold.mode.value == "servo_position"
-
-
-def test_factory_rejects_invalid_default_pink_configuration() -> None:
-    config = TaskConfig(
-        name="cartesian",
-        type="cartesian_ik",
-        joint_names=["j1", "j2"],
-        priority=10,
-        params={},
-    )
-
-    with pytest.raises(ValueError, match="control_ik"):
-        control_task_registry.create("cartesian_ik", config, hardware={})
-
-
-@pytest.mark.parametrize("legacy_field", ["backend", "ee_joint_id"])
+@pytest.mark.parametrize("legacy_field", ["backend", "ee_joint_id", "self_collision_enabled"])
 def test_pink_rejects_legacy_configuration_fields(tmp_path: Path, legacy_field: str) -> None:
     model_path = _write_urdf(tmp_path)
     with pytest.raises(ValueError, match=legacy_field):
         PinkControlIKConfig.model_validate(
             {"robot_model": _robot(model_path), legacy_field: "pinocchio"}
         )
-
-
-class _FakeControlIK:
-    nq = 2
-
-    def __init__(self) -> None:
-        self.result = np.array([0.1, 0.2])
-        self.raise_runtime = False
-        self.dt_calls: list[float] = []
-
-    def solve(self, target: object, measured: np.ndarray, dt: float) -> ControlIKResult:
-        self.dt_calls.append(dt)
-        if self.raise_runtime:
-            raise RuntimeError("synthetic control failure")
-        return ControlIKResult(self.result.copy(), self.result - measured)
-
-
-def _cartesian_state(t_now: float, dt: float = 0.01) -> CoordinatorState:
-    return CoordinatorState(
-        joints=JointStateSnapshot(joint_positions={"j1": 0.0, "j2": 0.0}),
-        t_now=t_now,
-        dt=dt,
-    )

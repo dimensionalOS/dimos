@@ -14,27 +14,33 @@
 
 from typing import cast
 
+import pinocchio
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import PinkControlIKConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
+from dimos.robot.manipulators.a1z.config import make_a1z_model_config
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
+from dimos.robot.manipulators.a750.config import make_a750_model_config
 from dimos.robot.manipulators.common.blueprints import eef_twist_task, planner
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
 )
+from dimos.robot.manipulators.openarm.config import openarm_model_config
 from dimos.robot.manipulators.piper.blueprints.teleop import (
     coordinator_cartesian_ik_mock,
     coordinator_cartesian_ik_piper,
     keyboard_teleop_piper,
 )
-from dimos.robot.manipulators.piper.config import PIPER_MODEL_PATH
+from dimos.robot.manipulators.piper.config import PIPER_MODEL_PATH, make_piper_model_config
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     xarm6_planner_only,
@@ -165,12 +171,33 @@ def test_piper_pink_task_uses_xacro_and_gripper_base() -> None:
         )
         control_ik = task.params["control_ik"]
         assert control_ik["robot_model"].model_path == PIPER_MODEL_PATH
-        assert control_ik["robot_model"].model_path == PIPER_MODEL_PATH
         assert control_ik["robot_model"].end_effector_link == "gripper_base"
         assert "ee_joint_id" not in task.params
-        assert "self_collision_enabled" not in control_ik
 
         reconstructed = PinkControlIKConfig.model_validate(control_ik)
         assert reconstructed.robot_model is control_ik["robot_model"]
         assert reconstructed.robot_model.model_path == PIPER_MODEL_PATH
         assert reconstructed.robot_model.end_effector_link == "gripper_base"
+
+
+@pytest.mark.parametrize(
+    "robot_model",
+    [
+        pytest.param(make_xarm6_model_config(add_gripper=False), id="xarm6"),
+        pytest.param(make_xarm7_model_config(add_gripper=False), id="xarm7"),
+        pytest.param(make_piper_model_config(), id="piper"),
+        pytest.param(openarm_model_config("left"), id="openarm"),
+        pytest.param(make_a750_model_config(), id="a750"),
+        pytest.param(make_a1z_model_config(has_gripper=True), id="a1z"),
+    ],
+)
+def test_shipped_model_family_has_named_eef_frame(robot_model: RobotModelConfig) -> None:
+    assert robot_model.model_path.is_file()
+    prepared = prepare_urdf_for_drake(
+        robot_model.model_path,
+        package_paths=robot_model.package_paths,
+        xacro_args=robot_model.xacro_args,
+        convert_meshes=False,
+    )
+    model = pinocchio.buildModelFromUrdf(str(prepared))
+    assert model.existFrame(robot_model.end_effector_link)
