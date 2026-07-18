@@ -253,7 +253,7 @@ SEED = 42
 RANSAC_ITERS_FOR_TEST = 20_000  # see docstring below: matches how the baseline was captured
 
 # SIMULATED baseline captured 2026-07-16 against the pre-refactor relocalize()
-# on this branch (commit bc846bb69, before this refactor), via a throwaway
+# on this branch (the parent of the split-judge commit), via a throwaway
 # script (not part of this repo) that: built this exact deterministic
 # L-shaped-room synthetic scene (numpy `default_rng(42)`, `o3d.utility.random.
 # seed(42)`), monkeypatched RANSAC_ITERS from the production 500_000 down to
@@ -261,8 +261,8 @@ RANSAC_ITERS_FOR_TEST = 20_000  # see docstring below: matches how the baseline 
 # only needs identical conditions before/after the refactor, not production
 # iteration counts), and called relocalize(global_map, local_map). Reran
 # twice pre-refactor and once post-refactor: all three runs produced this
-# exact T (bit-identical) and fitness -- confirms the determinism claim
-# (#2137 program.md: "seeded per-frame, RANSAC variance zero").
+# exact T (bit-identical) and fitness -- confirming the determinism #2137's
+# program.md describes (per-frame seeding, zero RANSAC variance).
 _BASELINE_FITNESS = 0.9980842911877394
 _BASELINE_T = np.array(
     [
@@ -359,7 +359,7 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior (Phase 2): age gating/decay + judge integrity
+# FiducialPrior: age gating/decay + judge integrity
 # ---------------------------------------------------------------------------
 
 
@@ -420,8 +420,8 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
 
 
 def test_gravity_gate_is_per_source_no_walkover() -> None:
-    """The gravity-gate walkover (benchmark-found, repro hk_village1 frame
-    831): with a pool-global gate, one upright stale seed un-empties
+    """The gravity-gate walkover (found in offline replay of hk_village1,
+    repro frame 831): with a pool-global gate, one upright stale seed un-empties
     `upright` and silently discards another source's ALL-TILTED candidates —
     the seed wins unopposed. Per-source gating (sources=) must keep each
     source's own fallback: the tilted-but-near-truth RANSAC candidate beats

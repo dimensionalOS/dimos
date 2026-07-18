@@ -38,9 +38,9 @@ RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
 # Minimum wall points (per cloud, post fine-voxel downsample) to attempt the
 # wall-only rerank. ARBITRARY / UNTUNED: inherited verbatim from the old
-# silent-fallback check; no benchmark frame has ever come below it (the Jul 17
-# probe showed the fallback never fired on any of the n=6 canonical runs), so
-# it has never been calibrated against real sparse-wall data.
+# silent-fallback check; never observed to fire in offline replay of the
+# hk_village1..6 recordings, so it has never been calibrated against real
+# sparse-wall data.
 MIN_WALL_POINTS = 100
 
 
@@ -227,8 +227,8 @@ def refine_candidates(
         # Per-source gating: one source's upright candidate must not orphan
         # another source's all-tilted pool (the gravity-gate walkover: a
         # near-upright stale seed silently discarded all 34 tilted RANSAC
-        # candidates and won unopposed — found by the offline benchmark,
-        # repro hk_village1 frame 831). Each source falls back to its own
+        # candidates and won unopposed — found in offline replay of
+        # hk_village1, repro frame 831). Each source falls back to its own
         # tilted pool only when IT has no upright member, so single-source
         # behavior is unchanged bit-for-bit.
         if len(sources) != len(candidates):
@@ -302,8 +302,9 @@ def relocalize(
 
     RANSAC candidate generation (``generate_ransac_candidates``) feeding the
     shared judge (``refine_candidates``). Public contract preserved exactly --
-    this signature is relied on by callers outside this package (module.py's
-    ``_relocalize``, the #2137 offline eval harness).
+    module.py's ``_relocalize`` relies on this (T, fitness) signature. (#2137's
+    offline eval entrypoint shares only the (global_map, local_map) argument
+    convention; its documented contract returns the bare 4x4, not this tuple.)
     """
     candidates = generate_ransac_candidates(global_map, local_map)
     T, fitness, _winning_index = refine_candidates(global_map, local_map, candidates)

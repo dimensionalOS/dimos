@@ -42,12 +42,15 @@ MAP_FRAME, OPTICAL_FRAME = (
 class LocalizationConfig(NamedTuple):
     marker_length_m: float
     min_tags: int = 1
+    # 3.0 px is an engineering guess (untuned), not calibrated against real
+    # footage: loose enough for a clean detection's residual, tight enough to
+    # reject a grossly wrong solve.
     max_reprojection_error_px: float = 3.0
     # IPPE mirror-ambiguity gate: the best PnP candidate is only trusted when it
     # beats the runner-up by this reprojection-error ratio. Near-tied candidates
     # mean the flipped mirror pose explains the pixels almost as well (weak
     # perspective: small/near-head-on tag) and neither can be trusted. 1.0
-    # disables the gate.
+    # disables the gate; the 2.0 default is an engineering guess (untuned).
     ambiguity_ratio_min: float = 2.0
 
 
@@ -78,9 +81,9 @@ def localize_from_detections(
     """
     k, d = camera_info_to_cv_matrices(camera_info)
     # distortion_model must reach the PnP helpers: the Go2 camera is
-    # equidistant fisheye, and without the model its 4 coefficients get
-    # misread as radtan k1,k2,p1,p2 (marker_detect.py passes it; this path
-    # didn't — poses were solved against the wrong lens).
+    # equidistant fisheye, and without the model the 4 fisheye coefficients
+    # get misread as radtan k1,k2,p1,p2 — poses solved against the wrong
+    # lens. marker_detect.py passes it through for the same reason.
     model = camera_info.distortion_model
     good: list[tuple[float, Transform]] = []
     for marker_id, corners_px in detections:

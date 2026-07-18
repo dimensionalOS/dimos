@@ -16,10 +16,11 @@
 """Pluggable relocalization priors -- candidate PROPOSERS feeding the shared
 fine-ICP judge in relocalize.py (``refine_candidates``). No prior is trusted:
 a candidate wins the pool by surviving the wall-only fine-fitness rerank,
-never by its source's own reported confidence. RANSAC (``RansacPrior``,
-wrapping relocalize.py's existing multi-scale FPFH+RANSAC search) is the
-first prior; a future high-confidence seed (a fiducial marker, a carried-
-forward pose) is meant to compete here too, not bypass the judge.
+never by its source's own reported confidence. Three priors live here:
+``RansacPrior`` (wrapping relocalize.py's existing multi-scale FPFH+RANSAC
+search), ``LastPosePrior`` (the last accepted answer, carried forward) and
+``FiducialPrior`` (visual marker fixes, age-decayed). The same invariant
+binds any future prior: it competes through the judge, never bypasses it.
 """
 
 from __future__ import annotations
@@ -142,8 +143,8 @@ class FiducialPrior:
     confidence — a stale or wrong fix still has to win on wall fitness, like
     every other prior.
 
-    The decay/cutoff defaults are engineering guesses, not tuned values; the
-    Phase-4 autoresearch loop against the offline sections harness owns them.
+    The decay/cutoff defaults are engineering guesses, not tuned values;
+    tuning them belongs to #2137's autoresearch harness.
     """
 
     name = "fiducial"
