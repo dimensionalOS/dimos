@@ -503,9 +503,13 @@ def test_localize_fisheye_distortion_model_reaches_pnp() -> None:
     fx, fy, cx, cy = 797.476, 796.487, 643.535, 349.278  # front_camera_720.yaml
     d_fisheye = np.array([-0.0731, -0.0234, -0.0069, 0.0092], dtype=np.float64)
     info = CameraInfo(
-        width=1280, height=720, distortion_model="equidistant",
+        width=1280,
+        height=720,
+        distortion_model="equidistant",
         K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        D=list(d_fisheye), frame_id=OPTICAL_FRAME, ts=10.0,
+        D=list(d_fisheye),
+        frame_id=OPTICAL_FRAME,
+        ts=10.0,
     )
     length = 0.10
     h = length / 2.0
@@ -521,8 +525,11 @@ def test_localize_fisheye_distortion_model_reaches_pnp() -> None:
     marker_map = {5: Transform(frame_id=MAP_FRAME, child_frame_id="marker_5")}
 
     result = localize_from_detections(
-        [(5, corners.reshape(4, 2))], marker_map, info,
-        LocalizationConfig(length, max_reprojection_error_px=1.0), ts=10.0
+        [(5, corners.reshape(4, 2))],
+        marker_map,
+        info,
+        LocalizationConfig(length, max_reprojection_error_px=1.0),
+        ts=10.0,
     )
     assert result is not None, "fisheye corners must survive the reprojection gate"
     # Expected map_T_optical = identity_map_T_marker + (optical_T_marker)^-1

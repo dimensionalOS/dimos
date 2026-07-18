@@ -83,8 +83,9 @@ def _sample_wall(
     return np.stack([span, np.full(n, fixed_val), z], axis=1)
 
 
-def _sample_plane(rng: np.random.Generator, x_extent: float, y_extent: float, z: float,
-                   n: int) -> np.ndarray:
+def _sample_plane(
+    rng: np.random.Generator, x_extent: float, y_extent: float, z: float, n: int
+) -> np.ndarray:
     xy = rng.uniform([0.0, 0.0], [x_extent, y_extent], size=(n, 2))
     return np.concatenate([xy, np.full((n, 1), z)], axis=1)
 
@@ -162,9 +163,7 @@ def test_floors_only_scene_raises_insufficient_wall_evidence() -> None:
     local_pts = _apply(np.linalg.inv(T_true), room_pts[mask].copy())
 
     try:
-        _T, fitness, _idx = refine_candidates(
-            _pcd(room_pts), _pcd(local_pts), [T_true.copy()]
-        )
+        _T, fitness, _idx = refine_candidates(_pcd(room_pts), _pcd(local_pts), [T_true.copy()])
     except InsufficientWallEvidence as e:
         msg = str(e)
         assert "insufficient wall evidence" in msg
@@ -375,8 +374,7 @@ def test_fiducial_prior_fresh_fix_decays_with_age() -> None:
 
     gm, lm, T_true = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
     clock = {"now": 100.0}
-    p = FiducialPrior(age_tau_s=30.0, age_max_s=120.0, conf_max=0.9,
-                      now_fn=lambda: clock["now"])
+    p = FiducialPrior(age_tau_s=30.0, age_max_s=120.0, conf_max=0.9, now_fn=lambda: clock["now"])
     p.update(T_true, ts=100.0)
 
     fresh = p.propose(gm, lm)

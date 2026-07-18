@@ -95,7 +95,12 @@ def localize_from_detections(
             (
                 (
                     marker_reprojection_error(
-                        corners_px, config.marker_length_m, k, d, rvec, tvec,
+                        corners_px,
+                        config.marker_length_m,
+                        k,
+                        d,
+                        rvec,
+                        tvec,
                         distortion_model=model,
                     ),
                     rvec,
