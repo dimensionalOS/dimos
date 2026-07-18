@@ -117,6 +117,23 @@ unitree_go2_relocalization = autoconnect(
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11)
 
+# The full fiducial->judge path in one stack: VisualRelocalizationModule turns
+# marker sightings into world->map fixes on its `world_map_fix` Out stream, and
+# autoconnect wires that (by name+type) into RelocalizationModule's In of the
+# same name, where use_fiducial_prior=True feeds it to the shared judge as an
+# age-decayed candidate (never a bypass). Both map inputs stay unset: each
+# module no-ops until overrides point them at a premap + marker survey, e.g.
+#   -o relocalizationmodule.map_file=/abs/path/to/site.pc2.lcm
+#   -o visualrelocalizationmodule.marker_map_file=/abs/path/to/site_markers.yaml
+unitree_go2_fiducial_relocalization = autoconnect(
+    unitree_go2,
+    RelocalizationModule.blueprint(use_fiducial_prior=True),
+    VisualRelocalizationModule.blueprint(
+        marker_length_m=0.10,
+        camera_info=GO2Connection.camera_info_static,
+    ),
+).global_config(n_workers=12, robot_model="unitree_go2")
+
 unitree_go2_memory = autoconnect(
     unitree_go2,
     Go2Memory.blueprint(),
