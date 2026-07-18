@@ -202,8 +202,7 @@ async def test_reset_burst_does_not_wedge_robot_leg(relay: RelayReadyInfo) -> No
             # The accept glue cannot have read all 50 preambles before the
             # resets land, so some streams are reset pre-acceptance.
             ids = [
-                robot.send_frame("cam", b"\xcd" * (16 * 1024), delivery="latest")
-                for _ in range(50)
+                robot.send_frame("cam", b"\xcd" * (16 * 1024), delivery="latest") for _ in range(50)
             ]
             for stream_id in ids:
                 robot._session.reset_if_in_flight(stream_id)

@@ -123,7 +123,7 @@ _MSG_TYPES: dict[str, type[Any]] = {
 _KIND_BY_ANNOTATION = {"int": "number", "float": "number", "str": "string", "Role": "string"}
 _MSG_FIELD_KINDS: dict[str, dict[str, str]] = {
     # cast: `from __future__ import annotations` makes f.type always a str.
-    t: {f.name: _KIND_BY_ANNOTATION[cast(str, f.type)] for f in fields(cls)}
+    t: {f.name: _KIND_BY_ANNOTATION[cast("str", f.type)] for f in fields(cls)}
     for t, cls in _MSG_TYPES.items()
 }
 
@@ -276,7 +276,9 @@ def _frame_header_from_dict(body: dict[str, Any]) -> FrameHeader:
         raise ProtocolError(f"invalid data frame header: {body!r}")
     # cast: _is_kind proved seq/ts are numbers, which is as precise as JSON
     # gets (no int/float split on the wire, mirroring protocol.ts).
-    return FrameHeader(ch=ch, seq=cast(int, seq), ts=cast(float, ts), delivery=delivery, meta=meta)
+    return FrameHeader(
+        ch=ch, seq=cast("int", seq), ts=cast("float", ts), delivery=delivery, meta=meta
+    )
 
 
 def decode_data_frame(frame: bytes | bytearray) -> DataFrame:
