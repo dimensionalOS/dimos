@@ -368,17 +368,18 @@ def test_lfs_path_operations() -> None:
     assert filename in fspath_result
 
 
+@pytest.mark.self_hosted
 def test_lfs_path_division_operator() -> None:
     """Test path division operator with LfsPath."""
     # Use a directory for testing
-    lfs_path = LfsPath("three_paths.png")
+    lfs_path = LfsPath("a750_description")
 
     # Test truediv - this should trigger download and return resolved path
-    result = lfs_path / "subpath"
+    result = lfs_path / "urdf/a750_rev1_no_gripper.urdf"
     assert isinstance(result, Path)
 
     # The result should be the resolved path with subpath appended
-    assert "three_paths.png" in str(result)
+    assert "a750_rev1_no_gripper.urdf" in str(result)
 
 
 def test_lfs_path_multiple_instances() -> None:
@@ -489,7 +490,7 @@ def test_get_data_with_existing_extracted_path(temp_data_environment: tuple[Path
     assert result == extracted_path
     assert result.exists()
 
-    assert data._read_archive_checksum(extracted_path) is not None
+    assert data._read_archive_metadata(extracted_path) is not None
 
 
 def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path]) -> None:
@@ -517,8 +518,10 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
 
     assert result == extracted_path
     assert result.exists()
-    stored_md5 = data._read_archive_checksum(extracted_path)
-    assert stored_md5 == new_md5
+
+    metadata = data._read_archive_metadata(extracted_path)
+    assert metadata is not None
+    assert metadata.archive_md5 == new_md5
 
 
 def test_get_data_with_missing_archive(temp_data_environment: tuple[Path, Path]) -> None:
@@ -587,4 +590,6 @@ def test_get_data_with_single_file_archive(temp_data_environment: tuple[Path, Pa
     result2 = get_data("cafe.jpg")
     assert result2 == expected_path
     assert result2.exists()
-    assert data._read_archive_checksum(expected_path) == data._calculate_md5(archive_file)
+    metadata = data._read_archive_metadata(expected_path)
+    assert metadata is not None
+    assert metadata.archive_md5 == data._calculate_md5(archive_file)
