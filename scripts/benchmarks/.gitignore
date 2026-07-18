@@ -1,0 +1,3 @@
+# generated benchmark outputs
+*.csv
+*.json
