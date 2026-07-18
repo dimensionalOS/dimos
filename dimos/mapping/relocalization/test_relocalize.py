@@ -32,6 +32,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.mapping.relocalization.priors import (
     Candidate,
+    FiducialPrior,
     LastPosePrior,
     RelocPrior,
     relocalize_with_priors,
@@ -65,7 +66,7 @@ def _rigid(yaw_deg: float, t: tuple[float, float, float]) -> np.ndarray:
 
 
 def _apply(T: np.ndarray, points: np.ndarray) -> np.ndarray:
-    return (T[:3, :3] @ points.T).T + T[:3, 3]
+    return np.asarray((T[:3, :3] @ points.T).T + T[:3, 3])
 
 
 def _sample_wall(
@@ -364,15 +365,11 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
 
 def test_fiducial_prior_unset_proposes_nothing() -> None:
-    from dimos.mapping.relocalization.priors import FiducialPrior
-
     gm, lm, _ = _rect_room_scene(seed=11, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
     assert FiducialPrior().propose(gm, lm) == []
 
 
 def test_fiducial_prior_fresh_fix_decays_with_age() -> None:
-    from dimos.mapping.relocalization.priors import FiducialPrior
-
     gm, lm, T_true = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
     clock = {"now": 100.0}
     p = FiducialPrior(age_tau_s=30.0, age_max_s=120.0, conf_max=0.9, now_fn=lambda: clock["now"])
@@ -395,8 +392,6 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
     """A wrong marker fix (stale map, moved tag, bad PnP) at maximum
     confidence must lose to a correct low-confidence candidate — the fiducial
     tier gets no special treatment from the judge."""
-    from dimos.mapping.relocalization.priors import FiducialPrior, relocalize_with_priors
-
     gm, lm, T_true = _rect_room_scene(seed=13, yaw_deg=45.0, t=(2.0, 1.0, 0.0))
     T_wrong = T_true.copy()
     T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # confidently 6.4 m off
@@ -407,9 +402,9 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
     class NearTruthStub:
         name = "stub_near_truth"
 
-        def propose(self, g: object, l: object) -> list:
-            from dimos.mapping.relocalization.priors import Candidate
-
+        def propose(
+            self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
+        ) -> list[Candidate]:
             T_near = T_true.copy()
             T_near[:3, 3] += np.array([0.03, -0.02, 0.0])
             return [Candidate(T=T_near, source=self.name, confidence=0.01)]
@@ -454,14 +449,12 @@ def test_gravity_gate_is_per_source_no_walkover() -> None:
     class TiltedRansacStub:
         name = "ransac"
 
-        def propose(self, g: object, l: object) -> list:
-            from dimos.mapping.relocalization.priors import Candidate
-
+        def propose(
+            self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
+        ) -> list[Candidate]:
             return [Candidate(T=T_tilted, source=self.name, confidence=0.5)]
 
     lp = LastPosePrior()
     lp.update(T_stale)
-    from dimos.mapping.relocalization.priors import relocalize_with_priors as rwp
-
-    _, _, source = rwp(gm, lm, [TiltedRansacStub(), lp])
+    _, _, source = relocalize_with_priors(gm, lm, [TiltedRansacStub(), lp])
     assert source == "ransac"
