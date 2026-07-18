@@ -22,6 +22,9 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+)
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
     OPENYAM_PACKAGE_PATHS,
@@ -48,6 +51,7 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     assert config.base_link == "yam_base_link"
     assert config.end_effector_link == "yam_hand_tcp"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
+    assert str(config.model_path).endswith("yam_description/urdf/yam_gripper.urdf.xacro")
     assert config.gripper_hardware_id == "arm"
 
 
@@ -76,10 +80,7 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
     kwargs = _module_kwargs(blueprint, ManipulationModule)
     config = ManipulationModuleConfig(**kwargs).robots[0]
 
-    assert config.name == "arm"
-    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.end_effector_link == "yam_hand_tcp"
-    assert config.gripper_hardware_id == "arm"
+    assert config == make_openyam_model_config(name="arm")
     task = _coordinator_kwargs(blueprint)["tasks"][0]
     assert task.type == "trajectory"
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
@@ -91,3 +92,14 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     assert len(kwargs["hardware"]) == 1
     assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF
     assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
+
+
+def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
+    blueprint = keyboard_teleop_openyam
+    task = next(
+        task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist"
+    )
+
+    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert task.params["ee_joint_id"] == OPENYAM_DOF
+    assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}
