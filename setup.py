@@ -58,6 +58,13 @@ def python_is_macos_universal_binary(executable: str | None = None) -> bool:
 
 TEST_MODULE_PATTERNS = ("test_*.py", "conftest.py")
 
+# The Deno relay (repo-root web/) ships inside the wheel so a pip-installed
+# dimos can run it without a checkout. Copied into build_lib below; editable
+# installs skip the copy and locate.find_web_dir() resolves the checkout.
+# MANIFEST.in grafts web/ so sdist->wheel builds can reproduce this.
+RELAY_DIST_SOURCES = ("deno.json", "deno.lock", "relay", "shared")
+RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
+
 
 class build_py(_build_py):
     def find_package_modules(self, package, package_dir):
@@ -68,6 +75,24 @@ class build_py(_build_py):
                 fnmatch.fnmatch(os.path.basename(filepath), pat) for pat in TEST_MODULE_PATTERNS
             )
         ]
+
+    def run(self):
+        super().run()
+        if not getattr(self, "editable_mode", False):
+            self._copy_relay_dist()
+
+    def _copy_relay_dist(self):
+        src = Path(__file__).parent / "web"
+        if not (src / "relay" / "main.ts").is_file():
+            raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
+        dst = Path(self.build_lib) / RELAY_DIST_TARGET
+        for name in RELAY_DIST_SOURCES:
+            for path in sorted((src / name).rglob("*")) if (src / name).is_dir() else [src / name]:
+                if path.is_dir() or path.name.endswith("_test.ts"):
+                    continue
+                target = dst / path.relative_to(src)
+                self.mkpath(str(target.parent))
+                self.copy_file(str(path), str(target))
 
 
 extra_compile_args = [
