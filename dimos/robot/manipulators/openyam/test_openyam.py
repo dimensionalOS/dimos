@@ -220,7 +220,9 @@ def test_openyam_coordinator_blueprints_use_six_arm_joints(blueprint: Blueprint)
     ids=["bare", "gripper"],
 )
 def test_openyam_teleop_blueprints_construct_with_eef_twist(blueprint: Blueprint) -> None:
-    task = next(task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist")
+    task = next(
+        task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist"
+    )
 
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert task.params["ee_joint_id"] == OPENYAM_DOF

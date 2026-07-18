@@ -34,6 +34,7 @@ OPENYAM_FLANGE_MODEL_PATH = OPENYAM_PACKAGE / "yam.urdf"
 OPENYAM_FK_MODEL = OPENYAM_FLANGE_MODEL_PATH
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
+
 def make_openyam_hardware(
     hw_id: str = "arm",
     *,
