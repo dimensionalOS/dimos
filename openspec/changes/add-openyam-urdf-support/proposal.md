@@ -1,14 +1,15 @@
 ## Why
 
-DimOS supports A1Z as a runnable manipulator description, but has no equivalent integration for OpenYAM. Adding OpenYAM lets developers use its gripper-equipped arm model with the existing planning, teleoperation, and visualization workflows.
+DimOS supports A1Z as a runnable manipulator description, but has no equivalent integration for OpenYAM. Adding OpenYAM lets developers use exactly one gripper-equipped arm model with the existing planning, teleoperation, and visualization workflows.
 
-The upstream description provides two complementary sources: generated `yam.urdf` for the bare six-axis arm and `yam_arm.xacro` for the arm with gripper and TCP links. DimOS should make both choices explicit rather than presenting gripper geometry when a user selects the bare-arm robot.
+The OpenYAM description is exposed through the DimOS-owned `yam_gripper.urdf.xacro` wrapper, which supplies the complete gripper-equipped model and its TCP links.
 
 ## What Changes
 
-- Add OpenYAM description assets and robot-specific manipulation configurations for bare-arm and gripper-equipped models.
-- Add runnable OpenYAM manipulation blueprints that compose the existing planning, teleoperation, and visualization surfaces.
-- Expose the six controlled arm joints for both variants and a direct mock-gripper command channel only for the gripper-equipped variant; no finger-state visualization or synchronization is in scope.
+- Add the OpenYAM description assets and exactly one gripper-equipped robot-specific manipulation configuration, using the DimOS-owned `yam_gripper.urdf.xacro` wrapper.
+- Add runnable OpenYAM manipulation blueprints that compose the existing planning, teleoperation, and visualization surfaces for that configuration.
+- Expose the six controlled arm joints and a direct mock-gripper command channel; finger-state visualization or synchronization is not in scope.
+- Limit corrected mesh orientation to the wrapper's visual and collision mesh presentations; preserve mesh bytes, XYZ origins, joints/axes, and inertials, and add no custom collision exclusions or hardware behavior.
 - Add focused validation for the model configuration and blueprint wiring.
 - Do not add real OpenYAM hardware control in this change.
 
@@ -23,7 +24,7 @@ The upstream description provides two complementary sources: generated `yam.urdf
 ## Capabilities
 
 ### New Capabilities
-- `openyam-manipulator-support`: Configure and run bare-arm and gripper-equipped OpenYAM variants through DimOS's manipulation planning and teleoperation workflows.
+- `openyam-manipulator-support`: Configure and run exactly one gripper-equipped OpenYAM model through DimOS's manipulation planning and teleoperation workflows.
 
 ### Modified Capabilities
 
@@ -31,4 +32,4 @@ None.
 
 ## Impact
 
-Developers gain bare-arm and gripper-equipped OpenYAM robot options using the established A1Z-style workflows. The change adds description assets and depends on their upstream mesh/license provenance being acceptable for redistribution. It does not alter existing robots or public skills. Validation must cover URDF/Xacro asset resolution, expected links and joints, variant-specific gripper configuration, blueprint generation, and the existing blueprint-level test paths.
+Developers gain exactly one gripper-equipped OpenYAM robot configuration using the established A1Z-style workflows. The change adds description assets and depends on their upstream mesh/license provenance being acceptable for redistribution. It does not alter existing robots or public skills. Validation must cover wrapper-based Xacro asset resolution, expected links and joints, direct mock-gripper configuration, blueprint generation, and the existing blueprint-level test paths.

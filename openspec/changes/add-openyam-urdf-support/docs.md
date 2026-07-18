@@ -1,6 +1,6 @@
 ## User-Facing Docs
 
-Update the runnable-blueprint documentation or quick-reference table if it enumerates supported manipulators, including that OpenYAM is a mock/planning/teleoperation integration with separate bare-arm and gripper-equipped variants. The gripper variant offers direct mock control only, not animated finger state.
+Update the runnable-blueprint documentation or quick-reference table if it enumerates supported manipulators, including that OpenYAM is exactly one mock/planning/teleoperation integration using the DimOS-owned `yam_gripper.urdf.xacro` wrapper. It offers direct mock gripper control only, not animated or synchronized finger state.
 
 ## Contributor Docs
 
