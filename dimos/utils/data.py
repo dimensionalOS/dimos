@@ -372,7 +372,7 @@ def get_data(name: str | Path) -> Path:
         # unavailable, preserve the existing usable extracted data.
         try:
             pull_path = _pull_lfs_archive(archive_name)
-        except (RuntimeError, FileNotFoundError) as exc:
+        except RuntimeError as exc:
             logger.warning(
                 "Could not resolve the Git LFS archive for %s. "
                 "Using existing extracted data at %s: %s",
