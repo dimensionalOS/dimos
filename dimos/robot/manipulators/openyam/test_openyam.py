@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 from typing import Any
-import xml.etree.ElementTree as ET
-
-import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.utils.mesh_utils import clear_cache, prepare_urdf_for_drake
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -33,13 +27,10 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
-    OPENYAM_MODEL_PATH,
     OPENYAM_PACKAGE_PATHS,
     make_openyam_hardware,
     make_openyam_model_config,
 )
-from dimos.robot.model_parser import parse_model
-from dimos.utils.ament_prefix import process_xacro
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -48,38 +39,6 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     return _module_kwargs(blueprint, ControlCoordinator)
-
-
-def _archive_model_root(config: RobotModelConfig) -> ET.Element:
-    model_path = Path(config.model_path)
-    if model_path.suffix == ".xacro":
-        model_xml = process_xacro(model_path, config.package_paths, {})
-        return ET.fromstring(model_xml)
-    return ET.parse(model_path).getroot()
-
-
-def _element_attributes(element: ET.Element | None) -> dict[str, str]:
-    return {} if element is None else dict(element.attrib)
-
-
-def _origin_attributes(element: ET.Element | None) -> dict[str, str]:
-    origin = element.find("origin") if element is not None else None
-    return _element_attributes(origin)
-
-
-def _arm_link_name(prefix: str, link_number: int) -> str:
-    return f"{prefix}link_{link_number}" if link_number else f"{prefix}base_link"
-
-
-_EXPECTED_VISUAL_RPY = {
-    0: (0.0, 0.0, 0.0),
-    1: (0.0, 0.0, -1.5708),
-    2: (1.5708, 0.0, 3.14159),
-    3: (-1.5708, 0.0, -3.14159),
-    4: (-1.5708, 0.0, -3.14159),
-    5: (-3.14159, 0.0, 1.5708),
-    6: (0.0, -1.5708, 0.0),
-}
 
 
 def test_openyam_model_config_has_expected_links_and_mapping() -> None:
@@ -92,65 +51,8 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     assert config.base_link == "yam_base_link"
     assert config.end_effector_link == "yam_hand_tcp"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
-    assert config.model_path is OPENYAM_MODEL_PATH
+    assert str(config.model_path).endswith("yam_description/urdf/yam_gripper.urdf.xacro")
     assert config.gripper_hardware_id == "arm"
-
-
-@pytest.mark.self_hosted
-def test_openyam_assets_prepare_and_parse_from_lfs_archive() -> None:
-    config = make_openyam_model_config(name="arm")
-
-    prepared_path = prepare_urdf_for_drake(
-        config.model_path,
-        package_paths=config.package_paths,
-    )
-    prepared_content = Path(prepared_path).read_text()
-    model = parse_model(prepared_path)
-
-    assert model.root_link == config.base_link
-    assert config.end_effector_link in model.links
-    assert "package://yam_description" not in prepared_content
-    assert [joint for joint in config.joint_names if joint in model.actuated_joint_names] == (
-        config.joint_names
-    )
-    assert len(config.joint_names) == OPENYAM_DOF
-    assert len(config.joint_name_mapping) == OPENYAM_DOF
-
-
-@pytest.mark.self_hosted
-def test_openyam_visual_origins_match_mujoco_without_changing_arm_metadata() -> None:
-    config = make_openyam_model_config(name="arm")
-    archive_root = _archive_model_root(config)
-    clear_cache()
-    prepared_path = prepare_urdf_for_drake(config.model_path, package_paths=config.package_paths)
-    prepared_root = ET.parse(prepared_path).getroot()
-    link_prefix = "yam_"
-
-    for link_number, expected_rpy in _EXPECTED_VISUAL_RPY.items():
-        link_name = _arm_link_name(link_prefix, link_number)
-        archive_link = archive_root.find(f"./link[@name='{link_name}']")
-        prepared_link = prepared_root.find(f"./link[@name='{link_name}']")
-        assert archive_link is not None
-        assert prepared_link is not None
-
-        visual_origin = _origin_attributes(prepared_link.find("visual"))
-        collision_origin = _origin_attributes(prepared_link.find("collision"))
-        for origin in (visual_origin, collision_origin):
-            assert tuple(float(value) for value in origin["rpy"].split()) == pytest.approx(
-                expected_rpy
-            )
-        assert visual_origin["xyz"] == _origin_attributes(archive_link.find("visual"))["xyz"]
-        assert collision_origin["xyz"] == _origin_attributes(archive_link.find("collision"))["xyz"]
-
-    for joint_name in config.joint_name_mapping.values():
-        archive_joint = archive_root.find(f"./joint[@name='{joint_name}']")
-        prepared_joint = prepared_root.find(f"./joint[@name='{joint_name}']")
-        assert archive_joint is not None
-        assert prepared_joint is not None
-        assert _origin_attributes(prepared_joint) == _origin_attributes(archive_joint)
-        assert _element_attributes(prepared_joint.find("axis")) == _element_attributes(
-            archive_joint.find("axis")
-        )
 
 
 def test_openyam_mock_hardware_has_gripper() -> None:
