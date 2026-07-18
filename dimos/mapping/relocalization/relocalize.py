@@ -44,7 +44,7 @@ GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than th
 MIN_WALL_POINTS = 100
 
 
-class InsufficientWallEvidence(ValueError):
+class InsufficientWallEvidenceError(ValueError):
     """A cloud has too few wall (horizontal-normal) points for the wall-only
     rerank to mean anything. Floors/ceilings are rotationally symmetric, so
     solving on the full cloud instead would be rotation-blind -- a 180-deg
@@ -253,7 +253,7 @@ def refine_candidates(
     n_src_walls, n_tgt_walls = len(src_walls.points), len(tgt_walls.points)
     if n_src_walls < MIN_WALL_POINTS or n_tgt_walls < MIN_WALL_POINTS:
         # No silent full-cloud fallback: floors-only scoring is rotation-blind.
-        raise InsufficientWallEvidence(
+        raise InsufficientWallEvidenceError(
             f"insufficient wall evidence: submap walls={n_src_walls}, "
             f"map walls={n_tgt_walls} < {MIN_WALL_POINTS} — skipping solve"
         )

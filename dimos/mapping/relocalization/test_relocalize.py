@@ -37,7 +37,7 @@ from dimos.mapping.relocalization.priors import (
 )
 import dimos.mapping.relocalization.relocalize as relocalize_mod
 from dimos.mapping.relocalization.relocalize import (
-    InsufficientWallEvidence,
+    InsufficientWallEvidenceError,
     refine_candidates,
     relocalize,
 )
@@ -152,7 +152,7 @@ def test_floors_only_scene_raises_insufficient_wall_evidence() -> None:
     silent fallback: _wall_subset used to hand back the FULL cloud below 100
     wall points, so the "wall-only" rerank scored on floors -- rotation-blind,
     a 180-deg flip fits as well as the truth -- and returned a confident
-    fitness anyway. Now refine_candidates raises InsufficientWallEvidence
+    fitness anyway. Now refine_candidates raises InsufficientWallEvidenceError
     (module.py catches -> logs + skips the frame) and never returns."""
     rng = np.random.default_rng(21)
     floor = _sample_plane(rng, 6.0, 4.0, 0.0, 2000)
@@ -164,13 +164,13 @@ def test_floors_only_scene_raises_insufficient_wall_evidence() -> None:
 
     try:
         _T, fitness, _idx = refine_candidates(_pcd(room_pts), _pcd(local_pts), [T_true.copy()])
-    except InsufficientWallEvidence as e:
+    except InsufficientWallEvidenceError as e:
         msg = str(e)
         assert "insufficient wall evidence" in msg
         assert "submap walls=" in msg and "map walls=" in msg
     else:
         raise AssertionError(
-            f"expected InsufficientWallEvidence, got fitness={fitness:.3f} -- "
+            f"expected InsufficientWallEvidenceError, got fitness={fitness:.3f} -- "
             "the silent full-cloud fallback is back"
         )
 
