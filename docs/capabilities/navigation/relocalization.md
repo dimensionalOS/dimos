@@ -177,6 +177,10 @@ CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
+| `use_last_pose_seed` | `false` | Carry the last accepted pose forward as an extra candidate; it competes through the same wall-fitness judge as RANSAC, never bypassing it |
+| `use_fiducial_prior` | `false` | Feed visual marker fixes from the `world_map_fix` In stream into the judge as age-decayed candidates; same no-bypass rule |
+
+With `use_fiducial_prior` enabled, the module consumes a `world_map_fix` `Transform` In stream (a world → map estimate); `VisualRelocalizationModule` publishes a matching Out stream, so the two autoconnect by name/type when blueprinted together.
 
 Constants are not overridable via CLI today:
 
