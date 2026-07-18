@@ -22,6 +22,7 @@ wires them by name. The base class writes each port (plus the live tf tree) to
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import Field
@@ -38,8 +39,11 @@ LOSSLESS_CODEC = "lz4+lcm"
 
 
 class SpotRecorderConfig(RecorderConfig):
-    db_path: str | Path = "spot_recording.db"
-    # Append into a populated db so re-runs add to the same recording.
+    # Timestamped by default so each run lands in its own file instead of appending
+    # onto the last one. Override with `-o spotrecorder.db_path=...` to pick a path.
+    db_path: str | Path = Field(
+        default_factory=lambda: f"spot_recording_{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
+    )
     on_existing: OnExisting = OnExisting.APPEND
     # The odom frame is the fixed root SpotHighLevel anchors against. It publishes
     # odom->base_link and base_link->camera edges, so image/odom poses resolve
@@ -74,4 +78,4 @@ class SpotRecorder(Recorder):
     grayscale_info: In[CameraInfo]
     depth_info: In[CameraInfo]
 
-    odom: In[Odometry]
+    odometry: In[Odometry]

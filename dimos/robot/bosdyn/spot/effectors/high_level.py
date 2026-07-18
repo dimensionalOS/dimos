@@ -22,8 +22,8 @@ odometry:
 - `grayscale_image_{front_left,front_right,left,right,back}` — the five fisheye
   body cameras.
 - `depth_image_{front_left,front_right,left,right,back}` — the matching depth cameras.
-- `odom` — base pose + velocity, published live as `odom`->`base_link` on TF
-  (frame names configurable via `odom_frame_id` / `base_frame_id`).
+- `odometry` — base pose + velocity, also published live as `odom`->`base_link`
+  on TF (frame names configurable via `odom_frame_id` / `base_frame_id`).
 
 The fixed camera mounts (`base_link`->`{pos}_camera_optical`) come from the URDF
 at `SPOT_URDF_PATH` instead of Spot's live snapshot: `SpotHighLevel` subclasses
@@ -114,7 +114,7 @@ class SpotHighLevelConfig(StaticTfPublisherConfig):
 
     # Poll at the camera's max rate; SpotHighLevel dedups repeats by acquisition_time.
     image_rate_hz: float = CAMERA_MAX_HZ
-    odom_rate_hz: float = 20.0
+    odom_rate_hz: float = 60.0
 
 
 class SpotHighLevel(StaticTfPublisher):
@@ -140,7 +140,7 @@ class SpotHighLevel(StaticTfPublisher):
     grayscale_info: Out[CameraInfo]
     depth_info: Out[CameraInfo]
 
-    odom: Out[Odometry]
+    odometry: Out[Odometry]
 
     dedicated_worker = True
 
@@ -403,12 +403,15 @@ class SpotHighLevel(StaticTfPublisher):
                 kinematic_state.transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME
             )
             velocity = kinematic_state.velocity_of_body_in_vision
-            self._publish_odom(vision_tform_body, velocity)
+            time_converter = self._robot.time_sync.get_robot_time_converter()
+            ts = time_converter.local_seconds_from_robot_timestamp(
+                kinematic_state.acquisition_timestamp
+            )
+            self._publish_odom(vision_tform_body, velocity, ts)
 
             await asyncio.sleep(max(0.0, period - (time.monotonic() - start)))
 
-    def _publish_odom(self, vision_tform_body: Any, velocity: Any) -> None:
-        now = time.time()
+    def _publish_odom(self, vision_tform_body: Any, velocity: Any, ts: float) -> None:
         pose = Pose(
             position=[vision_tform_body.x, vision_tform_body.y, vision_tform_body.z],
             orientation=[
@@ -423,13 +426,13 @@ class SpotHighLevel(StaticTfPublisher):
             angular=[velocity.angular.x, velocity.angular.y, velocity.angular.z],
         )
         odometry = Odometry(
-            ts=now,
+            ts=ts,
             frame_id=self.config.odom_frame_id,
             child_frame_id=self.config.base_frame_id,
             pose=pose,
             twist=twist,
         )
-        self.odom.publish(odometry)
+        self.odometry.publish(odometry)
         self.tf.publish(
             Transform(
                 translation=Vector3(vision_tform_body.x, vision_tform_body.y, vision_tform_body.z),
@@ -441,7 +444,7 @@ class SpotHighLevel(StaticTfPublisher):
                 ),
                 frame_id=self.config.odom_frame_id,
                 child_frame_id=self.config.base_frame_id,
-                ts=now,
+                ts=ts,
             )
         )
 
