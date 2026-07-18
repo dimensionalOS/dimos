@@ -25,11 +25,16 @@ from dimos.web.relay_bridge.protocol import (
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
     PROTOCOL_VERSION,
+    ChannelSpec,
     ControlFrameReader,
     DataFrameReader,
     FrameHeader,
+    Hello,
     Ping,
     ProtocolError,
+    RobotInfo,
+    RobotManifest,
+    Robots,
     decode_data_frame,
     decode_datagram,
     encode_control_frame,
@@ -190,6 +195,68 @@ def test_msg_from_dict_validates_types():
         msg_from_dict({"t": "bogus"})  # unknown type
     with pytest.raises(ProtocolError):
         msg_from_dict({"t": "ping", "n": True, "ts": 2.5})  # bool is not a number
+    # Mirrored-validator parity: protocol.ts must also reject prototype-chain
+    # keys instead of resolving them through Object.prototype (protocol_test.ts
+    # asserts the same three).
+    with pytest.raises(ProtocolError):
+        msg_from_dict({"t": "toString"})
+    with pytest.raises(ProtocolError):
+        msg_from_dict({"t": "constructor"})
+    with pytest.raises(ProtocolError):
+        msg_from_dict({"t": "hasOwnProperty"})
+
+
+def test_msg_from_dict_validates_nested_session_shapes():
+    robot = {"id": "go2-lab", "name": "Go2 Lab", "model": "unitree-go2"}
+    spec = {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.5}
+    full = {"t": "hello", "v": 1, "role": "robot", "robot": robot, "manifest": {"channels": [spec]}}
+    assert msg_from_dict(full) == Hello(
+        v=1,
+        role="robot",
+        robot=RobotInfo(id="go2-lab", name="Go2 Lab", model="unitree-go2"),
+        manifest=RobotManifest(
+            channels=[
+                ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.5)
+            ]
+        ),
+    )
+    # hello stays valid without the optional robot/manifest (viewer form).
+    assert msg_from_dict({"t": "hello", "v": 1, "role": "viewer"}) == Hello(v=1, role="viewer")
+    bad = [
+        # Optional means absent-or-valid: explicit null is rejected on the
+        # wire (local construction with robot=None stays fine: absent).
+        {"t": "hello", "v": 1, "role": "robot", "robot": None},
+        {**full, "robot": {"id": 5, "name": "x", "model": "m"}},
+        {**full, "manifest": {"channels": [{**spec, "maxHz": "20"}]}},
+        {**full, "manifest": {"channels": [{**spec, "delivery": "bogus"}]}},
+        {**full, "manifest": {"channels": robot}},
+        {"t": "robots", "robots": {}},
+        {"t": "robots", "robots": [{"id": "a", "name": "b"}]},
+        {"t": "robots"},
+        {"t": "manifest", "channels": [spec]},
+        {"t": "watch"},
+        {"t": "subs", "chs": ["a", 5], "n": 1},
+        {"t": "subs", "chs": ["a"]},
+    ]
+    for data in bad:
+        with pytest.raises(ProtocolError):
+            msg_from_dict(data)
+
+
+def test_encode_omits_absent_optional_fields():
+    # A viewer hello must stay byte-identical to its T1 wire form: no
+    # "robot":null / "manifest":null keys (JSON.stringify omits undefined).
+    assert encode_datagram(Hello(v=1, role="viewer")) == b'{"t":"hello","v":1,"role":"viewer"}'
+
+
+def test_nested_roundtrip_returns_models():
+    msg = Robots(robots=[RobotInfo(id="a", name="A", model="m")])
+    decoded = decode_datagram(encode_datagram(msg))
+    assert decoded == msg
+    assert isinstance(decoded.robots[0], RobotInfo)
+    # Extra wire keys inside nested objects are ignored (forward compat).
+    extra = {"t": "watch", "robotId": "r", "later": 1}
+    assert msg_from_dict(extra) == msg_from_dict({"t": "watch", "robotId": "r"})
 
 
 def test_non_finite_numbers_rejected():

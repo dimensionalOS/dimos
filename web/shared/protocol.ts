@@ -26,10 +26,33 @@ export const MAX_DATA_FRAME_BYTES = 64 * 1024 * 1024;
 export type Role = "robot" | "viewer";
 export type Delivery = "latest" | "reliable";
 
+export interface RobotInfo {
+  id: string;
+  name: string;
+  model: string;
+}
+
+// One robot->viewer stream: encoding names the payload format (e.g. jpeg.v1,
+// pose.json.v1), delivery picks the relay's forwarding policy, maxHz is the
+// bridge's advertised send cap (informational for viewers).
+export interface ChannelSpec {
+  ch: string;
+  encoding: string;
+  delivery: Delivery;
+  maxHz: number;
+}
+
+export interface RobotManifest {
+  channels: ChannelSpec[];
+}
+
 export interface HelloMsg {
   t: "hello";
   v: number;
   role: Role;
+  // role=robot only: identity + channel manifest, registered by the relay.
+  robot?: RobotInfo;
+  manifest?: RobotManifest;
 }
 
 export interface WelcomeMsg {
@@ -55,6 +78,44 @@ export interface ErrorMsg {
   message: string;
 }
 
+// Session messages (T2): robot registration, viewer watch + per-channel
+// subscriptions, and the relay->robot subscription snapshot.
+export interface RobotsMsg {
+  t: "robots";
+  robots: RobotInfo[];
+}
+
+export interface WatchMsg {
+  t: "watch";
+  robotId: string;
+}
+
+export interface ManifestMsg {
+  t: "manifest";
+  robotId: string;
+  channels: ChannelSpec[];
+}
+
+export interface SubMsg {
+  t: "sub";
+  ch: string;
+}
+
+export interface UnsubMsg {
+  t: "unsub";
+  ch: string;
+}
+
+// Relay->robot: the full set of channels with >= 1 subscribed viewer. A
+// snapshot (not a delta) because it rides lossy datagrams: any single delivery
+// heals the state. `n` is monotonic per robot; receivers ignore stale/reordered
+// snapshots.
+export interface SubsMsg {
+  t: "subs";
+  chs: string[];
+  n: number;
+}
+
 // Teleop datagrams (carried from T6 on; declared here so the wire format is
 // pinned by fixtures from day one).
 export interface TwistMsg {
@@ -72,12 +133,14 @@ export interface StopMsg {
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
+export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
 export type TeleopMsg = TwistMsg | StopMsg;
-export type Msg = ControlMsg | TeleopMsg;
+export type Msg = ControlMsg | SessionMsg | TeleopMsg;
 
-// Data-plane frame header. `delivery` tells the relay how to forward the
-// frame without a manifest (T1 only; the T2+ manifest replaces it). `meta`
-// carries encoding-specific extras (e.g. {w, h} for images).
+// Data-plane frame header. `delivery` tells the relay how to forward frames
+// on channels the robot's manifest does not declare (the manifest's delivery
+// wins when present). `meta` carries encoding-specific extras (e.g. {w, h}
+// for images).
 export interface FrameHeader {
   ch: string;
   seq: number;
@@ -98,13 +161,20 @@ const dec = new TextDecoder("utf-8", { fatal: true });
 
 // Runtime field validation, mirrored by the pydantic models in protocol.py:
 // "string" is a JSON string, "number" any JSON number (booleans excluded by
-// typeof).
+// typeof). Structured fields (nested objects/arrays) are checked by
+// MSG_VALIDATORS below.
 const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   hello: { v: "number", role: "string" },
   welcome: { v: "number" },
   ping: { n: "number", ts: "number" },
   pong: { n: "number", ts: "number" },
   error: { code: "string", message: "string" },
+  robots: {},
+  watch: { robotId: "string" },
+  manifest: { robotId: "string" },
+  sub: { ch: "string" },
+  unsub: { ch: "string" },
+  subs: { n: "number" },
   twist: { vx: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
 };
@@ -113,15 +183,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isRobotInfo(value: unknown): value is RobotInfo {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.model === "string"
+  );
+}
+
+function isChannelSpec(value: unknown): value is ChannelSpec {
+  return (
+    isRecord(value) &&
+    typeof value.ch === "string" &&
+    typeof value.encoding === "string" &&
+    (value.delivery === "latest" || value.delivery === "reliable") &&
+    typeof value.maxHz === "number"
+  );
+}
+
+// Structural checks for nested fields, run after the flat MSG_FIELDS pass.
+// Optional fields (hello.robot/manifest) accept absent but reject null: JSON
+// encoders on both sides omit absent fields and never emit null.
+const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
+  hello: (v) =>
+    (v.robot === undefined || isRobotInfo(v.robot)) &&
+    (v.manifest === undefined ||
+      (isRecord(v.manifest) &&
+        Array.isArray(v.manifest.channels) &&
+        v.manifest.channels.every(isChannelSpec))),
+  robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
+  manifest: (v) => Array.isArray(v.channels) && v.channels.every(isChannelSpec),
+  subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
+};
+
 /** Validated message from parsed JSON; null for unknown or malformed ones. */
 export function msgFromUnknown(value: unknown): Msg | null {
   if (!isRecord(value) || typeof value.t !== "string") return null;
-  const fields = MSG_FIELDS[value.t];
+  // Object.hasOwn: a bare [value.t] lookup traverses to Object.prototype, so
+  // {"t":"toString"} would come back typed as Msg while the mirrored
+  // protocol.py (dict membership) rejects it.
+  const fields = Object.hasOwn(MSG_FIELDS, value.t) ? MSG_FIELDS[value.t] : undefined;
   if (fields === undefined) return null;
   for (const [name, kind] of Object.entries(fields)) {
     const actual = typeof value[name];
     if (actual !== kind) return null;
   }
+  const structural = Object.hasOwn(MSG_VALIDATORS, value.t) ? MSG_VALIDATORS[value.t] : undefined;
+  if (structural !== undefined && !structural(value)) return null;
   return value as unknown as Msg;
 }
 

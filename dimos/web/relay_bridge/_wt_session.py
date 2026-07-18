@@ -59,6 +59,11 @@ logger = setup_logger()
 # Received data frames waiting for the consumer; drop-oldest beyond this.
 _FRAME_QUEUE_MAX = 256
 
+# Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
+# the consumer; drop-oldest beyond this. Snapshots are idempotent and resent,
+# so a dropped one heals on the next round.
+_CONTROL_QUEUE_MAX = 64
+
 # The relay's abort of its send half surfaces as a stream reset; also used
 # when this side resets a stale latest-wins stream.
 STALE_STREAM_ERROR_CODE = 0x01
@@ -92,6 +97,8 @@ class SessionProtocol(QuicConnectionProtocol):
         self.relay_error: Error | None = None
         self.frames: asyncio.Queue[DataFrame] = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         self.frames_dropped = 0
+        self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue(maxsize=_CONTROL_QUEUE_MAX)
+        self.control_dropped = 0
         self.session_id: int | None = None
         self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
         self._frame_readers: dict[int, DataFrameReader | None] = {}
@@ -142,6 +149,13 @@ class SessionProtocol(QuicConnectionProtocol):
             waiter = self._pong_waiters.pop(msg.n, None)
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
+        else:
+            # Session messages (subs snapshots, robots, manifest, ...) go to
+            # the consumer queue; see RelayClient.control_messages().
+            if self.control_msgs.full():
+                self.control_msgs.get_nowait()
+                self.control_dropped += 1
+            self.control_msgs.put_nowait(msg)
 
     def _stream_data_received(self, stream_id: int, data: bytes, ended: bool) -> None:
         # None marks a stream whose frame is already complete (the late FIN

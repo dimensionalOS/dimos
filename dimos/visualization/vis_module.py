@@ -18,6 +18,7 @@
 from typing import Any, get_args
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.visualization.rerun.constants import ViewerBackend
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -61,7 +62,7 @@ def vis_module(
             rerun_config.setdefault("pubsubs", [LCM()])
             rerun_config.setdefault("rerun_open", global_config.rerun_open)
             rerun_config.setdefault("rerun_web", global_config.rerun_web)
-            return autoconnect(
+            bundle = autoconnect(
                 RerunBridgeModule.blueprint(
                     **rerun_config,
                 ),
@@ -69,7 +70,21 @@ def vis_module(
                 WebsocketVisModule.blueprint(),
             )
         case "none":
-            return autoconnect(WebsocketVisModule.blueprint())
+            bundle = autoconnect(WebsocketVisModule.blueprint())
         case _:
             valid = ", ".join(get_args(ViewerBackend))
             raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")
+    return _with_relay_bridge(bundle)
+
+
+def _with_relay_bridge(bundle: Blueprint) -> Blueprint:
+    """Append the cockpit RelayBridgeModule when the relay is enabled."""
+    if not (global_config.local_relay or global_config.relay_url):
+        return bundle
+    try:
+        from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+    except ImportError as e:
+        raise RuntimeError(
+            "--local-relay/--relay-url need the web extra: `uv sync --extra web --inexact`"
+        ) from e
+    return autoconnect(bundle, RelayBridgeModule.blueprint())

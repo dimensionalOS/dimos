@@ -4,6 +4,7 @@
 // only), so this covers the full forwarding path without a browser.
 import { assert, assertEquals } from "@std/assert";
 import {
+  type ChannelSpec,
   ControlFrameReader,
   decodeDatagram,
   encodeControlFrame,
@@ -12,9 +13,16 @@ import {
   type FrameHeader,
   type Msg,
   PROTOCOL_VERSION,
+  type RobotInfo,
 } from "@dimos/shared";
 import { readDataFrameBytes } from "./forward.ts";
 import { startRelay } from "./server.ts";
+
+const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
+const CHANNELS: ChannelSpec[] = [
+  { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
+  { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+];
 
 function certOpts(hashB64: string): WebTransportOptions {
   return {
@@ -162,7 +170,7 @@ Deno.test({
   const controlWriter = control.writable.getWriter();
   const nextControl = controlQueue(control.readable);
 
-  await t.step("viewer control: hello -> welcome, ping -> pong", async () => {
+  await t.step("viewer control: hello -> welcome + robots, ping -> pong", async () => {
     await controlWriter.write(
       encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }),
     );
@@ -170,6 +178,7 @@ Deno.test({
       t: "welcome",
       v: PROTOCOL_VERSION,
     });
+    assertEquals(await within(nextControl(), "robots"), { t: "robots", robots: [] });
     await controlWriter.write(encodeControlFrame({ t: "ping", n: 1, ts: 123.5 }));
     assertEquals(await within(nextControl(), "pong"), { t: "pong", n: 1, ts: 123.5 });
   });
@@ -190,14 +199,51 @@ Deno.test({
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
   const robotDgWriter = robot.datagrams.writable.getWriter();
 
-  await t.step("robot control rides datagrams: hello -> welcome", async () => {
+  await t.step("robot hello (identity + manifest) -> welcome + baseline subs", async () => {
     await robotDgWriter.write(
-      encodeDatagram({ t: "hello", v: PROTOCOL_VERSION, role: "robot" }),
+      encodeDatagram({
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: ROBOT,
+        manifest: { channels: CHANNELS },
+      }),
     );
     assertEquals(await within(robotDatagrams(), "robot welcome"), {
       t: "welcome",
       v: PROTOCOL_VERSION,
     });
+    // Registration pushes the forced baseline snapshot (no viewers yet).
+    assertEquals(await within(robotDatagrams(), "baseline subs"), {
+      t: "subs",
+      chs: [],
+      n: 1,
+    });
+  });
+
+  await t.step("registration pushes robots to the greeted viewer", async () => {
+    assertEquals(await within(nextControl(), "robots push"), {
+      t: "robots",
+      robots: [ROBOT],
+    });
+  });
+
+  await t.step("watch -> manifest reply; subs snapshot reaches the robot", async () => {
+    await controlWriter.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
+    assertEquals(await within(nextControl(), "manifest"), {
+      t: "manifest",
+      robotId: ROBOT.id,
+      channels: CHANNELS,
+    });
+    await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
+    await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    // One snapshot per sub message; skip ahead to the full set.
+    let subs: Msg;
+    do {
+      subs = await within(robotDatagrams(), "subs snapshot");
+    } while (subs.t === "subs" && subs.chs.length < 2);
+    assert(subs.t === "subs");
+    assertEquals(subs.chs, ["color_image", "odom"]);
   });
 
   await t.step("robot frames fan out to the viewer on uni streams", async () => {
@@ -233,13 +279,79 @@ Deno.test({
     assertEquals(got[1].payload, imagePayload);
   });
 
-  await t.step("/api/stats counted the traffic", async () => {
+  await t.step("a viewer that never subscribed receives nothing", async () => {
+    const idle = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+    await within(idle.ready, "idle viewer connect");
+    const idleStream = await idle.createBidirectionalStream();
+    const idleWriter = idleStream.writable.getWriter();
+    const idleControl = controlQueue(idleStream.readable);
+    await idleWriter.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    await within(idleControl(), "idle welcome");
+
+    await sendRobotFrame(
+      robot,
+      { ch: "odom", seq: 3, ts: 12.5, delivery: "reliable" },
+      new Uint8Array([3]),
+    );
+    // The subscribed viewer's receipt proves routing ran with both present.
+    assertEquals((await within(viewerFrames(), "odom for subscriber")).header.seq, 3);
     const stats = await (await fetch(`${httpBase}/api/stats`)).json();
-    assertEquals(stats.robot, true);
+    const idleStats = stats.perViewer.find((v: { watched: string | null }) => v.watched === null);
+    assertEquals(idleStats.channels, {});
+    idle.close();
+  });
+
+  await t.step("unsub stops forwarding that channel", async () => {
+    await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "color_image" }));
+    // Ordered control stream: the pong below proves the unsub was processed.
+    await controlWriter.write(encodeControlFrame({ t: "ping", n: 9, ts: 99.5 }));
+    assertEquals(await within(nextControl(), "pong after unsub"), { t: "pong", n: 9, ts: 99.5 });
+
+    await sendRobotFrame(
+      robot,
+      { ch: "color_image", seq: 4, ts: 13.5, delivery: "latest" },
+      new Uint8Array([4]),
+    );
+    await sendRobotFrame(
+      robot,
+      { ch: "odom", seq: 5, ts: 14.5, delivery: "reliable" },
+      new Uint8Array([5]),
+    );
+    // Only odom arrives; the image frame was not forwarded.
+    const got = await within(viewerFrames(), "odom after unsub");
+    assertEquals(got.header.ch, "odom");
+    assertEquals(got.header.seq, 5);
+  });
+
+  await t.step("/api/stats reflects sessions and traffic", async () => {
+    // The idle viewer's close is asynchronous on the relay side; poll it out.
+    let stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    for (let i = 0; i < 80 && stats.viewers !== 1; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    }
+    assertEquals(stats.robots, [ROBOT]);
     assertEquals(stats.viewers, 1);
-    assertEquals(stats.channels.odom.framesIn, 1);
-    assertEquals(stats.channels.color_image.framesIn, 1);
-    assertEquals(stats.perViewer[0].channels.odom.sent, 1);
+    assertEquals(stats.perRobot[ROBOT.id].subs, ["odom"]);
+    assertEquals(stats.perRobot[ROBOT.id].channels.odom.framesIn, 3);
+    assertEquals(stats.perRobot[ROBOT.id].channels.odom.delivery, "reliable");
+    const viewerStats = stats.perViewer.find(
+      (v: { watched: string | null }) => v.watched === ROBOT.id,
+    );
+    assertEquals(viewerStats.subs, ["odom"]);
+    assertEquals(viewerStats.channels.odom.sent, 3);
+  });
+
+  await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
+    const bare = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(bare.ready, "bare robot connect");
+    const bareDatagrams = datagramQueue(bare.datagrams.readable);
+    const bareWriter = bare.datagrams.writable.getWriter();
+    await bareWriter.write(encodeDatagram({ t: "hello", v: PROTOCOL_VERSION, role: "robot" }));
+    const err = await within(bareDatagrams(), "missing_robot_id error");
+    assertEquals(err.t, "error");
+    assertEquals((err as { code: string }).code, "missing_robot_id");
+    await within(bare.closed.catch(() => {}), "bare robot session close");
   });
 
   await t.step("hello with a wrong version -> error + close", async () => {

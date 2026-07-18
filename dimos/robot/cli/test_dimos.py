@@ -144,6 +144,28 @@ def test_blueprint_arg_help_extra_args():
     ]
 
 
+def test_load_config_args_merges_cli_g_overrides(tmp_path):
+    """CLI flags (--transport, --local-relay, ...) must merge into the g
+    subtree built from config file / G__* env / -o g.* args, not replace it:
+    a replace silently reverts every other g.* key to its default."""
+
+    class Config(ModuleConfig):
+        pass
+
+    class TestModuleG(Module):
+        config: Config
+
+    blueprint = TestModuleG.blueprint()
+    kwargs = load_config_args(
+        blueprint.config(),
+        ["g.robot_id=go2-lab", "g.local_relay=false"],
+        tmp_path / "config.json",
+        cli_g_overrides={"local_relay": True},
+    )
+    assert kwargs["g"]["robot_id"] == "go2-lab"  # survives the CLI overrides
+    assert kwargs["g"]["local_relay"] is True  # the explicit flag wins its own key
+
+
 def test_blueprint_arg_help_required():
     """Test required arguments."""
 
