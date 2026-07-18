@@ -49,9 +49,16 @@ class LocalizationConfig(NamedTuple):
     # IPPE mirror-ambiguity gate: the best PnP candidate is only trusted when it
     # beats the runner-up by this reprojection-error ratio. Near-tied candidates
     # mean the flipped mirror pose explains the pixels almost as well (weak
-    # perspective: small/near-head-on tag) and neither can be trusted. 1.0
-    # disables the gate; the 2.0 default is an engineering guess (untuned).
-    ambiguity_ratio_min: float = 2.0
+    # perspective: small/near-head-on tag) and neither can be trusted; 1.0
+    # disables the gate. 5.0 TESTED on the hk_village3 replay (n=112 live fixes,
+    # 164 detections passing the old 2.0 gate): this ratio was the only live
+    # signal tracking world-frame tag-orientation error (Spearman rho -0.57) —
+    # the error a 31 m tag-to-map-origin lever arm amplifies into ~0.55 m of fix
+    # translation per degree. At 5.0 the gate kept 41/112 fixes, median tag-
+    # orientation deviation 2.4 deg kept vs 5.8 deg cut, fix translation error
+    # 2.38 m kept vs 3.35 m cut, coverage retained in all 5 sighting bursts.
+    # Tuned on that ONE recording; untuned beyond it.
+    ambiguity_ratio_min: float = 5.0
 
 
 def detect_markers(gray_image: np.ndarray, detector: Any) -> list[tuple[int, np.ndarray]]:
@@ -67,6 +74,7 @@ def localize_from_detections(
     camera_info: CameraInfo,
     config: LocalizationConfig,
     ts: float,
+    reject_counts: dict[str, int] | None = None,
 ) -> Transform | None:
     """Per known tag: invert solvePnP (``pose_in_map = map_T_marker . (optical_T_marker)^-1``).
 
@@ -78,7 +86,13 @@ def localize_from_detections(
     When multiple tags clear both gates, the lowest-reprojection-error estimate
     wins (never worse than the single best tag) instead of an arbitrary
     detection-order pick.
+
+    ``reject_counts``, when given, is filled with per-tag skip reasons
+    (``unmapped_id`` / ``mirror_ambiguous`` / ``high_reprojection``) so the
+    caller's log can say WHICH gate fired — each reason has a different
+    operator fix (see VisualRelocalizationModule.handle_color_image).
     """
+    rejects = reject_counts if reject_counts is not None else {}
     k, d = camera_info_to_cv_matrices(camera_info)
     # distortion_model must reach the PnP helpers: the Go2 camera is
     # equidistant fisheye, and without the model the 4 fisheye coefficients
@@ -88,6 +102,7 @@ def localize_from_detections(
     good: list[tuple[float, Transform]] = []
     for marker_id, corners_px in detections:
         if (map_T_marker := marker_map.get(marker_id)) is None:
+            rejects["unmapped_id"] = rejects.get("unmapped_id", 0) + 1
             continue
         candidates = estimate_marker_pose_candidates(
             corners_px, config.marker_length_m, k, d, distortion_model=model
@@ -116,8 +131,11 @@ def localize_from_detections(
         error, rvec, tvec = scored[0]
         if len(scored) > 1 and error > 1e-12:
             if scored[1][0] / error < config.ambiguity_ratio_min:
-                continue  # mirror pose explains the pixels almost as well: untrustworthy view
+                # mirror pose explains the pixels almost as well: untrustworthy view
+                rejects["mirror_ambiguous"] = rejects.get("mirror_ambiguous", 0) + 1
+                continue
         if error > config.max_reprojection_error_px:
+            rejects["high_reprojection"] = rejects.get("high_reprojection", 0) + 1
             continue
         optical_T_marker = rvec_tvec_to_transform(
             rvec, tvec, frame_id=OPTICAL_FRAME, child_frame_id=map_T_marker.child_frame_id, ts=ts

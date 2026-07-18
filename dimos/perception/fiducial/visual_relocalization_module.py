@@ -51,8 +51,10 @@ class VisualRelocalizationModuleConfig(ModuleConfig):
     min_tags: int = Field(1, ge=1)  # tags that must clear the gate before a fix is trusted
     max_reprojection_error_px: float = Field(3.0, gt=0.0)
     # best-vs-runner-up IPPE candidate reprojection ratio below which a tag's
-    # view is mirror-ambiguous and rejected; 1.0 disables (see LocalizationConfig)
-    ambiguity_ratio_min: float = Field(2.0, ge=1.0)
+    # view is mirror-ambiguous and rejected; 1.0 disables. Default TESTED on the
+    # hk_village3 replay ONLY (n=112 live fixes) — measurement and the lever-arm
+    # physics live on LocalizationConfig.ambiguity_ratio_min.
+    ambiguity_ratio_min: float = Field(5.0, ge=1.0)
     camera_info: CameraInfo | None = None  # static, MarkerDetectionStreamModule convention
     camera_optical_frame: str = OPTICAL_FRAME
     # target frame for the published correction TF (world -> map_frame) and the pose output's
@@ -107,10 +109,19 @@ class VisualRelocalizationModule(Module):
         detections = detect_markers(msg.to_grayscale().as_numpy(), self._detector)
         if not detections:
             return  # no tags in view: the normal case, not worth logging
-        pose = localize_from_detections(detections, self._marker_map, info, self._cfg, msg.ts)
+        rejects: dict[str, int] = {}
+        pose = localize_from_detections(
+            detections, self._marker_map, info, self._cfg, msg.ts, reject_counts=rejects
+        )
         if pose is None:
+            # Per-reason counts make the throttled line actionable on robot day:
+            # mirror_ambiguous -> viewing geometry (tag small/near-head-on in
+            # frame: get closer or more oblique), high_reprojection -> detection
+            # quality or camera calibration, unmapped_id -> tag missing from
+            # marker_map_file.
             self._warn_throttled(
-                f"VisualRelocalizationModule: gate rejected ({len(detections)} tags seen)"
+                f"VisualRelocalizationModule: gate rejected ({len(detections)} tags seen, "
+                f"rejects={rejects})"
             )
             return
         pose.frame_id = self.config.map_frame  # retarget map_T_optical before inverting/publishing

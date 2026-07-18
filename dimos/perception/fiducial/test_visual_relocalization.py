@@ -238,6 +238,77 @@ def test_ambiguity_gate_accepts_unambiguous_view() -> None:
     assert truth.translation.distance(pose.translation) < 0.05
 
 
+def test_ambiguity_gate_default_rejects_mid_ratio_view() -> None:
+    """Mid-perspective view whose runner-up reprojects ~3.6x worse (measured): clears the
+    old 2.0 engineering-guess default but not the village3-measured 5.0 — on that replay,
+    detections in this ratio band carried ~5.8 deg median world-frame tag-orientation
+    error, i.e. ~3 m of fix error through the 31 m map-origin lever arm. Explicitly
+    passing 2.0 accepts the same detection, pinning that only the default moved."""
+    info = camera_info()
+    corners = _projected_corners(
+        np.array([[0.20], [0.1], [0.0]]), np.array([[0.1], [0.05], [1.5]]), info, _SUBPIXEL_NOISE
+    )
+    default_gate = LocalizationConfig(_MARKER_LENGTH_M)
+    assert (
+        localize_from_detections([(_MARKER_ID, corners)], _MARKER_MAP, info, default_gate, 10.0)
+        is None
+    )
+    old_default = LocalizationConfig(_MARKER_LENGTH_M, ambiguity_ratio_min=2.0)
+    assert (
+        localize_from_detections([(_MARKER_ID, corners)], _MARKER_MAP, info, old_default, 10.0)
+        is not None
+    )
+
+
+def test_ambiguity_gate_default_is_village3_measured_value() -> None:
+    """Core NamedTuple default and module config default both sit at the village3-measured
+    5.0 and cannot drift apart silently (the module threads its value into the core)."""
+    assert LocalizationConfig(_MARKER_LENGTH_M).ambiguity_ratio_min == 5.0
+    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M)
+    try:
+        assert module._cfg.ambiguity_ratio_min == 5.0
+    finally:
+        module.stop()
+
+
+def test_localize_reject_counts_name_the_gate() -> None:
+    """``reject_counts`` attributes each skipped tag to the gate that fired, so the
+    module's throttled warning is triageable: mirror_ambiguous = viewing geometry,
+    high_reprojection = detection/calibration, unmapped_id = marker map contents."""
+    info = camera_info()
+    ambiguous = _projected_corners(
+        np.array([[0.05], [0.03], [0.0]]), np.array([[0.1], [0.05], [5.0]]), info, _SUBPIXEL_NOISE
+    )
+    counts: dict[str, int] = {}
+    assert (
+        localize_from_detections(
+            [(_MARKER_ID, ambiguous), (99, ambiguous)],
+            _MARKER_MAP,
+            info,
+            LocalizationConfig(_MARKER_LENGTH_M),
+            10.0,
+            reject_counts=counts,
+        )
+        is None
+    )
+    assert counts == {"mirror_ambiguous": 1, "unmapped_id": 1}
+
+    corrupted = _projected_corners(
+        np.array([[0.5], [0.2], [0.0]]), np.array([[0.05], [0.02], [0.6]]), info, _SUBPIXEL_NOISE
+    )
+    corrupted[0] += (60.0, -45.0)  # yank one corner -> inconsistent quad, huge residual
+    counts = {}
+    # ambiguity gate disabled so the reprojection gate is provably the one that fired
+    cfg = LocalizationConfig(_MARKER_LENGTH_M, ambiguity_ratio_min=1.0)
+    assert (
+        localize_from_detections(
+            [(_MARKER_ID, corrupted)], _MARKER_MAP, info, cfg, 10.0, reject_counts=counts
+        )
+        is None
+    )
+    assert counts == {"high_reprojection": 1}
+
+
 def test_estimate_marker_pose_candidates_returns_only_finite_poses() -> None:
     """The multi-candidate helper returns both IPPE solutions on a clean view and never a
     non-finite pose on degenerate input (solvePnPGeneric can emit all-NaN solutions there)."""
@@ -352,8 +423,13 @@ async def test_handle_color_image_unmapped_marker_skips_publish() -> None:
 
 
 async def test_handle_color_image_rejects_high_reprojection_error() -> None:
-    """A corrupted detection (high reprojection error) makes the gate reject; publish is skipped."""
-    module = VisualRelocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    """A corrupted detection (high reprojection error) makes the gate reject; publish is
+    skipped and the throttled warning names the gate that fired. The ambiguity gate is
+    disabled because the corrupted quad's candidate ratio (~2.6, measured) would trip it
+    first under the village3 default — this test pins the reprojection gate specifically."""
+    module = VisualRelocalizationModule(
+        marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info(), ambiguity_ratio_min=1.0
+    )
     module._marker_map = _MARKER_MAP
     image = synthetic_marker_image(_MARKER_ID, ts=10.0)
     detections = detect_markers(
@@ -363,12 +439,18 @@ async def test_handle_color_image_rejects_high_reprojection_error() -> None:
     corrupted[0][1][0] += (60.0, -45.0)  # yank one corner off -> inconsistent quad
     try:
         module.tf.publish(world_T_optical())
-        with patch(
-            "dimos.perception.fiducial.visual_relocalization_module.detect_markers",
-            return_value=corrupted,
+        with (
+            patch(
+                "dimos.perception.fiducial.visual_relocalization_module.detect_markers",
+                return_value=corrupted,
+            ),
+            patch(
+                "dimos.perception.fiducial.visual_relocalization_module.logger.warning"
+            ) as warned,
         ):
             await module.handle_color_image(image)
         assert module.tf.get("world", "map") is None
+        assert any("high_reprojection" in str(c.args[0]) for c in warned.call_args_list)
     finally:
         module.stop()
 
