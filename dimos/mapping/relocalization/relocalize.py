@@ -36,6 +36,21 @@ RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # voxel for the final ICP refinement
 RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
+# Minimum wall points (per cloud, post fine-voxel downsample) to attempt the
+# wall-only rerank. ARBITRARY / UNTUNED: inherited verbatim from the old
+# silent-fallback check; no benchmark frame has ever come below it (the Jul 17
+# probe showed the fallback never fired on any of the n=6 canonical runs), so
+# it has never been calibrated against real sparse-wall data.
+MIN_WALL_POINTS = 100
+
+
+class InsufficientWallEvidence(ValueError):
+    """A cloud has too few wall (horizontal-normal) points for the wall-only
+    rerank to mean anything. Floors/ceilings are rotationally symmetric, so
+    solving on the full cloud instead would be rotation-blind -- a 180-deg
+    flip scores as well as the truth. Refuse loudly rather than silently
+    degrade; the live module (module.py ``_try_relocalize``) catches this,
+    logs it, and skips the frame."""
 
 
 def _preprocess(
@@ -124,11 +139,12 @@ def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
     """Roughly-horizontal-normal subset. Floor/ceiling points have vertical
     normals; they fit equally well in any yaw rotation (flat planes are
     rotationally symmetric), so a 180°-flipped candidate can hide its wall
-    misalignment behind perfect floor alignment if they're left in."""
+    misalignment behind perfect floor alignment if they're left in.
+
+    Returns the subset unconditionally, even when it is tiny/empty; the
+    sparse-wall refusal (MIN_WALL_POINTS) lives in ``refine_candidates``."""
     nrm = np.asarray(cloud.normals)
     mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
-    if mask.sum() < 100:
-        return cloud  # too sparse -> fall back to full cloud
     sub = o3d.geometry.PointCloud()
     sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
     sub.normals = o3d.utility.Vector3dVector(nrm[mask])
@@ -234,6 +250,13 @@ def refine_candidates(
     # are preserved in the output.
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
+    n_src_walls, n_tgt_walls = len(src_walls.points), len(tgt_walls.points)
+    if n_src_walls < MIN_WALL_POINTS or n_tgt_walls < MIN_WALL_POINTS:
+        # No silent full-cloud fallback: floors-only scoring is rotation-blind.
+        raise InsufficientWallEvidence(
+            f"insufficient wall evidence: submap walls={n_src_walls}, "
+            f"map walls={n_tgt_walls} < {MIN_WALL_POINTS} — skipping solve"
+        )
 
     # Stage 1: rank all candidates by WALL-only fine-scale fitness.
     def fine_fitness(item: tuple[int, np.ndarray]) -> float:

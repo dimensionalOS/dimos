@@ -36,7 +36,11 @@ from dimos.mapping.relocalization.priors import (
     relocalize_with_priors,
 )
 import dimos.mapping.relocalization.relocalize as relocalize_mod
-from dimos.mapping.relocalization.relocalize import refine_candidates, relocalize
+from dimos.mapping.relocalization.relocalize import (
+    InsufficientWallEvidence,
+    refine_candidates,
+    relocalize,
+)
 
 
 def _pcd(points: np.ndarray) -> o3d.geometry.PointCloud:
@@ -139,6 +143,37 @@ def test_judge_integrity_wall_fitness_picks_near_truth_over_decoys() -> None:
     assert fitness > 0.5
     np.testing.assert_allclose(T[:3, 3], T_true[:3, 3], atol=0.15)
     np.testing.assert_allclose(T[:3, :3], T_true[:3, :3], atol=0.05)
+
+
+def test_floors_only_scene_raises_insufficient_wall_evidence() -> None:
+    """A floors-only scene (floor + ceiling, zero walls -> zero
+    horizontal-normal points) must refuse loudly. Regression for the old
+    silent fallback: _wall_subset used to hand back the FULL cloud below 100
+    wall points, so the "wall-only" rerank scored on floors -- rotation-blind,
+    a 180-deg flip fits as well as the truth -- and returned a confident
+    fitness anyway. Now refine_candidates raises InsufficientWallEvidence
+    (module.py catches -> logs + skips the frame) and never returns."""
+    rng = np.random.default_rng(21)
+    floor = _sample_plane(rng, 6.0, 4.0, 0.0, 2000)
+    ceiling = _sample_plane(rng, 6.0, 4.0, 2.5, 2000)
+    room_pts = np.concatenate([floor, ceiling], axis=0)
+    mask = (room_pts[:, 0] <= 3.2) & (room_pts[:, 1] <= 2.2)
+    T_true = _rigid(30.0, (1.0, 0.5, 0.0))
+    local_pts = _apply(np.linalg.inv(T_true), room_pts[mask].copy())
+
+    try:
+        _T, fitness, _idx = refine_candidates(
+            _pcd(room_pts), _pcd(local_pts), [T_true.copy()]
+        )
+    except InsufficientWallEvidence as e:
+        msg = str(e)
+        assert "insufficient wall evidence" in msg
+        assert "submap walls=" in msg and "map walls=" in msg
+    else:
+        raise AssertionError(
+            f"expected InsufficientWallEvidence, got fitness={fitness:.3f} -- "
+            "the silent full-cloud fallback is back"
+        )
 
 
 def test_priors_plumbing_stub_candidate_wins_with_right_source() -> None:
