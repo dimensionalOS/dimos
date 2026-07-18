@@ -233,6 +233,7 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
+    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
 
 perception = [
