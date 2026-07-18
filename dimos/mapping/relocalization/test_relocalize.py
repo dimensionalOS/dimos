@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation
 
 from dimos.mapping.relocalization.priors import (
     Candidate,
@@ -426,13 +427,11 @@ def test_gravity_gate_is_per_source_no_walkover() -> None:
     source's own fallback: the tilted-but-near-truth RANSAC candidate beats
     the upright-but-6m-stale seed on wall fitness, as it always did before
     the seed existed."""
-    from scipy.spatial.transform import Rotation as _R
-
     gm, lm, T_true = _rect_room_scene(seed=31, yaw_deg=20.0, t=(1.0, -1.5, 0.0))
 
     T_tilted = T_true.copy()  # near-truth but 15 deg off-gravity (> 10 deg gate)
     tilt = np.eye(4)
-    tilt[:3, :3] = _R.from_euler("x", 15.0, degrees=True).as_matrix()
+    tilt[:3, :3] = Rotation.from_euler("x", 15.0, degrees=True).as_matrix()
     T_tilted = T_tilted @ tilt
 
     T_stale = T_true.copy()  # perfectly upright, 7.8 m from the truth

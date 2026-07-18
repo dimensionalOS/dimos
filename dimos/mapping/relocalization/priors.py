@@ -24,9 +24,10 @@ forward pose) is meant to compete here too, not bypass the judge.
 
 from __future__ import annotations
 
-import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+import time
+from typing import Protocol
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
