@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from pydantic import Field
@@ -71,6 +72,7 @@ class VisualRelocalizationModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._last_warn_log = 0.0
         self._marker_map: dict[int, Transform] = {}
         self._detector = create_aruco_detector(self.config.aruco_dictionary)
         c = self.config
@@ -88,6 +90,16 @@ class VisualRelocalizationModule(Module):
             return
         self._marker_map = load_marker_map(resolve_named_path(self.config.marker_map_file, ".yaml"))
 
+    def _warn_throttled(self, msg: str) -> None:
+        # Both warnings below fire per frame at camera rate for as long as
+        # their condition holds (a marginal tag in view, a misnamed TF chain):
+        # throttle to one line per 5 s instead of flooding the log —
+        # RelocalizationModule._maybe_log_skip's pattern.
+        now = time.monotonic()
+        if now - self._last_warn_log > 5.0:
+            logger.warning(msg)
+            self._last_warn_log = now
+
     async def handle_color_image(self, msg: Image) -> None:
         info = self.config.camera_info
         if not self._marker_map or info is None:
@@ -97,14 +109,14 @@ class VisualRelocalizationModule(Module):
             return  # no tags in view: the normal case, not worth logging
         pose = localize_from_detections(detections, self._marker_map, info, self._cfg, msg.ts)
         if pose is None:
-            logger.warning(
+            self._warn_throttled(
                 f"VisualRelocalizationModule: gate rejected ({len(detections)} tags seen)"
             )
             return
         pose.frame_id = self.config.map_frame  # retarget map_T_optical before inverting/publishing
         optical = self.config.camera_optical_frame
         if (world_T_optical := self.tf.get(WORLD_FRAME, optical, time_point=msg.ts)) is None:
-            logger.warning(
+            self._warn_throttled(
                 f"VisualRelocalizationModule: no TF {WORLD_FRAME} -> {optical} at {msg.ts}; "
                 "check camera_optical_frame against the camera's static TF chain"
             )
