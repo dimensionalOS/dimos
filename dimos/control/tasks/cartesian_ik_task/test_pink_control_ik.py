@@ -28,6 +28,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     ControlIKResult,
     PinkControlIK,
     PinkControlIKConfig,
+    PinkControlRuntimeError,
     PinocchioIK,
 )
 from dimos.control.tasks.registry import control_task_registry
@@ -303,6 +304,56 @@ def test_pink_applies_position_velocity_limits_and_finite_output(tmp_path: Path)
     )
     assert result.positions.shape == (2,)
     assert np.all(np.isfinite(result.positions))
+
+
+def test_pink_clamps_tiny_position_limit_overshoot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = _write_urdf(tmp_path)
+    robot = _robot(model_path).model_copy(
+        update={"joint_limits_lower": [-1.22, -0.25], "joint_limits_upper": [1.22, 0.25]}
+    )
+    backend = PinkControlIK(
+        model_path, None, ["joint1", "joint2"], PinkControlIKConfig(robot_model=robot)
+    )
+    measured = np.array([1.22, 0.1])
+
+    def solve(
+        configuration: object, tasks: list[object], dt: float, **kwargs: object
+    ) -> np.ndarray:
+        return np.array([0.00013784674535, -0.2])
+
+    monkeypatch.setattr(
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
+    )
+    result = backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+    assert np.array_equal(result.positions, np.array([1.22, 0.098]))
+    assert np.array_equal(result.velocity, np.array([0.00013784674535, -0.2]))
+
+
+def test_pink_rejects_material_position_limit_violation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = _write_urdf(tmp_path)
+    robot = _robot(model_path).model_copy(
+        update={"joint_limits_lower": [-1.22, -0.25], "joint_limits_upper": [1.22, 0.25]}
+    )
+    backend = PinkControlIK(
+        model_path, None, ["joint1", "joint2"], PinkControlIKConfig(robot_model=robot)
+    )
+    measured = np.array([1.22, 0.1])
+
+    def solve(
+        configuration: object, tasks: list[object], dt: float, **kwargs: object
+    ) -> np.ndarray:
+        return np.array([0.01, -0.2])
+
+    monkeypatch.setattr(
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
+    )
+    with pytest.raises(PinkControlRuntimeError, match="out-of-bounds"):
+        backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
 
 def test_cartesian_pipeline_bounds_dt_and_holds_on_expected_error(

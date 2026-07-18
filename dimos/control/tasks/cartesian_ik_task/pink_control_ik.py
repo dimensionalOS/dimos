@@ -34,6 +34,9 @@ from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.protocol.service.spec import BaseConfig
 
+# Pink's integration/QP boundary tolerance is small but larger than machine epsilon.
+_POSITION_LIMIT_EPSILON_RAD = 1e-5
+
 
 class PinkControlIKConfig(BaseConfig):
     """Typed configuration for the control IK backend."""
@@ -267,6 +270,7 @@ class PinkControlIK:
             candidate = self._controlled_q(configuration.q, measured)
             if candidate.size != measured.size or not np.all(np.isfinite(candidate)):
                 raise PinkControlRuntimeError("Pink produced an invalid joint candidate")
+            candidate = self._clamp_position_limits(candidate)
             return ControlIKResult(candidate, self._controlled_velocity(velocity))
         except PinkControlRuntimeError:
             raise
@@ -303,6 +307,27 @@ class PinkControlIK:
 
     def _controlled_velocity(self, velocity: NDArray[np.float64]) -> NDArray[np.float64]:
         return np.array([velocity[index] for index in self._v_indices], dtype=np.float64)
+
+    def _clamp_position_limits(self, candidate: NDArray[np.float64]) -> NDArray[np.float64]:
+        bounded = candidate.copy()
+        for index, width in enumerate(self._q_widths):
+            if width != 1:
+                continue
+            q_index = self._q_indices[index]
+            lower = self._model.lowerPositionLimit[q_index]
+            upper = self._model.upperPositionLimit[q_index]
+            value = bounded[index]
+            if np.isfinite(lower) and value < lower:
+                if lower - value <= _POSITION_LIMIT_EPSILON_RAD:
+                    bounded[index] = lower
+                else:
+                    raise PinkControlRuntimeError("Pink produced an out-of-bounds joint candidate")
+            elif np.isfinite(upper) and value > upper:
+                if value - upper <= _POSITION_LIMIT_EPSILON_RAD:
+                    bounded[index] = upper
+                else:
+                    raise PinkControlRuntimeError("Pink produced an out-of-bounds joint candidate")
+        return bounded
 
     def _build_mapping(self, robot: RobotModelConfig) -> tuple[list[int], list[int]]:
         coordinator_names = robot.get_coordinator_joint_names()
