@@ -125,6 +125,11 @@ unitree_go2_relocalization = autoconnect(
 # module no-ops until overrides point them at a premap + marker survey, e.g.
 #   -o relocalizationmodule.map_file=/abs/path/to/site.pc2.lcm
 #   -o visualrelocalizationmodule.marker_map_file=/abs/path/to/site_markers.yaml
+#   -o visualrelocalizationmodule.marker_length_m=0.10
+# The last line repeats the blueprint default only because CLI validation
+# (load_config_args) checks -o overrides against the module config alone, and
+# marker_length_m is required-no-default there: any visualrelocalizationmodule
+# override without it fails validation before the blueprint kwargs ever merge.
 unitree_go2_fiducial_relocalization = autoconnect(
     unitree_go2,
     RelocalizationModule.blueprint(use_fiducial_prior=True),
