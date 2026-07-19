@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.robot.unitree.g1.config import G1
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
@@ -27,6 +28,7 @@ from dimos.visualization.rerun.urdf_robot import (
 
 G1_RERUN_ROOT = "world/odom/g1"
 G1_RERUN_URDF = "g1_urdf/g1.fixed.urdf"
+G1_LIDAR_MOUNT_HEIGHT = G1.internal_odom_offsets["mid360_link"].z
 
 # Classic costmap palette, indexed by grid value + 1:
 # transparent unknown, blue free, orange occupied, red lethal.
@@ -76,9 +78,14 @@ def g1_static_robot(rr: Any) -> list[Any]:
 def g1_odometry_tf_override(odom: Any) -> Any:
     """Publish odometry as a TF frame so sensor_scan/path/robot can reference it.
 
-    The z is zeroed because point clouds already have the full init_pose
-    transform applied (ground at z≈0). Using the raw odom.z (= mount height)
-    would double-count the vertical offset.
+    The sensor z is zeroed so the robot box keeps its fixed drawn height.
+
+    PointLio's map frame originates at the lidar's pose when odometry booted
+    (not the ground), so the accumulated global_map renders too low by the
+    lidar's boot height. The robot is assumed to be standing when odometry
+    boots, so lifting by the mount height puts the map's ground at z≈0. The
+    lift is re-logged per odometry message (not a static entry) because the
+    bridge's one-time frame attach on the cloud would clobber a static one.
     """
     import rerun as rr
 
@@ -95,6 +102,11 @@ def g1_odometry_tf_override(odom: Any) -> Any:
         parent_frame="tf#/map",
         child_frame="tf#/sensor",
     )
+    ground_lift = rr.Transform3D(
+        translation=[0.0, 0.0, G1_LIDAR_MOUNT_HEIGHT],
+        parent_frame="tf#/world",
+    )
     return [
         ("tf#/sensor", tf),
+        ("world/global_map", ground_lift),
     ]
