@@ -944,8 +944,9 @@ rule. R1 was mandated by the task assignment; the rest are this spec's calls.
 3. **T4 protocol parameter names** — RESOLVED: T4 adopted positional-only
    protocol params (t4-typing.md §2.3); G2 amended accordingly, no
    param-name rule.
-4. **Runtime `None` from a `skips=False` step** — T6 policy (skip + health
-   count vs error). `StepSpec.skips` is provided either way.
+4. **Runtime `None` from a `skips=False` step** — RESOLVED by T6
+   (t6-drivers.md D1): ERROR, `[step-none-no-skip]`, in every kind — an
+   annotation-vs-behavior contradiction is never silently absorbed.
 5. **T2 reuse of `PureModuleDefinitionError`** for config violations —
    RESOLVED yes (t2-config.md §10.1); the flip was performed with this
    landing: `ConfigFieldError(PureModuleDefinitionError)`, unified-base test

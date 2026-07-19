@@ -12,8 +12,17 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T2 config | done | `pure/impl-t2-config` |
 | T3 validation | done | `pure/impl-t3-stepspec` |
 | T4 typing | done (static surface; `over()`/ports bodies land with T6/T8) | `pure/spec-t4-typing` |
-| T5 alignment | planning | `pure/spec-t5-align` |
-| T6 drivers | planning | `pure/spec-t6-drivers` |
+| T5 alignment | spec-ready | `pure/spec-t5-align` |
+| T6 drivers | spec-ready | `pure/spec-t6-drivers` |
+
+Wave-B interface reconciliation (orchestrator, binding for the T5/T6
+implementers): `Stamped` gets ONE home — `typing.py` (t6-drivers.md §11.2;
+overrides t5-align.md Q2's default) — with `align.py`/`drivers.py` importing
+it and `Streamable` tightening to `Iterable[Stamped]` at T6 impl.
+memory2-`Observation` coercion at the `over()` boundary is a T6-impl
+obligation (t5-align.md Q1 default confirmed). T5's `[align-unknown-port]`
+is authoritative for wiring names; T6's eager `[run-unknown-stream]` is the
+pre-align fast path, same copy standard.
 | T7 resources | ready | |
 | T8 rim | ready | |
 | T9 health | ready | |
@@ -196,8 +205,12 @@ Watch out for:
 - Policy decision to make explicit: exactly ONE `tick()` field per In bundle
   for now (multi-trigger joins are a plan error until a real use case) —
   document it, cheapest correct semantics.
-- Bound the history buffers (retention window config); unbounded growth on a
-  never-ticking module is the classic leak.
+- Bound the history buffers; unbounded growth on a never-ticking module is
+  the classic leak. (Orchestrator amendment per t5-align.md §15: the pull
+  merge makes per-port state structurally O(1) — newest + pending head — so
+  there is no retention knob to configure; windowed buffers arrive with the
+  samplers that need them, T11 tf. "Hold until resolvable" refines to
+  held-while-frontier-pending vs dropped-once-provably-final.)
 
 ## T6 — Step drivers + `over()`
 
