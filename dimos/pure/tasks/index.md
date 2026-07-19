@@ -12,8 +12,8 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T2 config | done | `pure/impl-t2-config` |
 | T3 validation | done | `pure/impl-t3-stepspec` |
 | T4 typing | done (static surface; `over()`/ports bodies land with T6/T8) | `pure/spec-t4-typing` |
-| T5 alignment | spec-ready | `pure/spec-t5-align` |
-| T6 drivers | spec-ready | `pure/spec-t6-drivers` |
+| T5 alignment | implementing | `pure/impl-t5-align` |
+| T6 drivers | implementing | `pure/impl-t6-drivers` |
 
 Wave-B interface reconciliation (orchestrator, binding for the T5/T6
 implementers): `Stamped` gets ONE home — `typing.py` (t6-drivers.md §11.2;
