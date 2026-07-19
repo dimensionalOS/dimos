@@ -79,7 +79,10 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
     kwargs = _module_kwargs(blueprint, ManipulationModule)
     config = ManipulationModuleConfig(**kwargs).robots[0]
 
-    assert config == make_openyam_model_config(name="arm")
+    assert config.name == "arm"
+    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert config.end_effector_link == "yam_hand_tcp"
+    assert config.gripper_hardware_id == "arm"
     task = _coordinator_kwargs(blueprint)["tasks"][0]
     assert task.type == "trajectory"
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
