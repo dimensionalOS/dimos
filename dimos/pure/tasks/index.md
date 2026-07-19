@@ -14,8 +14,8 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T4 typing | done (static surface; `over()`/ports bodies land with T6/T8) | `pure/spec-t4-typing` |
 | T5 alignment | done | `pure/impl-t5-align` |
 | T6 drivers | done | `pure/impl-t6-drivers` |
-| T7 resources | implementing | `pure/impl-t7-resources` |
-| T8 rim | ready | |
+| T7 resources | done | `pure/impl-t7-resources` |
+| T8 rim | planning | `pure/spec-t8-rim` |
 | T9 health | ready | |
 | T10 checkpoint | ready | |
 | T11 tf | ready | |
@@ -270,6 +270,30 @@ Watch out for:
 - Reuse `StreamAccessor`/`Stream` conventions rather than inventing a
   parallel stream API (store-as-owner, caller-managed lifecycle — house
   style).
+
+Legacy parity (owner amendment, 2026-07-19 — binding): pure modules run ONE
+PER PROCESS, communicating via transports, and from the outside must behave
+exactly like legacy modules — deployable and managed by `module_coordinator`,
+wired by autoconnect, instantiated from blueprints — plus one extra
+conventionally-named health topic (T9's stream). The outside contract is THIN
+(verified): deploy-by-class + kwargs over a forkserver pipe
+(`dimos/core/coordination/python_worker.py::deploy_module`), an `Actor`
+handle for lifecycle/wiring calls, transports at the edge. Structure the work
+as TWO layers so parity never bends the rim core: `rim.py` (ports, buffers,
+marshal-to-one-loop, engine-owned — pure-module terms only) and a small
+coordinator-facing adapter satisfying the legacy surface (port enumeration
+answered from `fields()`, lifecycle delegated to rim warmup/start/stop,
+topic naming per house convention). Phase 1 of planning is an investigation
+of `module_coordinator.py` / `python_worker.py` / `blueprints.py` /
+`process_lifecycle.py` + the autoconnect path producing a PARITY MATRIX:
+every outside-visible behavior → how the adapter satisfies it → a test.
+Known wrinkle already found: `deploy_module` force-injects
+`kwargs["g"] = global_config`, which `extra="forbid"` config rejects — the
+adapter absorbs `g`. Acceptance bar: a PureModule deployed in a blueprint
+next to legacy modules, autoconnected, data flowing both directions, health
+visible. Parity = wiring/lifecycle/transport/topic surface; internal legacy
+habits (mid-run mutation, ad-hoc RPC attachment) are NOT reproduced, and
+legacy-RPC dependencies stay out of scope until the RPC wave.
 
 ## T9 — Health
 
