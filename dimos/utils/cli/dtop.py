@@ -64,7 +64,7 @@ _BRAILLE_BASE = 0x2800
 _LDOTS = (0x00, 0x40, 0x44, 0x46, 0x47)  # left col: 0‥4 filled rows
 _RDOTS = (0x00, 0x80, 0xA0, 0xB0, 0xB8)  # right col: 0‥4 filled rows
 _SPARK_WIDTH = 12  # characters (×2 = 24 samples of history)
-_LABEL_COLOR = "#cccccc"  # metric label color (CPU, PSS, Thr, etc.)
+_LABEL_COLOR = "#cccccc"  # metric label color (CPU, memory, Thr, etc.)
 
 
 def _spark(history: deque[float], width: int = _SPARK_WIDTH) -> Text:
@@ -151,10 +151,11 @@ _LINE2: list[tuple[str, str, Callable[[float], str]]] = [
 # IO r/w is a compound field handled specially in _make_lines
 _IO_KEYS = ("io_read_bytes", "io_write_bytes")
 
-_ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS)
+_ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS) | {"rss"}
 
 LOGGED_METRICS = (
     "cpu_percent",
+    "rss",
     "pss",
     "num_threads",
     "num_children",
@@ -165,6 +166,12 @@ LOGGED_METRICS = (
     "io_read_bytes",
     "io_write_bytes",
 )
+
+
+def select_memory_metric(data: dict[str, Any]) -> tuple[str, str]:
+    if data.get("pss", 0):
+        return "PSS", "pss"
+    return "RSS", "rss"
 
 
 def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
@@ -397,6 +404,8 @@ class ResourceSpyApp(App[None]):
         # Line 1
         line1 = Text()
         for idx, (label, key, fmt) in enumerate(_LINE1):
+            if key == "pss":
+                label, key = select_memory_metric(d)
             val = d.get(key, 0)
             lo, hi = ranges[key]
             if idx > 0:
