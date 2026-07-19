@@ -820,27 +820,66 @@ whole-file `pickle.dumps` of module-level example classes (T12 examples).
 
 ## 14. Acceptance criteria
 
-- [ ] `uv run mypy dimos/pure/config.py dimos/pure/module.py` clean
+- [x] `uv run mypy dimos/pure/config.py dimos/pure/module.py` clean
       (repo strict config) — already true for the skeletons.
-- [ ] Skip line removed from `dimos/pure/test_config.py`; all 29 tests
+- [x] Skip line removed from `dimos/pure/test_config.py`; all 29 tests
       pass unmodified; no engine imports anywhere in the file.
-- [ ] §13.2 case file reproduces its annotated mypy output exactly.
-- [ ] Sketch §5c executes literally: the `Go2Connection` construction,
+- [x] §13.2 case file reproduces its annotated mypy output exactly.
+      (Landed as `test_typing_fixtures/case_config_real.py`; one adaptation
+      to the harness's one-diagnostic-per-line rule — see appendix.)
+- [x] Sketch §5c executes literally: the `Go2Connection` construction,
       flat access, `model_dump()` dict equality (declaration-ordered),
       both frozen failures, and the sweep-rebuild line.
 - [ ] `VoxelGridMapper(emit_every=2)` from sketch `_unit_tests` constructs
       once T1/T3 land (config fields `voxel_size`, `emit_every` collected;
       nested `In`/`Out`/`State`, `@resource grid`, `step` are not fields).
-- [ ] Tagger floor: zero-config modules define no extra line for T2.
-- [ ] `__init_subclass__` order matches §4.1 with the T3 placeholder as
+      (T1/T3 — the config half is proven by `test_machinery_members_are_not_fields`.)
+- [x] Tagger floor: zero-config modules define no extra line for T2.
+- [x] `__init_subclass__` order matches §4.1 with the T3 placeholder as
       the marked final step; no step/fold/In/Out/State on PureModule.
-- [ ] `class PureModule(EngineSurface)` wired per §10.2; no
+- [x] `class PureModule(EngineSurface)` wired per §10.2; no
       `over`/`i`/`o` declared or shadowed by T2; T4's fixtures still pass
       over the composed base.
-- [ ] All §11 messages implemented verbatim (templates are normative).
-- [ ] No new files beyond config.py / module.py / test_config.py; no
+- [x] All §11 messages implemented verbatim (templates are normative).
+- [x] No new files beyond config.py / module.py / test_config.py; no
       `__init__.py` created; no imports of not-yet-existing siblings
       except the §3.4 lazy rows guard and the §10 activated seam.
+      (Plus the orchestrator-sanctioned static fixture `case_config_real.py`
+      — no engine file, no `__init__.py`, no missing-sibling import.)
+
+## Implementation notes
+
+Deviations / decisions made during implementation, none altering the spec's
+intent:
+
+1. **`__pure_config__` instance-attr annotation on the base (module.py).**
+   §2.1 states PureModule's body carries "no plain annotated attributes (only
+   the ClassVar-annotated `__pure_config_model__`)", with the operative rule
+   "any future internal state on the base stays 'unannotated or dunder'". The
+   config backing store needs a type for mypy on the read-only `config`
+   property, so it is declared as `__pure_config__: PureModuleConfig` — a
+   **dunder**, blessed by that rule. Verified non-interfering: it is not a
+   dataclass_transform field (T4 §9 finding), never collected (base body is
+   never scanned; underscore-prefixed regardless), and `case_config_real.py`
+   confirms subclasses do not require it and reveals are unaffected.
+
+2. **`case_config_real.py` — one adaptation vs §13.2 verbatim.** The spec's
+   `c.config = None` line emits *two* diagnostics (`[misc]` read-only +
+   `[assignment]`), but T4's harness enforces one diagnostic per marked line.
+   The read-only-ness of `config` is pinned instead by `c.config = c.config`
+   (type-matched RHS → single `[misc]`); the value type is separately pinned
+   by `reveal_type(c.config)` and the `_cfg: PureModuleConfig = c.config`
+   assignability line. All other §13.2 lines are reproduced exactly. Required
+   a one-line note appended to `t4-typing.md` §7.5 rule 1 (real-surface
+   fixtures allowed once the surface ships), per the task mandate.
+
+3. **`mypy dimos/pure` and the untracked seed.** Recursive
+   `uv run mypy dimos/pure` surfaces 5 diagnostics, *all* from the untracked
+   design seed `config_fields_experiment.py` (self-contained `reveal_type` +
+   deliberate-error lines; imports nothing from `dimos.pure`). It is
+   pre-existing and left untracked per instruction; the deliverable and every
+   committed file are clean (`uv run mypy dimos/pure --exclude
+   config_fields_experiment` → success, 5 source files).
 
 ## 15. Relitigation
 

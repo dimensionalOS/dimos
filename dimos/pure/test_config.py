@@ -33,8 +33,6 @@ from dimos.pure.config import (
 )
 from dimos.pure.module import PureModule
 
-pytestmark = pytest.mark.skip(reason="T2 skeleton — enable with implementation")
-
 
 def _go2():
     """The sketch §5b/§5c example, minus bundles (T1) and step (T3)."""
