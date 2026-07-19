@@ -148,7 +148,7 @@ class VoxelGridMapper(PureModule):
     class Out(pm.Out):
         global_map: PointCloud2 = contract(min_hz=1)
 
-    class State(NamedTuple):
+    class State(pm.State):  # NamedTuple still accepted; pm.State adds a public replace()
         n: int = 0  # ticks folded so far
 
     @resource
@@ -157,7 +157,7 @@ class VoxelGridMapper(PureModule):
 
     def step(self, state: State, i: In) -> tuple[State, Out | None]:
         self.grid.add_frame(i.lidar)
-        state = state._replace(n=state.n + 1)
+        state = state.replace(n=state.n + 1)
 
         if state.n % self.emit_every:
             return state, None

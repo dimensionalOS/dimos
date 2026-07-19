@@ -64,6 +64,7 @@ from dimos.pure.rows import (
     latest,
     tick,
 )
+from dimos.pure.state import State
 from dimos.pure.stepspec import (
     PureModuleDefinitionError,
     StepKind,
@@ -112,6 +113,7 @@ __all__ = [
     "PureModuleRunError",
     "RunHooks",
     "Stamped",
+    "State",
     "Stateless",
     "StepError",
     "StepKind",

@@ -78,6 +78,8 @@ def test_pm_surface_exports():
         "run_over",
         # T7 — resources (pm exports the decorator only; spec §2.3)
         "resource",
+        # pm.State — frozen Mealy-state base, completing In/Out/State symmetry
+        "State",
     }
     for name in pm.__all__:
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"
@@ -85,6 +87,7 @@ def test_pm_surface_exports():
     assert pm.PureModule.__module__ == "dimos.pure.module"
     assert pm.StepSpec.__module__ == "dimos.pure.stepspec"
     assert pm.Stateless.__module__ == "dimos.pure.typing"
+    assert pm.State.__module__ == "dimos.pure.state"
 
 
 def test_pm_surface_tagger_floor():

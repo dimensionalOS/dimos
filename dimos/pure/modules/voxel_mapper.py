@@ -66,7 +66,6 @@ across machines; both devices produce identical grids.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import NamedTuple
 
 from dimos import pure as pm
 from dimos.mapping.voxels import VoxelGrid
@@ -177,7 +176,7 @@ class VoxelMapper2(pm.PureModule):
         n_voxels: int
         n_scans: int
 
-    class State(NamedTuple):
+    class State(pm.State):
         n_scans: int = 0  # scans folded so far — plain data, checkpointable
 
     @pm.resource
@@ -195,7 +194,7 @@ class VoxelMapper2(pm.PureModule):
         """Add the scan to the grid, bump the counter, emit a snapshot on cadence."""
         self.grid.add_frame(i.scan)
         n = s.n_scans + 1
-        s = s._replace(n_scans=n)
+        s = s.replace(n_scans=n)
         if self.emit_every > 0 and n % self.emit_every == 0:
             return s, VoxelMapper2.Out(
                 global_map=self.grid.get_global_pointcloud2(),
