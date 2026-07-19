@@ -190,7 +190,9 @@ def test_runtime_surface():
         assert hasattr(pure_typing, name)
     assert pure_typing.Stateless[int, str] is not None  # structural aliases work
     surface = pure_typing.EngineSurface()
-    with pytest.raises(NotImplementedError):
+    # T6-active over(): a class without T3's spec fails per t4-typing.md §4.4 —
+    # TypeError (PureModuleDefinitionError) pointing at the step/fold rule.
+    with pytest.raises(TypeError, match="not-classified"):
         surface.over()
     with pytest.raises(NotImplementedError):
         _ = surface.i

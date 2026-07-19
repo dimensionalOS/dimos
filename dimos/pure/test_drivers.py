@@ -46,12 +46,6 @@ from dimos.pure.drivers import (
 )
 from dimos.pure.stepspec import StepKind, StepSpec
 
-pytestmark = pytest.mark.skip(
-    reason="T6 spec phase: drivers.py is a typed skeleton (tasks/t6-drivers.md); "
-    "tests activate with the implementation"
-)
-
-
 # ── shared fixtures: real bundles, plain (non-PureModule) step carriers ──────
 
 
@@ -554,6 +548,46 @@ def test_async_ateardown_runs_on_run_loop():
 # ── teardown (spec §8) ───────────────────────────────────────────────────────
 
 
+def test_baseexception_propagates_raw_stateless():
+    # §10.2/§8.3 row 6: BaseException is never wrapped or counted; teardown runs once.
+    class Interrupted:
+        def step(self, i: Ping) -> Pong:
+            raise KeyboardInterrupt
+
+    torn: list[bool] = []
+    hooks = RunHooks(teardown=lambda: torn.append(True))
+    it = drive_stateless(Interrupted(), iter(_rows(1.0)), skips=False, hooks=hooks)
+    with pytest.raises(KeyboardInterrupt):
+        next(it)
+    assert torn == [True]
+    assert (hooks.errors, hooks.last_error) == (0, None)  # raw unwind, uncounted
+
+
+def test_async_baseexception_propagates_raw():
+    # §6.4: BaseException from a step task propagates raw — never a counted drop;
+    # CLOSING still reaps the in-flight sibling on the way out.
+    ev = asyncio.Event()  # never set: the sibling parks until cancelled
+    cancelled: list[float] = []
+
+    class Interrupted:
+        async def step(self, i: Ping) -> Pong:
+            if i.x == 1.0:
+                raise KeyboardInterrupt
+            try:
+                await ev.wait()
+            except asyncio.CancelledError:
+                cancelled.append(i.x)
+                raise
+            return Pong(y=i.x)
+
+    hooks = RunHooks()
+    it = drive_async(Interrupted(), iter(_rows(1.0, 2.0)), max_inflight=2, skips=False, hooks=hooks)
+    with pytest.raises(KeyboardInterrupt):
+        next(it)
+    assert cancelled == [2.0]  # §6.3 CLOSING reaped the sibling, none leaked
+    assert (hooks.drops, hooks.errors) == (0, 0)  # BaseException: never counted (§6.4)
+
+
 def test_teardown_on_break_stateless():
     torn: list[bool] = []
     hooks = RunHooks(teardown=lambda: torn.append(True))
@@ -612,6 +646,22 @@ def test_run_over_bad_max_inflight_eager():
     assert ei.value.rule is RunRule.BAD_MAX_INFLIGHT
 
 
+def test_run_over_inside_loop_eager():
+    # §6.2: sync over() cannot be driven from inside a running loop — eager guard.
+    class AsyncEcho:
+        async def step(self, i: Ping) -> Pong:
+            return Pong(y=i.x)
+
+    async def call() -> PureModuleRunError:
+        with pytest.raises(PureModuleRunError) as ei:
+            run_over(AsyncEcho(), _spec(StepKind.ASYNC_STATELESS), {"x": []})
+        return ei.value
+
+    err = asyncio.run(call())
+    assert err.rule is RunRule.INSIDE_LOOP
+    assert "run-inside-loop" in str(err)
+
+
 def test_run_over_composes_align(monkeypatch):
     calls = _stub_align(monkeypatch, _rows(1.0, 2.0))
     hooks = RunHooks()
@@ -668,6 +718,79 @@ def test_run_over_async_max_inflight_from_module_field(monkeypatch):
     outs = list(run_over(Wide(), _spec(StepKind.ASYNC_STATELESS), {"x": []}))
     assert len(outs) == 3
     assert peak == 3
+
+
+# ── the memory2 boundary (index reconciliation; t5-align.md §11.1) ───────────
+# A memory2 Stream yields Observation envelopes (envelope carries ts; payload
+# behind .data). run_over unwraps to payloads at the over() boundary so row
+# fields receive payloads (T5 D2) and the payload ts stays the ONE authority.
+
+
+class _FakeObservation:
+    """Shape-match of memory2's Observation: envelope ts + data payload."""
+
+    def __init__(self, ts: float, data: object) -> None:
+        self.ts = ts
+        self.data = data
+
+
+def _install_fake_memory2_stream(monkeypatch) -> type:
+    """A sys.modules stub matching dimos.memory2.stream's Stream shape."""
+
+    class Stream:
+        def __init__(self, observations) -> None:
+            self._observations = list(observations)
+
+        def __iter__(self):
+            return iter(self._observations)
+
+    mod = types.ModuleType("dimos.memory2.stream")
+    mod.Stream = Stream  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dimos.memory2.stream", mod)
+    return Stream
+
+
+def test_run_over_unwraps_memory2_stream(monkeypatch):
+    stream_cls = _install_fake_memory2_stream(monkeypatch)
+    calls = _stub_align(monkeypatch, _rows(1.0))
+    payloads = _rows(10.0, 11.0)  # stamped payloads: ts survives the unwrap
+    stream = stream_cls(_FakeObservation(ts=p.ts, data=p) for p in payloads)
+    list(run_over(EchoStep(), _spec(StepKind.STATELESS), {"x": stream}))
+    ((_, streams_seen),) = calls
+    coerced = streams_seen["x"]
+    assert coerced is not stream  # recognized and adapted, not passed verbatim
+    items = list(coerced)
+    assert [a is b for a, b in zip(items, payloads, strict=False)] == [
+        True,
+        True,
+    ]  # payloads, unwrapped
+    assert [i.ts for i in items] == [10.0, 11.0]  # payload ts intact — never lost
+    assert list(coerced) == payloads  # re-iterable, like the Stream it wraps
+
+
+def test_run_over_memory2_absent_is_passthrough(monkeypatch):
+    # Recognition is sys.modules-based: without memory2 imported, nothing is
+    # imported and every value passes verbatim (the plain-iterable contract).
+    monkeypatch.delitem(sys.modules, "dimos.memory2.stream", raising=False)
+    calls = _stub_align(monkeypatch, _rows(1.0))
+    stream = [_rows(1.0)[0]]
+    list(run_over(EchoStep(), _spec(StepKind.STATELESS), {"x": stream}))
+    assert calls[0][1]["x"] is stream
+    assert "dimos.memory2.stream" not in sys.modules  # coercion imported nothing
+
+
+def test_run_over_unwraps_real_memory2_stream(monkeypatch):
+    memory = pytest.importorskip("dimos.memory2.store.memory")
+    calls = _stub_align(monkeypatch, _rows(1.0))
+    with memory.MemoryStore() as store:
+        stream = store.stream("x", Ping)
+        for row in _rows(10.0, 11.0):
+            stream.append(row, ts=row.ts)
+        list(run_over(EchoStep(), _spec(StepKind.STATELESS), {"x": stream}))
+        ((_, streams_seen),) = calls
+        items = list(streams_seen["x"])
+        assert all(isinstance(i, Ping) for i in items)  # payloads, not Observations
+        assert [i.ts for i in items] == [10.0, 11.0]  # payload ts intact after unwrap
 
 
 def test_hooks_invariant_step_kinds():
