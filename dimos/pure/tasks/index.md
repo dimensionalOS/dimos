@@ -15,7 +15,7 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T5 alignment | done | `pure/impl-t5-align` |
 | T6 drivers | done | `pure/impl-t6-drivers` |
 | T7 resources | done | `pure/impl-t7-resources` |
-| T8 rim | implementing (T8a done; T8b legacy bridge in flight; AD1 capacity default pending re-pin) | `pure/impl-t8b-legacy` |
+| T8 rim | done (e2e parity bar passed live; AD1 capacity default = 16, pending Ivan re-pin) | `pure/impl-t8b-legacy` |
 | T9 health | ready | |
 | T10 checkpoint | ready | |
 | T11 tf | ready | |
