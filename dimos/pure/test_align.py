@@ -32,9 +32,6 @@ from dimos.pure.align import (
 )
 from dimos.pure.rows import In, InterpolateSpec, LatestSpec, TickSpec, interpolate, latest, tick
 
-pytestmark = pytest.mark.skip(reason="T5 skeleton — enable with implementation")
-
-
 # ── fixtures: stamped payloads ───────────────────────────────────────────────
 
 

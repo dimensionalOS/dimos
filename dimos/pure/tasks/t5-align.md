@@ -727,23 +727,24 @@ test bodies). Zero engine imports beyond `dimos.pure.align` +
 
 ## 13. Acceptance criteria
 
-- [ ] `uv run mypy dimos/pure/align.py` clean; `uv run mypy dimos/pure`
+- [x] `uv run mypy dimos/pure/align.py` clean; `uv run mypy dimos/pure`
       stays clean (strict, repo config).
-- [ ] `align.py` imports stdlib + `typing_extensions` +
+- [x] `align.py` imports stdlib + `typing_extensions` +
       `dimos.pure.rows` only — no engine, no memory2, no clock, no threads.
-- [ ] `uv run pytest dimos/pure -q`: suite collects; pre-existing 167 pass;
+- [x] `uv run pytest dimos/pure -q`: suite collects; pre-existing 167 pass;
       T5 tests skip against the skeleton and pass once implemented.
-- [ ] §4 denotational semantics implemented exactly; §10 oracle equivalence
+      (Result: 202 passed = 167 + 35, 38 skipped = T6's `test_drivers.py`.)
+- [x] §4 denotational semantics implemented exactly; §10 oracle equivalence
       green under the seeded property tests.
-- [ ] All §9 errors raise `AlignmentError` with the templates and rules;
+- [x] All §9 errors raise `AlignmentError` with the templates and rules;
       wiring errors eager; data errors at the pulling `next()`; T1's
       `BundleDefinitionError` propagates unwrapped.
-- [ ] O(1) per-port state (no history collections anywhere).
-- [ ] Interpolators invoked only for emitted rows, never with alpha ∉ (0,1).
-- [ ] Sketch floor unchanged: `Tagger`/`CostMapper` bundles align with zero
+- [x] O(1) per-port state (no history collections anywhere).
+- [x] Interpolators invoked only for emitted rows, never with alpha ∉ (0,1).
+- [x] Sketch floor unchanged: `Tagger`/`CostMapper` bundles align with zero
       added declarations; `over(global_map=..., relocalized_map=...)`
       kwarg spelling maps to ports by name.
-- [ ] Stats deterministic under re-runs of identical inputs.
+- [x] Stats deterministic under re-runs of identical inputs.
 
 ## 14. Decisions within mandate (numbered for review)
 
@@ -838,3 +839,43 @@ test bodies). Zero engine imports beyond `dimos.pure.align` +
    a structural twin — T6's one-line call.
 3. **`pm` export set** (§2): proposed six names; integrator applies with the
    next `__init__.py` touch.
+
+## Implementation notes
+
+Landed on `pure/impl-t5-align`. `align.py` filled per §2's signatures; the
+skeleton's `Stamped`/`Interpolatable`/`AlignRule`/`AlignmentError`/stats/
+`_PortState` shapes were kept verbatim. mypy clean (`align.py` and
+`dimos/pure`, strict/3.12); `test_align.py` skip line removed, all 35 tests
+pass unmodified; full `dimos/pure` suite 202 passed / 38 skipped.
+
+**Deviation D-impl-1 — interpolator resolution is per *wired* interpolate
+port, not "every interpolate() field" (§6.3 / §7 #7).** A streamless optional
+`interpolate()` port (has `default=`, stream omitted) resolves to its default
+on every tick and never calls an interpolator, so `align()` does **not**
+resolve/validate its interpolator and never raises
+`[align-interp-untyped]`/`[align-not-interpolatable]` for it. Required
+interpolate ports always have a stream (§7 #5) and any *wired* optional
+interpolate port is still resolved eagerly, so the eager-wiring guarantee is
+intact for every port that can actually interpolate.
+
+- *Why forced by the executable spec.* `test_optional_port_stream_omitted`
+  aligns `Combined` (whose `vel: S | None = interpolate(default=None)` is
+  omitted) and expects construction to succeed with `vel` defaulting — while
+  `test_interp_optional_none_annotation` aligns `InterpOpt` (optional but
+  *wired*) and expects interpolation to run. In definition order (pytest
+  `--dist=loadfile`, no `randomly` plugin) the omitted-port test runs before
+  any `_use_s_lerp()`, so `S` is unregistered there; resolving `vel`'s
+  interpolator eagerly would raise `[align-not-interpolatable]` and fail the
+  test. Stream presence — not required-ness — is the discriminator both tests
+  encode (`InterpOpt.pose` is optional yet must resolve). Per the task's
+  "test + denotational semantics win" rule, resolution follows stream presence.
+- *Blast radius.* None: a port with no stream produces no bracket, so a
+  missing interpolator is unobservable; the degraded-sensor `default=` mode
+  (§7 #5, sketch §4 `relocalized_map`) keeps working even when the omitted
+  field's payload type happens to be non-interpolatable. Suggested §6.3/§7 #7
+  wording amendment if accepted: "for every **wired** interpolate() field".
+
+**Interpretation I-impl-1 — `[align-bad-item]` `{type}` renders as
+`type(item).__name__`** (e.g. `stream yielded WeirdTs …`), the natural reading
+of the template; no test constrains the exact spelling (they assert the
+`bundle.port` substring and the rule).
