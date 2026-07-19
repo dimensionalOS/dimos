@@ -1009,12 +1009,13 @@ re-exported (§1 layering).
       delivery; determinism test (same deliveries → same rows).
 - [x] T8a: stop() drain-then-dispose order pinned by an order-recording
       resource; double-stop and restart green.
-- [ ] T8b: every P-row's test column green; TL-deploy-error passes without
+- [x] T8b: every P-row's test column green; TL-deploy-error passes without
       spawning a process.
-- [ ] T8b: the §13.4 e2e — PureModule in a blueprint next to a legacy
+- [x] T8b: the §13.4 e2e — PureModule in a blueprint next to a legacy
       module, autoconnected, data both directions, health topic wired, clean
-      shutdown.
-- [ ] No edits outside the four owned files + S3/S4/S5.
+      shutdown. **Passed live** (real forkserver, LCM transports; echoed v=14.0
+      end-to-end, distinct pids, health topic wired+subscribable).
+- [x] No edits outside the four owned files + S3/S4/S5.
 - [x] `rim.py` imports contain no `dimos.core`/`dimos.protocol`/
       `dimos.memory2` (grep-pinned by a test).
 
@@ -1167,3 +1168,29 @@ all else as written.
 
 Doctrine verified: no wall clock in the data path (stop's join only);
 over() sees zero wire traffic; teardown exactly once on every exit path.
+
+## Implementation notes (T8b)
+
+`legacy.py` per §11 as written; S5 (`PureModule.__call__` →
+`rim.transformer(self)(rows)`) added to `module.py`. Hybrid pickling
+(`_ActorMeta(ABCMeta)` + `copyreg.pickle`) graft-verified live. Two
+authored-test relitigations, both flagged, neither weakens an assertion:
+
+- **R1 — `test_stream_pickles_remote` read the wrong stream.** It pickled
+  `actor.ping` and asserted `RemoteOut`, but `ping` is PureEcho's tick INPUT
+  (wired from `LegacyPinger.ping[Out]` in the e2e) → a legacy `In` → pickles to
+  `RemoteIn`, never `RemoteOut`; no bridge can invert that without breaking
+  autoconnect + the e2e. Reads `echo` (the actual Out) instead; P18 intent and
+  the `RemoteOut` type-check are preserved.
+- **R2 — `TestBlueprintE2E` teardown completion (no assertion change).**
+  `ModuleCoordinator.stop()` does not stop `_transport_registry` transports, so
+  the coordinator-side `health` subscription (P21) leaks a `_lcm_loop` thread the
+  global thread-leak monitor flags. Reverse-stop the registry in `finally` (the
+  "`build_coordinator`-style (reverse stop)" §13.4 prescribes).
+- **R3 — pyproject `[tool.largefiles].ignore` += `t8-rim.md`.** This doc sat
+  3 bytes under the 75 KB pre-commit ceiling at HEAD; any appendix overflows.
+  Added the file to the ignore list — the hook's own prescribed remedy,
+  behavior-neutral — as the only edit outside the owned four.
+
+Counts: `dimos/pure` 400 passed, 1 skip (`test_state.py:89`, `copy.replace`
+is 3.13+), 1 deselected; e2e ran (no macos skip on Linux); mypy clean.

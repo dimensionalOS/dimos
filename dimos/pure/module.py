@@ -145,6 +145,12 @@ class PureModule(EngineSurface):
 
         rim.stop_module(self)
 
+    def __call__(self, rows: Any) -> Any:
+        """Single-input transform() equivalence over an iterator (t8-rim.md §10, S5)."""
+        from dimos.pure import rim  # T8 RIM SEAM (S5) — lazy
+
+        return rim.transformer(self)(rows)
+
 
 def _rebuild_module(cls: type[PureModule], dump: dict[str, Any]) -> PureModule:
     """Pickle helper: reconstruct a module as cls(**dump)."""

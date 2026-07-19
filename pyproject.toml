@@ -660,4 +660,5 @@ ignore = [
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
+    "dimos/pure/tasks/t8-rim.md",  # long spec doc (sat at the 75KB ceiling; T8b appendix, R3)
 ]

@@ -53,8 +53,6 @@ from dimos.pure import rim
 from dimos.pure.legacy import legacy_actor, legacy_blueprint
 from dimos.pure.stepspec import PureModuleDefinitionError
 
-pytestmark = pytest.mark.skip(reason="T8 skeleton — enabled by T8b")
-
 WAIT_S = 10.0
 
 
@@ -354,9 +352,13 @@ class TestActorInstance:
 
     def test_stream_pickles_remote(self, actor_instance: Any) -> None:  # P18
         actor_instance.ref = "stub-actor"
-        remote = pickle.loads(pickle.dumps(actor_instance.ping))
+        # R1 (T8b relitigation): read the Out stream `echo` — `ping` is PureEcho's
+        # tick INPUT (wired from LegacyPinger.ping[Out] in the e2e), so it pickles to
+        # RemoteIn, never the asserted+imported RemoteOut. Out→RemoteOut is the
+        # verified P18 path; see appendix R1.
+        remote = pickle.loads(pickle.dumps(actor_instance.echo))
         assert isinstance(remote, RemoteOut)
-        assert remote.name == "ping" and remote.type is Ping
+        assert remote.name == "echo" and remote.type is Ping
 
     def test_lifecycle_flow(self) -> None:  # P13, P14 — no processes, no wire
         a = legacy_actor(PureWithResource)
@@ -484,3 +486,13 @@ class TestBlueprintE2E:
         finally:
             mc.stop()
             mc.stop()  # P15 at the coordinator level too
+            # R2 (T8b teardown hygiene): mc.stop() does not stop the coordinator-side
+            # _transport_registry transports (only modules + managers + coordinator RPC).
+            # The health topic we subscribed to above left a live LCM dispatcher thread;
+            # reverse-stop the registry so the global thread-leak monitor stays green
+            # (the "build_coordinator-style (reverse stop)" teardown spec §13.4 calls for).
+            for _t in list(mc._transport_registry.values()):
+                try:
+                    _t.stop()
+                except Exception:
+                    pass

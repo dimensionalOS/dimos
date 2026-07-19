@@ -29,10 +29,17 @@ legacy system. Nothing in ``dimos.core`` or the engine imports it back.
 from __future__ import annotations
 
 import copyreg
-from typing import TYPE_CHECKING, Any, Final
+import types
+from typing import TYPE_CHECKING, Any, Final, Union, get_args, get_origin
 
-from dimos.core.module import Module, ModuleConfig  # the bridge edge (spec §1)
+from pydantic import create_model
+
+from dimos.core.core import rpc  # the bridge edge (spec §1)
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.pure import rim
 from dimos.pure.module import PureModule
+from dimos.pure.stepspec import PureModuleDefinitionError
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
@@ -118,31 +125,137 @@ def legacy_actor(cls: type[PureModule], /, *, name: str | None = None) -> type[M
     the class lives in no importable namespace — G9); pickling rides the ``copyreg``
     recipe above, not the module string.
     """
-    raise NotImplementedError
+    key = (cls, name)
+    cached = _ACTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    _validate_bridgeable(cls)
+
+    actor_name = name or cls.__name__
+    config_model = _actor_config_model(cls)
+    pure_fields: tuple[str, ...] = tuple(cls.__pure_config_model__.model_fields)
+
+    def actor_init(self: Any, **kwargs: Any) -> None:
+        Module.__init__(self, **kwargs)  # legacy streams + ActorConfig + serve RPC
+        pure_kwargs = {f: getattr(self.config, f) for f in pure_fields}
+        self._pure = type(self).__pure_class__(**pure_kwargs)
+
+    @rpc
+    def build(self: Any) -> None:
+        rim.warmup_module(self._pure)  # P13: build == warmup == resource creation
+
+    @rpc
+    def start(self: Any) -> None:
+        Module.start(self)  # legacy start (main/handlers: no-ops)
+        spec = type(self._pure).__pure_step__
+        for field in spec.in_type.fields():
+            stream = getattr(self, field)
+            if getattr(stream, "_transport", None) is not None:  # wired only (§11.3)
+                getattr(self._pure.i, field).source = stream  # In is Subscribable
+        for field in spec.out_type.fields():
+            getattr(self._pure.o, field).transport = getattr(self, field)  # Out is Publishable
+        rim.start_module(self._pure)
+
+    @rpc
+    def stop(self: Any) -> None:
+        rim.stop_module(self._pure)  # drain → dispose → join (idempotent)
+        Module.stop(self)  # legacy close (idempotent latch)
+
+    namespace: dict[str, Any] = {
+        "__module__": "dimos.pure.legacy",  # honest: lives in no namespace (G9)
+        "__qualname__": f"legacy_actor({cls.__qualname__})",
+        "__doc__": f"Legacy deployment face for {cls.__qualname__} (synthesized, spec §11).",
+        "__annotations__": _actor_annotations(cls, config_model),
+        "__pure_class__": cls,
+        "__actor_name__": name,
+        "deployment": "python",
+        "dedicated_worker": True,  # one module per process (P9, amendment)
+        "__init__": actor_init,
+        "build": build,
+        "start": start,
+        "stop": stop,
+    }
+    actor = _ActorMeta(actor_name, (Module,), namespace)
+    _ACTOR_CACHE[key] = actor
+    return actor
 
 
 def legacy_blueprint(
     cls: type[PureModule], /, *, name: str | None = None, **kwargs: Any
 ) -> Blueprint:
     """``legacy_actor(cls, name=name).blueprint(**kwargs)`` — the blueprint spelling (spec §11.1)."""
-    raise NotImplementedError
+    return legacy_actor(cls, name=name).blueprint(**kwargs)
 
 
 def _validate_bridgeable(cls: type[PureModule]) -> None:
     """Reject In∩Out overlap and surface/config name collisions (spec §11.2, D13)."""
-    raise NotImplementedError
+    spec = cls.__pure_step__
+    in_names = set(spec.in_type.fields())
+    out_names = set(spec.out_type.fields())
+
+    overlap = sorted(in_names & out_names)
+    if overlap:
+        raise PureModuleDefinitionError(
+            f"{cls.__qualname__}: field name(s) {', '.join(overlap)} appear in both In and Out — "
+            f"the legacy surface is one class annotation / one (name, type) autoconnect key per "
+            f"name and cannot express an In∩Out overlap. Rename one side."
+        )
+
+    surface = sorted((in_names | out_names) & _MODULE_SURFACE)
+    if surface:
+        raise PureModuleDefinitionError(
+            f"{cls.__qualname__}: field name(s) {', '.join(surface)} shadow the legacy Module "
+            f"surface — a synthesized stream annotation would overwrite a Module attribute/method. "
+            f"Rename the field(s)."
+        )
+
+    config_clash = sorted(set(cls.__pure_config_model__.model_fields) & _RESERVED_CONFIG)
+    if config_clash:
+        raise PureModuleDefinitionError(
+            f"{cls.__qualname__}: config field name(s) {', '.join(config_clash)} collide with "
+            f"ModuleConfig fields absorbed by the actor. Rename the field(s)."
+        )
 
 
-def _actor_annotations(cls: type[PureModule]) -> dict[str, Any]:
+def _stream_annotation(stream: Any, payload: Any) -> Any:
+    """``stream[payload]`` built from runtime values (``In``/``Out`` subscripted dynamically)."""
+    return stream[payload]
+
+
+def _actor_annotations(cls: type[PureModule], config_model: type[ModuleConfig]) -> dict[str, Any]:
     """Synthesize ``In[T]``/``Out[T]``/``health``/``config`` annotations (spec §11.1, P5)."""
-    raise NotImplementedError
+    spec = cls.__pure_step__
+    annotations: dict[str, Any] = {}
+    for field, fs in spec.in_type.fields().items():
+        annotations[field] = _stream_annotation(In, _strip_optional(fs.annotation))
+    for field, fs in spec.out_type.fields().items():
+        annotations[field] = _stream_annotation(
+            Out, _strip_optional(fs.annotation)
+        )  # Optional stripped
+    annotations[_HEALTH_STREAM] = _stream_annotation(Out, _HEALTH_PAYLOAD)  # §12: T9 swaps the type
+    annotations["config"] = config_model
+    return annotations
 
 
 def _actor_config_model(cls: type[PureModule]) -> type[ModuleConfig]:
     """ModuleConfig subclass carrying the pure fields with pure defaults (P6)."""
-    raise NotImplementedError
+    fields: dict[str, Any] = {
+        fname: (finfo.annotation, finfo)
+        for fname, finfo in cls.__pure_config_model__.model_fields.items()
+    }
+    model = create_model(
+        f"{cls.__name__}ActorConfig",
+        __base__=ModuleConfig,
+        **fields,
+    )
+    return model  # type: ignore[no-any-return]
 
 
 def _strip_optional(annotation: Any) -> Any:
     """Drop a single ``| None`` for autoconnect payload typing (spec §11.1)."""
-    raise NotImplementedError
+    if get_origin(annotation) in (Union, types.UnionType):
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
