@@ -8,9 +8,9 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 
 | Task | Status | Spec branch |
 | --- | --- | --- |
-| T1 rows | implementing | `pure/impl-t1-rows` |
-| T2 config | implementing | `pure/impl-t2-config` |
-| T3 validation | spec-ready | `pure/spec-t3-validation` |
+| T1 rows | done | `pure/impl-t1-rows` |
+| T2 config | done | `pure/impl-t2-config` |
+| T3 validation | implementing | `pure/impl-t3-stepspec` |
 | T4 typing | spec-ready | `pure/spec-t4-typing` |
 | T5 alignment | ready | |
 | T6 drivers | ready | |
