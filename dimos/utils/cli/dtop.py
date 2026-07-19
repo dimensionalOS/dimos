@@ -168,8 +168,8 @@ LOGGED_METRICS = (
 )
 
 
-def select_memory_metric(data: dict[str, Any]) -> tuple[str, str]:
-    if data.get("pss", 0):
+def select_memory_metric(ranges: dict[str, tuple[float, float]]) -> tuple[str, str]:
+    if ranges["pss"][1] > 0:
         return "PSS", "pss"
     return "RSS", "rss"
 
@@ -405,7 +405,7 @@ class ResourceSpyApp(App[None]):
         line1 = Text()
         for idx, (label, key, fmt) in enumerate(_LINE1):
             if key == "pss":
-                label, key = select_memory_metric(d)
+                label, key = select_memory_metric(ranges)
             val = d.get(key, 0)
             lo, hi = ranges[key]
             if idx > 0:

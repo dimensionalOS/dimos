@@ -18,11 +18,13 @@ from dimos.utils.cli.dtop import select_memory_metric
 
 
 @pytest.mark.parametrize(
-    ("pss", "expected"),
+    ("pss_range", "expected"),
     [
-        pytest.param(32 * 1048576, ("PSS", "pss"), id="pss"),
-        pytest.param(0, ("RSS", "rss"), id="rss-fallback"),
+        pytest.param((0, 32 * 1048576), ("PSS", "pss"), id="pss"),
+        pytest.param((0, 0), ("RSS", "rss"), id="rss-fallback"),
     ],
 )
-def test_select_memory_metric_uses_available_measure(pss: int, expected: tuple[str, str]) -> None:
-    assert select_memory_metric({"pss": pss}) == expected
+def test_select_memory_metric_is_consistent_for_panel(
+    pss_range: tuple[int, int], expected: tuple[str, str]
+) -> None:
+    assert select_memory_metric({"pss": pss_range}) == expected
