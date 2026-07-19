@@ -1,0 +1,65 @@
+warning: `VIRTUAL_ENV=/home/nibarkavi/Desktop/Rotate8/venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+running PGO for ground truth...
+04:51:34.716 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.063 source=125 target=78
+04:51:35.015 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.021 source=134 target=96
+04:51:38.448 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0421 source=289 target=248
+04:51:38.767 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0173 source=298 target=240
+04:51:39.167 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0548 source=308 target=68
+04:51:39.572 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0386 source=317 target=60
+04:51:39.962 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.023 source=324 target=50
+04:51:40.439 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0337 source=333 target=38
+04:51:40.825 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0395 source=341 target=14
+04:51:41.358 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0404 source=353 target=16
+04:51:43.678 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.057 source=435 target=404
+04:51:44.151 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0342 source=442 target=415
+04:51:44.747 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0297 source=452 target=407
+04:51:47.167 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.1571 source=539 target=498
+04:51:47.817 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0499 source=547 target=499
+04:51:48.544 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0445 source=562 target=498
+04:51:49.245 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0477 source=576 target=498
+04:51:49.975 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0274 source=588 target=490
+04:51:50.560 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0244 source=596 target=485
+04:51:51.156 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0403 source=605 target=481
+04:51:54.270 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0173 source=710 target=668
+04:51:54.930 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0499 source=719 target=668
+04:51:55.588 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0491 source=726 target=666
+04:51:57.323 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0193 source=772 target=734
+04:51:58.121 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.013 source=782 target=741
+04:51:59.058 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0143 source=798 target=741
+04:51:59.941 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0207 source=808 target=734
+04:52:00.700 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0247 source=815 target=727
+04:52:01.417 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0217 source=825 target=720
+04:52:03.854 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.09 source=898 target=10
+04:52:04.713 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0457 source=911 target=10
+04:52:05.552 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0419 source=922 target=31
+04:52:06.427 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.04 source=932 target=32
+04:52:07.181 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0243 source=940 target=332
+04:52:07.889 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0108 source=947 target=54
+04:52:08.871 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0128 source=959 target=55
+04:52:09.689 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0077 source=971 target=61
+04:52:10.465 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0089 source=982 target=74
+04:52:11.258 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0109 source=991 target=93
+04:52:12.062 [inf][os/mapping/loop_closure/pgo.py] Loop closure detected score=0.0085 source=1000 target=100
+PGO ground truth ready in 41.4s (1007 keyframes, 40 loop closures)
+t=1778055152.52  n_pts=  50106  mode=search    fitness=0.725  wall=14.01s  cpu=53.22s  trans_err=0.338m  yaw_err=  1.76deg  ACCEPT
+t=1778055154.60  n_pts=  52009  mode=search    fitness=0.722  wall=13.67s  cpu=48.55s  trans_err=0.344m  yaw_err=  1.69deg  ACCEPT
+t=1778055156.67  n_pts=  55566  mode=search    fitness=0.750  wall=13.74s  cpu=49.40s  trans_err=0.349m  yaw_err=  1.59deg  ACCEPT
+t=1778055158.77  n_pts=  56370  mode=search    fitness=0.762  wall=13.75s  cpu=43.39s  trans_err=0.357m  yaw_err=  1.70deg  ACCEPT
+t=1778055160.83  n_pts=  61314  mode=search    fitness=0.771  wall=14.76s  cpu=47.36s  trans_err=0.366m  yaw_err=  2.11deg  ACCEPT
+t=1778055162.92  n_pts=  65783  mode=search    fitness=0.793  wall=15.67s  cpu=47.26s  trans_err=0.369m  yaw_err=  1.98deg  ACCEPT
+t=1778055164.98  n_pts=  68931  mode=search    fitness=0.795  wall=15.92s  cpu=46.99s  trans_err=0.372m  yaw_err=  1.89deg  ACCEPT
+t=1778055167.07  n_pts=  73541  mode=search    fitness=0.795  wall=16.08s  cpu=48.06s  trans_err=0.374m  yaw_err=  1.83deg  ACCEPT
+t=1778055169.13  n_pts=  77785  mode=search    fitness=0.799  wall=16.55s  cpu=49.33s  trans_err=0.372m  yaw_err=  1.78deg  ACCEPT
+t=1778055171.16  n_pts=  83485  mode=search    fitness=0.792  wall=16.03s  cpu=47.74s  trans_err=0.379m  yaw_err=  1.80deg  ACCEPT
+t=1778055173.17  n_pts=  88372  mode=search    fitness=0.779  wall=21.35s  cpu=62.08s  trans_err=0.392m  yaw_err=  1.89deg  ACCEPT
+t=1778055175.24  n_pts=  92576  mode=search    fitness=0.776  wall=17.89s  cpu=52.91s  trans_err=0.402m  yaw_err=  1.92deg  ACCEPT
+t=1778055177.32  n_pts=  94790  mode=search    fitness=0.770  wall=18.20s  cpu=53.14s  trans_err=0.416m  yaw_err=  1.97deg  ACCEPT
+t=1778055179.39  n_pts=  98626  mode=search    fitness=0.785  wall=18.79s  cpu=53.57s  trans_err=0.428m  yaw_err=  1.99deg  ACCEPT
+t=1778055181.47  n_pts= 102917  mode=search    fitness=0.802  wall=19.72s  cpu=55.84s  trans_err=0.442m  yaw_err=  2.07deg  ACCEPT
+
+-- overall (n=15) --
+accepted=15 (100%)
+latency wall   median=16.03s  p90=19.35s
+latency cpu    median=49.33s  p90=54.93s
+trans_err (accepted)  median=0.372m  p90=0.423m
+yaw_err   (accepted)  median=1.89deg  p90=2.04deg
