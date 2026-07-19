@@ -19,7 +19,7 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T9 health | ready | |
 | T10 checkpoint | ready | |
 | T11 tf | ready | |
-| T12 examples | implementing (first module: voxel mapper, `dimos/pure/modules/`) | `pure/modules-voxel-mapper` |
+| T12 examples | in progress — VoxelMapper landed (`dimos/pure/modules/`, go2_hongkong_office-validated, 0.89 @ 1-voxel vs PGO reference); docs pass pending | `pure/modules-voxel-mapper` |
 
 Wave-B interface reconciliation (orchestrator, binding for the T5/T6
 implementers): `Stamped` gets ONE home — `typing.py` (t6-drivers.md §11.2;
