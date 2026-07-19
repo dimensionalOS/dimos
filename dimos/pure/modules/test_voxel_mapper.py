@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""VoxelMapper: fold units (no engine), over() synthetics, go2_hongkong_office."""
+"""VoxelMapper(2): fold + Mealy units, over() synthetics, go2_hongkong_office parity."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import pytest
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.pure.modules import voxel_mapper
-from dimos.pure.modules.voxel_mapper import VoxelMapper
+from dimos.pure.modules.voxel_mapper import VoxelMapper, VoxelMapper2
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -224,3 +224,142 @@ def test_full_dataset_matches_reference(reference_map: PointCloud2) -> None:
         rows[-1].global_map.pointcloud.compute_point_cloud_distance(reference_map.pointcloud)
     )
     assert (dists <= 2 * REAL_VOXEL).mean() >= 0.5  # PGO corrections drift late in the run
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VoxelMapper2 — the Mealy + @resource respelling (same core, compared side by side)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _rows2(*clouds: PointCloud2) -> Iterator[VoxelMapper2.In]:
+    return iter(VoxelMapper2.In(ts=c.ts, scan=c) for c in clouds)
+
+
+def _centers(out: Any) -> np.ndarray:
+    """Voxel-center set of an Out row, sorted lexicographically for comparison."""
+    pts = out.global_map.points_f32()
+    return pts[np.lexsort(pts.T[::-1])]
+
+
+# ── unit: step behavior, lazy resource, no engine ────────────────────────────
+
+
+def test_mapper2_step_lazy_resource_and_count() -> None:
+    # lazy-resource test-mode: m.grid is touchable without a run (T7 §5.1)
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=2, carve_columns=False)
+    s = VoxelMapper2.State()
+    s, out = m.step(s, next(_rows2(_cloud([[0.1, 0.1, 0.1], [0.7, 0.1, 0.1]], ts=1.0))))
+    assert s.n_scans == 1 and out is None  # below cadence → skip
+    s, out = m.step(s, next(_rows2(_cloud([[5.0, 0.0, 0.0]], ts=2.0))))
+    assert s.n_scans == 2 and out is not None  # cadence hit → emit
+    assert out.n_scans == 2 and out.n_voxels == 3
+    centers = np.sort(out.global_map.points_f32(), axis=0)
+    np.testing.assert_allclose(
+        centers, [[0.25, 0.25, 0.25], [0.75, 0.25, 0.25], [5.25, 0.25, 0.25]], atol=1e-6
+    )
+
+
+def test_mapper2_step_below_cadence_returns_none() -> None:
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=50)
+    s = VoxelMapper2.State()
+    for c in _grid_rows(49):
+        s, out = m.step(s, VoxelMapper2.In(ts=c.ts, scan=c))
+        assert out is None
+    assert s.n_scans == 49
+
+
+# ── engine: synthetic streams through over() ─────────────────────────────────
+
+
+def test_mapper2_over_cadence_no_tail_flush() -> None:
+    # 5 scans, emit_every=2 → emits at 2 and 4 ONLY; the 5th (tail partial) is lost
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=2)
+    rows = list(m.over(scan=_grid_rows(5)))
+    assert [r.n_scans for r in rows] == [2, 4]  # NOT [2, 4, 5] — no exhaustion flush
+    assert [r.ts for r in rows] == [2.0, 4.0]  # engine-stamped from the tick row
+    assert [r.n_voxels for r in rows] == [2, 4]
+    assert rows[-1].global_map.frame_id == "world"
+
+
+def test_mapper2_over_emits_nothing_below_first_cadence() -> None:
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=50)
+    assert list(m.over(scan=_grid_rows(49))) == []  # never reaches a cadence point
+
+
+def test_mapper2_over_fresh_grid_per_run() -> None:
+    # engine builds a fresh resource per run — two runs do not share accumulation
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=3)
+    a = list(m.over(scan=_grid_rows(3)))
+    b = list(m.over(scan=_grid_rows(3)))
+    assert a[-1].n_voxels == b[-1].n_voxels == 3  # not 3 then 6
+
+
+def test_mapper2_over_disposes_on_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(voxel_mapper, "VoxelGrid", _SpyGrid)
+    list(VoxelMapper2(emit_every=1).over(scan=_grid_rows(3)))  # run to exhaustion
+    assert _SpyGrid.last is not None and _SpyGrid.last.disposed  # engine teardown disposed
+
+
+def test_mapper2_over_disposes_on_early_break(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(voxel_mapper, "VoxelGrid", _SpyGrid)
+    it = VoxelMapper2(emit_every=1).over(scan=_grid_rows(3))
+    next(it)
+    it.close()  # consumer breaks early — resource teardown must still dispose
+    assert _SpyGrid.last is not None and _SpyGrid.last.disposed
+
+
+# ── the comparison: fold and Mealy agree at shared cadence points ────────────
+
+
+def test_mapper2_matches_fold_at_shared_cadence() -> None:
+    """Both mappers over the SAME stream → identical maps at 2 & 4; fold alone emits 5."""
+    clouds = _grid_rows(5)
+    fold = list(VoxelMapper(voxel_size=VOXEL, emit_every=2).over(scan=clouds))
+    mealy = list(VoxelMapper2(voxel_size=VOXEL, emit_every=2).over(scan=clouds))
+    # cadence points 2 & 4 are shared; fold adds a tail 5, Mealy cannot
+    assert [r.n_scans for r in fold] == [2, 4, 5]
+    assert [r.n_scans for r in mealy] == [2, 4]
+    for f, m in zip(fold, mealy, strict=False):  # the common prefix must be voxel-identical
+        assert f.n_scans == m.n_scans and f.n_voxels == m.n_voxels
+        assert f.ts == m.ts
+        np.testing.assert_array_equal(_centers(f), _centers(m))
+
+
+# ── real data: VoxelMapper2 over the go2_hongkong_office slice (skip-guarded) ──
+
+
+@pytest.fixture(scope="module")
+def hk_rows2() -> list[VoxelMapper2.Out]:
+    """First N_SCANS scans through VoxelMapper2.over(); one shared run per module."""
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    path = _get_data("go2_hongkong_office.db")
+    with SqliteStore(path=path) as store:
+        lidar = store.stream("lidar", PointCloud2)
+        m = VoxelMapper2(voxel_size=REAL_VOXEL, emit_every=50)
+        return list(m.over(scan=lidar.range_seek(0, N_SCANS)))
+
+
+def test_mapper2_real_slice_no_tail_flush(hk_rows2: list[VoxelMapper2.Out]) -> None:
+    # fold emits 50..250 plus the 298 tail; Mealy emits 50..250 and stops
+    assert [r.n_scans for r in hk_rows2] == [50, 100, 150, 200, 250]
+    ts = [r.ts for r in hk_rows2]
+    assert ts == sorted(ts) and len(set(ts)) == len(ts)
+    assert hk_rows2[-1].n_voxels > 10_000
+
+
+def test_mapper2_matches_fold_on_real_slice(
+    hk_rows: list[VoxelMapper.Out], hk_rows2: list[VoxelMapper2.Out]
+) -> None:
+    """Shared VoxelGrid core → the 250-scan snapshots are voxel-identical across shapes."""
+    fold_250 = next(r for r in hk_rows if r.n_scans == 250)
+    mealy_250 = next(r for r in hk_rows2 if r.n_scans == 250)
+    assert fold_250.n_voxels == mealy_250.n_voxels
+    # symmetric nearest-neighbour distance is 0 iff the voxel-center sets coincide
+    fwd = np.asarray(
+        mealy_250.global_map.pointcloud.compute_point_cloud_distance(fold_250.global_map.pointcloud)
+    )
+    rev = np.asarray(
+        fold_250.global_map.pointcloud.compute_point_cloud_distance(mealy_250.global_map.pointcloud)
+    )
+    assert float(fwd.max()) == 0.0 and float(rev.max()) == 0.0  # identical maps

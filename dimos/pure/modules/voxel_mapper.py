@@ -66,12 +66,13 @@ across machines; both devices produce identical grids.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import NamedTuple
 
 from dimos import pure as pm
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-__all__ = ["VoxelMapper"]
+__all__ = ["VoxelMapper", "VoxelMapper2"]
 
 
 class VoxelMapper(pm.PureModule):
@@ -122,3 +123,83 @@ class VoxelMapper(pm.PureModule):
             n_voxels=len(grid),
             n_scans=n,
         )
+
+
+class VoxelMapper2(pm.PureModule):
+    """Mealy-plus-``@resource`` respelling of :class:`VoxelMapper` — the sketch3 §3 shape.
+
+    Same VoxelGrid core, same config, same ``Out`` — a side-by-side of two module
+    shapes, not a replacement (:class:`VoxelMapper` stays). The grid is now an
+    engine-owned ``@resource`` (T7): built fresh per run at warmup, disposed at
+    teardown (``VoxelGrid.dispose`` is sniffed), lazily cached outside a run so a
+    unit test can touch ``self.grid`` with no engine. ``State`` is plain data —
+    a scan counter — so it is checkpointable (T10-compatible); the heavy mutable
+    accumulator lives in the resource, exactly where resources belong.
+
+    Deliberate behavioral difference from the fold version — a step never learns
+    the stream ended, so ``VoxelMapper2`` CANNOT emit the fold's final flush at
+    exhaustion. With ``emit_every=50`` over 298 ticks it emits at 50..250 and the
+    trailing 48-scan partial batch is silently not emitted; the fold emits a 298
+    row too. That is the price of the Mealy shape. What it buys: checkpointable
+    plain-data ``State`` and engine-managed grid lifecycle — the live-mapping
+    trade (resume a long mapping run from a checkpoint; the engine owns warmup
+    and teardown instead of a generator-local ``try/finally``).
+
+    Comparison (fold ``VoxelMapper`` vs Mealy ``VoxelMapper2``)::
+
+        aspect            VoxelMapper (fold)          VoxelMapper2 (Mealy + resource)
+        ─────────────────────────────────────────────────────────────────────────
+        shape             fold(rows) -> Iterator      step(state, i) -> (state, Out?)
+        grid home         generator-local var         @resource (engine-owned)
+        state home        closure locals (n, last_ts) State NamedTuple (plain data)
+        grid lifecycle    try/finally dispose          warmup create / teardown dispose
+        exhaustion flush  YES (final partial batch)    NO (step can't see stream end)
+        checkpointable    no (state is in the stack)   yes (State is plain data)
+        emit at 298?      yes                          no (last emit is 250)
+        logic LOC         28 (fold + _snapshot)        21 (State + grid + step)
+
+    At the shared cadence points (50, 100, ...) the two emit identical maps —
+    same VoxelGrid, same insertion order — differing only in the fold's extra
+    tail row. See ``test_voxel_mapper.py`` for the cadence-parity test.
+    """
+
+    voxel_size: float = 0.1  # metric voxel edge length
+    emit_every: int = 20  # emit every n scans; <= 0 never emits (no exhaustion flush)
+    device: str = "CPU:0"  # o3d device; CPU measured faster than CUDA here
+    carve_columns: bool = True  # clear re-observed (x, y) columns before insert
+    frame_id: str = "world"  # frame stamped on the emitted map
+
+    class In(pm.In):
+        scan: PointCloud2 = pm.tick(expect_hz=8)
+
+    class Out(pm.Out):
+        global_map: PointCloud2 = pm.contract(min_hz=0.25)  # occupied-voxel centers
+        n_voxels: int
+        n_scans: int
+
+    class State(NamedTuple):
+        n_scans: int = 0  # scans folded so far — plain data, checkpointable
+
+    @pm.resource
+    def grid(self) -> VoxelGrid:
+        """Fresh per-run VoxelGrid from config; engine disposes it at teardown."""
+        return VoxelGrid(
+            voxel_size=self.voxel_size,
+            device=self.device,
+            carve_columns=self.carve_columns,
+            frame_id=self.frame_id,
+            show_startup_log=False,
+        )
+
+    def step(self, s: State, i: In) -> tuple[State, Out | None]:
+        """Add the scan to the grid, bump the counter, emit a snapshot on cadence."""
+        self.grid.add_frame(i.scan)
+        n = s.n_scans + 1
+        s = s._replace(n_scans=n)
+        if self.emit_every > 0 and n % self.emit_every == 0:
+            return s, VoxelMapper2.Out(
+                global_map=self.grid.get_global_pointcloud2(),
+                n_voxels=len(self.grid),
+                n_scans=n,
+            )  # engine stamps ts from the tick row
+        return s, None
