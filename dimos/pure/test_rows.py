@@ -48,8 +48,6 @@ from dimos.pure.rows import (
     tick,
 )
 
-pytestmark = pytest.mark.skip(reason="T1 skeleton — enable with implementation")
-
 
 class Image:
     """Fake payload."""
@@ -493,3 +491,83 @@ def test_sketch_floor_tagger():
     assert i.ts == 0.0 and o.ts == UNSTAMPED
     assert o.located == "bright=0.80 @ (1.00, 2.00)"
     assert list(Tagger.In.fields()) == ["image", "pose"]
+
+
+# ── implementation-time additions (need module-level fixture bundles) ────────
+# These three cases were impossible under the skeleton (module-level specifier
+# calls raised); they are added now that rows.py is real (spec §9.1 close).
+
+
+class PickleHolder:
+    class Row(In):
+        value: int = latest()
+        label: str = latest(default="")
+
+
+def test_nested_pickle_roundtrip():
+    """A bundle nested in a module-level class round-trips through pickle."""
+    import pickle
+
+    row = PickleHolder.Row(ts=2.0, value=7, label="hi")
+    back = pickle.loads(pickle.dumps(row))
+    assert type(back) is PickleHolder.Row
+    assert back == row
+    assert back.ts == 2.0 and back.value == 7 and back.label == "hi"
+
+
+class BMsg:
+    """Payload visible only in this test module's globals."""
+
+
+def test_cross_module_inheritance():
+    """Each MRO layer resolves annotations against its own module's globals."""
+    import sys
+    import textwrap
+    import types
+
+    mod = types.ModuleType("dimos.pure._t1_fixture_mod_a")
+    src = textwrap.dedent(
+        """
+        from __future__ import annotations
+
+        from dimos.pure.rows import In, tick
+
+
+        class AMsg:
+            pass
+
+
+        class ABundle(In):
+            a: AMsg = tick()
+        """
+    )
+    sys.modules[mod.__name__] = mod
+    try:
+        exec(compile(src, mod.__name__, "exec"), mod.__dict__)
+        ABundle = mod.ABundle
+
+        class BBundle(ABundle):  # a resolves in mod_a; b resolves in this module
+            b: BMsg = latest()
+
+        f = BBundle.fields()
+        assert list(f) == ["a", "b"]
+        assert f["a"].annotation is mod.AMsg  # would NameError if resolved here
+        assert f["b"].annotation is BMsg
+        assert isinstance(f["a"], TickSpec) and isinstance(f["b"], LatestSpec)
+    finally:
+        del sys.modules[mod.__name__]
+
+
+class QualOuter:
+    class Sib:  # a payload, referenced by qualified path from the nested bundle
+        pass
+
+    class Row(In):
+        x: QualOuter.Sib = tick()
+
+
+def test_qualified_path_resolution():
+    """A field typed by qualified path (Outer.Sib) resolves in fields()."""
+    f = QualOuter.Row.fields()
+    assert isinstance(f["x"], TickSpec)
+    assert f["x"].annotation is QualOuter.Sib

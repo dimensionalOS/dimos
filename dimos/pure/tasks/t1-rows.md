@@ -700,25 +700,25 @@ payloads exact); S12 `replace`/`asdict` typing on rows; S13 `fields()` →
 
 ## 10. Acceptance criteria
 
-- [ ] `uv run mypy dimos/pure/rows.py` clean under repo strict config.
-- [ ] rows.py imports stdlib + `typing_extensions` only; no `dimos.*`
+- [x] `uv run mypy dimos/pure/rows.py` clean under repo strict config.
+- [x] rows.py imports stdlib + `typing_extensions` only; no `dimos.*`
       imports; no imports of `dimos.pure` siblings.
-- [ ] The sketch3 §1/§2/§4 bundles (Tagger, QualityGate, CostMapper) compile
+- [x] The sketch3 §1/§2/§4 bundles (Tagger, QualityGate, CostMapper) compile
       against `pm.In`/`pm.Out` + specifiers verbatim — the Tagger stays four
       declarations, zero added ceremony.
-- [ ] Sketch test spellings work verbatim: `Tagger.In(ts=0.0, image=…,
+- [x] Sketch test spellings work verbatim: `Tagger.In(ts=0.0, image=…,
       pose=…)`, `Tagger.Out(located=…)`, `VoxelGridMapper.Out(ts=r.ts, …)`.
-- [ ] `uv run pytest dimos/pure/test_rows.py --collect-only` green against
+- [x] `uv run pytest dimos/pure/test_rows.py --collect-only` green against
       the skeleton; after removing the module-level skip, all §9.1 tests
       pass, plus the three implementation-time additions.
-- [ ] All §9.2 static cases behave as listed.
-- [ ] All §7 error paths raise `BundleDefinitionError` with the templates.
-- [ ] `fields()` guarantees hold: ts excluded, declaration order, fresh
+- [x] All §9.2 static cases behave as listed.
+- [x] All §7 error paths raise `BundleDefinitionError` with the templates.
+- [x] `fields()` guarantees hold: ts excluded, declaration order, fresh
       dict, lazy + cached + failure-not-cached resolution.
-- [ ] Specifier objects never observable as class or instance attribute
+- [x] Specifier objects never observable as class or instance attribute
       values after class creation.
-- [ ] Nested-bundle pickle round-trip passes.
-- [ ] No engine, stream, transport, or clock code anywhere in the module.
+- [x] Nested-bundle pickle round-trip passes.
+- [x] No engine, stream, transport, or clock code anywhere in the module.
 
 ## 11. Decisions within mandate (numbered for review)
 
@@ -743,3 +743,22 @@ payloads exact); S12 `replace`/`asdict` typing on rows; S13 `fields()` →
 - **D11** Stamping ownership: T5 constructs In stamped; T6 step driver
   stamps Out via `replace` (overwrite, don't error); fold self-stamps, T6
   validates strictly-increasing (§4.4).
+
+## Implementation notes
+
+Shipped exactly as specified (pipeline §4.2 steps 1–13, error templates §7,
+`fields()` §5.2). Two defensive choices widen an internal check without
+changing any spec'd behavior for the canonical (future-annotations) inputs:
+
+- **InitVar detection (§4.2#6).** The spec mandates the *textual* check
+  (`"InitVar" in ann`) for the string annotations produced under
+  `from __future__ import annotations`. The implementation keeps that check
+  verbatim for string annotations and additionally recognises a live
+  `dataclasses.InitVar` object, so a bundle authored *without* future
+  annotations still raises E-INITVAR rather than slipping through. Identical
+  behaviour on every spec'd (string) input; strictly a superset otherwise.
+- **E-UNRESOLVED catch (§5.2 / §7).** `fields()` chains E-UNRESOLVED from any
+  `get_type_hints` failure (`except Exception`), not only `NameError`, so a
+  broken *qualified* path (`Outer.Missing`, which surfaces as `AttributeError`)
+  is reported with the same qualified-path teaching message instead of leaking
+  a raw exception. The `NameError` case (§8 #12/#13) is unchanged.
