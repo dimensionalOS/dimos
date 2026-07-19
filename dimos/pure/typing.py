@@ -25,8 +25,8 @@ or ``import dimos.pure.typing as pure_typing``) and never bind the bare name
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterator
-from typing import Any, Generic, Protocol, TypeAlias, TypeVar, overload
+from collections.abc import Awaitable, Callable, Iterable, Iterator
+from typing import Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
 
 __all__ = [
     "AsyncStateless",
@@ -37,6 +37,7 @@ __all__ = [
     "Mealy",
     "OutPort",
     "OutPorts",
+    "Stamped",
     "Stateless",
 ]
 
@@ -55,8 +56,26 @@ _TState = TypeVar("_TState")
 _TBundle = TypeVar("_TBundle")  # ports-view parameter (a bundle class)
 _TMsg = TypeVar("_TMsg")  # port-handle parameter (a field's value type)
 
-# Provisional stream argument type for over(); T6 tightens (spec §over).
-Streamable: TypeAlias = object
+
+@runtime_checkable
+class Stamped(Protocol):
+    """One element of a timestamped stream: anything carrying a float ``ts``.
+
+    THE protocol's single home (wave-B reconciliation): ``align`` and the T6
+    drivers consume it from here. Read-only property spelling per §5.3
+    doctrine — satisfied by frozen row fields, plain-attribute msgs, and
+    property implementations alike; a plain ``ts: float`` member would demand
+    settability and reject rows.
+    """
+
+    @property
+    def ts(self) -> float: ...
+
+
+# A stream argument is anything the aligner can iter() per run: memory2
+# Stream objects (yield stamped Observations), lists of rows/msgs (tests),
+# generators (one run). T4 §13.1 resolved here (T6 D12).
+Streamable: TypeAlias = Iterable[Stamped]
 
 
 # ── step-shape protocols ─────────────────────────────────────────────────────
@@ -197,10 +216,8 @@ class EngineSurface:
     @overload
     def over(self: Fold[_TIn, _TOut], **streams: Streamable) -> Iterator[_TOut]: ...
     def over(self: Any, **streams: Streamable) -> Iterator[Any]:
-        """Align streams, drive the step, yield typed Out rows (T5 + T6).
+        """Align streams, drive the step, yield typed Out rows (T5 + T6)."""
+        from dimos.pure.drivers import run_over  # lazy: sanctioned edge #2
+        from dimos.pure.stepspec import step_spec  # lazy: sanctioned edge #1
 
-        Final body (spec §over): dispatch on ``step_spec(type(self))`` — the
-        frozen StepSpec T3 stamps as ``cls.__pure_step__`` — via a lazy local
-        import of ``dimos.pure.drivers`` (T6).
-        """
-        raise NotImplementedError
+        return run_over(self, step_spec(type(self)), streams)

@@ -822,24 +822,26 @@ modules, alignment-determinism property test (index T12), re-invoked
 
 ## 15. Acceptance checklist
 
-- [ ] `uv run mypy dimos/pure/drivers.py` clean; `uv run mypy dimos/pure`
+- [x] `uv run mypy dimos/pure/drivers.py` clean; `uv run mypy dimos/pure`
       stays clean (strict).
-- [ ] `uv run pytest dimos/pure -q`: existing 167 still pass; T6 tests
+- [x] `uv run pytest dimos/pure -q`: existing 167 still pass; T6 tests
       collect and skip (spec phase) / pass (implementation phase).
-- [ ] Implementation replaces `over()`'s body per §11.1; ALL T4 harness
+- [x] Implementation replaces `over()`'s body per §11.1; ALL T4 harness
       cases stay green (`test_typing_static.py`), including
       `case_config_kwargs`/`case_tagger_floor` revealed types.
-- [ ] `Stamped` + alias land per §11.2–3; `uv run mypy dimos/pure/typing.py`
+      (One runtime assertion updated to §4.4's specified failure mode —
+      appendix A2.)
+- [x] `Stamped` + alias land per §11.2–3; `uv run mypy dimos/pure/typing.py`
       standalone clean.
-- [ ] Every §10.3 message template appears verbatim (modulo interpolation)
+- [x] Every §10.3 message template appears verbatim (modulo interpolation)
       in the implementation, each with a test asserting slug + key phrases.
-- [ ] §8.3 table holds path-by-path under tests (rows 1–4, 6 at minimum).
-- [ ] Async machine invariants hold under the choreography tests: window
+- [x] §8.3 table holds path-by-path under tests (rows 1–4, 6 at minimum).
+- [x] Async machine invariants hold under the choreography tests: window
       bound, tick-order emission, no leaked tasks (§6.3).
-- [ ] No wall-clock/timeout call in any driver code path (§12); no import
+- [x] No wall-clock/timeout call in any driver code path (§12); no import
       of `module.py`/`config.py` from `drivers.py` (§1).
-- [ ] fold hot path adds nothing beyond §7.3's counters to per-input cost.
-- [ ] T4 §13.1 marked resolved (pointer to §11.3) when landing.
+- [x] fold hot path adds nothing beyond §7.3's counters to per-input cost.
+- [x] T4 §13.1 marked resolved (pointer to §11.3) when landing.
 
 ## 16. Decisions within mandate (numbered for review)
 
@@ -901,3 +903,100 @@ modules, alignment-determinism property test (index T12), re-invoked
 No `## Relitigation` section: no settled decision is deviated from — D5
 reaffirms the index's async-drop text, D11 adopts T1's recommendation
 verbatim, D3 and D12 execute mandates explicitly delegated to T6.
+
+## Appendix — implementation notes (T6-impl, 2026-07-19)
+
+Landed on `pure/impl-t6-drivers`: `drivers.py` full, `over()` activated,
+`Stamped`/`Streamable` moved per §11. Suite: 208 passed / 35 skipped (T5's
+suite awaits its parallel implementation); mypy strict clean. Notes on every
+point where the implementation had to choose or deviate:
+
+### A1. The memory2 boundary (reconciliation obligation) — findings + decision
+
+Investigated `dimos/memory2` reality (`stream.py`, `type/observation.py`,
+`replay.py`, `store/base.py`):
+
+- `Stream.__iter__` yields `Observation` **envelopes** (`stream.py:193`),
+  never payloads. `Observation` (`type/observation.py:107`) is a dataclass
+  with a guaranteed plain `ts: float` field and a lazy `.data` property
+  (blob loader behind a lock) for the payload.
+- Payloads are stamped **sometimes**: ~20 msg classes subclass
+  `dimos.types.timestamped.Timestamped` (Image, Transform, Odometry, Imu,
+  …) and carry their own float `ts`; bare scalars
+  (`store.stream("test", int)`), `Pose`, `Vector3`, `TFMessage` carry none;
+  `PointCloud2.ts` can be `None`; `Detection2D/3D.ts` is a computed property
+  off `header.stamp`.
+- `ReplayStream` (`replay.py:113`) has **no `__iter__`** — its explicit
+  `.iterate()`/`.iterate_ts()` already yield raw payloads / `(ts, data)`.
+  `StreamAccessor` is a namespace, not a stream.
+
+**Decision — unwrap to `.data`, exactly T5 Q1's confirmed default.** In
+`run_over`'s stream normalization, a value recognized as a memory2 `Stream`
+is wrapped by a re-iterable payload view yielding `obs.data`; every other
+value passes verbatim, identity-preserved (pinned by
+`test_run_over_composes_align`). Recognition is
+`sys.modules.get("dimos.memory2.stream")` + `isinstance`: a Stream instance
+cannot exist unless its module is already imported, so the engine never
+imports memory2 — the layering hygiene holds even at runtime.
+
+The flagged ts-loss hazard resolves without a shim: after the unwrap the
+payload's own `ts` is the ONE authority (T5 §3 doctrine — the envelope ts is
+*discarded by design*; envelope/payload divergence resolves payload-wins). A
+stream of **unstamped** payloads then fails at T5 ingestion with
+`[align-bad-item]` naming the port — loud, at the first pull, never a silent
+cadence change. That failure is doctrinally correct ("primitives ride a
+stamped envelope msg", t5-align §6.1); a shim landing in row fields would
+break T5 D2, and reality does not force it — no orchestrator question was
+raised. `ReplayStream` is deliberately NOT adapted: it is not iterable and
+fails loudly at `iter()`; choosing `.iterate()` vs `.iterate_ts()` for the
+user is policy, and `.iterate()`'s output (stamped payloads) is already the
+plain-iterable currency.
+
+Tests: fake Stream/Observation shape
+(`test_run_over_unwraps_memory2_stream`), memory2-absent passthrough proving
+zero import side effects (`test_run_over_memory2_absent_is_passthrough`), and
+a real `MemoryStore`-backed smoke test
+(`test_run_over_unwraps_real_memory2_stream`).
+
+### A2. One assertion updated in T4's harness (out-of-mandate file, forced)
+
+`test_typing_static.py::test_runtime_surface` pinned the skeleton-phase
+`over()` → `NotImplementedError`. With the §11.1 body active, a spec-less
+`EngineSurface()` fails per t4-typing.md §4.4's *specified* failure mode —
+`step_spec` raises `[not-classified]`, a `TypeError`. No implementation of
+the mandated body can preserve the old assertion, so the one line became
+`pytest.raises(TypeError, match="not-classified")`. The `m.i`/`m.o`
+NotImplementedError pins are untouched (T8 stubs remain).
+
+### A3. Smaller in-mandate choices
+
+- **CLOSING is internally nested** (`try: cancel+reap finally: await
+  ateardown`): §6.3 lists the steps sequentially; nesting guarantees the T7
+  seam runs even if the reap raises — what §8.3 row 7 demands of teardown
+  steps generally.
+- **`{out}` in `[step-none-no-skip]`**: drivers never see `StepSpec` (D2),
+  so the Out type is unavailable; the message interpolates the step's return
+  annotation best-effort (`__annotations__["return"]` when it is a plain
+  name or class) and falls back to the literal `Out` (e.g. for Mealy tuple
+  annotations).
+- **`hooks.errors` scoping**: incremented at the §9-table driver raise sites
+  (`step-error`, `step-none-no-skip`, `fold-*`); the wiring-class `run-*`
+  raises (eager `run_over` checks and the façade's defensive re-checks)
+  touch no counters — no run started.
+- **`module.fold(proxy)` call sits inside the StepError wrap**: a
+  non-generator fold can raise at the call itself; §10.2's blanket rule
+  ("every propagating user-code exception") covers it (coordinates: 0 rows
+  consumed, ts=-inf).
+- **`gen.close()` / `rows.close()` via getattr-if-present**: a fold may
+  return a plain (non-generator) `Iterator[Out]` with no `close`; §8.2
+  already spells close-if-present for `rows`.
+- **BaseException fine print**: a task's KeyboardInterrupt escapes
+  `run_until_complete` off the loop itself (CPython re-raises out of
+  `Task.__step`); the machine then receives it at `await task` during the
+  aclose drive, so CLOSING (cancel + reap + `ateardown`) still runs on the
+  way out — pinned by `test_async_baseexception_propagates_raw`. As with
+  stock `asyncio.run`, a Ctrl-C teardown may leave an unretrieved-exception
+  report on stderr; counters stay untouched (§6.4: never counted).
+- **Tests added beyond the shipped 38** (additions, not modifications):
+  `[run-inside-loop]` slug coverage, two BaseException §8.3-row-6 tests, and
+  the three A1 boundary tests — 44 in `test_drivers.py` total.

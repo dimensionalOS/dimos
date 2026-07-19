@@ -591,7 +591,9 @@ No other settled decision was deviated from.
 - [x] T3 coordination decisions (a)/(b)/(c) recorded and, where static,
       pinned as fixtures.
 - [x] No new dev dependency; no pyproject.toml change.
-- [ ] T6 replaces `over()` body per §4.4 (keeps every harness case green).
+- [x] T6 replaces `over()` body per §4.4 (keeps every harness case green;
+      the one runtime stub assertion follows §4.4's not-classified failure
+      mode — t6-drivers.md appendix A2).
 - [ ] T8 implements accessor `__get__`/views per §5.5 (adds runtime port
       tests; static cases unchanged).
 - [ ] T2 makes `PureModule` inherit `EngineSurface` (§3) and re-exports §6
@@ -601,7 +603,10 @@ No other settled decision was deviated from.
 
 1. `Streamable` final bound (T6): stamped-msg iterable vs memory2
    `StreamAccessor` protocol — decide when `run_over` exists; alias swap is
-   one line here.
+   one line here. **RESOLVED by T6 (D12, t6-drivers.md §11.3)**:
+   `Streamable = Iterable[Stamped]`, `Stamped` homed here in `typing.py`;
+   the `StreamAccessor` bound was rejected (store-access surface, not a
+   data contract).
 2. `OutPort.subscribe` return type: rim subscription handle
    (unsubscribe callable? context manager?) — T8's call; `Any` until then.
 3. Whether `pm` re-exports the port types at all, or keeps them
