@@ -31,8 +31,8 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult, PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -100,7 +100,6 @@ class _ManipulationModuleHarness(ManipulationModule):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
-        self._last_limit_projection_log = {}
         self._robots = {}
         self._planned_paths = {}
         self._planned_trajectories = {}
@@ -309,10 +308,6 @@ class TestPlanningInitialization:
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 1.0],
-        )
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
         module._world_monitor.get_current_joint_state.return_value = current
         expected = IKResult(
@@ -363,10 +358,6 @@ class TestPlanningInitialization:
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 1.0],
-        )
         module._world_monitor.get_current_joint_state.return_value = JointState(
             name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
         )
@@ -382,146 +373,6 @@ class TestPlanningInitialization:
         _, kwargs = module._kinematics.solve.call_args
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.get_current_joint_state.assert_not_called()
-
-    def test_solve_ik_projects_minor_measured_limit_overshoot(self, robot_config):
-        module = _make_module()
-        robot_config.measured_state_limit_tolerance = 0.01
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._world_monitor = MagicMock()
-        module._world_monitor.world = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 0.0],
-        )
-        measured = JointState(
-            name=["joint3", "joint1", "joint2"],
-            position=[0.003, 0.2, 0.3],
-        )
-        module._world_monitor.get_current_joint_state.return_value = measured
-        module._kinematics = MagicMock()
-        module._kinematics.solve.return_value = IKResult(
-            status=IKStatus.SUCCESS,
-            joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.1, -0.1]),
-        )
-
-        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
-
-        assert result.status == IKStatus.SUCCESS
-        planning_seed = module._kinematics.solve.call_args.kwargs["seed"]
-        assert planning_seed.name == ["joint3", "joint1", "joint2"]
-        assert planning_seed.position == [0.0, 0.2, 0.3]
-        assert measured.position == [0.003, 0.2, 0.3]
-
-    def test_viser_pose_evaluation_projects_minor_measured_limit_overshoot(self, robot_config):
-        module = _make_module()
-        robot_config.measured_state_limit_tolerance = 0.01
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._world_monitor = MagicMock()
-        module._world_monitor.world = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 0.0],
-        )
-        measured = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.003],
-        )
-        module._world_monitor.get_current_joint_state.return_value = measured
-        module._world_monitor.is_state_valid.return_value = True
-        module._kinematics = MagicMock()
-        solution = JointState(
-            name=robot_config.joint_names,
-            position=[0.1, 0.1, -0.1],
-        )
-        module._kinematics.solve.return_value = IKResult(
-            status=IKStatus.SUCCESS,
-            joint_state=solution,
-        )
-
-        result = module.evaluate_pose_target(
-            Pose(position=Vector3(), orientation=Quaternion()), "test_arm"
-        )
-
-        assert result["success"] is True
-        assert result["joint_state"] == solution
-        planning_seed = module._kinematics.solve.call_args.kwargs["seed"]
-        assert planning_seed.position == [0.0, 0.0, 0.0]
-        assert measured.position == [0.0, 0.0, 0.003]
-
-    def test_solve_ik_rejects_measured_limit_violation_beyond_tolerance(self, robot_config):
-        module = _make_module()
-        robot_config.measured_state_limit_tolerance = 0.01
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._world_monitor = MagicMock()
-        module._world_monitor.world = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 0.0],
-        )
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.02],
-        )
-        module._kinematics = MagicMock()
-
-        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
-
-        assert result.status == IKStatus.JOINT_LIMITS
-        assert "joint3=0.020000" in result.message
-        assert "by 0.020000 rad" in result.message
-        module._kinematics.solve.assert_not_called()
-
-    def test_plan_to_joints_projects_minor_measured_start_overshoot(self, robot_config):
-        module = _make_module()
-        robot_config.measured_state_limit_tolerance = 0.01
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._world_monitor = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 0.0],
-        )
-        measured = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.003],
-        )
-        module._world_monitor.get_current_joint_state.return_value = measured
-        module._planner = MagicMock()
-        module._planner.plan_joint_path.return_value = PlanningResult(
-            status=PlanningStatus.NO_SOLUTION,
-            message="stop after validating inputs",
-        )
-        goal = JointState(name=robot_config.joint_names, position=[0.1, 0.1, -0.1])
-
-        assert not module.plan_to_joints(goal)
-
-        planning_start = module._planner.plan_joint_path.call_args.kwargs["start"]
-        assert planning_start.position == [0.0, 0.0, 0.0]
-        assert measured.position == [0.0, 0.0, 0.003]
-
-    def test_plan_to_joints_preserves_planner_failure_details(self, robot_config):
-        module = _make_module()
-        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
-        module._world_monitor = MagicMock()
-        module._world_monitor.get_joint_limits.return_value = (
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 1.0],
-        )
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
-        )
-        module._planner = MagicMock()
-        module._planner.plan_joint_path.return_value = PlanningResult(
-            status=PlanningStatus.INVALID_GOAL,
-            message="arm_joint3 is outside its upper limit",
-        )
-
-        goal = JointState(name=robot_config.joint_names, position=[0.1, 0.1, 0.1])
-        assert not module.plan_to_joints(goal)
-        assert (
-            module.get_error()
-            == "Planning failed: INVALID_GOAL: arm_joint3 is outside its upper limit"
-        )
 
 
 class TestJointNameTranslation:

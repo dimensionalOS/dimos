@@ -1,8 +1,8 @@
 # Galaxea A1Z + G1Z
 
 The A1Z integration uses native Linux SocketCAN, the vendor's 250 Hz MIT
-position-control loop, the G1Z URDF for gravity compensation and visualization,
-and the vendor G1Z gripper implementation.
+position-control loop, the G1Z URDF for gravity compensation, and the vendor
+G1Z gripper implementation.
 
 ## Vendor SDK
 

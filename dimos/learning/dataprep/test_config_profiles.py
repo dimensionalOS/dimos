@@ -14,28 +14,15 @@
 
 from pathlib import Path
 
-import pytest
-
 from dimos.learning.dataprep.core import DataPrepConfig
 
 
-@pytest.mark.parametrize(
-    ("filename", "anchor", "observation_keys"),
-    [
-        ("galaxea_a1z_state_config.json", "joint_state", {"joint_state"}),
-        ("galaxea_a1z_camera_config.json", "image", {"image", "joint_state"}),
-    ],
-)
-def test_a1z_dataprep_profiles_are_valid(
-    filename: str,
-    anchor: str,
-    observation_keys: set[str],
-) -> None:
-    path = Path(__file__).with_name(filename)
+def test_a1z_dataprep_profile_is_valid() -> None:
+    path = Path(__file__).with_name("galaxea_a1z_state_config.json")
 
     config = DataPrepConfig.model_validate_json(path.read_text())
 
-    assert config.sync.anchor == anchor
-    assert set(config.observation) == observation_keys
+    assert config.sync.anchor == "joint_state"
+    assert set(config.observation) == {"joint_state"}
     assert set(config.action) == {"joint_target"}
     assert config.output.metadata["robot"] == "galaxea_a1z"

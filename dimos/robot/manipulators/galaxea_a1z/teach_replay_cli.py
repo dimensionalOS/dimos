@@ -47,7 +47,7 @@ def teach(
     """Hand-teach episodes into one Memory2 recording."""
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
-    from dimos.robot.manipulators.galaxea_a1z.teach_replay_blueprints import (
+    from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
         make_a1z_teach_blueprint,
     )
 
@@ -146,14 +146,14 @@ def replay(
     from dimos.control.coordinator import ControlCoordinator
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+    from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
+        A1Z_REPLAY_TASK_NAME,
+        make_a1z_replay_blueprint,
+    )
     from dimos.robot.manipulators.galaxea_a1z.teach_replay import (
         build_execution_trajectory,
         load_recorded_episode,
         prepare_episode,
-    )
-    from dimos.robot.manipulators.galaxea_a1z.teach_replay_blueprints import (
-        A1Z_REPLAY_TASK_NAME,
-        make_a1z_replay_blueprint,
     )
 
     source = source.expanduser().resolve()

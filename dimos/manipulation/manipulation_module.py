@@ -82,8 +82,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_LIMIT_PROJECTION_LOG_PERIOD_S = 5.0
-
 # Composite type aliases for readability (using semantic IDs from planning.spec)
 RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
 """(world_robot_id, config, trajectory_generator)"""
@@ -96,10 +94,6 @@ PlannedPaths: TypeAlias = dict[RobotName, JointPath]
 
 PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
 """Maps robot_name -> planned trajectory"""
-
-
-class _MeasuredStateLimitError(ValueError):
-    """Raised when measured feedback is too far outside planning limits."""
 
 
 class ManipulationState(Enum):
@@ -153,7 +147,6 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
-        self._last_limit_projection_log: dict[WorldRobotID, float] = {}
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -516,11 +509,6 @@ class ManipulationModule(Module):
         """Run the configured kinematics backend for a world-frame pose."""
         assert self._world_monitor and self._kinematics
 
-        try:
-            planning_seed = self._project_measured_state_for_planning(robot_id, seed)
-        except _MeasuredStateLimitError as exc:
-            return IKResult(status=IKStatus.JOINT_LIMITS, message=str(exc))
-
         # Convert Pose to PoseStamped for the IK solver
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -534,100 +522,9 @@ class ManipulationModule(Module):
             world=self._world_monitor.world,
             robot_id=robot_id,
             target_pose=target_pose,
-            seed=planning_seed,
+            seed=seed,
             check_collision=check_collision,
         )
-
-    def _project_measured_state_for_planning(
-        self, robot_id: WorldRobotID, state: JointState
-    ) -> JointState:
-        """Project a minor measured-state overshoot onto the planning limits.
-
-        Driver feedback remains untouched. Only the copy passed to IK or a
-        planner is projected, and only when every violation is within the
-        robot-specific measured-state tolerance.
-        """
-        assert self._world_monitor
-        config = next(
-            (
-                config
-                for candidate_id, config, _ in self._robots.values()
-                if candidate_id == robot_id
-            ),
-            None,
-        )
-        if config is None:
-            raise _MeasuredStateLimitError(f"No robot configuration for '{robot_id}'")
-
-        positions = np.asarray(state.position, dtype=np.float64)
-        lower_limits, upper_limits = self._world_monitor.get_joint_limits(robot_id)
-        model_lower = np.asarray(lower_limits, dtype=np.float64)
-        model_upper = np.asarray(upper_limits, dtype=np.float64)
-        if positions.shape != model_lower.shape or positions.shape != model_upper.shape:
-            raise _MeasuredStateLimitError(
-                "Measured state and planning joint limits have different lengths: "
-                f"state={positions.size}, lower={model_lower.size}, upper={model_upper.size}"
-            )
-        if not np.all(np.isfinite(positions)):
-            raise _MeasuredStateLimitError("Measured planning state contains non-finite positions")
-
-        joint_names = state.name if state.name else config.joint_names
-        if len(joint_names) != len(state.position):
-            raise _MeasuredStateLimitError(
-                "Measured planning state must name every position or omit all names"
-            )
-        model_index_by_name = {name: i for i, name in enumerate(config.joint_names)}
-        model_indices: list[int] = []
-        for name in joint_names:
-            model_name = config.get_urdf_joint_name(name)
-            if model_name not in model_index_by_name:
-                raise _MeasuredStateLimitError(
-                    f"Measured planning state has unknown joint '{name}'"
-                )
-            model_indices.append(model_index_by_name[model_name])
-        if len(set(model_indices)) != len(model_indices):
-            raise _MeasuredStateLimitError("Measured planning state contains duplicate joints")
-        lower = model_lower[model_indices]
-        upper = model_upper[model_indices]
-
-        overshoot = np.maximum(lower - positions, positions - upper)
-        outside = overshoot > 0.0
-        if not np.any(outside):
-            return state
-
-        tolerance = config.measured_state_limit_tolerance
-        beyond_tolerance = outside & (overshoot > tolerance)
-        if np.any(beyond_tolerance):
-            violations = ", ".join(
-                f"{joint_names[i]}={positions[i]:.6f} outside "
-                f"[{lower[i]:.6f}, {upper[i]:.6f}] by {overshoot[i]:.6f} rad"
-                for i in np.flatnonzero(beyond_tolerance)
-            )
-            raise _MeasuredStateLimitError(
-                f"Measured planning state exceeds the {tolerance:.6f} rad limit tolerance: "
-                f"{violations}"
-            )
-
-        projected = JointState(state)
-        projected.position = np.clip(positions, lower, upper).tolist()
-        projections = ", ".join(
-            f"{joint_names[i]}={positions[i]:.6f}->{projected.position[i]:.6f}"
-            for i in np.flatnonzero(outside)
-        )
-        now = time.monotonic()
-        with self._lock:
-            previous_log = self._last_limit_projection_log.get(robot_id, 0.0)
-            should_log = now - previous_log >= _LIMIT_PROJECTION_LOG_PERIOD_S
-            if should_log:
-                self._last_limit_projection_log[robot_id] = now
-        if should_log:
-            logger.warning(
-                "Projected measured state onto planning limits",
-                robot_id=str(robot_id),
-                projections=projections,
-                tolerance_rad=tolerance,
-            )
-        return projected
 
     @rpc
     def solve_ik(
@@ -691,8 +588,7 @@ class ManipulationModule(Module):
 
         ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
         if not ik.is_success() or ik.joint_state is None:
-            detail = f": {ik.message}" if ik.message else ""
-            return self._fail(f"IK failed: {ik.status.name}{detail}")
+            return self._fail(f"IK failed: {ik.status.name}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_path_only(robot_name, robot_id, ik.joint_state, planning_epoch)
@@ -725,10 +621,6 @@ class ManipulationModule(Module):
         start = self._world_monitor.get_current_joint_state(robot_id)
         if start is None:
             return self._fail("No joint state")
-        try:
-            start = self._project_measured_state_for_planning(robot_id, start)
-        except _MeasuredStateLimitError as exc:
-            return self._fail(f"Planning start is invalid: {exc}")
 
         # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
         planner_dof = len(start.position)
@@ -749,8 +641,7 @@ class ManipulationModule(Module):
             logger.info("Discarding cancelled planning result")
             return False
         if not result.is_success():
-            detail = f": {result.message}" if result.message else ""
-            return self._fail(f"Planning failed: {result.status.name}{detail}")
+            return self._fail(f"Planning failed: {result.status.name}")
 
         logger.info(f"Path: {len(result.path)} waypoints")
         self._planned_paths[robot_name] = result.path

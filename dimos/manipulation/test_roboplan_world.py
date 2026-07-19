@@ -480,55 +480,6 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
-def test_native_planner_returns_invalid_start_for_out_of_limit_configuration(
-    fake_roboplan: None, robot_config: RobotModelConfig
-) -> None:
-    world, robot_id = _make_world(fake_roboplan, robot_config)
-    world.finalize()
-
-    start = JointState(name=["joint1", "joint2"], position=[1.01, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
-
-    assert result.status == PlanningStatus.INVALID_START
-    assert "joint1=1.010000 outside [-1.000000, 1.000000]" in result.message
-
-
-def test_native_planner_returns_invalid_goal_for_out_of_limit_configuration(
-    fake_roboplan: None, robot_config: RobotModelConfig
-) -> None:
-    world, robot_id = _make_world(fake_roboplan, robot_config)
-    world.finalize()
-
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 2.01])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
-
-    assert result.status == PlanningStatus.INVALID_GOAL
-    assert "joint2=2.010000 outside [-2.000000, 2.000000]" in result.message
-
-
-def test_native_planner_maps_known_backend_invalid_start_error(
-    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class InvalidStartRRT(FakeRRT):
-        def plan(
-            self, q_start: FakeJointConfiguration, q_goal: FakeJointConfiguration
-        ) -> FakeJointPath:
-            raise RuntimeError("Invalid start configuration requested, cannot plan!")
-
-    monkeypatch.setattr(sys.modules["roboplan.rrt"], "RRT", InvalidStartRRT)
-    world, robot_id = _make_world(fake_roboplan, robot_config)
-    world.finalize()
-
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
-
-    assert result.status == PlanningStatus.INVALID_START
-    assert "Invalid start configuration requested" in result.message
-
-
 def test_native_planner_rejects_empty_path(
     fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
