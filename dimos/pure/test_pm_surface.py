@@ -63,7 +63,19 @@ def test_pm_surface_exports():
         "Mealy",
         "OutPort",
         "OutPorts",
+        "Stamped",
         "Stateless",
+        # T5 — align
+        "Aligner",
+        "AlignmentError",
+        "Interpolatable",
+        "align",
+        "register_interpolator",
+        # T6 — drivers
+        "PureModuleRunError",
+        "RunHooks",
+        "StepError",
+        "run_over",
     }
     for name in pm.__all__:
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"

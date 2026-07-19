@@ -13,7 +13,7 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T3 validation | done | `pure/impl-t3-stepspec` |
 | T4 typing | done (static surface; `over()`/ports bodies land with T6/T8) | `pure/spec-t4-typing` |
 | T5 alignment | done | `pure/impl-t5-align` |
-| T6 drivers | implementing | `pure/impl-t6-drivers` |
+| T6 drivers | done | `pure/impl-t6-drivers` |
 | T7 resources | ready | |
 | T8 rim | ready | |
 | T9 health | ready | |

@@ -28,10 +28,23 @@ Export lists per owning spec: T1 ``rows.__all__``; T2 t2-config.md §2.3;
 T3 t3-validation.md §1 (recommended set); T4 t4-typing.md §6 ``__all__``.
 """
 
+from dimos.pure.align import (
+    Aligner,
+    AlignmentError,
+    Interpolatable,
+    align,
+    register_interpolator,
+)
 from dimos.pure.config import (
     ConfigFieldError,
     FrozenModuleError,
     PureModuleConfig,
+)
+from dimos.pure.drivers import (
+    PureModuleRunError,
+    RunHooks,
+    StepError,
+    run_over,
 )
 from dimos.pure.module import PureModule
 from dimos.pure.rows import (
@@ -65,11 +78,14 @@ from dimos.pure.typing import (
     Mealy,
     OutPort,
     OutPorts,
+    Stamped,
     Stateless,
 )
 
 __all__ = [
     "UNSTAMPED",
+    "Aligner",
+    "AlignmentError",
     "AsyncStateless",
     "BundleDefinitionError",
     "ConfigFieldError",
@@ -81,6 +97,7 @@ __all__ = [
     "In",
     "InPort",
     "InPorts",
+    "Interpolatable",
     "InterpolateSpec",
     "LatestSpec",
     "Mealy",
@@ -91,13 +108,20 @@ __all__ = [
     "PureModule",
     "PureModuleConfig",
     "PureModuleDefinitionError",
+    "PureModuleRunError",
+    "RunHooks",
+    "Stamped",
     "Stateless",
+    "StepError",
     "StepKind",
     "StepSpec",
     "TickSpec",
+    "align",
     "contract",
     "interpolate",
     "latest",
+    "register_interpolator",
+    "run_over",
     "step_spec",
     "tick",
 ]

@@ -34,6 +34,7 @@ from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar, Union, get
 from typing_extensions import Self
 
 from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, TickSpec
+from dimos.pure.typing import Stamped
 
 __all__ = [
     "AlignRule",
@@ -51,13 +52,6 @@ __all__ = [
 _TV = TypeVar("_TV")
 
 _NEG_INF: Final = float("-inf")
-
-
-class Stamped(Protocol):
-    """One payload in a stream: anything carrying a readable float ts."""
-
-    @property
-    def ts(self) -> float: ...
 
 
 InT = TypeVar("InT", bound=In)
