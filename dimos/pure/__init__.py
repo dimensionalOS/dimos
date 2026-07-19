@@ -47,6 +47,7 @@ from dimos.pure.drivers import (
     run_over,
 )
 from dimos.pure.module import PureModule
+from dimos.pure.resources import resource
 from dimos.pure.rows import (
     UNSTAMPED,
     BundleDefinitionError,
@@ -121,6 +122,7 @@ __all__ = [
     "interpolate",
     "latest",
     "register_interpolator",
+    "resource",
     "run_over",
     "step_spec",
     "tick",

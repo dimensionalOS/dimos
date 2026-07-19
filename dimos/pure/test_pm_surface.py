@@ -76,6 +76,8 @@ def test_pm_surface_exports():
         "RunHooks",
         "StepError",
         "run_over",
+        # T7 — resources (pm exports the decorator only; spec §2.3)
+        "resource",
     }
     for name in pm.__all__:
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"

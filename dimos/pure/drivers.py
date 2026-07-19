@@ -89,13 +89,14 @@ class StepError(PureModuleRunError):
     """User step/fold code raised; always chained ``from`` the original (spec §10.2)."""
 
 
+# T7 RESOURCE SEAM — _noop/_anoop are the default warmup+teardown seam callables
 def _noop() -> None:
-    """Default ``RunHooks.teardown``: nothing attached (T7 fills the seam)."""
+    """Default ``RunHooks`` seam callable: nothing attached (T7 fills the seam)."""
     return None
 
 
 async def _anoop() -> None:
-    """Default ``RunHooks.ateardown``: nothing attached (T7 fills the seam)."""
+    """Default ``RunHooks`` seam callable: nothing attached (T7 fills the seam)."""
     return None
 
 
@@ -113,6 +114,8 @@ class RunHooks:
     drops: int = 0
     errors: int = 0
     last_error: BaseException | None = None
+    warmup: Callable[[], None] = _noop  # T7 RESOURCE SEAM — sync-run creation (t7 §6)
+    awarmup: Callable[[], Awaitable[None]] = _anoop  # T7 RESOURCE SEAM — async creation on loop
     teardown: Callable[[], None] = _noop
     ateardown: Callable[[], Awaitable[None]] = _anoop
 
@@ -190,6 +193,9 @@ def run_over(
         state_type = spec.state_type
         assert state_type is not None  # T3: a MEALY spec always carries State
         initial = state_type()  # D16: a buggy State.__init__ errors at the call site
+    from dimos.pure.resources import attach_resources  # T7 RESOURCE SEAM — lazy, permanently
+
+    attach_resources(module, hooks, async_run=spec.kind is StepKind.ASYNC_STATELESS)
     from dimos.pure.align import align  # lazy, permanently (spec §4)
 
     rows = align(spec.in_type, {name: _coerce_stream(s) for name, s in streams.items()})
@@ -286,6 +292,7 @@ class _ObservationPayloads:
 def _finalized(inner: Iterator[_T], rows: Iterator[Any], hooks: RunHooks) -> Iterator[_T]:
     """Compose a drive loop with the §8.2 teardown: inner-first, seam last."""
     try:
+        hooks.warmup()  # T7 RESOURCE SEAM — create before the first row pull (t7 §7)
         yield from inner
     finally:
         try:
@@ -435,6 +442,7 @@ async def _drive_async_rows(
     window: deque[tuple[float, asyncio.Task[_TOutRow | None]]] = deque()
     exhausted = False
     try:
+        await hooks.awarmup()  # T7 RESOURCE SEAM — create on the run loop, before FILL (t7 §7.3)
         while True:
             # FILL — admit tasks up to max_inflight, in tick order.
             while not exhausted and len(window) < max_inflight:
