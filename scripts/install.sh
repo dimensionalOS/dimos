@@ -29,6 +29,7 @@ fi
 
 INSTALLER_VERSION="0.3.0"
 readonly SMOKE_TEST_TIMEOUT_SECONDS=60
+readonly SMOKE_TEST_SHUTDOWN_GRACE_SECONDS=5
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
 UBUNTU_PACKAGES="curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1"
@@ -78,39 +79,42 @@ has_cmd() { command -v "$1" &>/dev/null; }
 
 run_with_timeout() {
     local timeout_seconds="$1"; shift
-    local marker pid watchdog
+    local deadline pid
     local exit_code=0
     local interrupted=0
-
-    # Bash 3.2 has no wait -n, so the marker distinguishes timeout from command exit.
-    marker="$(mktemp "${TMPDIR:-/tmp}/dimos-timeout.XXXXXX")"
-    rm -f "$marker"
+    local terminated=0
+    local timed_out=0
 
     "$@" &
     pid=$!
-    (
-        sleep "$timeout_seconds"
-        : > "$marker"
-        # Non-interactive Bash jobs ignore SIGINT; DimOS handles SIGTERM gracefully.
-        kill -TERM "$pid" 2>/dev/null || true
-    ) &
-    watchdog=$!
+    deadline=$((SECONDS + timeout_seconds))
+    trap 'interrupted=1' INT
 
-    trap 'interrupted=1; kill -TERM "$pid" 2>/dev/null || true' INT
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ "$interrupted" == "1" ]] && [[ "$terminated" == "0" ]]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            terminated=1
+            deadline=$((SECONDS + SMOKE_TEST_SHUTDOWN_GRACE_SECONDS))
+        elif [[ "$terminated" == "0" ]] && (( SECONDS >= deadline )); then
+            timed_out=1
+            kill -TERM "$pid" 2>/dev/null || true
+            terminated=1
+            deadline=$((SECONDS + SMOKE_TEST_SHUTDOWN_GRACE_SECONDS))
+        elif [[ "$terminated" == "1" ]] && (( SECONDS >= deadline )); then
+            kill -KILL "$pid" 2>/dev/null || true
+            break
+        fi
+        sleep 0.1 || true
+    done
+
     wait "$pid" 2>/dev/null || exit_code=$?
     trap handle_interrupt INT
-
-    kill "$watchdog" 2>/dev/null || true
-    wait "$watchdog" 2>/dev/null || true
-
     if [[ "$interrupted" == "1" ]]; then
-        wait "$pid" 2>/dev/null || true
         exit_code=130
-    elif [[ -f "$marker" ]]; then
+    elif [[ "$timed_out" == "1" ]]; then
         exit_code=124
     fi
 
-    rm -f "$marker"
     return "$exit_code"
 }
 
