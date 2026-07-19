@@ -14,6 +14,12 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T4 typing | done (static surface; `over()`/ports bodies land with T6/T8) | `pure/spec-t4-typing` |
 | T5 alignment | implementing | `pure/impl-t5-align` |
 | T6 drivers | implementing | `pure/impl-t6-drivers` |
+| T7 resources | ready | |
+| T8 rim | ready | |
+| T9 health | ready | |
+| T10 checkpoint | ready | |
+| T11 tf | ready | |
+| T12 examples | ready | |
 
 Wave-B interface reconciliation (orchestrator, binding for the T5/T6
 implementers): `Stamped` gets ONE home — `typing.py` (t6-drivers.md §11.2;
@@ -23,12 +29,6 @@ memory2-`Observation` coercion at the `over()` boundary is a T6-impl
 obligation (t5-align.md Q1 default confirmed). T5's `[align-unknown-port]`
 is authoritative for wiring names; T6's eager `[run-unknown-stream]` is the
 pre-align fast path, same copy standard.
-| T7 resources | ready | |
-| T8 rim | ready | |
-| T9 health | ready | |
-| T10 checkpoint | ready | |
-| T11 tf | ready | |
-| T12 examples | ready | |
 
 Source of truth: `dimos/memory2/puremodule_api_sketch3.py` (the module layer).
 Each task below is a dev-task boundary; a planning agent expands it into a full
