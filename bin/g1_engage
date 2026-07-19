@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Engage (or disengage) the G1 GR00T whole-body controller's legs.
+
+The ``unitree-g1-groot-wbc`` blueprint starts unarmed + dry-run: the GR00T
+policy runs but never sends torque to the legs, so they stay compliant/damped.
+This tool drives the running ControlCoordinator into live control via a remote
+RPC proxy to the module:
+
+    set_dry_run(False)    # actually send motor commands
+    set_activated(True)   # arm -> ~10s ramp to the bent-knee default, then the
+                          # policy takes torque control of the legs
+
+Usage:
+    bin/g1_engage            # engage: dry-run off, then arm
+    bin/g1_engage off        # disengage: disarm, then dry-run on
+
+SAFETY: engaging makes the robot take torque control and try to stand/balance.
+Only do this with the G1 supported on a gantry, or on the ground and ready to
+balance. Disengaging drops back to compliant/damped legs.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.rpc_client import RPCClient
+
+_DISENGAGE_WORDS = {"off", "stop", "disengage", "disarm", "down"}
+
+
+def main() -> None:
+    disengage = len(sys.argv) > 1 and sys.argv[1].lower() in _DISENGAGE_WORDS
+
+    # Remote proxy to the running ControlCoordinator module over the LCM RPC
+    # backend. Calling an @rpc method on it round-trips to the live coordinator.
+    coordinator = RPCClient.remote(ControlCoordinator)
+    try:
+        if disengage:
+            coordinator.set_activated(False)
+            coordinator.set_dry_run(True)
+            print("G1 disengaged: disarmed + dry-run on (legs compliant).")
+        else:
+            coordinator.set_dry_run(False)
+            coordinator.set_activated(True)
+            print("G1 engaging: dry-run off, arming (ramp to default, then legs go live).")
+    except TimeoutError:
+        print(
+            "Error: no response from ControlCoordinator. Is the groot blueprint running?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    finally:
+        coordinator.stop_rpc_client()
+
+
+if __name__ == "__main__":
+    main()

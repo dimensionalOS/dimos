@@ -13,7 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simple G1 nav stack: onboard sensors, raytracing costmap, and A* replanning."""
+"""Shared G1 raytracing nav middle (no lidar source, no locomotion).
+
+RayTracingVoxelMap -> CostMapper -> ReplanningAStarPlanner -> MovementManager,
+plus the nav viewer. Consumers supply the lidar and locomotion: the onboard
+high-level SDK (unitree-g1-nav-simple) or the GR00T WBC stack (unitree-g1).
+"""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
@@ -21,8 +26,7 @@ from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unitree_g1_onboard
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_vis import unitree_g1_vis
 from dimos.robot.unitree.g1.config import G1
 
 assert G1.height_clearance is not None and G1.width_clearance is not None
@@ -34,8 +38,8 @@ g1_rotation_diameter = 0.8
 voxel_resolution = 0.05
 g1_safe_radius_margin = 0.6
 
-unitree_g1_nav_simple = autoconnect(
-    _unitree_g1_onboard,
+# Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
+_unitree_g1_nav_simple = autoconnect(
     RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution),
     CostMapper.blueprint(
         config=HeightCostConfig(
@@ -51,4 +55,4 @@ unitree_g1_nav_simple = autoconnect(
     ),
     MovementManager.blueprint(),
     unitree_g1_vis,
-).global_config(n_workers=10, robot_model="unitree_g1")
+)

@@ -13,20 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic skills used by higher-level G1 blueprints."""
+"""Simple G1 nav stack: onboard sensors + high-level locomotion, raytracing
+costmap, and A* replanning."""
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.navigation import NavigationSkillContainer
-from dimos.agents.skills.speak_skill import SpeakSkill
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
-from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_onboard import _unitree_g1_onboard
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_nav_simple import _unitree_g1_nav_simple
 
-_agentic_skills = autoconnect(
-    McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
-    NavigationSkillContainer.blueprint(),
-    SpeakSkill.blueprint(),
-    UnitreeG1SkillContainer.blueprint(),
+unitree_g1_nav_simple = autoconnect(_unitree_g1_onboard, _unitree_g1_nav_simple).global_config(
+    n_workers=10, robot_model="unitree_g1"
 )

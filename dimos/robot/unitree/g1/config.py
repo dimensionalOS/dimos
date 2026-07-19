@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -36,7 +35,6 @@ class G1Config:
     """Physical metadata used by G1 navigation and sensor blueprints."""
 
     name: str
-    model_path: Path
     height_clearance: float
     width_clearance: float
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
@@ -44,7 +42,6 @@ class G1Config:
 
 G1 = G1Config(
     name="unitree_g1",
-    model_path=Path(__file__).parent / "g1.urdf",
     height_clearance=1.2,
     width_clearance=0.6,
     internal_odom_offsets={
