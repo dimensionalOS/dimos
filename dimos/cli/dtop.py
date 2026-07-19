@@ -444,7 +444,8 @@ class ResourceSpyApp(App[None]):
 _PREVIEW_DATA: dict[str, Any] = {
     "coordinator": {
         "cpu_percent": 12.3,
-        "pss": 47_400_000,
+        "rss": 47_400_000,
+        "pss": 0,
         "num_threads": 4,
         "num_children": 0,
         "num_fds": 32,
