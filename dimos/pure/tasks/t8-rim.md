@@ -76,10 +76,11 @@ The outside contract of a legacy module, established by reading
   kwargs)` (`python_worker.py:216`) forces `kwargs["g"] = global_config`
   (`:227`), sends `DeployModuleRequest(module_id, module_class, kwargs)` over
   a forkserver pipe; the worker executes `module_class(**kwargs)`
-  (`:379`). The class pickles **by reference** (module+qualname) unless its
-  metaclass supplies `__reduce__`. Constructor kwargs also carry
-  `instance_name` (`blueprints.py:827`, multi-instance) and
-  `frame_id_prefix` (`blueprints.py:335`, `.namespace()`).
+  (`:379`). The class pickles **by reference** (module+qualname) unless the
+  pickler consults a `copyreg` dispatch entry for its metaclass first (§11.1).
+  Constructor kwargs also carry `instance_name` (`blueprints.py:144`,
+  `:326-331`, multi-instance) and `frame_id_prefix` (`blueprints.py:333-338`,
+  `.namespace()`).
 - **Actor surface** — after deploy, `SetRefRequest` performs a plain
   `instance.ref = actor` attribute set (`python_worker.py:384`);
   `GetAttrRequest` pickles arbitrary `getattr(instance, name)` results back
@@ -156,7 +157,7 @@ code path itself, not a reimplementation. Tests live in `test_legacy.py`
 
 | # | Outside-visible behavior (legacy) | Pure-side mechanism | Test |
 | --- | --- | --- | --- |
-| P1 | Deploy = pickle class over forkserver pipe, `module_class(**kwargs)` in worker | actor class regenerates via metaclass `__reduce__ -> (legacy_actor, (PureCls,))`; PureCls pickles by reference | TL-pickle: `pickle.loads(pickle.dumps(actor)) is actor` |
+| P1 | Deploy = pickle class over forkserver pipe, `module_class(**kwargs)` in worker | actor class regenerates via a `copyreg`-registered reducer on its metaclass → `(_rebuild_actor, (PureCls, name))` (§11.1, G1 — a metaclass `__reduce__` on a class object is IGNORED by the pipe pickler); PureCls pickles by reference | TL-pickle: `pickle.loads(pickle.dumps(actor)) is actor` + DeployModuleRequest-shaped payload |
 | P2 | `kwargs["g"] = global_config` forced into the constructor | inherited: `ModuleConfig.g` field absorbs it (actor config subclasses ModuleConfig) | TL-ctor-g |
 | P3 | `instance_name` kwarg (multi-instance blueprints) | inherited: `ModuleConfig.instance_name`; RPC prefix follows it | TL-ctor-names |
 | P4 | `frame_id_prefix` kwarg (`.namespace()`) | inherited: `ModuleConfig.frame_id_prefix` (consumed by T11 later) | TL-ctor-names |
@@ -176,7 +177,7 @@ code path itself, not a reimplementation. Tests live in `test_legacy.py`
 | P18 | Reading streams via the pipe pickles them to `RemoteIn`/`RemoteOut` through `owner.ref` | inherited: the actor's ports ARE legacy `In`/`Out` instances | TL-reduce (unit: `__reduce__` with a fake ref) |
 | P19 | `peek_stream(name, timeout)` returns next emission / `PeekNotFound` | inherited (real legacy streams) | e2e assert |
 | P20 | `on_system_modules` optional hook, hasattr-guarded | not defined — coordinator skips, same as any legacy module without it | TL-attrs (absence) |
-| P21 | **Health topic** (amendment: one extra conventionally-named topic) | actor synthesizes `health: Out[...]` stream ref named `health` → autoconnect merges every pure module's health onto ONE `(name, type)` topic per namespace (`/health`, namespaced `robot0/health`) — the sketch's `g.health` merged, path-keyed stream. T8 wires the port; T9 fills payload + cadence (§12) | TL-atom (ref present) + e2e (transport wired) |
+| P21 | **Health topic** (amendment: one extra conventionally-named topic) | actor synthesizes `health: Out[HealthPlaceholder]` stream ref named `health` (a NAMED placeholder type in `dimos.pure`, not `object` — AD2) → autoconnect merges every pure module's health onto ONE `(name, type)` topic per namespace (`/health`, namespaced `robot0/health`) — the sketch's `g.health` merged, path-keyed stream. T8 wires the port; T9 swaps the payload type + fills cadence (§12) | TL-atom (ref present) + e2e (transport wired) |
 | P22 | Constructor/config errors surface through `WorkerResponse.error` with traceback | pydantic ValidationError raised inside `module_class(**kwargs)` rides the same channel | TL-deploy-error (unit, via `_handle_request` — no process needed) |
 | P23 | Global transport backend switch (lcm↔zenoh) rebuilds transports | coordinator-side; actor agnostic (receives built transports) | no test (no module involvement) |
 | P24 | Run-id tagging + watchdog sweep | process-level; nothing for the module | row for completeness |
@@ -187,6 +188,7 @@ code path itself, not a reimplementation. Tests live in `test_legacy.py`
 | P29 | Module as RPC PROVIDER for other modules' spec refs (`spec_structural_compliance`) | **out of scope** (RPC wave). Actors expose only lifecycle `@rpc`s; a pure module cannot satisfy a domain Spec ref. Blueprints requiring one fail with the existing "No module met that spec" error | row documented |
 | P30 | Legacy *internal* habits: `main()` async-gen, `handle_<input>` autobinding, mid-run `self.x` mutation, ad-hoc RPC attachment | **not reproduced** — internal behavior, not outside surface (amendment's parity-scope clause). The actor defines no `main`, no `handle_*`; pure state lives in `State` | n/a by scope |
 | P31 | Wire currency: raw msg payloads per topic (a legacy consumer sees the msg, nothing wrapped) | rim egress publishes **bare field values**; sparse `None` fields publish nothing; payloads must be Stamped (§6.3) — same currency both directions | TR-egress + e2e (legacy module receives) |
+| P32 | `remappings()` / `namespace()` rename streams (and hence topics) before `(name, type)` matching; `expose=` crosses the namespace boundary | free — matching is **name-based and adapter-agnostic**: the synthesized StreamRefs carry ordinary names, so remapping/namespace rewrites them identically to a legacy module's (nothing in the bridge participates) | TL-remap + TL-namespace (blueprint-level via `_all_name_types`) |
 
 Surprising rows worth flagging: P12 (the control plane is the RPC bus, not
 the pipe — serving module RPC is *lifecycle plumbing*, not out-of-scope RPC),
@@ -296,6 +298,12 @@ overloaded in T4).
   `rim.start_module`. There is no code path from `over()` into the rim — the
   isolation is architectural, and TR-over-isolation pins it (a module with
   bound fake transports replays via `over()`; the fakes observe zero traffic).
+- **`over()` during a live session (D19).** For a **resource-bearing** module,
+  a live session holds T7's `_RUN_ATTR`, so a concurrent `m.over(...)` fails
+  fast with `[resource-concurrent-run]` (one instance, one run — T7 §5.2). For
+  a **resource-free** module the concurrent replay is harmless by construction
+  (disjoint aligner, driver, buffers; the live wires still observe nothing) and
+  is allowed. Both arms are pinned (TR-over-live-resource, TR-over-live-free).
 
 ### 4.4 Structural transport protocols
 
@@ -319,21 +327,36 @@ object *is* Publishable+Subscribable, not because the rim knows LCM.
 
 ## 5. Ingress — queues, backpressure, threading
 
-- Per wired In port: one **bounded ring buffer** (`collections.deque`,
-  `maxlen=DEFAULT_PORT_DEPTH = 256`) plus one rim-wide
-  `threading.Condition`. Transport callbacks do exactly: append + notify.
-  No user code, no engine state, no allocation beyond the item ref. A full
-  ring drops the OLDEST item (deque semantics) and increments that port's
-  `ingress_dropped` counter — **all drop policy lives here and in the T5
-  aligner; transports never drop by policy** (their own QoS is their
-  business, §2.1). Depth override: `start(port_depth={"lidar": 1024})`
-  (mapping port name → depth); a single global default otherwise. Per-port
-  fluent knobs are deliberately deferred (YAGNI; D8).
-- The dropped-oldest policy is latest-wins under pressure — the house
-  default (legacy `backpressure()` and `_make_async_dispatch` both coalesce
-  to latest). On the tick port it thins ticks (each drop is accounted); on
-  secondary ports it advances the frontier faster (latest/interpolate want
-  newest anyway).
+Ingress backpressure is resolved per AD1 (**resolved by Ivan, 2026-07-20**):
+the ring is a per-port **capacity** knob, defaulting to KeepLast, with an
+opt-out for lossless (recorder) ports. This replaces A's original fixed
+depth-256 / `start(port_depth=)` scheme wholesale — there is now no
+`port_depth` argument and no single global depth.
+
+- Per wired In port: one **bounded ring buffer** (`collections.deque`) plus one
+  rim-wide `threading.Condition`. Transport callbacks do exactly: append +
+  notify. No user code, no engine state, no allocation beyond the item ref.
+  The ring's bound is the port's `capacity` (below). A full bounded ring drops
+  the OLDEST item (deque semantics) and increments that port's
+  `dropped_overflow` counter — **all drop policy lives here and in the T5
+  aligner; transports never drop by policy** (their own QoS is their business,
+  §2.1).
+- **`capacity` — the per-port knob.** Each `RimInPort` carries
+  `capacity: int | None`, settable pre-start like `transport`/`source`
+  (`m.i.lidar.capacity = n`), validated at assignment: `int >= 1`, or `None`
+  (unbounded/lossless); anything else raises `[rim-bad-capacity]`. The default
+  is `DEFAULT_CAPACITY = 1` — **KeepLast**, the house coalesce-to-latest
+  semantics legacy `backpressure()` and `_make_async_dispatch` both apply: a
+  slow step always sees the freshest delivered item, skipped ones counted (not
+  warned). A recorder-style module that must drop nothing sets
+  `m.i.lidar.capacity = None` — the ring grows unbounded and every delivery is
+  processed (memory is the caller's responsibility, exactly as with a legacy
+  lossless consumer). `capacity = n > 1` gives a shallow drop-oldest buffer for
+  ports that tolerate a little lag but not full latest-wins. This is A's own
+  cited justification followed to its conclusion: "drop-oldest is latest-wins;
+  legacy `backpressure()` coalesces to latest" argues for a default of 1, and
+  the per-port attribute matches the `.transport =` fluency rather than a
+  start-time mapping.
 - **Feed iterators**: each wired port's queue is exposed to the aligner as an
   iterator whose `__next__` (a) pops if non-empty, (b) else waits on the
   Condition — **no timeout, no wall clock** — until an append or stop wakes
@@ -341,13 +364,15 @@ object *is* Publishable+Subscribable, not because the rim knows LCM.
   `StopIteration`. Stop-drain order means everything that entered a queue
   before stop is processed (§7.3).
 - `source =` bindings: a Subscribable source is subscribed exactly like a
-  transport (same enqueue callback). An **Iterable** source gets a pump: a
-  daemon thread iterating it and enqueueing (honoring the ring bound by
-  BLOCKING on the condition when full — pull sources are lossless,
-  push callbacks are not; D9). The pump ends at source exhaustion or stop;
-  a pump parked inside a blocking `next()` on a live source is abandoned as
-  a daemon at process exit (documented; stop() closes the source first when
-  it has `.close()`).
+  transport (same enqueue callback, same `capacity` ring). An **Iterable**
+  source gets a pump: a daemon thread iterating it and enqueueing. Under a
+  finite `capacity` the pump BLOCKS on the condition when the ring is full
+  (pull sources exert flow control; push callbacks cannot — D9); under
+  `capacity = None` the ring never fills, so a finite source drains fully and
+  losslessly (the recorder path). The pump ends at source exhaustion or stop;
+  a pump parked inside a blocking `next()` on a live source is abandoned as a
+  daemon at process exit (documented; stop() closes the source first when it
+  has `.close()`).
 - **Live hold semantics — the honest paragraph.** T5's aligner refills every
   wired port before selecting (align spec §5.2), because firing tick T is
   only FINAL once every frontier provably passed T. Live, this means a wired
@@ -396,6 +421,15 @@ object *is* Publishable+Subscribable, not because the rim knows LCM.
    a legacy module whose internal thread died — via health (T9) and logs.
    `stop()` re-raises nothing; `m.stats.error` exposes it.
 
+**Start-failure unwind (G3).** Steps 1–3 run on the caller thread *before* the
+session thread exists; a failure at any of them (a wiring error from `align()`,
+an async-resource creation raise, an invalid `max_inflight`) unwinds in reverse
+on the caller: unsubscribe every binding already subscribed, then
+`hooks.teardown()` to dispose whatever step 2 created (in reverse declaration
+order), set state STOPPED, and re-raise the original error to the caller. No
+partially-wired session is ever left RUNNING, and no orphaned subscription
+survives a failed `start()`. (Warmup's own factory-failure unwind is §7.2.)
+
 ### 6.2 Threading model (normative)
 
 - **Delivery threads** (LCM dispatcher / zenoh runtime / SHM fanout / source
@@ -437,8 +471,18 @@ Per emitted Out row, on the session thread, in Out-field declaration order:
   session thread naming module + field + type, and advises: construct the
   msg with `ts=i.ts` (or the row's tick ts). Local-only ports (subscribers,
   no transport) skip the check — in-process consumers may want plain values.
+  This producer-side check (AD4, **resolved by Ivan, 2026-07-20**: A as written
+  — doctrine is "ports speak stamped msgs", so the producer is the right place
+  to blame) forbids a pure module publishing a ts-less legacy type to a
+  legacy-only consumer. **Noted escape hatch, not implemented:** if migration
+  surfaces a genuine ts-less legacy-interop need, downgrade this from a raise to
+  a warn-once-per-(module,field) fallback that then publishes the bare value —
+  a one-line change gated behind a real use case, deliberately deferred here.
 - Publish exceptions from the transport itself propagate as session errors
-  (§6.1.5) — a dead wire is a real failure, not a skip.
+  (§6.1.5) — a dead wire is a real failure, not a skip (AD3, **resolved by
+  Ivan, 2026-07-20**: A as written — a dead wire must be a session error, not a
+  warning counter, and the free local-subscriber slot keeps recording lambdas
+  composable under the coordinator).
 
 ## 7. Lifecycle
 
@@ -470,6 +514,12 @@ configuration, not run state).
   generator-start does not create twice. This is what makes the legacy
   `build()` mapping real: resource construction (models, maps, grids) is
   the heavy one-time work and runs under build's 24 h timeout, not start's.
+  **Factory-failure unwind (G3):** if a resource factory raises partway
+  through warmup, `hooks.teardown()` runs immediately — disposing the
+  already-created prefix in reverse declaration order (the shared-unwind path
+  T7 §7.5 provides) — state is cleared, and the original `ResourceError`
+  (`[resource-warmup-error]`) is re-raised. No half-created resource set
+  survives a failed `warmup()`.
 - **Async modules**: async factories must run on the run loop (T7 §7.3),
   which exists only inside `drive_async` — so creation happens at session
   start on the loop, and `warmup()` only validates. Documented divergence
@@ -482,7 +532,7 @@ configuration, not run state).
 
 | step | what | thread | notes |
 | --- | --- | --- | --- |
-| 1 | CAS the stop latch (idempotent: losers return immediately, incl. re-entrant calls and the P15 double-stop) | caller | `threading.Lock` + flag |
+| 1 | CAS the stop latch. A **re-entrant** call on the *same* thread (from within teardown) returns immediately to avoid self-deadlock; a **concurrent** call from a *different* thread — the P15/P16 two-rail reality: coordinator RPC stop + worker-shutdown `finally` — JOINS the same latch and blocks until drain/dispose/join completes, so no caller returns believing the module is down before it is (G4) | caller | `threading.Lock` + flag + a done-`Event` the losers wait on |
 | 2 | Unsubscribe every transport/source subscription; close iterable sources exposing `.close()` | caller | ingestion sealed — nothing new enters queues |
 | 3 | Wake the Condition (stop flag set) | caller | parked feeds resume |
 | 4 | Feeds drain their remaining queued items, then StopIteration, in aligner pull order | session | **drain before dispose** — everything accepted before step 2 is processed |
@@ -601,32 +651,51 @@ envelopes carry `ts` + `data` and `over()` unwraps them (T6's
 ### 11.1 The factory
 
 ```python
-def legacy_actor(cls: type[PureModule], /) -> type[Module]: ...
-def legacy_blueprint(cls: type[PureModule], /, **kwargs: Any) -> Blueprint: ...
-    # = legacy_actor(cls).blueprint(**kwargs)
+def legacy_actor(cls: type[PureModule], /, *, name: str | None = None) -> type[Module]: ...
+def legacy_blueprint(cls: type[PureModule], /, *, name: str | None = None, **kwargs) -> Blueprint: ...
+    # = legacy_actor(cls, name=name).blueprint(**kwargs)
 ```
 
-`legacy_actor` is **cached** (one actor class per PureModule class, identity
-by the class object) and returns a genuine `dimos.core.module.Module`
-subclass. Parity by inheritance: everything the coordinator touches is
-either the legacy code path itself or an explicit, listed override. The
-actor is the DEPLOYMENT FACE of the module; the PureModule instance it owns
-is the module.
+`legacy_actor` is **cached**, keyed by `(cls, name)` — one actor class per
+`(PureModule class, name-override)` — and returns a genuine
+`dimos.core.module.Module` subclass. Parity by inheritance: everything the
+coordinator touches is either the legacy code path itself or an explicit,
+listed override. The actor is the DEPLOYMENT FACE of the module; the
+PureModule instance it owns is the module.
 
 Generated class, precisely:
 
-- **Metaclass** `_ActorMeta(type(Module))` — `type(Module)` resolved
-  dynamically (ABCMeta via `Resource`) — defining
-  `__reduce__ = lambda self: (legacy_actor, (self.__pure_class__,))` so the
-  class pickles through the deploy pipe (P1) even though it exists in no
-  importable namespace. The factory stamps `__pure_class__ = cls`.
-- `__name__ = cls.__name__`, `__qualname__ = f"legacy_actor({cls.__qualname__})"`,
-  `__module__ = cls.__module__` — instance keys, RPC prefixes, and logs read
-  as the pure module (P7); qualname keeps tracebacks honest.
+- **Pickling (P1) — the hybrid, re-verified in this graft (G1).** The class
+  exists in no importable namespace, so the deploy-pipe pickler
+  (`multiprocessing.reduction.ForkingPickler`) would take the
+  `issubclass(t, type)` → `save_global` branch and fail. A metaclass
+  `__reduce__` does NOT help: pickle IGNORES a class object's metaclass
+  `__reduce__` (empirically confirmed against `ForkingPickler`). The fix is
+  **`copyreg.pickle(_ActorMeta, _reduce_actor_class)`** — pickle consults the
+  `copyreg` dispatch table BEFORE the `save_global` fallback, so a class whose
+  metaclass is registered pickles by recipe. The metaclass
+  `_ActorMeta(type(Module))` MUST subclass `type(Module)` (`ABCMeta`) — a
+  plain-`type` metaclass raises `metaclass conflict` at synthesis (also
+  confirmed). The module-level reducer
+  `_reduce_actor_class(cls) -> (_rebuild_actor, (cls.__pure_class__, cls.__actor_name__))`
+  reconstructs the cached actor in the worker via `_rebuild_actor(pure, name)
+  = legacy_actor(pure, name=name)`; caching makes parent-side identity stable
+  and rebuilds identically worker-side. The factory stamps
+  `__pure_class__ = cls` and `__actor_name__ = name`.
+- `__name__ = name or cls.__name__`,
+  `__qualname__ = f"legacy_actor({cls.__qualname__})"`,
+  `__module__ = "dimos.pure.legacy"` — instance keys and RPC prefixes read as
+  the (optionally overridden) module name (P7); the honest `__module__` (G9)
+  makes the synthesized-ness visible in logs/tracebacks and no longer serves
+  pickling (that rides the `copyreg` recipe above), so it does not mislead the
+  reload path (P26). `name=` (G8/D16) is the migration escape hatch when a
+  legacy class and its pure twin would collide on `__name__.lower()` in one
+  blueprint — one kwarg, `legacy_actor(X, name="XLive")`, distinct cache entry.
 - `deployment = "python"`, **`dedicated_worker = True`** (P9).
 - **Synthesized `__annotations__`** (P5): for each In field
   `name: In[payload]`, each Out field `name: Out[payload]`, plus
-  `health: Out[<health payload>]` (§12) and `config: <ActorConfig>`.
+  `health: Out[HealthPlaceholder]` (§12, AD2 — a NAMED placeholder type in
+  `dimos.pure.legacy`, never `Out[object]`) and `config: <ActorConfig>`.
   `payload` = the bundle field's declared annotation with a single
   `| None` stripped (align §6.3's `_strip_optional` logic — sparse Out
   fields autoconnect by their payload type). Payload types are already
@@ -648,9 +717,16 @@ Generated class, precisely:
   autoconnect key per name) cannot express it — matching legacy
   expressiveness exactly. Message names the offending fields and suggests
   renaming one side.
-- Field names colliding with the legacy Module surface
-  (`ref, config, rpc, tf, io, inputs, outputs, rpcs, name, blueprint,
-  module_info, health` + underscore names) → error.
+- Field names colliding with the legacy Module surface → error. The surface is
+  **computed** (G2), not hand-listed: `frozenset(dir(Module)) ∪ {config, ref,
+  rpc, tf}` (the four instance attributes `Module.__init__` sets that never
+  appear on the class `dir`). This is drift-proof and catches names a static
+  list silently misses — re-verified in this graft, `dir(Module)` includes
+  `set_transport`, `peek_stream`, `stop`, `start`, `build`, `set_module_ref`
+  (and `main` via the base): a pure field named any of these would synthesize
+  e.g. `stop: In[T]` and have `Module.__init__` `setattr` an `In(...)` over the
+  lifecycle RPC method — silent catastrophic breakage. `health` is on the
+  surface because the actor synthesizes it (§12).
 - Pure config field names colliding with `ModuleConfig` fields
   (`g, instance_name, frame_id_prefix, frame_id, rpc_transport,
   default_rpc_timeout, rpc_timeouts, tf_transport`) → error.
@@ -702,13 +778,17 @@ concern, not T8's.
 
 ### 11.4 Deploy-path verification (amendment: "verify against the actual pipe protocol")
 
-Verified against `python_worker.py`: the pipe pickles (a) the actor class —
-P1's metaclass reduce, (b) kwargs — plain config values + `GlobalConfig`
-(pydantic BaseSettings, pickles, shipped today) + strings, (c) responses —
-module_id ints. `_handle_request` reads `kwargs.get("g")` for the backend
-switch — ActorConfig accepts `g` so both consumers of that kwarg are
-satisfied. TL-deploy-error exercises `_handle_request` directly (no
-process); the e2e exercises the real forkserver.
+Verified against `python_worker.py`: the pipe carries the full request set —
+`Deploy` / `SetRef` / `GetAttr` / **`CallMethod`** / `Undeploy` /
+`SuppressConsole` (`_handle_request`); it is NOT limited to
+deploy/undeploy/attr-get/set_ref (G11 — `CallMethodRequest` also rides the
+pipe, e.g. `MethodCallProxy.set_transport` on remote streams). The pipe
+pickles (a) the actor class — P1's `copyreg` recipe (§11.1, G1), (b) kwargs —
+plain config values + `GlobalConfig` (pydantic BaseSettings, pickles, shipped
+today) + strings, (c) responses — module_id ints. `_handle_request` reads
+`kwargs.get("g")` for the backend switch — ActorConfig accepts `g` so both
+consumers of that kwarg are satisfied. TL-deploy-error exercises
+`_handle_request` directly (no process); the e2e exercises the real forkserver.
 
 ## 12. The health topic (T8's share of T9)
 
@@ -719,23 +799,27 @@ every pure module in a namespace shares ONE topic (`/health`; namespaced
 merged, path-keyed" as a free consequence of P10, no new mechanism. Rows are
 path-keyed by their T9 payload; T9 defines the payload type and the pacer.
 
-T8 obligations: the actor synthesizes the `health: Out[...]` annotation
-(payload type: `dimos.pure.health.Health` once T9 lands; until then the
-skeleton uses a module-level `_HEALTH_PAYLOAD: type = object` placeholder
-constant in `legacy.py` that T9 replaces — `Out[object]` autoconnects
-consistently among pure modules and pickled transports carry anything).
-Nothing publishes on it in T8 — the port exists, the topic is wired, the
-stream is silent. The rim exposes the seam: `rim.stats(m)` (§9) is the
-snapshot the T9 pacer will read, and the actor's `self.health` legacy stream
-is the publish target it will bind. Acceptance (e2e) asserts the topic is
-WIRED (transport attached, subscribable), not that rows flow.
+T8 obligations: the actor synthesizes the `health: Out[HealthPlaceholder]`
+annotation. Per **AD2 (resolved by Ivan, 2026-07-20)** the placeholder is a
+minimal NAMED type — `class HealthPlaceholder` in `legacy.py`, referenced via
+the `_HEALTH_PAYLOAD` constant — NOT `object`: the autoconnect key is
+`("health", HealthPlaceholder)`, which stays legible in the transport registry
+and cannot collide with a legacy module's `Out[object]`. T9 replaces the
+TYPE (`dimos.pure.health.Health`), not the mechanism — the annotation, the
+shared-topic matching, and the wired seam all stay put. Nothing publishes on it
+in T8 — the port exists, the topic is wired, the stream is silent. The rim
+exposes the seam: `rim.stats(m)` (§9) is the snapshot the T9 pacer will read,
+and the actor's `self.health` legacy stream is the publish target it will bind.
+Acceptance (e2e) asserts the topic is WIRED (transport attached, subscribable),
+not that rows flow.
 
 ## 13. Test plan
 
 All files carry `pytestmark = pytest.mark.skip(reason="T8 skeleton — enabled
 by T8a/T8b")` at module level until their wave lands; bodies are REAL. The
-suite must collect green today: `uv run pytest dimos/pure -q` → 304 passed +
-1 deselected + T8 files collected-and-skipped.
+suite must collect green today: `uv run pytest dimos/pure -q` → 326 passed +
+1 deselected + the two T8 files (`test_rim.py`, `test_legacy.py`)
+collected-and-skipped.
 
 ### 13.1 `test_rim.py` fixtures
 
@@ -754,29 +838,42 @@ exclusion both directions, live-rebind rejection, not-subscribable /
 not-publishable, unbind via None. marshal/ordering: deliveries from multiple
 foreign threads → all steps on ONE thread (record `threading.get_ident()`
 inside step) and rows in queue order; determinism: same deliveries, same
-rows. backpressure: depth-1 ring under burst → oldest dropped,
-`ingress_dropped` counts, newest survives. lifecycle: warmup creates
-sync-run resources (probe resource), start flows end-to-end
-(FakeWire in → step → FakeWire out + local subscriber), stop drains queued
-items then disposes in reverse order (order-recording resources), stop
-idempotent (twice + concurrent), stop-before-start disposes warmup
-resources, restart = fresh session (fresh counters, resources re-created),
-already-live raises. egress: sparse None not published, bare-value currency
+rows. **backpressure (AD1):** default KeepLast (capacity 1) under a burst →
+oldest dropped, `dropped_overflow` counts, newest survives;
+`[rim-bad-capacity]` validation (`0`/`-1`/`True`/`1.5` reject, `n>=1` and
+`None` accept); `capacity = None` lossless (no drops over a burst). **live
+interpolation marshal (G7):** two foreign threads feed a tick + an interpolate
+port, T5 interpolation runs through the rings → midpoint row. lifecycle:
+warmup creates sync-run resources (probe resource), **warmup factory-failure
+unwinds the created prefix (G3, `[resource-warmup-error]`)**, start flows
+end-to-end (FakeWire in → step → FakeWire out + local subscriber), stop drains
+queued items then disposes in reverse order (order-recording resources), stop
+idempotent (twice), **concurrent stop from a second thread joins the latch —
+both callers see a fully drained/disposed session (G4)**, stop-before-start
+disposes warmup resources, restart = fresh session (fresh counters, resources
+re-created), already-live raises. egress: sparse None not published, bare-value currency
 (the FakeWire sees the payload object itself), unstamped-out error names
 module+field, subscriber exception doesn't kill the session
 (`egress_errors`). async module: e2e over FakeWire (drive_async private
 loop under the session thread), max_inflight validation at start. hold
 semantics: silent wired secondary holds the tick (assert via
-`held_tick_ts`/no rows), then resumes when data arrives. over() isolation:
-module with bound FakeWires runs `over()` on lists → wires observe zero
-traffic. stats: snapshot fields populated, align stats reachable, error
-captured. transformer(): equivalence vs `over()` on the same payloads;
-Observation re-enveloping (ts = row ts); multi-input module raises
-transform-shape.
+`held_tick_ts`/no rows), then resumes when data arrives. **over() isolation +
+D19 (G6):** module with bound FakeWires runs `over()` on lists → wires observe
+zero traffic; `over()` during a live resource-bearing session raises
+`[resource-concurrent-run]`; during a live resource-free session it is allowed
+and harmless. **sources (G7):** iterable-source pump (capacity None, finite
+source drains fully); a memory2-shaped source unwrapped to `obs.data` via a
+`sys.modules` monkeypatch of `dimos.memory2.stream`. stats: snapshot fields
+populated, align stats reachable, error captured. transformer(): equivalence vs
+`over()` on the same payloads; Observation re-enveloping (ts = row ts);
+multi-input module raises transform-shape.
 
 ### 13.3 `test_legacy.py` cases (TL-)
 
-TL-pickle (P1): `legacy_actor(M)` pickle round-trip is the cached class;
+TL-pickle (P1, G1): `legacy_actor(M)` pickle round-trip is the cached class,
+plus a DeployModuleRequest-shaped `(id, cls, kwargs)` payload round-trips (the
+`copyreg` recipe); TL-name-override (G8): `legacy_actor(M, name="MLive")` has
+`__name__=="MLive"`, distinct cache entry, and pickles by recipe;
 TL-ctor-g (P2) construct with `g=GlobalConfig()`; TL-ctor-names (P3/P4)
 instance_name + frame_id_prefix land in config; TL-atom (P5/P21):
 `BlueprintAtom.create(actor, {})` yields exactly the declared StreamRefs +
@@ -786,17 +883,24 @@ fields/defaults mirror the pure model, unknown kwarg raises; TL-attrs
 TL-autoconnect (P10): two-atom blueprint (pure actor + a test-local legacy
 Module) with a shared `(name, type)` — grouping via `_connect_streams`'s
 inputs (`_all_name_types`) shows one shared key; conflicting-type variant
-raises in `_verify_no_name_conflicts`; TL-set-transport (P11): unknown name
-ValueError, known name lands on the stream (constructed actor, stopped in
-finally); TL-rpcs (P12/P27): `{"build","start","stop","set_transport"} <=
-set(actor.rpcs)`; TL-lifecycle (P13/P14): build creates the probe resource,
-start flows against in-proc transports; TL-stop-twice (P15); TL-ref
-(P17/P28): settable, set_module_ref lands; TL-reduce (P18): stream
-`__reduce__` with a stub ref; TL-deploy-error (P22): `_handle_request`
-DeployModuleRequest with a bad config kwarg → WorkerResponse.error naming
-the pydantic failure; TL-restart-shape (P25): warmup/start/stop/start on one
-actor; TL-restart-limit (P26): reload-path failure mode pinned (the reloaded
-symbol is the pure class, deploying it raises on `g`); validation trio
+raises in `_verify_no_name_conflicts`; TL-remap + TL-namespace (P32, G5):
+`legacy_blueprint(M).remappings([...])` renames a stream and
+`.namespace("robot0", expose={...})` prefixes streams — asserted via
+`_all_name_types`, identical to a legacy module's behavior; TL-set-transport
+(P11): unknown name ValueError, known name lands on the stream (constructed
+actor, stopped in finally); TL-rpcs (P12/P27):
+`{"build","start","stop","set_transport"} <= set(actor.rpcs)`; TL-lifecycle
+(P13/P14): build creates the probe resource, start flows against in-proc
+transports; TL-session-reachable (G7): the live rim session is reachable
+through the shell's `_pure` (`rim.stats(inst._pure).state` running → stopped);
+TL-stop-twice (P15); TL-ref (P17/P28): settable, set_module_ref lands;
+TL-reduce (P18): stream `__reduce__` with a stub ref; TL-deploy-error (P22):
+`_handle_request` DeployModuleRequest with a bad config kwarg →
+WorkerResponse.error naming the pydantic failure; TL-restart-shape (P25):
+warmup/start/stop/start on one actor; TL-restart-limit (P26, G9): reload-path
+failure mode pinned — `__module__ == "dimos.pure.legacy"` (honest), and
+`getattr(sys.modules[__module__], __name__)` raises `AttributeError` (the
+synthesized symbol lives nowhere), a loud failure; validation trio
 (§11.2): overlap / surface-collision / config-collision each raise at
 factory time with release copy.
 
@@ -842,8 +946,13 @@ registration per T4 §7.
 No other file outside T8's four changes. Explicitly NOT edited: `drivers.py`
 (rim composes `align` + `drive_*` + `attach_resources` public surface;
 `run_over` stays over()-only), `resources.py` (T7 `_chain` note resolved
-architecturally, §7.4), `align.py`, legacy core (the actor adapts; no legacy
-hook was needed — the investigation found the surface sufficient).
+architecturally, §7.4), `align.py`, **`dimos/memory2/stream.py`** (AD5,
+**resolved by Ivan, 2026-07-20**: A as written — `Stream.transform` already
+accepts bare callables (`stream.py:384-401`), so `transformer(m)` needs no
+memory2 edit, and `derive(data=row, ts=row.ts)` preserves observation metadata;
+all three seams S3/S4/S5 stay inside `dimos/pure`), legacy core (the actor
+adapts; no legacy hook was needed — the investigation found the surface
+sufficient).
 
 ## 15. Division of labor — T8a / T8b
 
@@ -874,10 +983,11 @@ re-exported (§1 layering).
 | Watch-out (index §T8 + amendment) | Where handled |
 | --- | --- |
 | transports deliver on arbitrary threads, never drop by policy | §5, §6.2; drop lives in rim ring + T5 only |
+| ingress backpressure = per-port `capacity` (default 1 KeepLast, `None` lossless) | §5 (AD1), `[rim-bad-capacity]` |
 | one loop per module; marshal don't lock | §6.1.3, §6.2 |
-| over() structurally unable to touch transports | §4.3, TR-over-isolation |
+| over() structurally unable to touch transports; over()-during-live (D19) | §4.3, TR-over-isolation, TR-over-live-* |
 | source/transport mutually exclusive | §4.3, `[rim-port-conflict]` |
-| stop idempotent, drains before disposing, reverse order | §7.3 table |
+| stop idempotent (re-entrant returns, concurrent joins the latch), drains before disposing, reverse order | §7.3 table (G4) |
 | StreamAccessor/Stream conventions, store-as-owner | §4.3 subscribe→unsubscribe shape, §10 ownership |
 | kwargs["g"] wrinkle | §11.1 ActorConfig (P2) |
 | one module per process | P9 `dedicated_worker` |
@@ -893,7 +1003,7 @@ re-exported (§1 layering).
 ## 18. Acceptance checklist
 
 - [ ] T8a: `uv run mypy dimos/pure` clean (strict); `test_rim.py` green
-      unskipped; 304-test baseline still green; sketch wiring lines
+      unskipped; 326-test baseline still green; sketch wiring lines
       typecheck (case_rim).
 - [ ] T8a: marshal test proves single-thread stepping under multi-thread
       delivery; determinism test (same deliveries → same rows).
@@ -924,8 +1034,11 @@ re-exported (§1 layering).
 - **D4 — `start()` auto-warms** when NEW (sketch shows warmup-then-start;
   the coordinator path calls build first anyway; standalone users get the
   obvious behavior).
-- **D5 — Ingress ring default depth 256, drop-oldest, per-port counter;**
-  `start(port_depth=...)` mapping override; no fluent per-port knob yet.
+- **D5 — Ingress ring is a per-port `capacity` knob, default 1 (KeepLast)**
+  (AD1, resolved by Ivan 2026-07-20): `m.i.x.capacity = int >= 1` (drop-oldest,
+  per-port counter) or `None` (unbounded/lossless, recorder path); invalid →
+  `[rim-bad-capacity]`. No `start(port_depth=)` argument, no global depth. (This
+  supersedes A's original depth-256/`port_depth` design, replaced per AD1.)
 - **D6 — Async modules create resources at start on the run loop** (T7
   §7.3 forces it); sync-shaped modules create at `warmup()` — the legacy
   `build()` mapping (P13).
@@ -935,9 +1048,10 @@ re-exported (§1 layering).
   start; bindings persist) — mirrors over() re-invokability; legacy actor
   stop() remains terminal on the legacy side (its `_close_module` is), so
   restart-in-place arrives via the coordinator's redeploy, not in-process.
-- **D9 — Iterable sources pump losslessly** (block when ring full);
-  callback sources are lossy under pressure (ring drop) — pull is flow
-  control, push is not.
+- **D9 — Iterable sources exert flow control** (the pump blocks when a finite
+  ring is full; under `capacity=None` the ring never fills, so the source
+  drains fully and losslessly); callback sources are lossy under pressure (ring
+  drop) — pull is flow control, push is not.
 - **D10 — Live stats spelling is `dimos.pure.rim.stats(m) -> RimStats`;**
   no new PureModule property; the sketch's `m.health` stream surface stays
   T9's.
@@ -955,6 +1069,33 @@ re-exported (§1 layering).
   visibility via stats now, health at T9.
 - **D15 — Egress publishes bare field values** (P31) with a producer-side
   stamped check `[rim-unstamped-out]` on transport-bound ports only.
+- **D16 — `legacy_actor(cls, name=)` overrides the actor `__name__`** (G8):
+  the migration escape hatch for a legacy class and its pure twin colliding on
+  `__name__.lower()` in one blueprint; cache keyed `(cls, name)`, the name
+  rides the `copyreg` recipe.
+
+## 19b. Architect decisions — resolved
+
+All six escalated conflicts were **resolved by Ivan, 2026-07-20** (architecture
+session), each per the judge's recommendation in `t8-comparison.md`. They are
+integrated into the design text above; summarized here:
+
+- **AD1 — ingress default → B's design (the one REPLACEMENT).** Capacity-1
+  KeepLast default + per-port `m.i.x.capacity = n | None` knob (`None` =
+  lossless). §5 rewritten; D5 restated; `[rim-bad-capacity]` added (§8).
+- **AD2 — health timing → A's (T8 wires health), with a NAMED placeholder.**
+  `HealthPlaceholder` type in `legacy.py` instead of `Out[object]`; T9 swaps the
+  type, not the mechanism (§11.1, §12).
+- **AD3 — out-side bridge binding → A as written.** Transport-bound egress; a
+  dead wire is a session error, not a warning counter; local-subscriber slot
+  stays free (§6.3).
+- **AD4 — unstamped-out → A as written**, plus a noted (unimplemented) warn-once
+  fallback escape hatch should a real ts-less legacy-interop need surface (§6.3).
+- **AD5 — transform() seam → A as written.** `PureModule.__call__` (S5,
+  `dimos/pure`-only); NO `dimos/memory2/stream.py` edit — confirmed all seams
+  stay inside `dimos/pure` (§14).
+- **AD6 — bridge naming → A's stands:** `legacy.py`, `legacy_actor()`,
+  `legacy_blueprint()` (self-documents the sunset intent; unchanged).
 
 ## 20. Open questions (non-blocking; defaults chosen)
 
@@ -967,12 +1108,9 @@ re-exported (§1 layering).
   (declaration order, on one substrate) stays simple; revisit with a real
   slow-async-module case / options: (a) all-at-start (default), (b) split
   creation.
-- **Q3**: `_HEALTH_PAYLOAD = object` placeholder until T9 — acceptable that
-  autoconnect keys health as `("health", object)` in the interim? / default:
-  yes — pure-only merging is correct; a legacy module is unlikely to declare
-  `Out[object]` named health; T9 replaces the constant in one line /
-  options: (a) placeholder (default), (b) skip health annotation until T9
-  (loses the wired-topic acceptance row).
+- **Q3**: RESOLVED by AD2 (Ivan, 2026-07-20) — the placeholder is a NAMED type
+  `HealthPlaceholder` (not `object`), so autoconnect keys health as
+  `("health", HealthPlaceholder)`; T9 swaps the type. No longer open.
 - **Q4**: Zenoh QoS for pure topics — `make_transport` applies its
   name/type-based defaults; pure modules currently get generic defaults. /
   default: inherit exactly what a legacy module with the same stream
@@ -984,8 +1122,10 @@ re-exported (§1 layering).
 None required. Two near-misses recorded for the architecture session's
 awareness, neither deviating from a settled decision: (1) P26 —
 `restart_module(reload_source=True)` cannot rebuild a generated actor from a
-reloaded source module; fails loudly; a coordinator-side class-resolution
-hook would fix it and is deliberately NOT proposed as a legacy-core edit in
-this wave. (2) The sketch's `_shape_at_wiring_time` calls `m.warmup()` then
+reloaded source module; with the honest `__module__ == "dimos.pure.legacy"`
+(G9) the reload path's `getattr(reloaded_module, cls.__name__)` fails loudly
+with `AttributeError` (the synthesized symbol lives nowhere), not a silent
+wrong class; a coordinator-side class-resolution hook would fix it and is
+deliberately NOT proposed as a legacy-core edit in this wave. (2) The sketch's `_shape_at_wiring_time` calls `m.warmup()` then
 `m.start()` on a CostMapper with no resources — under D4/D6 both orderings
 and the auto-warm path are equivalent for it; no sketch amendment needed.

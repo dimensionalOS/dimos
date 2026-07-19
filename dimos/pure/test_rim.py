@@ -25,14 +25,17 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import dataclasses
 from pathlib import Path
+import sys
 import threading
 import time
+import types
 from typing import Any, NamedTuple
 
 import pytest
 
 from dimos import pure as pm
 from dimos.pure import rim
+from dimos.pure.resources import ResourceError
 from dimos.pure.rim import RimError, RimRule
 
 pytestmark = pytest.mark.skip(reason="T8 skeleton — enabled by T8a")
@@ -54,6 +57,17 @@ class Bare:
     """Deliberately unstamped payload for the egress currency check."""
 
     v: float
+
+
+@dataclasses.dataclass(frozen=True)
+class Pos:
+    """Interpolatable payload — exercises T5 interpolate through the live rings (G7)."""
+
+    ts: float
+    v: float
+
+    def interpolate(self, other: Pos, alpha: float) -> Pos:
+        return Pos(ts=self.ts + (other.ts - self.ts) * alpha, v=self.v + (other.v - self.v) * alpha)
 
 
 class FakeWire:
@@ -215,6 +229,41 @@ class BareOut(pm.PureModule):
         return BareOut.Out(naked=Bare(v=i.ping.v))
 
 
+class Located(pm.PureModule):
+    """Two-input: tick img + interpolated pos — the live-interpolation marshal (G7)."""
+
+    class In(pm.In):
+        img: Ping = pm.tick()
+        pos: Pos = pm.interpolate()
+
+    class Out(pm.Out):
+        at: Pos = pm.contract(min_hz=1)
+
+    def step(self, i: In) -> Out:
+        return Located.Out(at=i.pos)
+
+
+class FailWarmup(pm.PureModule):
+    """One good resource then a failing factory — warmup unwinds the prefix (G3)."""
+
+    class In(pm.In):
+        ping: Ping = pm.tick()
+
+    class Out(pm.Out):
+        pong: Ping = pm.contract(min_hz=1)
+
+    @pm.resource
+    def a(self) -> Probe:
+        return Probe(RESOURCE_LOG, "a")
+
+    @pm.resource
+    def bad(self) -> Probe:
+        raise RuntimeError("boom")
+
+    def step(self, i: In) -> Out:
+        return FailWarmup.Out(pong=i.ping)
+
+
 @pytest.fixture(autouse=True)
 def _clear_logs() -> Iterator[None]:
     STEP_THREADS.clear()
@@ -324,16 +373,14 @@ class TestIngress:
         assert [p.ts for p in wout.sent] == [float(i) for i in range(1, 8)]
         assert [p.v for p in wout.sent] == [float(i) * 2 for i in range(1, 8)]
 
-    def test_backpressure_drop_oldest(self) -> None:
+    def test_backpressure_keeplast_default(self) -> None:
         m = Echo()
         win, wout = FakeWire(), FakeWire()
-        m.i.ping.transport = win
+        m.i.ping.transport = win  # capacity defaults to 1 (KeepLast, AD1)
         m.o.pong.transport = wout
-        # depth-1 ring; deliver a burst BEFORE the session thread can drain:
-        rim.start_module(m, port_depth={"ping": 1})
+        rim.start_module(m)
         try:
-            # a held session? No — stall-free module; race-free assertion is on
-            # the counters after a quiescent burst window:
+            # deliver a burst; drop-oldest keeps the newest, drops accounted:
             for i in range(1, 51):
                 win.deliver(Ping(ts=float(i), v=float(i)))
             wait_for(lambda: rim.stats(m).ingress["ping"].received == 50)
@@ -343,8 +390,54 @@ class TestIngress:
             )
             s = rim.stats(m)
             assert s.ingress["ping"].received == 50
+            assert s.ingress["ping"].dropped_overflow > 0  # counted, never warned
             # newest survives: the last published row is ts=50
             wait_for(lambda: bool(wout.sent) and wout.sent[-1].ts == 50.0)
+        finally:
+            rim.stop_module(m)
+
+    def test_capacity_validation(self) -> None:
+        m = Echo()
+        for bad in (0, -1, True, 1.5):
+            with pytest.raises(RimError, match=r"\[rim-bad-capacity\]") as ei:
+                m.i.ping.capacity = bad  # type: ignore[assignment]
+            assert ei.value.rim_rule is RimRule.BAD_CAPACITY
+        m.i.ping.capacity = 4  # int >= 1 ok
+        m.i.ping.capacity = None  # unbounded ok
+
+    def test_capacity_unbounded_lossless(self) -> None:
+        m = Echo()
+        win, wout = FakeWire(), FakeWire()
+        m.i.ping.capacity = None  # lossless: recorder-style, no drops (AD1)
+        m.i.ping.transport = win
+        m.o.pong.transport = wout
+        rim.start_module(m)
+        try:
+            for i in range(1, 11):
+                win.deliver(Ping(ts=float(i), v=float(i)))
+            wait_for(lambda: len(wout.sent) == 10)
+            assert rim.stats(m).ingress["ping"].dropped_overflow == 0
+        finally:
+            rim.stop_module(m)
+
+    def test_live_interpolation_marshal(self) -> None:
+        """Two foreign threads feed img+pos; T5 interpolate runs through the rings (G7)."""
+        m = Located()
+        wimg, wpos, wout = FakeWire(), FakeWire(), FakeWire()
+        m.i.img.capacity = None
+        m.i.pos.capacity = None
+        m.i.img.transport = wimg
+        m.i.pos.transport = wpos
+        m.o.at.transport = wout
+        rim.start_module(m)
+        try:
+            wpos.deliver(Pos(ts=0.0, v=0.0), on_thread=True)
+            wimg.deliver(Ping(ts=1.0, v=0.0), on_thread=True)
+            wpos.deliver(Pos(ts=2.0, v=2.0), on_thread=True)  # brackets tick 1.0
+            wimg.join()
+            wpos.join()
+            wait_for(lambda: len(wout.sent) == 1)
+            assert wout.sent[0].v == pytest.approx(1.0)  # midpoint interpolation
         finally:
             rim.stop_module(m)
 
@@ -383,6 +476,41 @@ class TestLifecycle:
         finally:
             rim.stop_module(m)
         assert RESOURCE_LOG == ["create:a", "create:b", "dispose:b", "dispose:a"]
+
+    def test_warmup_failure_unwinds_prefix(self) -> None:
+        """A failing factory unwinds already-created resources in reverse (G3, spec §7.2)."""
+        m = FailWarmup()
+        m.i.ping.source = [Ping(1.0, 1.0)]
+        with pytest.raises(ResourceError, match=r"\[resource-warmup-error\]"):
+            rim.warmup_module(m)
+        assert RESOURCE_LOG == ["create:a", "dispose:a"]  # 'a' created then unwound
+        # no live session was left behind:
+        assert rim.stats(m).state in ("new", "stopped")
+
+    def test_concurrent_stop_joins_latch(self) -> None:
+        """Second stop from another thread JOINS the latch, not returns early (G4, P15/P16)."""
+        m = Stateful()
+        win, wout = FakeWire(), FakeWire()
+        m.i.ping.transport = win
+        m.o.total.transport = wout
+        rim.start_module(m)
+        for i in range(1, 4):
+            win.deliver(Ping(ts=float(i), v=1.0))
+        barrier = threading.Barrier(2)
+
+        def racer() -> None:
+            barrier.wait()
+            rim.stop_module(m)
+
+        t = threading.Thread(target=racer)
+        t.start()
+        barrier.wait()
+        rim.stop_module(m)
+        t.join(WAIT_S)
+        # both callers observe a fully-drained, disposed session (not an early return):
+        assert not t.is_alive()
+        assert rim.stats(m).state == "stopped"
+        assert RESOURCE_LOG[-2:] == ["dispose:b", "dispose:a"]
 
     def test_flow_end_to_end(self, live_echo: tuple[Echo, FakeWire, FakeWire]) -> None:
         m, win, wout = live_echo
@@ -595,6 +723,7 @@ class TestSourcesAndInterop:
     def test_iterable_source_pump(self) -> None:
         m = Echo()
         wout = FakeWire()
+        m.i.ping.capacity = None  # lossless: every pumped item processed (D9/AD1)
         m.i.ping.source = [Ping(ts=float(i), v=float(i)) for i in range(1, 4)]
         m.o.pong.transport = wout
         rim.start_module(m)
@@ -629,6 +758,33 @@ class TestSourcesAndInterop:
         rows = list(m.over(ping=[Ping(ts=1.0, v=1.0), Ping(ts=2.0, v=2.0)]))
         assert [r.pong.v for r in rows] == [2.0, 4.0]
         assert wout.sent == [] and win.n_subs == 0
+
+    def test_over_during_live_with_resources_rejected(self) -> None:
+        """D19 (G6): a resource-bearing module rejects over() while live — T7's guard."""
+        m = Stateful()  # has @resource a, b
+        win, wout = FakeWire(), FakeWire()
+        m.i.ping.transport = win
+        m.o.total.transport = wout
+        rim.start_module(m)
+        try:
+            with pytest.raises(ResourceError, match=r"\[resource-concurrent-run\]"):
+                next(iter(m.over(ping=[Ping(ts=1.0, v=1.0)])))
+        finally:
+            rim.stop_module(m)
+
+    def test_over_during_live_resource_free_ok(self) -> None:
+        """D19 (G6): a resource-free module may over() concurrently — harmless, disjoint."""
+        m = Echo()  # no resources
+        win, wout = FakeWire(), FakeWire()
+        m.i.ping.transport = win
+        m.o.pong.transport = wout
+        rim.start_module(m)
+        try:
+            rows = list(m.over(ping=[Ping(ts=1.0, v=3.0)]))
+            assert rows[0].pong.v == 6.0
+            assert wout.sent == []  # replay never rebroadcasts on the live wire
+        finally:
+            rim.stop_module(m)
 
     def test_stats_surface(self, live_echo: tuple[Echo, FakeWire, FakeWire]) -> None:
         m, win, wout = live_echo
@@ -676,3 +832,41 @@ class TestTransformer:
         with pytest.raises(RimError, match=r"\[rim-transform-shape\]") as ei:
             rim.transformer(TwoIn())
         assert ei.value.rim_rule is RimRule.TRANSFORM_SHAPE
+
+
+class _FakeStream:
+    """sys.modules stub matching dimos.memory2.stream's Stream shape (subscribable)."""
+
+    def __init__(self, items: list[Any]) -> None:
+        self._items = list(items)
+
+    def subscribe(self, on_next: Callable[[Any], Any]) -> Any:
+        for item in self._items:
+            on_next(item)
+
+        class _Disp:
+            def dispose(self) -> None:
+                pass
+
+        return _Disp()
+
+
+class TestSources:
+    def test_observation_unwrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A memory2-shaped source is unwrapped to obs.data at ingestion (G7, spec §10)."""
+        mod = types.ModuleType("dimos.memory2.stream")
+        mod.Stream = _FakeStream  # type: ignore[attr-defined]
+        mod.Observation = FakeObs  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "dimos.memory2.stream", mod)
+        payloads = [Ping(ts=float(i), v=float(i)) for i in range(1, 3)]
+        m = Echo()
+        wout = FakeWire()
+        m.i.ping.capacity = None
+        m.i.ping.source = _FakeStream([FakeObs(ts=p.ts, data=p) for p in payloads])
+        m.o.pong.transport = wout
+        rim.start_module(m)
+        try:
+            wait_for(lambda: len(wout.sent) == 2)
+            assert [p.v for p in wout.sent] == [2.0, 4.0]  # payloads unwrapped, doubled
+        finally:
+            rim.stop_module(m)

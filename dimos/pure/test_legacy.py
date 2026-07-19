@@ -46,9 +46,10 @@ from dimos.core.coordination.worker_messages import (
     UndeployModuleRequest,
 )
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, RemoteOut, Transport
+from dimos.pure import rim
 from dimos.pure.legacy import legacy_actor, legacy_blueprint
 from dimos.pure.stepspec import PureModuleDefinitionError
 
@@ -231,9 +232,22 @@ class TestFactory:
         assert a is legacy_actor(PureEcho)  # one actor class per pure class
         assert issubclass(a, Module)
 
-    def test_pickle_roundtrip(self) -> None:  # P1 — the deploy-pipe contract
+    def test_pickle_roundtrip(self) -> None:  # P1 — the deploy-pipe contract (G1)
         a = legacy_actor(PureEcho)
+        # copyreg reducer → _rebuild_actor → cached class; identity survives the pipe:
         assert pickle.loads(pickle.dumps(a)) is a
+        # DeployModuleRequest-shaped payload round-trips (class + kwargs):
+        payload = pickle.dumps((1, a, {"gain": 2.0, "g": GlobalConfig(viewer="none")}))
+        _, a2, kwargs = pickle.loads(payload)
+        assert a2 is a and kwargs["gain"] == 2.0
+
+    def test_name_override(self) -> None:  # G8 / D16 — the migration collision escape
+        aliased = legacy_actor(PureEcho, name="PureEchoLive")
+        assert aliased.__name__ == "PureEchoLive"
+        assert aliased.name == "pureecholive"  # distinct instance key
+        assert aliased is not legacy_actor(PureEcho)  # cache keyed (cls, name)
+        assert aliased is legacy_actor(PureEcho, name="PureEchoLive")  # cached
+        assert pickle.loads(pickle.dumps(aliased)) is aliased  # name rides the recipe
 
     def test_identity_attrs(self) -> None:  # P7, P8, P9, P20
         a = legacy_actor(PureEcho)
@@ -294,6 +308,18 @@ class TestBlueprintSurface:
         with pytest.raises(ValueError, match="ping"):
             _verify_no_name_conflicts(bp)
 
+    def test_remapping_renames_streams(self) -> None:  # P32 (G5): name-based, adapter-agnostic
+        bp = legacy_blueprint(PureEcho).remappings([(legacy_actor(PureEcho), "echo", "echo_out")])
+        pairs = _all_name_types(bp)
+        assert ("echo_out", Ping) in pairs and ("echo", Ping) not in pairs  # renamed
+        assert ("ping", Ping) in pairs  # untouched — exactly a legacy module's behavior
+
+    def test_namespace_prefixes_streams(self) -> None:  # P32 (G5)
+        bp = legacy_blueprint(PureEcho).namespace("robot0", expose={"ping"})
+        pairs = _all_name_types(bp)
+        assert ("robot0/echo", Ping) in pairs  # prefixed like any legacy stream
+        assert ("ping", Ping) in pairs  # exposed → crosses the namespace boundary
+
 
 # ── constructed actor, in-process (P2-P4, P11-P15, P17, P18, P28) ────────────
 
@@ -349,6 +375,21 @@ class TestActorInstance:
         finally:
             inst.stop()
 
+    def test_rim_session_reachable_through_shell(self) -> None:  # G7
+        a = legacy_actor(PureWithResource)
+        inst = a(g=GlobalConfig(viewer="none"))
+        tin, tout = FakeLegacyTransport(), FakeLegacyTransport()
+        try:
+            inst.set_transport("ping", tin)
+            inst.set_transport("echo", tout)
+            inst.build()
+            inst.start()
+            # the live rim session is reachable through the shell's pure instance:
+            assert rim.stats(inst._pure).state == "running"
+        finally:
+            inst.stop()
+        assert rim.stats(inst._pure).state == "stopped"
+
     def test_stop_twice(self) -> None:  # P15 — the normal shutdown path
         a = legacy_actor(PureEcho)
         inst = a(g=GlobalConfig(viewer="none"))
@@ -400,14 +441,15 @@ class TestDeployPath:
             # the same channel a legacy module's config typo rides.
             _handle_request(req, state)
 
-    def test_restart_reload_limitation_pinned(self) -> None:  # P26
+    def test_restart_reload_limitation_pinned(self) -> None:  # P26 (G9)
         a = legacy_actor(PureEcho)
-        # restart(reload_source=True) resolves getattr(module, __name__) after
-        # reload — which is the PURE class, not the actor:
-        assert getattr(sys.modules[a.__module__], a.__name__) is PureEcho
-        # ...and deploying the pure class dies LOUDLY on the forced g kwarg:
-        with pytest.raises(Exception, match="g"):
-            PureEcho(g=global_config)  # type: ignore[call-arg]
+        # G9: __module__ is honest — the actor lives in no importable namespace, so
+        # its synthesized-ness is visible in logs/tracebacks (not the pure module):
+        assert a.__module__ == "dimos.pure.legacy"
+        # restart(reload_source=True) does getattr(reload(sys.modules[__module__]),
+        # __name__); legacy.py defines no 'PureEcho' symbol, so it fails LOUDLY:
+        with pytest.raises(AttributeError):
+            getattr(sys.modules[a.__module__], a.__name__)
 
 
 # ── the acceptance bar (spec §13.4): blueprint e2e over real workers ─────────

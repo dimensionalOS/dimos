@@ -25,7 +25,7 @@ other direction.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 import dataclasses
 import enum
 import threading
@@ -46,7 +46,7 @@ from dimos.pure.stepspec import StepSpec
 from dimos.pure.typing import InPort, InPorts, OutPort, OutPorts
 
 __all__ = [
-    "DEFAULT_PORT_DEPTH",
+    "DEFAULT_CAPACITY",
     "STOP_JOIN_TIMEOUT",
     "PortIngress",
     "Publishable",
@@ -66,8 +66,13 @@ __all__ = [
     "warmup_module",
 ]
 
-DEFAULT_PORT_DEPTH: Final[int] = 256
-"""Ingress ring depth per wired In port; drop-oldest beyond it (spec §5, D5)."""
+DEFAULT_CAPACITY: Final[int] = 1
+"""Default per-port ingress ring capacity — **KeepLast** (spec §5, D5, AD1).
+
+Capacity 1 is house coalesce-to-latest: a slow step always sees the freshest
+delivered item, skipped ones counted (never warned). Per-port override
+``m.i.x.capacity = n`` (drop-oldest, deque-maxlen) or ``= None`` (unbounded,
+lossless — recorder-style modules). Resolved by Ivan, 2026-07-20 (AD1)."""
 
 STOP_JOIN_TIMEOUT: Final[float] = 5.0
 """stop()'s session-thread join bound — the rim's ONLY wall clock (spec §7.3 #6)."""
@@ -103,6 +108,7 @@ class RimRule(enum.Enum):
     LIVE_REBIND = "rim-live-rebind"
     NOT_SUBSCRIBABLE = "rim-not-subscribable"
     NOT_PUBLISHABLE = "rim-not-publishable"
+    BAD_CAPACITY = "rim-bad-capacity"
     ALREADY_LIVE = "rim-already-live"
     UNSTAMPED_OUT = "rim-unstamped-out"
     UNKNOWN_PORT = "rim-unknown-port"
@@ -156,14 +162,18 @@ class RimStats:
 
 
 class RimInPort(InPort[Any]):
-    """Runtime In-port handle: ``.transport =`` / ``.source =``, mutually exclusive."""
+    """Runtime In-port handle: ``.transport =`` / ``.source =`` (exclusive) + ``.capacity``."""
+
+    capacity: int | None
+    """Ingress ring capacity: ``int >= 1`` (drop-oldest) or ``None`` (unbounded); default
+    ``DEFAULT_CAPACITY`` (spec §5, AD1). Invalid values raise ``[rim-bad-capacity]``."""
 
     def __init__(self, module: Any, name: str, spec: FieldSpec) -> None:
         """Bind-less handle for one In field; validation happens on assignment."""
         raise NotImplementedError
 
     def __setattr__(self, name: str, value: Any) -> None:
-        """Intercept ``transport``/``source`` (spec §4.3: conflict, live-rebind, shape)."""
+        """Intercept ``transport``/``source``/``capacity`` (spec §4.3: conflict, live-rebind, shape)."""
         raise NotImplementedError
 
 
@@ -218,12 +228,14 @@ class RimOutPorts(OutPorts[Any]):
 class _PortQueue:
     """Bounded ring + shared Condition: delivery threads append, session pulls."""
 
-    def __init__(self, depth: int, cond: threading.Condition, ingress: PortIngress) -> None:
-        """O(1) enqueue with drop-oldest accounting (spec §5)."""
+    def __init__(
+        self, capacity: int | None, cond: threading.Condition, ingress: PortIngress
+    ) -> None:
+        """O(1) enqueue; ``capacity=None`` is unbounded/lossless, else drop-oldest (spec §5, AD1)."""
         raise NotImplementedError
 
     def enqueue(self, item: Any) -> None:
-        """Append + notify; full ring evicts oldest and counts it (spec §5)."""
+        """Append + notify; a bounded full ring evicts oldest and counts it (spec §5)."""
         raise NotImplementedError
 
 
@@ -249,8 +261,8 @@ class _LiveSession:
         """Validate wiring; create sync-run resources eagerly (spec §7.2, D6)."""
         raise NotImplementedError
 
-    def start(self, port_depth: Mapping[str, int] | None = None) -> None:
-        """Bind feeds, compose aligner+driver, spawn the session thread (spec §6.1)."""
+    def start(self) -> None:
+        """Bind feeds (per-port capacity), compose aligner+driver, spawn the thread (spec §6.1)."""
         raise NotImplementedError
 
     def stop(self) -> None:
@@ -293,8 +305,12 @@ def warmup_module(module: Any) -> None:
     raise NotImplementedError
 
 
-def start_module(module: Any, *, port_depth: Mapping[str, int] | None = None) -> None:
-    """``m.start()`` body (seam S4): auto-warm (D4) then go live (spec §6.1)."""
+def start_module(module: Any) -> None:
+    """``m.start()`` body (seam S4): auto-warm (D4) then go live (spec §6.1).
+
+    Per-port ingress ring capacity is read from each ``m.i.<port>.capacity``
+    (default ``DEFAULT_CAPACITY``, ``None`` = unbounded) — no ``port_depth``
+    argument (AD1, resolved by Ivan 2026-07-20; the knob rides the port)."""
     raise NotImplementedError
 
 
