@@ -15,20 +15,18 @@
 """Hosted Teleop Module — Cloudflare Realtime SFU client.
 
 .. deprecated::
-    For the data planes (commands, telemetry) use ``CloudflareTransport``
-    bound directly to blueprint streams instead — see
-    ``dimos/protocol/pubsub/impl/webrtc`` and the
-    ``teleop-hosted-go2-transport`` blueprint. This module remains only for
-    video-track publishing until ``BrokerProvider`` grows media support,
-    after which it will be removed.
+    DO NOT USE for new work. This module owns its own RTCPeerConnection —
+    a second broker session next to any transport-bound streams. The current
+    pattern binds ``Cloudflare*`` transports (including video —
+    ``BrokerProvider`` has media support) directly to per-concern modules: see
+    ``dimos/teleop/hosted/``. Kept only because ``teleop-hosted-go2`` still runs
+    on it; deleted once that migrates.
 """
 
 from __future__ import annotations
 
 import asyncio
-from enum import IntEnum
 import json
-import os
 import threading
 import time
 from typing import Any
@@ -55,9 +53,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import DEFAULT_BROKER_URL
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
-from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
+from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.utils.video_stats import VideoStats
@@ -66,16 +65,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class Hand(IntEnum):
-    LEFT = 0
-    RIGHT = 1
-
-
 class HostedTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
-    broker_url: str = "https://teleop.dimensionalos.com"
-    # Empty defaults; resolved from TELEOP_* env vars at start() if unset.
+    broker_url: str = DEFAULT_BROKER_URL
+    # Set via the module-config flow (-o hosted-teleop.broker_api_key=... or env).
     broker_api_key: str = ""
     robot_id: str = ""
     robot_name: str = ""
@@ -111,10 +105,9 @@ class HostedTeleopModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         warnings.warn(
-            "HostedTeleopModule is deprecated: bind CloudflareTransport to your "
-            "blueprint streams instead (cmd_unreliable / state_reliable / "
-            "state_reliable_back). It remains only for video-track publishing "
-            "until BrokerProvider supports media tracks.",
+            "HostedTeleopModule is deprecated: bind Cloudflare* "
+            "transports to your module's streams instead (video included) — "
+            "see dimos/teleop/hosted/.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -141,7 +134,7 @@ class HostedTeleopModule(Module):
         self._state_back_channel: RTCDataChannel | None = None
         self._state_back_channel_id: int | None = None
 
-        self._video_track = CameraVideoTrack()
+        self._video_track: CameraVideoTrack | None = None
         self._cmd_stats = LiveStreamStats()
 
         self._control_loop_thread: threading.Thread | None = None
@@ -159,8 +152,6 @@ class HostedTeleopModule(Module):
     def start(self) -> None:
         super().start()
         self._stop_event.clear()
-        unsub = self.color_image.subscribe(self._video_track.set_latest)
-        self.register_disposable(Disposable(unsub))
         self._connect_blocking()
         self._start_heartbeat()
         self._start_telemetry()
@@ -190,6 +181,9 @@ class HostedTeleopModule(Module):
         self.spawn(self._connect()).result(timeout=45.0)
 
     async def _connect(self) -> None:
+        self._video_track = CameraVideoTrack(asyncio.get_running_loop())
+        unsub = self.color_image.subscribe(self._video_track.set_latest)
+        self.register_disposable(Disposable(unsub))
         self._http = httpx.AsyncClient(timeout=30.0)
 
         ice_servers = [RTCIceServer(urls=u) for u in self.config.stun_urls]
@@ -219,9 +213,13 @@ class HostedTeleopModule(Module):
         async def _on_state() -> None:
             if self._pc is None:
                 return
-            logger.info(f"PC state: {self._pc.connectionState}")
-            if self._pc.connectionState == "connected":
+            cs = self._pc.connectionState
+            logger.info(f"PC state: {cs}")
+            if cs == "connected" and self._video_track is not None:
                 self._video_track.arm()
+            elif cs in ("failed", "closed"):
+                # Terminal — orchestrator decides whether to reconnect.
+                logger.error("PC entered terminal state %s — connection lost", cs)
 
         offer = await self._pc.createOffer()
         await self._pc.setLocalDescription(offer)
@@ -241,8 +239,8 @@ class HostedTeleopModule(Module):
 
         url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions"
         body = {
-            "robot_id": self.config.robot_id or os.getenv("TELEOP_ROBOT_ID", ""),
-            "robot_name": self.config.robot_name or os.getenv("TELEOP_ROBOT_NAME", ""),
+            "robot_id": self.config.robot_id,
+            "robot_name": self.config.robot_name,
             "sdp_offer": self._pc.localDescription.sdp,
         }
         resp = await self._http.post(url, json=body, headers=self._auth_headers())
@@ -287,9 +285,8 @@ class HostedTeleopModule(Module):
         self._session_id = None
 
     def _auth_headers(self) -> dict[str, str]:
-        api_key = self.config.broker_api_key or os.getenv("TELEOP_API_KEY")
-        if api_key:
-            return {"X-Robot-API-Key": api_key}
+        if self.config.broker_api_key:
+            return {"X-Robot-API-Key": self.config.broker_api_key}
         return {}
 
     def _start_heartbeat(self) -> None:

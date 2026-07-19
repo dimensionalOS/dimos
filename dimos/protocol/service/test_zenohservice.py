@@ -60,7 +60,7 @@ def test_stop_does_not_close_shared_session(session_pool) -> None:
 def test_session_before_start_raises(session_pool) -> None:
     svc = ZenohService(session_pool=session_pool)
     with pytest.raises(RuntimeError, match="not initialized"):
-        _ = svc.session
+        svc.session  # noqa: B018
 
 
 def test_start_is_idempotent(session_pool) -> None:

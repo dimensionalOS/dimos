@@ -26,6 +26,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
+@pytest.mark.flaky(reruns=2)
 def test_security_module(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],

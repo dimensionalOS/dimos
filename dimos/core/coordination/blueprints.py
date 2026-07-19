@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property, reduce
 import operator
+import re
 import sys
 import types as types_mod
 from types import MappingProxyType
@@ -84,6 +85,14 @@ class BlueprintAtom:
     module: type[ModuleBase]
     streams: tuple[StreamRef, ...]
     module_refs: tuple[ModuleRef, ...]
+    # Set when the same module class appears more than once in a blueprint
+    # (e.g. one per robot). `None` means just one.
+    instance_name: str | None = None
+
+    @property
+    def name(self) -> str:
+        """The key identifying this module instance within a blueprint."""
+        return self.instance_name if self.instance_name is not None else self.module.name
 
     @classmethod
     def create(cls, module: type[ModuleBase], kwargs: dict[str, Any]) -> Self:
@@ -132,11 +141,16 @@ class BlueprintAtom:
                     elif is_module_type(inner):
                         module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
 
+        instance_name = kwargs.get("instance_name")
+        if instance_name is not None and not isinstance(instance_name, str):
+            raise TypeError("instance_name must be a string or None")
+
         return cls(
             module=module,
             streams=tuple(streams),
             module_refs=tuple(module_refs),
             kwargs=kwargs,
+            instance_name=instance_name,
         )
 
 
@@ -175,9 +189,12 @@ class Blueprint:
         default_factory=lambda: MappingProxyType({})
     )
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    remapping_map: Mapping[tuple[type[ModuleBase], str], str | type[ModuleBase] | type[Spec]] = (
-        field(default_factory=lambda: MappingProxyType({}))
+
+    # Keyed by (instance name, stream/ref name).
+    remapping_map: Mapping[tuple[str, str], str | type[ModuleBase] | type[Spec]] = field(
+        default_factory=lambda: MappingProxyType({})
     )
+
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
 
@@ -202,10 +219,17 @@ class Blueprint:
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
     def config(self) -> type:
-        configs = {
-            b.module.name: (get_type_hints(b.module)["config"] | None, None)
-            for b in self.blueprints
-        }
+        configs = {}
+
+        for b in self.blueprints:
+            key = config_key(b.name)
+            if key in configs:
+                raise ValueError(
+                    f"Config key collision: two module instances map to {key!r}. "
+                    f"Rename one of the instances."
+                )
+            configs[key] = (get_type_hints(b.module)["config"] | None, None)
+
         configs["g"] = (GlobalConfig | None, None)
         transport_fields: dict[str, Any] = {}
         seen: set[type] = set()
@@ -237,12 +261,111 @@ class Blueprint:
 
     def remappings(
         self,
-        remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]],
+        remappings: Sequence[
+            tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
+        ],
     ) -> "Blueprint":
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
-            remappings_dict[(module, old)] = new
+            remappings_dict[(self._instance_key(module), old)] = new
         return replace(self, remapping_map=MappingProxyType(remappings_dict))
+
+    def _instance_key(self, module: type[ModuleBase] | str) -> str:
+        if isinstance(module, str):
+            return module
+        names = [b.name for b in self.blueprints if b.module is module]
+        if len(names) > 1:
+            raise ValueError(
+                f"{module.__name__} has multiple instances in this blueprint "
+                f"({', '.join(sorted(names))}). Pass the instance name instead of the class."
+            )
+        return names[0] if names else module.name
+
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> "Blueprint":
+        """Isolate this blueprint under a name prefix so several copies can coexist.
+
+        Instance names, stream names (and so their topics), TF frame ids, and RPC
+        topics all get the `{prefix}/` prefix, which disconnects the namespaced
+        modules from everything outside.
+
+        Stream names listed in *expose* are left unprefixed, so they connect
+        globally by the usual (name, type) matching.  That is how data crosses the
+        namespace boundary:
+
+            fleet = autoconnect(
+                AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
+                *[
+                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+                    for i, ip in enumerate(ips)
+                ],
+            )
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
+            raise ValueError(
+                f"Invalid namespace prefix {prefix!r}; use letters, digits and underscores "
+                f"(nest namespaces by composition, not with '/')."
+            )
+
+        expose_set = frozenset(expose)
+
+        effective_names = set()
+        for atom in self.blueprints:
+            for stream in atom.streams:
+                effective = self.remapping_map.get((atom.name, stream.name), stream.name)
+                if isinstance(effective, str):
+                    effective_names.add(effective)
+
+        unknown = expose_set - effective_names
+        if unknown:
+            raise ValueError(
+                f"expose names {sorted(unknown)} do not match any stream in the "
+                f"namespaced blueprint (available: {sorted(effective_names)})"
+            )
+
+        new_atoms = []
+        new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}
+
+        for atom in self.blueprints:
+            new_name = f"{prefix}/{atom.name}"
+            kwargs = dict(atom.kwargs)
+            kwargs["instance_name"] = new_name
+            old_namespace = atom.name.rsplit("/", 1)[0] if "/" in atom.name else ""
+            frame_id_prefix = kwargs.get("frame_id_prefix")
+            if frame_id_prefix is None:
+                kwargs["frame_id_prefix"] = prefix
+            elif old_namespace and frame_id_prefix == old_namespace:
+                # Auto-set by an inner .namespace(); extend it. User-set values are kept.
+                kwargs["frame_id_prefix"] = f"{prefix}/{frame_id_prefix}"
+            new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
+
+            for stream in atom.streams:
+                effective = self.remapping_map.get((atom.name, stream.name), stream.name)
+                if not isinstance(effective, str):
+                    continue
+                if effective in expose_set:
+                    if (atom.name, stream.name) in self.remapping_map:
+                        new_remap[new_name, stream.name] = effective
+                else:
+                    new_remap[new_name, stream.name] = f"{prefix}/{effective}"
+
+        # Module-ref remappings (values that are classes/Specs) keep their values.
+        for (instance, ref_name), value in self.remapping_map.items():
+            if not isinstance(value, str):
+                new_remap[f"{prefix}/{instance}", ref_name] = value
+
+        new_transports = {}
+        for (name, type_), transport in self.transport_map.items():
+            if name in expose_set:
+                new_transports[name, type_] = transport
+            else:
+                new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)
+
+        return replace(
+            self,
+            blueprints=tuple(new_atoms),
+            remapping_map=MappingProxyType(new_remap),
+            transport_map=MappingProxyType(new_transports),
+        )
 
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
@@ -294,7 +417,32 @@ def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom
     seen = set()
     unique_blueprints = []
     for bp in reversed(blueprints):
-        if bp.module not in seen:
-            seen.add(bp.module)
+        if bp.name not in seen:
+            seen.add(bp.name)
             unique_blueprints.append(bp)
     return list(reversed(unique_blueprints))
+
+
+def config_key(instance_name: str) -> str:
+    """Escape an instance name into a valid config/CLI/env identifier."""
+    return instance_name.replace("/", "_")
+
+
+def _reprefix_transport(
+    transport: TransportSpec | Transport[Any], prefix: str
+) -> TransportSpec | Transport[Any]:
+    """Clone a pinned transport with its topic moved under the namespace prefix."""
+    if isinstance(transport, TransportSpec):
+        cls, args = transport.cls, transport.args
+    else:
+        cls, args = transport.__reduce__()  # type: ignore[misc]
+    if not (isinstance(args, tuple) and args and isinstance(args[0], str)):
+        raise ValueError(
+            f"Cannot namespace pinned transport {transport!r}; pin it on the "
+            f"namespaced blueprint with an explicit topic instead."
+        )
+    topic = args[0]
+    new_topic = f"/{prefix}{topic}" if topic.startswith("/") else f"{prefix}/{topic}"
+    if isinstance(transport, TransportSpec):
+        return replace(transport, args=(new_topic, *args[1:]))
+    return cls(new_topic, *args[1:])  # type: ignore[no-any-return, call-arg]

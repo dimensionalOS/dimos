@@ -75,7 +75,8 @@ class RemoteModuleSource(ModuleSource):
 
     def _refresh_descriptors(self) -> dict[str, ModuleDescriptor]:
         descriptors = self._coord.call("list_modules")
-        self._descriptors = {d.class_name: d for d in descriptors}
+        # rpc_name is empty when talking to an older daemon.
+        self._descriptors = {(d.rpc_name or d.class_name): d for d in descriptors}
         return self._descriptors
 
     def _get_descriptor(self, name: str) -> ModuleDescriptor:
@@ -83,9 +84,19 @@ class RemoteModuleSource(ModuleSource):
             if self._descriptors is None or name not in self._descriptors:
                 self._refresh_descriptors()
             assert self._descriptors is not None
-            if name not in self._descriptors:
-                raise KeyError(name)
-            return self._descriptors[name]
+            if name in self._descriptors:
+                return self._descriptors[name]
+
+            matches = [d for d in self._descriptors.values() if d.class_name == name]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                instance_names = ", ".join(sorted(d.rpc_name for d in matches))
+                raise ValueError(
+                    f"Multiple instances of {name!r} are deployed "
+                    f"({instance_names}); use the instance name."
+                )
+            raise KeyError(name)
 
     def list_module_names(self) -> list[str]:
         with self._lock:
@@ -103,9 +114,10 @@ class RemoteModuleSource(ModuleSource):
             try:
                 module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
                 cls = getattr(importlib.import_module(module_path), class_name)
-                proxy = RPCClient(None, cls, rpc=self._coord.rpc)
+                proxy = RPCClient(None, cls, descriptor.rpc_name or None, rpc=self._coord.rpc)
             except (ImportError, AttributeError):
-                proxy = _RemoteProxy(self._coord.rpc, name, set(descriptor.rpc_names))
+                remote_name = descriptor.rpc_name or name
+                proxy = _RemoteProxy(self._coord.rpc, remote_name, set(descriptor.rpc_names))
             self._cache[name] = proxy
             return proxy
 

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from enum import Enum
 from importlib import resources
 import sys
@@ -86,11 +87,15 @@ class Go2ConnectionProtocol(Protocol):
     def video_stream(self) -> Observable[Image]: ...
     def lowstate_stream(self) -> Observable[LowStateMsg]: ...
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
+    def stop_movement(self) -> None: ...
     def standup(self) -> bool: ...
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def sport_command(self, api_id: int) -> bool: ...
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool: ...
     def set_rage_mode(self, enable: bool) -> bool: ...
+    def set_light(self, level: int) -> bool: ...
+    def switch_joystick(self, enable: bool = True) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -102,6 +107,13 @@ _FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
 def _camera_info_static() -> CameraInfo:
     with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
         return CameraInfo.from_yaml(str(yaml_path))
+
+
+def _prefixed(prefix: str | None, name: str) -> str:
+    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    if not prefix or not name:
+        return name
+    return f"{prefix}/{name}"
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
@@ -185,13 +197,26 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def balance_stand(self) -> bool:
         return True
 
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
+    def stop_movement(self) -> None:
+        # No webrtc deadman timer to cancel; the cmd_vel timeout covers replay.
         pass
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
 
     def set_motion_mode(self, name: str) -> None:
         pass
 
     def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
     def _stream_name(self, *names: str) -> str:
@@ -277,6 +302,13 @@ class GO2Connection(Module, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
+        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+            # Copy so the class-level default is not mutated.
+            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static.frame_id = _prefixed(
+                self.config.frame_id_prefix, self.camera_info_static.frame_id
+            )
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -285,6 +317,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
+            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
             self._latest_video_frame = image
 
@@ -316,10 +349,17 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def stop(self) -> None:
-        self.liedown()
+        # Best-effort steps: teardown must always reach the WebRTC disconnect.
+        try:
+            self.liedown()
+        except Exception:
+            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
         if self.connection:
-            self.connection.stop()
+            try:
+                self.connection.stop()
+            except Exception:
+                logger.warning("connection stop failed", exc_info=True)
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -327,32 +367,34 @@ class GO2Connection(Module, Camera, Pointcloud):
         super().stop()
 
     @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+        # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
+        # robots still hang off one shared tree root.
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
+            frame_id=_prefixed(prefix, "base_link"),
+            child_frame_id=_prefixed(prefix, "camera_link"),
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
+            frame_id=_prefixed(prefix, "camera_link"),
+            child_frame_id=_prefixed(prefix, "camera_optical"),
             ts=odom.ts,
         )
 
         return [
-            Transform.from_pose("base_link", odom),
+            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
             camera_link,
             camera_optical,
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
-        transforms = self._odom_to_tf(msg)
+        transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
         self.tf.publish(*transforms)
         if self.odom.transport:
             self.odom.publish(msg)
@@ -392,6 +434,31 @@ class GO2Connection(Module, Camera, Pointcloud):
         logger.info("Rage Mode", enabled=enable)
         return result
 
+    @rpc
+    def sport_command(self, api_id: int) -> bool:
+        """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
+        return self.connection.sport_command(api_id)
+
+    @rpc
+    def set_light(self, level: int) -> bool:
+        """Head-LED brightness level 0-10 (0 = off)."""
+        return self.connection.set_light(level)
+
+    @rpc
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        """Toggle the onboard obstacle avoidance."""
+        return self.connection.set_obstacle_avoidance(enabled)
+
+    @rpc
+    def switch_joystick(self, enable: bool = True) -> bool:
+        """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
+        return self.connection.switch_joystick(enable)
+
+    @rpc
+    def stop_movement(self) -> None:
+        """Zero the base immediately (webrtc deadman stop)."""
+        self.connection.stop_movement()
+
     def _on_lowstate(self, msg: LowStateMsg) -> None:
         """Cache the latest low-level state push (battery, IMU, motors, etc.)."""
         self._latest_lowstate = msg
@@ -403,6 +470,12 @@ class GO2Connection(Module, Camera, Pointcloud):
         Use this skill to answer battery / power / charge questions. Returns
         None if no low-level state has been received yet.
         """
+        return self.battery_soc()
+
+    @rpc
+    def battery_soc(self) -> int | None:
+        """Battery SOC 0-100 (or None until lowstate arrives). Plain RPC — no
+        skill-log spam, for the hosted telemetry poll."""
         try:
             return int(self._latest_lowstate["data"]["bms_state"]["soc"])  # type: ignore[index]
         except (KeyError, TypeError, ValueError):

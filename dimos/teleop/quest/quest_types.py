@@ -16,10 +16,16 @@
 """Quest controller types with nice API for parsing Joy messages."""
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import ClassVar
 
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.UInt32 import UInt32
+
+
+class Hand(IntEnum):
+    LEFT = 0
+    RIGHT = 1
 
 
 @dataclass

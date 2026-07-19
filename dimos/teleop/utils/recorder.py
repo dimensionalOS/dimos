@@ -53,10 +53,11 @@ class TeleopRecorder(Recorder):
     """Records teleop streams to a .db + (optionally) a transport-stats report.
 
     Superset of ports across arm (pose + buttons), mobile-base
-    (``cmd_vel_stamped``), and hosted-teleop video stats. Unconnected ports stay
-    empty in the DB. Each run lands in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
+    (``cmd_vel_stamped``), and hosted-teleop stats (``video_stats``,
+    ``robot_telemetry``). Unconnected ports stay empty in the DB. Each run lands
+    in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
     so runs don't clobber. On stop, if ``generate_report=True``, also writes
-    ``report.md`` next to the .db.
+    ``report.json`` next to the .db.
     """
 
     left_controller_output: In[PoseStamped]
@@ -64,6 +65,7 @@ class TeleopRecorder(Recorder):
     teleop_buttons: In[Buttons]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
+    robot_telemetry: In[bytes]  # hosted-teleop periodic telemetry (cmd stats + soc + state)
     config: TeleopRecorderConfig
     # Per-run path (stem + timestamp), held here so we don't mutate config.
     _db_path: Path | None = None

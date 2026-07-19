@@ -190,18 +190,21 @@ class TestStoreBasic:
         assert results[0].data == "north"
         assert results[0].similarity > 0.99
 
-    def test_search_text(self, session: Store) -> None:
-        s = session.stream("logs", str)
+    def test_search_text(self, memory_session: Store) -> None:
+        s = memory_session.stream("logs", str)
         s.append("motor fault")
         s.append("temperature ok")
 
-        # SqliteObservationStore blocks search_text to prevent full table scans
-        try:
-            results = s.search_text("motor").to_list()
-        except NotImplementedError:
-            pytest.skip("search_text not supported on this backend")
+        results = s.search_text("motor").to_list()
         assert len(results) == 1
         assert results[0].data == "motor fault"
+
+    def test_search_text_sqlite_blocked(self, sqlite_session: Store) -> None:
+        # SqliteObservationStore blocks search_text to prevent full table scans
+        s = sqlite_session.stream("logs", str)
+        s.append("motor fault")
+        with pytest.raises(NotImplementedError, match="search_text"):
+            s.search_text("motor").to_list()
 
 
 class TestBlobLoading:
@@ -383,7 +386,7 @@ class TestStoreDelegation:
 
         blob_spy.gets.clear()
         for obs in s:
-            _ = obs.data
+            assert obs.data is not None
         assert len(blob_spy.gets) == 2
 
     def test_append_embedding_calls_vector_put(self, spy_session) -> None:
@@ -513,7 +516,7 @@ class TestStreamAccessor:
 
     def test_accessor_missing_raises(self, session: Store) -> None:
         with pytest.raises(AttributeError, match="nonexistent"):
-            _ = session.streams.nonexistent
+            session.streams.nonexistent  # noqa: B018
 
     def test_accessor_getitem(self, session: Store) -> None:
         s = session.stream("data", float)

@@ -49,6 +49,10 @@ _INDICATOR_RADIUS = 15
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control. Outputs Twist on cmd_vel."""
 
+    # pygame.display supports one window per process; multi-robot blueprints
+    # run one teleop per robot, so each instance needs its own worker.
+    dedicated_worker = True
+
     cmd_vel: Out[Twist]
 
     _stop_event: threading.Event
@@ -79,6 +83,9 @@ class KeyboardTeleop(Module):
         # (e.g. the SI / benchmark tools) instead of flooding zeros.
         self.publish_only_when_active = publish_only_when_active
         self._was_active = False
+        # Namespaced instances (e.g. "robot0/keyboardteleop") get their own
+        # window title so multi-robot teleop windows are distinguishable.
+        self._window_title = self.config.instance_name or "Keyboard Teleop"
 
     @rpc
     def start(self) -> None:
@@ -111,7 +118,7 @@ class KeyboardTeleop(Module):
 
         pygame.init()
         self._screen = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT), pygame.SWSURFACE)
-        pygame.display.set_caption("Keyboard Teleop")
+        pygame.display.set_caption(self._window_title)
         self._clock = pygame.time.Clock()
         self._font = pygame.font.Font(None, _FONT_SIZE)
 
@@ -207,7 +214,7 @@ class KeyboardTeleop(Module):
             speed_mult_text = f" [SLOW {self.slow_multiplier:g}x]"
 
         texts = [
-            "Keyboard Teleop" + speed_mult_text,
+            self._window_title + speed_mult_text,
             "",
             f"Linear X (Forward/Back): {twist.linear.x:+.2f} m/s",
             f"Linear Y (Strafe L/R): {twist.linear.y:+.2f} m/s",
@@ -216,9 +223,9 @@ class KeyboardTeleop(Module):
             "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self._keys_held if k < 256]),
         ]
 
-        for text in texts:
+        for i, text in enumerate(texts):
             if text:
-                color = (0, 255, 255) if text.startswith("Keyboard Teleop") else (255, 255, 255)
+                color = (0, 255, 255) if i == 0 else (255, 255, 255)
                 surf = self._font.render(text, True, color)
                 self._screen.blit(surf, (20, y_pos))
             y_pos += 30

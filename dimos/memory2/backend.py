@@ -186,7 +186,7 @@ class Backend(CompositeResource, Generic[T]):
 
         if self.eager_blobs and self.blob_store is not None:
             for obs in it:
-                _ = obs.data  # trigger lazy loader
+                obs.data  # noqa: B018 -- eagerly trigger the lazy blob loader
                 yield obs
         else:
             yield from it
@@ -243,7 +243,7 @@ class Backend(CompositeResource, Generic[T]):
                 if filters and not all(f.matches(obs) for f in filters):
                     continue
                 if eager:
-                    _ = obs.data  # trigger lazy loader
+                    obs.data  # noqa: B018 -- eagerly trigger the lazy blob loader
                 yield obs
         except (ClosedError, StopIteration):
             pass

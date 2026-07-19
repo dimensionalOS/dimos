@@ -20,6 +20,7 @@ on:
     types: [completed]
   pull_request_target:
     types: [synchronize, converted_to_draft, ready_for_review, opened, reopened, labeled, unlabeled]
+  merge_group:
 
 permissions: {}
 
@@ -122,7 +123,9 @@ jobs:
 
   backport-check:
     name: "Admins: Backport label added"
-    if: github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main'
+    if: |
+      (github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -131,8 +134,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # merge_group ref: refs/heads/gh-readonly-queue/main/pr-<N>-<base_sha>
+          MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
           REPO: ${{ github.repository }}
         run: |
+          # merge_group carries no pull_request payload; recover the PR number
+          # from the queue branch ref (…/pr-<N>-<base_sha>).
+          if [[ -z "$PR_NUMBER" ]]; then
+            PR_NUMBER=${MERGE_GROUP_REF##*/pr-}
+            PR_NUMBER=${PR_NUMBER%%-*}
+          fi
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not determine PR number (merge_group ref: '$MERGE_GROUP_REF')"
+            exit 1
+          fi
           # Skip when no release is in flight (`backport:skip` is excluded by the prefix filter).
           release_labels=$(gh api "repos/$REPO/labels" --paginate \
             --jq '.[].name | select(startswith("backport release/"))')

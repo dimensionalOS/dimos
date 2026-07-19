@@ -69,11 +69,15 @@ teleop/
 │   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/
 │       └── static/index.html    # WebXR client
-├── quest_hosted/
-│   ├── hosted_teleop_module.py  # Hosted Quest teleop (Cloudflare SFU broker)
-│   ├── hosted_extensions.py     # HostedArmTeleop, HostedTwistTeleop
-│   ├── blueprints.py            # Pre-wired blueprints
-│   └── README.md                # Channel/CF gotchas, threads, sidecars
+├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
+│   ├── go2_command.py           # Go2CommandModule: command/E-STOP dispatch + drive guard
+│   ├── command_executor.py      # SerializedCommandMixin: serialized cmds + safety fence
+│   ├── camera_mux.py            # CameraMuxModule: N cameras → one composited video track
+│   ├── map_compress.py          # MapCompressModule: costmap/odom → minimap datachannel
+│   ├── hosted_stats.py          # HostedStatsModule: telemetry + acks + cmd-link stats
+│   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
+│   └── blueprints/              # cloudflare.py (Go2 single + multicam)
+├── quest_hosted/                # Deprecated monolithic hosted Quest teleop (teleop-hosted-go2)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
@@ -82,8 +86,8 @@ teleop/
 │       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
-│   ├── recorder.py              # Generic SQLite recorder (writes .db + report.md on stop)
-│   ├── report.py                # generate_report(db_path) — read .db, emit report.md + PNGs
+│   ├── recorder.py              # Generic SQLite recorder (writes .db + report_<ts>.json on stop)
+│   ├── report.py                # generate_report(db_path) — read .db, emit report_<ts>.json
 │   └── stream_stats.py          # LiveStreamStats + pcts/loss_pct (shared math)
 └── blueprints.py                # Module blueprints for easy instantiation
 ```

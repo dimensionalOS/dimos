@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,6 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -38,16 +36,12 @@ if TYPE_CHECKING:
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
-        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
 @pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
-    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
-        pytest.skip("Need MOONDREAM_API_KEY to run")
-
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")
@@ -102,7 +96,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
-        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
@@ -110,9 +103,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 @pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
-
-    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
-        pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 

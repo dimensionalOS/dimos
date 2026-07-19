@@ -13,8 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
-from queue import Empty, Queue
+from queue import Empty
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
@@ -22,7 +23,6 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
-from dimos.utils.sequential_ids import SequentialIds
 
 
 def _mock_post(url: str, **kwargs: object) -> MagicMock:
@@ -95,19 +95,18 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
 
 
 @pytest.fixture
-def mcp_client() -> McpClient:
+def mcp_client() -> Iterator[McpClient]:
     """Build an McpClient wired to the mock MCP post handler."""
     mock_http = MagicMock()
     mock_http.post.side_effect = _mock_post
 
     with patch("dimos.agents.mcp.mcp_client.httpx.Client", return_value=mock_http):
-        client = McpClient.__new__(McpClient)
+        client = McpClient(mcp_server_url="http://localhost:9990/mcp")
 
-    client._http_client = mock_http
-    client._seq_ids = SequentialIds()
-    client.config = MagicMock()
-    client.config.mcp_server_url = "http://localhost:9990/mcp"
-    return client
+    try:
+        yield client
+    finally:
+        client.stop()
 
 
 def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
@@ -150,8 +149,6 @@ def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
 
 def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -> None:
     """A `notifications/message` delivered over LCM becomes a HumanMessage."""
-    mcp_client._message_queue = Queue()
-
     notification = {
         "jsonrpc": "2.0",
         "method": "notifications/message",
@@ -172,8 +169,6 @@ def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -
 def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
     """Unknown methods and empty bodies are dropped on the floor."""
 
-    mcp_client._message_queue = Queue()
-
     mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
     mcp_client._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": ""}}
@@ -188,8 +183,6 @@ def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
 
 def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient) -> None:
     """A `notifications/progress` frame is routed as a HumanMessage."""
-
-    mcp_client._message_queue = Queue()
 
     progress_frame = {
         "jsonrpc": "2.0",

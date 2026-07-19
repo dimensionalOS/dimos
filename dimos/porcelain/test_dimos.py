@@ -101,7 +101,7 @@ def test_repr_when_stopped(app):
 
 def test_skills_before_run(app):
     with pytest.raises(RuntimeError, match="No modules are running"):
-        _ = app.skills
+        app.skills  # noqa: B018
 
 
 def test_peek_stream_before_run(app):
@@ -142,19 +142,19 @@ def test_run_after_stop(app):
 def test_getattr_private_raises(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError):
-        _ = app._nonexistent
+        app._nonexistent  # noqa: B018
 
 
 def test_getattr_unknown_module(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError, match="No module named"):
-        _ = app.Nonexistent
+        app.Nonexistent  # noqa: B018
 
 
 def test_getattr_exists_but_not_running(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError, match="exists but is not running"):
-        _ = app.CameraModule
+        app.CameraModule  # noqa: B018
 
 
 def test_run_module_class(app):

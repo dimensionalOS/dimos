@@ -21,32 +21,41 @@ import threading
 import time
 import uuid
 
-# With pytest-xdist, pick a per-worker bucket and pin env vars *before*
-# any dimos module is imported, so parallel workers don't share LCM bus,
-# MCP port, or state directory. ``LCMConfig`` captures ``LCM_DEFAULT_URL``
-# at import time; ``GlobalConfig`` captures ``MCP_PORT``; ``run_registry``
-# captures ``XDG_STATE_HOME``. ``LCM_DEFAULT_URL`` in particular has to be
-# an env var (not just a fixture) because subprocess workers spawned by
-# ``ModuleCoordinator`` create their own ``LCMConfig`` / ``LCMRPC``
-# instances internally and can't receive a fixture value — they inherit
-# our env at fork time.
-#
-# Single-worker runs (no xdist) keep the defaults, so external processes
-# with hard-coded ports (e.g. the dimsim Deno bridge, which binds to LCM
-# 7667) can still talk to the test bus.
+# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
+DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
 _worker = os.environ.get("PYTEST_XDIST_WORKER")
+if not _worker:
+    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+
+# Pin every pytest session to its own LCM bus *before* any dimos module is
+# imported (``LCMConfig`` captures ``LCM_DEFAULT_URL`` at import time), so
+# messages from processes outside the session (a dev ``dimos`` daemon, a
+# leaked DimSim bridge, a concurrent pytest run) can't leak into
+# subscribe_all/pattern tests. It has to be an env var (not just a fixture)
+# because subprocesses spawned by tests (``ModuleCoordinator`` workers, the
+# DimSim Deno bridge) create their own LCM instances and inherit our env.
+#
+# Buckets are seeded with the session run id so concurrent sessions on one
+# machine can't collide. xdist workers mix in the worker name, and also get
+# a per-worker MCP port (``GlobalConfig`` captures ``MCP_PORT``) and state
+# dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
+# between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
+# single-worker session out of the isolation, deliberately joining it to an
+# external bus.
+
+
+def _lcm_bucket(seed: str) -> int:
+    return int.from_bytes(hashlib.blake2b(seed.encode(), digest_size=2).digest(), "big") % 5000
+
+
+_run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 if _worker:
-    _BUCKET = (
-        int.from_bytes(hashlib.blake2b(_worker.encode(), digest_size=2).digest(), "big") % 5000
-    )
+    _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
-
-# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
-DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
-if not _worker:
-    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+elif "LCM_DEFAULT_URL" not in os.environ:
+    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _lcm_bucket(_run_id)}?ttl=0"
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,

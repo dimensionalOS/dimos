@@ -67,11 +67,9 @@ def test_local_model_lazy_loading() -> None:
     model = ConcreteLocalModel()
     # Model not loaded yet
     assert "_model" not in model.__dict__
-    # Access triggers loading
-    _ = model._model
-    # Now it's cached
-    assert "_model" in model.__dict__
+    # Access triggers loading and caching
     assert model._model == "loaded_model"
+    assert "_model" in model.__dict__
 
 
 def test_local_model_start_triggers_loading() -> None:
