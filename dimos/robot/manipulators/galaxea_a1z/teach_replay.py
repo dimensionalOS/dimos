@@ -43,10 +43,17 @@ A1Z_JOINT_NAMES = (
 _POSITION_LOWER = np.array([-2.094, 0.0, -3.142, -1.484, -1.484, -2.007, 0.0])
 _POSITION_UPPER = np.array([2.094, 3.142, 0.0, 1.484, 1.484, 2.007, 0.1])
 
-# Conservative teach-replay caps. Faster demonstrations are automatically
-# time-scaled rather than clipped or rejected.
-_REPLAY_VELOCITY_MAX = np.array([1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 0.10])
-_REPLAY_ACCELERATION_MAX = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 0.50])
+# Teach-replay caps. Faster demonstrations are automatically time-scaled
+# rather than clipped or rejected. Arm values are sized so natural hand
+# teaching (peaks ~3.5 rad/s measured on hardware) replays at 1.0x while
+# staying under the SDK's 4.0 rad/s streaming cap and its 7-20 rad/s
+# per-joint velocity watchdogs. The gripper is not hand-driven: the teach
+# CLI commands it through the SDK's own gripper controller, whose measured
+# toggle motion reaches ~0.28 m/s and ~9 m/s^2 - the caps cover that with
+# margin, since re-streaming what the SDK itself commanded is safe by
+# construction (its torque limit bounds the physical motion either way).
+_REPLAY_VELOCITY_MAX = np.array([3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 0.4])
+_REPLAY_ACCELERATION_MAX = np.array([25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 15.0])
 _APPROACH_VELOCITY_MAX = np.array([0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.04])
 
 
@@ -155,9 +162,19 @@ def prepare_episode(
 
     source_ts = recorded.timestamps
     _validate_recorded_samples(source_ts, recorded.positions)
-    smoothed = _moving_average(recorded.positions, source_ts, smoothing_window_s)
     source_uniform_ts = _uniform_times(float(source_ts[-1]), sample_rate_hz)
-    source_uniform_q = _interpolate_positions(source_ts, smoothed, source_uniform_ts)
+    source_uniform_q = _interpolate_positions(source_ts, recorded.positions, source_uniform_ts)
+    # Smooth on the uniform grid, not the raw samples: the recorder's sample
+    # spacing is irregular (10-100 ms under load), and differentiating
+    # linear interpolation across those gaps manufactures acceleration
+    # spikes an order of magnitude above the real motion, which would both
+    # trip the safety time-scaler and put velocity ripple into the replayed
+    # command stream. Two moving-average passes (triangular kernel) give a
+    # continuous velocity profile, unlike a single pass whose derivative
+    # still has corners.
+    source_uniform_q = _smooth_uniform(
+        source_uniform_q, window=round(smoothing_window_s * sample_rate_hz), passes=2
+    )
 
     source_velocity = np.gradient(source_uniform_q, source_uniform_ts, axis=0)
     source_acceleration = np.gradient(source_velocity, source_uniform_ts, axis=0)
@@ -282,26 +299,31 @@ def _validate_positions(positions: NDArray[np.float64], *, context: str) -> None
     )
 
 
-def _moving_average(
+def _smooth_uniform(
     positions: NDArray[np.float64],
-    timestamps: NDArray[np.float64],
-    window_s: float,
+    *,
+    window: int,
+    passes: int = 1,
 ) -> NDArray[np.float64]:
-    if window_s == 0:
-        return positions.copy()
-    median_period = float(np.median(np.diff(timestamps)))
-    window = max(1, round(window_s / median_period))
+    """Zero-phase moving average over uniformly sampled positions."""
+    window = min(window, len(positions))
     if window % 2 == 0:
-        window += 1
-    if window == 1:
+        window -= 1
+    if window <= 1:
         return positions.copy()
 
     radius = window // 2
     kernel = np.ones(window, dtype=np.float64) / window
-    padded = np.pad(positions, ((radius, radius), (0, 0)), mode="edge")
-    return np.column_stack(
-        [np.convolve(padded[:, joint], kernel, mode="valid") for joint in range(positions.shape[1])]
-    )
+    smoothed = positions
+    for _ in range(passes):
+        padded = np.pad(smoothed, ((radius, radius), (0, 0)), mode="edge")
+        smoothed = np.column_stack(
+            [
+                np.convolve(padded[:, joint], kernel, mode="valid")
+                for joint in range(positions.shape[1])
+            ]
+        )
+    return smoothed
 
 
 def _uniform_times(duration: float, rate_hz: float) -> NDArray[np.float64]:

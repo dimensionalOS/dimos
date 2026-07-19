@@ -33,6 +33,7 @@ from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
     make_a1z_teach_blueprint,
 )
 from dimos.robot.manipulators.galaxea_a1z.teach_replay import (
+    _REPLAY_VELOCITY_MAX,
     A1Z_JOINT_NAMES,
     RecordedEpisode,
     build_execution_trajectory,
@@ -148,7 +149,7 @@ def test_prepare_smooths_resamples_and_time_scales_fast_motion() -> None:
     assert prepared.duration > prepared.recorded.timestamps[-1]
     assert len(prepared.timestamps) > len(positions)
     assert np.all(np.diff(prepared.timestamps) > 0)
-    assert np.max(np.abs(prepared.velocities[:, 0])) <= 1.5
+    assert np.max(np.abs(prepared.velocities[:, 0])) <= _REPLAY_VELOCITY_MAX[0]
 
 
 def test_execution_trajectory_approaches_then_replays_all_seven_joints() -> None:
