@@ -15,7 +15,7 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T5 alignment | done | `pure/impl-t5-align` |
 | T6 drivers | done | `pure/impl-t6-drivers` |
 | T7 resources | done | `pure/impl-t7-resources` |
-| T8 rim | spec-ready (T8a rim core / T8b legacy bridge split) | `pure/spec-t8-rim` |
+| T8 rim | implementing (T8a rim core; T8b legacy bridge queued; graft + AD resolutions merged, zero open decisions) | `pure/impl-t8a-rim` |
 | T9 health | ready | |
 | T10 checkpoint | ready | |
 | T11 tf | ready | |
