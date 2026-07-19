@@ -939,25 +939,25 @@ the stub).
 
 ## 16. Acceptance checklist
 
-- [ ] `resources.py` implements §3–§10; `uv run mypy dimos/pure` clean
+- [x] `resources.py` implements §3–§10; `uv run mypy dimos/pure` clean
       (strict), including the drivers seam edits.
-- [ ] drivers.py seam: exactly the five §6 edits, each marked
+- [x] drivers.py seam: exactly the five §6 edits, each marked
       `# T7 RESOURCE SEAM`; `RunHooks` field order
       warmup/awarmup/teardown/ateardown; no other drivers changes.
-- [ ] All §14 tests enabled and green; suite total = previous + T7's
+- [x] All §14 tests enabled and green; suite total = previous + T7's
       (no regressions, no skips left).
-- [ ] `case_resources.py` added; T4 harness green including
+- [x] `case_resources.py` added; T4 harness green including
       `case_config_kwargs.py` unchanged.
-- [ ] `pm.resource` exported (`__init__.py` import + `__all__`); nothing
+- [x] `pm.resource` exported (`__init__.py` import + `__all__`); nothing
       else from resources.py on the surface.
-- [ ] Error copy matches §11.2 templates; every `ResourceError` carries its
+- [x] Error copy matches §11.2 templates; every `ResourceError` carries its
       `ResourceRule`; definition errors are `ResourceDefinitionError`.
-- [ ] Sketch parity: VoxelGridMapper §3, RelocalizationModule §5
+- [x] Sketch parity: VoxelGridMapper §3, RelocalizationModule §5
       (None premap), Captioner §6 (aclose on loop) all expressible
       verbatim; Tagger unchanged (API floor).
-- [ ] No `dimos.core` imports under `dimos/pure` (grep-clean); interop
+- [x] No `dimos.core` imports under `dimos/pure` (grep-clean); interop
       test 10 green.
-- [ ] `_finalized`/`_drive_async_rows` §8.3 semantics preserved for
+- [x] `_finalized`/`_drive_async_rows` §8.3 semantics preserved for
       resource-free modules (T6 test suite untouched and green).
 
 ## 17. Decisions (numbered for review)
@@ -1024,3 +1024,27 @@ the stub).
   ExitStack/`with` behave identically and silence would hide leaks /
   options: (a) raise always (default), (b) log-only on GeneratorExit paths
   — revisit only with field evidence.
+
+## Implementation notes (landed)
+
+Implemented on `pure/impl-t7-resources`. All 26 §14 tests pass UNMODIFIED;
+`case_resources.py` reveals matched mypy's output verbatim (no §15 spelling
+adjustment needed). Suite: 292 passed (265 prior + 26 T7 + 1 harness case),
+zero skips; `uv run mypy dimos/pure` clean (strict, 10 files). Two refinements,
+both within the spec's stated invariants:
+
+- **Disposal clears `_RUN_ATTR` only when the ctx still owns it** (§8.2 says
+  "clears `_RUN_ATTR`"). `RunResources._relinquish()` clears the slot iff it
+  currently references `self`. A concurrent-run guard (§5.2) fails BEFORE
+  installing (§7.1 step 1 precedes step 2), so the second run's ctx is
+  stillborn — its `dispose()` (fired by the driver's `finally`) must NOT
+  clobber the in-flight run's slot. Unconditional clearing would break
+  test 24's "first run unaffected". This is the sole correct reading of
+  "clears `_RUN_ATTR`" and is invisible to the normal ownership path.
+- **`_chain(ctx.dispose, prev_teardown)` is sequential** (§6.1 LIFO): if
+  `ctx.dispose` raises `[resource-dispose-error]`, `prev_teardown` is skipped.
+  In T7 `prev_teardown` is always `_noop` (`over()` mints fresh hooks), so this
+  is unobservable; a future T8 injecting a real teardown alongside resources
+  would want error-isolated composition there.
+
+No spec contradictions surfaced; §18 defaults (Q1–Q3) implemented as written.

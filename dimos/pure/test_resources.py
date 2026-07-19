@@ -38,8 +38,6 @@ from dimos.pure.resources import (
     resource,
 )
 
-pytestmark = pytest.mark.skip(reason="T7 skeleton — enable with implementation")
-
 Event = tuple[str, str]  # ("create" | "dispose" | "close" | "aclose" | "step" | ..., name)
 
 
