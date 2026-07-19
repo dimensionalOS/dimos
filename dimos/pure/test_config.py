@@ -32,15 +32,32 @@ from dimos.pure.config import (
     PureModuleConfig,
 )
 from dimos.pure.module import PureModule
+from dimos.pure.rows import In, Out, tick
+from dimos.pure.stepspec import PureModuleDefinitionError, StepKind, step_spec
+
+# T3 seam ACTIVE: every PureModule subclass must declare a valid step at its
+# class statement. These shared minimal rows + a per-class `def step` keep the
+# T2 tests focused on config; step bodies are never read.
+
+
+class _In(In):
+    x: int = tick()
+
+
+class _Out(Out):
+    y: int = 0
 
 
 def _go2():
-    """The sketch §5b/§5c example, minus bundles (T1) and step (T3)."""
+    """The sketch §5b/§5c example, minus bundles (T1); minimal step for T3."""
 
     class Go2Connection(PureModule):
         prefix: str = ""
         robot_ip: str | None = None
         odom_timeout: float = 0.5
+
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
 
     return Go2Connection
 
@@ -91,6 +108,9 @@ def test_missing_required_rejected():
     class NeedsIp(PureModule):
         robot_ip: str  # no default -> required
 
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
+
     with pytest.raises(ValidationError) as e:
         NeedsIp()
     assert e.value.errors()[0]["type"] == "missing"
@@ -127,6 +147,9 @@ def test_machinery_members_are_not_fields():
 
         def helper(self) -> int:
             return 1
+
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
 
     fields = Mapper.__pure_config_model__.model_fields
     assert set(fields) == {"voxel_size"}
@@ -198,6 +221,9 @@ def test_mutable_default_not_shared():
     class Stages(PureModule):
         layers: list[str] = []
 
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
+
     a, b = Stages(), Stages()
     a.layers.append("x")
     assert b.layers == []  # per-instance copy (default_factory semantics)
@@ -212,7 +238,10 @@ def test_model_dump_declaration_order_with_inheritance():
         alpha: int = 1
         beta: int = 2
 
-    class Child(Base):
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
+
+    class Child(Base):  # config-only subclass: inherits Base's step
         gamma: int = 3
         alpha: int = 99  # override: new default, ORIGINAL position
 
@@ -224,12 +253,46 @@ def test_shape_subclass_inherits_and_extends_fields():
     class CostMapper(PureModule):
         resolution: float = 0.1
 
-    class HeightCostMapper(CostMapper):
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
+
+    class HeightCostMapper(CostMapper):  # shape impl: inherits the step contract
         max_height: float = 0.35
 
     m = HeightCostMapper(resolution=0.2)
     assert m.resolution == 0.2 and m.max_height == 0.35
     assert list(m.config.model_dump()) == ["resolution", "max_height"]
+
+
+def test_voxelgridmapper_style_construction():
+    # T2 §14: the sketch _unit_tests construction, satisfiable now that T1+T3
+    # landed — config fields collected; nested In/Out/State and step are not
+    # fields. (@resource is T7 and not part of this construction.)
+    from typing import NamedTuple
+
+    class VoxelGridMapper(PureModule):
+        voxel_size: float = 0.05
+        emit_every: int = 5
+
+        class In(In):
+            lidar: float = tick()
+
+        class Out(Out):
+            global_map: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+    m = VoxelGridMapper(emit_every=2)
+    assert m.voxel_size == 0.05 and m.emit_every == 2
+    assert set(VoxelGridMapper.__pure_config_model__.model_fields) == {"voxel_size", "emit_every"}
+    spec = step_spec(VoxelGridMapper)
+    assert spec.kind is StepKind.MEALY
+    assert spec.state_type is VoxelGridMapper.State
+    assert spec.skips is True
 
 
 # ── identity ────────────────────────────────────────────────────────────────
@@ -248,8 +311,14 @@ def test_eq_is_class_scoped():
     class A(PureModule):
         x: int = 1
 
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
+
     class B(PureModule):
         x: int = 1
+
+        def step(self, i: _In) -> _Out:
+            raise NotImplementedError
 
     assert A() != B()  # identity = class + config, not shape
 
@@ -308,6 +377,17 @@ def test_final_field_rejected():
 
 def test_config_field_errors_are_type_errors():
     with pytest.raises(TypeError):  # stable across the T3 base flip (spec §10)
+
+        class Bad(PureModule):
+            config: str = "x"  # type: ignore[assignment]
+
+
+def test_config_field_errors_share_definition_error_base():
+    # Post-flip (t2-config.md §10.1): one user-facing definition-error type —
+    # except PureModuleDefinitionError catches config AND shape violations.
+    assert issubclass(ConfigFieldError, PureModuleDefinitionError)
+    assert issubclass(ConfigFieldError, TypeError)
+    with pytest.raises(PureModuleDefinitionError):
 
         class Bad(PureModule):
             config: str = "x"  # type: ignore[assignment]

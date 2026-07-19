@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, create_model
 import typing_extensions
 
 from dimos.protocol.service.spec import BaseConfig
+from dimos.pure.stepspec import PureModuleDefinitionError
 
 __all__ = [
     "RESERVED_CONFIG_FIELDS",
@@ -63,12 +64,12 @@ RESERVED_CONFIG_FIELDS: Final[frozenset[str]] = frozenset(
 )
 
 
-class ConfigFieldError(TypeError):
+class ConfigFieldError(PureModuleDefinitionError):
     """A class body declares an invalid config field (raised at class definition).
 
-    NOTE(T3 seam): once dimos.pure.stepspec lands, the base flips to
-    stepspec.PureModuleDefinitionError (itself a TypeError subclass) so all
-    definition-time errors share one user-facing type — spec §10.1.
+    T3 seam (spec §10.1), ACTIVE: the base is stepspec.PureModuleDefinitionError
+    (itself a TypeError subclass) so all definition-time errors share one
+    user-facing type. config imports stepspec, never the reverse (acyclic).
     """
 
 

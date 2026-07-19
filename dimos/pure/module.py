@@ -31,13 +31,12 @@ from dimos.pure.config import (
     _collect_config_fields,
     _synthesize_config_model,
 )
+from dimos.pure.stepspec import StepSpec, classify
 from dimos.pure.typing import EngineSurface
 
-# T3 SEAM (spec §10.1): once dimos.pure.stepspec lands, module.py gains a
-# module-level `from dimos.pure.stepspec import classify`, invoked as the LAST
-# statement of __init_subclass__ (`cls.__pure_step__ = classify(cls)`). Kept
-# INACTIVE here — stepspec.classify raises NotImplementedError today; the call
-# site is the marked placeholder at the end of __init_subclass__ below.
+# T3 SEAM (spec §10.1) — ACTIVE: classify(cls) runs as the LAST statement of
+# __init_subclass__; __pure_step__'s presence certifies that ALL definition-time
+# machinery (config included) passed. stepspec never imports module.py.
 
 __all__ = ["PureModule"]
 
@@ -47,6 +46,7 @@ class PureModule(EngineSurface):
     """Base for pure modules: flat annotated fields become typed, frozen config."""
 
     __pure_config_model__: ClassVar[type[PureModuleConfig]]
+    __pure_step__: ClassVar[StepSpec]  # stamped by the T3 seam; dunder, never a field
     __pure_config__: PureModuleConfig  # per-instance store; set via object.__setattr__
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -57,8 +57,7 @@ class PureModule(EngineSurface):
           2. fields = _collect_config_fields(cls)                    # config.py
           3. bases = per-spec §4.3 from PureModule-derived cls.__bases__
           4. cls.__pure_config_model__ = _synthesize_config_model(cls, fields, bases)
-          5. T3 SEAM — LAST statement, verbatim once stepspec lands:
-             cls.__pure_step__ = classify(cls)
+          5. cls.__pure_step__ = classify(cls)   # T3 seam — LAST statement (§10.1)
         """
         super().__init_subclass__(**kwargs)  # 1 cooperative chain (traverses EngineSurface)
         fields = _collect_config_fields(cls)  # 2 §3
@@ -68,10 +67,7 @@ class PureModule(EngineSurface):
             if b is not PureModule and issubclass(b, PureModule)
         ) or (PureModuleConfig,)
         cls.__pure_config_model__ = _synthesize_config_model(cls, fields, bases)  # 4
-        # 5 T3 SEAM (spec §4.1 step 5, §10.1) — the LAST statement, activated verbatim
-        #   when dimos.pure.stepspec lands:  cls.__pure_step__ = classify(cls)
-        #   Kept INACTIVE here: stepspec.classify raises NotImplementedError, and its
-        #   presence certifies all definition-time machinery passed (config first).
+        cls.__pure_step__ = classify(cls)  # 5 T3 SEAM (§4.1 step 5, §10.1) — LAST statement
 
     def __init__(self, **kwargs: object) -> None:
         """Validate kwargs through the synthesized model; flatten values onto self."""
