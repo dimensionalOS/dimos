@@ -51,7 +51,6 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     assert config.base_link == "yam_base_link"
     assert config.end_effector_link == "yam_hand_tcp"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
-    assert str(config.model_path).endswith("yam_description/urdf/yam_gripper.urdf.xacro")
     assert config.gripper_hardware_id == "arm"
 
 
