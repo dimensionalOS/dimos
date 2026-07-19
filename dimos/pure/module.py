@@ -128,16 +128,22 @@ class PureModule(EngineSurface):
         return (_rebuild_module, (type(self), self.config.model_dump()))
 
     def warmup(self) -> None:
-        """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        return None
+        """Validate wiring and create sync-run resources (t8-rim.md §7.2)."""
+        from dimos.pure import rim  # T8 RIM SEAM (S4) — lazy
+
+        rim.warmup_module(self)
 
     def start(self) -> None:
-        """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        return None
+        """Go live: one session thread over the wired ports (t8-rim.md §6)."""
+        from dimos.pure import rim  # T8 RIM SEAM (S4) — lazy
+
+        rim.start_module(self)
 
     def stop(self) -> None:
-        """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        return None
+        """Drain, dispose in reverse, join — idempotent (t8-rim.md §7.3)."""
+        from dimos.pure import rim  # T8 RIM SEAM (S4) — lazy
+
+        rim.stop_module(self)
 
 
 def _rebuild_module(cls: type[PureModule], dump: dict[str, Any]) -> PureModule:

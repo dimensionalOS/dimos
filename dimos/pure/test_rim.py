@@ -38,8 +38,6 @@ from dimos.pure import rim
 from dimos.pure.resources import ResourceError
 from dimos.pure.rim import RimError, RimRule
 
-pytestmark = pytest.mark.skip(reason="T8 skeleton — enabled by T8a")
-
 WAIT_S = 5.0  # test-side wall clock only; the rim's data path reads no clocks
 
 

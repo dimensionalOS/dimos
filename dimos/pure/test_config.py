@@ -399,6 +399,10 @@ def test_config_field_errors_share_definition_error_base():
 def test_service_interop_surface():
     c = _go2()()
     assert isinstance(c.config, BaseConfig)  # Configurable's declared currency
-    assert c.warmup() is None  # T2: no-op hooks, T8 fills behavior
-    assert c.start() is None
+    # T8-filled behavior (t8-rim.md S4): warmup tolerates an unwired module
+    # (the bridge wires streams after build, §11.3); start fails LOUD on the
+    # unwired trigger (§6.1.1); stop is idempotent on a never-started session.
+    assert c.warmup() is None
+    with pytest.raises(TypeError, match=r"\[align-missing-tick-stream\]"):
+        c.start()
     assert c.stop() is None

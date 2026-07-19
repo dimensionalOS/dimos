@@ -169,7 +169,11 @@ class _InAccessor:
     @overload
     def __get__(self, obj: Fold[_TIn, _TOut], owner: type | None = None) -> InPorts[_TIn]: ...
     def __get__(self, obj: Any, owner: type | None = None) -> Any:
-        raise NotImplementedError  # runtime view is built by the rim (T8)
+        if obj is None:
+            return self  # class access: the accessor itself (first overload)
+        from dimos.pure.rim import ports_of  # T8 RIM SEAM (S3) — lazy: sanctioned edge #2 (t4 §5.5)
+
+        return ports_of(obj).i
 
 
 class _OutAccessor:
@@ -192,7 +196,11 @@ class _OutAccessor:
     @overload
     def __get__(self, obj: Fold[_TIn, _TOut], owner: type | None = None) -> OutPorts[_TOut]: ...
     def __get__(self, obj: Any, owner: type | None = None) -> Any:
-        raise NotImplementedError  # runtime view is built by the rim (T8)
+        if obj is None:
+            return self  # class access: the accessor itself (first overload)
+        from dimos.pure.rim import ports_of  # T8 RIM SEAM (S3) — lazy: sanctioned edge #2 (t4 §5.5)
+
+        return ports_of(obj).o
 
 
 # ── the typed engine facade ─────────────────────────────────────────────────

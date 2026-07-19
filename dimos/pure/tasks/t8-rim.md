@@ -1002,12 +1002,12 @@ re-exported (§1 layering).
 
 ## 18. Acceptance checklist
 
-- [ ] T8a: `uv run mypy dimos/pure` clean (strict); `test_rim.py` green
+- [x] T8a: `uv run mypy dimos/pure` clean (strict); `test_rim.py` green
       unskipped; 326-test baseline still green; sketch wiring lines
       typecheck (case_rim).
-- [ ] T8a: marshal test proves single-thread stepping under multi-thread
+- [x] T8a: marshal test proves single-thread stepping under multi-thread
       delivery; determinism test (same deliveries → same rows).
-- [ ] T8a: stop() drain-then-dispose order pinned by an order-recording
+- [x] T8a: stop() drain-then-dispose order pinned by an order-recording
       resource; double-stop and restart green.
 - [ ] T8b: every P-row's test column green; TL-deploy-error passes without
       spawning a process.
@@ -1015,7 +1015,7 @@ re-exported (§1 layering).
       module, autoconnected, data both directions, health topic wired, clean
       shutdown.
 - [ ] No edits outside the four owned files + S3/S4/S5.
-- [ ] `rim.py` imports contain no `dimos.core`/`dimos.protocol`/
+- [x] `rim.py` imports contain no `dimos.core`/`dimos.protocol`/
       `dimos.memory2` (grep-pinned by a test).
 
 ## 19. Decisions (numbered)
@@ -1129,3 +1129,41 @@ wrong class; a coordinator-side class-resolution hook would fix it and is
 deliberately NOT proposed as a legacy-core edit in this wave. (2) The sketch's `_shape_at_wiring_time` calls `m.warmup()` then
 `m.start()` on a CostMapper with no resources — under D4/D6 both orderings
 and the auto-warm path are equivalent for it; no sketch amendment needed.
+
+## Implementation notes (T8a)
+
+Each deviation is forced by a pinned test or a verified structural fact;
+all else as written.
+
+1. **`DEFAULT_CAPACITY = 16`, not AD1's 1 — RELITIGATION.** Six original
+   TR tests (row-order, stop-drains, sparse, subscriber-exc, hold,
+   async-live) assert zero loss for same-thread inline bursts of 2-7
+   items. Empirically (CPython 3.12, 20/20) a burst loop never yields the
+   GIL to the parked session thread inside the 5 ms switch interval, so
+   capacity 1 deterministically evicts all but the last item. The burst
+   test pins default < 50; coherent range [7, 49]; 16 chosen. AD1's knob
+   surface is untouched — only the constant moved ("a one-constant change
+   later", t8-comparison). Re-pinning 1 means those six tests must pace
+   deliveries or go lossless.
+2. **Scalars exempt from `[rim-unstamped-out]`.** TR pins bare `float`
+   out-fields on transports while ts-less `Bare` raises. As built:
+   int/float/complex/str/bytes pass; structured payloads need finite ts.
+3. **Live async window is 1.** `drive_async` pulls `next(rows)` inside
+   its loop; over a blocking live feed it parks with in-flight tasks
+   neither progressing nor emitting once the rings run dry (StopIteration
+   is terminal — no "no row yet" signal without a drivers.py edit).
+   `max_inflight` still D6-validates at start; `over()` keeps the
+   declared window.
+4. **Warmup dry-checks only when the trigger is wired** — the bridge
+   wires streams between build and start (§11.3); missing-tick is a START
+   error (§6.1.1).
+5. **One outside edit:** `test_service_interop_surface` (test_config), a
+   stale T2 pin self-labeled "T8 fills behavior". Now: warmup None, start
+   loud (§6.1.1/P14), stop None.
+6. **Small seams:** `ports_of` raises `NotImplementedError` for
+   spec-less objects (T4 pins the stub contract); S3 bodies guard
+   `obj is None` (class access returns the accessor);
+   `_checked_max_inflight` imported from drivers (one copy source).
+
+Doctrine verified: no wall clock in the data path (stop's join only);
+over() sees zero wire traffic; teardown exactly once on every exit path.
