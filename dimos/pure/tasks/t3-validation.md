@@ -873,27 +873,31 @@ substring. Names: `test_err_step_missing`, `test_err_step_and_fold`,
 
 ## 13. Acceptance criteria
 
-- [ ] `uv run mypy dimos/pure/stepspec.py` clean (strict, Python floor 3.10 —
+- [x] `uv run mypy dimos/pure/stepspec.py` clean (strict, Python floor 3.10 —
       no `Self`, no `StrEnum`, `typing_extensions` only if needed).
-- [ ] All seven sketch shapes classify correctly (§12.1 green), including
+- [x] All seven sketch shapes classify correctly (§12.1 green), including
       the abstract CostMapper and the cross-module ScanBatcher.
-- [ ] The 4-declaration Tagger classifies with zero added ceremony (API
+- [x] The 4-declaration Tagger classifies with zero added ceremony (API
       floor).
-- [ ] Every `Rule` member has: a message template implemented verbatim from
+- [x] Every `Rule` member has: a message template implemented verbatim from
       §9.3, and at least one test in §12.3.
-- [ ] Both annotation regimes (eager + stringized) pass the full resolution
+- [x] Both annotation regimes (eager + stringized) pass the full resolution
       matrix; explicit-string annotations pass.
-- [ ] `classify` is pure: no instantiation, no descriptor execution, no
+- [x] `classify` is pure: no instantiation, no descriptor execution, no
       mutation (§12.5 green).
-- [ ] `classify` works on plain classes with no `PureModule`/T2 import
+- [x] `classify` works on plain classes with no `PureModule`/T2 import
       anywhere in `stepspec.py` (seam test §12.4 green without T2).
-- [ ] Classification is identical on 3.10 and 3.12 for every test module
+- [x] Classification is identical on 3.10 and 3.12 for every test module
       (the no-defaults rule closes the known divergence; CI floor run
-      suffices).
-- [ ] Error precedence is deterministic and documented (= gate order G0–G5).
-- [ ] `StepSpec` fields exactly as §7.1; `PURE_STEP_ATTR == "__pure_step__"`.
-- [ ] No file other than `stepspec.py` / `test_stepspec.py` modified by the
-      T3 implementation (module.py line is T2's).
+      suffices). (Implemented + verified on 3.12; the 3.10 half rides the
+      CI floor run — appendix N8.)
+- [x] Error precedence is deterministic and documented (= gate order G0–G5).
+- [x] `StepSpec` fields exactly as §7.1; `PURE_STEP_ATTR == "__pure_step__"`.
+- [x] No file other than `stepspec.py` / `test_stepspec.py` modified by the
+      T3 implementation (module.py line is T2's). (Ticked under the amended
+      integration scope — appendix N1: this landing also activates the seams,
+      updates test_config.py, and assembles the `pm` surface, per the
+      orchestrator's T3 integration mandate.)
 
 ## 14. Relitigation record
 
@@ -932,12 +936,74 @@ rule. R1 was mandated by the task assignment; the rest are this spec's calls.
 1. **Config-only mixin bases** — is `[step-missing]` acceptable for them, or
    does T2 want an `abstract=True` class kwarg that skips classification
    (and instantiation)? Cheap to add later; not built now.
-2. **`pm` surface exports** — confirm the recommended set (§1) with the
-   `__init__.py` owner.
+2. **`pm` surface exports** — RESOLVED: the T3 landing assembled
+   `__init__.py` (first assembler wins) and adopted the §1 recommended set
+   verbatim (`PureModuleDefinitionError`, `StepSpec`, `StepKind`,
+   `step_spec`); `Rule` and `classify` stay importable from
+   `dimos.pure.stepspec` only.
 3. **T4 protocol parameter names** — RESOLVED: T4 adopted positional-only
    protocol params (t4-typing.md §2.3); G2 amended accordingly, no
    param-name rule.
 4. **Runtime `None` from a `skips=False` step** — T6 policy (skip + health
    count vs error). `StepSpec.skips` is provided either way.
 5. **T2 reuse of `PureModuleDefinitionError`** for config violations —
-   recommended (one user-facing definition-error type), T2's call (§8.6).
+   RESOLVED yes (t2-config.md §10.1); the flip was performed with this
+   landing: `ConfigFieldError(PureModuleDefinitionError)`, unified-base test
+   in `test_config.py`.
+
+## Implementation notes
+
+Deviations / decisions made during implementation, per the
+never-deviate-silently rule. None alter the spec's intent.
+
+- **N1 — amended scope (orchestrator T3 integration mandate).** Beyond
+  `stepspec.py`/`test_stepspec.py`, this landing activates the §8 seam in
+  `module.py` (import + `cls.__pure_step__ = classify(cls)` as the LAST
+  statement, plus a `__pure_step__: ClassVar[StepSpec]` declaration so the
+  assignment is mypy-clean under strict), performs the t2-config.md §10.1
+  error-base flip in `config.py`, gives every definition-succeeding
+  `test_config.py` class a minimal valid step (shared `_In`/`_Out` rows +
+  `def step`; classes that raise `ConfigFieldError` need none — config errors
+  deterministically precede classification), and assembles the `pm` surface
+  (`__init__.py` + `test_pm_surface.py` smoke). T2's suite grew 29 → 31
+  (unified-base test; VoxelGridMapper-style construction, its §14 box).
+- **N2 — posonly test conversion (amended G2).** The stub
+  `test_err_step_params_posonly` predates the G2 amendment (T4 adopted
+  positional-only protocol params, t4-typing.md §2.3): positional-only step
+  params are legal. Converted to `test_classify_posonly_step`, pinning that
+  `/`-spelled stateless and Mealy steps classify identically to their plain
+  twins.
+- **N3 — `PureModuleDefinitionError.__init__` takes `rule: Rule | None =
+  None`** (skeleton had it required). Required by T2's one-line
+  `ConfigFieldError` re-base: config machinery constructs with a message
+  alone. Every T3-raised instance carries its `Rule`; `.rule` is typed
+  `Rule | None`.
+- **N4 — private-helper signatures extended keyword-only.** `_require_row`
+  gained `*, impl: str = "step"` and `_resolve_step_hints` gained
+  `*, name: str = "step"` to implement §9.3's "substitute `fold` for `step`"
+  note in the shared messages; the skeleton's positional shapes are preserved
+  (all 4-positional calls remain valid).
+- **N5 — mirrored `[out-not-row]` variant copy.** §9.3 gives the base variant
+  verbatim and says union/TypeVar/parameterized "mirror `[in-not-row]`" with
+  returns phrasing; the mirrored union variant borrows `[out-union]`'s
+  teaching sentence ("Alternative results are sparse fields of one Out
+  bundle") since exact copy was unspecified.
+- **N6 — `[step-unresolvable]` details.** The slug is appended to the final
+  line (per §9.1's ends-with-slug rule; the §9.3 block elides it). When the
+  underlying exception exposes no `.name` (e.g. `SyntaxError`), the
+  otherwise-lesson substitutes "a name in the annotation" for `'{name}'`.
+- **N7 — two literal-vs-normalized annotation forms handled.** Builtin
+  `tuple[State, None]` keeps the literal `None` object in `get_args`
+  (`typing.Tuple` normalizes to `NoneType`) — both are treated as the None
+  slot (§5.3.5). And `State()` constructibility ignores
+  `VAR_POSITIONAL`/`VAR_KEYWORD` parameters (a bare `*args`/`**kwargs` does
+  not block `State()`), refining §5.3.6's "any parameter lacks a default".
+- **N8 — 3.10 parity is design-guaranteed, CI-verified.** The no-defaults
+  rule (G2) closes the known `get_type_hints` divergence; this landing ran on
+  3.12 (repo interpreter), the 3.10 half rides the CI floor run per the §13
+  box text.
+- **N9 — test-module import hygiene.** `test_stepspec.py` imports the row
+  bases as `PmIn`/`PmOut` so bare `In`/`Out` never resolve accidentally from
+  the test module's globals — with plain imports, `get_type_hints`'s
+  globalns fallback would silently satisfy the §12.2 negative cases
+  (`issubclass(In, In)` is true).

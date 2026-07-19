@@ -830,10 +830,13 @@ whole-file `pickle.dumps` of module-level example classes (T12 examples).
 - [x] Sketch §5c executes literally: the `Go2Connection` construction,
       flat access, `model_dump()` dict equality (declaration-ordered),
       both frozen failures, and the sweep-rebuild line.
-- [ ] `VoxelGridMapper(emit_every=2)` from sketch `_unit_tests` constructs
+- [x] `VoxelGridMapper(emit_every=2)` from sketch `_unit_tests` constructs
       once T1/T3 land (config fields `voxel_size`, `emit_every` collected;
       nested `In`/`Out`/`State`, `@resource grid`, `step` are not fields).
       (T1/T3 — the config half is proven by `test_machinery_members_are_not_fields`.)
+      (Landed with T3's seam activation as
+      `test_voxelgridmapper_style_construction`; `@resource grid` is T7 and
+      excluded from the construction. See note 4.)
 - [x] Tagger floor: zero-config modules define no extra line for T2.
 - [x] `__init_subclass__` order matches §4.1 with the T3 placeholder as
       the marked final step; no step/fold/In/Out/State on PureModule.
@@ -880,6 +883,19 @@ intent:
    pre-existing and left untracked per instruction; the deliverable and every
    committed file are clean (`uv run mypy dimos/pure --exclude
    config_fields_experiment` → success, 5 source files).
+
+4. **T3 seam executed (by the T3 landing, recorded here).** §10.1 performed
+   verbatim: `module.py` imports `classify` and stamps
+   `cls.__pure_step__ = classify(cls)` as the LAST `__init_subclass__`
+   statement (plus a `__pure_step__: ClassVar[StepSpec]` dunder declaration,
+   blessed by note 1's rule, so the stamp is strict-mypy-clean);
+   `ConfigFieldError` re-based onto `stepspec.PureModuleDefinitionError`
+   (one line + import; still a `TypeError`), with the unified-base assertion
+   landed as `test_config_field_errors_share_definition_error_base`. With
+   classification mandatory, every definition-succeeding `test_config.py`
+   class gained a minimal step (shared `_In`/`_Out` rows + `def step`;
+   `Bad` classes need none — config errors precede classification per §4.1);
+   all original assertions preserved. Suite: 29 → 31 tests.
 
 ## 15. Relitigation
 
