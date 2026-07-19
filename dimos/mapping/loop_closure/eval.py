@@ -33,12 +33,13 @@ from typing import Any
 
 import typer
 
-from dimos.mapping.loop_closure.pgo import PGO
+from dimos.mapping.loop_closure.pgo import PGO, PoseGraph
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import QualityWindow, SpeedLimit
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
 from dimos.robot.unitree.go2.connection import _camera_info_static
@@ -55,6 +56,62 @@ def _pairwise_sum(pts: list[tuple[float, float, float]]) -> float:
             dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
             total += (dx * dx + dy * dy + dz * dz) ** 0.5
     return total
+
+
+def corrected_marker_transforms(
+    store: SqliteStore,
+    graph: PoseGraph,
+    *,
+    camera_info: CameraInfo,
+    marker_size: float,
+    marker_max_speed: float,
+    marker_max_rot_rate: float,
+    marker_quality_window: float,
+    marker_smoothing: float,
+) -> dict[int, list[Transform]]:
+    """Final smoothed marker pose per detection track, PGO-corrected, by marker id.
+
+    The detection pipeline is the same shape as dimos map / markers_rrd
+    (sharpest-frame window -> speed gate -> DetectMarkers); each track's final
+    smoothed pose is lifted through ``graph.correct`` into the drift-corrected
+    frame — the frame ``dimos map global --pgo`` builds its map in, so these
+    transforms serve directly as map_T_marker entries against that map.
+    """
+    color_image = store.stream("color_image", Image)
+    xf = DetectMarkers(
+        camera_info=camera_info,
+        marker_length_m=marker_size,
+        smoothing_window=marker_smoothing,
+    )
+    pipeline: Stream[Image] = color_image.transform(
+        QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
+    )
+    if marker_max_speed > 0:
+        pipeline = pipeline.transform(
+            SpeedLimit(
+                max_mps=marker_max_speed,
+                max_dps=marker_max_rot_rate if marker_max_rot_rate > 0 else None,
+            )
+        )
+    all_dets = pipeline.transform(xf).to_list()
+
+    # Dedup by track_id → final smoothed pose per track.
+    by_track: dict[int, Observation[Any]] = {}
+    for d in all_dets:
+        by_track[d.data.track_id] = d
+
+    # PGO-correct each track's pose; group by marker_id.
+    by_marker: dict[int, list[Transform]] = {}
+    for d in by_track.values():
+        raw_tf = Transform(
+            translation=d.data.center,
+            rotation=d.data.orientation,
+            frame_id="world",
+            child_frame_id=f"marker_{d.data.marker_id}",
+            ts=d.ts,
+        )
+        by_marker.setdefault(d.data.marker_id, []).append(graph.correct(raw_tf))
+    return by_marker
 
 
 def _eval_recording(
@@ -78,46 +135,20 @@ def _eval_recording(
         graph = lidar.transform(PGO()).last().data
         pgo_time = time.perf_counter() - t0
 
-        # Marker detection pipeline: same shape as dimos map / markers_rrd.
-        color_image = store.stream("color_image", Image)
-        xf = DetectMarkers(
+        by_marker = corrected_marker_transforms(
+            store,
+            graph,
             camera_info=cam_info,
-            marker_length_m=marker_size,
-            smoothing_window=marker_smoothing,
+            marker_size=marker_size,
+            marker_max_speed=marker_max_speed,
+            marker_max_rot_rate=marker_max_rot_rate,
+            marker_quality_window=marker_quality_window,
+            marker_smoothing=marker_smoothing,
         )
-        pipeline: Stream[Image] = color_image.transform(
-            QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
+        spread = sum(
+            _pairwise_sum([(t.translation.x, t.translation.y, t.translation.z) for t in tfs])
+            for tfs in by_marker.values()
         )
-        if marker_max_speed > 0:
-            pipeline = pipeline.transform(
-                SpeedLimit(
-                    max_mps=marker_max_speed,
-                    max_dps=marker_max_rot_rate if marker_max_rot_rate > 0 else None,
-                )
-            )
-        all_dets = pipeline.transform(xf).to_list()
-
-        # Dedup by track_id → final smoothed pose per track.
-        by_track: dict[int, Observation[Any]] = {}
-        for d in all_dets:
-            by_track[d.data.track_id] = d
-        tracks = list(by_track.values())
-
-        # PGO-correct each track's pose; group by marker_id.
-        by_marker: dict[int, list[tuple[float, float, float]]] = {}
-        for d in tracks:
-            raw_tf = Transform(
-                translation=d.data.center,
-                rotation=d.data.orientation,
-                frame_id="world",
-                child_frame_id=f"marker_{d.data.marker_id}",
-                ts=d.ts,
-            )
-            corrected = graph.correct(raw_tf)
-            t = corrected.translation
-            by_marker.setdefault(d.data.marker_id, []).append((t.x, t.y, t.z))
-
-        spread = sum(_pairwise_sum(v) for v in by_marker.values())
         return pgo_time, spread
 
 
