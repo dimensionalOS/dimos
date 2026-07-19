@@ -15,7 +15,8 @@ set -euo pipefail
 
 
 # ─── signal handling (must be early so Ctrl+C works everywhere) ────────────────
-trap 'printf "\n"; exit 130' INT
+handle_interrupt() { printf "\n"; exit 130; }
+trap handle_interrupt INT
 
 # If piped from curl (stdin is not a TTY and $0 is the shell),
 # save to temp file and re-execute so interactive prompts get proper TTY input.
@@ -27,6 +28,7 @@ if [ ! -t 0 ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ] || [ "$0" = "/bin/bas
 fi
 
 INSTALLER_VERSION="0.3.0"
+readonly SMOKE_TEST_TIMEOUT_SECONDS=60
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
 UBUNTU_PACKAGES="curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1"
@@ -73,6 +75,44 @@ run_cmd() {
 }
 
 has_cmd() { command -v "$1" &>/dev/null; }
+
+run_with_timeout() {
+    local timeout_seconds="$1"; shift
+    local marker pid watchdog
+    local exit_code=0
+    local interrupted=0
+
+    # Bash 3.2 has no wait -n, so the marker distinguishes timeout from command exit.
+    marker="$(mktemp "${TMPDIR:-/tmp}/dimos-timeout.XXXXXX")"
+    rm -f "$marker"
+
+    "$@" &
+    pid=$!
+    (
+        sleep "$timeout_seconds"
+        : > "$marker"
+        # Non-interactive Bash jobs ignore SIGINT; DimOS handles SIGTERM gracefully.
+        kill -TERM "$pid" 2>/dev/null || true
+    ) &
+    watchdog=$!
+
+    trap 'interrupted=1; kill -TERM "$pid" 2>/dev/null || true' INT
+    wait "$pid" 2>/dev/null || exit_code=$?
+    trap handle_interrupt INT
+
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+
+    if [[ "$interrupted" == "1" ]]; then
+        wait "$pid" 2>/dev/null || true
+        exit_code=130
+    elif [[ -f "$marker" ]]; then
+        exit_code=124
+    fi
+
+    rm -f "$marker"
+    return "$exit_code"
+}
 
 # ─── gum bootstrap ───────────────────────────────────────────────────────────
 GUM_VERSION="0.17.0"
@@ -868,29 +908,26 @@ run_post_install_tests() {
         return
     fi
 
-    if ! prompt_confirm "Run a quick smoke test? (starts unitree-go2 for 60s)" "yes"; then
+    if ! prompt_confirm "Run a quick smoke test? (starts unitree-go2 for ${SMOKE_TEST_TIMEOUT_SECONDS}s)" "yes"; then
         dim "  skipping smoke test"
         return
     fi
 
     printf "\n"; info "${BOLD}post-install smoke test${RESET}"; printf "\n"
 
-    local cmd
+    local -a cmd
     if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then
-        cmd="dimos --simulation run unitree-go2"
+        cmd=(dimos --simulation run unitree-go2)
     else
-        cmd="dimos --replay run unitree-go2"
+        cmd=(dimos --replay run unitree-go2)
     fi
 
-    info "running: ${DIM}${cmd}${RESET} (Ctrl+C to stop)"
+    info "running: ${DIM}${cmd[*]}${RESET} (Ctrl+C to stop)"
 
     local exit_code=0
     pushd "$dir" >/dev/null
     source "$venv"
-    $cmd &
-    local pid=$!
-    # wait allows bash to process INT trap immediately
-    wait $pid || exit_code=$?
+    run_with_timeout "$SMOKE_TEST_TIMEOUT_SECONDS" "${cmd[@]}" || exit_code=$?
     popd >/dev/null
 
     printf "\n"
