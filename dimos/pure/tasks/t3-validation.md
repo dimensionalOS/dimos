@@ -148,13 +148,15 @@ function, so param 0 is the receiver):
 | Observation | Result |
 | --- | --- |
 | zero parameters | **error `[step-no-self]`** |
-| any param of kind `VAR_POSITIONAL` / `VAR_KEYWORD` / `KEYWORD_ONLY` / `POSITIONAL_ONLY` | **error `[step-params]`** (names param + kind) |
+| any param of kind `VAR_POSITIONAL` / `VAR_KEYWORD` / `KEYWORD_ONLY` | **error `[step-params]`** (names param + kind) |
+| params of kind `POSITIONAL_ONLY` | allowed — orchestrator amendment: T4 adopted positional-only protocol params (t4-typing.md §2.3), so mypy accepts a `/`-spelled step; T3 must too |
 | any param (incl. the receiver) with a default | **error `[step-param-default]`** |
 | otherwise | `data_params = params[1:]`, continue |
 
-Rationale for the two strict rows: mypy rejects a positional-only or
-keyword-only implementation of T4's protocols (parameter-kind compatibility),
-so runtime must too; and parameter defaults make `typing.get_type_hints`
+Rationale for the strict rows: mypy rejects a keyword-only or variadic
+implementation of T4's protocols (parameter-kind compatibility), so runtime
+must too — positional-only impls, by the same parity principle, are ACCEPTED
+now that T4's protocols are themselves positional-only; and parameter defaults make `typing.get_type_hints`
 output *version-dependent* (Python 3.10 wraps `= None` params in `Optional`,
 3.11+ does not — observed) — a module must classify identically across the
 supported floor, so defaults are banned outright. The receiver is identified
@@ -603,7 +605,7 @@ assert per-variant substrings).
 
 **`[step-params]`** — G2
 > `{X}: step parameter '{name}' is {kind}; step parameters must be plain positional: (self, i) or (self, state, i). The engine calls step positionally. [step-params]`
-> (`{kind}` ∈ "*args" / "**kwargs" / "keyword-only" / "positional-only".)
+> (`{kind}` ∈ "*args" / "**kwargs" / "keyword-only" — positional-only is legal, see G2 amendment.)
 
 **`[step-param-default]`** — G2
 > `{X}: step parameter '{name}' has a default. The engine always passes every argument, and defaults change how annotations resolve across Python versions — remove it. [step-param-default]`
@@ -865,8 +867,9 @@ substring. Names: `test_err_step_missing`, `test_err_step_and_fold`,
   mypy acceptance next to the runtime rejection test.
 - Recommendation to T4 (from §15 Q3): protocol params spelled positional-only
   (`def step(self, state: TState, i: TIn, /) -> …`) so implementations keep
-  parameter-name freedom; if T4 declines, T3 gains a param-name rule in a
-  follow-up.
+  parameter-name freedom. **Resolved: T4 ACCEPTED** (t4-typing.md §2.3,
+  pinned by `case_param_names.py`); G2 amended — positional-only impl params
+  are legal, no param-name rule needed.
 
 ## 13. Acceptance criteria
 
@@ -931,8 +934,9 @@ rule. R1 was mandated by the task assignment; the rest are this spec's calls.
    (and instantiation)? Cheap to add later; not built now.
 2. **`pm` surface exports** — confirm the recommended set (§1) with the
    `__init__.py` owner.
-3. **T4 protocol parameter names** — recommend positional-only protocol
-   params (§12.6); needs T4's confirmation, else T3 adds a param-name rule.
+3. **T4 protocol parameter names** — RESOLVED: T4 adopted positional-only
+   protocol params (t4-typing.md §2.3); G2 amended accordingly, no
+   param-name rule.
 4. **Runtime `None` from a `skips=False` step** — T6 policy (skip + health
    count vs error). `StepSpec.skips` is provided either way.
 5. **T2 reuse of `PureModuleDefinitionError`** for config violations —
