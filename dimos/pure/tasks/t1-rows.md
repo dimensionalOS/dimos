@@ -33,7 +33,7 @@ Downstream consumption map (who reads what — all "provided by" other tasks):
 | Consumer | Uses from T1 |
 | --- | --- |
 | T2 config | must *skip* nested `_Bundle` subclasses when collecting config fields |
-| T3 validation | resolves step hints to bundle classes; should call `In.fields()`/`Out.fields()` during module validation to force type-resolution errors at import time |
+| T3 validation | resolves step hints to bundle classes; bundle internals stay opaque to it (orchestrator amendment: T3 must NOT call `fields()` in `__init_subclass__` — that would eagerly resolve field types and break the forward-reference case §5.2 exists for; resolution errors surface at wiring, T5) |
 | T4 typing | bundles are ordinary classes in protocol params (`Stateless[C.In, C.Out]`); nothing else needed |
 | T5 alignment | `In.fields()` → tick/latest/interpolate specs + defaults; constructs `InCls(ts=tick_ts, **resolved)` |
 | T6 drivers | stamps step Out rows via `dataclasses.replace(row, ts=tick_ts)`; validates fold self-stamped ts (`UNSTAMPED` + monotonicity) |
