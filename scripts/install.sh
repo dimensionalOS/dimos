@@ -85,10 +85,10 @@ run_with_timeout() {
     local terminated=0
     local timed_out=0
 
+    trap 'interrupted=1' INT
     "$@" &
     pid=$!
     deadline=$((SECONDS + timeout_seconds))
-    trap 'interrupted=1' INT
 
     while kill -0 "$pid" 2>/dev/null; do
         if [[ "$interrupted" == "1" ]] && [[ "$terminated" == "0" ]]; then
@@ -935,7 +935,7 @@ run_post_install_tests() {
     popd >/dev/null
 
     printf "\n"
-    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran 60s without crash ✓"
+    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran ${SMOKE_TEST_TIMEOUT_SECONDS}s without crash ✓"
     elif [[ $exit_code -eq 130 ]] || [[ $exit_code -eq 137 ]]; then
         ok "smoke test: stopped by user"
     elif [[ $exit_code -eq 0 ]]; then ok "smoke test: completed ✓"
