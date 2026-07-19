@@ -25,27 +25,29 @@ from typing import Any, ClassVar
 
 from typing_extensions import dataclass_transform
 
-from dimos.pure.config import PureModuleConfig
+from dimos.pure.config import (
+    FrozenModuleError,
+    PureModuleConfig,
+    _collect_config_fields,
+    _synthesize_config_model,
+)
+from dimos.pure.typing import EngineSurface
 
-# T3 SEAM (spec §10): once dimos.pure.stepspec lands, module.py gains
-#   from dimos.pure.stepspec import classify
-# used as the LAST statement of __init_subclass__.
-#
-# T4 SEAM (spec §10.2): the binding final form of the class statement is
-#   from dimos.pure.typing import EngineSurface
-#   class PureModule(EngineSurface):
-# EngineSurface hosts over() and the i/o port accessors (deliberately
-# UNANNOTATED class attributes, invisible to config-field collection);
-# T2 must not redeclare over, i, or o. The implementer wires the base.
+# T3 SEAM (spec §10.1): once dimos.pure.stepspec lands, module.py gains a
+# module-level `from dimos.pure.stepspec import classify`, invoked as the LAST
+# statement of __init_subclass__ (`cls.__pure_step__ = classify(cls)`). Kept
+# INACTIVE here — stepspec.classify raises NotImplementedError today; the call
+# site is the marked placeholder at the end of __init_subclass__ below.
 
 __all__ = ["PureModule"]
 
 
 @dataclass_transform(kw_only_default=True, frozen_default=True)
-class PureModule:  # final form: PureModule(EngineSurface) — T4 seam above
+class PureModule(EngineSurface):
     """Base for pure modules: flat annotated fields become typed, frozen config."""
 
     __pure_config_model__: ClassVar[type[PureModuleConfig]]
+    __pure_config__: PureModuleConfig  # per-instance store; set via object.__setattr__
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Collect config fields, synthesize the frozen model, then classify the step.
@@ -58,54 +60,90 @@ class PureModule:  # final form: PureModule(EngineSurface) — T4 seam above
           5. T3 SEAM — LAST statement, verbatim once stepspec lands:
              cls.__pure_step__ = classify(cls)
         """
-        raise NotImplementedError
+        super().__init_subclass__(**kwargs)  # 1 cooperative chain (traverses EngineSurface)
+        fields = _collect_config_fields(cls)  # 2 §3
+        bases: tuple[type[PureModuleConfig], ...] = tuple(  # 3 §4.3 mirrored inheritance
+            b.__pure_config_model__
+            for b in cls.__bases__
+            if b is not PureModule and issubclass(b, PureModule)
+        ) or (PureModuleConfig,)
+        cls.__pure_config_model__ = _synthesize_config_model(cls, fields, bases)  # 4
+        # 5 T3 SEAM (spec §4.1 step 5, §10.1) — the LAST statement, activated verbatim
+        #   when dimos.pure.stepspec lands:  cls.__pure_step__ = classify(cls)
+        #   Kept INACTIVE here: stepspec.classify raises NotImplementedError, and its
+        #   presence certifies all definition-time machinery passed (config first).
 
     def __init__(self, **kwargs: object) -> None:
         """Validate kwargs through the synthesized model; flatten values onto self."""
-        raise NotImplementedError
+        model = getattr(type(self), "__pure_config_model__", None)
+        if model is None:  # only PureModule itself lacks a synthesized model
+            raise TypeError(
+                "PureModule cannot be instantiated directly — subclass it "
+                "(config fields + In/Out + step)"
+            )
+        cfg = model(**kwargs)  # pydantic validates; raw ValidationError on failure (§5.2)
+        object.__setattr__(self, "__pure_config__", cfg)
+        for name in model.model_fields:  # class-level access (2.12 deprecates instance)
+            object.__setattr__(self, name, getattr(cfg, name))
 
     @property
     def config(self) -> PureModuleConfig:
         """The frozen synthesized config model; ``model_dump()`` is canonical."""
-        raise NotImplementedError
+        return self.__pure_config__
 
     def __setattr__(self, name: str, value: object) -> None:
         """Always raises FrozenModuleError — rebuild the module, never mutate."""
-        raise NotImplementedError
+        model = getattr(type(self), "__pure_config_model__", None)
+        if model is not None and name in model.model_fields:
+            raise FrozenModuleError(
+                f"{type(self).__name__}.{name} is frozen config — rebuild: "
+                f"{type(self).__name__}(**{{**m.config.model_dump(), {name!r}: ...}})"
+            )
+        raise FrozenModuleError(
+            f"{type(self).__name__} is immutable — per-run state belongs in State, "
+            f"heavyweight objects in @resource"
+        )
 
     def __delattr__(self, name: str) -> None:
         """Always raises FrozenModuleError."""
-        raise NotImplementedError
+        raise FrozenModuleError(
+            f"{type(self).__name__}.{name} cannot be deleted — modules are immutable"
+        )
 
     def __eq__(self, other: object) -> bool:
         """Identity = class + config: same exact class and equal config."""
-        raise NotImplementedError
+        if other is self:
+            return True
+        if not isinstance(other, PureModule):
+            return NotImplemented
+        return type(other) is type(self) and other.config == self.config
 
     def __hash__(self) -> int:
         """hash((type(self), config)) — frozen models hash by value."""
-        raise NotImplementedError
+        return hash((type(self), self.config))
 
     def __repr__(self) -> str:
         """``ClassName(field=value, ...)`` in canonical field order."""
-        raise NotImplementedError
+        inner = ", ".join(f"{k}={v!r}" for k, v in self.config.model_dump().items())
+        return f"{type(self).__name__}({inner})"
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle/copy as rebuild-from-config: (_rebuild_module, (cls, dump))."""
-        raise NotImplementedError
+        return (_rebuild_module, (type(self), self.config.model_dump()))
 
     def warmup(self) -> None:
         """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        raise NotImplementedError
+        return None
 
     def start(self) -> None:
         """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        raise NotImplementedError
+        return None
 
     def stop(self) -> None:
         """Service-interop lifecycle hook; no-op until T8 fills behavior."""
-        raise NotImplementedError
+        return None
 
 
 def _rebuild_module(cls: type[PureModule], dump: dict[str, Any]) -> PureModule:
     """Pickle helper: reconstruct a module as cls(**dump)."""
-    raise NotImplementedError
+    return cls(**dump)

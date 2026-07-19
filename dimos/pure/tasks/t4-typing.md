@@ -456,6 +456,9 @@ from the same file mypy reads.
 1. Self-contained: each fixture defines its own row/module stand-ins; the
    ONLY project import is `dimos.pure.typing` (so the suite tests the real
    shipped surface, and a broken shared helper can't fail everything).
+   Exception (post-T2): once a real surface ships, a fixture MAY import it
+   directly to pin production statics — `case_config_real.py` imports
+   `dimos.pure.module`/`config` against the landed PureModule.
 2. Never imported at runtime — fixtures may use bare `reveal_type` and
    deliberate errors; the driver never imports them, pytest never collects
    them (`case_` prefix, enforced by the dir's naming convention).
