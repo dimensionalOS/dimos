@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
-
 //! Navigation-function local planner — a faithful port of the measured Python
 //! `plan_path` in `wavefront/local_planner.py`: one Dijkstra wavefront
 //! rooted at the robot over a clearance-shaped cost field (travel + clearance +

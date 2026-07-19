@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
-
 //! Native wavefront local planner: GENUINE high-rate solves.
 //!
 //! The Python module re-anchored a cached plan at 60 Hz and only re-SOLVED at
