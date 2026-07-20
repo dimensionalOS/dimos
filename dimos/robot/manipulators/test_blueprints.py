@@ -20,7 +20,6 @@ import pytest
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
@@ -36,14 +35,17 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
     xarm6_planner_only,
     xarm7_planner_coordinator,
 )
-from dimos.robot.manipulators.xarm.blueprints.simulation import (
-    xarm_perception_sim,
-)
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
     keyboard_teleop_xarm6,
     keyboard_teleop_xarm7,
 )
-from dimos.robot.manipulators.xarm.config import make_xarm7_model_config, make_xarm_hardware
+from dimos.robot.manipulators.xarm.config import (
+    make_xarm7_model_config,
+    make_xarm7_sim_module_kwargs,
+    make_xarm7_sim_robot_config,
+    make_xarm_hardware,
+)
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModuleConfig
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
@@ -90,9 +92,14 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
 
 
 def test_xarm_perception_sim_uses_aligned_camera_frame() -> None:
-    sim_robot = _module_kwargs(xarm_perception_sim, PickAndPlaceModule)["robots"][0]
+    sim_robot = make_xarm7_sim_robot_config()
+    sim_config = MujocoSimModuleConfig(
+        **make_xarm7_sim_module_kwargs("test-xarm7-scene.xml"),
+    )
 
     assert sim_robot.xacro_args["attach_rpy"] == "0 0.0 0"
+    assert sim_config.base_frame_id == "link7"
+    assert sim_config.reset_joint_positions == sim_robot.home_joints
 
 
 def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:

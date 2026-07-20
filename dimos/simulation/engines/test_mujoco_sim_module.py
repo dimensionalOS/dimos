@@ -19,6 +19,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -82,6 +83,15 @@ class _FakeSimHooks:
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     events: list[str] = []
+    module = MujocoSimModule()
+    module._shm_ready_signaled = False
+    module._root_base_qpos_adr = 0
+    module._imu_quat_slice = None
+    module._imu_base_qpos_slice = slice(3, 7)
+    module._imu_gyro_slice = slice(0, 3)
+    module._imu_accel_slice = slice(3, 6)
+    module.odom = MagicMock()
+    module.imu = MagicMock()
 
     class _FakeHooks:
         def post_step(self, engine: Any) -> None:
@@ -102,7 +112,6 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         def cleanup(self) -> None:
             pass
 
-    module = MujocoSimModule()
     try:
         module._root_base_qpos_adr = 0
         module._imu_base_qpos_slice = slice(3, 7)
@@ -206,14 +215,10 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
         module.stop()
 
 
-def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
-    engine = object.__new__(MujocoEngine)
-    engine._lock = threading.Lock()
-    engine._reset_requested = False
-    engine._reset_done_events = []
-    engine._spawn_xy = None
-    engine._spawn_z = None
-    engine._spawn_yaw = None
+def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: Path) -> None:
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
     results: list[bool] = []
 
     def _wait_until_waiters_ready() -> None:
@@ -246,22 +251,25 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
     for thread in threads:
         thread.start()
 
-    _wait_until_waiters_ready()
-    with engine._lock:
-        assert engine._reset_requested
-        assert engine._spawn_xy == (1.0, 2.0)
-        assert engine._spawn_z == 0.5
-        assert engine._spawn_yaw == 0.25
-        done_events = engine._reset_done_events
-        engine._reset_done_events = []
-        engine._reset_requested = False
-    for done_event in done_events:
-        done_event.set()
+    try:
+        _wait_until_waiters_ready()
+        with engine._lock:
+            assert engine._reset_requested
+            assert engine._spawn_xy == (1.0, 2.0)
+            assert engine._spawn_z == 0.5
+            assert engine._spawn_yaw == 0.25
+            done_events = engine._reset_done_events
+            engine._reset_done_events = []
+            engine._reset_requested = False
+        for done_event in done_events:
+            done_event.set()
 
-    for thread in threads:
-        thread.join(timeout=1.0)
-        assert not thread.is_alive()
-    assert results == [True, True]
+        for thread in threads:
+            thread.join(timeout=1.0)
+            assert not thread.is_alive()
+        assert results == [True, True]
+    finally:
+        engine.disconnect()
 
 
 def _write_scene_xml(path: Path) -> None:

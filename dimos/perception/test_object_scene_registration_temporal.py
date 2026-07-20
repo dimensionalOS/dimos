@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -24,6 +23,7 @@ import pytest
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.protocol.tf.tf import TFSpec
 
 
 class _FakeTF:
@@ -35,6 +35,9 @@ class _FakeTF:
         self.calls.append((args, kwargs))
         return self.result
 
+    def stop(self) -> None:
+        pass
+
 
 def _image(timestamp: float) -> Image:
     return Image(
@@ -45,39 +48,31 @@ def _image(timestamp: float) -> Image:
     )
 
 
-def _module(tf: _FakeTF, monkeypatch: Any) -> ObjectSceneRegistrationModule:
-    # Avoid starting the module's RPC/event-loop resources in this unit test.
-    monkeypatch.setattr(
-        "dimos.core.module.ModuleBase.__init__",
-        lambda _self, config_args: None,
-    )
-    module = ObjectSceneRegistrationModule(
-        target_frame="map",
-        max_distance=0.0,
-        use_aabb=False,
-        max_obstacle_width=0.0,
-    )
+def _module(tf: _FakeTF) -> ObjectSceneRegistrationModule:
+    module = ObjectSceneRegistrationModule(target_frame="map")
     module._camera_info = MagicMock(K=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-    module._tf = tf  # type: ignore[assignment]
+    module._tf = cast("TFSpec", tf)
     module._latest_scene_snapshot = None
     return module
 
 
 def test_temporal_tf_lookup_uses_bounded_image_timestamp(monkeypatch: Any) -> None:
     tf = _FakeTF(MagicMock())
-    module = _module(tf, monkeypatch)
-    monkeypatch.setattr(ObjectSceneRegistrationModule, "tf", property(lambda self: self._tf))
+    module = _module(tf)
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
     )
 
-    ObjectSceneRegistrationModule._process_3d_detections(
-        module,
-        MagicMock(spec=ImageDetections2D),
-        _image(12.5),
-        _image(12.5),
-    )
+    try:
+        ObjectSceneRegistrationModule._process_3d_detections(
+            module,
+            MagicMock(spec=ImageDetections2D),
+            _image(12.5),
+            _image(12.5),
+        )
+    finally:
+        module._close_module()
 
     assert tf.calls == [(("map", "camera", 12.5, 0.1), {"forward_tolerance": 0.2})]
 
@@ -87,38 +82,40 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
 ) -> None:
     old_transform = MagicMock(name="old_transform")
     tf = _FakeTF(old_transform)
-    module = _module(tf, monkeypatch)
-    monkeypatch.setattr(ObjectSceneRegistrationModule, "tf", property(lambda self: self._tf))
+    module = _module(tf)
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
     )
 
     old_depth = _image(1.0)
-    ObjectSceneRegistrationModule._process_3d_detections(
-        module,
-        MagicMock(spec=ImageDetections2D),
-        old_depth,
-        old_depth,
-    )
-    tf.result = None
-    new_depth = _image(2.0)
-    ObjectSceneRegistrationModule._process_3d_detections(
-        module,
-        MagicMock(spec=ImageDetections2D),
-        new_depth,
-        new_depth,
-    )
+    try:
+        ObjectSceneRegistrationModule._process_3d_detections(
+            module,
+            MagicMock(spec=ImageDetections2D),
+            old_depth,
+            old_depth,
+        )
+        tf.result = None
+        new_depth = _image(2.0)
+        ObjectSceneRegistrationModule._process_3d_detections(
+            module,
+            MagicMock(spec=ImageDetections2D),
+            new_depth,
+            new_depth,
+        )
 
-    assert len(tf.calls) == 2
-    assert tf.calls[1] == (("map", "camera", 2.0, 0.1), {"forward_tolerance": 0.2})
-    assert module._latest_scene_snapshot == (old_depth, old_transform)
+        assert len(tf.calls) == 2
+        assert tf.calls[1] == (("map", "camera", 2.0, 0.1), {"forward_tolerance": 0.2})
+        assert module._latest_scene_snapshot == (old_depth, old_transform)
+    finally:
+        module._close_module()
 
 
 def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(monkeypatch: Any) -> None:
     depth = _image(3.0)
     transform = MagicMock(name="transform")
-    module = _module(_FakeTF(transform), monkeypatch)
+    module = _module(_FakeTF(transform))
     module._latest_scene_snapshot = (depth, transform)
 
     class _PointCloud:
@@ -143,6 +140,8 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(monkeypatch: Any
         lambda *_args, **_kwargs: result,
     )
 
-    module.get_full_scene_pointcloud()
-
-    result.transform.assert_called_once_with(transform)
+    try:
+        module.get_full_scene_pointcloud()
+        result.transform.assert_called_once_with(transform)
+    finally:
+        module._close_module()

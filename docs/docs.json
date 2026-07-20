@@ -98,6 +98,7 @@
             "group": "Manipulation",
             "pages": [
               "capabilities/manipulation/index",
+              "capabilities/manipulation/agentic",
               "capabilities/manipulation/adding_a_custom_arm",
               "capabilities/manipulation/openarm_integration",
               "capabilities/manipulation/a750"
@@ -406,6 +407,10 @@
     {
       "source": "/docs/capabilities/manipulation",
       "destination": "/capabilities/manipulation/index"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/agentic.md",
+      "destination": "/capabilities/manipulation/agentic"
     },
     {
       "source": "/docs/capabilities/manipulation/adding_a_custom_arm.md",
