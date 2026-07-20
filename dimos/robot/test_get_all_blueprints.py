@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.robot.get_all_blueprints import get_by_name
+from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
 
 
 def test_resolve_string_blueprint():
@@ -26,6 +26,16 @@ def test_resolve_string_blueprint():
 
 def test_resolve_string_module():
     bp = get_by_name("camera-module")
+    assert bp is not None
+
+
+def test_resolve_string_blueprint_or_exit():
+    bp = get_by_name_or_exit("demo-mcp-stress-test")
+    assert bp is not None
+
+
+def test_resolve_string_module_or_exit():
+    bp = get_by_name_or_exit("camera-module")
     assert bp is not None
 
 

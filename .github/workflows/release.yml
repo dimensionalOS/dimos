@@ -109,7 +109,6 @@ jobs:
       id-token: write      # For attest-build-provenance's OIDC sigstore signing
       attestations: write  # For uploading the SLSA build-provenance attestation
     env:
-      CIBW_ENABLE: "cpython-freethreading"
       CIBW_ARCHS: ${{ matrix.arch }}
       # Skip musllinux (Alpine) — Pinocchio's build ecosystem (pin/coal/cmeel-*)
       # is glibc-only; cmeel-assimp >= 6.0.5 has no musllinux wheels.

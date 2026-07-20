@@ -18,13 +18,16 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+import torch
 from ultralytics import YOLOE  # type: ignore[attr-defined]
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
-from dimos.utils.gpu_utils import is_cuda_available
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class YoloePromptMode(Enum):
@@ -43,6 +46,7 @@ class Yoloe2DDetector(Detector):
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
         exclude_class_ids: list[int] | None = None,
         max_area_ratio: float | None = 0.3,
+        conf: float = 0.6,
     ) -> None:
         """
         Initialize YOLO-E 2D detector.
@@ -54,6 +58,7 @@ class Yoloe2DDetector(Detector):
             prompt_mode: LRPC for prompt-free detection, PROMPT for text/visual prompting.
             exclude_class_ids: Class IDs to filter out from results (pass [] to disable).
             max_area_ratio: Maximum bbox area ratio (0-1) relative to image.
+            conf: Confidence threshold passed to Ultralytics inference.
         """
         if model_name is None:
             if prompt_mode == YoloePromptMode.LRPC:
@@ -63,8 +68,10 @@ class Yoloe2DDetector(Detector):
 
         self.model = YOLOE(get_data(model_path) / model_name)
         self.prompt_mode = prompt_mode
+        self._text_prompts: tuple[str, ...] | None = None
         self._visual_prompts: dict[str, NDArray[Any]] | None = None
         self.max_area_ratio = max_area_ratio
+        self.conf = conf
         self._lock = threading.Lock()
 
         if prompt_mode == YoloePromptMode.PROMPT:
@@ -74,12 +81,11 @@ class Yoloe2DDetector(Detector):
         if self.max_area_ratio is not None and not (0.0 < self.max_area_ratio <= 1.0):
             raise ValueError("max_area_ratio must be in the range (0, 1].")
 
-        if device:
-            self.device = device
-        elif is_cuda_available():  # type: ignore[no-untyped-call]
-            self.device = "cuda"
-        else:
-            self.device = "cpu"
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(
+            f"YOLO-E detector loaded model={model_name} prompt_mode={prompt_mode.value} "
+            f"device={self.device} conf={self.conf}"
+        )
 
     def set_prompts(
         self,
@@ -99,13 +105,23 @@ class Yoloe2DDetector(Detector):
             raise ValueError("Must provide either text or bboxes.")
 
         with self._lock:
-            self.model.predictor = None
             if text is not None:
+                prompts = tuple(text)
+                if prompts == self._text_prompts and self._visual_prompts is None:
+                    return
+                self.model.predictor = None
                 self.model.set_classes(text, self.model.get_text_pe(text))  # type: ignore[no-untyped-call]
+                self._text_prompts = prompts
                 self._visual_prompts = None
             else:
+                self.model.predictor = None
                 cls = np.arange(len(bboxes), dtype=np.int16)  # type: ignore[arg-type]
+                self._text_prompts = None
                 self._visual_prompts = {"bboxes": bboxes, "cls": cls}  # type: ignore[dict-item]
+
+    def warmup(self, image: Image) -> None:
+        """Initialize Ultralytics' predictor with the currently configured prompts."""
+        self.predict_image(image)
 
     def process_image(self, image: Image) -> "ImageDetections2D[Any]":
         """
@@ -117,20 +133,30 @@ class Yoloe2DDetector(Detector):
         Returns:
             ImageDetections2D containing all detected objects
         """
-        track_kwargs = {
+        return self._run(image, track=True)
+
+    def predict_image(self, image: Image) -> "ImageDetections2D[Any]":
+        """Run stateless inference for recorded frames."""
+        return self._run(image, track=False)
+
+    def _run(self, image: Image, *, track: bool) -> "ImageDetections2D[Any]":
+        """Run tracking or prediction and apply common filtering."""
+        kwargs = {
             "source": image.to_opencv(),
             "device": self.device,
-            "conf": 0.6,
+            "conf": self.conf,
             "iou": 0.6,
-            "persist": True,
             "verbose": False,
         }
+        if track:
+            kwargs["persist"] = True
 
         with self._lock:
             if self._visual_prompts is not None:
-                track_kwargs["visual_prompts"] = self._visual_prompts
+                kwargs["visual_prompts"] = self._visual_prompts
 
-            results = self.model.track(**track_kwargs)  # type: ignore[arg-type]
+            infer = self.model.track if track else self.model.predict
+            results = infer(**kwargs)  # type: ignore[arg-type]
 
         detections = ImageDetections2D.from_ultralytics_result(image, results)
         return self._apply_filters(image, detections)

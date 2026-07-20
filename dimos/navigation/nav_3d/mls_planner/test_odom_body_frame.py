@@ -12,39 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
-
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.navigation.nav_3d.mls_planner.odom_body_frame import (
-    OdomBodyFrame,
-    OdomBodyFrameConfig,
-)
+from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
 
 
 def _level(mount_rotation, orientation):
-    """Run one odometry message through the handler and return the output.
-
-    Builds the module without its transport so no runtime threads spawn.
-    """
-    module = object.__new__(OdomBodyFrame)
-    module.config = OdomBodyFrameConfig(
-        mount_rotation=list(mount_rotation), body_frame_id="base_link"
-    )
-    module._mount_inv = Quaternion(*module.config.mount_rotation).inverse()
-    captured = []
-    module.body_odometry = SimpleNamespace(publish=captured.append)
-    module._on_odometry(
-        Odometry(
-            ts=1.0,
-            frame_id="odom",
-            child_frame_id="mid360_link",
-            pose=Pose(Vector3(1.0, 2.0, 3.0), orientation),
+    """Run one odometry message through the handler and return the output."""
+    module = OdomBodyFrame(mount_rotation=list(mount_rotation), body_frame_id="base_link")
+    try:
+        captured = []
+        module.body_odometry.subscribe(captured.append)
+        module._on_odometry(
+            Odometry(
+                ts=1.0,
+                frame_id="odom",
+                child_frame_id="mid360_link",
+                pose=Pose(Vector3(1.0, 2.0, 3.0), orientation),
+            )
         )
-    )
-    return captured[0]
+        return captured[0]
+    finally:
+        module.stop()
 
 
 def test_composes_out_the_mount_pitch():
