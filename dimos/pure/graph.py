@@ -48,6 +48,7 @@ from typing import (
     get_args,
     get_origin,
 )
+import warnings
 
 from typing_extensions import dataclass_transform
 
@@ -969,9 +970,9 @@ def _close_out(
         ctx.exports.append((fname, ref))
     unused = [n for n in in_fields if n not in ctx.used_inputs]
     if unused:
-        # §0.1 reaffirms Q2's default (error). The stale inline "USER ANSWER: B - warn"
-        # in §11 is superseded; the acceptance test pins a raise.
-        raise _e_unused_input(cls, unused)
+        # Q2 (Ivan): warn, don't fail — an unused rim input is a soft wiring smell,
+        # not a hard error (it may be wired in a later revision of the graph).
+        warnings.warn(str(_e_unused_input(cls, unused)), stacklevel=2)
     open_fb = sum(1 for fb in ctx.feedbacks_open if fb._closed_with is None)
     if open_fb:
         raise _e_unclosed_feedback(cls, open_fb)

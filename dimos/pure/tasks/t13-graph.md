@@ -31,7 +31,10 @@ text is kept only for context. The Phase-A implementer builds to §0.
   (landed with this spec, live-tested).
 - **Q4 (GraphRun outputs are raw payloads): CONFIRMED.** `run.path.to_list()`
   yields `Path` objects, not Out-row envelopes.
-- Q1/Q2/Q3/Q5/Q6/Q7/Q9 defaults stand unchanged.
+- **Q2 (`[graph-unused-input]` severity): WARN, not error** (honors the inline
+  "USER ANSWER: B - warn" in §11) — an unused rim input warns at build and does
+  not fail it.
+- Q1/Q3/Q5/Q6/Q7/Q9 defaults stand unchanged.
 
 ### 0.2 Runtime is bounded streaming — SUPERSEDES §6.2 (edge logs)
 

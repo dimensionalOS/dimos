@@ -518,8 +518,8 @@ class TestGraphBuild:
             def wire(self, i: "G.In") -> "G.Out":
                 return G.Out(b=MakeB()(a=i.a).b)
 
-        with pytest.raises(pg.PureGraphDefinitionError, match=r"\[graph-unused-input\]"):
-            G().build()
+        with pytest.warns(UserWarning, match=r"\[graph-unused-input\]"):
+            G().build()  # Q2: an unused rim input warns, it does not fail the build
 
     def test_unset_output(self):
         class G(pg.PureGraph):
