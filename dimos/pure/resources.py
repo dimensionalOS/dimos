@@ -30,12 +30,12 @@ from collections.abc import Awaitable, Callable, Coroutine
 from contextvars import ContextVar
 import enum
 import inspect
-import logging
 import threading
 from typing import Any, Final, Generic, Protocol, TypeVar, overload
 
 from dimos.pure.drivers import PureModuleRunError, RunHooks
 from dimos.pure.stepspec import PureModuleDefinitionError
+from dimos.utils.logging_config import setup_logger
 
 __all__ = [
     "IN_HANDLER",
@@ -50,7 +50,7 @@ __all__ = [
 
 _T = TypeVar("_T")
 
-_LOG: Final = logging.getLogger("dimos.pure.resources")
+_LOG: Final = setup_logger()  # reachable in forkserver workers (bare getLogger is swallowed)
 
 _RUN_ATTR: Final = "__pure_run_resources__"
 """Instance slot for the per-run ``RunResources`` context (spec §5.2); ``None`` between runs."""

@@ -29,7 +29,6 @@ from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping
 import dataclasses
 import enum
-import logging
 import re
 import sys
 from typing import TYPE_CHECKING, Any, Final, TypeVar
@@ -37,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Final, TypeVar
 from dimos.pure.rows import UNSTAMPED, TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import AsyncStateless, Fold, Mealy, Stamped, Stateless, Streamable
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -57,7 +57,7 @@ __all__ = [
 DEFAULT_MAX_INFLIGHT: Final[int] = 1
 """Async in-flight window for modules declaring no ``max_inflight`` field (spec §6.1)."""
 
-_LOG: Final = logging.getLogger("dimos.pure.drivers")
+_LOG: Final = setup_logger()  # reachable in forkserver workers (bare getLogger is swallowed)
 
 
 class RunRule(enum.Enum):
