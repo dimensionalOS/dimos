@@ -64,6 +64,39 @@ XARM_GRIPPER_PARAMS = {
     "gripper_open_pos": 0.85,
     "gripper_closed_pos": 0.0,
 }
+XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
+
+
+def make_xarm7_sim_robot_config() -> RobotModelConfig:
+    return make_xarm7_model_config(
+        name="arm",
+        add_gripper=True,
+        tf_extra_links=["link7"],
+        home_joints=XARM7_SIM_HOME,
+        pre_grasp_offset=0.05,
+    )
+
+
+def make_xarm7_sim_hardware(address: str | Path) -> HardwareComponent:
+    return make_xarm_hardware(
+        "arm",
+        7,
+        adapter_type="sim_mujoco",
+        address=address,
+        gripper=True,
+        home_joints=XARM7_SIM_HOME,
+    )
+
+
+def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+    return {
+        "address": address,
+        "headless": False,
+        "dof": 7,
+        "camera_name": "wrist_camera",
+        "base_frame_id": "link7",
+        "reset_joint_positions": XARM7_SIM_HOME,
+    }
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
@@ -77,7 +110,7 @@ def make_xarm_hardware(
     dof: int,
     *,
     adapter_type: str = "mock",
-    address: str | None = None,
+    address: str | Path | None = None,
     gripper: bool = False,
     auto_enable: bool = True,
     adapter_kwargs: dict[str, object] | None = None,
