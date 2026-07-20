@@ -86,6 +86,36 @@ Do **not** make the legacy autoconnect matcher covariant. A small
 `TwistStamped → Twist` translator pure module bridges the command edge; GO2Connection
 changes to accept `TwistStamped` later. Phase B item.
 
+### 0.5 Terminal-drive: compute-once multi-output (Phase A.5, BINDING)
+
+The re-run cone (§0.2) is correct ONLY for reading a *single* output. Reading N
+outputs separately re-evaluates their shared upstream N times (a voxel mapper
+computed once per output) — unacceptable as the normal path. For any run with
+more than one consumer (recording, viz, a downstream stage) the graph must
+compute ONCE. The model:
+
+- A `GraphRun` has one **terminal drive.** `run.save(sink)` (equivalently
+  `graph.over(src).save(sink)`) drives the whole DAG in a single synchronous
+  pass — each produced edge value is teed to all its consumers before the
+  producer advances (bounded, ~one msg/edge in flight, no edge logs, no
+  re-run). Shared upstream runs exactly once.
+- `sink` is any multi-input consumer of the graph's named outputs:
+  - a **mem2 store** → each exported output becomes a named `Observation` stream
+    in the store (`out.stream("path")`, `out.stream("costmap")`), written as
+    produced; the store is then the replay/query system (§0.3).
+  - a **rerun sink** → each output logged under its entity path (the
+    `NavRerunSink` behavior, consuming *exported* streams, not baked into the DAG).
+  - any pure **module/graph** whose In ports match the exported names.
+- Independent per-export lazy pull (`run.path.to_list()`, §0.2's cone) remains
+  ONLY as a one-off single-output convenience. Any multi-output consumption goes
+  through the terminal drive and is compute-once. Interior edges may also be
+  routed into the sink by path (record an interior edge) — same single pass.
+
+Phase A.5 delivers the terminal-drive engine + `.save(sink)` for mem2 stores and
+rerun sinks. **This subsumes the deferred recording (§0.3) — they are one
+mechanism.** It lands before Phase B (blueprint lowering): it is what makes a
+graph usable rather than a demo.
+
 ---
 
 ## 1. Scope and the settled model
