@@ -16,6 +16,7 @@
 
 from enum import IntEnum
 import json
+import math
 import threading
 import time
 from typing import Any
@@ -80,8 +81,9 @@ class G1HighLevelDdsSdkConfig(ModuleConfig):
     loco_client_timeout: float = 10.0
     cmd_vel_timeout: float = 0.2
     # deadzone compensation
-    min_effective_linear_velocity: float = 0.05  # m/s
+    min_effective_linear_velocity: float = 0.08  # m/s
     min_effective_angular_velocity: float = 0.2  # radians/s
+    min_effective_angular_velocity_in_place: float = 0.9  # radians/s
 
 
 def _boost_above_deadzone(value: float, min_effective_magnitude: float) -> float:
@@ -165,9 +167,16 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         raw_vy = twist.linear.y
         raw_vyaw = twist.angular.z
 
+        # at a standstill, the g1 will just flex in place (and spring-back) rather than actually turning
+        turning_in_place = math.hypot(raw_vx, raw_vy) < self.config.min_effective_linear_velocity
+        yaw_floor = (
+            self.config.min_effective_angular_velocity_in_place
+            if turning_in_place
+            else self.config.min_effective_angular_velocity
+        )
         vx = _boost_above_deadzone(raw_vx, self.config.min_effective_linear_velocity)
         vy = _boost_above_deadzone(raw_vy, self.config.min_effective_linear_velocity)
-        vyaw = _boost_above_deadzone(raw_vyaw, self.config.min_effective_angular_velocity)
+        vyaw = _boost_above_deadzone(raw_vyaw, yaw_floor)
 
         if self._stop_timer:
             self._stop_timer.cancel()
