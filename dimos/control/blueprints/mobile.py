@@ -20,6 +20,7 @@ Usage:
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
+    dimos run coordinator-flowbase-stereo-nav            # FlowBase + RealSense D435i stereo depth + nav stack
 """
 
 from __future__ import annotations
@@ -35,8 +36,13 @@ from dimos.control.components import (
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.perception.stereo_point_cloud.filtered_realsense import FilteredRealSenseCamera
+from dimos.perception.stereo_point_cloud.module import StereoPointCloud
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -212,3 +218,42 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
         ),
     ],
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
+
+# FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
+coordinator_flowbase_stereo_nav = (
+    autoconnect(
+        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
+        StereoPointCloud.blueprint(),
+        # Rust voxel map with raycast clearing. frame_cloud/odometry come from
+        # StereoPointCloud; global_emit_every/emit_every throttle at the source
+        # rather than relying solely on the Rerun bridge's max_hz downstream.
+        RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
+        CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
+        # MovementManager.blueprint(),
+        ControlCoordinator.blueprint(
+            hardware=[_flowbase_twist_base()],
+            tasks=[
+                TaskConfig(
+                    name="vel_base",
+                    type="velocity",
+                    joint_names=_base_joints,
+                    priority=10,
+                ),
+            ],
+        ),
+        RerunBridgeModule.blueprint(
+            rerun_open="native",
+            max_hz={"world/frame_cloud": 10.0, "world/global_map": 2.0, "world/local_map": 5.0},
+        ),
+        RerunWebSocketServer.blueprint(),
+    )
+    .remappings(
+        [
+            (ControlCoordinator, "twist_command", "cmd_vel"),
+            (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
+            (RayTracingVoxelMap, "lidar", "frame_cloud"),
+        ]
+    )
+    .global_config(n_workers=8)
+)
