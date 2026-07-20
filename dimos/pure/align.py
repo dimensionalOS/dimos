@@ -46,6 +46,14 @@ from typing_extensions import Self
 
 from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, TfSpec, TickSpec
 from dimos.pure.typing import Stamped
+from dimos.utils.logging_config import setup_logger as _setup_logger
+
+_DBG = _setup_logger()
+
+# TEMPORARY (Go2 firmware bug) — see the drop gate in Aligner.__next__. A sample
+# whose ts jumps more than this far past the port frontier is treated as a corrupt
+# future stamp and dropped without advancing the frontier.
+_FUTURE_TS_OUTLIER_S = 3600.0
 
 if TYPE_CHECKING:
     from dimos.pure.tfbuffer import TfContext
@@ -503,6 +511,22 @@ class Aligner(Generic[InT]):
                         p.it = None
                         break
                     ts = self._checked_ts(p, item)
+                    # TEMPORARY — Go2 firmware bug: the Go2 lidar occasionally stamps a
+                    # scan with a corrupt timestamp ~75 days in the future. Accepting it
+                    # latches this port's frontier (last_ts) to the garbage value, so the
+                    # monotonic gate below then drops every subsequent (correct) sample —
+                    # the stream starves permanently. Drop any item jumping >1h past the
+                    # frontier WITHOUT latching last_ts. Remove once recordings/firmware
+                    # carry sane stamps.
+                    if math.isfinite(p.last_ts) and ts > p.last_ts + _FUTURE_TS_OUTLIER_S:
+                        _DBG.warning(
+                            "dropping sample with implausible future ts (Go2 firmware bug)",
+                            port=p.name,
+                            ts=ts,
+                            last_ts=p.last_ts,
+                            ahead_s=ts - p.last_ts,
+                        )
+                        continue
                     if ts <= p.last_ts:
                         p.stats.dropped_nonmonotonic += 1
                         continue
