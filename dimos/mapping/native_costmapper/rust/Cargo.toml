@@ -1,0 +1,36 @@
+[package]
+name = "dimos-native-costmapper"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust costmap module for dimos"
+license = "Apache-2.0"
+
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_native_costmapper"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "native_costmapper"
+path = "src/main.rs"
+
+[features]
+python = ["dep:pyo3"]
+
+[dependencies]
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+image = { version = "0.25", default-features = false }
+imageproc = { version = "0.27", default-features = false }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+validator = { version = "0.20", features = ["derive"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
