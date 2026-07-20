@@ -63,6 +63,7 @@ __all__ = [
     "RimRule",
     "RimStats",
     "Subscribable",
+    "attach_tf_buffer",
     "ports_of",
     "start_module",
     "stats",
@@ -70,6 +71,9 @@ __all__ = [
     "transformer",
     "warmup_module",
 ]
+
+_TF_STREAM_SPEC: Final = TfSpec(name="tf")
+"""Synthetic marker spec for the m.i.tf stream port (not a bundle field; spec §9.1)."""
 
 DEFAULT_CAPACITY: Final[int] = 16
 """Default per-port ingress ring capacity — KeepLast-style drop-oldest (spec §5, AD1).
@@ -306,10 +310,22 @@ def _unwrap_obs(item: Any) -> Any:
 
 def _tf_frames(module: Any, side: str, name: str, spec: FieldSpec) -> tuple[str, str]:
     """Build-resolved frame edge of a tf port; non-tf ports keep raising (T4 §5.5)."""
-    if not isinstance(spec, (TfSpec, TfOutSpec)):
+    if not isinstance(spec, (TfSpec, TfOutSpec)) or ("in" if side == "i" else "out", name) not in (
+        getattr(module, "__pure_tf_frames__", {})
+    ):
         raise NotImplementedError(f"{_cls(module)}.{side}.{name}.frames — not a tf()/tf_out() port")
     frames: dict[tuple[str, str], tuple[str, str]] = module.__pure_tf_frames__
     return frames[("in" if side == "i" else "out", name)]
+
+
+def _declares_tf(fields: Mapping[str, FieldSpec]) -> bool:
+    """True if the In bundle declares any tf() field (the m.i.tf gate, spec §9.1)."""
+    return any(isinstance(s, TfSpec) for s in fields.values())
+
+
+def _declares_tf_out(fields: Mapping[str, FieldSpec]) -> bool:
+    """True if the Out bundle declares any tf_out() field (the tap gate, spec §9.3)."""
+    return any(isinstance(s, TfOutSpec) for s in fields.values())
 
 
 # ── runtime ports (spec §4.1) ────────────────────────────────────────────────
@@ -435,6 +451,14 @@ class RimInPorts(InPorts[Any]):
         if name.startswith("_"):  # dunder/underscore probes: default lookup semantics
             raise AttributeError(name)
         fields = self.__dict__["_fields"]
+        if name == "tf" and name not in fields and _declares_tf(fields):
+            # Synthetic tf-stream port: present iff the In bundle declares tf() fields
+            # (name collision impossible — D4). Full binding surface (spec §9.1).
+            port = self._ports.get("tf")
+            if port is None:
+                port = RimInPort(self._module, "tf", _TF_STREAM_SPEC)
+                self._ports["tf"] = port
+            return port
         if name not in fields:
             raise _e_unknown_port(self._bundle, name, fields)
         port = self._ports.get(name)
@@ -571,6 +595,7 @@ class _LiveSession:
         self._hooks: RunHooks | None = None
         self._aligner: Aligner[Any] | None = None
         self._driver: Iterator[Any] | None = None
+        self._tf_ctx: Any = None  # TfContext | None — the tf side channel (T11, spec §9)
         self._thread: threading.Thread | None = None
         self._queues: dict[str, _PortQueue] = {}
         self._ingress: dict[str, PortIngress] = {}
@@ -638,12 +663,19 @@ class _LiveSession:
                 self._queues[name] = queue
                 self._ingress[name] = ingress
                 feeds[name] = _LiveFeed(queue)
+            # T11: build the tf side channel (buffer + m.i.tf feed + claims) before
+            #      the aligner; claims raise here, on the caller thread (spec §9.3).
+            self._tf_ctx = self._build_tf_context()
             # 1. Eager aligner: T5's wiring errors name the module at start, on
             #    the caller thread, before any subscription exists (spec §6.1.1).
-            self._aligner = align(self._spec.in_type, feeds)
+            self._aligner = align(self._spec.in_type, feeds, tf=self._tf_ctx)
             # 3. Driver dispatch mirroring run_over (spec §6.1.3; D3 — the rim
             #    composes the public pieces, it does not call run_over live).
             self._driver = self._dispatch(self._aligner, hooks)
+            if self._tf_ctx is not None and _declares_tf_out(self._spec.out_type.fields()):
+                from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §9.3)
+
+                self._driver = tf_out_tap(self._driver, self._module, self._tf_ctx)
             out_view = ports_of(self._module).o
             self._out_ports = {
                 name: getattr(out_view, name) for name in self._spec.out_type.fields()
@@ -665,6 +697,31 @@ class _LiveSession:
         thread.start()
         for pump in self._pumps:
             pump.start()
+
+    def _build_tf_context(self) -> Any:
+        """Buffer (attached or fresh) + wired m.i.tf feed + claims → TfContext (spec §9.3)."""
+        module, spec = self._module, self._spec
+        in_tf = _declares_tf(spec.in_type.fields())
+        out_tf = _declares_tf_out(spec.out_type.fields())
+        if not in_tf and not out_tf:
+            return None
+        from dimos.pure.tfbuffer import TfBuffer, TfContext  # lazy (spec §9.3)
+
+        state: _RimState = getattr(module, _RIM_ATTR)
+        buffer = state.tf_buffer if state.tf_buffer is not None else TfBuffer()
+        feed: _LiveFeed | None = None
+        if in_tf:
+            tf_port = ports_of(module).i._ports.get("tf")  # created only if m.i.tf touched
+            if tf_port is not None and (
+                tf_port.__dict__["transport"] is not None or tf_port.__dict__["source"] is not None
+            ):
+                ingress = PortIngress()
+                queue = _PortQueue(tf_port.__dict__["capacity"], self._cond, ingress)
+                self._queues["tf"] = queue
+                self._ingress["tf"] = ingress
+                feed = _LiveFeed(queue)
+                self._bind_ingress("tf", tf_port, queue)  # pump/subscribe, started with the rest
+        return TfContext.for_live(module, spec, buffer, feed)
 
     def _dispatch(self, rows: Iterator[Any], hooks: RunHooks) -> Iterator[Any]:
         """The run_over dispatch, over live feeds (spec §6.1.3)."""
@@ -722,6 +779,13 @@ class _LiveSession:
 
     def _unwind_start(self, hooks: RunHooks) -> None:
         """G3: reverse-unwind a failed start on the caller thread; original error re-raises."""
+        if self._tf_ctx is not None:
+            try:
+                self._tf_ctx.release()  # drop any claims taken before the failure (spec §9.3)
+            except Exception:
+                _LOG.warning(
+                    "%s tf release raised during unwind", _cls(self._module), exc_info=True
+                )
         self._seal_ingestion()
         self._safe_teardown(hooks)
         self._state = "stopped"
@@ -757,6 +821,11 @@ class _LiveSession:
                     _LOG.warning(
                         "%s driver close raised: %r", _cls(self._module), exc, exc_info=exc
                     )
+            if self._tf_ctx is not None:
+                try:
+                    self._tf_ctx.release()  # idempotent with the tap's own finally (spec §9.3)
+                except Exception:
+                    _LOG.warning("%s tf release raised", _cls(self._module), exc_info=True)
             self._error = error
             self._seal_ingestion()  # a dead session consumes nothing (spec §6.1.5)
             with self._cond:
@@ -880,6 +949,7 @@ class _RimState:
         spec: StepSpec = type(module).__pure_step__  # T3-stamped; never re-derived
         self.spec = spec
         self.session: _LiveSession | None = None
+        self.tf_buffer: Any = None  # attached shared TfBuffer, or None → fresh per session (T11)
         self._i = RimInPorts(module, spec)
         self._o = RimOutPorts(module, spec)
 
@@ -915,6 +985,15 @@ def ports_of(module: Any) -> _RimState:
             state = _RimState(module)
             object.__setattr__(module, _RIM_ATTR, state)
         return state  # type: ignore[no-any-return]
+
+
+def attach_tf_buffer(module: Any, buffer: Any) -> None:
+    """Store a (possibly shared) TfBuffer for the module's next session (spec §9.2)."""
+    state = ports_of(module)
+    session = state.session
+    if session is not None and session.state == "running":
+        raise _e_live_rebind(module, "i", "tf")  # live-rebind guard, like any binding
+    state.tf_buffer = buffer
 
 
 def warmup_module(module: Any) -> None:

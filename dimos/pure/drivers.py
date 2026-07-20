@@ -34,7 +34,7 @@ import re
 import sys
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from dimos.pure.rows import UNSTAMPED
+from dimos.pure.rows import UNSTAMPED, TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import AsyncStateless, Fold, Mealy, Stamped, Stateless, Streamable
 
@@ -177,6 +177,7 @@ def run_over(
     spec: StepSpec,
     streams: Mapping[str, Streamable],
     *,
+    tf: Any | None = None,  # runtime-untyped like module; static type lives on over() (spec §8.3)
     hooks: RunHooks | None = None,
 ) -> Iterator[Any]:
     """Validate eagerly, align via T5, dispatch on ``spec.kind`` (spec §4)."""
@@ -196,17 +197,47 @@ def run_over(
     from dimos.pure.resources import attach_resources  # T7 RESOURCE SEAM — lazy, permanently
 
     attach_resources(module, hooks, async_run=spec.kind is StepKind.ASYNC_STATELESS)
+    # ── tf side channel (T11): lazy, only when tf= given or the bundles declare edges ──
+    in_tf, out_tf = _has_tf_fields(spec)
+    ctx: Any | None = None
+    if tf is not None or in_tf or out_tf:
+        from dimos.pure.tfbuffer import TfContext  # lazy — leaf engine (spec §8.3)
+
+        ctx = TfContext.for_over(module, spec, tf)  # claims/wiring raise here, caller thread
     from dimos.pure.align import align  # lazy, permanently (spec §4)
 
-    rows = align(spec.in_type, {name: _coerce_stream(s) for name, s in streams.items()})
-    # ── dispatch: drivers self-finalize (§8.2); no wrapper of run_over's own ──
+    rows = align(spec.in_type, {name: _coerce_stream(s) for name, s in streams.items()}, tf=ctx)
+    # ── dispatch: drivers self-finalize (§8.2); the tf tap wraps the out iterator ──
     if spec.kind is StepKind.MEALY:
-        return drive_mealy(module, rows, initial, skips=spec.skips, hooks=hooks)
-    if spec.kind is StepKind.ASYNC_STATELESS:
-        return drive_async(module, rows, max_inflight=max_inflight, skips=spec.skips, hooks=hooks)
-    if spec.kind is StepKind.FOLD:
-        return drive_fold(module, rows, hooks=hooks)
-    return drive_stateless(module, rows, skips=spec.skips, hooks=hooks)
+        driver = drive_mealy(module, rows, initial, skips=spec.skips, hooks=hooks)
+    elif spec.kind is StepKind.ASYNC_STATELESS:
+        driver = drive_async(module, rows, max_inflight=max_inflight, skips=spec.skips, hooks=hooks)
+    elif spec.kind is StepKind.FOLD:
+        driver = drive_fold(module, rows, hooks=hooks)
+    else:
+        driver = drive_stateless(module, rows, skips=spec.skips, hooks=hooks)
+    if ctx is None:
+        return driver
+    if out_tf:
+        from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §7.1)
+
+        return tf_out_tap(driver, module, ctx)
+    return _tf_released(driver, ctx)  # no tf_out fields: still release claims on teardown
+
+
+def _has_tf_fields(spec: StepSpec) -> tuple[bool, bool]:
+    """(In declares tf(), Out declares tf_out()) — the tf-context trigger (spec §8.3)."""
+    in_tf = any(isinstance(s, TfSpec) for s in spec.in_type.fields().values())
+    out_tf = any(isinstance(s, TfOutSpec) for s in spec.out_type.fields().values())
+    return in_tf, out_tf
+
+
+def _tf_released(driver: Iterator[_T], ctx: Any) -> Iterator[_T]:
+    """Wrap a tf-consumer driver (no tf_out) so claims release once on teardown (spec §8.3)."""
+    try:
+        yield from driver
+    finally:
+        ctx.release()
 
 
 def _check_unknown_streams(module: Any, spec: StepSpec, streams: Mapping[str, Streamable]) -> None:

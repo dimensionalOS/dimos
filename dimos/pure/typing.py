@@ -26,7 +26,19 @@ or ``import dimos.pure.typing as pure_typing``) and never bind the bare name
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Iterator
-from typing import Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    overload,
+    runtime_checkable,
+)
+
+if TYPE_CHECKING:
+    from dimos.pure.tfbuffer import TfSource
 
 __all__ = [
     "AsyncStateless",
@@ -221,16 +233,24 @@ class EngineSurface:
     o = _OutAccessor()
 
     @overload
-    def over(self: AsyncStateless[_TIn, _TOut], **streams: Streamable) -> Iterator[_TOut]: ...
+    def over(
+        self: AsyncStateless[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+    ) -> Iterator[_TOut]: ...
     @overload
-    def over(self: Mealy[_TState, _TIn, _TOut], **streams: Streamable) -> Iterator[_TOut]: ...
+    def over(
+        self: Mealy[_TState, _TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+    ) -> Iterator[_TOut]: ...
     @overload
-    def over(self: Stateless[_TIn, _TOut], **streams: Streamable) -> Iterator[_TOut]: ...
+    def over(
+        self: Stateless[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+    ) -> Iterator[_TOut]: ...
     @overload
-    def over(self: Fold[_TIn, _TOut], **streams: Streamable) -> Iterator[_TOut]: ...
-    def over(self: Any, **streams: Streamable) -> Iterator[Any]:
+    def over(
+        self: Fold[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+    ) -> Iterator[_TOut]: ...
+    def over(self: Any, *, tf: Any = None, **streams: Streamable) -> Iterator[Any]:
         """Align streams, drive the step, yield typed Out rows (T5 + T6)."""
         from dimos.pure.drivers import run_over  # lazy: sanctioned edge #2
         from dimos.pure.stepspec import step_spec  # lazy: sanctioned edge #1
 
-        return run_over(self, step_spec(type(self)), streams)
+        return run_over(self, step_spec(type(self)), streams, tf=tf)
