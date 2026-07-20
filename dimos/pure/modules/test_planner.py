@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -33,8 +33,8 @@ def _grid(cells: np.ndarray, ts: float) -> OccupancyGrid:
     return cm
 
 
-def _goal(x: float, y: float, ts: float) -> PoseStamped:
-    g = PoseStamped(frame_id="world", position=[x, y, 0.0])
+def _goal(x: float, y: float, ts: float) -> PointStamped:
+    g = PointStamped(x=x, y=y, z=0.0, frame_id="world")
     g.ts = ts
     return g
 
@@ -52,7 +52,9 @@ def _at(x: float, y: float, *ts: float) -> list[Any]:
 def test_plans_robot_to_goal_over_free_grid() -> None:
     m = Planner()
     cm = _grid(np.zeros((20, 20)), ts=1.0)
-    rows = list(m.over(costmap=[cm], goal=[_goal(1.5, 0.5, ts=0.5)], tf=_at(0.2, 0.2, 0.0, 2.0)))
+    rows = list(
+        m.over(costmap=[cm], goal_point=[_goal(1.5, 0.5, ts=0.5)], tf=_at(0.2, 0.2, 0.0, 2.0))
+    )
     (row,) = rows
     poses = row.path.poses
     assert row.path.frame_id == "world"
@@ -68,7 +70,7 @@ def test_unreachable_goal_skips_tick() -> None:
     rows = list(
         m.over(
             costmap=[_grid(cells, ts=1.0)],
-            goal=[_goal(1.5, 0.5, ts=0.5)],
+            goal_point=[_goal(1.5, 0.5, ts=0.5)],
             tf=_at(0.2, 0.2, 0.0, 2.0),
         )
     )
@@ -76,10 +78,12 @@ def test_unreachable_goal_skips_tick() -> None:
 
 
 def test_no_goal_yet_emits_nothing() -> None:
-    # required latest goal: ticks drop until a goal has been seen
+    # no goal_point yet (optional, default None): the tick skips silently
     m = Planner()
     rows = list(
-        m.over(costmap=[_grid(np.zeros((20, 20)), ts=1.0)], goal=[], tf=_at(0.2, 0.2, 0.0, 2.0))
+        m.over(
+            costmap=[_grid(np.zeros((20, 20)), ts=1.0)], goal_point=[], tf=_at(0.2, 0.2, 0.0, 2.0)
+        )
     )
     assert rows == []
 
@@ -89,6 +93,6 @@ def test_replans_each_costmap() -> None:
     m = Planner()
     cms = [_grid(np.zeros((20, 20)), ts=1.0), _grid(np.zeros((20, 20)), ts=2.0)]
     rows = list(
-        m.over(costmap=cms, goal=[_goal(1.5, 0.5, ts=0.5)], tf=_at(0.2, 0.2, 0.0, 1.5, 2.5))
+        m.over(costmap=cms, goal_point=[_goal(1.5, 0.5, ts=0.5)], tf=_at(0.2, 0.2, 0.0, 1.5, 2.5))
     )
     assert [r.ts for r in rows] == [1.0, 2.0]

@@ -844,6 +844,7 @@ class TestNavStackPort:
         from itertools import tee as _tee
 
         from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
         from dimos.pure.modules.costmapper import PureCostMapper
@@ -857,7 +858,7 @@ class TestNavStackPort:
         scans, voxel, every = 24, 0.1, 8
 
         def _goal():
-            g = PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+            g = PointStamped(x=0.0, y=0.0, z=0.0, frame_id="world")
             g.ts = 1.0  # below every recording ts — planner's latest() sees it from tick 1
             return g
 
@@ -873,7 +874,9 @@ class TestNavStackPort:
             map_cost, map_sink = _tee(maps)
             costs = (r.global_costmap for r in PureCostMapper().over(global_map=map_cost))
             cost_plan, cost_sink = _tee(costs)
-            paths = [r.path for r in Planner().over(costmap=cost_plan, goal=[_goal()], tf=tf_items)]
+            paths = [
+                r.path for r in Planner().over(costmap=cost_plan, goal_point=[_goal()], tf=tf_items)
+            ]
             want_maps = list(map_sink)
             want_costs = list(cost_sink)
 
@@ -882,7 +885,7 @@ class TestNavStackPort:
             lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
             odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
             with NavStack(voxel_size=voxel, emit_every=every).over(
-                lidar=lidar, odom=odom, goal=[_goal()]
+                lidar=lidar, odom=odom, goal_point=[_goal()]
             ) as run:
                 got_paths = run.path.to_list()
                 got_maps = run.map.to_list()
@@ -903,6 +906,7 @@ class TestNavStackPort:
         # match the Phase A per-export pull frame-for-frame.
         from dimos.memory2.store.memory import MemoryStore
         from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -912,7 +916,7 @@ class TestNavStackPort:
         scans, voxel, every = 24, 0.1, 8
 
         def _goal():
-            g = PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+            g = PointStamped(x=0.0, y=0.0, z=0.0, frame_id="world")
             g.ts = 1.0
             return g
 
@@ -920,7 +924,7 @@ class TestNavStackPort:
             lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
             odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
             with NavStack(voxel_size=voxel, emit_every=every).over(
-                lidar=lidar, odom=odom, goal=[_goal()]
+                lidar=lidar, odom=odom, goal_point=[_goal()]
             ) as run:
                 want_maps = [repr(m) for m in run.map.to_list()]
                 want_costs = [repr(c) for c in run.costmap.to_list()]
@@ -931,7 +935,7 @@ class TestNavStackPort:
             lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
             odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
             NavStack(voxel_size=voxel, emit_every=every).over(
-                lidar=lidar, odom=odom, goal=[_goal()]
+                lidar=lidar, odom=odom, goal_point=[_goal()]
             ).save(out)
 
         assert sorted(out.list_streams()) == ["costmap", "map", "path"]
@@ -1018,7 +1022,7 @@ class TestGraphBlueprint:
         # Rim In ports stay exposed (bare) — the name-crossing scan->lidar included.
         assert remap[("nav_stack/voxel_mapper", "scan")] == "lidar"
         assert remap[("nav_stack/odom_tf", "odom")] == "odom"
-        assert remap[("nav_stack/planner", "goal")] == "goal"
+        assert remap[("nav_stack/planner", "goal_point")] == "goal_point"
 
         # The charter's name-crossing edge: cost.global_costmap -> planner.costmap,
         # both joined on the exported `costmap` topic (the export name wins).

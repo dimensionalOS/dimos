@@ -39,6 +39,7 @@ from itertools import tee
 
 from dimos import pure as pm
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -103,7 +104,7 @@ def run(scans: int, sink: str, out: str | None) -> int:
         odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
         tf_items = [r.tf for r in OdomTf().over(odom=odom)]  # small; planner tf + sink robot
 
-        goal = PoseStamped(frame_id=WORLD, position=[0.0, 0.0, 0.0])
+        goal = PointStamped(x=0.0, y=0.0, z=0.0, frame_id=WORLD)
         goal.ts = 1.0  # below every recording ts, so the planner's latest() sees it from tick 1
 
         # Lazy DAG: tee fans each stage to both the next module and the sink. One frame in
@@ -112,7 +113,7 @@ def run(scans: int, sink: str, out: str | None) -> int:
         map_cost, map_sink = tee(maps)
         costmaps = (r.global_costmap for r in PureCostMapper().over(global_map=map_cost))
         cost_plan, cost_sink = tee(costmaps)
-        paths = (r.path for r in Planner().over(costmap=cost_plan, goal=[goal], tf=tf_items))
+        paths = (r.path for r in Planner().over(costmap=cost_plan, goal_point=[goal], tf=tf_items))
 
         rows = NavRerunSink(sink=sink, save_path=out).over(
             map=map_sink, costmap=cost_sink, path=paths, robot=tf_items
@@ -137,9 +138,11 @@ def run_graph(scans: int, sink: str, out: str | None) -> int:
     with SqliteStore(path=str(path)) as store:
         lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
         odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
-        goal = PoseStamped(frame_id=WORLD, position=[0.0, 0.0, 0.0])
+        goal = PointStamped(x=0.0, y=0.0, z=0.0, frame_id=WORLD)
         goal.ts = 1.0  # below every recording ts, so the planner's latest() sees it from tick 1
-        run = NavStack(voxel_size=0.1, emit_every=20).over(lidar=lidar, odom=odom, goal=[goal])
+        run = NavStack(voxel_size=0.1, emit_every=20).over(
+            lidar=lidar, odom=odom, goal_point=[goal]
+        )
         n: int = run.save(NavRerunSink(sink=sink, save_path=out))
     print(f"rendered {n} frames")
     return n

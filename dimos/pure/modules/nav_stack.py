@@ -25,6 +25,7 @@ recording is attached to the run's exported streams, not baked into the DAG.
 """
 
 from dimos import pure as pm
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
@@ -45,7 +46,7 @@ class NavStack(PureGraph):
     class In(pm.In):
         lidar: PointCloud2
         odom: PoseStamped
-        goal: PoseStamped
+        goal_point: PointStamped  # the destination point (e.g. a rerun click)
 
     class Out(pm.Out):
         path: Path
@@ -53,11 +54,11 @@ class NavStack(PureGraph):
         map: PointCloud2
 
     def wire(self, i: "NavStack.In") -> "NavStack.Out":
-        """Map scans, cost them, plan robot->goal; odom drives the planner's tf."""
+        """Map scans, cost them, plan robot->goal_point; odom drives the planner's tf."""
         odom_tf = OdomTf()(odom=i.odom)
         mapped = VoxelMapper(voxel_size=self.voxel_size, emit_every=self.emit_every)(scan=i.lidar)
         cost = PureCostMapper()(global_map=mapped.global_map)
-        plan = Planner()(costmap=cost.global_costmap, goal=i.goal, tf=odom_tf.tf)
+        plan = Planner()(costmap=cost.global_costmap, goal_point=i.goal_point, tf=odom_tf.tf)
         return NavStack.Out(
             path=plan.path,
             costmap=cost.global_costmap,

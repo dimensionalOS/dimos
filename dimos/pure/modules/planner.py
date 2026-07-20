@@ -26,8 +26,9 @@ plan is frame-consistent with the map it was cut from.
 from __future__ import annotations
 
 from dimos import pure as pm
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
@@ -36,7 +37,7 @@ __all__ = ["Planner"]
 
 
 class Planner(pm.PureModule):
-    """A* a path from the robot to the goal over each new costmap."""
+    """A* a path from the robot to the goal point over each new costmap."""
 
     frame_id: str = "world"  # plan frame; costmap, goal, and position all live here
     body_frame: str = "base_link"  # robot frame; position samples frame_id <- body_frame
@@ -46,16 +47,18 @@ class Planner(pm.PureModule):
     class In(pm.In):
         costmap: OccupancyGrid = pm.tick(expect_hz=2)
         position: Transform = pm.tf("{frame_id}", "{body_frame}")  # robot pose at tick ts
-        goal: PoseStamped = pm.latest()  # latest requested destination
+        goal_point: PointStamped | None = pm.latest(default=None)  # destination; silent until set
 
     class Out(pm.Out):
         path: Path  # no cadence contract: the planner is silent with no goal / no path
 
     def step(self, i: In) -> Out | None:
-        """Plan robot -> goal on this costmap; skip the tick when no path exists."""
+        """Plan robot -> goal_point on this costmap; skip the tick with no goal or no path."""
+        if i.goal_point is None:
+            return None  # no destination yet
         path = min_cost_astar(
             i.costmap,
-            goal=i.goal.position,
+            goal=Vector3(i.goal_point.x, i.goal_point.y, i.goal_point.z),
             start=i.position.translation,
             cost_threshold=self.cost_threshold,
             unknown_penalty=self.unknown_penalty,
