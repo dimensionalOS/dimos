@@ -503,7 +503,7 @@ async fn run(config: &Config, latest: Arc<Latest>, sink: Sink) -> Result<()> {
     };
     Ok(())
 }
- 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let envelope: Envelope = serde_json::from_reader(io::stdin())?;
