@@ -21,8 +21,8 @@ Spec: dimos/pure/tasks/t2-config.md. Deliberately absent here: ``step``,
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar
+from collections.abc import Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, overload
 
 from typing_extensions import dataclass_transform
 
@@ -34,10 +34,16 @@ from dimos.pure.config import (
 )
 from dimos.pure.rows import TfOutSpec, TfSpec, _merged_specs, format_frame
 from dimos.pure.stepspec import PureModuleDefinitionError, StepSpec, classify
-from dimos.pure.typing import EngineSurface
+from dimos.pure.typing import AsyncStateless, EngineSurface, Fold, Mealy, Stateless
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
+
+# Solver twins for the __call__ overloads (T4 doctrine: plain typevars unify
+# against the concrete step; variant typevars are illegal in overload position).
+_TIn = TypeVar("_TIn")
+_TOut = TypeVar("_TOut")
+_TState = TypeVar("_TState")
 
 # T3 SEAM (spec §10.1) — ACTIVE: classify(cls) runs as the LAST statement of
 # __init_subclass__; __pure_step__'s presence certifies that ALL definition-time
@@ -157,11 +163,34 @@ class PureModule(EngineSurface):
 
         rim.stop_module(self)
 
-    def __call__(self, rows: Any) -> Any:
-        """Single-input transform() equivalence over an iterator (t8-rim.md §10, S5)."""
-        from dimos.pure import rim  # T8 RIM SEAM (S5) — lazy
+    # ── the one operator (t13-graph.md §3.3): keyword application, positional
+    # transformer. Overload order mirrors over(): AsyncStateless first, so a
+    # coroutine-returning step cannot unify _TOut with the sync overload.
+    @overload
+    def __call__(self: AsyncStateless[_TIn, _TOut], **ports: Any) -> _TOut: ...
+    @overload
+    def __call__(self: Mealy[_TState, _TIn, _TOut], **ports: Any) -> _TOut: ...
+    @overload
+    def __call__(self: Stateless[_TIn, _TOut], **ports: Any) -> _TOut: ...
+    @overload
+    def __call__(self: Fold[_TIn, _TOut], **ports: Any) -> _TOut: ...
+    @overload
+    def __call__(self, rows: Iterable[Any], /) -> Iterator[Any]: ...
+    def __call__(self, *args: Any, **ports: Any) -> Any:
+        """Keyword ports: symbolic application (T13). Positional iterator: transform (S5)."""
+        if args:
+            if len(args) > 1 or ports:
+                raise TypeError(
+                    f"{type(self).__name__}(...) mixes a positional row iterator with "
+                    f"port kwargs — transform takes rows only, application takes ports "
+                    f"only"
+                )
+            from dimos.pure import rim  # T8 RIM SEAM (S5) — lazy
 
-        return rim.transformer(self)(rows)
+            return rim.transformer(self)(args[0])
+        from dimos.pure.graph import apply_symbolic  # T13 GRAPH SEAM — lazy
+
+        return apply_symbolic(self, ports)
 
     @classmethod
     def blueprint(cls, *, name: str | None = None, **kwargs: Any) -> Blueprint:
