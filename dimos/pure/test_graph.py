@@ -30,9 +30,6 @@ import pytest
 from dimos import pure as pm
 from dimos.pure import graph as pg
 
-SKIP_B = pytest.mark.skip(reason="T13 Phase B impl pending")
-
-
 # ── toy payloads / modules (definable under the landed engine) ───────────────
 
 
@@ -944,10 +941,9 @@ class TestNavStackPort:
         assert want_maps, "expected at least one map emit over the slice"
 
 
-# ── skip-gated: blueprint lowering (spec §7, Phase B) ────────────────────────
+# ── live: blueprint lowering (spec §7, Phase B) ──────────────────────────────
 
 
-@SKIP_B
 class TestGraphBlueprint:
     def test_lowering_names_remaps_and_exposure(self):
         class Pipe2(pg.PureGraph):
@@ -972,13 +968,187 @@ class TestGraphBlueprint:
         assert remap.get(("pipe2/make_b", "a"), "a") == "a"
         assert remap.get(("pipe2/join_b", "total"), "total") == "total"
 
-    def test_grounding_go2_replay(self):
-        # North star (spec §7.4): NavStack beside GO2Connection under --replay.
+    def test_config_and_namespace_override(self):
+        # Member config flows into the atom kwargs; namespace= overrides the prefix.
+        class Scale(pm.PureModule):
+            gain: float = 1.0
+
+            class In(pm.In):
+                a: PayA = pm.tick()
+
+            class Out(pm.Out):
+                b: PayB
+
+            def step(self, i: In) -> Out:
+                return Scale.Out(b=PayB(ts=i.ts, v=i.a.v * self.gain))
+
+        class Cfg(pg.PureGraph):
+            gain: float = 5.0
+
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                b: PayB
+
+            def wire(self, i: "Cfg.In") -> "Cfg.Out":
+                return Cfg.Out(b=Scale(gain=self.gain)(a=i.a).b)
+
+        bp = Cfg.blueprint(gain=9.0, namespace="ns")
+        (atom,) = bp.blueprints
+        assert atom.name == "ns/scale"
+        assert atom.kwargs["gain"] == 9.0  # graph config → member config → atom kwargs
+
+    def test_navstack_lowering_matches_the_worked_table(self):
+        # Spec §7.3 asserted against the produced Blueprint (no coordinator). The
+        # landed NavStack additionally exports `map`, so voxel_mapper/global_map is
+        # exposed rather than path-qualified — the one divergence from the charter
+        # table row; the cost->plan name-crossing edge appears exactly as promised.
+        from .modules.nav_stack import NavStack
+
+        bp = NavStack.blueprint(voxel_size=0.1)
+        assert {atom.name for atom in bp.blueprints} == {
+            "nav_stack/odom_tf",
+            "nav_stack/voxel_mapper",
+            "nav_stack/pure_cost_mapper",
+            "nav_stack/planner",
+        }
+        remap = dict(bp.remapping_map)
+
+        # Rim In ports stay exposed (bare) — the name-crossing scan->lidar included.
+        assert remap[("nav_stack/voxel_mapper", "scan")] == "lidar"
+        assert remap[("nav_stack/odom_tf", "odom")] == "odom"
+        assert remap[("nav_stack/planner", "goal")] == "goal"
+
+        # The charter's name-crossing edge: cost.global_costmap -> planner.costmap,
+        # both joined on the exported `costmap` topic (the export name wins).
+        assert remap[("nav_stack/pure_cost_mapper", "global_costmap")] == "costmap"
+        assert remap[("nav_stack/planner", "costmap")] == "costmap"
+
+        # Exports stay exposed; voxel_mapper.global_map is exported AND consumed by
+        # the cost mapper — one topic, `map`.
+        assert remap[("nav_stack/planner", "path")] == "path"
+        assert remap[("nav_stack/voxel_mapper", "global_map")] == "map"
+        assert remap[("nav_stack/pure_cost_mapper", "global_map")] == "map"
+
+        # An unexported interior Out stream is namespaced, never bare (health merges).
+        assert remap[("nav_stack/voxel_mapper", "health")] == "nav_stack/health"
+        assert remap[("nav_stack/planner", "health")] == "nav_stack/health"
+
+    def test_combined_with_go2_matches_by_name_and_type(self):
+        # Spec §9: the combined blueprint is valid — GO2's lidar/odom outputs link
+        # NavStack's exposed rim inputs by (name, type); no topic collisions.
         from dimos.core.coordination.blueprints import autoconnect
-        from dimos.pure.modules.costmapper import CostMapper  # noqa: F401 (T12 tree)
+        from dimos.core.coordination.module_coordinator import (
+            _all_name_types,
+            _verify_no_name_conflicts,
+        )
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
         from dimos.robot.unitree.go2.connection import GO2Connection
 
-        from .modules.nav_stack import NavStack  # landed with the NavStack port
+        from .modules.nav_stack import NavStack
 
         bp = autoconnect(GO2Connection.blueprint(), NavStack.blueprint(voxel_size=0.1))
-        assert bp is not None  # coordinator run + on-bus assertions per spec §7.4
+        pairs = _all_name_types(bp)
+        assert ("lidar", PointCloud2) in pairs  # GO2 Out -> NavStack rim In
+        assert ("odom", PoseStamped) in pairs
+        _verify_no_name_conflicts(bp)  # namespaced interior never collides
+
+
+class TestTwistUnstampTranslator:
+    """The §0.4 cmd_vel seam: a TwistStamped -> Twist translator, not covariance."""
+
+    def test_row_level_unwrap(self):
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+
+        from .modules.translators import TwistUnstamp
+
+        ins = [
+            TwistStamped(ts=1.0, linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.5]),
+            TwistStamped(ts=2.0, linear=[0.0, 2.0, 0.0], angular=[0.0, 0.0, 1.0]),
+        ]
+        outs = [r.cmd_vel for r in TwistUnstamp().over(cmd_vel_stamped=ins)]
+        assert len(outs) == 2
+        assert all(type(o) is Twist for o in outs)  # the stamp is gone (bare Twist)
+        assert outs[0].linear == ins[0].linear and outs[0].angular == ins[0].angular
+        assert outs[1].linear == ins[1].linear
+
+    def test_is_bridgeable(self):
+        # Register-clean: the legacy factory accepts it (no reserved-name collision),
+        # and it lowers to an In[TwistStamped]/Out[Twist] atom for autoconnect.
+        from dimos.core.coordination.blueprints import BlueprintAtom
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+        from dimos.pure.legacy import legacy_actor
+
+        from .modules.translators import TwistUnstamp
+
+        atom = BlueprintAtom.create(legacy_actor(TwistUnstamp), {})
+        refs = {(s.name, s.type, s.direction) for s in atom.streams}
+        assert ("cmd_vel_stamped", TwistStamped, "in") in refs
+        assert ("cmd_vel", Twist, "out") in refs
+
+
+# The full north star (spec §7.4) — NavStack.blueprint() autoconnected beside
+# GO2Connection under --replay, deployed on the real worker pool — is heavy
+# (webrtc import + standup sleep + multi-worker fork) and its END-TO-END payload
+# emergence over cross-worker LCM replay is timing-dependent (a Phase A rim/
+# transport concern, not the lowering). It is skipped in CI and gated on the
+# dataset. The lowering itself is proven deterministically: the combined
+# blueprint BUILDS + DEPLOYS every graph member beside GO2, each on its own
+# worker, with the rim transports (lidar/odom in, costmap/path out) wired — which
+# is what this test asserts. Live data flow THROUGH a lowered graph member is
+# proven in-process by test_legacy.TestGraphBlueprintE2E; the NavStack DAG over
+# this very dataset is proven by TestNavStackPort (both run by default).
+@pytest.mark.skipif_in_ci  # heavy: worker pool + replay + webrtc import + standup sleep
+class TestGroundingGo2Replay:
+    """North star (spec §7.4): NavStack beside GO2Connection under --replay."""
+
+    def test_lowered_graph_deploys_next_to_go2_replay(self):
+        from dimos.core.coordination.blueprints import autoconnect
+        from dimos.core.coordination.module_coordinator import ModuleCoordinator
+        from dimos.robot.unitree.go2.connection import GO2Connection
+
+        from .modules.nav_stack import NavStack
+
+        path = _hk_data("go2_hongkong_office.db")
+        bp = autoconnect(GO2Connection.blueprint(), NavStack.blueprint(voxel_size=0.1))
+        mc = ModuleCoordinator.build(
+            bp,
+            {
+                "g": {
+                    "viewer": "none",
+                    "robot_ip": "replay",  # ip=='replay' selects ReplayConnection
+                    "replay_db": str(path),
+                    "obstacle_avoidance": False,
+                }
+            },
+        )
+        try:
+            # Every graph member deploys next to GO2, each on its own worker (P9).
+            assert {
+                "go2connection",
+                "nav_stack/odom_tf",
+                "nav_stack/voxel_mapper",
+                "nav_stack/pure_cost_mapper",
+                "nav_stack/planner",
+            } <= set(mc._deployed_modules)
+            workers = mc._managers["python"].workers  # type: ignore[attr-defined]
+            owners = {w.worker_id for w in workers for m in w.module_names}
+            assert len(owners) >= 5  # GO2 + four graph members, dedicated workers each
+
+            # GO2's lidar/odom bridged onto the bus; the graph's exported outputs
+            # (costmap/path) are wired transports — the rim exposed, interior namespaced.
+            names = {name for name, _ in mc._transport_registry}
+            assert {"lidar", "odom", "costmap", "path"} <= names  # rim exposed, bare
+            # The name-crossing interior edge never leaks a bare interior topic.
+            assert "global_costmap" not in names and "global_map" not in names
+        finally:
+            mc.stop()
+            for _t in list(mc._transport_registry.values()):
+                try:
+                    _t.stop()
+                except Exception:
+                    pass

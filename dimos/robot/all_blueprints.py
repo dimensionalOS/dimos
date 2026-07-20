@@ -274,6 +274,7 @@ all_modules = {
     "terrain-analysis": "dimos.navigation.cmu_nav.modules.terrain_analysis.terrain_analysis.TerrainAnalysis",
     "terrain-map-ext": "dimos.navigation.cmu_nav.modules.terrain_map_ext.terrain_map_ext.TerrainMapExt",
     "twist-teleop-module": "dimos.teleop.quest.quest_extensions.TwistTeleopModule",
+    "twist-unstamp": "dimos.pure.modules.translators.TwistUnstamp",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
     "unity-bridge-module": "dimos.simulation.unity.module.UnityBridgeModule",

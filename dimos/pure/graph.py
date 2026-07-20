@@ -1427,6 +1427,66 @@ def _rebuild_graph(cls: type[PureGraph], dump: dict[str, Any]) -> PureGraph:
     return cls(**dump)
 
 
+# ── blueprint lowering (spec §7.2) — the graph's one dimos.core edge ─────────
+
+
+def _lower_blueprint(cls: type[Any], namespace: str | None, config: Mapping[str, Any]) -> Blueprint:
+    """Lower a built plan to a coordinator Blueprint namespace (spec §7.2).
+
+    Each member deploys through the T8 bridge (one process); the graph's explicit
+    edges GENERATE the wiring — an interior edge path-qualifies its producer topic
+    and every consumer joins it; a name-crossing edge becomes a ``.remappings``
+    entry; rim In/Out ports stay exposed (bare) so the graph links by the
+    autoconnect (name, type) convention. tf edges ride the shared tf rail, not a
+    stream topic. Lazy imports: this is the one ``dimos.core`` edge (spec §1).
+    """
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.pure.legacy import legacy_blueprint
+
+    ns = namespace or snake_case(cls.__name__)
+    plan = build_graph(cast("Any", cls)(**config))
+
+    atoms = [
+        legacy_blueprint(type(m), instance_name=path.replace(".", "/"), **m.config.model_dump())
+        for path, m in plan.members
+    ]
+
+    export_by_ref: dict[PortRef, str] = {ref: name for name, ref in plan.exports}
+    remaps: dict[tuple[str, str], str] = {}
+    expose: set[str] = set()
+
+    def _key(member: str) -> str:
+        return member.replace(".", "/")  # blueprint-land uses '/', pure-land '.'
+
+    def _producer_topic(ref: PortRef) -> str:
+        """The topic a member producer publishes on: its export name, else path-qualified."""
+        name = export_by_ref.get(ref)
+        if name is not None:
+            return name  # exported → the exposed rim name (one topic, one name)
+        return f"{_key(cast('str', ref.member))}/{ref.field}"
+
+    # Rim exports: each producer publishes under its export name (exposed, bare).
+    for name, ref in plan.exports:
+        remaps[_key(cast("str", ref.member)), ref.field] = name
+        expose.add(name)
+
+    # Every edge: the consumer joins the producer's topic. Feedback edges lower
+    # like any interior edge (the sampler rides the member; pubsub is cyclic).
+    for b in (*plan.bindings, *plan.feedbacks):
+        dst_member = cast("str", b.dst.member)  # a binding dst is always a member
+        if b.src.member is None:  # rim input → consumer subscribes the rim name (exposed)
+            remaps[_key(dst_member), b.dst.field] = b.src.field
+            expose.add(b.src.field)
+        else:
+            topic = _producer_topic(b.src)
+            remaps[_key(dst_member), b.dst.field] = topic
+            if b.src not in export_by_ref:  # unexported producer path-qualifies its topic
+                remaps[_key(b.src.member), b.src.field] = topic
+
+    entries = [(inst, old, new) for (inst, old), new in remaps.items()]
+    return autoconnect(*atoms).remappings(entries).namespace(ns, expose=sorted(expose))
+
+
 # ── the graph base (spec §2, §3.4) ───────────────────────────────────────────
 # INVARIANT: PureGraph must never declare `wire` — a base-level wire would make
 # every subclass match Wires with the base's types (the EngineSurface rule).
@@ -1535,7 +1595,7 @@ class PureGraph:
     @classmethod
     def blueprint(cls, *, namespace: str | None = None, **config: Any) -> Blueprint:
         """Lower the graph to a coordinator Blueprint namespace (spec §7.2, Phase B)."""
-        raise _e_impl_pending(f"{_clspath(cls)}.blueprint()")
+        return _lower_blueprint(cls, namespace, config)
 
     def bind(self, transport: Any) -> Any:
         """Bind rim ports to a live transport (native live graph; spec §8, Phase C)."""
