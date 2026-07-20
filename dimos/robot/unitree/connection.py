@@ -502,7 +502,16 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-        self._publish_movement(0, 0, 0)
+
+        async def async_stop() -> None:
+            self._publish_movement(0, 0, 0)
+
+        if not self.loop.is_running():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(async_stop(), self.loop).result(timeout=1.0)
+        except Exception as e:
+            logger.warning("Failed to publish stop twist: %s", e)
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

@@ -620,6 +620,17 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Fetch DimSim LFS assets only
+        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
+        # glbs are pointer stubs and the browser sim fails to load them. Pull
+        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
+        # multi-GB data/.lfs/* objects (some missing on the server → 404).
+        # persist-credentials is false above, so supply the token for this pull.
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
+          git lfs pull --include="misc/DimSim/**"
+          git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
         with:

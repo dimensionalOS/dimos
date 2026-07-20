@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 from types import MappingProxyType
 from typing import Protocol
 
@@ -287,9 +288,9 @@ def test_remapping() -> None:
         ]
     )
 
-    # Verify remappings are stored correctly
-    assert (SourceModule, "color_image") in blueprint_set.remapping_map
-    assert blueprint_set.remapping_map[(SourceModule, "color_image")] == "remapped_data"
+    # Verify remappings are stored correctly, keyed by instance name.
+    assert (SourceModule.name, "color_image") in blueprint_set.remapping_map
+    assert blueprint_set.remapping_map[(SourceModule.name, "color_image")] == "remapped_data"
 
     # Verify that remapped names are used in name resolution
     all_names = _all_name_types(blueprint_set)
@@ -580,6 +581,23 @@ def test_optional_module_ref_without_provider(build_coordinator) -> None:
     assert mod is not None
 
 
+def test_build_with_explicit_instance_name(build_coordinator) -> None:
+    """A blueprint-supplied instance_name is used for deployment and wiring."""
+    coordinator = build_coordinator(
+        autoconnect(
+            ModuleA.blueprint(instance_name="custom/modulea"),
+            ModuleB.blueprint(),
+        )
+    )
+
+    module_a = coordinator.get_instance("custom/modulea")
+    module_b = coordinator.get_instance(ModuleB)
+    assert module_a is not None
+    assert module_b is not None
+    assert module_a.data1.transport.topic == module_b.data1.transport.topic
+    assert module_b.what_is_as_name() == "A, Module A"
+
+
 def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:
     """A coordinator with 0 initial workers auto-adds workers on load_blueprint."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
@@ -813,3 +831,43 @@ def test_load_blueprint_by_name_uses_shared_resolver(
     coordinator.load_blueprint_by_name("my-test-stack.demo")
 
     load_blueprint.assert_called_once_with(expected_blueprint)
+
+
+class NamedModule(Module):
+    @rpc
+    def whoami(self) -> str:
+        return self.config.instance_name or "default"
+
+
+def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
+    """Two instances of one class get separate RPC topics and coordinator entries."""
+    p0 = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
+    p1 = dynamic_coordinator.deploy(NamedModule, instance_name="robot1/namedmodule")
+
+    assert dynamic_coordinator.get_instance("robot0/namedmodule") is p0
+    assert dynamic_coordinator.get_instance("robot1/namedmodule") is p1
+    with pytest.raises(ValueError, match="Multiple instances"):
+        dynamic_coordinator.get_instance(NamedModule)
+
+    # Each proxy reaches its own instance over the instance-name RPC topic.
+    assert p0.remote_name == "robot0/namedmodule"
+    assert p0.whoami() == "robot0/namedmodule"
+    assert p1.whoami() == "robot1/namedmodule"
+
+    assert set(dynamic_coordinator.list_module_names()) == {
+        "robot0/namedmodule",
+        "robot1/namedmodule",
+    }
+    descriptors = {d.rpc_name: d for d in dynamic_coordinator.list_modules()}
+    assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
+
+
+def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
+    """Proxies pickled into workers (set_module_ref) must keep the instance RPC name."""
+    proxy = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
+    restored = pickle.loads(pickle.dumps(proxy))
+    try:
+        assert restored.remote_name == "robot0/namedmodule"
+        assert restored.whoami() == "robot0/namedmodule"
+    finally:
+        restored.stop_rpc_client()
