@@ -20,6 +20,7 @@ implementation) → `implementing` → `done`. Specs land next to this index as
 | T10 checkpoint | ready | |
 | T11 tf | done (buffer + sampler live; hold-via-pull, no wall clock; 454 tests) | `pure/impl-t11-tf` |
 | T12 examples | in progress — VoxelMapper landed (`dimos/pure/modules/`, go2_hongkong_office-validated, 0.89 @ 1-voxel vs PGO reference); docs pass pending | `pure/modules-voxel-mapper` |
+| T13 graph | spec-ready (`t13-graph.md`; skeleton `graph.py` + `__call__` overloads/`blueprint()` on PureModule; Phase A/B/C split) | `pure/spec-t13-graph` |
 
 Wave-B interface reconciliation (orchestrator, binding for the T5/T6
 implementers): `Stamped` gets ONE home — `typing.py` (t6-drivers.md §11.2;
