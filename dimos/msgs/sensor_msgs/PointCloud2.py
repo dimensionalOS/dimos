@@ -771,7 +771,7 @@ class PointCloud2(Timestamped):
             colors = np.column_stack([r, g, b])
             pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
 
-        pc = cls(
+        cloud = cls(
             pointcloud=pcd_t,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
@@ -779,9 +779,9 @@ class PointCloud2(Timestamped):
             else None,
         )
         if lazy_wire_fields:
-            pc._lazy_wire_fields = lazy_wire_fields
-            pc._lazy_wire_raw = (raw_data, point_step, num_points)
-        return pc
+            cloud._lazy_wire_fields = lazy_wire_fields
+            cloud._lazy_wire_raw = (raw_data, point_step, num_points)
+        return cloud
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]
         """Create X, Y, Z, intensity field definitions."""
