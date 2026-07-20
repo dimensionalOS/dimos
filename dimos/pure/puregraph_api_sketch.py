@@ -84,7 +84,12 @@
 #     partition), topics named by the autoconnect CONVENTION, name-crossing
 #     edges emitted as remappings. You keep chucking pure modules into
 #     blueprints/coordinator — but the graph GENERATES that wiring instead of
-#     you hand-writing it.
+#     you hand-writing it. Both PureModule and PureGraph expose .blueprint() (a
+#     module via the T8 bridge's legacy_blueprint; a graph as the lowered
+#     composite), so either drops into autoconnect() beside a legacy blueprint
+#     like GO2Connection.blueprint(). A graph blueprint IS a namespace —
+#     interior member ports prefixed by path, rim In/Out exposed — reusing the
+#     blueprint namespace/expose mechanism, not forking it.
 #   • MULTIPROCESS FUTURE, our own — the graph itself becomes the distributed
 #     unit: pick cut edges, put a pubsub transport on each, the graph runtime
 #     places subgraphs across processes/hosts. Same wire(); deployment config
@@ -231,6 +236,28 @@ def _multiprocess_today() -> None:
     # wire() authored once; this is a compile target, not a rewrite.
     coordinator = ModuleCoordinator.build(NavStack.blueprint(voxel_size=0.1))
     coordinator.loop()  # runs distributed across the worker pool, on the shared bus
+
+
+def _grounding_test_go2_replay() -> None:
+    """Grounding integration test: a pure graph beside GO2Connection, driven by --replay."""
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.robot.unitree.go2.connection import GO2Connection
+
+    # GO2Connection with --replay loads a mem2 recording ON ITS OWN SIDE (opaque to us) and
+    # publishes lidar/odom on the bus exactly as a live robot would. The pure graph sees only
+    # topics, so "robot" vs "replay" is invisible to it — no db-binding of the graph needed.
+    bp = autoconnect(
+        GO2Connection.blueprint(),  # Out lidar:PointCloud2, odom:PoseStamped ; In cmd_vel:Twist
+        NavStack.blueprint(voxel_size=0.1),  # rim In lidar/odom link by (name, type)
+    )
+    # Clean links: GO2 lidar -> NavStack.lidar, odom -> NavStack.odom. NavStack's interior
+    # edges are path-namespaced (nav/voxel_mapper/global_map, ...) so they never collide with
+    # a GO2 topic — the graph is a blueprint NAMESPACE (interior prefixed, rim exposed).
+    # The one seam is the command return path: GO2 cmd_vel is In[Twist] (unstamped legacy), a
+    # pure port speaks a STAMPED payload (ts drives alignment) -> TwistStamped. Bridge it where
+    # a controller stage exports cmd_vel (emit the on-bus type, or one remapping/adapter).
+    ModuleCoordinator.build(bp).loop()  # GO2Connection in --replay: full stack, no robot
 
 
 def _multiprocess_future() -> None:
