@@ -26,11 +26,9 @@ class EvalConfig:
 
     (0.31m wide, 0.40m tall, ~0.16m stair risers.)
 
-    Algorithm tuning lives in the algorithm packages as their constructor
-    defaults. The evaluator fixes only the shared voxel resolution, the
-    sensor range, the robot's sensor height, and the physical body and
-    capability bounds it gates against. Improving the algorithm means
-    changing the algorithm, never this file.
+    Fixes only the shared voxel resolution, sensor range, sensor height, and
+    the physical body and capability bounds it gates against. Algorithm tuning
+    lives in the algorithm packages as their constructor defaults.
     """
 
     voxel_size: float = 0.08

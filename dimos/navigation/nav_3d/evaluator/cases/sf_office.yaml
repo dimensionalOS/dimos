@@ -5,7 +5,7 @@ cases:
   start: [-1.64, -2.52, -0.16]
   goal: [13.8, 1.56, 0.32]
   weight: 1.0
-  tags: [auto, flat]
+  tags: [auto, flat, doorway, narrow]
 - id: auto_01_flat
   start: [-2.84, 8.44, -0.24]
   goal: [3.64, 7.64, -0.16]
@@ -45,7 +45,7 @@ cases:
   start: [3.72, 2.28, -0.16]
   goal: [12.6, -0.36, 0.24]
   weight: 1.0
-  tags: [auto, flat]
+  tags: [auto, flat, narrow]
 - id: auto_09_flat
   start: [11.72, 3.88, -0.08]
   goal: [4.92, 4.76, -0.16]
@@ -205,7 +205,7 @@ cases:
   start: [-1.64, -2.52, -0.16]
   goal: [11.96, -0.68, 0.24]
   weight: 1.0
-  tags: [auto, flat]
+  tags: [auto, flat, doorway, narrow]
 - id: auto_41_flat
   start: [13.88, 1.96, 0.24]
   goal: [-3.64, 4.36, -0.24]
@@ -230,12 +230,12 @@ cases:
   start: [0.12, 0.04, -0.16]
   goal: [10.84, -0.84, 0.24]
   weight: 1.0
-  tags: [auto, flat]
+  tags: [auto, flat, narrow]
 - id: auto_46_flat
   start: [-0.44, 0.76, -0.16]
   goal: [12.76, -0.36, 0.24]
   weight: 1.0
-  tags: [auto, flat]
+  tags: [auto, flat, narrow]
 - id: auto_47_flat
   start: [13.88, 1.96, 0.24]
   goal: [-1.32, 7.64, -0.16]

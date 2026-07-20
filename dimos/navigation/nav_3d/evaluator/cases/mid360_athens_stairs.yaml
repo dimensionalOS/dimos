@@ -39,7 +39,7 @@ cases:
   start: [6.68, -5.56, 2.08]
   goal: [5.72, -5.48, -1.04]
   weight: 1.0
-  tags: [auto, stairs, down, long]
+  tags: [auto, stairs, down, long, narrow]
 - id: auto_08_down
   start: [-0.2, -3.0, 2.56]
   goal: [7.16, -3.8, -3.12]

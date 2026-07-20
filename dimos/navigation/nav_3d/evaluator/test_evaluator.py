@@ -54,6 +54,7 @@ from dimos.navigation.nav_3d.evaluator.runner import (
     _run_plan,
     score_negative,
 )
+from dimos.navigation.nav_3d.evaluator.tagging import GEOMETRIC_TAGS, route_tags
 
 if TYPE_CHECKING:
     from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
@@ -600,7 +601,7 @@ def test_load_suite(tmp_path: Path) -> None:
 
 
 def test_final_only_covers_manual_and_infeasible() -> None:
-    """Manual and infeasible cases skip the online phase; auto cases keep it."""
+    """Manual and infeasible cases skip the online phase. Auto cases keep it."""
     xyz = (0.0, 0.0, 0.0)
     assert not _final_only(Case(id="a", start=xyz, goal=xyz, tags=["auto", "flat"]))
     assert _final_only(Case(id="m", start=xyz, goal=xyz, tags=["manual", "flat"]))
@@ -723,6 +724,124 @@ def test_tripwire_exact_differences() -> None:
     diffs = tripwire.exact_differences(report, changed)
     assert len(diffs) == 1
     assert "length" in diffs[0] and "12.34" in diffs[0]
+
+
+def _ywall(y: float, x_lo: float, x_hi: float) -> np.ndarray:
+    """A wall parallel to +x travel, at constant y, spanning body height."""
+    xs, zs = np.meshgrid(np.arange(x_lo, x_hi, VOXEL), np.arange(0.05, 1.5, VOXEL))
+    return np.stack([xs.ravel(), np.full(xs.size, y), zs.ravel()], axis=1, dtype=np.float32)
+
+
+def _tag_cfg() -> EvalConfig:
+    return EvalConfig(voxel_size=VOXEL)
+
+
+def _tags(route: np.ndarray, keys: np.ndarray) -> list[str]:
+    """Tag a synthetic route, taking its endpoints for elevation."""
+    start = (float(route[0, 0]), float(route[0, 1]), float(route[0, 2]))
+    goal = (float(route[-1, 0]), float(route[-1, 1]), float(route[-1, 2]))
+    return route_tags(start, goal, route, keys, _tag_cfg())
+
+
+def test_ground_truth_route_returns_walked_slice() -> None:
+    """The route is the shortest walked slice between the endpoints, not a line."""
+    out = np.stack([np.linspace(0, 10, 101), np.zeros(101), np.full(101, 0.3)], axis=1)
+    detour = np.stack([np.full(101, 10.0), np.linspace(0, 6, 101), np.full(101, 0.3)], axis=1)
+    positions = np.concatenate([out, detour]).astype(np.float32)
+    traj = Trajectory(ts=np.linspace(0, 20, len(positions)), positions=positions)
+    route = metrics.ground_truth_route(traj, (0, 0, 0), (10, 6, 0), robot_height=0.3)
+    assert route is not None
+    # Foot level (sensor height removed) and it walks the full out-and-detour.
+    assert abs(route[0, 2]) < 1e-5
+    assert metrics.path_length(route) == pytest.approx(16.0, abs=0.2)
+    assert metrics.ground_truth_route(traj, (0, 20, 0), (10, 6, 0), robot_height=0.3) is None
+
+
+def test_ground_truth_route_orients_start_to_goal() -> None:
+    """The route runs start-to-goal even when the start was walked later, so its
+    elevation is not read backward."""
+    xs = np.linspace(0, 10, 101)
+    positions = np.stack([xs, np.zeros(101), xs * 0.25], axis=1).astype(np.float32)
+    traj = Trajectory(ts=np.linspace(0, 10, 101), positions=positions)
+    # Start high at x=8, goal low at x=2: a downhill traverse.
+    route = metrics.ground_truth_route(traj, (8, 0, 1.7), (2, 0, 0.2), robot_height=0.3)
+    assert route is not None
+    # Runs start-to-goal: x decreasing from ~8 to ~2, so elevation reads downhill.
+    assert route[0, 0] > 6.0 and route[-1, 0] < 4.0
+    assert route[0, 0] > route[-1, 0]
+    assert route[-1, 2] < route[0, 2]
+
+
+def test_route_tags_flat_wide_has_no_shape_tags() -> None:
+    """A wide flat traverse is just flat: no narrow, doorway, or corridor."""
+    route = np.array([[0, 0, 0], [4, 0, 0]], dtype=np.float32)
+    walls = np.concatenate([_ywall(-2.0, 0, 4), _ywall(2.0, 0, 4)])
+    keys = np.unique(voxel_keys(walls, VOXEL))
+    tags = _tags(route, keys)
+    assert "flat" in tags
+    assert "narrow" not in tags and "doorway" not in tags and "corridor" not in tags
+
+
+def test_route_tags_narrow_passage() -> None:
+    """Walls under a body-plus-clearance apart the whole way make a corridor."""
+    route = np.array([[0, 0, 0], [4, 0, 0]], dtype=np.float32)
+    walls = np.concatenate([_ywall(-0.4, 0, 4), _ywall(0.4, 0, 4)])
+    keys = np.unique(voxel_keys(walls, VOXEL))
+    tags = _tags(route, keys)
+    assert "narrow" in tags and "corridor" in tags
+    assert "doorway" not in tags  # sustained squeeze, not a short pinch
+    assert "open" not in tags
+
+
+def test_route_tags_doorway_is_a_short_pinch() -> None:
+    """An open corridor that pinches briefly and reopens is a doorway."""
+    route = np.array([[0, 0, 0], [5, 0, 0]], dtype=np.float32)
+    far = np.concatenate([_ywall(-2.0, 0, 5), _ywall(2.0, 0, 5)])
+    pinch = np.concatenate([_ywall(-0.35, 2.0, 2.6), _ywall(0.35, 2.0, 2.6)])
+    keys = np.unique(voxel_keys(np.concatenate([far, pinch]), VOXEL))
+    tags = _tags(route, keys)
+    assert "doorway" in tags and "narrow" in tags
+
+
+def test_route_tags_sharp_doorway() -> None:
+    """A door frame is a sharp pinch: the narrow stretch is only a couple of
+    voxels, but flanked by open space it is still a doorway."""
+    route = np.array([[0, 0, 0], [5, 0, 0]], dtype=np.float32)
+    far = np.concatenate([_ywall(-2.0, 0, 5), _ywall(2.0, 0, 5)])
+    frame = np.concatenate([_ywall(-0.35, 2.4, 2.6), _ywall(0.35, 2.4, 2.6)])
+    keys = np.unique(voxel_keys(np.concatenate([far, frame]), VOXEL))
+    assert "doorway" in _tags(route, keys)
+
+
+def test_route_tags_stairs_from_endpoints() -> None:
+    """Elevation comes from the endpoints: a climb past the threshold is stairs,
+    and a big rise is long, whatever the route in between does."""
+    up = np.stack([np.linspace(0, 4, 40), np.zeros(40), np.linspace(0, 2.0, 40)], axis=1).astype(
+        np.float32
+    )
+    tags = _tags(up, np.array([], dtype=np.int64))
+    assert "stairs" in tags and "up" in tags and "long" in tags
+    assert "down" in _tags(up[::-1].copy(), np.array([], dtype=np.int64))
+
+
+def test_route_tags_gate_excludes_detour_routes() -> None:
+    """Shape tags need a near-direct route. Between the same endpoints, a
+    straight walk through the corridor is tagged, but a long detour is not:
+    its terrain cannot be attributed to the case, so it gets elevation only."""
+    walls = np.concatenate([_ywall(-0.4, 0, 4), _ywall(0.4, 0, 4)])
+    keys = np.unique(voxel_keys(walls, VOXEL))
+    direct = np.array([[0, 0, 0], [4, 0, 0]], dtype=np.float32)
+    assert "corridor" in route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), direct, keys, _tag_cfg())
+    detour = np.array([[0, 0, 0], [2, 6, 0], [4, 0, 0]], dtype=np.float32)
+    assert route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), detour, keys, _tag_cfg()) == ["flat"]
+
+
+def test_route_tags_are_all_geometric() -> None:
+    """Every tag the tagger emits is one a retag is allowed to recompute."""
+    route = np.array([[0, 0, 0], [4, 0, 0]], dtype=np.float32)
+    walls = np.concatenate([_ywall(-0.4, 0, 4), _ywall(0.4, 0, 4)])
+    keys = np.unique(voxel_keys(walls, VOXEL))
+    assert set(_tags(route, keys)) <= GEOMETRIC_TAGS
 
 
 def test_tripwire_diff_names_every_flip() -> None:

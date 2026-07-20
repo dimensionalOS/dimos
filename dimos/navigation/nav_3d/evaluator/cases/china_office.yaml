@@ -109,7 +109,7 @@ cases:
   start: [-7.4, 11.96, 3.04]
   goal: [8.2, -17.32, -0.4]
   weight: 1.0
-  tags: [auto, stairs, down, long]
+  tags: [auto, stairs, down, long, doorway, narrow]
 - id: auto_22_up
   start: [-0.36, -4.44, -0.4]
   goal: [11.24, -6.76, 4.16]

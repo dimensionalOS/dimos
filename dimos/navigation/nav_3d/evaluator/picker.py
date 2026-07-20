@@ -14,15 +14,10 @@
 
 """Browser point-picking for case curation, served by viser.
 
-Opens a dark-themed local web viewer with the final map, the walked path,
-and every case already in the manifest as a collapsed, editable panel entry.
-Clicking a pair's endpoint sphere in the scene highlights the pair, opens
-its panel entry, and scrolls to it. The show button inside each entry
-highlights its pair in the scene. Shift+click picks new start/goal pairs.
-Every entry has the coordinates, a name field, geometry-suggested tag
-checkboxes, custom tags, a negative toggle, and save/delete buttons, so any
-case can be renamed, retagged, flipped, or removed. Plain clicks and drags
-only move the camera.
+Serves the final map, the walked path, and every existing case as an editable
+panel entry. Shift+click picks new start/goal pairs. Each entry exposes the
+coordinates, a name field, tag checkboxes, a negative toggle, and save/delete
+buttons, so any case can be renamed, retagged, flipped, or removed.
 """
 
 from __future__ import annotations
@@ -33,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.navigation.nav_3d.evaluator.generate import (
+from dimos.navigation.nav_3d.evaluator.tagging import (
     LONG_STAIRS_DZ_M,
     LONG_STAIRS_WALKED_M,
     STAIRS_DZ_M,
@@ -96,7 +91,7 @@ _ACES_OUTPUT = np.array(
 )
 # White scene lights, bright enough that inverse-tone-mapped albedos fit
 # in [0, 1]. LIGHT_REFERENCE is the ambient plus directional total on a
-# typical face; faces above or below it shade brighter or darker.
+# typical face. Faces above or below it shade brighter or darker.
 _AMBIENT_INTENSITY = 3.5
 _DIRECTIONAL_INTENSITY = 2.0
 _LIGHT_REFERENCE = 4.6
@@ -299,8 +294,8 @@ class _PairEntry:
 
             @self.button.on_click
             def _(_event: object) -> None:
-                # save_unsaved calls save_or_update already holding the lock;
-                # the button path runs on a bare viser callback thread and must
+                # save_unsaved calls save_or_update already holding the lock.
+                # The button path runs on a bare viser callback thread and must
                 # take it to serialize suite/manifest mutation.
                 with self._hooks.lock:
                     self.save_or_update()
@@ -337,7 +332,7 @@ class _PairEntry:
         tags += [t.strip() for t in self.custom_text.value.split(",") if t.strip()]
         return tags
 
-    def save_or_update(self) -> None:
+    def save_or_update(self) -> bool:
         name = self.id_text.value.strip()
         if self.saved_id is None:
             ok, msg, saved, tags = self._hooks.save_pair(
@@ -354,7 +349,7 @@ class _PairEntry:
         print(msg)
         if not (ok and saved is not None):
             self.message.content = f"**FAILED**: {msg}"
-            return
+            return False
         # Viser cannot collapse a live panel, so replace it with the
         # collapsed button form, synced from the authoritative save.
         self.saved_id = saved
@@ -366,6 +361,7 @@ class _PairEntry:
         order = self.panel.order
         self.panel.remove()
         self._build(expanded=False, order=order)
+        return True
 
 
 def pick_cases(
@@ -541,11 +537,9 @@ def pick_cases(
                 if entry.saved_id is not None:
                     print(f"{entry.saved_id} stays in the manifest; use delete to remove it")
 
-    def save_unsaved() -> None:
+    def save_unsaved() -> int:
         with lock:
-            for pair in pairs:
-                if pair.saved_id is None:
-                    pair.save_or_update()
+            return sum(not pair.save_or_update() for pair in pairs if pair.saved_id is None)
 
     @save_all_button.on_click
     def _(_event: object) -> None:
@@ -553,8 +547,8 @@ def pick_cases(
 
     @exit_button.on_click
     def _(_event: object) -> None:
-        save_unsaved()
-        stop.set()
+        if save_unsaved() == 0:
+            stop.set()
 
     print("picker running; ctrl-c to exit (unsaved pairs are discarded)")
     try:

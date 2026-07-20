@@ -252,13 +252,10 @@ def reference_length(
 ) -> Reference:
     """Shortest walked length the trajectory demonstrates between start and goal.
 
-    The robot usually passes each spot several times, so the reference is the
-    minimum route length over every combination of start and goal visits, not
-    the route between single nearest poses, which would include any wandering
-    in between. Only causal pairs count when one exists: the goal visited
-    before the start, so an incremental map at the start time has seen the
-    goal and the demonstrated route. When either endpoint is farther than
-    max_snap_m from the trajectory, falls back to the straight-line distance.
+    Minimizes route length over every combination of start and goal visits,
+    not the route between single nearest poses. Only causal pairs count when
+    one exists: the goal visited before the start. Falls back to straight-line
+    distance when either endpoint is farther than max_snap_m from the trajectory.
     """
     foot = trajectory.positions - np.array([0.0, 0.0, robot_height], dtype=np.float32)
     s = np.asarray(start, dtype=np.float32)
@@ -283,6 +280,44 @@ def reference_length(
     i = int(near_s[best[0]])
     start_ts = float(trajectory.ts[i]) if causal else float("inf")
     return Reference(max(float(totals[best]), 1e-6), True, start_ts, causal)
+
+
+def ground_truth_route(
+    trajectory: Trajectory,
+    start: tuple[float, float, float],
+    goal: tuple[float, float, float],
+    robot_height: float,
+    max_snap_m: float = 1.0,
+) -> NDArray[np.float32] | None:
+    """Foot-level polyline of the shortest walk the robot took between start and
+    goal, or None when either endpoint is off the trajectory.
+
+    Unlike reference_length this ignores causality: it describes the terrain
+    between two places, so the nearest-in-time pass is what we want, not the
+    causal one. Picking the visit pair with the least trajectory between them
+    keeps the route local instead of a building-spanning detour.
+    """
+    foot = trajectory.positions - np.array([0.0, 0.0, robot_height], dtype=np.float32)
+    s = np.asarray(start, dtype=np.float32)
+    g = np.asarray(goal, dtype=np.float32)
+    ds = np.linalg.norm(foot - s, axis=1)
+    dg = np.linalg.norm(foot - g, axis=1)
+    if ds.min() > max_snap_m or dg.min() > max_snap_m:
+        return None
+    arcs = trajectory.arc_lengths()
+    near_s = np.flatnonzero(ds <= max_snap_m)
+    near_g = np.flatnonzero(dg <= max_snap_m)
+    totals = (
+        np.abs(arcs[near_s][:, None] - arcs[near_g][None, :])
+        + ds[near_s][:, None]
+        + dg[near_g][None, :]
+    )
+    best = np.unravel_index(totals.argmin(), totals.shape)
+    i = int(near_s[best[0]])
+    j = int(near_g[best[1]])
+    # Orient the slice start-to-goal so the route reads in the case's direction.
+    route = foot[i : j + 1] if i <= j else foot[j : i + 1][::-1]
+    return route.astype(np.float32)
 
 
 def spl(success: bool, l_ref: float, p_len: float) -> float:

@@ -25,12 +25,14 @@ New dataset:          python -m dimos.navigation.nav_3d.evaluator ingest recordi
 Pick cases by click:  python -m dimos.navigation.nav_3d.evaluator pick-case office_a
 Curate by coords:     python -m dimos.navigation.nav_3d.evaluator add-case office_a --start x y z --goal x y z
 Flag dynamic route:   python -m dimos.navigation.nav_3d.evaluator tag office_a auto_03 --final-fail
+Recompute tags:       python -m dimos.navigation.nav_3d.evaluator retag office_a
 """
 
 from __future__ import annotations
 
 import contextlib
 import dataclasses
+import itertools
 import json
 import os
 from pathlib import Path
@@ -56,8 +58,10 @@ from dimos.navigation.nav_3d.evaluator.generate import (
     generate_cases,
     snap_to_surface,
 )
+from dimos.navigation.nav_3d.evaluator.metrics import ground_truth_route
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
 from dimos.navigation.nav_3d.evaluator.runner import Report, evaluate
+from dimos.navigation.nav_3d.evaluator.tagging import GEOMETRIC_TAGS, route_tags
 from dimos.utils.data import get_data_dir
 
 if TYPE_CHECKING:
@@ -160,11 +164,9 @@ def diff_reports(
     """Name every case whose pass/fail flipped between two runs.
 
     Exits 1 when any case regressed, so a keep/discard loop can gate on it.
-    Perf budget breaches always print but only exit 1 with --exact: parallel
-    runs inflate wall-clock ~20 percent, so the binding perf check belongs on
-    the serial confirmation run. With --exact, also exits 1 on any non-timing
-    difference at all. Running the suite twice and exact-diffing the reports
-    is the determinism check.
+    Perf budget breaches always print but only exit 1 with --exact, which also
+    exits 1 on any non-timing difference. Running the suite twice and
+    exact-diffing the reports is the determinism check.
     """
     old_report = json.loads(old.read_text())
     new_report = json.loads(new.read_text())
@@ -373,8 +375,13 @@ def _append_case(
         print(f"note: goal {goal} is off any standable surface; keeping it as picked")
     else:
         raise typer.BadParameter(f"goal {goal} is more than {snap_max}m from standable surface")
+    if case_id is None:
+        existing = {c.id for c in suite.cases}
+        case_id = next(
+            f"{prefix}_{n:02d}" for n in itertools.count() if f"{prefix}_{n:02d}" not in existing
+        )
     case = Case(
-        id=case_id or f"{prefix}_{sum(c.id.startswith(f'{prefix}_') for c in suite.cases):02d}",
+        id=case_id,
         start=_snap_or_fail("start", start, surface, snap_max),
         goal=goal,
         weight=weight,
@@ -467,6 +474,44 @@ def tag_case(
     print(f"{case.id}: {flag} [{', '.join(case.tags)}]")
 
 
+@app.command("retag")
+def retag(
+    dataset: str = typer.Argument(..., help="Dataset whose manifest gets retagged"),
+) -> None:
+    """Recompute geometric tags for auto-generated cases from the final map.
+
+    Only the geometric tags (flat, stairs, narrow, switchback, and the rest)
+    are replaced, so improving the tagger never churns start/goal pairs. The
+    auto provenance tag survives. Manually curated cases are left untouched:
+    their tags are human intent, not something to recompute.
+    """
+    manifest = CASES_DIR / f"{dataset}.yaml"
+    if not manifest.exists():
+        raise typer.BadParameter(f"no manifest {manifest}; run ingest first")
+    suite = load_suite(manifest)
+    cfg = EvalConfig()
+    final = load_or_build_final_map(suite.db_path(), suite, cfg)
+    trajectory = load_trajectory(suite.db_path(), suite.odom_stream)
+    changed = 0
+    for case in suite.cases:
+        if "auto" not in case.tags:
+            print(f"  {case.id}: curated, tags kept [{', '.join(case.tags)}]")
+            continue
+        route = ground_truth_route(trajectory, case.start, case.goal, cfg.robot_height)
+        if route is None:
+            print(f"  {case.id}: off-trajectory, tags kept [{', '.join(case.tags)}]")
+            continue
+        provenance = [t for t in case.tags if t not in GEOMETRIC_TAGS]
+        geo = route_tags(case.start, case.goal, route, final.occupied_keys, cfg)
+        new_tags = provenance + [t for t in geo if t not in provenance]
+        if new_tags != case.tags:
+            changed += 1
+            print(f"  {case.id}: [{', '.join(case.tags)}] -> [{', '.join(new_tags)}]")
+        case.tags = new_tags
+    save_suite(suite, manifest)
+    print(f"\nretagged {changed} case(s) in {manifest.name}")
+
+
 @app.command("pick-case")
 def pick_case(
     dataset: str = typer.Argument(..., help="Dataset whose manifest gets the cases"),
@@ -526,11 +571,13 @@ def pick_case(
         if new_id != saved_id and any(c.id == new_id for c in suite.cases):
             return False, f"case id {new_id!r} already exists", None, None
         case.id = new_id
-        # Tags round-trip verbatim; the negative checkbox owns only the
+        # Tags round-trip verbatim. The negative checkbox owns only the
         # negative tag, so auto/manual provenance survives edits.
         plain = [t for t in tags if t != "negative"]
         case.tags = plain + (["negative"] if negative else [])
         case.expect_fail = negative
+        if negative:
+            case.expect_final_fail = False
         save_suite(suite, manifest)
         return True, f"updated {case.id} [{', '.join(case.tags)}]", case.id, list(case.tags)
 

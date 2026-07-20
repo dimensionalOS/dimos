@@ -14,16 +14,12 @@
 
 """Run case suites through the ray tracer and MLS planner and score them.
 
-Auto cases, derived from the walked trajectory, are planned twice: online on
-the incremental map built up to the case's start time, and final on the map
-fed the whole recording. Manual and certified-infeasible cases have no plan
-time on the recording, so they are planned once, on the final map only. The
-final map is not ground truth, only the most complete map the pipeline makes.
-The final path is gated against full final occupancy, the online path against
-the incremental map the planner had at plan time, so obstacles the sensor had
-not yet mapped never count. Every path must also stand on final-map occupancy
-and stay within the climb envelope. The headline score is validity-gated SPL
-on the incremental map.
+Auto cases plan twice: online on the incremental map at the case start time,
+and final on the map fed the whole recording. Manual and infeasible cases plan
+once on the final map. The final path is gated against full final occupancy,
+the online path against the incremental map at plan time. Every path must stand
+on final-map occupancy and stay within the climb envelope. The headline score
+is validity-gated SPL on the incremental map.
 """
 
 from __future__ import annotations
@@ -157,7 +153,7 @@ class Report:
     score_soft: float
     final_score: float
     n_cases: int
-    # Cases with an online phase; the incremental score is over these only.
+    # Cases with an online phase. The incremental score is over these only.
     n_online: int
     n_success: int
     n_success_final: int
@@ -283,11 +279,10 @@ def _dynamic_candidate(
 ) -> tuple[bool, list[list[float]]]:
     """Flag a case whose online route is blocked only by new final occupancy.
 
-    An online success paired with a final failure is either a dynamic obstacle
-    that appeared after the robot passed or a planner or mapping bug. Gating
-    the online path against the voxels the final map gained since plan time
-    tells the two apart. If that newly-occupied set alone blocks the route, a
-    real obstacle appeared. A human still confirms before labeling the case.
+    An online success with a final failure is either a dynamic obstacle that
+    appeared after the robot passed or a planner or mapping bug. Gating the
+    online path against the voxels gained since plan time tells them apart. A
+    human confirms before labeling the case.
     """
     if online_wp is None or not online.success or final.success:
         return False, []
@@ -333,7 +328,7 @@ def run_suite(
     final = load_or_build_final_map(db_path, suite, cfg)
     obstacle_keys = final.occupied_keys
 
-    final_only = np.array([_final_only(c) for c in suite.cases])
+    final_only = np.array([_final_only(c) for c in suite.cases], dtype=bool)
     refs: list[metrics.Reference] = []
     for i, case in enumerate(suite.cases):
         if case.expect_fail:

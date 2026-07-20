@@ -53,8 +53,8 @@ class Suite:
     cases: list[Case]
     lidar_stream: str = "pointlio_lidar"
     odom_stream: str = "pointlio_odometry"
-    # Recording location override. Default is data/<dataset>.db; set this to
-    # keep a recording outside data/, e.g. a private or holdout recording.
+    # Recording location override, defaulting to data/<dataset>.db.
+    # Set this to keep a recording outside data/.
     db: str | None = None
     path: Path | None = None
 

@@ -14,21 +14,11 @@
 
 """Write an evaluation report into a rerun recording.
 
-One static scene per dataset:
-- map/obstacles: final voxels, turbo colormap by height
-- walked_path: the recorded foot path (white)
-- planner_final: the planner graph the full aggregated map produced.
-  Surface cells colored by wall clearance (gray inside the hard clearance),
-  edges colored white to red by log traversal cost.
-- cases/<id>: start (cyan), goal (orange), online and final planned paths
-  colored by verdict (green valid, red gate-invalid, yellow unreached), the
-  gate's body box at each collision (semi-transparent red, pitched with the
-  slope and elevated over the legs), unsupported samples (magenta), and
-  too-steep waypoints (purple). Every case carries a known/ layer: the
-  incremental voxel map (known/voxels, turbo by height) and planner graph
-  at plan time, what the robot knew then. Failed cases also get a thin red
-  start-to-goal intent line. Dynamic obstacle candidates get a new_obstacle
-  layer marking the final occupancy that blocks the online route.
+One static scene per dataset: the final voxel map, the walked path, the
+planner graph over the aggregated map, and per-case start/goal with the
+online and final planned paths colored by verdict and the gate's collision
+boxes. Each case also carries a known/ layer holding the incremental map and
+planner graph at plan time.
 """
 
 from __future__ import annotations
@@ -76,8 +66,10 @@ def turbo_by_height(points: NDArray[np.float32]) -> NDArray[np.uint8]:
     # Lazy: matplotlib is a heavy viz-only dependency.
     import matplotlib.pyplot as plt
 
+    if len(points) == 0:
+        return np.zeros((0, 3), dtype=np.uint8)
     z = points[:, 2].astype(np.float64)
-    span = float(z.max() - z.min()) if len(z) else 0.0
+    span = float(z.max() - z.min())
     t = (z - z.min()) / max(span, 1e-6)
     return np.asarray(plt.get_cmap("turbo")(t)[:, :3] * 255, dtype=np.uint8)
 

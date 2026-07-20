@@ -139,7 +139,8 @@ class MapCheckpoints:
         """
         keys = np.array([], dtype=np.int64)
         for add, rem, obs in zip(self.added, self.removed, self.observed_added, strict=True):
-            keys = np.union1d(np.setdiff1d(keys, rem, assume_unique=True), add)
+            keys = np.delete(keys, np.searchsorted(keys, rem))
+            keys = np.insert(keys, np.searchsorted(keys, add), add)
             yield keys, obs
 
 

@@ -32,6 +32,7 @@ import numpy as np
 
 from dimos.navigation.nav_3d.evaluator import metrics
 from dimos.navigation.nav_3d.evaluator.cases import Case
+from dimos.navigation.nav_3d.evaluator.tagging import STAIRS_DZ_M, route_tags
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -39,10 +40,6 @@ if TYPE_CHECKING:
     from dimos.navigation.nav_3d.evaluator.config import EvalConfig
     from dimos.navigation.nav_3d.evaluator.final_map import FinalMap
     from dimos.navigation.nav_3d.evaluator.recording import Trajectory
-
-STAIRS_DZ_M = 0.5
-LONG_STAIRS_DZ_M = 1.5
-LONG_STAIRS_WALKED_M = 20.0
 
 
 @dataclass
@@ -199,7 +196,13 @@ def generate_cases(
 
     ranked = sorted(candidates.values(), key=lambda c: (-c.priority, c.start, c.goal))
     selected = _select_diverse(ranked, params, params.resolve_max_cases(float(arcs[-1])))
-    cases = [_to_case(cand, n) for n, cand in enumerate(selected)]
+    cases = []
+    for n, cand in enumerate(selected):
+        route = metrics.ground_truth_route(
+            trajectory, cand.start, cand.goal, cfg.robot_height, params.snap_max_m
+        )
+        tags = route_tags(cand.start, cand.goal, route, obstacle_keys, cfg)
+        cases.append(_to_case(cand, n, tags))
     return cases
 
 
@@ -255,7 +258,7 @@ def _select_diverse(
                 spread = np.full(len(ranked), 2.0 * spread_cap, dtype=np.float32)
             score = priorities + 0.4 * spread
             score[~alive] = -np.inf
-            if not relax and len(stairs) + 1 >= stairs_cap:
+            if not relax and len(stairs) >= stairs_cap:
                 score[is_stairs] = -np.inf
             if not np.isfinite(score).any():
                 break
@@ -287,21 +290,17 @@ def _select_diverse(
     return (stairs + flats)[:max_cases]
 
 
-def _to_case(cand: Candidate, n: int) -> Case:
+def _to_case(cand: Candidate, n: int, tags: list[str]) -> Case:
     if cand.dz >= STAIRS_DZ_M:
-        kind, tags = "up", ["auto", "stairs", "up"]
+        kind = "up"
     elif cand.dz <= -STAIRS_DZ_M:
-        kind, tags = "down", ["auto", "stairs", "down"]
+        kind = "down"
     else:
-        kind, tags = "flat", ["auto", "flat"]
-    if kind != "flat" and (
-        abs(cand.dz) >= LONG_STAIRS_DZ_M or cand.walked_m >= LONG_STAIRS_WALKED_M
-    ):
-        tags.append("long")
+        kind = "flat"
     return Case(
         id=f"auto_{n:02d}_{kind}",
         start=cand.start,
         goal=cand.goal,
         weight=1.0,
-        tags=tags,
+        tags=["auto", *tags],
     )
