@@ -31,7 +31,7 @@ IGNORED_FILES: set[str] = {
     "dimos/robot/test_all_blueprints_generation.py",
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
-    "dimos/memory2/puremodule_api_sketch.py",  # design sketch, not importable
+    "dimos/memory2/puremodule_api_sketch3_rpc.py",  # design sketch, not importable
 }
 # Terminal builder methods that mark a top-level blueprint expression. "blueprint"
 # is included so a bare single-module `X.blueprint(...)` (no transports/remappings
@@ -155,6 +155,7 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
+        or any(part.startswith("test_") for part in rel.split("/"))  # test dirs (e.g. fixtures)
         or rel.startswith("core/")
     )
 

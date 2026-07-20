@@ -22,7 +22,7 @@ Spec: dimos/pure/tasks/t2-config.md. Deliberately absent here: ``step``,
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import dataclass_transform
 
@@ -35,6 +35,9 @@ from dimos.pure.config import (
 from dimos.pure.rows import TfOutSpec, TfSpec, _merged_specs, format_frame
 from dimos.pure.stepspec import PureModuleDefinitionError, StepSpec, classify
 from dimos.pure.typing import EngineSurface
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint
 
 # T3 SEAM (spec §10.1) — ACTIVE: classify(cls) runs as the LAST statement of
 # __init_subclass__; __pure_step__'s presence certifies that ALL definition-time
@@ -159,6 +162,13 @@ class PureModule(EngineSurface):
         from dimos.pure import rim  # T8 RIM SEAM (S5) — lazy
 
         return rim.transformer(self)(rows)
+
+    @classmethod
+    def blueprint(cls, *, name: str | None = None, **kwargs: Any) -> Blueprint:
+        """Deployment-face Blueprint via the T8 bridge (t13-graph.md §7.1)."""
+        from dimos.pure.legacy import legacy_blueprint  # lazy: the sanctioned core edge
+
+        return legacy_blueprint(cls, name=name, **kwargs)
 
 
 def _rebuild_module(cls: type[PureModule], dump: dict[str, Any]) -> PureModule:

@@ -39,6 +39,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.pure import rim
 from dimos.pure.module import PureModule
+from dimos.pure.rows import TfOutSpec
 from dimos.pure.stepspec import PureModuleDefinitionError
 
 if TYPE_CHECKING:
@@ -79,8 +80,17 @@ _MODULE_SURFACE: Final[frozenset[str]] = frozenset(dir(Module)) | {
 instance attributes set in ``Module.__init__`` that never appear on the class ``dir`` (spec
 §11.2, G2 — re-verified against ``dir(Module)`` in this graft)."""
 
-_RESERVED_CONFIG: Final[frozenset[str]] = frozenset(ModuleConfig.model_fields)
-"""ModuleConfig field names a pure config field may not collide with (spec §11.2)."""
+_RESERVED_CONFIG: Final[frozenset[str]] = frozenset(ModuleConfig.model_fields) - {
+    "frame_id",
+    "frame_id_prefix",
+}
+"""ModuleConfig field names a pure config field may not collide with (spec §11.2).
+
+``frame_id``/``frame_id_prefix`` are exempt: they are author-facing module config a
+pure module may legitimately declare, and the synthesized ActorConfig simply overrides
+the same ``ModuleConfig`` slot (``create_model`` subclass field override). The remaining
+names are framework-injected plumbing (``g``, transports, timeouts, ``instance_name``)
+the coordinator/adapter owns."""
 
 _ACTOR_CACHE: Final[dict[tuple[type[PureModule], str | None], type[Module]]] = {}
 """One generated actor class per ``(PureModule class, name)`` (spec §11.1); pickle-stable."""
@@ -192,7 +202,11 @@ def _validate_bridgeable(cls: type[PureModule]) -> None:
     """Reject In∩Out overlap and surface/config name collisions (spec §11.2, D13)."""
     spec = cls.__pure_step__
     in_names = set(spec.in_type.fields())
-    out_names = set(spec.out_type.fields())
+    out_fields = spec.out_type.fields()
+    out_names = set(out_fields)
+    # tf_out() ports assert transforms onto the TF topic (the same rail Module.tf owns);
+    # they are exempt from the surface guard so a port named `tf` is legal here.
+    tf_out_names = {name for name, fs in out_fields.items() if isinstance(fs, TfOutSpec)}
 
     overlap = sorted(in_names & out_names)
     if overlap:
@@ -202,7 +216,7 @@ def _validate_bridgeable(cls: type[PureModule]) -> None:
             f"name and cannot express an In∩Out overlap. Rename one side."
         )
 
-    surface = sorted((in_names | out_names) & _MODULE_SURFACE)
+    surface = sorted(((in_names | out_names) - tf_out_names) & _MODULE_SURFACE)
     if surface:
         raise PureModuleDefinitionError(
             f"{cls.__qualname__}: field name(s) {', '.join(surface)} shadow the legacy Module "
@@ -230,6 +244,8 @@ def _actor_annotations(cls: type[PureModule], config_model: type[ModuleConfig]) 
     for field, fs in spec.in_type.fields().items():
         annotations[field] = _stream_annotation(In, _strip_optional(fs.annotation))
     for field, fs in spec.out_type.fields().items():
+        if isinstance(fs, TfOutSpec):
+            continue  # tf_out asserts onto the TF rail (Module.tf owns it), not a stream
         annotations[field] = _stream_annotation(
             Out, _strip_optional(fs.annotation)
         )  # Optional stripped

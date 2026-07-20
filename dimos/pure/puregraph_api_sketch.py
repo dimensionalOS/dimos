@@ -113,7 +113,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.pure.graph import Port, PureGraph, feedback
-from dimos.pure.modules.costmapper import CostMapper
+from dimos.pure.modules.costmapper import PureCostMapper
 from dimos.pure.modules.odom_tf import OdomTf
 from dimos.pure.modules.planner import Planner
 from dimos.pure.modules.voxel_mapper import VoxelMapper
@@ -150,7 +150,7 @@ class NavStack(PureGraph):
         """Symbolic application: bind each member input to a producer's output port."""
         odom_tf = OdomTf()(odom=i.odom)  # -> .tf : Transform
         voxel = VoxelMapper(voxel_size=self.voxel_size)(scan=i.lidar)  # -> .global_map
-        cost = CostMapper()(global_map=voxel.global_map)  # -> .global_costmap
+        cost = PureCostMapper()(global_map=voxel.global_map)  # -> .global_costmap
         plan = Planner()(  # name-crossing edge: cost.global_costmap -> planner.costmap
             costmap=cost.global_costmap, goal=i.goal, tf=odom_tf.tf
         )  # -> .path : Path
@@ -177,7 +177,7 @@ class SlewNav(PureGraph):
         from dimos.pure.modules.planner import SlewPlanner  # sketch: a prev_cmd variant
 
         voxel = VoxelMapper()(scan=i.lidar)
-        cost = CostMapper()(global_map=voxel.global_map)
+        cost = PureCostMapper()(global_map=voxel.global_map)
         prev: Port[TwistStamped] = feedback()  # declared before its producer
         plan = SlewPlanner()(costmap=cost.global_costmap, goal=i.goal, prev_cmd=prev)
         prev.close(plan.cmd_vel)  # the loop, well-founded by ts
