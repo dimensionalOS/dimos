@@ -818,7 +818,8 @@ if WHAT in ("lidar", "both"):
 
     if WRITE_ACCUM:
         # Raycast-accumulated global maps. Original: the input lidar (sensor-frame,
-        # tf-registered). Corrected: the gt stream just written (already world in "odom").
+        # tf-registered; already-world Point-LIO clouds get their ray origin from
+        # the odom trajectory). Corrected: the gt stream just written (already world in "odom").
         accumulate_stream(
             store,
             LIDAR_STREAM,
@@ -828,6 +829,7 @@ if WHAT in ("lidar", "both"):
             use_tf=USE_TF,
             voxel_size=ACCUM_VOXEL,
             max_range=ACCUM_MAX_RANGE,
+            origin_stream=ODOM_STREAM,
         )
         accumulate_stream(
             store,
@@ -842,7 +844,7 @@ if WHAT in ("lidar", "both"):
 if OPEN_RRD and WHAT in ("lidar", "both"):
     import subprocess
 
-    from dimos.navigation.jnav.components.loop_closure.gsc_pgo import make_rrd
+    from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts import make_rrd
 
     print("building comparison rrd...", flush=True)
     rrd_path = make_rrd.build(

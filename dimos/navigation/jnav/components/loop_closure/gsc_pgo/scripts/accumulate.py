@@ -67,7 +67,7 @@ def _quat_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
     )
 
 
-def _world_register(observation, store_tf, world_frame, lidar_frame):
+def _world_register(observation, store_tf, world_frame, lidar_frame, origin_lookup=None):
     """``(points_world_f32, sensor_origin_world)`` for a lidar observation.
 
     A scan already in ``world_frame`` is returned untouched with its stored pose
@@ -75,6 +75,10 @@ def _world_register(observation, store_tf, world_frame, lidar_frame):
     tf (``world_frame <- scan_frame``); the tf translation IS the sensor origin.
     Falls back to the stored pose, then to assuming the scan is already world.
     Returns ``(points, None)`` when no origin can be resolved (scan is skipped).
+
+    ``origin_lookup(ts) -> (x, y, z)`` supplies the ray origin for already-world
+    scans that carry no per-scan pose (e.g. Point-LIO world clouds), sourced from
+    the matching odometry trajectory.
     """
     points = np.asarray(observation.data.points_f32())
     if not len(points):
@@ -82,7 +86,12 @@ def _world_register(observation, store_tf, world_frame, lidar_frame):
     pose = observation.pose_tuple
     scan_frame = getattr(observation.data, "frame_id", "") or lidar_frame
     if scan_frame == world_frame:
-        origin = (float(pose[0]), float(pose[1]), float(pose[2])) if pose is not None else None
+        if pose is not None:
+            origin = (float(pose[0]), float(pose[1]), float(pose[2]))
+        elif origin_lookup is not None:
+            origin = origin_lookup(float(observation.ts))
+        else:
+            origin = None
         return points.astype(np.float32), origin
     if store_tf is not None:
         transform = store_tf.get(world_frame, scan_frame, float(observation.ts), None)
@@ -104,6 +113,32 @@ def _world_register(observation, store_tf, world_frame, lidar_frame):
     return points.astype(np.float32), None
 
 
+def _odom_origin_lookup(store: SqliteStore, odom_stream: str):
+    """``lookup(ts) -> (x, y, z)`` returning the nearest odometry position in time."""
+    samples = np.array(
+        [
+            (
+                float(observation.ts),
+                observation.data.pose.position.x,
+                observation.data.pose.position.y,
+                observation.data.pose.position.z,
+            )
+            for observation in store.stream(odom_stream)
+        ],
+        float,
+    )
+    times = samples[:, 0]
+
+    def lookup(ts: float) -> tuple[float, float, float]:
+        index = int(np.searchsorted(times, ts))
+        index = min(max(index, 0), len(samples) - 1)
+        if index > 0 and abs(times[index - 1] - ts) < abs(times[index] - ts):
+            index -= 1
+        return float(samples[index, 1]), float(samples[index, 2]), float(samples[index, 3])
+
+    return lookup
+
+
 def accumulate_stream(
     store: SqliteStore,
     in_stream: str,
@@ -114,11 +149,18 @@ def accumulate_stream(
     use_tf: bool = True,
     voxel_size: float = DEFAULT_VOXEL,
     max_range: float = DEFAULT_MAX_RANGE,
+    origin_stream: str | None = None,
 ) -> int:
-    """Raycast-accumulate ``in_stream`` into a single ``out_stream`` cloud; returns point count."""
+    """Raycast-accumulate ``in_stream`` into a single ``out_stream`` cloud; returns point count.
+
+    ``origin_stream`` names an odometry stream whose trajectory supplies the ray
+    origin for already-world scans that lack a per-scan pose (needed to raycast
+    Point-LIO world clouds, which carry no origin of their own).
+    """
     from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 
     store_tf = RecordingTF.from_store(store) if use_tf else None
+    origin_lookup = _odom_origin_lookup(store, origin_stream) if origin_stream else None
     mapper = VoxelRayMapper(voxel_size=voxel_size, max_range=max_range)
 
     print(
@@ -131,7 +173,9 @@ def accumulate_stream(
     last_ts = 0.0
     start_time = time.time()
     for observation in store.stream(in_stream):
-        world_points, origin = _world_register(observation, store_tf, world_frame, lidar_frame)
+        world_points, origin = _world_register(
+            observation, store_tf, world_frame, lidar_frame, origin_lookup
+        )
         if origin is None or not len(world_points):
             skipped += 1
             continue
@@ -170,7 +214,7 @@ def main() -> None:
         sys.exit(
             "usage: python .../scripts/accumulate.py --rec=PATH [--stream=pointlio_lidar] "
             "[--out=...] [--world-frame=world] [--lidar-frame=mid360_link] "
-            "[--voxel=0.05] [--max-range=20] [--no-tf]   (--rec required)"
+            "[--origin=pointlio_odometry] [--voxel=0.05] [--max-range=20] [--no-tf]   (--rec required)"
         )
     rec = Path(rec_arg).expanduser()
     in_stream = _arg("--stream", "pointlio_lidar")
@@ -185,6 +229,7 @@ def main() -> None:
         use_tf="--no-tf" not in sys.argv,
         voxel_size=float(_arg("--voxel", str(DEFAULT_VOXEL))),
         max_range=float(_arg("--max-range", str(DEFAULT_MAX_RANGE))),
+        origin_stream=_arg("--origin") or None,
     )
 
 
