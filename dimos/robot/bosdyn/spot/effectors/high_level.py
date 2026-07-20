@@ -57,6 +57,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.bosdyn.spot.config import (
     CAMERA_MAX_HZ,
+    FRONT_CAMERA_MIRROR_HALF_TURN,
     FRONT_CAMERA_ROTATE_UPRIGHT,
     IP_LABELS,
     MAX_ANGULAR_VELOCITY,
@@ -75,6 +76,7 @@ from dimos.robot.bosdyn.spot.utils import (
     camera_mount_transforms,
     clamp,
     decode_image,
+    roll_optical_frame,
     rotate_camera_info_quarter_turns,
     rotate_image_quarter_turns,
 )
@@ -169,9 +171,11 @@ class SpotHighLevel(StaticTfPublisher):
         """Static base_link -> camera-optical extrinsics parsed from the URDF.
 
         `StaticTfPublisher` republishes these on a fixed interval; the moving
-        odom->base_link edge stays live (see `_publish_odom`).
+        odom->base_link edge stays live (see `_publish_odom`). The front optical
+        frames are rolled to match the upright-rotated front images so recorded
+        tf, intrinsics, and pixels stay mutually consistent for depth reprojection.
         """
-        return camera_mount_transforms(
+        mounts = camera_mount_transforms(
             SPOT_URDF_PATH,
             self.config.base_frame_id,
             [
@@ -182,6 +186,16 @@ class SpotHighLevel(StaticTfPublisher):
                 self.config.back_camera_frame_id,
             ],
         )
+        front_frame_rolls = {
+            self.config.frontleft_camera_frame_id: FRONT_CAMERA_ROTATE_UPRIGHT,
+            self.config.frontright_camera_frame_id: (
+                FRONT_CAMERA_ROTATE_UPRIGHT + FRONT_CAMERA_MIRROR_HALF_TURN
+            ),
+        }
+        return [
+            roll_optical_frame(mount, front_frame_rolls.get(mount.child_frame_id, 0))
+            for mount in mounts
+        ]
 
     async def main(self) -> AsyncIterator[None]:
         username, password = self.config.username, self.config.password
@@ -191,72 +205,83 @@ class SpotHighLevel(StaticTfPublisher):
                 "(-o <module>.username=... -o <module>.password=...)"
             )
 
-        ip = await self.resolve_ip()
+        # Any setup failure past this point must undo the lease/E-stop keepalives and
+        # motor power it already acquired, else Spot is left powered with no manager.
+        try:
+            ip = await self.resolve_ip()
 
-        from bosdyn.client import create_standard_sdk  # type: ignore[import-not-found]
-        from bosdyn.client.estop import (  # type: ignore[import-not-found]
-            EstopClient,
-            EstopEndpoint,
-            EstopKeepAlive,
-        )
-        from bosdyn.client.image import ImageClient  # type: ignore[import-not-found]
-        from bosdyn.client.lease import (  # type: ignore[import-not-found]
-            LeaseClient,
-            LeaseKeepAlive,
-        )
-        from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
-            RobotCommandClient,
-            blocking_stand,
-        )
-        from bosdyn.client.robot_state import (  # type: ignore[import-not-found]
-            RobotStateClient,
-        )
-
-        logger.info(f"Connecting to Spot at {ip}")
-        sdk = await asyncio.to_thread(create_standard_sdk, "dimos-spot")
-        self._robot = await asyncio.to_thread(sdk.create_robot, ip)
-        await asyncio.to_thread(self._robot.authenticate, username, password)
-        await self.sync_clocks()
-
-        if self.config.enable_estop:
-            estop_client = self._robot.ensure_client(EstopClient.default_service_name)
-            endpoint = EstopEndpoint(
-                client=estop_client,
-                name="dimos-spot",
-                estop_timeout=self.config.estop_timeout,
+            from bosdyn.client import create_standard_sdk  # type: ignore[import-not-found]
+            from bosdyn.client.estop import (  # type: ignore[import-not-found]
+                EstopClient,
+                EstopEndpoint,
+                EstopKeepAlive,
             )
-            await asyncio.to_thread(endpoint.force_simple_setup)
-            self._estop_keepalive = EstopKeepAlive(endpoint)
-
-        if self.config.acquire_lease:
-            lease_client = self._robot.ensure_client(LeaseClient.default_service_name)
-            await asyncio.to_thread(lease_client.take)
-            self._lease_keepalive = LeaseKeepAlive(lease_client)
-
-        self._command_client = self._robot.ensure_client(RobotCommandClient.default_service_name)
-        self._state_client = self._robot.ensure_client(RobotStateClient.default_service_name)
-        self._image_client = self._robot.ensure_client(ImageClient.default_service_name)
-
-        if self.config.power_on_at_start:
-            logger.info("Powering on Spot motors")
-            await asyncio.to_thread(self._robot.power_on, timeout_sec=POWER_ON_TIMEOUT_S)
-
-        if self.config.stand_at_start:
-            logger.info("Standing Spot")
-            await asyncio.to_thread(
-                blocking_stand, self._command_client, timeout_sec=STAND_TIMEOUT_S
+            from bosdyn.client.image import ImageClient  # type: ignore[import-not-found]
+            from bosdyn.client.lease import (  # type: ignore[import-not-found]
+                LeaseClient,
+                LeaseKeepAlive,
             )
-            self._standing = True
+            from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
+                RobotCommandClient,
+                blocking_stand,
+            )
+            from bosdyn.client.robot_state import (  # type: ignore[import-not-found]
+                RobotStateClient,
+            )
 
-        self.tf.start()
-        self._image_task = asyncio.create_task(self._poll_images())
-        self._odom_task = asyncio.create_task(self._poll_odom())
+            logger.info(f"Connecting to Spot at {ip}")
+            sdk = await asyncio.to_thread(create_standard_sdk, "dimos-spot")
+            self._robot = await asyncio.to_thread(sdk.create_robot, ip)
+            await asyncio.to_thread(self._robot.authenticate, username, password)
+            await self.sync_clocks()
 
-        self._ready.set()
-        logger.info("Spot control + sensors ready")
+            if self.config.enable_estop:
+                estop_client = self._robot.ensure_client(EstopClient.default_service_name)
+                endpoint = EstopEndpoint(
+                    client=estop_client,
+                    name="dimos-spot",
+                    estop_timeout=self.config.estop_timeout,
+                )
+                await asyncio.to_thread(endpoint.force_simple_setup)
+                self._estop_keepalive = EstopKeepAlive(endpoint)
+
+            if self.config.acquire_lease:
+                lease_client = self._robot.ensure_client(LeaseClient.default_service_name)
+                await asyncio.to_thread(lease_client.take)
+                self._lease_keepalive = LeaseKeepAlive(lease_client)
+
+            self._command_client = self._robot.ensure_client(
+                RobotCommandClient.default_service_name
+            )
+            self._state_client = self._robot.ensure_client(RobotStateClient.default_service_name)
+            self._image_client = self._robot.ensure_client(ImageClient.default_service_name)
+
+            if self.config.power_on_at_start:
+                logger.info("Powering on Spot motors")
+                await asyncio.to_thread(self._robot.power_on, timeout_sec=POWER_ON_TIMEOUT_S)
+
+            if self.config.stand_at_start:
+                logger.info("Standing Spot")
+                await asyncio.to_thread(
+                    blocking_stand, self._command_client, timeout_sec=STAND_TIMEOUT_S
+                )
+                self._standing = True
+
+            self.tf.start()
+            self._image_task = asyncio.create_task(self._poll_images())
+            self._odom_task = asyncio.create_task(self._poll_odom())
+
+            self._ready.set()
+            logger.info("Spot control + sensors ready")
+        except BaseException:
+            await self._teardown()
+            raise
 
         yield
 
+        await self._teardown()
+
+    async def _teardown(self) -> None:
         self._ready.clear()
         for task in (self._image_task, self._odom_task):
             if task is not None:
@@ -405,6 +430,7 @@ class SpotHighLevel(StaticTfPublisher):
             VISION_FRAME_NAME,
             get_a_tform_b,
         )
+        from bosdyn.client.math_helpers import SE3Pose  # type: ignore[import-not-found]
 
         period = 1.0 / self.config.odom_rate_hz
         while True:
@@ -417,14 +443,23 @@ class SpotHighLevel(StaticTfPublisher):
                 continue
 
             kinematic_state = state.kinematic_state
-            vision_tform_body = get_a_tform_b(
-                kinematic_state.transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME
-            )
-            velocity = kinematic_state.velocity_of_body_in_vision
+            # note:  creating new time_converter's is intenional, time_sync changes itself over time, time_converter doesn't
             time_converter = self._robot.time_sync.get_robot_time_converter()
             ts = time_converter.local_seconds_from_robot_timestamp(
                 kinematic_state.acquisition_timestamp
             )
+            vision_tform_body = get_a_tform_b(
+                kinematic_state.transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME
+            )
+            # No vision->body: fall back to identity so odom->base_link keeps publishing and the
+            # tf tree stays connected (cameras keep resolving). Odom pose reads zero until it returns.
+            if vision_tform_body is None:
+                logger.warning(
+                    "Spot state has no vision->body transform; using identity "
+                    "odom->base_link until it returns (odometry pose reads zero)."
+                )
+                vision_tform_body = SE3Pose.from_identity()
+            velocity = kinematic_state.velocity_of_body_in_vision
             self._publish_odom(vision_tform_body, velocity, ts)
 
             await asyncio.sleep(max(0.0, period - (time.monotonic() - start)))
