@@ -82,11 +82,16 @@ static constexpr int32_t OFFSET_TIME_OFFSET = 16;
 static constexpr int32_t TAG_OFFSET = 20;
 static constexpr int32_t LINE_OFFSET = 21;
 static constexpr int32_t POINT_STEP = 22;
-static constexpr int32_t LEGACY_POINT_STEP = 16;  // x,y,z,intensity only
+static constexpr int32_t COMPACT_POINT_STEP = 16;  // minimal and legacy layouts
 
-// --per_point_timing false publishes the legacy 16-byte layout (no
-// offset_time/tag/line fields) for consumers that don't want the extra bytes.
-static bool g_per_point_timing = true;
+// --point_format selects the wire layout:
+//   full    (default) x,y,z,intensity,offset_time,tag,line — 22 B/point
+//   minimal           x,y,z,offset_time                    — 16 B/point
+//   legacy            x,y,z,intensity                      — 16 B/point
+// Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time; intensity
+// is passthrough-only for every LIO in the stack (viz/map coloring).
+enum class PointFormat { kFull, kMinimal, kLegacy };
+static PointFormat g_point_format = PointFormat::kFull;
 
 static void publish_pointcloud(const std::vector<float>& xyz,
                                const std::vector<float>& intensity,
@@ -104,10 +109,8 @@ static void publish_pointcloud(const std::vector<float>& xyz,
     pc.is_bigendian = 0;
     pc.is_dense = 1;
 
-    const bool timing = g_per_point_timing;
-    const int32_t point_step = timing ? POINT_STEP : LEGACY_POINT_STEP;
-    pc.fields_length = timing ? 7 : 4;
-    pc.fields.resize(pc.fields_length);
+    const PointFormat format = g_point_format;
+    const int32_t point_step = format == PointFormat::kFull ? POINT_STEP : COMPACT_POINT_STEP;
 
     auto make_field = [](const std::string& name, int32_t offset, int8_t datatype) {
         sensor_msgs::PointField f;
@@ -118,16 +121,22 @@ static void publish_pointcloud(const std::vector<float>& xyz,
         return f;
     };
 
-    pc.fields[0] = make_field("x", 0, sensor_msgs::PointField::FLOAT32);
-    pc.fields[1] = make_field("y", 4, sensor_msgs::PointField::FLOAT32);
-    pc.fields[2] = make_field("z", 8, sensor_msgs::PointField::FLOAT32);
-    pc.fields[3] = make_field("intensity", 12, sensor_msgs::PointField::FLOAT32);
-    if (timing) {
-        pc.fields[4] =
-            make_field("offset_time", OFFSET_TIME_OFFSET, sensor_msgs::PointField::UINT32);
-        pc.fields[5] = make_field("tag", TAG_OFFSET, sensor_msgs::PointField::UINT8);
-        pc.fields[6] = make_field("line", LINE_OFFSET, sensor_msgs::PointField::UINT8);
+    pc.fields.clear();
+    pc.fields.push_back(make_field("x", 0, sensor_msgs::PointField::FLOAT32));
+    pc.fields.push_back(make_field("y", 4, sensor_msgs::PointField::FLOAT32));
+    pc.fields.push_back(make_field("z", 8, sensor_msgs::PointField::FLOAT32));
+    if (format != PointFormat::kMinimal) {
+        pc.fields.push_back(make_field("intensity", 12, sensor_msgs::PointField::FLOAT32));
     }
+    if (format == PointFormat::kFull) {
+        pc.fields.push_back(
+            make_field("offset_time", OFFSET_TIME_OFFSET, sensor_msgs::PointField::UINT32));
+        pc.fields.push_back(make_field("tag", TAG_OFFSET, sensor_msgs::PointField::UINT8));
+        pc.fields.push_back(make_field("line", LINE_OFFSET, sensor_msgs::PointField::UINT8));
+    } else if (format == PointFormat::kMinimal) {
+        pc.fields.push_back(make_field("offset_time", 12, sensor_msgs::PointField::UINT32));
+    }
+    pc.fields_length = static_cast<int32_t>(pc.fields.size());
 
     pc.point_step = point_step;
     pc.row_step = pc.point_step * num_points;
@@ -142,12 +151,23 @@ static void publish_pointcloud(const std::vector<float>& xyz,
         dst[0] = xyz[i * 3 + 0];
         dst[1] = xyz[i * 3 + 1];
         dst[2] = xyz[i * 3 + 2];
-        dst[3] = intensity[i];
-        if (timing) {
-            uint32_t offset_value = offset_ns[i];
-            std::memcpy(base + OFFSET_TIME_OFFSET, &offset_value, sizeof(uint32_t));
-            base[TAG_OFFSET] = tag[i];
-            base[LINE_OFFSET] = 0;  // Mid-360: single line
+        switch (format) {
+            case PointFormat::kFull: {
+                dst[3] = intensity[i];
+                uint32_t offset_value = offset_ns[i];
+                std::memcpy(base + OFFSET_TIME_OFFSET, &offset_value, sizeof(uint32_t));
+                base[TAG_OFFSET] = tag[i];
+                base[LINE_OFFSET] = 0;  // Mid-360: single line
+                break;
+            }
+            case PointFormat::kMinimal: {
+                uint32_t offset_value = offset_ns[i];
+                std::memcpy(base + 12, &offset_value, sizeof(uint32_t));
+                break;
+            }
+            case PointFormat::kLegacy:
+                dst[3] = intensity[i];
+                break;
         }
     }
 
@@ -289,7 +309,18 @@ int main(int argc, char** argv) {
     g_frequency = mod.arg_float("frequency", 10.0f);
     g_frame_id = mod.arg("frame_id", "lidar_link");
     g_imu_frame_id = mod.arg("imu_frame_id", "imu_link");
-    g_per_point_timing = mod.arg_bool("per_point_timing", true);
+    const std::string point_format = mod.arg("point_format", "full");
+    if (point_format == "full") {
+        g_point_format = PointFormat::kFull;
+    } else if (point_format == "minimal") {
+        g_point_format = PointFormat::kMinimal;
+    } else if (point_format == "legacy") {
+        g_point_format = PointFormat::kLegacy;
+    } else {
+        fprintf(stderr, "[mid360] unknown --point_format '%s' (full|minimal|legacy)\n",
+                point_format.c_str());
+        return 1;
+    }
 
     // SDK network ports (defaults from SdkPorts struct in livox_sdk_config.hpp)
     livox_common::SdkPorts ports;
