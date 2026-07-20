@@ -259,10 +259,11 @@ def _tfm(parent: str, child: str, ts: float, x: float = 0.0, y: float = 0.0):  #
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-    return Transform(translation=Vector3(x, y, 0.0), frame_id=parent, child_frame_id=child, ts=ts)
+    t = Transform(translation=Vector3(x, y, 0.0), frame_id=parent, child_frame_id=child, ts=ts)
+    t.ts = ts  # Transform ctor swaps an explicit ts=0.0 for wall clock; force the sample ts
+    return t
 
 
-@pytest.mark.skip(reason="T11 impl pending")
 class TestTfBuffer:
     def _buffer(self):  # type: ignore[no-untyped-def]
         from dimos.pure.tfbuffer import TfBuffer
@@ -313,15 +314,15 @@ class TestTfBuffer:
         buf = self._buffer()
         s = math.sin(math.pi / 4)
         for ts in (0.0, 2.0):
-            buf.ingest(
-                Transform(
-                    translation=Vector3(10.0, 0.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, s, s),
-                    frame_id="world",
-                    child_frame_id="odom",
-                    ts=ts,
-                )
+            wo = Transform(
+                translation=Vector3(10.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, s, s),
+                frame_id="world",
+                child_frame_id="odom",
+                ts=ts,
             )
+            wo.ts = ts  # ctor swaps an explicit ts=0.0 for wall clock; force the sample ts
+            buf.ingest(wo)
             buf.ingest(_tfm("odom", "base", ts, x=1.0))
         t = buf.resolve("world", "base", 1.0)
         assert t is not None
@@ -405,7 +406,6 @@ class TestTfBuffer:
 # ── skip-gated: align integration through over() (spec §6, §8) ───────────────
 
 
-@pytest.mark.skip(reason="T11 impl pending")
 class TestOverIntegration:
     def _consumer(self):  # type: ignore[no-untyped-def]
         from dimos.msgs.geometry_msgs.Transform import Transform
@@ -525,7 +525,6 @@ class TestOverIntegration:
 # ── skip-gated: tf_out routing (spec §7) ─────────────────────────────────────
 
 
-@pytest.mark.skip(reason="T11 impl pending")
 class TestTfOutRouting:
     def test_self_ingestion_brackets_with_stream(self) -> None:
         # spec §7.3: a module's own assertion (ingested by the tap at tick 0.0)

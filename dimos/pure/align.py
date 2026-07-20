@@ -29,12 +29,26 @@ import dataclasses
 import enum
 import math
 import types
-from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar, Union, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Generic,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from typing_extensions import Self
 
-from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, TickSpec
+from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, TfSpec, TickSpec
 from dimos.pure.typing import Stamped
+
+if TYPE_CHECKING:
+    from dimos.pure.tfbuffer import TfContext
 
 __all__ = [
     "AlignRule",
@@ -59,8 +73,8 @@ InT = TypeVar("InT", bound=In)
 InterpolatorFn: TypeAlias = Callable[[Any, Any, float], Any]
 """``fn(a, b, alpha) -> value`` with alpha strictly inside (0, 1) (spec §6)."""
 
-_SUPPORTED_KINDS: Final = (TickSpec, LatestSpec, InterpolateSpec)
-"""The In-side sampler kinds this resolver handles (spec §4.1; T11 extends)."""
+_SUPPORTED_KINDS: Final = (TickSpec, LatestSpec, InterpolateSpec, TfSpec)
+"""The In-side sampler kinds this resolver handles (spec §4.1; tf() is a side channel)."""
 
 
 class Interpolatable(Protocol):
@@ -286,7 +300,13 @@ class _PortState:
 class Aligner(Generic[InT]):
     """One-shot iterator of aligned In rows; owns counters, owns no resources."""
 
-    def __init__(self, in_type: type[InT], streams: Mapping[str, Iterable[Stamped]]) -> None:
+    def __init__(
+        self,
+        in_type: type[InT],
+        streams: Mapping[str, Iterable[Stamped]],
+        *,
+        tf: TfContext | None = None,
+    ) -> None:
         """Validate wiring eagerly (spec §7); pulls nothing until iteration."""
         # §7 #1 — in_type must be a pm.In subclass; fields() is called once and a
         # BundleDefinitionError (T1 E-UNRESOLVED) propagates untouched.
@@ -313,17 +333,20 @@ class Aligner(Generic[InT]):
         # §7 #4 — every stream key names a declared port.
         for key in streams:
             if key not in fields:
-                ts_note = (
-                    " (ts is row infrastructure, stamped by the engine — not a port.)"
-                    if key == "ts"
-                    else ""
-                )
-                raise _e_unknown_port(self._bundle, key, ", ".join(fields), ts_note)
+                if key == "ts":
+                    note = " (ts is row infrastructure, stamped by the engine — not a port.)"
+                elif key == "tf":
+                    note = " (tf is the reserved tf-stream key — pass it as the tf= argument, not a stream.)"
+                else:
+                    note = ""
+                raise _e_unknown_port(self._bundle, key, ", ".join(fields), note)
 
         # §7 #5 — tick + required secondaries need streams; optionals may be omitted.
         if tick_name not in streams:
             raise _e_missing_tick_stream(self._bundle, tick_name)
         for name, spec in fields.items():
+            if isinstance(spec, TfSpec):
+                continue  # tf fields are a demand-pulled side channel, not a merge port
             if name != tick_name and spec.required and name not in streams:
                 raise _e_missing_required_stream(self._bundle, spec.kind, name)
 
@@ -346,8 +369,12 @@ class Aligner(Generic[InT]):
         self._stats = AlignStats()
         self._ports: list[_PortState] = []
         self._secondaries: list[_PortState] = []
+        self._tf_fields: list[tuple[str, TfSpec]] = []  # demand-pulled side channel (spec §6.1)
         tick_port: _PortState | None = None
         for index, (name, spec) in enumerate(fields.items()):
+            if isinstance(spec, TfSpec):
+                self._tf_fields.append((name, spec))  # no _PortState — resolved at fire time
+                continue
             it = iters.get(name)
             interp: InterpolatorFn | None = None
             if isinstance(spec, InterpolateSpec) and it is not None:
@@ -362,6 +389,9 @@ class Aligner(Generic[InT]):
         assert tick_port is not None  # a tick field was found in §7 #2
         self._tick: _PortState = tick_port
         self._held_tick_ts: float | None = None
+        self._ctx: TfContext | None = tf
+        if tf is not None:
+            self._stats.ports["tf"] = tf.port_stats  # T9 sees the stream-level counters
 
     def _resolve_interp(self, name: str, spec: FieldSpec) -> InterpolatorFn:
         """Resolve an interpolate port's interpolator from its declared type (spec §6.3)."""
@@ -428,6 +458,26 @@ class Aligner(Generic[InT]):
             for field_name in missing_required:
                 stats.drops_by_field[field_name] = stats.drops_by_field.get(field_name, 0) + 1
             return None
+        # tf block — the demand-pulled side channel resolves at fire time (spec §6.3/§6.4).
+        # Resolution IS the decision: required chains hold (pull) until resolvable or the
+        # stream exhausts; optional chains take their default when unresolvable.
+        if self._tf_fields:
+            ctx = self._ctx
+            unresolved = {
+                name
+                for name, spec in self._tf_fields
+                if spec.required and (ctx is None or ctx.resolve_field(name, tick_ts) is None)
+            }
+            while unresolved and ctx is not None and ctx.pull():  # THE HOLD — pulling is the wait
+                unresolved = {n for n in unresolved if ctx.resolve_field(n, tick_ts) is None}
+            if unresolved:
+                stats.ticks_dropped += 1
+                for field_name in unresolved:
+                    stats.drops_by_field[field_name] = stats.drops_by_field.get(field_name, 0) + 1
+                return None
+            for name, spec in self._tf_fields:
+                value = None if ctx is None else ctx.resolve_field(name, tick_ts)
+                resolved[name] = value if value is not None else spec.default
         # pass 2 — materialize brackets (user interpolation runs only for emitted rows).
         for bname, left, right, alpha, interp in brackets:
             resolved[bname] = interp(left, right, alpha)
@@ -482,6 +532,8 @@ class Aligner(Generic[InT]):
             # (e) tick event fires: every other frontier is provably past T (§5.3),
             #     so the resolution is final either way.
             assert tick.head is not None  # min selected it from ports-with-head
+            if self._ctx is not None:
+                self._ctx.advance_past(tick.head_ts)  # ingest the tf frontier past T (§6.2)
             row = self._fire(tick.head, tick.head_ts)
             tick.head = None
             self._held_tick_ts = None
@@ -500,6 +552,11 @@ class Aligner(Generic[InT]):
         return self._held_tick_ts
 
 
-def align(in_type: type[InT], streams: Mapping[str, Iterable[Stamped]]) -> Aligner[InT]:
+def align(
+    in_type: type[InT],
+    streams: Mapping[str, Iterable[Stamped]],
+    *,
+    tf: TfContext | None = None,
+) -> Aligner[InT]:
     """Resolve stamped streams into tick-stamped In rows (validates now, pulls lazily)."""
-    return Aligner(in_type, streams)
+    return Aligner(in_type, streams, tf=tf)
