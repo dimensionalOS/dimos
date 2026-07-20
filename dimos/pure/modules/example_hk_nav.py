@@ -123,13 +123,38 @@ def run(scans: int, sink: str, out: str | None) -> int:
     return n
 
 
+def run_graph(scans: int, sink: str, out: str | None) -> int:
+    """Same pipeline via ``NavStack.over(...).save(sink)`` — the graph computes once (§0.5).
+
+    ``NavStack`` wires the DAG; the terminal drive fans its exported map/costmap/path
+    into the sink in one synchronous pass (shared upstream evaluated once). The sink's
+    ``robot`` pose stays unbound here — the odom tf is interior to the graph, not an
+    exported output (routing it in is a thin follow-up). Returns frames rendered.
+    """
+    from dimos.pure.modules.nav_stack import NavStack
+
+    path = get_data("go2_hongkong_office.db")
+    with SqliteStore(path=str(path)) as store:
+        lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
+        odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
+        goal = PoseStamped(frame_id=WORLD, position=[0.0, 0.0, 0.0])
+        goal.ts = 1.0  # below every recording ts, so the planner's latest() sees it from tick 1
+        run = NavStack(voxel_size=0.1, emit_every=20).over(lidar=lidar, odom=odom, goal=[goal])
+        n: int = run.save(NavRerunSink(sink=sink, save_path=out))
+    print(f"rendered {n} frames")
+    return n
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scans", type=int, default=120, help="lidar scans to replay")
     parser.add_argument("--sink", choices=("grpc", "spawn", "save"), default="spawn")
     parser.add_argument("--out", default=None, help=".rrd path for --sink save")
+    parser.add_argument(
+        "--graph", action="store_true", help="drive via NavStack.over().save() (compute-once)"
+    )
     args = parser.parse_args()
-    run(args.scans, args.sink, args.out)
+    (run_graph if args.graph else run)(args.scans, args.sink, args.out)
 
 
 if __name__ == "__main__":
