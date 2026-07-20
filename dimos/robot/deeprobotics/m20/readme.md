@@ -107,6 +107,25 @@ dimos --transport=zenoh \
   run m20-simple-nav
 ```
 
+The blueprint automatically loads the checked-in real-robot trajectory
+generation and smoothing profile from
+`dimos/robot/deeprobotics/m20/config/m20_simple_nav.yaml`. No additional
+`--config` option is required.
+
+To load a different deployment profile instead, pass it explicitly:
+
+```bash
+dimos --transport=zenoh \
+  --zenoh-connect tcp/<aos_ip>:7447 \
+  run m20-simple-nav \
+  --config /path/to/deployment-profile.yaml
+```
+
+The initial profile covers the A* objective and final-path diagnostics/smoothing.
+Raw-path publication and constrained smoothing are enabled in the checked-in profile.
+Edit the profile and restart DimOS to change them during physical validation.
+The profile does not change mapping, CostMapper, local-controller, or MuJoCo settings.
+
 
 
 ---

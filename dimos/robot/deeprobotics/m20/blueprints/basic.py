@@ -49,6 +49,20 @@ def _node_edges_on_surface(msg: Any) -> Any:
     return msg.to_rerun(z_offset=0.0)
 
 
+def _raw_path_for_rerun(msg: Any) -> Any:
+    """Render the unmodified A* path above the controller path."""
+    if not msg.poses:
+        return None
+    return msg.to_rerun(color=(255, 170, 0), z_offset=0.55, radii=0.035)
+
+
+def _smooth_path_for_rerun(msg: Any) -> Any:
+    """Render the path sent to LocalPlanner in the existing green style."""
+    if not msg.poses:
+        return None
+    return msg.to_rerun(color=(0, 255, 128), z_offset=0.60, radii=0.05)
+
+
 def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
@@ -138,6 +152,8 @@ rerun = autoconnect(
             "world/camera_info": None,
             "world/camera_info_rear": None,
             "world/node_edges": _node_edges_on_surface,
+            "world/raw_path": _raw_path_for_rerun,
+            "world/path": _smooth_path_for_rerun,
         },
         static={"world/tf/base_link": _m20_static_scene},
     ),

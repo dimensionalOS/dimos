@@ -73,15 +73,29 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config` `-c` | YAML or JSON config file; YAML is recommended because it supports comments. Environment and `-o` values override file settings. |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
 | `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
+Use YAML for deployment configuration so the file can carry operator context:
+
+```yaml
+# ~/.config/dimos.yaml
+voxelgridmapper:
+  voxel_size: 0.05 # Tune for the deployed sensor resolution.
+```
+
+Existing JSON config files remain supported. Invalid configuration syntax and
+non-mapping files are reported instead of being ignored.
+
 ```bash
 # Foreground (Ctrl-C to stop)
 dimos run unitree-go2
+
+# YAML config with deployment notes
+dimos run unitree-go2 --config ~/.config/dimos.yaml
 
 # Background (returns immediately)
 dimos run unitree-go2-agentic --daemon
