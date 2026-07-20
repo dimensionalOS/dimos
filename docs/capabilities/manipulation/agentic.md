@@ -3,8 +3,7 @@ title: "Agentic xArm Simulation"
 ---
 
 `xarm-perception-sim-agent` runs the xArm perception, planning, MuJoCo
-simulation, MCP server, and built-in agent together. It is **simulation-only**;
-it does not control a physical arm.
+simulation, MCP server, and built-in agent together. It is **simulation-only**; This guide uses this blueprint to provide a walk-through of dimos's agentic manipulation stack.
 
 See the [manipulation capability overview](/docs/capabilities/manipulation/) for
 the underlying planning and perception stack.
@@ -17,14 +16,8 @@ Install the manipulation dependencies:
 uv sync --extra manipulation --inexact
 ```
 
-The built-in agent requires an `OPENAI_API_KEY` for OpenAI Platform API access.
-Your OpenAI account must have billing enabled or available API credits. Do not
-put the key in this document or in shell history shared with others.
+The built-in agent requires an `OPENAI_API_KEY`.
 
-The local LCM UDP multicast/loopback path must be available between the DimOS
-processes. On a restricted environment, allow local multicast traffic on the
-loopback interface; otherwise the agent input and module communication may not
-arrive.
 
 ## Start and stop
 
@@ -109,7 +102,3 @@ uv run dimos mcp call look
 uv run dimos mcp call scan_objects
 ```
 
-`look` observes the current camera view without moving the arm. `scan_objects`
-is a single initialization-viewpoint perception snapshot: it first moves the
-simulated arm to its init position and then refreshes detections. It is not a
-guaranteed object inventory.
