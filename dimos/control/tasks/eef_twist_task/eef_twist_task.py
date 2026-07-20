@@ -95,11 +95,13 @@ class EEFTwistTask(BaseControlTask):
         return ResourceClaim(joints, self._config.priority, ControlMode.SERVO_POSITION)
 
     def is_active(self) -> bool:
-        return not self._estopped
+        with self._lock:
+            return not self._estopped
 
     def set_estop(self, estopped: bool) -> None:
-        """Latch/clear E-STOP. On latch, drop any pending jog and hold anchor so
-        clearing never resumes a stale command; is_active() gates compute()."""
+        """Latch/clear E-STOP. On latch, drop the pending jog and hold anchor so
+        clearing resumes from the current pose, not a stale target. The gripper
+        target is kept so a held payload isn't released."""
         with self._lock:
             self._estopped = estopped
             if estopped:
