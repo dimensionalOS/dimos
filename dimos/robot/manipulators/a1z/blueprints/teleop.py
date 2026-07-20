@@ -20,8 +20,6 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import (
-    A1Z_DOF,
-    A1Z_FK_MODEL,
     make_a1z_hardware,
     make_a1z_model_config,
 )
@@ -29,15 +27,21 @@ from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a1z_keyboard_hw = make_a1z_hardware("arm")
+_a1z_model = make_a1z_model_config()
 
 keyboard_teleop_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         hardware=[_a1z_keyboard_hw],
-        tasks=[eef_twist_task(_a1z_keyboard_hw, model_path=A1Z_FK_MODEL, ee_joint_id=A1Z_DOF)],
+        tasks=[
+            eef_twist_task(
+                _a1z_keyboard_hw,
+                robot_model=_a1z_model,
+            )
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_a1z_model_config()],
+        robots=[_a1z_model],
         visualization={"backend": "viser"},
     ),
 )

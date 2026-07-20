@@ -52,6 +52,9 @@ _xarm7_hw = make_xarm_hardware(
     address=global_config.xarm7_ip,
 )
 
+_xarm6_model = make_xarm6_model_config(add_gripper=False)
+_xarm7_model = make_xarm7_model_config(add_gripper=False)
+
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
@@ -59,10 +62,15 @@ keyboard_teleop_xarm6 = autoconnect(
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_xarm6_hw],
-        tasks=[eef_twist_task(_xarm6_hw, model_path=XARM6_FK_MODEL, ee_joint_id=6)],
+        tasks=[
+            eef_twist_task(
+                _xarm6_hw,
+                robot_model=_xarm6_model,
+            )
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm6_model_config(add_gripper=False)],
+        robots=[_xarm6_model],
         visualization={"backend": "meshcat"},
     ),
 )
@@ -74,10 +82,15 @@ keyboard_teleop_xarm7 = autoconnect(
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_xarm7_hw],
-        tasks=[eef_twist_task(_xarm7_hw, model_path=XARM7_FK_MODEL, ee_joint_id=7)],
+        tasks=[
+            eef_twist_task(
+                _xarm7_hw,
+                robot_model=_xarm7_model,
+            )
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm7_model_config(add_gripper=False)],
+        robots=[_xarm7_model],
         visualization={"backend": "meshcat"},
     ),
 )

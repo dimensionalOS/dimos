@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -48,37 +48,64 @@ def trajectory_task(
     )
 
 
+def _resolve_control_ik(
+    hardware: HardwareComponent,
+    robot_model: RobotModelConfig,
+    control_ik: Mapping[str, object] | None,
+) -> dict[str, object]:
+    coordinator_joints = robot_model.get_coordinator_joint_names()
+    if hardware.joints != coordinator_joints:
+        raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
+    payload = dict(control_ik or {})
+    payload["robot_model"] = robot_model
+    return payload
+
+
 def cartesian_ik_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     name: str = CARTESIAN_IK_TASK_NAME,
     priority: int = 10,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: Mapping[str, object] | None = None,
+    robot_model: RobotModelConfig,
 ) -> TaskConfig:
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     return TaskConfig(
         name=name,
         type="cartesian_ik",
         joint_names=hardware.joints,
         priority=priority,
-        params={"model_path": model_path, "ee_joint_id": ee_joint_id},
+        params={
+            "control_ik": resolved_control_ik,
+            "min_dt": min_dt,
+            "max_dt": max_dt,
+        },
     )
 
 
 def eef_twist_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     name: str = EEF_TWIST_TASK_NAME,
     priority: int = 10,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: Mapping[str, object] | None = None,
+    robot_model: RobotModelConfig,
 ) -> TaskConfig:
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     return TaskConfig(
         name=name,
         type="eef_twist",
         joint_names=hardware.joints,
         priority=priority,
-        params={"model_path": model_path, "ee_joint_id": ee_joint_id},
+        params={
+            "control_ik": resolved_control_ik,
+            "min_dt": min_dt,
+            "max_dt": max_dt,
+        },
     )
 
 

@@ -118,6 +118,32 @@ request. For example, `planner_name=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+### Cartesian control IK
+
+Cartesian and keyboard EEF-twist tasks use the direct URDF/Xacro model from
+`RobotModelConfig`. The configuration supplies package paths, Xacro arguments,
+the named end-effector frame, and coordinator-to-model joint mapping. Invalid
+models, frames, or mappings fail at startup.
+
+Each control tick starts from measured joints, applies model position and
+velocity limits, and holds the measured position when a solve cannot produce a
+safe command. This local control path is separate from manipulation planning and
+does not use `WorldSpec` or provide world-obstacle avoidance.
+
+For a custom robot, pass the typed model configuration to the helper:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
+
+task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+```
+
+Validate Cartesian and twist behavior in simulation or replay before hardware
+use.
+
 Install the manipulation dependencies:
 
 ```bash
@@ -214,7 +240,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   TwistStamped           EEFTwistTask             RRT planner
-  spatial EEF twist      (Pinocchio FK/IK)        JacobianIK
+  spatial EEF twist      (control IK)             JacobianIK
                                │                   DrakeWorld
                           JointState ────────────→ (visualization)
 ```

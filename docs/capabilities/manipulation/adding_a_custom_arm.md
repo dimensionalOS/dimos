@@ -569,6 +569,34 @@ yourarm_planner = manipulation_module(
 | `coordinator_task_name` | Must match the `TaskConfig.name` in your coordinator blueprint |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
 
+### 4d. Configure Cartesian and EEF-twist control IK
+
+Cartesian and EEF-twist tasks use the direct URDF or Xacro in
+`RobotModelConfig`. Set `package_paths` and `xacro_args` when needed, name the
+end-effector link, and map coordinator joints to model joints. The task validates
+the prepared model, frame, and joint mapping at startup.
+
+Pass the same model configuration to the common helpers:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, eef_twist_task
+
+cartesian_task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+twist_task = eef_twist_task(
+    hardware,
+    robot_model=robot_model,
+)
+```
+
+Each tick starts from measured joints and applies model position and velocity
+limits. Twist targets are derived from measured forward kinematics. Invalid
+models or mappings fail at startup; invalid runtime output holds the measured
+position. Validate Cartesian and twist behavior in simulation or replay before
+hardware use.
+
 ## Step 5: Register Blueprints
 
 The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:

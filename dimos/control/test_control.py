@@ -258,7 +258,7 @@ class TestControlCoordinatorLifecycle:
                     name="eef",
                     type="eef_twist",
                     joint_names=["arm/joint1"],
-                    params={"model_path": "fake", "ee_joint_id": 1},
+                    params={"model_path": "fake"},
                 )
             ]
         )

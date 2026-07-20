@@ -36,6 +36,8 @@ from dimos.robot.manipulators.piper.config import (
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
+_piper_model = make_piper_model_config()
+
 _piper_keyboard_hw = make_piper_hardware(
     "arm",
     adapter_type="piper" if global_config.can_port else "mock",
@@ -50,10 +52,15 @@ keyboard_teleop_piper = autoconnect(
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_piper_keyboard_hw],
-        tasks=[eef_twist_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+        tasks=[
+            eef_twist_task(
+                _piper_keyboard_hw,
+                robot_model=_piper_model,
+            )
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_piper_model_config()],
+        robots=[_piper_model],
         visualization={"backend": "meshcat"},
     ),
 )
@@ -65,7 +72,12 @@ _piper_mock_cartesian_hw = make_piper_hardware(
 
 coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
     hardware=[_piper_mock_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+    tasks=[
+        cartesian_ik_task(
+            _piper_mock_cartesian_hw,
+            robot_model=_piper_model,
+        )
+    ],
 )
 
 _piper_teleop_hw = piper_hardware("arm")
@@ -100,5 +112,10 @@ _piper_cartesian_hw = make_piper_hardware(
 
 coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+    tasks=[
+        cartesian_ik_task(
+            _piper_cartesian_hw,
+            robot_model=_piper_model,
+        )
+    ],
 )
