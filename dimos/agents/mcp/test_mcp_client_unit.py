@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-
 from collections.abc import Callable
 from queue import Empty
 from unittest.mock import MagicMock, create_autospec
