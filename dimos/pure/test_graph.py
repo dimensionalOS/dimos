@@ -99,6 +99,59 @@ class Foldy(pm.PureModule):
 
 FOLDY_FINALIZED: list[int] = []
 
+COUNT_CALLS: list[int] = []
+
+
+class CountUp(pm.PureModule):
+    """A -> B, counting every step invocation (compute-once proof)."""
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+
+    class Out(pm.Out):
+        b: PayB
+
+    def step(self, i: In) -> Out:
+        COUNT_CALLS.append(1)
+        return CountUp.Out(b=PayB(ts=i.ts, v=i.a.v))
+
+
+class CollectSink(pm.PureModule):
+    """Terminal sink: tick on total, sample latest b; record what it saw."""
+
+    class In(pm.In):
+        total: PayB = pm.tick()
+        b: PayB | None = pm.latest(default=None)
+
+    class Out(pm.Out):
+        n: int
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out]:
+        COLLECT_SAW.append((i.total.v, None if i.b is None else i.b.v))
+        return s.replace(n=s.n + 1), CollectSink.Out(n=s.n + 1)
+
+
+COLLECT_SAW: list[tuple[float, float | None]] = []
+
+
+class _Fan(pg.PureGraph):
+    """Fan CountUp's output to two exports (b direct, total through JoinB)."""
+
+    class In(pm.In):
+        a: PayA
+
+    class Out(pm.Out):
+        b: PayB
+        total: PayB
+
+    def wire(self, i: "_Fan.In") -> "_Fan.Out":
+        c = CountUp()(a=i.a)
+        jn = JoinB()(b=c.b)
+        return _Fan.Out(b=c.b, total=jn.total)
+
 
 def _a_stream(n: int = 5) -> list[PayA]:
     return [PayA(ts=float(t + 1), v=float(t)) for t in range(n)]
@@ -665,6 +718,116 @@ class TestGraphOver:
         assert FOLDY_FINALIZED == []
 
 
+# ── skip-gated: the terminal drive — compute-once multi-output (spec §0.5) ───
+
+
+class TestTerminalDrive:
+    def test_save_to_store_records_every_output(self):
+        from dimos.memory2.store.memory import MemoryStore
+
+        store = MemoryStore()
+        COUNT_CALLS.clear()
+        returned = _Fan().over(a=_a_stream(5)).save(store)
+        assert returned is store
+        assert sorted(store.list_streams()) == ["b", "total"]
+        # JoinB has no extra source here, so total passes b through (v unchanged).
+        assert [o.data.v for o in store.stream("b")] == [0.0, 1.0, 2.0, 3.0, 4.0]
+        assert [o.data.v for o in store.stream("total")] == [0.0, 1.0, 2.0, 3.0, 4.0]
+        # ts rides the payload's own ts — symmetric with ingestion (§0.3).
+        assert [o.ts for o in store.stream("b")] == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+    def test_shared_upstream_computes_once(self):
+        # The compute-once contract: CountUp feeds both exports, runs ONCE per tick.
+        from dimos.memory2.store.memory import MemoryStore
+
+        COUNT_CALLS.clear()
+        _Fan().over(a=_a_stream(5)).save(MemoryStore())
+        assert len(COUNT_CALLS) == 5  # not 10 — the voxel-mapper-shaped member ran once
+
+    def test_per_export_pull_reruns_the_shared_member(self):
+        # Contrast (§0.5): independent per-export lazy pull re-evaluates the cone.
+        COUNT_CALLS.clear()
+        with _Fan().over(a=_a_stream(5)) as run:
+            run.b.to_list()
+            run.total.to_list()
+        assert len(COUNT_CALLS) == 10  # each export re-ran CountUp — why .save() exists
+
+    def test_save_to_module_sink_drives_in_one_pass(self):
+        COUNT_CALLS.clear()
+        COLLECT_SAW.clear()
+        frames = _Fan().over(a=_a_stream(5)).save(CollectSink())
+        assert frames == 5
+        assert len(COUNT_CALLS) == 5  # compute-once through the module sink too
+        # tick on total, latest-sampled b — both fed from the one pass.
+        assert COLLECT_SAW == [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 3.0), (4.0, 4.0)]
+
+    def test_module_sink_remap(self):
+        # remap a sink In field onto a differently-named output.
+        class Sink2(pm.PureModule):
+            class In(pm.In):
+                x: PayB = pm.tick()
+
+            class Out(pm.Out):
+                n: int
+
+            class State(pm.State):
+                n: int = 0
+
+            def step(self, s: State, i: In) -> tuple[State, Out]:
+                return s.replace(n=s.n + 1), Sink2.Out(n=s.n + 1)
+
+        frames = _Fan().over(a=_a_stream(4)).save(Sink2(), remap={"x": "total"})
+        assert frames == 4
+
+    def test_record_interior_edge_by_path(self):
+        from dimos.memory2.store.memory import MemoryStore
+
+        class TotalOnly(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                total: PayB  # make_b.b stays interior — only reachable by path
+
+            def wire(self, i: "TotalOnly.In") -> "TotalOnly.Out":
+                mk = MakeB()(a=i.a)
+                jn = JoinB()(b=mk.b)
+                return TotalOnly.Out(total=jn.total)
+
+        store = MemoryStore()
+        TotalOnly().over(a=_a_stream(3)).save(store, record={"make_b.b": "raw"})
+        assert sorted(store.list_streams()) == ["raw", "total"]
+        assert [o.data.v for o in store.stream("raw")] == [0.0, 2.0, 4.0]
+
+    def test_unknown_record_path_raises(self):
+        from dimos.memory2.store.memory import MemoryStore
+
+        with pytest.raises(pm.PureModuleRunError, match=r"\[graph-unknown-path\]"):
+            _pipe()().over(a=_a_stream(2)).save(MemoryStore(), record={"nope.x": "y"})
+
+    def test_bad_sink_type_raises(self):
+        with pytest.raises(TypeError, match="neither a mem2 store"):
+            _pipe()().over(a=_a_stream(2)).save(object())
+
+    def test_save_disposes_resources_once(self):
+        # The terminal drive owns member drivers; teardown fires once at exhaustion.
+        from dimos.memory2.store.memory import MemoryStore
+
+        class G(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                b: PayB
+
+            def wire(self, i: "G.In") -> "G.Out":
+                return G.Out(b=Foldy()(a=i.a).b)
+
+        FOLDY_FINALIZED.clear()
+        G().over(a=_a_stream(5)).save(MemoryStore())
+        assert FOLDY_FINALIZED == [1]
+
+
 # ── data-marked: the example_hk_nav DAG as a real graph (spec §9 acceptance 3) ─
 
 
@@ -737,6 +900,48 @@ class TestNavStackPort:
         assert [repr(m) for m in got_maps] == [repr(m) for m in want_maps]
         assert [repr(c) for c in got_costs] == [repr(c) for c in want_costs]
         assert [len(p.poses) for p in got_paths] == [len(p.poses) for p in paths]
+
+    def test_save_to_store_matches_per_export(self):
+        # §0.5 acceptance: .save(store) records every output computed ONCE; the streams
+        # match the Phase A per-export pull frame-for-frame.
+        from dimos.memory2.store.memory import MemoryStore
+        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        from .modules.nav_stack import NavStack
+
+        path = _hk_data("go2_hongkong_office.db")
+        scans, voxel, every = 24, 0.1, 8
+
+        def _goal():
+            g = PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+            g.ts = 1.0
+            return g
+
+        with SqliteStore(path=str(path)) as store:
+            lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
+            odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
+            with NavStack(voxel_size=voxel, emit_every=every).over(
+                lidar=lidar, odom=odom, goal=[_goal()]
+            ) as run:
+                want_maps = [repr(m) for m in run.map.to_list()]
+                want_costs = [repr(c) for c in run.costmap.to_list()]
+                want_paths = [len(p.poses) for p in run.path.to_list()]
+
+        out = MemoryStore()
+        with SqliteStore(path=str(path)) as store:
+            lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
+            odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
+            NavStack(voxel_size=voxel, emit_every=every).over(
+                lidar=lidar, odom=odom, goal=[_goal()]
+            ).save(out)
+
+        assert sorted(out.list_streams()) == ["costmap", "map", "path"]
+        assert [repr(o.data) for o in out.stream("map")] == want_maps
+        assert [repr(o.data) for o in out.stream("costmap")] == want_costs
+        assert [len(o.data.poses) for o in out.stream("path")] == want_paths
+        assert want_maps, "expected at least one map emit over the slice"
 
 
 # ── skip-gated: blueprint lowering (spec §7, Phase B) ────────────────────────

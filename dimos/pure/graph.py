@@ -1100,6 +1100,91 @@ class _RunInstance:
                 closer()
 
 
+class _TerminalRun:
+    """One compute-once pass over the union cone of several recorded producers (§0.5).
+
+    Every member in the union of the recorded producers' cones is driven by a
+    single ``run_over`` — shared upstream runs EXACTLY ONCE — and each producer's
+    Out row is teed to its downstream consumers and to one record branch per
+    recorded output. The record branches are the terminal: a store drains them,
+    a sink module consumes them. Bounded (~one msg per edge in flight), no edge
+    logs, no per-output re-run.
+    """
+
+    def __init__(
+        self, plan: GraphPlan, sources: Mapping[str, Any], records: Sequence[tuple[str, PortRef]]
+    ) -> None:
+        """Wire the union cone eagerly (drivers created, resources not yet acquired)."""
+        self._members: list[tuple[str, Iterator[Any]]] = []
+        self._closed = False
+        self.record_iters: dict[str, Iterator[Any]] = self._build(plan, sources, records)
+
+    def _build(
+        self, plan: GraphPlan, sources: Mapping[str, Any], records: Sequence[tuple[str, PortRef]]
+    ) -> dict[str, Iterator[Any]]:
+        members: set[str] = set()
+        rims: set[str] = set()
+        for _, ref in records:
+            cone_members, cone_rims = _cone(plan, ref)
+            members |= cone_members
+            rims |= cone_rims
+
+        sinks: dict[PortRef, list[tuple[str, Any]]] = {}
+        for b in plan.bindings:
+            if b.dst.member in members:
+                sinks.setdefault(b.src, []).append(("edge", b.dst))
+        for b in plan.tf_bindings:
+            if b.dst.member in members:
+                sinks.setdefault(b.src, []).append(("tf", b.dst))
+        for name, ref in records:
+            sinks.setdefault(ref, []).append(("record", name))
+
+        edges: dict[PortRef, Iterator[Any]] = {}
+        tfs: dict[str, Iterator[Any]] = {}
+        recorded: dict[str, Iterator[Any]] = {}
+
+        def assign(sink: tuple[str, Any], it: Iterator[Any]) -> None:
+            kind, ref = sink
+            if kind == "edge":
+                edges[ref] = it
+            elif kind == "tf":
+                tfs[ref.member] = it
+            else:
+                recorded[ref] = it
+
+        for name in rims:
+            branches = _fanout(_payload_iter(sources[name]), sinks.get(PortRef(None, name), []))
+            for branch, sink in branches:
+                assign(sink, branch)
+
+        for path, module in plan.members:
+            if path not in members:
+                continue
+            spec = module.__pure_step__
+            streams = {b.dst.field: edges[b.dst] for b in plan.bindings if b.dst.member == path}
+            gen = run_over(module, spec, streams, tf=tfs.get(path), hooks=RunHooks())
+            self._members.append((path, gen))
+            member_sinks = [
+                (ref.field, sink)
+                for ref, slist in sinks.items()
+                if ref.member == path
+                for sink in slist
+            ]
+            for (field, sink), branch in _tee_members(gen, member_sinks):
+                assign(sink, _project(branch, field))
+        return recorded
+
+    def close(self) -> None:
+        """Close every member driver in reverse creation order — idempotent (spec §6.4)."""
+        if self._closed:
+            return
+        self._closed = True
+        for _, gen in reversed(self._members):
+            closer = getattr(gen, "close", None)
+            if closer is not None:
+                closer()
+
+
 def _fanout(
     base: Iterator[Any], sinks: Sequence[tuple[str, Any]]
 ) -> list[tuple[Iterator[Any], Any]]:
@@ -1148,6 +1233,7 @@ class GraphRun(Generic[_TOut]):
         self._plan = plan
         self._sources = sources
         self._live: list[_RunInstance] = []
+        self._terminals: list[_TerminalRun] = []
         self._closed = False
 
     def __getattr__(self, name: str) -> EdgeStream:
@@ -1170,12 +1256,118 @@ class GraphRun(Generic[_TOut]):
             if inst in self._live:
                 self._live.remove(inst)
 
+    def save(
+        self,
+        sink: Any,
+        *,
+        remap: Mapping[str, str] | None = None,
+        record: Mapping[str, str] | None = None,
+    ) -> Any:
+        """Terminal drive (§0.5): compute the whole DAG ONCE, fan every output to ``sink``.
+
+        ``sink`` is a mem2 store (each output → a named ``Observation`` stream) or a
+        pure module whose In ports match the exported output names. ``remap`` maps a
+        module-sink In field to a differently-named output; ``record`` maps an interior
+        edge path (``'member.field'``) to an extra recorded output name. Shared upstream
+        runs exactly once. Returns the store (store sink) or the frame count (module sink).
+        """
+        remap = remap or {}
+        record = record or {}
+        if isinstance(sink, PureGraph):
+            raise _e_impl_pending(f"{_clspath(type(self._graph))}.save(<graph sink>)")
+        if hasattr(type(sink), "__pure_step__"):
+            return self._save_to_module(sink, remap, record)
+        if callable(getattr(sink, "stream", None)):
+            return self._save_to_store(sink, record)
+        raise TypeError(
+            f"{_clspath(type(self._graph))}.save() sink {type(sink).__qualname__} is neither a "
+            f"mem2 store (has .stream(name, type)) nor a pure module (has __pure_step__)."
+        )
+
+    def _producer_ref(self, path: str) -> PortRef:
+        """Resolve an output name or interior edge path to its producing port (spec §0.5)."""
+        for name, ref in self._plan.exports:
+            if name == path:
+                return ref
+        if "." in path:
+            member, _, field = path.rpartition(".")
+            for p, m in self._plan.members:
+                if p == member and field in m.__pure_step__.out_type.fields():
+                    return PortRef(member, field)
+        available = [n for n, _ in self._plan.exports] + [
+            f"{p}.{f}" for p, m in self._plan.members for f in m.__pure_step__.out_type.fields()
+        ]
+        raise _e_unknown_path(self._plan.graph, path, available)
+
+    def _out_type(self, name: str) -> type[Any] | None:
+        """The exported output's payload type, for the store codec (None if not a concrete type)."""
+        fields = self._plan.graph.__pure_graph__.out_type.fields()
+        ann = fields[name].annotation if name in fields else None
+        return ann if isinstance(ann, type) else None
+
+    def _save_to_store(self, store: Any, record: Mapping[str, str]) -> Any:
+        """Record every exported output (+ any interior ``record`` edges) as named streams."""
+        records: list[tuple[str, PortRef]] = list(self._plan.exports)
+        for path, name in record.items():
+            records.append((name, self._producer_ref(path)))
+        run = _TerminalRun(self._plan, self._sources, records)
+        self._terminals.append(run)
+        try:
+            streams = {name: store.stream(name, self._out_type(name)) for name, _ in records}
+            iters = run.record_iters
+            active = [name for name, _ in records]
+            while active:
+                still: list[str] = []
+                for name in active:  # round-robin: one pull per branch keeps tees bounded
+                    try:
+                        payload = next(iters[name])
+                    except StopIteration:
+                        continue
+                    streams[name].append(payload, ts=getattr(payload, "ts", None))
+                    still.append(name)
+                active = still
+        finally:
+            run.close()
+        return store
+
+    def _save_to_module(
+        self, sink: Any, remap: Mapping[str, str], record: Mapping[str, str]
+    ) -> int:
+        """Drive the DAG into a pure-module sink whose In ports name the outputs (spec §0.5)."""
+        from dimos.pure.rows import TfSpec  # data layer; local to keep the surface honest
+
+        spec = type(sink).__pure_step__
+        produced: dict[str, PortRef] = {n: ref for n, ref in self._plan.exports}
+        for path, name in record.items():
+            produced[name] = self._producer_ref(path)
+        records: dict[str, PortRef] = {}
+        mapping: dict[str, str] = {}  # sink In field → recorded output name
+        for fld, fs in spec.in_type.fields().items():
+            if isinstance(fs, TfSpec):
+                continue  # tf side channel is not fed from named outputs here
+            src = remap.get(fld, fld)
+            if src in produced:
+                records[src] = produced[src]
+                mapping[fld] = src
+        run = _TerminalRun(self._plan, self._sources, list(records.items()))
+        self._terminals.append(run)
+        try:
+            streams = {fld: run.record_iters[src] for fld, src in mapping.items()}
+            gen = run_over(sink, spec, streams, hooks=RunHooks())
+            run._members.append(("<sink>", gen))  # closed with the run (sink last-created)
+            return sum(1 for _ in gen)
+        finally:
+            run.close()
+
     def close(self) -> None:
         """Tear down every still-live run in reverse order — idempotent (spec §6.4)."""
         self._closed = True
         for inst in reversed(self._live):
             inst.close()
         self._live.clear()
+        for term in reversed(self._terminals):
+            term.close()
+        self._terminals.clear()
 
     def __enter__(self) -> GraphRun[_TOut]:
         """Context-managed run; exit closes."""
