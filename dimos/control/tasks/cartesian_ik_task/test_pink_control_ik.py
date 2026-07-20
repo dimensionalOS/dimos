@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip("pink")
+
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     IKControlRuntimeError,

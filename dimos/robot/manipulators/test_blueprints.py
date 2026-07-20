@@ -201,6 +201,7 @@ def test_piper_pink_task_uses_xacro_and_gripper_base() -> None:
         pytest.param(make_a1z_model_config(has_gripper=True), id="a1z"),
     ],
 )
+@pytest.mark.self_hosted
 def test_shipped_model_family_has_named_eef_frame(robot_model: RobotModelConfig) -> None:
     assert robot_model.model_path.is_file()
     prepared = prepare_urdf_for_drake(
