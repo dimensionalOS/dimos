@@ -91,7 +91,7 @@ def render(
         module_classes[bp.module.__name__] = bp.module
         for conn in bp.streams:
             # Apply remapping
-            remapped_name = blueprint_set.remapping_map.get((bp.module, conn.name), conn.name)
+            remapped_name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
             key = (remapped_name, conn.type)
             if conn.direction == "out":
                 producers[key].append(bp.module)  # type: ignore[index]

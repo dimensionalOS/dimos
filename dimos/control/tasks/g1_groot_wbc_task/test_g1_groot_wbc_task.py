@@ -76,7 +76,6 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     call_log: list[str] = []
 
     def _factory(path: str, providers: Any = None) -> _StubSession:
-        _ = providers
         label = "balance" if "balance" in str(path) else "walk"
         return _StubSession(
             str(path),
@@ -116,7 +115,6 @@ def joints_29() -> list[str]:
 def task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
 ) -> Iterator[G1GrootWBCTask]:
-    _ = patched_ort
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -140,7 +138,6 @@ def task(
 def unarmed_task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
 ) -> Iterator[G1GrootWBCTask]:
-    _ = patched_ort
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(

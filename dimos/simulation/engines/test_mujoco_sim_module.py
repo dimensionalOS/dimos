@@ -19,13 +19,12 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 
 class _FakeData:
@@ -69,6 +68,9 @@ class _FakeRespawnEngine:
         }
         return True
 
+    def disconnect(self) -> None:
+        pass
+
 
 class _FakeSimHooks:
     def __init__(self) -> None:
@@ -80,15 +82,6 @@ class _FakeSimHooks:
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     events: list[str] = []
-    module = object.__new__(MujocoSimModule)
-    module._shm_ready_signaled = False
-    module._root_base_qpos_adr = 0
-    module._imu_quat_slice = None
-    module._imu_base_qpos_slice = slice(3, 7)
-    module._imu_gyro_slice = slice(0, 3)
-    module._imu_accel_slice = slice(3, 6)
-    module.odom = MagicMock()
-    module.imu = MagicMock()
 
     class _FakeHooks:
         def post_step(self, engine: Any) -> None:
@@ -103,44 +96,64 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
             assert num_joints == 2
             events.append("ready")
 
-    module._sim_hooks = _FakeHooks()
-    module._shm = _FakeShm()
+        def signal_stop(self) -> None:
+            pass
 
-    module._publish_shm_and_lcm(_FakeEngine)
+        def cleanup(self) -> None:
+            pass
 
-    assert events == ["joint_state", "imu", "ready"]
+    module = MujocoSimModule()
+    try:
+        module._root_base_qpos_adr = 0
+        module._imu_base_qpos_slice = slice(3, 7)
+        module._imu_gyro_slice = slice(0, 3)
+        module._imu_accel_slice = slice(3, 6)
+        module._sim_hooks = _FakeHooks()
+        module._shm = _FakeShm()
+
+        module._publish_shm_and_lcm(_FakeEngine)
+
+        assert events == ["joint_state", "imu", "ready"]
+    finally:
+        module.stop()
 
 
 def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
-    module = object.__new__(MujocoSimModule)
     engine = _FakeRespawnEngine()
     hooks = _FakeSimHooks()
-    module._engine = engine
-    module._sim_hooks = hooks
+    module = MujocoSimModule()
+    try:
+        module._engine = engine
+        module._sim_hooks = hooks
 
-    assert module.reset() is True
+        assert module.reset() is True
 
-    assert engine.reset_requested is True
-    assert hooks.cleared is True
+        assert engine.reset_requested is True
+        assert hooks.cleared is True
+    finally:
+        module.stop()
 
 
 def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
-    module = object.__new__(MujocoSimModule)
     engine = _FakeRespawnEngine(ground_z=0.08)
     hooks = _FakeSimHooks()
-    module._engine = engine
-    module._sim_hooks = hooks
-    module._root_spawn_clearance_z = 0.793
+    module = MujocoSimModule()
+    try:
+        module._engine = engine
+        module._sim_hooks = hooks
+        module._root_spawn_clearance_z = 0.793
 
-    assert module.respawn_at(2.6, 0.0, yaw=0.25) is True
+        assert module.respawn_at(2.6, 0.0, yaw=0.25) is True
 
-    assert engine.reset_to_kwargs == {
-        "spawn_xy": (2.6, 0.0),
-        "spawn_z": pytest.approx(0.873),
-        "spawn_yaw": 0.25,
-        "wait": True,
-    }
-    assert hooks.cleared is True
+        assert engine.reset_to_kwargs == {
+            "spawn_xy": (2.6, 0.0),
+            "spawn_z": pytest.approx(0.873),
+            "spawn_yaw": 0.25,
+            "wait": True,
+        }
+        assert hooks.cleared is True
+    finally:
+        module.stop()
 
 
 def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
@@ -311,37 +324,38 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
     _write_scene_xml(scene_xml)
     _write_robot_xml(robot_xml)
 
-    module = object.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(
+    module = MujocoSimModule(
         scene_xml=scene_xml,
         robot_mjcf=robot_xml,
         scene_entities=[_scene_entity("chair_000")],
         spawn_xy=(0.25, -0.5),
         spawn_z=0.8,
     )
+    try:
+        model = module._compose_model()
 
-    model = MujocoSimModule._compose_model(module)
+        assert model.opt.timestep == pytest.approx(0.005)
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "static_scene_box") >= 0
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:chair_000") >= 0
 
-    assert model.opt.timestep == pytest.approx(0.005)
-    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "static_scene_box") >= 0
-    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:chair_000") >= 0
+        free_joints: list[tuple[str, int]] = []
+        for joint_id in range(model.njnt):
+            if int(model.jnt_type[joint_id]) != int(mujoco.mjtJoint.mjJNT_FREE):
+                continue
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id) or ""
+            free_joints.append((name, int(model.jnt_qposadr[joint_id])))
 
-    free_joints: list[tuple[str, int]] = []
-    for joint_id in range(model.njnt):
-        if int(model.jnt_type[joint_id]) != int(mujoco.mjtJoint.mjJNT_FREE):
-            continue
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id) or ""
-        free_joints.append((name, int(model.jnt_qposadr[joint_id])))
+        robot_free = next(item for item in free_joints if item[0].endswith("floating_base_joint"))
+        entity_free = next(item for item in free_joints if item[0] == "entity:chair_000:free")
+        assert robot_free[1] == 0
+        assert entity_free[1] > robot_free[1]
 
-    robot_free = next(item for item in free_joints if item[0].endswith("floating_base_joint"))
-    entity_free = next(item for item in free_joints if item[0] == "entity:chair_000:free")
-    assert robot_free[1] == 0
-    assert entity_free[1] > robot_free[1]
-
-    engine = MujocoEngine(config_path=robot_xml, headless=True, model=model)
-    assert engine.model is model
-    assert engine.root_qpos_adr == 0
-    assert any(name.endswith("hinge") for name in engine.joint_names)
+        engine = MujocoEngine(config_path=robot_xml, headless=True, model=model)
+        assert engine.model is model
+        assert engine.root_qpos_adr == 0
+        assert any(name.endswith("hinge") for name in engine.joint_names)
+    finally:
+        module.stop()
 
 
 @pytest.mark.mujoco
@@ -355,8 +369,7 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
     _write_robot_xml(robot_xml)
     _write_hull_obj(hull_obj)
 
-    module = object.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(
+    module = MujocoSimModule(
         scene_xml=scene_xml,
         robot_mjcf=robot_xml,
         scene_entities=[
@@ -365,12 +378,14 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
         ],
         spawn_xy=(0.0, 0.0),
     )
+    try:
+        model = module._compose_model()
 
-    model = MujocoSimModule._compose_model(module)
-
-    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_000") >= 0
-    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_001") >= 0
-    assert model.nmesh == 1
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_000") >= 0
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_001") >= 0
+        assert model.nmesh == 1
+    finally:
+        module.stop()
 
 
 @pytest.fixture
