@@ -21,6 +21,7 @@ Spec: dimos/pure/tasks/t2-config.md. Deliberately absent here: ``step``,
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from typing_extensions import dataclass_transform
@@ -31,7 +32,8 @@ from dimos.pure.config import (
     _collect_config_fields,
     _synthesize_config_model,
 )
-from dimos.pure.stepspec import StepSpec, classify
+from dimos.pure.rows import TfOutSpec, TfSpec, _merged_specs, format_frame
+from dimos.pure.stepspec import PureModuleDefinitionError, StepSpec, classify
 from dimos.pure.typing import EngineSurface
 
 # T3 SEAM (spec §10.1) — ACTIVE: classify(cls) runs as the LAST statement of
@@ -47,7 +49,9 @@ class PureModule(EngineSurface):
 
     __pure_config_model__: ClassVar[type[PureModuleConfig]]
     __pure_step__: ClassVar[StepSpec]  # stamped by the T3 seam; dunder, never a field
+    __pure_tf_templates__: ClassVar[dict[tuple[str, str], TfSpec | TfOutSpec]]  # (side, field)
     __pure_config__: PureModuleConfig  # per-instance store; set via object.__setattr__
+    __pure_tf_frames__: dict[tuple[str, str], tuple[str, str]]  # T11 build resolution
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Collect config fields, synthesize the frozen model, then classify the step.
@@ -67,7 +71,9 @@ class PureModule(EngineSurface):
             if b is not PureModule and issubclass(b, PureModule)
         ) or (PureModuleConfig,)
         cls.__pure_config_model__ = _synthesize_config_model(cls, fields, bases)  # 4
-        cls.__pure_step__ = classify(cls)  # 5 T3 SEAM (§4.1 step 5, §10.1) — LAST statement
+        spec = classify(cls)  # 5 T3 SEAM (§4.1 step 5, §10.1)
+        cls.__pure_tf_templates__ = _collect_tf_templates(spec)  # T11 declared edges
+        cls.__pure_step__ = spec  # LAST — presence certifies every gate above passed
 
     def __init__(self, **kwargs: object) -> None:
         """Validate kwargs through the synthesized model; flatten values onto self."""
@@ -81,6 +87,9 @@ class PureModule(EngineSurface):
         object.__setattr__(self, "__pure_config__", cfg)
         for name in model.model_fields:  # class-level access (2.12 deprecates instance)
             object.__setattr__(self, name, getattr(cfg, name))
+        templates = type(self).__pure_tf_templates__
+        if templates:  # T11: frame templates resolve at build, against this config
+            object.__setattr__(self, "__pure_tf_frames__", _resolve_tf_frames(self, templates))
 
     @property
     def config(self) -> PureModuleConfig:
@@ -155,3 +164,73 @@ class PureModule(EngineSurface):
 def _rebuild_module(cls: type[PureModule], dump: dict[str, Any]) -> PureModule:
     """Pickle helper: reconstruct a module as cls(**dump)."""
     return cls(**dump)
+
+
+# ── T11: tf frame templates (spec: tasks/t11-tf.md §3) ───────────────────────
+
+
+def _collect_tf_templates(spec: StepSpec) -> dict[tuple[str, str], TfSpec | TfOutSpec]:
+    """Declared tf edges keyed (side, field) from both bundles' raw spec tables."""
+    templates: dict[tuple[str, str], TfSpec | TfOutSpec] = {}
+    for bundle in (spec.in_type, spec.out_type):
+        for name, fs in _merged_specs(bundle).items():
+            if isinstance(fs, (TfSpec, TfOutSpec)):
+                templates[(fs.side, name)] = fs
+    return templates
+
+
+def _resolve_tf_frames(
+    module: PureModule, templates: Mapping[tuple[str, str], TfSpec | TfOutSpec]
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """Resolve declared frame templates against instance config (t11 spec §3.2)."""
+    cls = type(module)
+    cls_path = f"{cls.__module__}.{cls.__qualname__}"
+    values = {name: getattr(module, name) for name in cls.__pure_config_model__.model_fields}
+    frames: dict[tuple[str, str], tuple[str, str]] = {}
+    writers: dict[frozenset[str], str] = {}
+    for (side, name), fs in templates.items():
+        parent = _resolved_frame(cls_path, name, fs.parent, values)
+        child = _resolved_frame(cls_path, name, fs.child, values)
+        if parent == child:
+            raise PureModuleDefinitionError(
+                f"{cls_path}: tf field {name!r} resolved to identical parent and child "
+                f"frames ({parent!r}) — a tf edge relates two distinct frames. "
+                f"[tf-self-edge]"
+            )
+        if side == "out":
+            key = frozenset((parent, child))
+            prior = writers.get(key)
+            if prior is not None:
+                raise PureModuleDefinitionError(
+                    f"{cls_path}: tf_out fields {prior!r} and {name!r} both assert the "
+                    f"edge between {parent!r} and {child!r} — one writer per edge "
+                    f"(reversed orientation included); merge them or rename a frame. "
+                    f"[tf-duplicate-edge]"
+                )
+            writers[key] = name
+        frames[(side, name)] = (parent, child)
+    return frames
+
+
+def _resolved_frame(cls_path: str, field: str, template: str, values: Mapping[str, Any]) -> str:
+    """Resolve one frame template, wrapping errors with build coordinates."""
+    try:
+        frame = format_frame(template, values)
+    except KeyError as exc:
+        names = ", ".join(values) or "<none>"
+        raise PureModuleDefinitionError(
+            f"{cls_path}: tf field {field!r} template {template!r} names {exc.args[0]!r}, "
+            f"which is not a config field — frame templates resolve against the module's "
+            f"own config fields ({names}). [tf-template-unknown]"
+        ) from None
+    except ValueError as exc:
+        raise PureModuleDefinitionError(
+            f"{cls_path}: tf field {field!r} template {template!r}: {exc}. [tf-template-value]"
+        ) from None
+    if not frame:
+        raise PureModuleDefinitionError(
+            f"{cls_path}: tf field {field!r} frame template {template!r} resolved to an "
+            f"empty frame name — after empty segments drop, at least one segment must "
+            f"remain. [tf-frame-empty]"
+        )
+    return frame

@@ -80,6 +80,11 @@ def test_pm_surface_exports():
         "resource",
         # pm.State — frozen Mealy-state base, completing In/Out/State symmetry
         "State",
+        # T11 — tf specifiers (data layer; the engine stays in dimos.pure.tfbuffer)
+        "TfOutSpec",
+        "TfSpec",
+        "tf",
+        "tf_out",
     }
     for name in pm.__all__:
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"

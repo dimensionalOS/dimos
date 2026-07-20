@@ -58,10 +58,14 @@ from dimos.pure.rows import (
     LatestSpec,
     Out,
     PlainSpec,
+    TfOutSpec,
+    TfSpec,
     TickSpec,
     contract,
     interpolate,
     latest,
+    tf,
+    tf_out,
     tick,
 )
 from dimos.pure.state import State
@@ -118,6 +122,8 @@ __all__ = [
     "StepError",
     "StepKind",
     "StepSpec",
+    "TfOutSpec",
+    "TfSpec",
     "TickSpec",
     "align",
     "contract",
@@ -127,5 +133,7 @@ __all__ = [
     "resource",
     "run_over",
     "step_spec",
+    "tf",
+    "tf_out",
     "tick",
 ]

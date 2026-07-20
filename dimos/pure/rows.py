@@ -20,8 +20,10 @@ imports are stdlib + typing_extensions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import dataclasses
 from dataclasses import MISSING
+import string
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -49,10 +51,16 @@ __all__ = [
     "LatestSpec",
     "Out",
     "PlainSpec",
+    "TfOutSpec",
+    "TfSpec",
     "TickSpec",
     "contract",
+    "format_frame",
     "interpolate",
     "latest",
+    "normalize_frame",
+    "tf",
+    "tf_out",
     "tick",
 ]
 
@@ -112,6 +120,16 @@ class InterpolateSpec(FieldSpec):
 
 
 @dataclasses.dataclass(frozen=True)
+class TfSpec(FieldSpec):
+    """In field resolved to a chain-composed, interpolated transform at tick ts."""
+
+    kind = "tf"
+    side = "in"
+    parent: str = ""
+    child: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
 class ContractSpec(FieldSpec):
     """Out field carrying a minimum-cadence contract."""
 
@@ -126,6 +144,17 @@ class PlainSpec(FieldSpec):
 
     kind = "plain"
     side = "out"
+
+
+@dataclasses.dataclass(frozen=True)
+class TfOutSpec(FieldSpec):
+    """Out field asserting one tf edge; payload frames validate on emission."""
+
+    kind = "tf_out"
+    side = "out"
+    parent: str = ""
+    child: str = ""
+    min_hz: float | None = None
 
 
 # ── field specifiers ─────────────────────────────────────────────────────────
@@ -165,6 +194,99 @@ def contract(*, min_hz: float, default: Any = MISSING) -> Any:
     if min_hz <= 0:
         raise ValueError(f"contract(): min_hz must be > 0, got {min_hz}")
     return ContractSpec(min_hz=min_hz, default=default)
+
+
+@overload
+def tf(parent: str, child: str) -> Any: ...
+@overload
+def tf(parent: str, child: str, *, default: _T) -> _T: ...
+def tf(parent: str, child: str, *, default: Any = MISSING) -> Any:
+    """Declare an In field sampling the parent<-child transform chain at tick ts."""
+    _check_edge_templates("tf", parent, child)
+    return TfSpec(default=default, parent=parent, child=child)
+
+
+@overload
+def tf_out(parent: str, child: str, *, min_hz: float | None = None) -> Any: ...
+@overload
+def tf_out(parent: str, child: str, *, min_hz: float | None = None, default: _T) -> _T: ...
+def tf_out(parent: str, child: str, *, min_hz: float | None = None, default: Any = MISSING) -> Any:
+    """Declare an Out field asserting the parent->child tf edge."""
+    if min_hz is not None and min_hz <= 0:
+        raise ValueError(f"tf_out(): min_hz must be > 0, got {min_hz}")
+    _check_edge_templates("tf_out", parent, child)
+    return TfOutSpec(default=default, parent=parent, child=child, min_hz=min_hz)
+
+
+# ── frame templates (t11 spec §3) ────────────────────────────────────────────
+
+_TEMPLATE_FORMATTER: Final = string.Formatter()
+
+
+def normalize_frame(frame: str) -> str:
+    """Join the non-empty '/'-segments of a frame name (empty segments drop)."""
+    return "/".join(seg for seg in frame.split("/") if seg)
+
+
+def format_frame(template: str, values: Mapping[str, Any]) -> str:
+    """Resolve a frame template against config values, then normalize.
+
+    Raises KeyError for an unknown placeholder, ValueError for an unusable
+    value; callers (module build) wrap with module + field + template context.
+    None resolves empty — its segment drops with the separator.
+    """
+    out: list[str] = []
+    for literal, field_name, _spec, _conv in _TEMPLATE_FORMATTER.parse(template):
+        out.append(literal)
+        if field_name is None:
+            continue
+        if field_name not in values:
+            raise KeyError(field_name)
+        value = values[field_name]
+        if value is None:
+            continue
+        if not isinstance(value, (str, int, float, bool)):
+            raise ValueError(
+                f"config field {field_name!r} value {value!r} is not usable in a frame "
+                f"name — use str, int, float, bool, or None (None resolves empty and "
+                f"its segment drops)"
+            )
+        out.append(str(value))
+    return normalize_frame("".join(out))
+
+
+def _check_frame_template(fn: str, template: object) -> None:
+    """Specifier-call validation of one frame template (t11 spec §3.1)."""
+    if not isinstance(template, str) or not template:
+        raise ValueError(f"{fn}(): frame template must be a non-empty string, got {template!r}")
+    try:
+        parts = list(_TEMPLATE_FORMATTER.parse(template))
+    except ValueError as exc:
+        raise ValueError(f"{fn}(): frame template {template!r} is malformed: {exc}") from None
+    placeholders = 0
+    for _literal, field_name, format_spec, conversion in parts:
+        if field_name is None:
+            continue
+        placeholders += 1
+        if not field_name.isidentifier() or format_spec or conversion:
+            raise ValueError(
+                f"{fn}(): frame template {template!r}: placeholder must be a plain "
+                f"config field name ('{{prefix}}'-style; no positions, attributes, "
+                f"indexing, conversions, or format specs)"
+            )
+    if placeholders == 0 and not normalize_frame(template):
+        raise ValueError(f"{fn}(): frame template {template!r} is empty after empty segments drop")
+
+
+def _check_edge_templates(fn: str, parent: object, child: object) -> None:
+    """Specifier-call validation of a declared edge (t11 spec §3.1)."""
+    _check_frame_template(fn, parent)
+    _check_frame_template(fn, child)
+    if parent == child:
+        raise ValueError(
+            f"{fn}(): parent and child templates are identical ({parent!r}) — a tf edge "
+            f"relates two distinct frames"
+        )
 
 
 # ── processing pipeline (spec §4.2) ──────────────────────────────────────────
@@ -245,6 +367,12 @@ def _process(cls: type[_Bundle]) -> None:
         if name in _RESERVED:
             raise _err(
                 cls, f"field name {name!r} is reserved (row infrastructure: ['fields', 'ts'])"
+            )
+        if side == "in" and name == "tf":
+            raise _err(
+                cls,
+                "In field name 'tf' is reserved — it is the tf stream key "
+                "(over(tf=...), m.i.tf) that feeds tf() samplers; rename the field",
             )
         if _is_initvar(ann):
             raise _err(
@@ -345,7 +473,7 @@ def _process(cls: type[_Bundle]) -> None:
 @dataclass_transform(
     kw_only_default=True,
     frozen_default=True,
-    field_specifiers=(tick, latest, interpolate, contract),
+    field_specifiers=(tick, latest, interpolate, contract, tf, tf_out),
 )
 class _Bundle:
     """Shared machinery for In/Out row bundles."""

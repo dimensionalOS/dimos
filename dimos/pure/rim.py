@@ -46,7 +46,7 @@ from dimos.pure.drivers import (
     run_over,
 )
 from dimos.pure.resources import attach_resources
-from dimos.pure.rows import FieldSpec, TickSpec
+from dimos.pure.rows import FieldSpec, TfOutSpec, TfSpec, TickSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import InPort, InPorts, OutPort, OutPorts, Stamped
 
@@ -304,6 +304,14 @@ def _unwrap_obs(item: Any) -> Any:
     return item
 
 
+def _tf_frames(module: Any, side: str, name: str, spec: FieldSpec) -> tuple[str, str]:
+    """Build-resolved frame edge of a tf port; non-tf ports keep raising (T4 §5.5)."""
+    if not isinstance(spec, (TfSpec, TfOutSpec)):
+        raise NotImplementedError(f"{_cls(module)}.{side}.{name}.frames — not a tf()/tf_out() port")
+    frames: dict[tuple[str, str], tuple[str, str]] = module.__pure_tf_frames__
+    return frames[("in" if side == "i" else "out", name)]
+
+
 # ── runtime ports (spec §4.1) ────────────────────────────────────────────────
 
 
@@ -356,6 +364,11 @@ class RimInPort(InPort[Any]):
         else:
             object.__setattr__(self, name, value)
 
+    @property
+    def frames(self) -> tuple[str, str]:
+        """Resolved (parent, child) edge — tf() ports only (t11-tf.md §3.3)."""
+        return _tf_frames(self._module, "i", self._name, self._spec)
+
 
 class RimOutPort(OutPort[Any]):
     """Runtime Out-port handle: ``.transport =`` (Publishable) + ``.subscribe``."""
@@ -398,10 +411,8 @@ class RimOutPort(OutPort[Any]):
 
     @property
     def frames(self) -> tuple[str, str]:
-        """tf_out ports only — raises until T11 defines it (t4-typing.md §5.5)."""
-        raise NotImplementedError(
-            f"{_cls(self._module)}.o.{self._name}.frames — tf ports arrive with T11"
-        )
+        """Asserted (parent, child) edge — tf_out ports only (t11-tf.md §3.3)."""
+        return _tf_frames(self._module, "o", self._name, self._spec)
 
 
 class RimInPorts(InPorts[Any]):
