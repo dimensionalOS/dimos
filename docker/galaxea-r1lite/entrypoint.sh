@@ -4,7 +4,8 @@
 #
 # When launching a blueprint (`run ...`), first wait for the Galaxea vendor
 # stack's /hdas/* topics so container start order vs. the robot stack never
-# matters (compose `restart: unless-stopped` + this wait = boot-order-proof).
+# matters (systemd starts the release at boot; this wait absorbs the vendor
+# stack coming up later — it does NOT autostart on the R1 Lite).
 # Set DIMOS_NO_WAIT=1 to skip.
 set -e
 

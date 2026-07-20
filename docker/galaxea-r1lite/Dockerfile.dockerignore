@@ -1,0 +1,28 @@
+# Context filter for docker/galaxea-r1lite/Dockerfile (BuildKit picks this
+# file up because it sits next to the Dockerfile). Replaces the old
+# git-archive staging: keeps the repo-root context small (~200MB, not 35GB)
+# and deterministic. The wheel build needs dimos/, pyproject.toml, uv.lock,
+# setup.py, MANIFEST.in, README.md — keep those; drop everything heavy or
+# machine-local.
+.git
+.github
+.venv
+**/venv
+data
+docs
+Rerun
+build
+dist
+**/*.egg-info
+**/__pycache__
+**/*.pyc
+**/node_modules
+*.db
+*.db-shm
+*.db-wal
+*.lcm
+*.mcap
+*.log
+recordings
+scripts/r1pro_test
+flowbase_baselines

@@ -20,7 +20,13 @@ x-dimos-common: &dimos-common
   #   the "topics visible, zero messages" signature. NOT sufficient on its own:
   #   see `user:` below.
   ipc: host
-  restart: unless-stopped
+  # restart "no" is deliberate (Final plan D8/D9): systemd owns this lifecycle.
+  # dimos-r1lite.service runs `compose up` in the foreground with
+  # Restart=on-failure, so crash recovery exists exactly once, in one place,
+  # and the operator-triggered updater can stop/start/rollback via systemctl
+  # without racing a Docker restart policy. If you run this compose file
+  # standalone (bring-up), a crashed container stays down until you restart it.
+  restart: "no"
   # Logs are forever on an always-on robot. Docker's default json-file driver
   # is unbounded: a 100Hz coordinator will fill the disk and take the robot
   # down, weeks later, at a customer site. Cap it.
@@ -50,10 +56,10 @@ services:
     # the sensor executor down, so give it room.
     stop_grace_period: 30s
     command: ["run", "r1lite-coordinator"]
-    # Informational only: docker's restart policy does NOT act on health, so a
-    # false negative cannot restart-loop a working robot. It makes `compose ps`
-    # tell the truth, which `restart: unless-stopped` alone cannot — that only
-    # catches a process that EXITS, never one that is alive but wedged.
+    # Informational only: nothing acts on health automatically (restart is
+    # systemd's job and it only sees exits). It makes `compose ps` tell the
+    # truth about a process that is alive but wedged, and the updater's
+    # readiness check (Final plan Step 6) is the real gate.
     # WebsocketVisModule is composed for every viewer setting (including
     # "none") and binds global_config.listen_host (127.0.0.1) — reachable here
     # because of network_mode: host.
