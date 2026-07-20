@@ -4,9 +4,10 @@
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-  - [1. Switch to the DimOS Workspace](#1-switch-to-the-dimos-workspace)
-  - [2. Register All Blueprints](#2-register-all-blueprints)
-  - [3. First Launch](#3-first-launch)
+  - [1. Deploy the M20 drdds to Zenoh Bridge](#1-deploy-the-m20-drdds-to-zenoh-bridge)
+  - [2. Switch to the DimOS Workspace](#2-switch-to-the-dimos-workspace)
+  - [3. Register All Blueprints](#3-register-all-blueprints)
+  - [4. First Launch](#4-first-launch)
 - [Running the System](#running-the-system)
 - [Using the Navigation System](#using-the-navigation-system)
 - [Troubleshooting](#troubleshooting)
@@ -21,15 +22,77 @@
 
 Before getting started, make sure that:
 
-- The DimOS environment has been installed successfully.
-- You are working from the DimOS workspace.
+- The DimOS environment has been installed successfully on the GEN module or
+  workstation. The NOS module does not require a DimOS Python installation.
+- You are working from the DimOS workspace on the GEN module or workstation.
 - The robot is powered on and connected to the same network as your workstation.
 
 ---
 
 # Installation
 
-## 1. Switch to the DimOS Workspace
+## 1. Deploy the M20 drdds to Zenoh Bridge
+
+The bridge runs on the robot's **NOS module** and republishes the M20's drdds
+localization topics over Zenoh. The NOS module must have the DeepRobotics drdds
+SDK and Zenoh C (`libzenohc.so` and headers) installed under `/usr/local`. It
+does not need the DimOS Python environment, `uv sync`, or a virtual environment.
+
+On the NOS module, use Git sparse checkout to download only the bridge source:
+
+```bash
+cd ~
+git clone --depth 1 --filter=blob:none --sparse \
+  https://github.com/dimensionalOS/dimos.git dimos-bridge
+
+cd ~/dimos-bridge
+git sparse-checkout set \
+  dimos/robot/deeprobotics/m20/onboard/drdds-zenoh-bridge
+```
+
+Build the C++ bridge directly. This compiles the bridge against the drdds and
+Zenoh C libraries already installed on NOS; it does not build or install DimOS:
+
+```bash
+cd ~/dimos-bridge/dimos/robot/deeprobotics/m20/onboard/drdds-zenoh-bridge/cpp
+./build.sh
+```
+
+The build script also needs the generated C++ message headers from `dimos-lcm`.
+It downloads them automatically from GitHub. If NOS cannot access that
+repository, transfer a `dimos-lcm` checkout from another machine and place it at
+`/tmp/dimos-lcm` before running `./build.sh`.
+
+Start the bridge on NOS as root so it can access the drdds shared-memory
+transport:
+
+```bash
+sudo ./build/m20_drdds_zenoh_bridge \
+  --aligned  'dimos/aligned_points#sensor_msgs.PointCloud2' --aligned_topic /ALIGNED_POINTS \
+  --grid     'dimos/grid_map_3d#sensor_msgs.PointCloud2'    --grid_topic /grid_map_3d \
+  --odometry 'dimos/odom#nav_msgs.Odometry'                 --odom_topic /ODOM \
+  --iface eth1 --domain 0 \
+  --connect tcp/10.21.31.103:7447
+```
+
+Replace `10.21.31.103` if the AOS module's Zenoh router uses a different IP
+address. Keep the bridge running while using the navigation system.
+
+On the GEN module, verify that the bridged topics are arriving:
+
+```bash
+cd ~/workplace/dimos
+source .venv/bin/activate
+dimos spy --transport zenoh -n --duration 7 --interval 1
+```
+
+The output should include `aligned_points`, `grid_map_3d`, and `odom`. For the
+complete dependency, topic, and connection options, see the
+[M20 drdds to Zenoh bridge documentation](onboard/drdds-zenoh-bridge/README.md).
+
+---
+
+## 2. Switch to the DimOS Workspace
 
 Before compiling or launching the navigation system, switch to the latest `main` branch:
 
@@ -41,7 +104,7 @@ git switch main
 
 ---
 
-## 2. Register All Blueprints
+## 3. Register All Blueprints
 
 Run the following command once after setting up the environment:
 
@@ -54,7 +117,7 @@ uv run pytest dimos/robot/test_all_blueprints_generation.py
 
 ---
 
-## 3. First Launch
+## 4. First Launch
 
 Launch the navigation system:
 
@@ -175,6 +238,11 @@ source .venv/bin/activate
 
 rustup override set stable
 
+gedit ~/.bashrc
+Add the command below to the very bottom line and save the file
+export PATH="$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+
+source ~/.bashrc
 source "$HOME/.cargo/env"
 ```
 
