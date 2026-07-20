@@ -1,0 +1,34 @@
+[package]
+name = "dimos-gsc-pgo"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of the gsc_pgo pose-graph-optimization core (gtsam FFI shim + Scan Context)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_gsc_pgo"
+path = "src/lib.rs"
+
+# The module executable (port of gsc_pgo's main.cpp on dimos_module). Kept
+# behind the `native` feature so `--no-default-features` still builds/tests
+# the dependency-free PGO core alone.
+[[bin]]
+name = "gsc-pgo"
+path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:tracing", "dep:validator"]
+
+[dependencies]
+rayon = "1"
+dimos-module = { path = "../../../../../../../native/rust/dimos-module", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3555e97704ec4c727d96a7ac0769d5735bb44feb", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+tracing = { version = "0.1", optional = true }
+validator = { version = "0.20", features = ["derive"], optional = true }
+
+[build-dependencies]
+cc = "1"

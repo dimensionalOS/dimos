@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native C++ PGO module — faithful reimplementation of the original nav stack PGO.
+"""Native Rust PGO module.
 
-Uses GTSAM iSAM2 for pose graph optimization and PCL ICP for loop closure.
+GTSAM iSAM2 pose graph + ICP loop closure + Scan Context place recognition, with
+the PCL/ICP/Scan-Context machinery implemented in Rust (see rust/src/) over a thin
+C FFI shim onto pinned gtsam. The module executable speaks the dimos_module
+stdin-JSON protocol, so ``stdin_config`` is on.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from reactivex.disposable import Disposable
 
@@ -39,16 +40,18 @@ logger = setup_logger()
 
 
 class PGOConfig(NativeModuleConfig):
-    # C++ + nix flake live in the standalone repo github.com/jeff-hykin/gsc_pgo.
-    # Pinned to a version branch for reproducibility; bump when the C++ changes.
-    # The build runs in this module dir and drops a `result` symlink here (gitignored).
-    cwd: str | None = str(Path(__file__).resolve().parent)
-    executable: str = "result/bin/pgo"
-    build_command: str | None = (
-        'nix build "github:jeff-hykin/gsc_pgo/v1.1.0#default" --no-write-lock-file'
-    )
+    # The crate lives in this module dir; the flake pins gtsam + the toolchain
+    # env (GTSAM_INCLUDE_DIR etc.) that build.rs consumes. NativeModule runs
+    # build_command with cwd=<this dir>/rust, so `path:.` is the crate dir.
+    cwd: str | None = "rust"
+    executable: str = "target/release/gsc-pgo"
+    build_command: str | None = "nix develop path:. --command cargo build --release"
+    stdin_config: bool = True
 
-    frame_id: str = "map"
+    # Output/map frame. NOTE: named world_frame (not frame_id like the C++
+    # wrapper) because NativeModuleConfig.to_config_dict() strips base-config
+    # field names — frame_id is one — from the stdin config JSON.
+    world_frame: str = "map"
     child_frame_id: str = "odom"
     body_frame: str = "base_link"
 
@@ -122,26 +125,24 @@ class PGOConfig(NativeModuleConfig):
     # at its own timestamp.
     odom_buffer_window: float = 10.0
 
-    # Gravity anchor
-    # Pin keyframe 0 (whose orientation is gravity-aligned by the LIO front end)
-    # so landmark/loop closures cannot rotate the initial roll/pitch off gravity.
-    # The full pose is pinned (also the gauge reference); roll/pitch stiffness is
-    # the gravity component. Variances (smaller = stiffer).
-    gravity_anchor: bool = True
-    gravity_anchor_rp_var: float = 1e-12
-    gravity_anchor_yaw_var: float = 1e-12
-    gravity_anchor_trans_var: float = 1e-12
-    # Per-keyframe gravity anchor (roll/pitch-only prior on EVERY keyframe). Anchoring
-    # only kf0 lets a big loop closure tilt inner keyframes' roll/pitch, which converts
-    # horizontal travel into vertical and corrupts z by tens of metres. Pinning every
-    # keyframe's roll/pitch to its gravity-aligned LIO orientation (yaw + translation
-    # left free) keeps the closure in-plane and preserves the z structure.
-    # Default OFF: the anisotropic odometry between-factor is the primary gravity-
-    # preservation mechanism (and still lets landmarks correct slow tilt drift).
-    # This absolute prior is a harder lock for when the front end's absolute tilt
-    # is trustworthy (e.g. ZUPT in the LIO estimator).
-    gravity_anchor_per_keyframe: bool = False
-    gravity_anchor_kf_rp_var: float = 1e-4
+    # First-keyframe absolute anchor prior. The pose graph is relative-only, so
+    # one keyframe must be pinned to fix the gauge. Each axis has its own stiffness
+    # (smaller variance = harder pin). A tight anchor_rp_var pins roll/pitch to the
+    # initial LIO attitude (which is gravity-aligned by the front end) so loop
+    # closures cannot tilt the map; loosen it to let odom/loops decide roll/pitch.
+    anchor_rp_var: float = 1e-12
+    anchor_yaw_var: float = 1e-12
+    anchor_trans_var: float = 1e-12
+    # Optional roll/pitch-only prior on EVERY keyframe (yaw + translation left free).
+    # Anchoring only kf0 lets a big loop closure tilt inner keyframes' roll/pitch,
+    # which converts horizontal travel into vertical and corrupts z by tens of
+    # metres. Pinning every keyframe's roll/pitch to its initial LIO attitude keeps
+    # the closure in-plane and preserves z structure. Default OFF: the anisotropic
+    # odometry between-factor is the primary tilt-preservation mechanism. Turn on
+    # for a harder lock when the front end's absolute tilt is trustworthy (e.g. ZUPT
+    # in the LIO estimator).
+    per_keyframe_rp_prior: bool = False
+    per_keyframe_rp_var: float = 1e-4
 
     # Anisotropic odometry between-factor: the LIO relative roll/pitch is accurate
     # (IMU sees gravity each step) but yaw drifts, so roll/pitch are stiff and yaw
@@ -163,7 +164,7 @@ class PGOConfig(NativeModuleConfig):
 
 
 class PGO(NativeModule):
-    """Pose graph optimization with loop closure using GTSAM iSAM2 + PCL ICP."""
+    """Pose graph optimization with loop closure — Rust port of gsc_pgo."""
 
     config: PGOConfig
 
@@ -181,7 +182,7 @@ class PGO(NativeModule):
     loop_closure_event: Out[GraphDelta3D]
     # Per-keyframe pose-graph nodes, published individually (un-batched) so a
     # recorder can stream them. tf_id on each identifies the corrected edge
-    # (frame_id -> child_frame_id). Autoconnects to the Recorder's like-named port.
+    # (world_frame -> child_frame_id). Autoconnects to the Recorder's like-named port.
     tf_deformation_nodes: Out[DeformationNode]
     # Internal/debug only (off by default) — see global_map_publish_rate. Named
     # with a leading underscore so autoconnect won't wire it to `global_map` Ins.
@@ -192,7 +193,7 @@ class PGO(NativeModule):
         super().start()
         self.tf.publish(
             Transform(
-                frame_id=self.config.frame_id,
+                frame_id=self.config.world_frame,
                 child_frame_id=self.config.child_frame_id,
             )
         )
@@ -202,7 +203,7 @@ class PGO(NativeModule):
             )
         )
         if self.config.debug:
-            logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
+            logger.info("PGO native module started (Rust iSAM2 port)")
 
     def _on_correction_for_tf(self, correction: Transform) -> None:
         self.tf.publish(correction)
