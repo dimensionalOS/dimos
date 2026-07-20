@@ -47,7 +47,6 @@ class GenerationParams:
     min_separation_m: float = 3.0
     min_euclid_m: float = 2.0
     detour_ratio_min: float = 1.3
-    snap_max_m: float = 1.0
     bin_size_m: float = 2.0
     waypoint_spacing_m: float = 1.0
     # None scales the case count with the walked distance.
@@ -130,7 +129,7 @@ def generate_cases(
     idx = _subsample_indices(trajectory, params.waypoint_spacing_m)
     snaps = np.full((len(idx), 3), np.nan, dtype=np.float32)
     for n, i in enumerate(idx):
-        hit = snap_to_surface(foot[i], surface, params.snap_max_m)
+        hit = snap_to_surface(foot[i], surface, cfg.snap_max_m)
         if hit is not None:
             snaps[n] = hit
     ok = np.isfinite(snaps[:, 0])
@@ -141,7 +140,7 @@ def generate_cases(
         if not ok[ai]:
             continue
         sa = snaps[ai]
-        near_a = np.linalg.norm(foot - sa, axis=1) <= params.snap_max_m
+        near_a = np.linalg.norm(foot - sa, axis=1) <= cfg.snap_max_m
         last_visit_a = float(trajectory.ts[near_a].max()) if near_a.any() else -np.inf
         later = np.arange(ai + 1, len(idx))
         later = later[ok[later]]
@@ -161,15 +160,7 @@ def generate_cases(
                     continue
                 # Only pairs not already qualified pay for the line sweep.
                 line = np.stack([sa, sb])
-                blocked = not metrics.check_path(
-                    line,
-                    obstacle_keys,
-                    cfg.voxel_size,
-                    cfg.robot_length,
-                    cfg.robot_width,
-                    cfg.ground_margin,
-                    cfg.body_clearance,
-                ).valid
+                blocked = not metrics.check_path(line, obstacle_keys, cfg).valid
                 if not blocked:
                     continue
             # Backward in time is always causal. Forward only when the start
@@ -198,9 +189,7 @@ def generate_cases(
     selected = _select_diverse(ranked, params, params.resolve_max_cases(float(arcs[-1])))
     cases = []
     for n, cand in enumerate(selected):
-        route = metrics.ground_truth_route(
-            trajectory, cand.start, cand.goal, cfg.robot_height, params.snap_max_m
-        )
+        route = metrics.ground_truth_route(trajectory, cand.start, cand.goal, cfg)
         tags = route_tags(cand.start, cand.goal, route, obstacle_keys, cfg)
         cases.append(_to_case(cand, n, tags))
     return cases
@@ -291,16 +280,5 @@ def _select_diverse(
 
 
 def _to_case(cand: Candidate, n: int, tags: list[str]) -> Case:
-    if cand.dz >= STAIRS_DZ_M:
-        kind = "up"
-    elif cand.dz <= -STAIRS_DZ_M:
-        kind = "down"
-    else:
-        kind = "flat"
-    return Case(
-        id=f"auto_{n:02d}_{kind}",
-        start=cand.start,
-        goal=cand.goal,
-        weight=1.0,
-        tags=["auto", *tags],
-    )
+    kind = "up" if cand.dz >= STAIRS_DZ_M else "down" if cand.dz <= -STAIRS_DZ_M else "flat"
+    return Case(id=f"auto_{n:02d}_{kind}", start=cand.start, goal=cand.goal, tags=["auto", *tags])

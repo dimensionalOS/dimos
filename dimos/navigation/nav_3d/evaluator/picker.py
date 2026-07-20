@@ -28,31 +28,17 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.navigation.nav_3d.evaluator.tagging import (
-    LONG_STAIRS_DZ_M,
-    LONG_STAIRS_WALKED_M,
-    STAIRS_DZ_M,
-)
+from dimos.navigation.nav_3d.evaluator.curation import CurationError
+from dimos.navigation.nav_3d.evaluator.tagging import elevation_tags
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from numpy.typing import NDArray
     import viser
 
     from dimos.navigation.nav_3d.evaluator.cases import Case
-
-    # (start, goal, negative, tags, case_id) -> (ok, message, saved_id, saved_tags)
-    SavePair = Callable[
-        [tuple[float, float, float], tuple[float, float, float], bool, list[str], str | None],
-        tuple[bool, str, str | None, list[str] | None],
-    ]
-    # (saved_id, new_id, negative, tags) -> (ok, message, saved_id, saved_tags)
-    UpdateCase = Callable[
-        [str, str, bool, list[str]], tuple[bool, str, str | None, list[str] | None]
-    ]
-    # (saved_id) -> (ok, message)
-    DeleteCase = Callable[[str], tuple[bool, str]]
+    from dimos.navigation.nav_3d.evaluator.curation import CaseStore
 
 # Selection cone half-angle around the click ray. Wide enough to hit a voxel
 # point from across a room, narrow enough to stay on the intended surface.
@@ -71,6 +57,7 @@ INSTRUCTIONS = """**shift+click** picks START then GOAL, repeated per case.
 **click** an endpoint sphere to highlight and open its case.
 Plain drag orbits, scroll zooms, right-drag pans.
 """
+
 
 # three.js ACES filmic tone mapping, the fitted curve and its color
 # matrices. Applied by the viewer to mesh materials but not to the point
@@ -129,6 +116,10 @@ def _marker_color(srgb: tuple[int, int, int]) -> tuple[int, int, int]:
     return int(r), int(g), int(b)
 
 
+def _point(p: NDArray[np.float32]) -> tuple[float, float, float]:
+    return (float(p[0]), float(p[1]), float(p[2]))
+
+
 def pick_along_ray(
     points: NDArray[np.float32],
     origin: NDArray[np.float64],
@@ -152,27 +143,11 @@ def pick_along_ray(
     return None
 
 
-def suggested_tags(start: NDArray[np.float32], goal: NDArray[np.float32]) -> set[str]:
-    """Geometry-derived tag suggestions, mirroring auto-generation's rules."""
-    dz = float(goal[2] - start[2])
-    euclid = float(np.linalg.norm(goal - start))
-    tags: set[str] = set()
-    if abs(dz) >= STAIRS_DZ_M:
-        tags |= {"stairs", "up" if dz > 0 else "down"}
-    else:
-        tags.add("flat")
-    if abs(dz) >= LONG_STAIRS_DZ_M or euclid >= LONG_STAIRS_WALKED_M:
-        tags.add("long")
-    return tags
-
-
 @dataclass
 class _Hooks:
-    """Manifest callbacks and shared state handed to every pair entry."""
+    """Manifest store and shared state handed to every pair entry."""
 
-    save_pair: SavePair
-    update_case: UpdateCase
-    delete_case: DeleteCase
+    store: CaseStore
     lock: threading.Lock
     unregister: Callable[[_PairEntry], None]
     announce: Callable[[str], None]
@@ -202,7 +177,7 @@ class _PairEntry:
         if case is None:
             self.saved_id: str | None = None
             self._name = ""
-            self._checked = suggested_tags(start, goal)
+            self._checked = set(elevation_tags(_point(start), _point(goal)))
             self._custom = ""
             self._negative = False
             self._status = "unsaved"
@@ -313,11 +288,13 @@ class _PairEntry:
 
     def delete(self) -> None:
         if self.saved_id is not None:
-            ok, msg = self._hooks.delete_case(self.saved_id)
-            print(msg)
-            if not ok:
-                self.message.content = f"**FAILED**: {msg}"
+            try:
+                self._hooks.store.delete(self.saved_id)
+            except CurationError as err:
+                self.message.content = f"**FAILED**: {err}"
+                print(err)
                 return
+            print(f"deleted {self.saved_id}")
         self._hooks.unregister(self)
         self.remove()
 
@@ -334,29 +311,33 @@ class _PairEntry:
 
     def save_or_update(self) -> bool:
         name = self.id_text.value.strip()
-        if self.saved_id is None:
-            ok, msg, saved, tags = self._hooks.save_pair(
-                (float(self.start[0]), float(self.start[1]), float(self.start[2])),
-                (float(self.goal[0]), float(self.goal[1]), float(self.goal[2])),
-                self.negative_box.value,
-                self.extra_tags(),
-                name or None,
-            )
-        else:
-            ok, msg, saved, tags = self._hooks.update_case(
-                self.saved_id, name or self.saved_id, self.negative_box.value, self.extra_tags()
-            )
-        print(msg)
-        if not (ok and saved is not None):
-            self.message.content = f"**FAILED**: {msg}"
+        store = self._hooks.store
+        negative = self.negative_box.value
+        try:
+            if self.saved_id is None:
+                case = store.add(
+                    _point(self.start),
+                    _point(self.goal),
+                    self.extra_tags(),
+                    case_id=name or None,
+                    expect_fail=negative,
+                )
+            else:
+                case = store.update(
+                    self.saved_id, name or self.saved_id, self.extra_tags(), negative
+                )
+        except CurationError as err:
+            print(err)
+            self.message.content = f"**FAILED**: {err}"
             return False
+        msg = f"saved {case.id} [{', '.join(case.tags)}]"
+        print(msg)
         # Viser cannot collapse a live panel, so replace it with the
         # collapsed button form, synced from the authoritative save.
-        self.saved_id = saved
+        self.saved_id = case.id
         self._snapshot()
-        self._name = saved
-        if tags is not None:
-            self._sync_tags(tags)
+        self._name = case.id
+        self._sync_tags(case.tags)
         self._status = msg
         order = self.panel.order
         self.panel.remove()
@@ -370,10 +351,7 @@ def pick_cases(
     map_colors: NDArray[np.uint8],
     voxel_size: float,
     walked: NDArray[np.float32],
-    cases: Sequence[Case],
-    save_pair: SavePair,
-    update_case: UpdateCase,
-    delete_case: DeleteCase,
+    store: CaseStore,
 ) -> None:
     """Serve the picker until the user exits from the panel or hits ctrl-c."""
     import viser
@@ -460,15 +438,7 @@ def pick_cases(
         entry.set_highlight(True)
         highlighted.append(entry)
 
-    hooks = _Hooks(
-        save_pair,
-        update_case,
-        delete_case,
-        lock,
-        lambda entry: pairs.remove(entry),
-        announce,
-        highlight,
-    )
+    hooks = _Hooks(store, lock, lambda entry: pairs.remove(entry), announce, highlight)
     marker_seq = 0
 
     def sphere(point: NDArray[np.float32], color: tuple[int, int, int]) -> viser.SceneNodeHandle:
@@ -496,7 +466,7 @@ def pick_cases(
     ) -> list[viser.SceneNodeHandle]:
         return [sphere(start, START_COLOR), sphere(goal, GOAL_COLOR), pair_line(start, goal)]
 
-    for case in cases:
+    for case in store.suite.cases:
         start = np.asarray(case.start, dtype=np.float32)
         goal = np.asarray(case.goal, dtype=np.float32)
         pairs.append(

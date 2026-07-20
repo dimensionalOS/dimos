@@ -3,56 +3,45 @@ cases:
 - id: auto_00_up
   start: [-0.12, -0.6, -0.32]
   goal: [1.32, -0.84, 2.72]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_01_up
   start: [7.24, -3.96, -6.08]
   goal: [6.44, -5.56, -1.44]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_02_down
   start: [8.04, -0.76, 3.04]
   goal: [-2.36, -4.36, -0.32]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_03_down
   start: [5.88, -4.52, 2.96]
   goal: [2.28, -6.52, -0.32]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_04_down
   start: [-0.2, -3.0, 2.56]
   goal: [-2.04, 3.16, -0.48]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_05_down
   start: [0.52, -4.68, -0.32]
   goal: [5.96, -3.64, -3.52]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_06_up
   start: [6.36, -5.4, -4.48]
   goal: [-2.36, 0.44, -0.4]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_07_down
   start: [6.68, -5.56, 2.08]
   goal: [5.72, -5.48, -1.04]
-  weight: 1.0
   tags: [auto, stairs, down, long, narrow]
 - id: auto_08_down
   start: [-0.2, -3.0, 2.56]
   goal: [7.16, -3.8, -3.12]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_09_flat
   start: [5.08, -3.8, -6.48]
   goal: [7.24, -3.96, -6.08]
-  weight: 1.0
   tags: [auto, flat]
 - id: manual_00
   start: [1.8, -4.44, -0.32]
   goal: [5.24, -4.2, -0.32]
-  weight: 1.0
   tags: [manual, flat, doorway, negative]
   expect_fail: true

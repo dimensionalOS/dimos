@@ -31,10 +31,7 @@ from dimos.navigation.nav_3d.evaluator.final_map import (
     FinalMap,
     MapCheckpoints,
     encode_deltas,
-    key_centers,
-    keys_contain,
     replay_frames,
-    voxel_keys,
 )
 from dimos.navigation.nav_3d.evaluator.generate import (
     Candidate,
@@ -55,6 +52,7 @@ from dimos.navigation.nav_3d.evaluator.runner import (
     score_negative,
 )
 from dimos.navigation.nav_3d.evaluator.tagging import GEOMETRIC_TAGS, route_tags
+from dimos.navigation.nav_3d.evaluator.voxel_keys import key_centers, keys_contain, voxel_keys
 
 if TYPE_CHECKING:
     from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
@@ -80,17 +78,13 @@ def _wall(x: float) -> np.ndarray:
     return np.stack([np.full(ys.size, x), ys.ravel(), zs.ravel()], axis=1, dtype=np.float32)
 
 
+def _cfg(**overrides: float) -> EvalConfig:
+    return replace(EvalConfig(voxel_size=VOXEL), **overrides)
+
+
 def _gate(waypoints: np.ndarray, obstacles: np.ndarray) -> metrics.GateResult:
     keys = np.unique(voxel_keys(obstacles, VOXEL))
-    return metrics.check_path(
-        waypoints,
-        keys,
-        VOXEL,
-        robot_length=0.7,
-        robot_width=0.31,
-        ground_margin=0.25,
-        body_clearance=0.45,
-    )
+    return metrics.check_path(waypoints, keys, _cfg())
 
 
 def test_gate_blocks_wall_crossing() -> None:
@@ -186,16 +180,16 @@ def test_reference_length_snaps_to_trajectory() -> None:
     ).astype(np.float32)
     traj = Trajectory(ts=np.linspace(0, 10, 101), positions=positions)
     # Walking toward a never-yet-visited goal is not causal.
-    ref = metrics.reference_length(traj, (0, 0, 0), (10, 0, 0), robot_height=0.3)
+    ref = metrics.reference_length(traj, (0, 0, 0), (10, 0, 0), _cfg())
     assert ref.snapped
     assert ref.length == pytest.approx(10.0, abs=0.01)
     assert not ref.causal
     assert ref.start_ts == float("inf")
     # Returning to the walk's origin is causal.
-    ref = metrics.reference_length(traj, (10, 0, 0), (0, 0, 0), robot_height=0.3)
+    ref = metrics.reference_length(traj, (10, 0, 0), (0, 0, 0), _cfg())
     assert ref.causal
     assert 9.0 <= ref.start_ts <= 10.0
-    ref = metrics.reference_length(traj, (0, 5, 0), (10, 0, 0), robot_height=0.3)
+    ref = metrics.reference_length(traj, (0, 5, 0), (10, 0, 0), _cfg())
     assert not ref.snapped
     assert ref.start_ts == float("inf")
 
@@ -207,7 +201,7 @@ def test_reference_length_uses_shortest_revisit() -> None:
     back = detour[::-1]
     positions = np.concatenate([out, detour, back]).astype(np.float32)
     traj = Trajectory(ts=np.linspace(0, 30, len(positions)), positions=positions)
-    ref = metrics.reference_length(traj, (0, 0, 0), (10, 0, 0), robot_height=0.3)
+    ref = metrics.reference_length(traj, (0, 0, 0), (10, 0, 0), _cfg())
     assert ref.snapped
     assert ref.length == pytest.approx(10.0, abs=0.2)
 
@@ -292,26 +286,10 @@ def test_checkpoint_deltas_roundtrip() -> None:
         np.array([2, 3, 4, 5], dtype=np.int64),
         np.array([4, 5], dtype=np.int64),
     ]
-    observed = [
-        np.array([1, 2, 3], dtype=np.int64),
-        np.array([1, 2, 3, 4, 5], dtype=np.int64),
-        np.array([1, 2, 3, 4, 5, 9], dtype=np.int64),
-    ]
     added, removed = encode_deltas(snapshots)
-    observed_added, _ = encode_deltas(observed)
-    ckpt = MapCheckpoints(
-        times=np.arange(3, dtype=np.float64),
-        added=added,
-        removed=removed,
-        observed_added=observed_added,
-    )
-    seen = np.array([], dtype=np.int64)
-    for (orig_keys, orig_obs), (keys, obs_new) in zip(
-        zip(snapshots, observed, strict=True), ckpt.iter_snapshots(), strict=True
-    ):
-        assert np.array_equal(orig_keys, keys)
-        seen = np.union1d(seen, obs_new)
-        assert np.array_equal(orig_obs, seen)
+    ckpt = MapCheckpoints(times=np.arange(3, dtype=np.float64), added=added, removed=removed)
+    for original, keys in zip(snapshots, ckpt.iter_snapshots(), strict=True):
+        assert np.array_equal(original, keys)
 
 
 def test_replay_frames_snapshots_grow_with_time() -> None:
@@ -331,20 +309,20 @@ def test_replay_frames_snapshots_grow_with_time() -> None:
         frame_at(2.1, 11.0),
     ]
     times = np.array([0.5, 1.5, np.inf])
-    final, snapshots, observed = replay_frames(frames, mapper, VOXEL, times)
+    final, snapshots = replay_frames(frames, mapper, VOXEL, times)
     assert final.frames == 6
     sizes = [len(s) for s in snapshots]
     assert 0 < sizes[0] < sizes[1] < sizes[2]
     assert np.array_equal(snapshots[2], final.occupied_keys)
     for earlier, later in itertools.pairwise(snapshots):
         assert keys_contain(later, earlier).all()
-    # The observed set holds raw returns causally: wall 1 by the first
-    # checkpoint, wall 3 only at the end.
+    # Each checkpoint holds the walls mapped by its time: wall 1 by the first,
+    # wall 3 only at the end.
     wall1 = np.unique(voxel_keys(_wall(5.0), VOXEL))
     wall3 = np.unique(voxel_keys(_wall(11.0), VOXEL))
-    assert keys_contain(observed[0], wall1).all()
-    assert not keys_contain(observed[0], wall3).any()
-    assert keys_contain(observed[2], wall3).all()
+    assert keys_contain(snapshots[0], wall1).all()
+    assert not keys_contain(snapshots[0], wall3).any()
+    assert keys_contain(snapshots[2], wall3).all()
 
 
 class _StubPlanner:
@@ -517,16 +495,16 @@ def test_dynamic_candidate_flags_route_blocked_by_new_occupancy() -> None:
 
 def test_check_kinematics_rejects_cliff_jumps() -> None:
     stairs = np.array([[0, 0, 0], [0.4, 0, 0.16], [0.8, 0, 0.32]], dtype=np.float32)
-    assert metrics.check_kinematics(stairs, max_slope=1.0, max_step_m=0.2, window_m=0.5).valid
+    assert metrics.check_kinematics(stairs, _cfg(max_slope=1.0)).valid
     riser = np.array([[0, 0, 0], [0.08, 0, 0.16]], dtype=np.float32)
-    assert metrics.check_kinematics(riser, max_slope=1.0, max_step_m=0.2, window_m=0.5).valid
+    assert metrics.check_kinematics(riser, _cfg(max_slope=1.0)).valid
     # A double riser between adjacent cells is quantization, not a cliff.
     quantized = np.array(
         [[0, 0, 0], [0.4, 0, 0.08], [0.56, 0, 0.4], [0.96, 0, 0.48]], dtype=np.float32
     )
-    assert metrics.check_kinematics(quantized, max_slope=1.0, max_step_m=0.2, window_m=0.5).valid
+    assert metrics.check_kinematics(quantized, _cfg(max_slope=1.0)).valid
     cliff = np.array([[0, 0, 0], [0.2, 0, 0.9], [1, 0, 0.9]], dtype=np.float32)
-    result = metrics.check_kinematics(cliff, max_slope=1.0, max_step_m=0.2, window_m=0.5)
+    result = metrics.check_kinematics(cliff, _cfg(max_slope=1.0))
     assert not result.valid
     assert len(result.violation_points) >= 1
 
@@ -556,7 +534,7 @@ def test_save_suite_roundtrip(tmp_path: Path) -> None:
     suite = Suite(
         dataset="demo",
         cases=[
-            Case(id="a", start=(0.0, 0.0, 0.0), goal=(1.0, 2.0, 3.0), weight=2.0, tags=["x"]),
+            Case(id="a", start=(0.0, 0.0, 0.0), goal=(1.0, 2.0, 3.0), tags=["x"]),
             Case(id="neg", start=(0.0, 0.0, 0.0), goal=(5.0, 5.0, 5.0), expect_fail=True),
         ],
         lidar_stream="other_lidar",
@@ -583,13 +561,12 @@ def test_load_suite(tmp_path: Path) -> None:
         "  - id: a\n"
         "    start: [0, 0, 0]\n"
         "    goal: [1, 2, 3]\n"
-        "    weight: 2\n"
         "    tags: [stairs]\n"
     )
     suite = load_suite(manifest)
     assert suite.dataset == "demo"
     assert suite.cases[0].goal == (1.0, 2.0, 3.0)
-    assert suite.cases[0].weight == 2.0
+    assert suite.cases[0].tags == ["stairs"]
 
     manifest.write_text(
         "dataset: demo\ncases:\n"
@@ -652,7 +629,6 @@ def _tripwire_report(spec: dict[str, dict[str, tuple[bool, bool]]]) -> dict[str,
                     dataset=dataset,
                     start=case.start,
                     goal=case.goal,
-                    weight=1.0,
                     tags=[],
                     l_ref=1.0,
                     l_ref_snapped=False,
@@ -732,15 +708,11 @@ def _ywall(y: float, x_lo: float, x_hi: float) -> np.ndarray:
     return np.stack([xs.ravel(), np.full(xs.size, y), zs.ravel()], axis=1, dtype=np.float32)
 
 
-def _tag_cfg() -> EvalConfig:
-    return EvalConfig(voxel_size=VOXEL)
-
-
 def _tags(route: np.ndarray, keys: np.ndarray) -> list[str]:
     """Tag a synthetic route, taking its endpoints for elevation."""
     start = (float(route[0, 0]), float(route[0, 1]), float(route[0, 2]))
     goal = (float(route[-1, 0]), float(route[-1, 1]), float(route[-1, 2]))
-    return route_tags(start, goal, route, keys, _tag_cfg())
+    return route_tags(start, goal, route, keys, _cfg())
 
 
 def test_ground_truth_route_returns_walked_slice() -> None:
@@ -749,12 +721,12 @@ def test_ground_truth_route_returns_walked_slice() -> None:
     detour = np.stack([np.full(101, 10.0), np.linspace(0, 6, 101), np.full(101, 0.3)], axis=1)
     positions = np.concatenate([out, detour]).astype(np.float32)
     traj = Trajectory(ts=np.linspace(0, 20, len(positions)), positions=positions)
-    route = metrics.ground_truth_route(traj, (0, 0, 0), (10, 6, 0), robot_height=0.3)
+    route = metrics.ground_truth_route(traj, (0, 0, 0), (10, 6, 0), _cfg())
     assert route is not None
     # Foot level (sensor height removed) and it walks the full out-and-detour.
     assert abs(route[0, 2]) < 1e-5
     assert metrics.path_length(route) == pytest.approx(16.0, abs=0.2)
-    assert metrics.ground_truth_route(traj, (0, 20, 0), (10, 6, 0), robot_height=0.3) is None
+    assert metrics.ground_truth_route(traj, (0, 20, 0), (10, 6, 0), _cfg()) is None
 
 
 def test_ground_truth_route_orients_start_to_goal() -> None:
@@ -764,7 +736,7 @@ def test_ground_truth_route_orients_start_to_goal() -> None:
     positions = np.stack([xs, np.zeros(101), xs * 0.25], axis=1).astype(np.float32)
     traj = Trajectory(ts=np.linspace(0, 10, 101), positions=positions)
     # Start high at x=8, goal low at x=2: a downhill traverse.
-    route = metrics.ground_truth_route(traj, (8, 0, 1.7), (2, 0, 0.2), robot_height=0.3)
+    route = metrics.ground_truth_route(traj, (8, 0, 1.7), (2, 0, 0.2), _cfg())
     assert route is not None
     # Runs start-to-goal: x decreasing from ~8 to ~2, so elevation reads downhill.
     assert route[0, 0] > 6.0 and route[-1, 0] < 4.0
@@ -831,9 +803,9 @@ def test_route_tags_gate_excludes_detour_routes() -> None:
     walls = np.concatenate([_ywall(-0.4, 0, 4), _ywall(0.4, 0, 4)])
     keys = np.unique(voxel_keys(walls, VOXEL))
     direct = np.array([[0, 0, 0], [4, 0, 0]], dtype=np.float32)
-    assert "corridor" in route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), direct, keys, _tag_cfg())
+    assert "corridor" in route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), direct, keys, _cfg())
     detour = np.array([[0, 0, 0], [2, 6, 0], [4, 0, 0]], dtype=np.float32)
-    assert route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), detour, keys, _tag_cfg()) == ["flat"]
+    assert route_tags((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), detour, keys, _cfg()) == ["flat"]
 
 
 def test_route_tags_are_all_geometric() -> None:

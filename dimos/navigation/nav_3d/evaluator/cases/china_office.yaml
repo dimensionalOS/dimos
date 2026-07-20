@@ -3,176 +3,141 @@ cases:
 - id: auto_00_up
   start: [-10.2, 15.8, -0.48]
   goal: [-8.12, 14.6, 2.56]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_01_down
   start: [-3.72, -4.6, 2.96]
   goal: [0.04, 0.04, -0.4]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_02_up
   start: [4.12, -21.72, -0.48]
   goal: [9.56, -14.28, 4.24]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_03_down
   start: [2.52, 10.84, 3.12]
   goal: [5.64, 23.64, -0.24]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_04_down
   start: [10.44, -4.12, 4.16]
   goal: [16.52, -32.28, -0.96]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_05_up
   start: [18.2, -20.6, -1.36]
   goal: [-1.4, -14.2, 2.96]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_06_down
   start: [-4.6, 4.52, 6.32]
   goal: [11.72, 6.36, -0.96]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_07_down
   start: [6.36, 2.6, 3.2]
   goal: [15.4, -9.88, -1.28]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_08_up
   start: [7.72, -33.8, -0.72]
   goal: [-3.32, 11.32, 2.88]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_09_down
   start: [12.2, -9.24, 4.16]
   goal: [3.56, -7.72, -0.4]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_10_down
   start: [-7.4, 7.32, 2.8]
   goal: [9.8, 14.04, -0.56]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_11_down
   start: [-2.52, 0.68, 4.0]
   goal: [13.4, -1.16, -1.2]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_12_down
   start: [6.28, -2.04, 4.16]
   goal: [3.32, 16.12, -0.24]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_13_down
   start: [-1.72, -9.72, 2.96]
   goal: [5.64, -13.56, -0.4]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_14_up
   start: [7.48, -27.48, -0.48]
   goal: [-6.2, 3.48, 2.88]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_15_up
   start: [19.8, -27.8, -1.12]
   goal: [2.6, -16.2, 2.08]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_16_up
   start: [0.6, 6.6, -0.4]
   goal: [2.04, -0.28, 3.12]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_17_down
   start: [4.28, 5.96, 3.12]
   goal: [17.0, -15.48, -1.28]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_18_down
   start: [-4.6, 8.2, 6.56]
   goal: [8.84, 18.84, -0.4]
-  weight: 1.0
   tags: [auto, stairs, down, long]
 - id: auto_19_up
   start: [-8.84, 10.76, -0.48]
   goal: [-1.4, -2.04, 3.12]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_20_up
   start: [14.6, -27.88, -0.24]
   goal: [1.0, 13.56, 2.96]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_21_down
   start: [-7.4, 11.96, 3.04]
   goal: [8.2, -17.32, -0.4]
-  weight: 1.0
   tags: [auto, stairs, down, long, doorway, narrow]
 - id: auto_22_up
   start: [-0.36, -4.44, -0.4]
   goal: [11.24, -6.76, 4.16]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_23_up
   start: [-0.28, 10.92, -0.4]
   goal: [0.6, -12.52, 3.12]
-  weight: 1.0
   tags: [auto, stairs, up, long]
 - id: auto_24_flat
   start: [12.52, -33.4, -0.8]
   goal: [14.52, -5.96, -1.28]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_25_flat
   start: [10.68, 9.88, -0.72]
   goal: [5.24, 12.52, -0.24]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_26_flat
   start: [19.16, -24.44, -1.36]
   goal: [12.6, 2.68, -1.04]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_27_flat
   start: [3.56, -18.36, 0.16]
   goal: [8.92, -13.32, -0.32]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_28_flat
   start: [-4.92, 11.0, -0.4]
   goal: [10.6, -34.92, -0.8]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_29_flat
   start: [-0.12, -17.08, 2.08]
   goal: [2.76, 7.4, 1.6]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_30_flat
   start: [6.04, -24.2, -0.48]
   goal: [7.0, 14.12, -0.08]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_31_flat
   start: [8.36, -30.44, -0.48]
   goal: [18.28, -32.28, -0.96]
-  weight: 1.0
   tags: [auto, flat]
 - id: auto_32_flat
   start: [11.32, 8.12, -0.88]
   goal: [5.72, -9.72, -0.4]
-  weight: 1.0
   tags: [auto, flat]
 - id: neg_00
   start: [5.0, 2.44, 3.2]
   goal: [9.32, 5.24, 6.4]
-  weight: 1.0
   tags: [manual, negative]
   expect_fail: true
 - id: manual_00
   start: [13.88, 1.48, -1.04]
   goal: [12.28, 8.6, -0.8]
-  weight: 1.0
   tags: [manual, flat]

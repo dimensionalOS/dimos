@@ -21,16 +21,19 @@ to goal. Thresholds come from the robot's dimensions in EvalConfig.
 
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.navigation.nav_3d.evaluator.final_map import (
+from dimos.navigation.nav_3d.evaluator.metrics import (
+    MARGIN_CAP_M,
+    arc_lengths,
+    body_frames,
     densify,
-    keys_contain,
-    voxel_keys,
+    path_length,
 )
-from dimos.navigation.nav_3d.evaluator.metrics import MARGIN_CAP_M, body_frames
+from dimos.navigation.nav_3d.evaluator.voxel_keys import keys_contain, voxel_keys
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -73,7 +76,7 @@ GEOMETRIC_TAGS = frozenset(
 )
 
 
-def _elevation_tags(
+def elevation_tags(
     start: tuple[float, float, float], goal: tuple[float, float, float]
 ) -> list[str]:
     """Elevation from the case endpoints, matching how generation labels them.
@@ -92,7 +95,7 @@ def _elevation_tags(
 
 
 def _corridor_width(
-    route: NDArray[np.float32], occupied_keys: NDArray[np.int64], cfg: EvalConfig
+    samples: NDArray[np.float32], occupied_keys: NDArray[np.int64], cfg: EvalConfig
 ) -> NDArray[np.float64]:
     """Free lateral width at each densified sample, at body height.
 
@@ -101,7 +104,6 @@ def _corridor_width(
     voxel, capped when the passage is open. This is the room the body has to
     pass, not the room the feet have to stand.
     """
-    samples = densify(route, cfg.voxel_size)
     _, lateral, _ = body_frames(samples, cfg.robot_length)
     mid_z = (cfg.ground_margin + cfg.body_clearance) / 2.0
     origin = samples.astype(np.float64) + np.array([0.0, 0.0, mid_z])
@@ -122,16 +124,12 @@ def _corridor_width(
 def _runs(mask: NDArray[np.bool_], arc: NDArray[np.float64]) -> list[tuple[float, float]]:
     """Arc-length (start, end) of every maximal True run in mask."""
     out: list[tuple[float, float]] = []
-    i, n = 0, len(mask)
-    while i < n:
-        if mask[i]:
-            j = i + 1
-            while j < n and mask[j]:
-                j += 1
-            out.append((float(arc[i]), float(arc[j - 1])))
-            i = j
-        else:
-            i += 1
+    i = 0
+    for value, group in itertools.groupby(mask):
+        n = sum(1 for _ in group)
+        if value:
+            out.append((float(arc[i]), float(arc[i + n - 1])))
+        i += n
     return out
 
 
@@ -151,11 +149,11 @@ def _corridor_tags(
 ) -> list[str]:
     if len(occupied_keys) == 0 or len(route) < 2:
         return []
-    width = _corridor_width(route, occupied_keys, cfg)
+    samples = densify(route, cfg.voxel_size)
+    width = _corridor_width(samples, occupied_keys, cfg)
     tight = cfg.robot_width + 2.0 * MARGIN_CAP_M
     roomy = cfg.robot_width + 2.0 * cfg.robot_length
-    samples = densify(route, cfg.voxel_size)
-    arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(samples, axis=0), axis=1))])
+    arc = arc_lengths(samples)
     # A real passage is at least the robot's own body wide. Anything tighter is
     # furniture or map noise the robot could not have walked through, so it does
     # not count as a passage.
@@ -196,7 +194,7 @@ def _is_local(
     eucl = float(np.linalg.norm(np.asarray(goal) - np.asarray(start)))
     if eucl < cfg.robot_length:
         return False
-    arc = float(np.linalg.norm(np.diff(route, axis=0), axis=1).sum())
+    arc = path_length(route)
     return LOCAL_SPAN_MIN_FRAC * eucl <= arc <= LOCAL_DETOUR_MAX * eucl + cfg.robot_length
 
 
@@ -215,7 +213,7 @@ def route_tags(
     long detour. Deterministic and free of provenance: the caller prepends auto
     or manual.
     """
-    tags = _elevation_tags(start, goal)
+    tags = elevation_tags(start, goal)
     if route is not None and len(route) >= 2 and _is_local(route, start, goal, cfg):
         tags += _corridor_tags(route, occupied_keys, cfg)
     return tags

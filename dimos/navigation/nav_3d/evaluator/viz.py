@@ -30,6 +30,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 from scipy.spatial.transform import Rotation
 
+from dimos.navigation.nav_3d.evaluator import metrics
 from dimos.navigation.nav_3d.evaluator.final_map import load_or_build_final_map
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
 
@@ -126,50 +127,13 @@ def _outcome_color(outcome: PlanOutcome) -> list[int]:
     return UNREACHED_PATH_COLOR
 
 
-def _travel_dirs(
-    points: NDArray[np.float32], waypoints: NDArray[np.float32], span: float
-) -> NDArray[np.float64]:
-    """Rigid-body heading at each point: the chord from span/2 behind it to
-    span/2 ahead along the path, the rear-feet to front-feet direction."""
-    if len(waypoints) < 2:
-        return np.tile(np.array([1.0, 0.0, 0.0]), (len(points), 1))
-    wp = waypoints.astype(np.float64)
-    seg = np.linalg.norm(np.diff(wp, axis=0), axis=1)
-    arc = np.concatenate([[0.0], np.cumsum(seg)])
-    a2, v2 = wp[:-1, :2], np.diff(wp[:, :2], axis=0)
-    hlen2 = np.maximum((v2 * v2).sum(1), 1e-12)
-    half = span / 2.0
-    dirs = np.empty((len(points), 3))
+def _thin_by_gap(points: NDArray[np.float32], gap: float) -> NDArray[np.int64]:
+    """Indices of points at least gap apart along the sequence."""
+    kept: list[int] = []
     for i, p in enumerate(points):
-        t = np.clip(((p[:2] - a2) * v2).sum(1) / hlen2, 0.0, 1.0)
-        s = int(np.argmin(((a2 + t[:, None] * v2 - p[:2]) ** 2).sum(1)))
-        pos = arc[s] + t[s] * seg[s]
-        lo, hi = np.clip([pos - half, pos + half], arc[0], arc[-1])
-        d = np.array(
-            [np.interp(hi, arc, wp[:, c]) - np.interp(lo, arc, wp[:, c]) for c in range(3)]
-        )
-        dirs[i] = d / max(float(np.linalg.norm(d)), 1e-9)
-    return dirs
-
-
-def _thin_by_gap(points: NDArray[np.float32], gap: float) -> NDArray[np.float32]:
-    """Keep points at least gap apart along the sequence."""
-    kept: list[NDArray[np.float32]] = []
-    for p in points:
-        if not kept or float(np.linalg.norm(p - kept[-1])) >= gap:
-            kept.append(p)
-    return np.asarray(kept, dtype=np.float32)
-
-
-def _body_box_quat(direction: NDArray[np.float64]) -> rr.Quaternion:
-    """Box orientation for a body travelling along direction: yaw and pitch from
-    the chord, no roll."""
-    fwd = direction
-    lateral = np.cross([0.0, 0.0, 1.0], fwd)
-    ln = float(np.linalg.norm(lateral))
-    lateral = lateral / ln if ln > 1e-6 else np.array([0.0, 1.0, 0.0])
-    up = np.cross(fwd, lateral)
-    return rr.Quaternion(xyzw=Rotation.from_matrix(np.column_stack([fwd, lateral, up])).as_quat())
+        if not kept or float(np.linalg.norm(p - points[kept[-1]])) >= gap:
+            kept.append(i)
+    return np.asarray(kept, dtype=np.int64)
 
 
 def _log_path(entity: str, outcome: PlanOutcome, radius: float, cfg: EvalConfig) -> None:
@@ -180,14 +144,18 @@ def _log_path(entity: str, outcome: PlanOutcome, radius: float, cfg: EvalConfig)
         rr.LineStrips3D([outcome.waypoints], colors=[_outcome_color(outcome)], radii=radius),
         static=True,
     )
-    if outcome.collisions:
+    if outcome.collision_indices:
         # The gate's body box at each colliding foot sample: the robot length
         # and width, centered over the path point and rotated in place (yaw and
         # pitch from the chord), elevated over the legs into the ground-margin
-        # to body-clearance band. Thinned to about a body length apart so the
-        # boxes read as distinct bodies instead of one overlapping smear.
-        feet = _thin_by_gap(np.asarray(outcome.collisions, dtype=np.float32), cfg.robot_length)
+        # to body-clearance band. Rebuilt from the gate's own sample indices so
+        # the drawn boxes are the boxes it rejected. Thinned to about a body
+        # length apart so they read as distinct bodies, not one smear.
         waypoints = np.asarray(outcome.waypoints, dtype=np.float32)
+        samples = metrics.densify(waypoints, cfg.voxel_size / 2)
+        axes = np.stack(metrics.body_frames(samples, cfg.robot_length), axis=-1)
+        idx = np.asarray(outcome.collision_indices, dtype=np.int64)
+        idx = idx[_thin_by_gap(samples[idx], cfg.robot_length)]
         mid = np.array([0.0, 0.0, (cfg.ground_margin + cfg.body_clearance) / 2.0])
         half = [
             cfg.robot_length / 2.0,
@@ -197,11 +165,9 @@ def _log_path(entity: str, outcome: PlanOutcome, radius: float, cfg: EvalConfig)
         rr.log(
             f"{entity}/collisions",
             rr.Boxes3D(
-                half_sizes=np.tile(half, (len(feet), 1)),
-                centers=feet + mid,
-                quaternions=[
-                    _body_box_quat(d) for d in _travel_dirs(feet, waypoints, cfg.robot_length)
-                ],
+                half_sizes=np.tile(half, (len(idx), 1)),
+                centers=samples[idx] + mid,
+                quaternions=Rotation.from_matrix(axes[idx]).as_quat(),
                 colors=[[*COLLISION_COLOR, COLLISION_FILL_ALPHA]],
                 fill_mode=rr.components.FillMode.Solid,
             ),

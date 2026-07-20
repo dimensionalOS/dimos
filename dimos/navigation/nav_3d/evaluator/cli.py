@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import itertools
 import json
 import os
 from pathlib import Path
@@ -45,19 +44,15 @@ import typer
 from dimos.navigation.nav_3d.evaluator import tripwire
 from dimos.navigation.nav_3d.evaluator.cases import (
     CASES_DIR,
-    Case,
     Suite,
     load_suite,
     load_suites,
     save_suite,
 )
 from dimos.navigation.nav_3d.evaluator.config import EvalConfig
+from dimos.navigation.nav_3d.evaluator.curation import CurationError, load_store
 from dimos.navigation.nav_3d.evaluator.final_map import load_or_build_final_map
-from dimos.navigation.nav_3d.evaluator.generate import (
-    GenerationParams,
-    generate_cases,
-    snap_to_surface,
-)
+from dimos.navigation.nav_3d.evaluator.generate import GenerationParams, generate_cases
 from dimos.navigation.nav_3d.evaluator.metrics import ground_truth_route
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
 from dimos.navigation.nav_3d.evaluator.runner import Report, evaluate
@@ -65,19 +60,24 @@ from dimos.navigation.nav_3d.evaluator.tagging import GEOMETRIC_TAGS, route_tags
 from dimos.utils.data import get_data_dir
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
+    from dimos.navigation.nav_3d.evaluator.curation import CaseStore
+    from dimos.navigation.nav_3d.evaluator.final_map import FinalMap
     from dimos.navigation.nav_3d.evaluator.runner import PlanOutcome
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
 def _apply_overrides(cfg: EvalConfig, overrides: list[str]) -> EvalConfig:
-    fields = {f.name: f.type for f in dataclasses.fields(EvalConfig)}
+    fields = {f.name for f in dataclasses.fields(EvalConfig)}
     for spec in overrides:
         if "=" not in spec:
             raise typer.BadParameter(f"--set expects name=value, got {spec!r}")
         name, value = spec.split("=", 1)
+        if name.startswith("planner."):
+            # Planner constructor arguments are validated by the planner, which
+            # owns their names and defaults.
+            cfg.planner[name.removeprefix("planner.")] = float(value)
+            continue
         if name not in fields:
             raise typer.BadParameter(f"unknown config field {name!r}")
         current = getattr(cfg, name)
@@ -267,20 +267,6 @@ def _copy_recording(src: Path, dest: Path) -> None:
         source.backup(target)
 
 
-def _snap_or_fail(
-    label: str,
-    point: tuple[float, float, float],
-    surface: NDArray[np.float32],
-    snap_max_m: float,
-) -> tuple[float, float, float]:
-    snapped = snap_to_surface(np.asarray(point, dtype=np.float32), surface, snap_max_m)
-    if snapped is None:
-        raise typer.BadParameter(
-            f"{label} {point} is more than {snap_max_m}m from any standable surface"
-        )
-    return (float(snapped[0]), float(snapped[1]), float(snapped[2]))
-
-
 @app.command()
 def ingest(
     source: Path = typer.Argument(
@@ -350,63 +336,15 @@ def ingest(
     path = save_suite(suite, manifest)
     print(f"\n{len(suite.cases)} cases -> {path}")
     for case in suite.cases:
-        print(f"  {case.id}: w={case.weight:g} [{', '.join(case.tags)}]")
+        print(f"  {case.id}: [{', '.join(case.tags)}]")
     print(f"\nrun with: python -m dimos.navigation.nav_3d.evaluator run --dataset {name}")
 
 
-def _append_case(
-    suite: Suite,
-    manifest: Path,
-    surface: NDArray[np.float32],
-    start: tuple[float, float, float],
-    goal: tuple[float, float, float],
-    case_id: str | None,
-    tags: list[str],
-    weight: float,
-    snap_max: float,
-    expect_fail: bool,
-) -> Case:
-    prefix = "neg" if expect_fail else "manual"
-    snapped_goal = snap_to_surface(np.asarray(goal, dtype=np.float32), surface, snap_max)
-    if snapped_goal is not None:
-        goal = (float(snapped_goal[0]), float(snapped_goal[1]), float(snapped_goal[2]))
-    elif expect_fail:
-        # An infeasible goal may sit on geometry with no standable surface.
-        print(f"note: goal {goal} is off any standable surface; keeping it as picked")
-    else:
-        raise typer.BadParameter(f"goal {goal} is more than {snap_max}m from standable surface")
-    if case_id is None:
-        existing = {c.id for c in suite.cases}
-        case_id = next(
-            f"{prefix}_{n:02d}" for n in itertools.count() if f"{prefix}_{n:02d}" not in existing
-        )
-    case = Case(
-        id=case_id,
-        start=_snap_or_fail("start", start, surface, snap_max),
-        goal=goal,
-        weight=weight,
-        tags=tags,
-        expect_fail=expect_fail,
-    )
-    if any(c.id == case.id for c in suite.cases):
-        raise typer.BadParameter(f"case id {case.id!r} already exists in {manifest}")
-    suite.cases.append(case)
-    save_suite(suite, manifest)
-    kind = "negative (must refuse)" if expect_fail else "positive"
-    print(f"added {kind} {case.id}: {case.start} -> {case.goal} to {manifest}")
-    return case
-
-
-def _load_for_curation(dataset: str) -> tuple[Suite, Path, NDArray[np.float32], EvalConfig]:
-    manifest = CASES_DIR / f"{dataset}.yaml"
-    if not manifest.exists():
-        raise typer.BadParameter(f"no manifest {manifest}; run ingest first")
-    suite = load_suite(manifest)
-    cfg = EvalConfig()
-    final = load_or_build_final_map(suite.db_path(), suite, cfg)
-    planner = cfg.make_planner()
-    planner.update_global_map(final.occupied)
-    return suite, manifest, planner.surface_map(), cfg
+def _open(dataset: str) -> tuple[CaseStore, FinalMap]:
+    try:
+        return load_store(dataset)
+    except CurationError as err:
+        raise typer.BadParameter(str(err)) from err
 
 
 @app.command("add-case")
@@ -416,27 +354,22 @@ def add_case(
     goal: tuple[float, float, float] = typer.Option(..., "--goal", help="Foot-level xyz"),
     case_id: str = typer.Option(None, "--id", help="Case id; default manual_<n> or neg_<n>"),
     tags: str = typer.Option(None, "--tags", help="Comma-separated tags"),
-    weight: float = typer.Option(1.0, "--weight"),
-    snap_max: float = typer.Option(1.0, "--snap-max", help="Max snap distance to surface (m)"),
     expect_fail: bool = typer.Option(
         False, "--expect-fail", help="Certified-infeasible pair; the planner must refuse"
     ),
 ) -> None:
     """Append a curated case, with endpoints snapped to the final surface."""
-    suite, manifest, surface, _ = _load_for_curation(dataset)
-    default_tags = "manual,negative" if expect_fail else "manual"
-    _append_case(
-        suite,
-        manifest,
-        surface,
-        start,
-        goal,
-        case_id,
-        [t.strip() for t in (tags or default_tags).split(",") if t.strip()],
-        weight,
-        snap_max,
-        expect_fail,
-    )
+    store, _ = _open(dataset)
+    try:
+        store.add(
+            start,
+            goal,
+            [t.strip() for t in (tags or "").split(",") if t.strip()],
+            case_id=case_id,
+            expect_fail=expect_fail,
+        )
+    except CurationError as err:
+        raise typer.BadParameter(str(err)) from err
 
 
 @app.command("tag")
@@ -497,7 +430,7 @@ def retag(
         if "auto" not in case.tags:
             print(f"  {case.id}: curated, tags kept [{', '.join(case.tags)}]")
             continue
-        route = ground_truth_route(trajectory, case.start, case.goal, cfg.robot_height)
+        route = ground_truth_route(trajectory, case.start, case.goal, cfg)
         if route is None:
             print(f"  {case.id}: off-trajectory, tags kept [{', '.join(case.tags)}]")
             continue
@@ -515,8 +448,6 @@ def retag(
 @app.command("pick-case")
 def pick_case(
     dataset: str = typer.Argument(..., help="Dataset whose manifest gets the cases"),
-    weight: float = typer.Option(1.0, "--weight"),
-    snap_max: float = typer.Option(1.0, "--snap-max", help="Max snap distance to surface (m)"),
 ) -> None:
     """Pick and edit cases by shift+clicking the map in a browser viewer.
 
@@ -529,90 +460,30 @@ def pick_case(
     from dimos.navigation.nav_3d.evaluator.picker import pick_cases
     from dimos.navigation.nav_3d.evaluator.viz import turbo_by_height
 
-    suite, manifest, surface, cfg = _load_for_curation(dataset)
-    final = load_or_build_final_map(suite.db_path(), suite, cfg)
-    trajectory = load_trajectory(suite.db_path(), suite.odom_stream)
-    foot = trajectory.positions - np.array([0.0, 0.0, cfg.robot_height], dtype=np.float32)
-
-    def full_tags(negative: bool, extra: list[str]) -> list[str]:
-        tags = ["manual"] + (["negative"] if negative else [])
-        return tags + [t for t in extra if t not in tags]
-
-    def save_pair(
-        start: tuple[float, float, float],
-        goal: tuple[float, float, float],
-        negative: bool,
-        tags: list[str],
-        case_id: str | None,
-    ) -> tuple[bool, str, str | None, list[str] | None]:
-        try:
-            case = _append_case(
-                suite,
-                manifest,
-                surface,
-                start,
-                goal,
-                case_id,
-                full_tags(negative, tags),
-                weight,
-                snap_max,
-                negative,
-            )
-        except typer.BadParameter as err:
-            return False, str(err), None, None
-        return True, f"saved {case.id} [{', '.join(case.tags)}]", case.id, list(case.tags)
-
-    def update_case(
-        saved_id: str, new_id: str, negative: bool, tags: list[str]
-    ) -> tuple[bool, str, str | None, list[str] | None]:
-        case = next((c for c in suite.cases if c.id == saved_id), None)
-        if case is None:
-            return False, f"case {saved_id!r} not found in manifest", None, None
-        if new_id != saved_id and any(c.id == new_id for c in suite.cases):
-            return False, f"case id {new_id!r} already exists", None, None
-        case.id = new_id
-        # Tags round-trip verbatim. The negative checkbox owns only the
-        # negative tag, so auto/manual provenance survives edits.
-        plain = [t for t in tags if t != "negative"]
-        case.tags = plain + (["negative"] if negative else [])
-        case.expect_fail = negative
-        if negative:
-            case.expect_final_fail = False
-        save_suite(suite, manifest)
-        return True, f"updated {case.id} [{', '.join(case.tags)}]", case.id, list(case.tags)
-
-    def delete_case(saved_id: str) -> tuple[bool, str]:
-        case = next((c for c in suite.cases if c.id == saved_id), None)
-        if case is None:
-            return False, f"case {saved_id!r} not found in manifest"
-        suite.cases.remove(case)
-        save_suite(suite, manifest)
-        return True, f"deleted {saved_id} from {manifest.name}"
-
+    store, final = _open(dataset)
+    trajectory = load_trajectory(store.suite.db_path(), store.suite.odom_stream)
+    foot = trajectory.positions - np.array([0.0, 0.0, store.cfg.robot_height], dtype=np.float32)
     pick_cases(
         dataset,
         final.occupied,
         turbo_by_height(final.occupied),
         final.voxel_size,
         foot,
-        suite.cases,
-        save_pair,
-        update_case,
-        delete_case,
+        store,
     )
     print(f"\nrun with: python -m dimos.navigation.nav_3d.evaluator run --dataset {dataset}")
 
 
 @app.command("list")
 def list_cases() -> None:
-    """Print every dataset's cases with endpoints, weights, and tags."""
+    """Print every dataset's cases with endpoints and tags."""
     for suite in load_suites():
         print(f"{suite.dataset} ({suite.path.name if suite.path else '?'})")
         for case in suite.cases:
             tags = f" [{', '.join(case.tags)}]" if case.tags else ""
             print(
                 f"  {case.id}: {tuple(round(v, 2) for v in case.start)} -> "
-                f"{tuple(round(v, 2) for v in case.goal)} w={case.weight:g}{tags}"
+                f"{tuple(round(v, 2) for v in case.goal)}{tags}"
             )
 
 

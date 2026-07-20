@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
@@ -59,16 +59,26 @@ class EvalConfig:
     max_slope: float = 1.2
     max_step_m: float = 0.2
     kinematic_window_m: float = 0.5
+    # How far an endpoint may sit from a standable surface before it counts as
+    # off the map, for both case generation and curation snapping.
+    snap_max_m: float = 1.0
 
     # An improvement must not buy score with compute. p95 over the suite.
     plan_p95_budget_ms: float = 50.0
     map_update_p95_budget_ms: float = 1000.0
 
+    # Planner constructor overrides, e.g. --set planner.wall_clearance_m=0.0.
+    # Omitted keys keep the planner's own defaults, so nothing is duplicated
+    # here, and the report records whatever was swept.
+    planner: dict[str, float] = field(default_factory=dict)
+
     def make_mapper(self) -> VoxelRayMapper:
         return VoxelRayMapper(voxel_size=self.voxel_size, max_range=self.max_range)
 
     def make_planner(self) -> MLSPlanner:
-        return MLSPlanner(voxel_size=self.voxel_size, robot_height=self.robot_height)
+        return MLSPlanner(
+            voxel_size=self.voxel_size, robot_height=self.robot_height, **self.planner
+        )
 
     def mapper_fingerprint(self) -> dict[str, float | int]:
         """Cache key parameters for the final map.

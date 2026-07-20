@@ -35,15 +35,11 @@ class Case:
     id: str
     start: tuple[float, float, float]
     goal: tuple[float, float, float]
-    weight: float = 1.0
     tags: list[str] = field(default_factory=list)
-    l_ref: float | None = None
-    # Human-certified infeasible pair: the correct answer is to refuse.
-    # Evaluated on the final map only, scored 1.0 for refusal.
+    # If the pair should not have a valid path, this is assigned by humans
     expect_fail: bool = False
-    # A route the robot walked that a later dynamic obstacle blocked, e.g. a
-    # door that closed. The online plan is expected to succeed, the final
-    # plan is expected to refuse and is scored 1.0 for refusal.
+    # Some routes are passable with the incremental map but not passable in the final.
+    # For example a door is open, robot walks through, then it gets closed.
     expect_final_fail: bool = False
 
 
@@ -85,9 +81,7 @@ def load_suite(path: Path) -> Suite:
             id=str(entry["id"]),
             start=(sx, sy, sz),
             goal=(gx, gy, gz),
-            weight=float(entry.get("weight", 1.0)),
             tags=[str(t) for t in entry.get("tags", [])],
-            l_ref=float(entry["l_ref"]) if "l_ref" in entry else None,
             expect_fail=expect_fail,
             expect_final_fail=expect_final_fail,
         )
@@ -130,11 +124,8 @@ def save_suite(suite: Suite, path: Path | None = None) -> Path:
             "id": case.id,
             "start": [round(float(v), 3) for v in case.start],
             "goal": [round(float(v), 3) for v in case.goal],
-            "weight": case.weight,
             "tags": case.tags,
         }
-        if case.l_ref is not None:
-            entry["l_ref"] = round(case.l_ref, 3)
         if case.expect_fail:
             entry["expect_fail"] = True
         if case.expect_final_fail:

@@ -36,11 +36,11 @@ import numpy as np
 from dimos.navigation.nav_3d.evaluator import metrics
 from dimos.navigation.nav_3d.evaluator.config import EvalConfig
 from dimos.navigation.nav_3d.evaluator.final_map import (
-    key_centers,
     load_or_build_checkpoints,
     load_or_build_final_map,
 )
 from dimos.navigation.nav_3d.evaluator.recording import load_trajectory
+from dimos.navigation.nav_3d.evaluator.voxel_keys import key_centers
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -79,6 +79,9 @@ class PlanOutcome:
     min_clearance: float | None
     waypoints: list[list[float]]
     collisions: list[list[float]]
+    # Indices of the colliding samples along the densified path, so a viewer
+    # can redraw the exact body boxes the gate rejected.
+    collision_indices: list[int]
     unsupported: list[list[float]]
     steep: list[list[float]]
 
@@ -97,7 +100,6 @@ class CaseResult:
     dataset: str
     start: tuple[float, float, float]
     goal: tuple[float, float, float]
-    weight: float
     tags: list[str]
     l_ref: float
     l_ref_snapped: bool
@@ -169,7 +171,7 @@ class Report:
     # dataset/id of cases whose online route a new final obstacle blocks, the
     # candidates for an expect_final_fail label.
     dynamic_candidates: list[str] = field(default_factory=list)
-    config: dict[str, float | int] = field(default_factory=dict)
+    config: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         out = asdict(self)
@@ -196,21 +198,9 @@ def _run_plan(
         return _no_plan(plan_ms), None
 
     reached = metrics.goal_reached(waypoints, case.goal, cfg.goal_tolerance)
-    gate = metrics.check_path(
-        waypoints,
-        obstacle_keys,
-        cfg.voxel_size,
-        cfg.robot_length,
-        cfg.robot_width,
-        cfg.ground_margin,
-        cfg.body_clearance,
-    )
-    support = metrics.check_support(
-        waypoints, support_keys, cfg.voxel_size, cfg.support_radius_m, cfg.support_depth_m
-    )
-    kinematics = metrics.check_kinematics(
-        waypoints, cfg.max_slope, cfg.max_step_m, cfg.kinematic_window_m
-    )
+    gate = metrics.check_path(waypoints, obstacle_keys, cfg)
+    support = metrics.check_support(waypoints, support_keys, cfg)
+    kinematics = metrics.check_kinematics(waypoints, cfg)
     length = metrics.path_length(waypoints)
     success = reached and gate.valid and support.valid and kinematics.valid
     outcome = PlanOutcome(
@@ -226,6 +216,7 @@ def _run_plan(
         min_clearance=gate.min_clearance_m,
         waypoints=waypoints.tolist(),
         collisions=gate.collision_points[:MAX_COLLISIONS_KEPT].tolist(),
+        collision_indices=gate.collision_indices[:MAX_COLLISIONS_KEPT].tolist(),
         unsupported=support.unsupported_points[:MAX_COLLISIONS_KEPT].tolist(),
         steep=kinematics.violation_points[:MAX_COLLISIONS_KEPT].tolist(),
     )
@@ -246,6 +237,7 @@ def _no_plan(plan_ms: float) -> PlanOutcome:
         min_clearance=None,
         waypoints=[],
         collisions=[],
+        collision_indices=[],
         unsupported=[],
         steep=[],
     )
@@ -286,18 +278,11 @@ def _dynamic_candidate(
     """
     if online_wp is None or not online.success or final.success:
         return False, []
-    new_keys = np.setdiff1d(final_keys, online_keys)
+    # Both come from np.unique, so the sort in setdiff1d is pure waste.
+    new_keys = np.setdiff1d(final_keys, online_keys, assume_unique=True)
     if not len(new_keys):
         return False, []
-    gate = metrics.check_path(
-        online_wp,
-        new_keys,
-        cfg.voxel_size,
-        cfg.robot_length,
-        cfg.robot_width,
-        cfg.ground_margin,
-        cfg.body_clearance,
-    )
+    gate = metrics.check_path(online_wp, new_keys, cfg)
     if gate.valid:
         return False, []
     return True, gate.collision_points[:MAX_COLLISIONS_KEPT].tolist()
@@ -336,7 +321,7 @@ def run_suite(
             miss = float(np.linalg.norm(np.asarray(case.goal) - np.asarray(case.start)))
             refs.append(metrics.Reference(miss, False, float("inf"), False))
             continue
-        ref = metrics.reference_length(trajectory, case.start, case.goal, cfg.robot_height)
+        ref = metrics.reference_length(trajectory, case.start, case.goal, cfg)
         if not final_only[i]:
             # Only online-replayed cases need a causal snap onto the trajectory.
             if not ref.snapped:
@@ -352,8 +337,6 @@ def run_suite(
                     suite.dataset,
                     case.id,
                 )
-        if case.l_ref is not None:
-            ref = metrics.Reference(case.l_ref, ref.snapped, ref.start_ts, ref.causal)
         refs.append(ref)
 
     # Final-only cases never replay online, so they take no checkpoint and their
@@ -371,21 +354,28 @@ def run_suite(
 
     results: list[CaseResult | None] = [None] * len(suite.cases)
 
+    def _result(case: Case, ref: metrics.Reference, **rest: object) -> CaseResult:
+        """Fill the fields every case copies straight from its case and reference."""
+        return CaseResult(
+            id=case.id,
+            dataset=suite.dataset,
+            start=case.start,
+            goal=case.goal,
+            tags=case.tags,
+            l_ref=ref.length,
+            l_ref_snapped=ref.snapped,
+            **rest,  # type: ignore[arg-type]
+        )
+
     for ci in np.flatnonzero(final_only):
         case, ref = suite.cases[ci], refs[ci]
         outcome, _ = _run_plan(final_planner, case, ref.length, obstacle_keys, obstacle_keys, cfg)
         if case.expect_fail:
             # An infeasible case is passed by refusing it.
             outcome = score_negative(outcome)
-        results[ci] = CaseResult(
-            id=case.id,
-            dataset=suite.dataset,
-            start=case.start,
-            goal=case.goal,
-            weight=case.weight,
-            tags=case.tags,
-            l_ref=ref.length,
-            l_ref_snapped=ref.snapped,
+        results[ci] = _result(
+            case,
+            ref,
             plan_ts=float("inf"),
             online_voxels=len(final.occupied),
             map_update_ms=0.0,
@@ -435,15 +425,9 @@ def run_suite(
                 if case.expect_final_fail
                 else _dynamic_candidate(online_out, final_out, online_wp, keys, obstacle_keys, cfg)
             )
-            results[ci] = CaseResult(
-                id=case.id,
-                dataset=suite.dataset,
-                start=case.start,
-                goal=case.goal,
-                weight=case.weight,
-                tags=case.tags,
-                l_ref=ref.length,
-                l_ref_snapped=ref.snapped,
+            results[ci] = _result(
+                case,
+                ref,
                 plan_ts=float(checkpoints.times[k]),
                 online_voxels=len(keys),
                 map_update_ms=map_update_ms,
@@ -476,27 +460,19 @@ def run_suite(
         """Walk the delta chain once, yielding the incremental occupancy at each
         case's plan time. Only voxels mapped by then are present, so obstacles
         the sensor never saw are naturally excluded from the online check."""
-        for k, (keys, _observed) in enumerate(checkpoints.iter_snapshots()):
+        for k, keys in enumerate(checkpoints.iter_snapshots()):
             if k in active:
                 yield k, keys
 
-    # The planner releases the GIL and parallelizes updates internally via a
-    # shared rayon pool, so a few worker threads interleave the serial parts
-    # of checkpoint updates without oversubscribing. The semaphore bounds how
-    # many reconstructed snapshots are held in memory at once.
-    if threads > 1:
-        in_flight = threading.BoundedSemaphore(threads * 2)
-        with ThreadPoolExecutor(max_workers=threads) as pool:
-            futures = []
-            for item in snapshot_stream():
-                in_flight.acquire()
-                futures.append(pool.submit(task, *item))
-            for future in futures:
-                future.result()
-    else:
-        online_planner = cfg.make_planner()
-        for k, keys in snapshot_stream():
-            process_checkpoint(k, keys, online_planner)
+    # The semaphore caps how many reconstructed snapshots are held in memory.
+    in_flight = threading.BoundedSemaphore(max(1, threads) * 2)
+    with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
+        futures = []
+        for item in snapshot_stream():
+            in_flight.acquire()
+            futures.append(pool.submit(task, *item))
+        for future in futures:
+            future.result()
 
     done = [r for r in results if r is not None]
     if len(done) != len(suite.cases):
@@ -547,10 +523,8 @@ def evaluate(
     # aggregate is over the online cases only. Final aggregates cover them all.
     online = [c for c in cases if not c.final_only]
 
-    def wmean(values: list[float], items: list[CaseResult]) -> float:
-        if not items:
-            return 0.0
-        return float(np.average(values, weights=[c.weight for c in items]))
+    def mean(values: list[float]) -> float:
+        return float(np.mean(values)) if values else 0.0
 
     outcome_names = {
         (True, True): "both",
@@ -569,18 +543,18 @@ def evaluate(
         by_tag[tag] = TagStats(
             n=len(tc),
             n_online=len(oc),
-            inc_score=wmean([c.online.spl for c in oc], oc),
-            fin_score=wmean([c.final.spl for c in tc], tc),
+            inc_score=mean([c.online.spl for c in oc]),
+            fin_score=mean([c.final.spl for c in tc]),
             inc_success=sum(c.online.success for c in oc),
             fin_success=sum(c.final.success for c in tc),
         )
 
     return Report(
-        score=wmean([c.online.spl for c in online], online),
-        score_soft=wmean(
-            [c.soft_progress if not c.online.success else c.online.spl for c in online], online
+        score=mean([c.online.spl for c in online]),
+        score_soft=mean(
+            [c.soft_progress if not c.online.success else c.online.spl for c in online]
         ),
-        final_score=wmean([c.final.spl for c in cases], cases),
+        final_score=mean([c.final.spl for c in cases]),
         n_cases=len(cases),
         n_online=len(online),
         n_success=sum(c.online.success for c in online),
