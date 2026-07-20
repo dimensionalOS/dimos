@@ -60,7 +60,7 @@ def set_episode(self, event: str, task_label: str | None = None) -> str:
 Behavior:
 - Validates `event ∈ {"start","save","discard"}`; unknown → returns an error
   string (no exception, so the calling skill can report it to the agent).
-- On `"start"`: sets the active `task_label`, then `_transition("start", ts)`.
+- On `"start"`: sets the runtime task label (see below), then `_transition("start", ts)`.
   If a take is already in progress, the existing state machine auto-commits it
   first (preserve current behavior; documented, not changed).
 - On `"save"`/`"discard"`: `_transition(event, ts)`.
@@ -68,8 +68,27 @@ Behavior:
   `_on_keyboard` use when they call `_transition`) so runtime and offline
   segmentation agree.
 - Button/keyboard input paths are untouched; this is an additional entry point.
-- Publishing of `EpisodeStatus` is unchanged (it already fires inside
-  `_transition` via `_snapshot`).
+
+**Required change to per-episode labeling (this is NOT unchanged).** Today
+`_snapshot` hardcodes `task_label=self.config.default_task_label`
+(episode_monitor.py:177) and there is no instance-level label field. To emit the
+agent-supplied label, this feature adds a runtime label field and makes
+`_snapshot` read it:
+- Add `self._task_label: str | None = self.config.default_task_label` in
+  `__init__` (initialized to the config default so button-triggered takes keep
+  their current behavior).
+- `set_episode("start", task_label)` sets `self._task_label = task_label` (when a
+  label is provided) *before* calling `_transition("start", ts)`.
+- Change `_snapshot` to use `self._task_label` instead of
+  `self.config.default_task_label`.
+- Label lifetime: the label applies to the current take only. On `save`/`discard`
+  (take ends), reset `self._task_label = self.config.default_task_label` so the
+  next take does not silently inherit the previous label. Button-triggered takes,
+  which never set a label, thus continue to use the config default exactly as
+  before.
+
+This is the one behavioral change inside `episode_monitor.py` beyond adding the
+RPC; everything else (the state machine, when `EpisodeStatus` fires) is unchanged.
 
 ### 2. Injection contract: `EpisodeControlSpec`
 File: `dimos/learning/collection/episode_monitor_spec.py` (new)
@@ -130,6 +149,16 @@ class Go2CollectionRecorder(Recorder):
 ```
 DB path: `STATE_DIR/recordings/session_go2_<YYYYMMDD_HHMMSS>.db`, reusing the
 `_session_db` helper pattern from `dimos/learning/collection/blueprint.py`.
+
+Notes:
+- **Coexists with the existing `Go2Memory(Recorder)`** already in the Go2 stack
+  (which records `color_image`/`lidar`/`odom` into the spatial-memory DB). This is
+  a distinct module writing a separate session DB, and it adds `cmd_vel` (actions)
+  + `status` (episode boundaries), which `Go2Memory` does not capture. Not a
+  duplicate; the two recorders serve different purposes.
+- **Lidar is intentionally omitted from v1** to keep episode DBs small for the
+  camera+proprioception+action VLA case. Adding `lidar: In[PointCloud2]` is a
+  trivial follow-up if training needs it.
 
 ### 5. Opt-in blueprint: `unitree-go2-agentic-record`
 File: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic_record.py` (new)
@@ -239,6 +268,14 @@ is the automated e2e check; step 6 confirms export compatibility.
   VLA training will eventually want motor-level `lowcmd`. Follow-up.
 - **Single active episode:** the state machine supports one take at a time; nested
   or concurrent episodes are not supported (and not requested).
+- **No button input on Go2:** `EpisodeMonitorModule` also declares
+  `teleop_buttons: In[Buttons]` and `keyboard: In[KeyPress]`, which have no
+  producer in the Go2 agentic stack. Those ports simply never fire — harmless, and
+  exactly why the `set_episode` RPC trigger is needed here.
+- **Auto-commit boundary:** a `start` issued while already recording emits a single
+  `EpisodeStatus(last_event="start")` (no separate `save`). The dataprep extractor
+  already segments on consecutive `start` events (episode_monitor.py:153 comment);
+  the unit tests will assert this so we don't rely on the comment alone.
 
 ## Files touched (summary)
 - edit: `dimos/learning/collection/episode_monitor.py` (add `set_episode` @rpc)
