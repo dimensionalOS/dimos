@@ -571,20 +571,12 @@ yourarm_planner = manipulation_module(
 
 ### 4d. Configure Cartesian and EEF-twist control IK
 
-Pink is the only backend for Cartesian and EEF-twist control. Pink control and
-manipulation planning are separate: planning uses `WorldSpec` and its selected
-planning backend, while control performs one local differential-IK step and
-does not use `WorldSpec` as a control input.
+Cartesian and EEF-twist tasks use the direct URDF or Xacro in
+`RobotModelConfig`. Set `package_paths` and `xacro_args` when needed, name the
+end-effector link, and map coordinator joints to model joints. The task validates
+the prepared model, frame, and joint mapping at startup.
 
-Use the same `RobotModelConfig` for the control model and planning robot
-metadata. Its `model_path` points to the direct URDF or Xacro, `package_paths`
-and `xacro_args` describe model preparation, `end_effector_link` names the EEF
-frame, and `joint_name_mapping` maps coordinator joints to URDF joints. Pink
-validates the prepared model, named frame, and exact ordered joint mapping at
-startup.
-
-The common helper passes that typed configuration to Pink and derives the model
-path and coordinator joint order from it:
+Pass the same model configuration to the common helpers:
 
 ```python skip
 from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, eef_twist_task
@@ -599,26 +591,11 @@ twist_task = eef_twist_task(
 )
 ```
 
-Pink control tasks use the named `RobotModelConfig.end_effector_link`; they do
-not accept a numeric `ee_joint_id` or a legacy backend selector.
-
-At every coordinator tick, Pink re-anchors to measured joints, derives the EEF
-target from measured FK for twist input, clamps `dt`, updates one `FrameTask`,
-integrates one step, and applies position and velocity limits. The shared task
-pipeline validates finite bounded output and uses a safe hold for expected
-runtime solve errors. Invalid models, frames, mappings, or model-preparation
-inputs fail startup; Pink is never silently replaced by Pinocchio.
-
-Piper follows the same path as other arms. Its Cartesian and EEF-twist tasks use
-the matching existing Xacro/URDF model, `make_piper_model_config()`, and the
-named `gripper_base` frame. They do not use the previous MJCF model or numeric
-EEF ID on the Pink path.
-
-Before hardware, validate the configuration in simulation or replay at the
-coordinator rate. Benchmark end-to-end latency, exercise Cartesian and twist
-commands, verify startup diagnostics and runtime safe holds, and confirm
-emergency-stop readiness. Hardware validation is future work and must be
-supervised and low speed; this guide does not claim that it has occurred.
+Each tick starts from measured joints and applies model position and velocity
+limits. Twist targets are derived from measured forward kinematics. Invalid
+models or mappings fail at startup; invalid runtime output holds the measured
+position. Validate Cartesian and twist behavior in simulation or replay before
+hardware use.
 
 ## Step 5: Register Blueprints
 

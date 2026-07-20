@@ -120,29 +120,17 @@ request. For example, `planner_name=roboplan` requires
 
 ### Cartesian control IK
 
-Cartesian and keyboard EEF-twist tasks use generic Pink control IK by default.
-Pink is the only control IK backend; a failed Pink setup does not silently select
-another solver.
+Cartesian and keyboard EEF-twist tasks use the direct URDF/Xacro model from
+`RobotModelConfig`. The configuration supplies package paths, Xacro arguments,
+the named end-effector frame, and coordinator-to-model joint mapping. Invalid
+models, frames, or mappings fail at startup.
 
-Pink control uses the direct URDF/Xacro model from `RobotModelConfig`. Package
-paths and Xacro arguments are prepared before startup. The configuration names
-the end-effector frame and maps coordinator joints to model joints; missing
-frames, mismatched mappings, or an invalid prepared model fail initialization.
+Each control tick starts from measured joints, applies model position and
+velocity limits, and holds the measured position when a solve cannot produce a
+safe command. This local control path is separate from manipulation planning and
+does not use `WorldSpec` or provide world-obstacle avoidance.
 
-Each control tick starts from measured joints, clamps `dt`, updates one Pink
-`FrameTask`, solves and integrates one local differential-IK step, and applies
-position and velocity limits. A configurable `posture_cost` (default `1e-3`)
-regularizes only the null space toward the current measured configuration and
-can be disabled with zero. Non-finite or unsafe output is rejected. Expected
-runtime solve errors produce a bounded safe hold instead of an invalid command.
-
-The control backend is separate from manipulation planning. It does not use
-`WorldSpec` to control the robot and makes no planning-world or dynamic-obstacle
-avoidance claim. `WorldSpec` and its Pink/Drake backends remain responsible for
-planning behavior.
-
-For a custom robot, the helper API derives the Pink model and joint mapping from
-the typed model configuration:
+For a custom robot, pass the typed model configuration to the helper:
 
 ```python skip
 from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
@@ -153,16 +141,8 @@ task = cartesian_ik_task(
 )
 ```
 
-Piper's Cartesian and EEF-twist blueprints use the matching Xacro/URDF
-`PIPER_MODEL_PATH`, `make_piper_model_config()`, and named `gripper_base` frame.
-Piper's Pink configuration does not use its previous MJCF model or numeric EEF
-ID.
-
-Validate a rollout in simulation or replay first: exercise Cartesian and twist
-commands at the coordinator rate, benchmark end-to-end control latency, verify
-model/frame diagnostics and safe holds, and confirm emergency-stop readiness.
-Hardware validation remains future work and must be supervised and low speed;
-no hardware validation is claimed here.
+Validate Cartesian and twist behavior in simulation or replay before hardware
+use.
 
 Install the manipulation dependencies:
 
@@ -260,7 +240,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   TwistStamped           EEFTwistTask             RRT planner
-  spatial EEF twist      (Pink control IK)        JacobianIK
+  spatial EEF twist      (control IK)             JacobianIK
                                │                   DrakeWorld
                           JointState ────────────→ (visualization)
 ```
