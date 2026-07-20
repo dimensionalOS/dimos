@@ -114,6 +114,11 @@ class InPort(Generic[_TMsg]):
     transport: Any  # settable; T8 tightens to the transport protocol
     source: Any  # settable; mutually exclusive with transport (T8)
 
+    @property
+    def frames(self) -> tuple[str, str]:
+        """Sampled (parent, child) frame edge — tf() ports only (T11)."""
+        raise NotImplementedError
+
 
 class OutPort(Generic[_TMsg]):
     """Handle for one output field's port: bind, subscribe, introspect."""
