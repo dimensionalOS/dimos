@@ -163,10 +163,10 @@ def diff_reports(
 ) -> None:
     """Name every case whose pass/fail flipped between two runs.
 
-    Exits 1 when any case regressed, so a keep/discard loop can gate on it.
-    Perf budget breaches always print but only exit 1 with --exact, which also
-    exits 1 on any non-timing difference. Running the suite twice and
-    exact-diffing the reports is the determinism check.
+    Exits 1 when any case regressed, so a CI check or before/after comparison
+    can gate on it. Perf budget breaches always print but only exit 1 with
+    --exact, which also exits 1 on any non-timing difference. Running the suite
+    twice and exact-diffing the reports is the determinism check.
     """
     old_report = json.loads(old.read_text())
     new_report = json.loads(new.read_text())

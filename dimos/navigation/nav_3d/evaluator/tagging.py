@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deterministic geometric tags for a case's demonstrated route.
+"""Geometric tags for a case: elevation, narrow, doorway, corridor.
 
-Every threshold is a physical measure of the robot from EvalConfig, not a
-difficulty knob. The tags mark the terrain a case exercises so a run can filter
-to the hard ones (stairs, narrow passages, doorways) while keeping flat
-coverage. Elevation comes from the endpoints. Path-shape tags describe the local
-terrain and only apply when the demonstrated route runs roughly straight from
-start to goal, so a long building detour cannot mislabel a case. Tagging never
-touches a case's weight.
+Elevation tags come from the endpoints. Shape tags measure corridor width along
+the demonstrated route and apply only when it runs roughly straight from start
+to goal. Thresholds come from the robot's dimensions in EvalConfig.
 """
 
 from __future__ import annotations
