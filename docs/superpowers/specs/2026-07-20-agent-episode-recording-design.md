@@ -81,11 +81,14 @@ agent-supplied label, this feature adds a runtime label field and makes
   label is provided) *before* calling `_transition("start", ts)`.
 - Change `_snapshot` to use `self._task_label` instead of
   `self.config.default_task_label`.
-- Label lifetime: the label applies to the current take only. On `save`/`discard`
-  (take ends), reset `self._task_label = self.config.default_task_label` so the
-  next take does not silently inherit the previous label. Button-triggered takes,
-  which never set a label, thus continue to use the config default exactly as
-  before.
+- Label lifetime: the label applies to the current take only. The reset
+  (`self._task_label = self.config.default_task_label`) lives **inside
+  `_transition` on the `save`/`discard` branches**, not in `set_episode`, so the
+  label is cleared no matter which entry point ends the take — this prevents a
+  mixed path (agent `start` with a label, then a button-triggered save going
+  straight through `_transition`) from leaking a stale label into the next take.
+  Button-triggered takes, which never set a label, thus continue to use the config
+  default exactly as before.
 
 This is the one behavioral change inside `episode_monitor.py` beyond adding the
 RPC; everything else (the state machine, when `EpisodeStatus` fires) is unchanged.
@@ -278,7 +281,9 @@ is the automated e2e check; step 6 confirms export compatibility.
   the unit tests will assert this so we don't rely on the comment alone.
 
 ## Files touched (summary)
-- edit: `dimos/learning/collection/episode_monitor.py` (add `set_episode` @rpc)
+- edit: `dimos/learning/collection/episode_monitor.py` (add `set_episode` @rpc +
+  per-episode runtime `task_label`: new `_task_label` field, `_snapshot` reads it,
+  reset in `_transition` on save/discard)
 - edit: `dimos/agents/system_prompt.py` (recording guidance)
 - new:  `dimos/learning/collection/episode_monitor_spec.py`
 - new:  `dimos/learning/collection/go2_recorder.py`
