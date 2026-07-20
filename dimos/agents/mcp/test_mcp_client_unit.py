@@ -212,8 +212,8 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
         captured["params"] = params
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    mcp_client._mcp_request = fake_request
-    mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
+    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
+        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
 
     assert captured["method"] == "tools/call"
     params = captured["params"]
@@ -227,11 +227,11 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
 
 
 @pytest.fixture
-def configured_mcp_client(mcp_client: McpClient) -> McpClient:
+def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
     """Prepare a client for testing agent model initialization."""
     mcp_client.config.model_fixture = None
     mcp_client.config.system_prompt = "System prompt"
-    mcp_client._fetch_tools = MagicMock(return_value=[])
+    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
     mcp_client._lock = RLock()
     mcp_client._thread = MagicMock()
     mcp_client._thread.is_alive.return_value = True
