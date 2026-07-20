@@ -1,33 +1,18 @@
 """
-Test 3: Chassis Command, small forward move (~5 cm) with all gates held open.
+Test 3: chassis command. Drives ~5 cm forward with all gates held open, then
+streams an active zero stop. PASS requires measured speed to rise during the
+move and settle near zero after.
 
-R1 Lite chassis findings (2026-07-03, see BRINGUP_LOG.md):
-  - Command topic is /motion_target/target_speed_chassis (TwistStamped)
-    directly, the R1 Pro's gatekeeper /cmd_vel does NOT exist here.
-  - The chassis node inherits the R1 Pro's gate design. All of these must
-    hold SIMULTANEOUSLY or commands produce ~0.3mm/s creep or nothing:
-      Gate 1: someone subscribed to /motion_control/chassis_speed
-              (this script's own monitor subscription holds it open)
-      Gate 2: brake_mode false           (streamed every tick)
-      Gate 3: nonzero chassis_acc_limit  (streamed every tick; boots at 0)
-  - Commands are dead-man streams: motion stops when streaming stops.
-  - Robot must have been POWERED ON with e-stop released, a latched
-    e-stop at boot inhibits all motors for the whole session.
+The chassis node requires, simultaneously and streamed every tick: a
+subscriber on /motion_control/chassis_speed (this script's own monitor),
+brake_mode false, and a nonzero chassis_acc_limit. Commands are dead-man
+streams.
 
-Move profile: vx = +0.05 m/s for 1.0 s ~ 5 cm forward, then an active
-zero-velocity stop stream. PASS requires measured chassis speed to rise
-above threshold during the move AND settle back near zero after.
-
-Prerequisites: robot untethered (except ethernet, tend the slack), ~0.5 m
-clear floor ahead, hand on e-stop.
-
-  *** RC MUST BE ON, ALL SWITCHES IN POSITION 1 (= mode 5, software may
-  drive). An RC that is OFF is NOT neutral: the receiver fails safe to
-  mode 3 ("manual, sticks centered") and the chassis node VETOES software
-  commands, you get the 0.3mm/s creep and a FAIL that looks exactly like
-  a latched VCU. Verify before running:  ros2 topic echo /controller --once
-  (This docstring said "RC idle/off" until 2026-07-17, it predated the
-  Day-2 RC mode map and was wrong; that error cost a test cycle twice.)
+The RC must be ON with all switches in position 1 (mode 5). RC OFF fails safe
+to a mode that vetoes software commands and mimics a latched VCU; verify on
+the host with the vendor workspace sourced: ros2 topic echo /controller --once
+The robot must have been powered on with the e-stop released. Keep ~0.5 m of
+clear floor ahead and a hand on the e-stop.
 
 Run:
     export ROS_DOMAIN_ID=2

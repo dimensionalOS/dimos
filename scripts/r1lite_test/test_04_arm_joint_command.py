@@ -3,7 +3,7 @@ Test 4: Arm Joint Movement (wrist roll)
 Reads current arm position, moves the LAST joint (wrist roll) by DELTA
 radians, holds, then returns home.
 
-HARDWARE-VALIDATED 2026-07-03: this exact motion (left wrist roll +0.2 rad
+This exact motion (left wrist roll +0.2 rad
 via streamed targets, all other joints held at their current positions) ran
 cleanly on the R1 Lite. The wrist roll rotates the gripper in place, the
 safest arm motion in the tabletop fold configuration. Do NOT change
@@ -37,7 +37,7 @@ from r1lite_config import ARM_DOF, CMD_ARM, FEEDBACK_ARM
 
 SIDE = "left"  # change to "right" to test right arm
 JOINT_INDEX = -1  # LAST joint = wrist roll, rotates in place (see header)
-DELTA = 0.2  # radians (~11 degrees), hardware-validated value
+DELTA = 0.2  # radians (~11 degrees)
 MOVE_DURATION = 4.0  # seconds of streaming per move (tracker needs the stream)
 VELOCITY = 0.5  # rad/s tracking speed
 DISCOVERY_WAIT = 5.0
@@ -130,7 +130,7 @@ def main(skip_prompt=False) -> bool:
     elif not moved:
         print(
             "\nFAIL: Wrist did not track the target, motors enabled? "
-            "(e-stop at boot inhibits everything, see BRINGUP_LOG.md)"
+            "(an e-stop latched at boot inhibits all motors for the session)"
         )
     else:
         print("\nFAIL: Wrist moved but did not return home, check feedback above.")

@@ -132,8 +132,9 @@ class R1LiteConnectionConfig(ModuleConfig):
     # chassis node latches its last target forever, so the timeout must
     # live here.
     cmd_vel_timeout_s: float = Field(default=0.3)
-    # Feedback older than this marks a segment stale: motor_states stops
-    # publishing and arm commands are dropped until fresh feedback returns.
+    # Feedback older than this marks a segment stale (or never seen):
+    # motor_states pauses and arm commands are dropped until fresh feedback.
+    # Initial value; tune from measured feedback gaps on hardware.
     feedback_stale_after_s: float = Field(default=0.5)
     # On stop(), stream chassis zeros for this long before ROS teardown.
     stop_zero_duration_s: float = Field(default=0.3)
@@ -207,7 +208,9 @@ class R1LiteConnection(Module):
         self._torso_ts = 0.0
         self._left_ts = 0.0
         self._right_ts = 0.0
-        self._stale_logged = False
+        self._cmd_stale_logged = False
+        self._state_stale_logged = False
+        self._bad_fb_warn_ts = 0.0
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
         self._torso_cmd_warned = False
@@ -216,7 +219,9 @@ class R1LiteConnection(Module):
         self._latest_cmd_vel: Twist | None = None
         self._latest_cmd_vel_ts = 0.0
         self._cmd_vel_active = False  # True while we still owe zero-streams
-        self._last_chassis_speed = 0.0
+        self._last_chassis_lin = 0.0
+        self._last_chassis_ang = 0.0
+        self._last_chassis_fb_ts = 0.0
 
         # Odom dead-reckoning (driven by the chassis_speed Gate-1 callback).
         self._odom_x = 0.0
@@ -243,12 +248,8 @@ class R1LiteConnection(Module):
 
     @rpc
     def start(self) -> None:
+        self._check_single_use()
         super().start()
-
-        # Clear stop flags so a start/stop/start lifecycle works.
-        self._stop_event.clear()
-        self._sensor_stop.clear()
-        self._stale_logged = False
 
         # Lazy import: RawROS pulls rclpy which must not load at import time in
         # environments without ROS 2.
@@ -589,12 +590,16 @@ class R1LiteConnection(Module):
                 return  # pre-start / post-stop
             _, left_stale, right_stale = self._stale_segments(time.monotonic())
             if left_stale or right_stale:
-                if not self._stale_logged:
-                    self._stale_logged = True
-                    logger.warning("arm feedback stale; dropping arm commands until it returns")
+                if not self._cmd_stale_logged:
+                    self._cmd_stale_logged = True
+                    logger.warning("arm feedback stale or missing; dropping arm commands")
                 return
-            self._stale_logged = False
+            if self._cmd_stale_logged:
+                self._cmd_stale_logged = False
+                logger.info("arm feedback fresh again; arm commands resumed")
             stamp = self._ros.now_stamp()
+            if stamp is None:
+                return
 
             left_q = list(msg.q[_LEFT_SLICE])
             right_q = list(msg.q[_RIGHT_SLICE])
@@ -644,8 +649,11 @@ class R1LiteConnection(Module):
         with self._lock:
             if self._ros is None or topic is None:
                 return
+            stamp = self._ros.now_stamp()
+            if stamp is None:
+                return
             cmd = RosJointState()
-            cmd.header.stamp = self._ros.now_stamp()
+            cmd.header.stamp = stamp
             cmd.name = [""]
             cmd.position = [target]
             cmd.velocity = [0.0]
@@ -659,19 +667,19 @@ class R1LiteConnection(Module):
             self._latest_cmd_vel_ts = time.monotonic()
             self._cmd_vel_active = True
 
-    def _publish_chassis_command(self, twist: Twist) -> None:
+    def _publish_chassis_command(self, twist: Twist) -> bool:
         """One chassis tick: acc_limit + brake=false + speed target.
-
-        All three every tick. Gate 1 is held open by
-        our _chassis_speed_topic subscription.
+        Returns True only if the commands were handed to ROS.
         """
         from geometry_msgs.msg import TwistStamped
         from std_msgs.msg import Bool
 
         with self._lock:
             if self._ros is None or self._acc_topic is None or self._speed_topic is None:
-                return
+                return False
             stamp = self._ros.now_stamp()
+            if stamp is None:
+                return False
 
             acc = TwistStamped()
             acc.header.stamp = stamp
@@ -689,40 +697,45 @@ class R1LiteConnection(Module):
             cmd.twist.linear.y = twist.linear.y
             cmd.twist.angular.z = twist.angular.z
             self._ros.publish(self._speed_topic, cmd)
+            return True
 
     def _stream_chassis_zero(self, duration_s: float) -> None:
-        """Stream zero-velocity for a bounded window, then confirm the chassis
-        settled. Runs after the publish loop is joined, before ROS teardown, so
-        a killed process cannot leave the chassis latched at a nonzero target.
+        """Best-effort stop: stream zero-velocity for a bounded window before
+        ROS teardown, then check fresh chassis feedback reports it settled.
+        Cannot run on SIGKILL or power loss; the robot-side e-stop and RC
+        remain the hard stop authority.
         """
         zero = Twist()
         period = 1.0 / float(self.config.publish_rate_hz)
         ticks = max(1, int(duration_s / period))
+        started = time.monotonic()
         sent = 0
         for _ in range(ticks):
             try:
-                self._publish_chassis_command(zero)
-                sent += 1
+                if self._publish_chassis_command(zero):
+                    sent += 1
             except Exception as exc:
                 logger.error("chassis zero publish failed during stop: %s", exc)
             time.sleep(period)
         if sent == 0:
-            logger.error("chassis stop sent no zero commands; chassis may be latched")
+            logger.error("chassis stop published no zero commands; chassis may be latched")
+            return
         with self._lock:
-            settled = abs(self._last_chassis_speed) < 0.02
-        if not settled:
-            logger.error(
-                "chassis speed %.3f m/s not settled after stop stream",
-                self._last_chassis_speed,
-            )
+            fb_ts = self._last_chassis_fb_ts
+            lin = self._last_chassis_lin
+            ang = self._last_chassis_ang
+        if fb_ts < started:
+            logger.warning("chassis stop unconfirmed: no fresh chassis feedback after stop")
+        elif lin > 0.02 or ang > 0.05:
+            logger.error("chassis not settled after stop: lin=%.3f ang=%.3f", lin, ang)
 
     def _stale_segments(self, now: float) -> tuple[bool, bool, bool]:
         """Freshness of (torso, left, right) feedback against the stale window."""
         window = self.config.feedback_stale_after_s
         return (
-            self._torso_seen and (now - self._torso_ts) > window,
-            self._left_seen and (now - self._left_ts) > window,
-            self._right_seen and (now - self._right_ts) > window,
+            not self._torso_seen or (now - self._torso_ts) > window,
+            not self._left_seen or (now - self._left_ts) > window,
+            not self._right_seen or (now - self._right_ts) > window,
         )
 
     # Control feedback callbacks
@@ -734,6 +747,8 @@ class R1LiteConnection(Module):
             ):
                 self._torso_seen = True
                 self._torso_ts = time.monotonic()
+            else:
+                self._warn_bad_feedback("torso", msg)
 
     def _on_feedback_left(self, msg: Any, _topic: Any) -> None:
         with self._lock:
@@ -742,6 +757,8 @@ class R1LiteConnection(Module):
             ):
                 self._left_seen = True
                 self._left_ts = time.monotonic()
+            else:
+                self._warn_bad_feedback("left", msg)
 
     def _on_feedback_right(self, msg: Any, _topic: Any) -> None:
         with self._lock:
@@ -750,6 +767,8 @@ class R1LiteConnection(Module):
             ):
                 self._right_seen = True
                 self._right_ts = time.monotonic()
+            else:
+                self._warn_bad_feedback("right", msg)
 
     def _on_gripper_feedback(self, side: str, msg: Any) -> None:
         if not msg.position:
@@ -770,21 +789,46 @@ class R1LiteConnection(Module):
     def _copy_segment(
         msg: Any, q_dst: list[float], dq_dst: list[float], eff_dst: list[float]
     ) -> bool:
-        """Copy one feedback segment. Rejects a wrong-length position array so a
-        malformed frame never partially overwrites cached joint state.
+        """Copy one feedback segment. Rejects any nonempty wrong-length field so
+        a malformed frame never partially overwrites cached joint state.
         """
         if len(msg.position) != len(q_dst):
             return False
+        if msg.velocity and len(msg.velocity) != len(dq_dst):
+            return False
+        if msg.effort and len(msg.effort) != len(eff_dst):
+            return False
         q_dst[:] = msg.position[:]
-        if len(msg.velocity) == len(dq_dst):
+        if msg.velocity:
             dq_dst[:] = msg.velocity[:]
-        if len(msg.effort) == len(eff_dst):
+        if msg.effort:
             eff_dst[:] = msg.effort[:]
         return True
+
+    def _warn_bad_feedback(self, segment: str, msg: Any) -> None:
+        now = time.monotonic()
+        if now - self._bad_fb_warn_ts < 5.0:
+            return
+        self._bad_fb_warn_ts = now
+        logger.warning(
+            "malformed %s feedback rejected: position=%d velocity=%d effort=%d",
+            segment,
+            len(msg.position),
+            len(msg.velocity),
+            len(msg.effort),
+        )
+
+    def _check_single_use(self) -> None:
+        if self._stop_event.is_set():
+            raise RuntimeError("R1LiteConnection is single-use; create a new instance")
 
     # Chassis Gate 1 + odom integration
 
     def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
+        with self._lock:
+            self._last_chassis_lin = max(abs(msg.twist.linear.x), abs(msg.twist.linear.y))
+            self._last_chassis_ang = abs(msg.twist.angular.z)
+            self._last_chassis_fb_ts = time.monotonic()
         if not self.config.publish_odom:
             return
         now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -798,8 +842,6 @@ class R1LiteConnection(Module):
         vx = msg.twist.linear.x
         vy = msg.twist.linear.y
         wz = msg.twist.angular.z
-        with self._lock:
-            self._last_chassis_speed = max(abs(vx), abs(vy))
         cy, sy = math.cos(self._odom_yaw), math.sin(self._odom_yaw)
         self._odom_x += (cy * vx - sy * vy) * dt
         self._odom_y += (sy * vx + cy * vy) * dt
@@ -857,8 +899,8 @@ class R1LiteConnection(Module):
                     imu_torso = self._latest_imu_torso
                     torso_stale, left_stale, right_stale = self._stale_segments(time.monotonic())
                     fresh = not (torso_stale or left_stale or right_stale)
-                    if not fresh and not self._stale_logged:
-                        self._stale_logged = True
+                    if not fresh and not self._state_stale_logged:
+                        self._state_stale_logged = True
                         logger.warning(
                             "feedback stale (torso=%s left=%s right=%s); "
                             "pausing motor_states until it returns",
@@ -866,8 +908,9 @@ class R1LiteConnection(Module):
                             left_stale,
                             right_stale,
                         )
-                    elif fresh:
-                        self._stale_logged = False
+                    elif fresh and self._state_stale_logged:
+                        self._state_stale_logged = False
+                        logger.info("feedback fresh again; motor_states resumed")
                 cmd_vel = self._latest_cmd_vel
                 cmd_fresh = (
                     cmd_vel is not None
@@ -934,7 +977,8 @@ class R1LiteConnection(Module):
                 bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if bgr is None:
                     continue
-                out.publish(Image(bgr, format=ImageFormat.BGR, frame_id=stream_name))
+                ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                out.publish(Image(bgr, format=ImageFormat.BGR, frame_id=stream_name, ts=ts))
             except Exception:
                 logger.exception(f"R1Lite camera {stream_name} decode error")
 

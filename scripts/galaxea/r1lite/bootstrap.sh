@@ -13,7 +13,7 @@ install -m 0644 "$HOST_DIR/dimos-hostnet.service" /etc/systemd/system/
 install -m 0644 "$HOST_DIR/dimos-r1lite.service" /etc/systemd/system/
 systemctl daemon-reload
 
-mkdir -p /opt/dimos/releases /opt/dimos/current
+mkdir -p /opt/dimos/releases
 
 systemctl enable --now dimos-hostnet.service
 systemctl enable dimos-r1lite.service

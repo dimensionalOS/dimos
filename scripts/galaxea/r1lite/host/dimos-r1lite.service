@@ -2,6 +2,7 @@
 Description=DimOS R1 Lite current release
 Requires=docker.service dimos-hostnet.service
 After=docker.service dimos-hostnet.service
+ConditionPathExists=/opt/dimos/current/compose.yaml
 StartLimitIntervalSec=300
 StartLimitBurst=3
 
