@@ -47,7 +47,9 @@ class Planner(pm.PureModule):
     class In(pm.In):
         costmap: OccupancyGrid = pm.tick(expect_hz=2)
         position: Transform = pm.tf("{frame_id}", "{body_frame}")  # robot pose at tick ts
-        goal_point: PointStamped | None = pm.latest(default=None)  # destination; silent until set
+        # destination; silent until set. control: a click is stamped by the browser's
+        # wall clock, not the data clock — under replay it would sit 75 days in the future.
+        goal_point: PointStamped | None = pm.latest(default=None, control=True)
 
     class Out(pm.Out):
         path: Path  # no cadence contract: the planner is silent with no goal / no path

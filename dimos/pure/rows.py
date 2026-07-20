@@ -118,6 +118,14 @@ class LatestSpec(FieldSpec):
 
     kind = "latest"
     side = "in"
+    control: bool = False
+    """Out-of-band control input (a click, a command) rather than a measurement.
+
+    Its own ts is user/browser wall-clock and carries no relation to the data
+    clock, so alignment stamps it with the current tick frontier on arrival
+    instead of trusting it. Without this a wall-clock-stamped click against a
+    replay stream sits permanently in the future: never the merge minimum, never
+    promoted to newest, silently never resolved."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -177,12 +185,17 @@ def tick(*, expect_hz: float | None = None) -> Any:
 
 
 @overload
-def latest() -> Any: ...
+def latest(*, control: bool = False) -> Any: ...
 @overload
-def latest(*, default: _T) -> _T: ...
-def latest(*, default: Any = MISSING) -> Any:
-    """Declare an In field resolved to the newest message at tick time."""
-    return LatestSpec(default=default)
+def latest(*, default: _T, control: bool = False) -> _T: ...
+def latest(*, default: Any = MISSING, control: bool = False) -> Any:
+    """Declare an In field resolved to the newest message at tick time.
+
+    ``control=True`` marks an out-of-band control input (a click, a command):
+    its own ts is stamped by whoever produced it and bears no relation to the
+    data clock, so it is re-stamped to the tick frontier on arrival.
+    """
+    return LatestSpec(default=default, control=control)
 
 
 @overload

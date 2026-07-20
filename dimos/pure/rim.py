@@ -28,12 +28,11 @@ from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 import dataclasses
 import enum
-import logging
 import math
 import threading
 from typing import Any, Final, Protocol, runtime_checkable
 
-from dimos.pure.align import Aligner, AlignStats, align
+from dimos.pure.align import NOTHING_PENDING, Aligner, AlignStats, align
 from dimos.pure.drivers import (
     DEFAULT_MAX_INFLIGHT,
     PureModuleRunError,
@@ -49,6 +48,7 @@ from dimos.pure.resources import attach_resources
 from dimos.pure.rows import FieldSpec, TfOutSpec, TfSpec, TickSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import InPort, InPorts, OutPort, OutPorts, Stamped
+from dimos.utils.logging_config import setup_logger
 
 __all__ = [
     "DEFAULT_CAPACITY",
@@ -89,7 +89,11 @@ STOP_JOIN_TIMEOUT: Final[float] = 5.0
 _RIM_ATTR: Final = "__pure_rim__"
 """Instance slot for the per-module ``_RimState`` (``object.__setattr__``, spec §4.1)."""
 
-_LOG: Final = logging.getLogger("dimos.pure.rim")
+# setup_logger() (not a bare getLogger) so the engine's warnings/errors are
+# reachable in forkserver workers — a bare logger has no handler on the worker's
+# root and its lines (session death, egress/publish/teardown errors) are silently
+# dropped. See dimos/utils/logging_config: it attaches a stdout + jsonl handler.
+_LOG: Final = setup_logger()
 
 _RIM_CREATE_LOCK: Final = threading.Lock()
 """Guards first-touch creation of the per-instance rim slot (stable view identity)."""
@@ -555,6 +559,24 @@ class _LiveFeed(Iterator[Any]):
                     raise StopIteration
                 q.cond.wait()
 
+    def pull_nowait(self) -> Any:
+        """Non-blocking pull: an item, ``NOTHING_PENDING``, or StopIteration when drained.
+
+        The aligner uses this for SECONDARY ports on the live path: a live secondary
+        that has nothing queued must not hold the tick (an optional latest() port
+        defaults; a wired-but-silent topic would otherwise park the session forever).
+        Only the tick port blocks — blocking on the driver IS the module's pacing.
+        """
+        q = self._queue
+        with q.cond:
+            if q.items:
+                item = q.items.popleft()
+                q.cond.notify_all()  # free a ring slot: wake a blocked pump
+                return item
+            if q.stopped:
+                raise StopIteration
+            return NOTHING_PENDING
+
 
 # ── egress helpers (spec §6.3) ───────────────────────────────────────────────
 
@@ -805,7 +827,7 @@ class _LiveSession:
                 self._emit(row)
         except BaseException as exc:
             error = exc
-            _LOG.warning("%s live session died: %r", _cls(self._module), exc, exc_info=exc)
+            _LOG.error("%s live session died: %r", _cls(self._module), exc, exc_info=exc)
         finally:
             close = getattr(driver, "close", None)
             try:

@@ -55,10 +55,25 @@ _DBG = _setup_logger()
 # future stamp and dropped without advancing the frontier.
 _FUTURE_TS_OUTLIER_S = 3600.0
 
+
+class _NothingPending:
+    """Sentinel type for ``NOTHING_PENDING`` (a class so it reprs legibly)."""
+
+    def __repr__(self) -> str:
+        return "NOTHING_PENDING"
+
+
+NOTHING_PENDING: Final = _NothingPending()
+"""A non-blocking feed has no item queued right now (see ``pull_nowait``).
+
+Returned by live feeds (``rim._LiveFeed.pull_nowait``) — never by a plain
+iterator, so offline ``over()`` alignment is untouched and stays deterministic."""
+
 if TYPE_CHECKING:
     from dimos.pure.tfbuffer import TfContext
 
 __all__ = [
+    "NOTHING_PENDING",
     "AlignRule",
     "AlignStats",
     "Aligner",
@@ -506,10 +521,33 @@ class Aligner(Generic[InT]):
             for p in self._ports:
                 while p.it is not None and p.head is None:
                     try:
-                        item = next(p.it)
+                        # A live OPTIONAL secondary with nothing queued must not hold the
+                        # tick: it has a default, so "nothing yet" is resolvable, and a
+                        # subscribed-but-silent topic would otherwise park the session
+                        # forever. The tick still blocks (that IS the pacing) and REQUIRED
+                        # secondaries still hold (spec §5 — they cannot be defaulted).
+                        # Plain iterators have no pull_nowait: offline over() is untouched.
+                        pull_nowait = (
+                            getattr(p.it, "pull_nowait", None)
+                            if p is not tick and not p.spec.required
+                            else None
+                        )
+                        item = next(p.it) if pull_nowait is None else pull_nowait()
+                        if item is NOTHING_PENDING:
+                            break
                     except StopIteration:
                         p.it = None
                         break
+                    # Control input (a click, a command): its ts is the producer's own
+                    # wall clock and bears no relation to the data clock, so it is
+                    # stamped with the current tick frontier and skips the measurement
+                    # gates below. Untouched payload — only the merge key is ours.
+                    if getattr(p.spec, "control", False):
+                        p.head = item
+                        p.head_ts = tick.last_ts  # -inf before the first tick: resolves at once
+                        p.last_ts = p.head_ts
+                        p.stats.accepted += 1
+                        continue
                     ts = self._checked_ts(p, item)
                     # TEMPORARY — Go2 firmware bug: the Go2 lidar occasionally stamps a
                     # scan with a corrupt timestamp ~75 days in the future. Accepting it

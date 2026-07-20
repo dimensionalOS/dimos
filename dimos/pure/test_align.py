@@ -673,3 +673,49 @@ def test_aligner_is_one_shot():
     with pytest.raises(StopIteration):
         next(a)
     assert list(a) == []  # exhausted stays exhausted
+
+
+def test_control_port_restamps_to_tick_frontier():
+    """control=True ignores the item's own ts — a click's wall clock is not the data clock.
+
+    Regression: a browser-stamped goal against a replay stream sits ~75 days in the
+    future, so it is never the merge minimum, never promoted to newest, and resolves
+    to its default forever (silently). control=True stamps it with the tick frontier.
+    """
+
+    class Row(In):
+        lidar: S = tick()
+        goal: S | None = latest(default=None, control=True)
+
+    data_t, click_t = 1778055129.0, 1784573453.0  # recording time vs wall clock
+    rows = list(
+        align(
+            Row,
+            {
+                "lidar": iter([S(ts=data_t + i, v=i) for i in range(3)]),
+                "goal": iter([S(ts=click_t, v=42.0)]),
+            },
+        )
+    )
+    assert [r.goal.v for r in rows] == [42.0, 42.0, 42.0]  # resolves from the first tick
+    assert [r.ts for r in rows] == [data_t, data_t + 1, data_t + 2]  # tick still owns row ts
+
+
+def test_non_control_latest_still_honours_its_own_ts():
+    """The control flag is opt-in: a plain latest() keeps strict (ts, index) merging."""
+
+    class Row(In):
+        lidar: S = tick()
+        other: S | None = latest(default=None)
+
+    data_t, future_t = 1778055129.0, 1784573453.0
+    rows = list(
+        align(
+            Row,
+            {
+                "lidar": iter([S(ts=data_t + i, v=i) for i in range(3)]),
+                "other": iter([S(ts=future_t, v=42.0)]),
+            },
+        )
+    )
+    assert [r.other for r in rows] == [None, None, None]  # future sample never resolves

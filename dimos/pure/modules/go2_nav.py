@@ -63,6 +63,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_con
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 WORLD = "world"
 
@@ -76,13 +77,22 @@ def go2_nav_blueprint(*, voxel_size: float = 0.1, connection: Blueprint | None =
     type, different name); the graph's interior edges are namespaced by
     ``NavStack.blueprint()`` so they never collide. ``connection`` overrides the GO2
     atom (e.g. an ``ip="replay"`` one); default is a live connection.
+
+    ``NavStack`` exports its costmap as ``costmap`` (topic ``/costmap``), but the go2
+    rerun renderer subscribes it under the legacy name ``global_costmap`` — remapped
+    here so the two meet, same as ``clicked_point``.
     """
     return autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
         connection or GO2Connection.blueprint(),
         RerunWebSocketServer.blueprint(),
         NavStack.blueprint(voxel_size=voxel_size),
-    ).remappings([(RerunWebSocketServer, "clicked_point", "goal_point")])
+    ).remappings(
+        [
+            (RerunWebSocketServer, "clicked_point", "goal_point"),
+            (WebsocketVisModule, "global_costmap", "costmap"),
+        ]
+    )
 
 
 def run_pure(db_name: str, *, voxel_size: float = 0.1, sink: str = "spawn") -> int:
