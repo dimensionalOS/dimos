@@ -34,7 +34,7 @@ from dimos.pure.graph import PureGraph
 from dimos.pure.modules.costmapper import PureCostMapper
 from dimos.pure.modules.odom_tf import OdomTf
 from dimos.pure.modules.planner import Planner
-from dimos.pure.modules.voxel_mapper import VoxelMapper
+from dimos.pure.modules.voxel_mapper import VoxelMapper2
 
 
 class NavStack(PureGraph):
@@ -56,7 +56,7 @@ class NavStack(PureGraph):
     def wire(self, i: "NavStack.In") -> "NavStack.Out":
         """Map scans, cost them, plan robot->goal_point; odom drives the planner's tf."""
         odom_tf = OdomTf()(odom=i.odom)
-        mapped = VoxelMapper(voxel_size=self.voxel_size, emit_every=self.emit_every)(scan=i.lidar)
+        mapped = VoxelMapper2(voxel_size=self.voxel_size, emit_every=self.emit_every)(scan=i.lidar)
         cost = PureCostMapper()(global_map=mapped.global_map)
         plan = Planner()(costmap=cost.global_costmap, goal_point=i.goal_point, tf=odom_tf.tf)
         return NavStack.Out(

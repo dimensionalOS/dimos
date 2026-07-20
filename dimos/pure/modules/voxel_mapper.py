@@ -78,7 +78,7 @@ class VoxelMapper(pm.PureModule):
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 emits only at exhaustion
-    device: str = "GPU:0"  # o3d device; CPU measured faster than CUDA here
+    device: str = "GPU:0"
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
     frame_id: str = "world"  # grid/output frame; also the pose tf() target
     sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
@@ -165,7 +165,7 @@ class VoxelMapper2(pm.PureModule):
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 never emits (no exhaustion flush)
-    device: str = "GPU:0"  # o3d device; CPU measured faster than CUDA here
+    device: str = "GPU:0"
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
     frame_id: str = "world"  # grid/output frame; also the pose tf() target
     sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
