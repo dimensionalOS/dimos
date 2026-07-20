@@ -31,7 +31,10 @@ obligation (t5-align.md Q1 default confirmed). T5's `[align-unknown-port]`
 is authoritative for wiring names; T6's eager `[run-unknown-stream]` is the
 pre-align fast path, same copy standard.
 
-Source of truth: `dimos/memory2/puremodule_api_sketch3.py` (the module layer).
+Source of truth: the landed `dimos/pure/` engine (T1–T8, T11) and its per-task
+specs in `tasks/tN-*.md` — the module-layer sketch that seeded them
+(`puremodule_api_sketch3.py`) is implemented and has been removed. The graph
+layer's charter is `dimos/pure/puregraph_api_sketch.py` (T13).
 Each task below is a dev-task boundary; a planning agent expands it into a full
 design with type specs. Tasks land independently, in dependency order (graph at
 the bottom).
