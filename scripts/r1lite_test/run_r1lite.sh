@@ -1,30 +1,12 @@
 #!/bin/bash
-# One-command R1 Lite blueprint launcher — run on the LAPTOP (not in the
-# container, not on the robot).
-#
-#   ./scripts/r1lite_test/run_r1lite.sh                    # r1lite-coordinator
-#   ./scripts/r1lite_test/run_r1lite.sh r1lite-keyboard-teleop
-#
-# Does three things:
-#   1. Starts the rerun viewer on the laptop (port 9877) if not already up.
-#      Viewer must run on the HOST: launching GUIs inside the container
-#      fails (X11 auth + software-GL crashes — see BRINGUP_LOG Day 3).
-#      Install once with: uv tool install rerun-sdk==0.29.2
-#   2. Ensures the dev container is running.
-#   3. Runs the blueprint inside the container with VIEWER=rerun and
-#      RERUN_OPEN=none, so the bridge serves gRPC but spawns no viewer of
-#      its own and streams to the laptop viewer instead (host networking
-#      makes 127.0.0.1:9877 the same place for both).
-#
-# Robot-side prerequisites are NOT handled here (stack up, RC mode 5 for
-# chassis) — see RUNBOOK.md.
+# Dev launcher for an R1 Lite blueprint (bring-up). Usage: run_r1lite.sh [--web] [blueprint]
 
 set -e
 
 # --web: serve the viewer as a headless in-container sidecar and view in
 # the BROWSER at http://127.0.0.1:9090?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9877%2Fproxy
 # (dimos' built-in rerun-web mode is known-broken: rr.serve_grpc()
-# GIL-deadlocks in forkserver workers — BRINGUP_LOG Day 3. The sidecar
+# GIL-deadlocks in forkserver workers, BRINGUP_LOG Day 3. The sidecar
 # keeps the rust server in its own process, which is why it works.)
 WEB=0
 if [ "$1" = "--web" ]; then
@@ -38,7 +20,7 @@ IMAGE=ghcr.io/dimensionalos/ros-dev:dev
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # Right after a fresh install the docker group isn't active until the next
-# login — fall back to sudo (mirrors r1lite_dimos_install.sh).
+# login, fall back to sudo (mirrors r1lite_dimos_install.sh).
 DOCKER=docker
 docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 
@@ -66,9 +48,9 @@ fi
 # have it yet (fresh clone). Mounts THIS checkout at /app, host networking
 # (required for DDS multicast to the robot).
 if ! $DOCKER ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-    echo "[run_r1lite] container $CONTAINER not found — creating it"
+    echo "[run_r1lite] container $CONTAINER not found, creating it"
     echo "[run_r1lite] (needs ghcr access: gh auth token | docker login ghcr.io -u <user> --password-stdin)"
-    # -v /dev/shm: same-host FastDDS uses shared memory — without it the
+    # -v /dev/shm: same-host FastDDS uses shared memory, without it the
     # on-robot container sees topics but zero messages. Harmless on laptops.
     #
     # X11 (pygame keyboard teleop) needs all three of these:
@@ -97,7 +79,7 @@ fi
 $DOCKER start "$CONTAINER" >/dev/null 2>&1 || true
 
 # The venv must be the container-built py3.10 one (Humble rclpy). Host
-# syncs (py3.12) silently break it — rebuild takes a few minutes, so we
+# syncs (py3.12) silently break it, rebuild takes a few minutes, so we
 # refuse loudly instead of doing it behind your back.
 if ! $DOCKER exec "$CONTAINER" bash -c 'test -x /app/.venv/bin/python && /app/.venv/bin/python -c "import sys; sys.exit(sys.version_info[:2] != (3,10))"' 2>/dev/null; then
     echo "[run_r1lite] ERROR: /app/.venv is missing or not the container py3.10 build."
@@ -125,7 +107,7 @@ elif ! ss -tln | grep -q ':9877 '; then
         ("$RERUN_BIN" --port 9877 >/dev/null 2>&1 &)
         sleep 2
     else
-        echo "[run_r1lite] WARNING: rerun not found on host — install with:"
+        echo "[run_r1lite] WARNING: rerun not found on host, install with:"
         echo "    uv tool install rerun-sdk==0.29.2"
         echo "continuing headless (viewer panes will not appear)"
     fi

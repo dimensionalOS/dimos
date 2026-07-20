@@ -1,35 +1,10 @@
-# dimos on a Galaxea R1 Lite — deployed state, installed to /opt/dimos by
-# setup.sh. The image reference lives in .env (DIMOS_IMAGE); updating a robot
-# is: edit .env to the new reference -> `docker compose up -d`. Rollback:
-# put the old one back.
-#
-# Prefer a DIGEST over a tag in .env (setup.sh writes one):
-#     DIMOS_IMAGE=ghcr.io/dimensionalos/dimos-r1lite@sha256:<digest>
-# Tags are mutable — anyone can push over `0.0.14b1-r1lite.1`, and then
-# "rollback to the known-good tag" silently gets different bytes. A digest is
-# the only reference that means one exact image forever, which is what makes
-# rollback a guarantee rather than a hope.
+# dimos runtime for a Galaxea R1 Lite. DIMOS_IMAGE and DIMOS_UID come from .env.
 
 x-dimos-common: &dimos-common
   image: ${DIMOS_IMAGE:?set in /opt/dimos/.env}
-  # network_mode: DDS discovery is multicast and must reach the vendor stack;
-  #   docker's default bridge NAT drops it (topics never appear at all).
   network_mode: host
-  # ipc: FastDDS delivers same-host data through shared memory. With a private
-  #   /dev/shm the container discovers topics over UDP and receives nothing —
-  #   the "topics visible, zero messages" signature. NOT sufficient on its own:
-  #   see `user:` below.
   ipc: host
-  # restart "no" is deliberate (Final plan D8/D9): systemd owns this lifecycle.
-  # dimos-r1lite.service runs `compose up` in the foreground with
-  # Restart=on-failure, so crash recovery exists exactly once, in one place,
-  # and the operator-triggered updater can stop/start/rollback via systemctl
-  # without racing a Docker restart policy. If you run this compose file
-  # standalone (bring-up), a crashed container stays down until you restart it.
   restart: "no"
-  # Logs are forever on an always-on robot. Docker's default json-file driver
-  # is unbounded: a 100Hz coordinator will fill the disk and take the robot
-  # down, weeks later, at a customer site. Cap it.
   logging:
     driver: json-file
     options:
@@ -40,35 +15,10 @@ services:
   dimos:
     <<: *dimos-common
     env_file: .env
-    # Match the vendor stack's uid (Galaxea runs as `r1lite`, uid 1000).
-    # FastDDS writes into the READER's /dev/shm segment: a root container owns
-    # its segments as root, the vendor's uid-1000 publishers cannot write to
-    # them, and data delivery dies silently while discovery keeps working.
-    # Override DIMOS_UID/DIMOS_GID in .env for a robot whose vendor uid differs
-    # — but that uid must also be able to write $HOME (/home/dimos), where
-    # dimos keeps logs and its run registry.
     user: "${DIMOS_UID:-1000}:${DIMOS_GID:-1000}"
-    # The chassis VCU LATCHES its last velocity target — it has no dead-man of
-    # its own. R1LiteConnection provides one and sends a courtesy zero from
-    # stop(), which SIGTERM triggers. Docker's default grace is 10s, then
-    # SIGKILL — and a killed process sends no zero, leaving a robot driving at
-    # its last commanded velocity. Teardown joins publisher threads and shuts
-    # the sensor executor down, so give it room.
     stop_grace_period: 30s
     command: ["run", "r1lite-coordinator"]
-    # Informational only: nothing acts on health automatically (restart is
-    # systemd's job and it only sees exits). It makes `compose ps` tell the
-    # truth about a process that is alive but wedged, and the updater's
-    # readiness check (Final plan Step 6) is the real gate.
-    # WebsocketVisModule is composed for every viewer setting (including
-    # "none") and binds global_config.listen_host (127.0.0.1) — reachable here
-    # because of network_mode: host.
-    #
-    # A TCP connect, deliberately NOT an HTTP GET: `/` redirects to
-    # /command-center, which returns 503 unless the React app has been built
-    # (it is not, in this image — no npm). An HTTP probe would report a
-    # perfectly healthy robot as unhealthy. Accepting a connection on 7779
-    # proves the process is up and its event loop is serving.
+    # TCP connect, not HTTP: the / route 503s without the built web app.
     healthcheck:
       test: ["CMD", "python3", "-c",
              "import socket; socket.create_connection(('127.0.0.1', 7779), timeout=5).close()"]
@@ -79,20 +29,5 @@ services:
 
   viewer:
     <<: *dimos-common
-    # rerun's web viewer as its own process. dimos' in-process web mode
-    # GIL-deadlocks inside forkserver workers (rr.serve_grpc() spins and
-    # starves worker 0 — root-caused with py-spy, see BRINGUP_LOG). A separate
-    # process keeps the rust server off dimos' GIL entirely.
-    #
-    # This service exists ONLY to host the web viewer app on 9090. The browser
-    # then points it at dimos' own gRPC stream:
-    #   http://<robot-ip>:9090?url=rerun%2Bhttp%3A%2F%2F<robot-ip>%3A9877%2Fproxy
-    #
-    # --port 9878, NOT 9877: `--serve-web` hosts a web viewer AND a gRPC server,
-    # and 9877 is dimos' (RERUN_GRPC_PORT). rerun 0.29 had the viewer listen on
-    # 9877 with dimos connecting to it; 0.32 inverted that — dimos serves and
-    # viewers connect. This service still used the old model, so it fought dimos
-    # for the port and crash-looped with "Address already in use (0.0.0.0:9090)"
-    # / 9877. Moving its unused proxy to 9878 leaves 9877 to dimos.
     entrypoint: ["rerun"]
     command: ["--serve-web", "--port", "9878", "--memory-limit", "2GB"]

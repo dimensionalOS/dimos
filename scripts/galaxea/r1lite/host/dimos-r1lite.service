@@ -1,16 +1,3 @@
-# DimOS R1 Lite release lifecycle (Final plan D8, D9): systemd owns activation.
-# Compose sets restart:no; this unit is the ONLY restart manager, so the
-# operator-triggered updater (dimos-ota) can stop/start/rollback
-# deterministically via systemctl without fighting a Docker restart policy.
-#
-# Compose runs in the FOREGROUND with --abort-on-container-exit so systemd
-# sees any container die (a detached `up -d` or a foreground `up` without the
-# flag would hide a single-service crash). Consequence, accepted for the
-# pilot: a viewer crash restarts the whole release, not just the viewer.
-#
-# Crash recovery: Restart=on-failure, 10s apart, 3 tries per 5 minutes.
-# The vendor stack being absent does NOT trip this: the entrypoint waits in
-# WAITING_FOR_VENDOR_STACK instead of exiting.
 [Unit]
 Description=DimOS R1 Lite current release
 Requires=docker.service dimos-hostnet.service
@@ -25,8 +12,6 @@ ExecStart=/usr/bin/docker compose up --no-color --abort-on-container-exit
 ExecStopPost=/usr/bin/docker compose down --timeout 35
 Restart=on-failure
 RestartSec=10
-# stop_grace_period in compose is 30s (chassis dead-man zero on SIGTERM);
-# give systemd room beyond that before it escalates to SIGKILL.
 TimeoutStopSec=45
 
 [Install]

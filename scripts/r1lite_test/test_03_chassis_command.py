@@ -1,9 +1,9 @@
 """
-Test 3: Chassis Command — small forward move (~5 cm) with all gates held open.
+Test 3: Chassis Command, small forward move (~5 cm) with all gates held open.
 
 R1 Lite chassis findings (2026-07-03, see BRINGUP_LOG.md):
   - Command topic is /motion_target/target_speed_chassis (TwistStamped)
-    directly — the R1 Pro's gatekeeper /cmd_vel does NOT exist here.
+    directly, the R1 Pro's gatekeeper /cmd_vel does NOT exist here.
   - The chassis node inherits the R1 Pro's gate design. All of these must
     hold SIMULTANEOUSLY or commands produce ~0.3mm/s creep or nothing:
       Gate 1: someone subscribed to /motion_control/chassis_speed
@@ -11,22 +11,22 @@ R1 Lite chassis findings (2026-07-03, see BRINGUP_LOG.md):
       Gate 2: brake_mode false           (streamed every tick)
       Gate 3: nonzero chassis_acc_limit  (streamed every tick; boots at 0)
   - Commands are dead-man streams: motion stops when streaming stops.
-  - Robot must have been POWERED ON with e-stop released — a latched
+  - Robot must have been POWERED ON with e-stop released, a latched
     e-stop at boot inhibits all motors for the whole session.
 
-Move profile: vx = +0.05 m/s for 1.0 s ≈ 5 cm forward, then an active
+Move profile: vx = +0.05 m/s for 1.0 s ~ 5 cm forward, then an active
 zero-velocity stop stream. PASS requires measured chassis speed to rise
 above threshold during the move AND settle back near zero after.
 
-Prerequisites: robot untethered (except ethernet — tend the slack), ~0.5 m
+Prerequisites: robot untethered (except ethernet, tend the slack), ~0.5 m
 clear floor ahead, hand on e-stop.
 
   *** RC MUST BE ON, ALL SWITCHES IN POSITION 1 (= mode 5, software may
   drive). An RC that is OFF is NOT neutral: the receiver fails safe to
   mode 3 ("manual, sticks centered") and the chassis node VETOES software
-  commands — you get the 0.3mm/s creep and a FAIL that looks exactly like
+  commands, you get the 0.3mm/s creep and a FAIL that looks exactly like
   a latched VCU. Verify before running:  ros2 topic echo /controller --once
-  (This docstring said "RC idle/off" until 2026-07-17 — it predated the
+  (This docstring said "RC idle/off" until 2026-07-17, it predated the
   Day-2 RC mode map and was wrong; that error cost a test cycle twice.)
 
 Run:
@@ -45,10 +45,10 @@ from std_msgs.msg import Bool
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r1lite_config import BRAKE_MODE, CHASSIS_ACC_LIMIT, CHASSIS_SPEED_FB, CMD_CHASSIS_SPEED
 
-VELOCITY = 0.05  # m/s forward — 5 cm over MOVE_DURATION
+VELOCITY = 0.05  # m/s forward, 5 cm over MOVE_DURATION
 MOVE_DURATION = 1.0  # s
 STOP_DURATION = 1.5  # s of active zero-velocity streaming after the move
-ACC_LIMIT_XY = 0.5  # m/s^2 — gentle ramp (Gate 3 opener)
+ACC_LIMIT_XY = 0.5  # m/s^2, gentle ramp (Gate 3 opener)
 ACC_LIMIT_YAW = 0.5  # rad/s^2
 PUBLISH_HZ = 20
 DISCOVERY_WAIT = 3.0
@@ -102,7 +102,7 @@ def main(skip_prompt=False) -> bool:
     subs = node.count_subscribers(CMD_CHASSIS_SPEED)
     print(f"{CMD_CHASSIS_SPEED}: {subs} subscriber(s)")
     if subs == 0:
-        print("FAIL: chassis controller not subscribed — is the robot stack running?")
+        print("FAIL: chassis controller not subscribed, is the robot stack running?")
         node.destroy_node()
         return False
 
@@ -131,20 +131,21 @@ def main(skip_prompt=False) -> bool:
             rclpy.spin_once(node, timeout_sec=0.0)
             time.sleep(period)
 
+    moved_peak = 0.0
     try:
         stream(VELOCITY, "MOVE", MOVE_DURATION)
         moved_peak = peak_speed[0]
-        stream(0.0, "STOP", STOP_DURATION)
-    except KeyboardInterrupt:
-        # Dead-man: with no stream the controller stops on its own, but
-        # send a short zero burst anyway as a courtesy stop.
-        print("\nInterrupted — sending stop burst...")
+    finally:
+        # Always end on a zero-velocity stream, whatever happened above.
         try:
-            stream(0.0, "STOP(interrupt)", 0.5)
+            stream(0.0, "STOP", STOP_DURATION)
         except Exception:
-            pass
-        node.destroy_node()
-        return False
+            for _ in range(5):
+                z = TwistStamped()
+                z.header.stamp = node.get_clock().now().to_msg()
+                speed_pub.publish(z)
+                rclpy.spin_once(node, timeout_sec=0.0)
+                time.sleep(0.02)
 
     # Let feedback settle, then read final speed.
     settle_end = time.time() + 0.5
@@ -166,12 +167,12 @@ def main(skip_prompt=False) -> bool:
         print(
             "\nFAIL: chassis did not reach measurable speed. Suspects, in order:\n"
             "  1. e-stop was latched at power-on (whole-session inhibit)\n"
-            "  2. a gate not open (brake/acc/subscriber — this script streams all three)\n"
-            "  3. VCU fault — check /hdas/feedback_status_chassis on the robot"
+            "  2. a gate not open (brake/acc/subscriber, this script streams all three)\n"
+            "  3. VCU fault, check /hdas/feedback_status_chassis on the robot"
         )
     else:
         print(
-            "\nFAIL: chassis moved but measured speed did not settle to zero — "
+            "\nFAIL: chassis moved but measured speed did not settle to zero, "
             "verify visually it is stationary; e-stop if not."
         )
 

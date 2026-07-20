@@ -13,22 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Lite ControlCoordinator: R1LiteConnection Module + transport_lcm bridges.
+"""R1 Lite ControlCoordinator: R1LiteConnection module with transport_lcm bridges.
 
-Mirrors ``r1pro_coordinator.py`` (which mirrors the G1 wiring). Whole-body
-upper body (16-DOF: 4 torso read-only + 2x6 arms) goes through
-``TransportWholeBodyAdapter``; the holonomic swerve chassis (3-DOF) goes
-through ``TransportTwistAdapter``. No R1Lite-specific adapter code.
+The upper body goes through TransportWholeBodyAdapter and the swerve chassis
+through TransportTwistAdapter. Chassis software control needs RC mode 5.
 
-Robot-side prerequisites (scripts/r1lite_test/RUNBOOK.md):
-    robot cold-booted with e-stop released; R1LITEBody.d stack up with the
-    GELLO teleop session killed; RC ON with all switches in position 1
-    (mode 5 = software may drive the chassis).
-
-Usage:
-    dimos run r1lite-coordinator                 # no viewer
-    dimos --viewer rerun run r1lite-coordinator  # composes the rerun bridge
-    dimos --viewer rerun --rerun-open web run r1lite-coordinator
+    dimos run r1lite-coordinator
+    dimos --viewer rerun run r1lite-coordinator
 """
 
 from __future__ import annotations
@@ -54,11 +45,6 @@ _chassis_joints = make_twist_base_joints("chassis")
 
 
 def _r1lite_rerun_blueprint() -> Any:
-    """Two-tab viewer: main (wrists + head-left + 3D) and stereo/depth grid.
-
-    Entity paths assume the bridge's default ``entity_prefix="world"`` — so
-    LCM topic ``/r1lite/head_left_color`` lands at ``world/r1lite/head_left_color``.
-    """
     import rerun as rr
     import rerun.blueprint as rrb
 
@@ -96,17 +82,8 @@ def _r1lite_rerun_blueprint() -> Any:
     )
 
 
-# Rerun ingests whatever the bridge logs, and R1LiteConnection decodes the
-# robot's /compressed camera topics to raw BGR before publishing
-# (_compressed_decode_loop -> cv2.imdecode). So the bridge sees SIX
-# uncompressed image streams -- 4 colour + 2 16-bit depth. Unthrottled that is
-# ~60 MB/s, measured on the robot: a connected viewer reported 6.2 GiB after
-# 1m44s and fell 45s behind live.
-#
-# Throttle per entity. The bridge drops frames above the rate before logging,
-# so this costs nothing but visual smoothness. Head-left is the driving view
-# and gets the best rate; the stereo partner and depth are for inspection, not
-# piloting. Entity paths are the bridge's default "world" prefix + LCM topic.
+# Per-entity frame-rate caps: the connection publishes six uncompressed image
+# streams; unthrottled a viewer falls behind live and consumes GBs.
 _CAMERA_MAX_HZ = {
     "world/r1lite/head_left_color": 10.0,
     "world/r1lite/head_right_color": 2.0,
@@ -120,11 +97,6 @@ _rerun_config = {
     "blueprint": _r1lite_rerun_blueprint,
     "pubsubs": [LCM()],
     "max_hz": _CAMERA_MAX_HZ,
-    # The bridge's gRPC proxy buffers history for viewers that connect later,
-    # and its default is "25%" -- a quarter of the robot's RAM. That is why a
-    # freshly connected viewer inherited 6.2 GiB and spent its time replaying
-    # the past instead of showing the present. Bound it: on a robot, live is
-    # what matters, and scrollback is what .rrd recordings are for.
     "memory_limit": "1GB",
 }
 
@@ -133,7 +105,6 @@ _r1lite_base = (
     autoconnect(
         R1LiteConnection.blueprint(),
         ControlCoordinator.blueprint(
-            tick_rate=100,
             hardware=[
                 HardwareComponent(
                     hardware_id="r1lite",
@@ -164,9 +135,7 @@ _r1lite_base = (
             ],
         ),
     )
-    # Module's `cmd_vel`/`odom` collide with the chassis transport adapter's
-    # /{hw}/cmd_vel + /{hw}/odom topics — rename so the adapter (hw_id="chassis")
-    # owns the canonical names.
+    # Rename so the chassis adapter owns the canonical cmd_vel/odom names.
     .remappings(
         [
             (R1LiteConnection, "cmd_vel", "chassis_cmd_vel"),
@@ -175,24 +144,16 @@ _r1lite_base = (
     )
     .transports(
         {
-            # WholeBody bridge (hw_id="r1lite"). TransportWholeBodyAdapter
-            # subscribes /{hw}/imu — only one IMU goes there.
             ("motor_states", JointState): LCMTransport("/r1lite/motor_states", JointState),
             ("imu_chassis", Imu): LCMTransport("/r1lite/imu", Imu),
             ("imu_torso", Imu): LCMTransport("/r1lite/imu_torso", Imu),
             ("motor_command", MotorCommandArray): LCMTransport(
                 "/r1lite/motor_command", MotorCommandArray
             ),
-            # Twist bridge (hw_id="chassis").
             ("chassis_cmd_vel", Twist): LCMTransport("/chassis/cmd_vel", Twist),
             ("chassis_odom", PoseStamped): LCMTransport("/chassis/odom", PoseStamped),
-            # Public Twist bus on /cmd_vel — `cmd_vel` covers any module's Out
-            # (KeyboardTeleop, phone teleop, etc.); `twist_command` is the
-            # ControlCoordinator's matching In. Both pinned to the same LCM
-            # topic so any Twist publisher drives the chassis.
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            # Grippers (0-100 native units; no R1 Pro equivalent).
             ("gripper_left_command", JointState): LCMTransport(
                 "/r1lite/gripper_left_command", JointState
             ),
@@ -205,15 +166,12 @@ _r1lite_base = (
             ("gripper_right_state", JointState): LCMTransport(
                 "/r1lite/gripper_right_state", JointState
             ),
-            # Sensor pass-throughs — downstream consumers (rerun bridge,
-            # perception modules, etc.) attach to these topics directly.
             ("head_left_color", Image): LCMTransport("/r1lite/head_left_color", Image),
             ("head_right_color", Image): LCMTransport("/r1lite/head_right_color", Image),
             ("wrist_left_color", Image): LCMTransport("/r1lite/wrist_left_color", Image),
             ("wrist_left_depth", Image): LCMTransport("/r1lite/wrist_left_depth", Image),
             ("wrist_right_color", Image): LCMTransport("/r1lite/wrist_right_color", Image),
             ("wrist_right_depth", Image): LCMTransport("/r1lite/wrist_right_depth", Image),
-            # ControlCoordinator outs.
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("joint_command", JointState): LCMTransport("/r1lite/joint_command", JointState),
         }
@@ -221,10 +179,6 @@ _r1lite_base = (
 )
 
 
-# Visualization, gated on `dimos --viewer`. `vis_module` is the house idiom
-# (same as the Go2/drone blueprints): it composes the rerun bridge plus the
-# viewer-interaction WebSocket server for "rerun", and degrades to the web
-# dashboard alone for "none".
 r1lite_coordinator = autoconnect(
     _r1lite_base,
     vis_module(
@@ -232,6 +186,3 @@ r1lite_coordinator = autoconnect(
         rerun_config=_rerun_config,
     ),
 )
-
-
-__all__ = ["r1lite_coordinator"]

@@ -1,12 +1,6 @@
 #!/bin/bash
-# Entrypoint for the dimos-r1lite runtime image: source ROS, then hand every
-# argument to the dimos CLI (`docker run <image> list` == `dimos list`).
-#
-# When launching a blueprint (`run ...`), first wait for the Galaxea vendor
-# stack's /hdas/* topics so container start order vs. the robot stack never
-# matters (systemd starts the release at boot; this wait absorbs the vendor
-# stack coming up later — it does NOT autostart on the R1 Lite).
-# Set DIMOS_NO_WAIT=1 to skip.
+# Source ROS, then run the dimos CLI. For a blueprint launch, wait for the
+# vendor stack's /hdas/* topics first. DIMOS_NO_WAIT=1 skips the wait.
 set -e
 
 source /opt/ros/humble/setup.bash
@@ -21,7 +15,7 @@ if [ "$1" = "run" ] && [ -z "$DIMOS_NO_WAIT" ]; then
         sleep 2
     done
     if ! ros2 topic list 2>/dev/null | grep -q '^/hdas/'; then
-        echo "[entrypoint] WARNING: no /hdas topics after 120s (vendor stack down?) — launching anyway"
+        echo "[entrypoint] no /hdas topics after 120s; launching anyway"
     fi
 fi
 

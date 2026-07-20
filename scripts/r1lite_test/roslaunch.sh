@@ -1,17 +1,5 @@
 #!/bin/bash
-# Boot the Galaxea R1 Lite ROS stack — run ON THE ROBOT.
-#
-#   ./scripts/r1lite_test/roslaunch.sh          # boot the stack (no-op if already up)
-#   ./scripts/r1lite_test/roslaunch.sh stop     # shut the stack down
-#
-# The whole onboard flow for a fresh robot:
-#   1. ./scripts/r1lite_test/roslaunch.sh                  # stack up
-#   2. bash scripts/r1lite_test/r1lite_dimos_install.sh    # first time only
-#   3. ./scripts/r1lite_test/run_r1lite.sh                 # every session
-# (run_r1lite.sh also calls this script itself, so forgetting step 1 is fine.)
-#
-# SAFETY: booting the stack makes the arms and grippers twitch (~30s HDAS
-# init). Keep the robot clear and the e-stop within reach.
+# Boot or stop the Galaxea vendor stack. Usage: roslaunch.sh [stop]
 
 set -e
 
@@ -31,7 +19,7 @@ if [ "$1" = "stop" ]; then
 fi
 
 # The factory GELLO teleop session grabs the arms: while it lives, our arm
-# commands are silently overridden. Kill it on BOTH paths — it used to sit
+# commands are silently overridden. Kill it on BOTH paths, it used to sit
 # after the early-exit below, so a stack that was already up (autostart, or a
 # previous boot) kept GELLO on the arms and the script still reported success.
 kill_gello() {
@@ -48,7 +36,7 @@ if tmux ls 2>/dev/null | grep -q hdas; then
     exit 0
 fi
 
-echo "[roslaunch] Booting Galaxea stack (~30s). ARMS AND GRIPPERS WILL TWITCH —"
+echo "[roslaunch] Booting Galaxea stack (~30s). ARMS AND GRIPPERS WILL TWITCH, "
 echo "[roslaunch] make sure the robot is clear and the e-stop is in reach."
 ( cd "$STARTUP_DIR" && ./robot_startup.sh boot "$SESSION_CFG" )
 sleep 30

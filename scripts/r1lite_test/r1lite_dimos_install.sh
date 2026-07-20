@@ -1,7 +1,7 @@
 #!/bin/bash
-# One-time dimos provisioning for an R1 Lite ONBOARD PC — single run.
+# One-time dimos provisioning for an R1 Lite ONBOARD PC, single run.
 # RUN THIS ON THE ROBOT (ssh r1lite). Standard flow for any fresh R1 Lite
-# (repo is public — no credentials needed on the robot):
+# (repo is public, no credentials needed on the robot):
 #     git clone https://github.com/dimensionalOS/dimos.git ~/dimos
 #     cd ~/dimos
 # To install from a feature branch instead of main:
@@ -10,7 +10,7 @@
 #     bash scripts/r1lite_test/r1lite_dimos_install.sh
 #
 # Idempotent; prompts before every host change. Host changes (with consent):
-#   docker.io (apt) · container "dimos-dev-r1lite" · py3.10 venv in it ·
+#   docker.io (apt)   container "dimos-dev-r1lite"   py3.10 venv in it  
 #   /etc/sysctl.d/60-dimos.conf. Does NOT touch the Galaxea stack.
 # One pause mid-run: the ghcr IMAGE is private (repo isn't), so it's
 # transferred from the laptop over the cable when the script asks.
@@ -42,7 +42,7 @@ if ! command -v docker >/dev/null; then
     sudo usermod -aG docker "$USER"
     echo "    installed (group applies on next login; this run continues via sudo)"
 fi
-# Group membership may not be active in this session yet — fall back to sudo.
+# Group membership may not be active in this session yet, fall back to sudo.
 DOCKER="docker"
 docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 $DOCKER info >/dev/null || { echo "docker not usable"; exit 1; }
@@ -122,13 +122,13 @@ echo "    lo multicast + 224.0.0.0/4 route present"
 step 8 "Verification"
 # `docker exec bash -c` is non-interactive: it does not read the image's
 # .bashrc, so ROS must be sourced explicitly or `import rclpy` fails here
-# (venv first, then ROS — same order as run_r1lite.sh).
+# (venv first, then ROS, same order as run_r1lite.sh).
 $DOCKER exec "$CONTAINER" bash -c 'cd /app && source .venv/bin/activate && source /opt/ros/humble/setup.bash && python -c "
 import rclpy, dimos
 from dimos.robot.galaxea.r1lite.connection import R1LiteConnection
 R1LiteConnection.blueprint()
 print(\"    imports + blueprint: OK\")"'
-echo "    DDS cross-boundary check (needs the Galaxea stack running — ./scripts/r1lite_test/roslaunch.sh):"
+echo "    DDS cross-boundary check (needs the Galaxea stack running, ./scripts/r1lite_test/roslaunch.sh):"
 $DOCKER exec -e FASTRTPS_DEFAULT_PROFILES_FILE=/app/scripts/r1lite_test/fastdds_udp_only.xml \
     "$CONTAINER" bash -c 'cd /app && source .venv/bin/activate && source /opt/ros/humble/setup.bash && export ROS_DOMAIN_ID=2 && timeout 15 python - <<PYEOF
 import time, rclpy

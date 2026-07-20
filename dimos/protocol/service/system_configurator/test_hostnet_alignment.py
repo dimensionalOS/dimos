@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keep the R1 Lite host-side network assets aligned with dimos' own
-configurators (Final plan Step 0, decision D10).
+"""Assert the R1 Lite host network assets match dimos' own configurators.
 
-The systemd oneshot and sysctl file under scripts/galaxea/r1lite/host/ repair
-the host; MulticastConfiguratorLinux / BufferConfiguratorLinux check the same
-state at runtime inside the container. If either side drifts (a different
-route, a different buffer size), readiness would report HOST_NETWORK_
-MISCONFIGURED on a host the bootstrap considers healthy — this test makes
-that drift a CI failure instead of a robot mystery.
+The systemd unit and sysctl file under scripts/galaxea/r1lite/host/ must set
+the same loopback route and buffer sizes that MulticastConfiguratorLinux and
+BufferConfiguratorLinux check at runtime. This test fails if they drift.
 """
 
 from pathlib import Path

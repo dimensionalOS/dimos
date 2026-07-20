@@ -1,5 +1,5 @@
 """
-Test 0: Recon — dump everything the robot's ROS 2 graph exposes.
+Test 0: Recon, dump everything the robot's ROS 2 graph exposes.
 
 Read-only. Run this FIRST (before any other test) and use its output to
 correct r1lite_config.py. Prints:

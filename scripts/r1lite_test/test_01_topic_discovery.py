@@ -2,14 +2,14 @@
 Test 1: Topic Discovery
 Verify that the DiMOS laptop can see the R1 Lite's ROS2 topics over ethernet.
 
-Ported from scripts/r1pro_test/test_01_topic_discovery.py — expected topic
+Ported from scripts/r1pro_test/test_01_topic_discovery.py, expected topic
 names come from r1lite_config.py (TODO(recon) until verified on hardware).
 
 Run standalone:
     export ROS_DOMAIN_ID=<see r1lite_config>
     python3 scripts/r1lite_test/test_01_topic_discovery.py
 
-Or via run_all_tests.py (preferred — single DDS session).
+Or via run_all_tests.py (preferred, single DDS session).
 
 Pass condition: All expected R1 Lite topics found.
 """

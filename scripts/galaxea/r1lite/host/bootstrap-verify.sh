@@ -1,10 +1,5 @@
 #!/bin/bash
-# Bootstrap verifier (Final plan Step 0): one-time INSTALLATION verification,
-# machine-readable. This is not the runtime checker - runtime readiness calls
-# MulticastConfiguratorLinux.check() / BufferConfiguratorLinux.check() inside
-# the container. Nothing here repairs anything; the systemd units repair.
-#
-# Output: one KEY=OK|FAIL line per check on stdout. Exit 0 iff all OK.
+# One-time install verification. One KEY=OK|FAIL line per check; exit 0 iff all OK.
 
 fail=0
 report() {

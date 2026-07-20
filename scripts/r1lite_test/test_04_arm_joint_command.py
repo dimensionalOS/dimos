@@ -5,13 +5,13 @@ radians, holds, then returns home.
 
 HARDWARE-VALIDATED 2026-07-03: this exact motion (left wrist roll +0.2 rad
 via streamed targets, all other joints held at their current positions) ran
-cleanly on the R1 Lite. The wrist roll rotates the gripper in place — the
+cleanly on the R1 Lite. The wrist roll rotates the gripper in place, the
 safest arm motion in the tabletop fold configuration. Do NOT change
 JOINT_INDEX to 0 (R1 Pro style): the base joint sweeps the whole arm
 horizontally toward the camera tower / other arm.
 
 Commands MUST be streamed continuously (jointTracker is a dead-man
-follower — motion stops when the stream stops). Ctrl-C mid-run is always
+follower, motion stops when the stream stops). Ctrl-C mid-run is always
 safe: the arm simply stays where it is.
 
 WARNING: Arm will physically move (gripper rotates ~11 degrees in place).
@@ -20,7 +20,7 @@ Run standalone:
     export ROS_DOMAIN_ID=<see r1lite_config>
     python3 scripts/r1lite_test/test_04_arm_joint_command.py
 
-Or via run_all_tests.py (preferred — single DDS session).
+Or via run_all_tests.py (preferred, single DDS session).
 
 Pass condition: Arm moves noticeably then returns to start position.
 """
@@ -36,8 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r1lite_config import ARM_DOF, CMD_ARM, FEEDBACK_ARM
 
 SIDE = "left"  # change to "right" to test right arm
-JOINT_INDEX = -1  # LAST joint = wrist roll — rotates in place (see header)
-DELTA = 0.2  # radians (~11 degrees) — hardware-validated value
+JOINT_INDEX = -1  # LAST joint = wrist roll, rotates in place (see header)
+DELTA = 0.2  # radians (~11 degrees), hardware-validated value
 MOVE_DURATION = 4.0  # seconds of streaming per move (tracker needs the stream)
 VELOCITY = 0.5  # rad/s tracking speed
 DISCOVERY_WAIT = 5.0
@@ -86,7 +86,7 @@ def main(skip_prompt=False) -> bool:
     home = list(current_pos[0])
     dof = len(home)
     if dof != ARM_DOF:
-        print(f"NOTE: arm has {dof} joints; r1lite_config.ARM_DOF says {ARM_DOF} — fix the config!")
+        print(f"NOTE: arm has {dof} joints; r1lite_config.ARM_DOF says {ARM_DOF}, fix the config!")
     print(f"Home position ({dof} joints): {[round(p, 3) for p in home]}")
 
     def send_positions(positions, label):
@@ -129,11 +129,11 @@ def main(skip_prompt=False) -> bool:
         print("\nPASS: Wrist tracked target and returned home (verified via feedback).")
     elif not moved:
         print(
-            "\nFAIL: Wrist did not track the target — motors enabled? "
-            "(e-stop at boot inhibits everything — see BRINGUP_LOG.md)"
+            "\nFAIL: Wrist did not track the target, motors enabled? "
+            "(e-stop at boot inhibits everything, see BRINGUP_LOG.md)"
         )
     else:
-        print("\nFAIL: Wrist moved but did not return home — check feedback above.")
+        print("\nFAIL: Wrist moved but did not return home, check feedback above.")
     node.destroy_node()
     return moved and returned
 

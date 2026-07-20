@@ -1,36 +1,21 @@
-"""R1 Lite hardware constants — single source of truth for the test suite.
+"""R1 Lite hardware constants for the test suite.
 
-Reconciled against live hardware 2026-07-02/03 (test_00_recon.py, boot
-profile ATCStandard/R1LITEBody.d, unit hostname "r1lite"). Remaining
-unknowns are marked TODO(recon). Full evidence trail: BRINGUP_LOG.md.
-
-Verified robot identity (/opt/galaxea/body/hardware.json): R1-LITE,
-ARM=A1X, TORSO=T0, ECU=E03, CHASSIS=C1(+CS1), ARM_END=EE0,
-HEAD_CAMERA=HC0 (stereo, no depth topic), WRIST_CAMERA=WC1 (RealSense).
-Onboard computer: x86_64, Ubuntu 22.04.5, ROS 2 Humble, user "r1lite".
+Robot: R1-LITE, A1X arms, T0 torso, C1 chassis, stereo head camera (no depth
+topic), RealSense wrist cameras. Onboard: x86_64, Ubuntu 22.04, ROS 2 Humble.
+Set the robot IP via the R1LITE_IP env var or --robot-ip; no IPs are hardcoded.
 """
 
-# --- Network (verified) ------------------------------------------------
-ROBOT_ETH_IP = "10.42.0.2"  # enp2s0, factory-assigned; laptop uses 10.42.0.100
-ROBOT_WIFI_IP = "192.168.1.85"  # office WiFi (wlo1)
-ROS_DOMAIN_ID = 2  # robot .bashrc: ROS_DOMAIN_ID=02; plain multicast
+ROS_DOMAIN_ID = 2
 
-# --- Kinematics (verified via feedback rates/counts) --------------------
+# Kinematics.
 ARM_DOF = 6  # /hdas/feedback_arm_*: 6 joints @ 200 Hz
 TORSO_DOF = 4  # /hdas/feedback_torso: 4 joints @ 488 Hz
 CHASSIS_FB_DOF = 3  # /hdas/feedback_chassis: 3 joints @ 200 Hz
 GRIPPER_DOF = 1  # /hdas/feedback_gripper_*: 1 joint @ 200 Hz
-# /joint_states aggregate: 25 joints @ 500 Hz (naming TODO below)
-# /hdas/feedback_hand_*: exist but silent (no dexterous hands on this unit)
 
-# TODO(recon): safe torso "home" pose — read it from the robot's
-# start_mobiman_torso_speed_control.sh (R1LITE arg) before running test_06.
 TORSO_HOME_POSE: list[float] = [0.0] * TORSO_DOF
 
-# TODO(recon): joint NAMES for each feedback topic (echo --field name),
-# and the 25-joint /joint_states naming; needed for dimos joint mapping.
-
-# --- Topics (verified live 2026-07-03) ----------------------------------
+# Topics.
 FEEDBACK_ARM = "/hdas/feedback_arm_{side}"  # JointState, 200 Hz
 FEEDBACK_TORSO = "/hdas/feedback_torso"  # JointState, 488 Hz
 FEEDBACK_CHASSIS = "/hdas/feedback_chassis"  # JointState, 200 Hz
@@ -45,7 +30,7 @@ CMD_CHASSIS_SPEED = "/motion_target/target_speed_chassis"  # TwistStamped
 CHASSIS_ACC_LIMIT = "/motion_target/chassis_acc_limit"  # TwistStamped
 BRAKE_MODE = "/motion_target/brake_mode"  # std_msgs/Bool
 CHASSIS_SPEED_FB = "/motion_control/chassis_speed"  # TwistStamped (Gate-1 analog)
-# TODO(recon): R1 Pro's gatekeeper /cmd_vel does NOT exist here — chassis
+# TODO(recon): R1 Pro's gatekeeper /cmd_vel does NOT exist here, chassis
 # command path is CMD_CHASSIS_SPEED directly; 3-gate behavior unverified
 # (all three gate suspects exist: /controller topic, brake_mode, acc_limit).
 CMD_VEL_GATEKEEPER = CMD_CHASSIS_SPEED

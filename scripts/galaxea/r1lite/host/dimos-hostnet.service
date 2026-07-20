@@ -1,15 +1,3 @@
-# DimOS host network prerequisites for LCM and FastDDS (Final plan D10).
-#
-# dimos' LCM bus needs loopback multicast and a 224.0.0.0/4 route on lo.
-# Neither survives a reboot, and the application container cannot apply them
-# (no CAP_NET_ADMIN: "RTNETLINK answers: Operation not permitted",
-# hardware-confirmed 2026-07-17). The host owns them, before Docker starts.
-#
-# Deliberately NO network-online dependency: both commands touch only lo,
-# which exists from earliest boot, and waiting for network-online would stall
-# Docker ~2 minutes on any boot without WiFi.
-#
-# Separate ExecStart lines: either failure fails the unit. No `|| true`.
 [Unit]
 Description=DimOS host network prerequisites (lo multicast + 224.0.0.0/4 route)
 Before=docker.service

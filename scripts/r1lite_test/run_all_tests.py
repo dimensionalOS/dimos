@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-R1 Lite Test Runner — Single DDS Session
+R1 Lite Test Runner, Single DDS Session
 
 Runs all tests with ONE rclpy.init()/shutdown() cycle to avoid the FastDDS
 2.x/3.x participant corruption that killed robot processes on the R1 Pro.
@@ -38,8 +38,9 @@ from scripts.r1lite_test import (
 
 def main():
     parser = argparse.ArgumentParser(description="R1 Lite integration tests")
-    parser.add_argument("--skip-chassis", action="store_true", help="Skip chassis test")
-    parser.add_argument("--skip-arm", action="store_true", help="Skip arm movement test")
+    parser.add_argument(
+        "--allow-motion", action="store_true", help="Enable chassis and arm motion tests"
+    )
     parser.add_argument("--recon", action="store_true", help="Run recon dump then exit")
     args = parser.parse_args()
 
@@ -65,7 +66,7 @@ def main():
     print("=" * 60)
     results["01_topic_discovery"] = t01.main()
 
-    if not confirm("Ready for Test 02 (Arm Feedback — read only)?"):
+    if not confirm("Ready for Test 02 (Arm Feedback, read only)?"):
         print("Stopping early.")
         rclpy.shutdown()
         return True
@@ -74,11 +75,11 @@ def main():
     print("=" * 60)
     results["02_arm_feedback"] = t02.main()
 
-    if args.skip_chassis:
-        print("\n[SKIPPED] Test 03: Chassis Command")
+    if not args.allow_motion:
+        print("\n[SKIPPED] Test 03: Chassis Command (pass --allow-motion to run)")
         results["03_chassis_command"] = None
     else:
-        if not confirm("Ready for Test 03 (Chassis — robot will move)?"):
+        if not confirm("Ready for Test 03 (Chassis, robot will move)?"):
             print("Stopping early.")
             rclpy.shutdown()
             return True
@@ -87,11 +88,11 @@ def main():
         print("=" * 60)
         results["03_chassis_command"] = t03.main()
 
-    if args.skip_arm:
-        print("\n[SKIPPED] Test 04: Arm Movement")
+    if not args.allow_motion:
+        print("\n[SKIPPED] Test 04: Arm Movement (pass --allow-motion to run)")
         results["04_arm_movement"] = None
     else:
-        if not confirm("Ready for Test 04 (Arm Movement — arm will physically move)?"):
+        if not confirm("Ready for Test 04 (Arm Movement, arm will physically move)?"):
             print("Stopping early.")
             rclpy.shutdown()
             return True
