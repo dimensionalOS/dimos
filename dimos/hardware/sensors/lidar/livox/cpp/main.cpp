@@ -75,14 +75,14 @@ using dimos::make_header;
 // ---------------------------------------------------------------------------
 
 // --point_format selects the wire layout:
-//   full    (default) x,y,z,intensity,offset_time,tag,line — 22 B/point
-//   minimal           x,y,z,offset_time                    — 16 B/point
+//   minimal (default) x,y,z,offset_time                    — 16 B/point
+//   full              x,y,z,intensity,offset_time,tag,line — 22 B/point
 //   legacy            x,y,z,intensity                      — 16 B/point
 // offset_time is uint32 ns since the header stamp; tag/line are the Livox
 // per-point bytes (line is always 0 on the Mid-360). Scan-undistorting
 // estimators (FAST-LIVO2 etc.) need offset_time.
 enum class PointFormat { Full, Minimal, Legacy };
-static PointFormat g_point_format = PointFormat::Full;
+static PointFormat g_point_format = PointFormat::Minimal;
 
 // Full-layout field offsets; minimal packs offset_time at 12 instead.
 static constexpr int32_t OFFSET_TIME_OFFSET = 16;
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
     g_frequency = mod.arg_float("frequency", 10.0f);
     g_frame_id = mod.arg("frame_id", "lidar_link");
     g_imu_frame_id = mod.arg("imu_frame_id", "imu_link");
-    const std::string point_format = mod.arg("point_format", "full");
+    const std::string point_format = mod.arg("point_format", "minimal");
     if (point_format == "full") {
         g_point_format = PointFormat::Full;
     } else if (point_format == "minimal") {

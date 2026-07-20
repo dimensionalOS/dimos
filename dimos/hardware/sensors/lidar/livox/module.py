@@ -64,12 +64,12 @@ class Mid360Config(NativeModuleConfig):
     frequency: float = 10.0
     enable_imu: bool = True
     # Wire layout per point:
-    #   "full"    x,y,z,intensity,offset_time,tag,line — 22 B (default)
-    #   "minimal" x,y,z,offset_time                    — 16 B
+    #   "minimal" x,y,z,offset_time                    — 16 B (default)
+    #   "full"    x,y,z,intensity,offset_time,tag,line — 22 B
     #   "legacy"  x,y,z,intensity                      — 16 B
     # Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time; no LIO in
     # the stack reads intensity (it only feeds viz/map coloring).
-    point_format: Literal["full", "minimal", "legacy"] = "full"
+    point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 
