@@ -502,7 +502,7 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    old_md5 = data._calculate_md5(archive_file)
+    old_sha256 = data._calculate_sha256(archive_file)
 
     with gzip.open(archive_file, "rb") as f:
         old_data = f.read()
@@ -510,9 +510,9 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
     with gzip.open(archive_file, "wb") as f:
         f.write(old_data + b"\x00")
 
-    new_md5 = data._calculate_md5(archive_file)
+    new_sha256 = data._calculate_sha256(archive_file)
 
-    assert old_md5 != new_md5
+    assert old_sha256 != new_sha256
 
     result = get_data(ARCHIVE_NAME)
 
@@ -521,7 +521,7 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
 
     metadata = data._read_archive_metadata(extracted_path)
     assert metadata is not None
-    assert metadata.archive_md5 == new_md5
+    assert metadata.archive_sha256 == new_sha256
 
 
 def test_get_data_with_missing_archive(temp_data_environment: tuple[Path, Path]) -> None:
@@ -592,4 +592,4 @@ def test_get_data_with_single_file_archive(temp_data_environment: tuple[Path, Pa
     assert result2.exists()
     metadata = data._read_archive_metadata(expected_path)
     assert metadata is not None
-    assert metadata.archive_md5 == data._calculate_md5(archive_file)
+    assert metadata.archive_sha256 == data._calculate_sha256(archive_file)

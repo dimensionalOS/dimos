@@ -20,7 +20,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -263,7 +262,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
 
 
 class LFSArchiveMetadata(BaseModel):
-    archive_md5: str
+    archive_sha256: str
 
 
 METADATA_FILENAME = ".archive_metadata.json"
@@ -277,14 +276,18 @@ def _get_archive_metadata_path(extracted_path: Path) -> Path:
     return extracted_path.parent / (f".{extracted_path.name}.archive_metadata.json")
 
 
-def _calculate_md5(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.md5()
+# read sha256 from pointer file
+def _read_lfs_pointer_sha256(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
-    with file_path.open("rb") as file:
-        for chunk in iter(lambda: file.read(chunk_size), b""):
-            digest.update(chunk)
+    for line in text.splitlines():
+        if line.startswith("oid sha256:"):
+            return line.removeprefix("oid sha256:")
 
-    return digest.hexdigest()
+    return None
 
 
 def _write_archive_metadata(extracted_path: Path, metadata: LFSArchiveMetadata) -> None:
@@ -300,12 +303,9 @@ def _write_archive_metadata(extracted_path: Path, metadata: LFSArchiveMetadata) 
 
 
 def _read_archive_metadata(extracted_path: Path) -> LFSArchiveMetadata | None:
-    """Read the archive MD5 checksum from the metadata JSON file in the extracted directory."""
+    """Read the archive SHA256 checksum from the metadata JSON file in the extracted directory."""
 
     metadata_path = _get_archive_metadata_path(extracted_path)
-
-    if not metadata_path.exists():
-        return None
 
     try:
         return LFSArchiveMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
@@ -315,6 +315,23 @@ def _read_archive_metadata(extracted_path: Path) -> LFSArchiveMetadata | None:
         OSError,
     ):
         return None
+
+
+def _calculate_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+
+    with file_path.open("rb") as file:
+        for chunk in iter(lambda: file.read(chunk_size), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def _get_archive_sha256(path: Path) -> str:
+    pointer_sha256 = _read_lfs_pointer_sha256(path)
+    if pointer_sha256 is not None:
+        return pointer_sha256
+    return _calculate_sha256(path)
 
 
 def get_data(name: str | Path) -> Path:
@@ -353,7 +370,7 @@ def get_data(name: str | Path) -> Path:
     data_dir = get_data_dir()
     file_path = data_dir / name
 
-    # Extract the archive root from the first path component and preserve any remaining components as the nested path.
+    # extract archive root (first path component) and nested path
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
@@ -370,64 +387,48 @@ def get_data(name: str | Path) -> Path:
         if not archive_file.exists():
             return file_path
 
-        # we assume archive file must work well if not throw an exception
-        pull_path = _pull_lfs_archive(archive_name)
+        # read sha256 from pointer file
+        archive_sha256 = _get_archive_sha256(archive_file)
 
-        # calculate archive_file md5
-        archive_checksum = _calculate_md5(pull_path)
-
-        # read md5 from extracted_path if reading fail return None and decompress again.
+        # read sha256 from extracted_path if reading fail return None and decompress again.
         metadata = _read_archive_metadata(extracted_path)
 
-        # compare md5 to decide which one is newer
-        archive_is_newer = metadata is None or archive_checksum != metadata.archive_md5
+        # compare sha256 to decide which one is newer
+        archive_is_newer = metadata is None or archive_sha256 != metadata.archive_sha256
 
         if not archive_is_newer:
             return file_path
 
-        logger.warning(
-            "Replacing stale extracted data at %s. A backup will be created first.",
-            extracted_path,
-        )
+        if extracted_path.is_file():
+            suffixes = "".join(extracted_path.suffixes)
+            base_name = extracted_path.name[: -len(suffixes)] if suffixes else extracted_path.name
+            backup_name = f"{base_name}._backup_{uuid4().hex}{suffixes}"
+            backup_path = extracted_path.with_name(backup_name)
+        else:
+            backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
 
-        # Use a unique backup path to backup.
-        backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
+        # notify user
+        logger.warning(
+            "Replacing stale extracted data at %s. A backup will be created at %s.",
+            extracted_path,
+            backup_path,
+        )
         extracted_path.rename(backup_path)
 
-        # decompress archive file
-        archive_path = _decompress_archive(pull_path)
+    # get sha256 from file
+    archive_sha256 = _get_archive_sha256(archive_file)
 
-        # write new md5 to extracted_path if succeed.
-        _write_archive_metadata(archive_path, LFSArchiveMetadata(archive_md5=archive_checksum))
-
-        # delete backup file after decompressing successfully.
-        if backup_path.is_dir() and not backup_path.is_symlink():
-            shutil.rmtree(backup_path)
-        elif backup_path.exists():
-            backup_path.unlink()
-
-        # Return the requested nested path or the extracted root.
-        result_path = extracted_path / nested_path if nested_path else extracted_path
-
-        if not result_path.exists():
-            raise FileNotFoundError(f"Requested test data does not exist: {result_path}")
-
-        return result_path
-
-    # pull archive file first.
+    # we assume archive file must work well if not throw an exception
     pull_path = _pull_lfs_archive(archive_name)
-
-    # calculate archive_file md5
-    archive_checksum = _calculate_md5(pull_path)
 
     # decompress archive files to produce extract directory
     archive_path = _decompress_archive(pull_path)
 
     metadata = LFSArchiveMetadata(
-        archive_md5=archive_checksum,
+        archive_sha256=archive_sha256,
     )
 
-    # write current archive_file md5 to extract directory
+    # write current archive_file sha256 to extract directory
     _write_archive_metadata(archive_path, metadata)
 
     result_path = archive_path / nested_path if nested_path else archive_path
