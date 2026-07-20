@@ -43,16 +43,16 @@ class Candidate:
     ``T`` uses relocalize()'s own convention: the 4x4 transform that maps
     ``local_map`` into ``global_map``'s frame (same as generate_ransac_
     candidates()'s and refine_candidates()'s transforms -- see
-    ``relocalize()``'s docstring). ``confidence`` is a coarse 0..1 tier the
-    proposer reports about itself -- informational only. ``refine_candidates``
-    never reads it: every candidate is judged purely on wall-only fine-scale
-    fitness, so a high-confidence candidate from a bad prior still loses to a
-    low-confidence candidate that actually fits the walls.
+    ``relocalize()``'s docstring). A candidate carries only WHICH transform and
+    WHICH source proposed it -- no self-reported confidence: ``refine_candidates``
+    ranks every candidate purely on wall-only fine-scale fitness, so a candidate
+    from a "trusted" prior still loses to one that actually fits the walls. (A
+    calibrated composite confidence is the Phase-4 fusion arbiter's job, read
+    from measured signals downstream of the judge, not asserted by the proposer.)
     """
 
     T: np.ndarray
     source: str
-    confidence: float
 
 
 class RelocPrior(Protocol):
@@ -74,12 +74,9 @@ class RelocPrior(Protocol):
 
 
 class RansacPrior:
-    """Wraps relocalize.py's existing multi-scale FPFH+RANSAC global search.
-
-    Confidence 0.5: a real geometric search over the full map, but not as
-    tight a prior as a fiducial marker sighting or a freshly-carried-forward
-    pose would be.
-    """
+    """Wraps relocalize.py's existing multi-scale FPFH+RANSAC global search --
+    a real geometric search over the full map, proposing its raw candidate pool
+    into the judge like any other source."""
 
     name = "ransac"
 
@@ -89,7 +86,7 @@ class RansacPrior:
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
         transforms = generate_ransac_candidates(global_map, local_map)
-        return [Candidate(T=T, source=self.name, confidence=0.5) for T in transforms]
+        return [Candidate(T=T, source=self.name) for T in transforms]
 
 
 class LastPosePrior:
@@ -125,26 +122,23 @@ class LastPosePrior:
     ) -> list[Candidate]:
         if self._last_T is None:
             return []
-        return [Candidate(T=self._last_T, source=self.name, confidence=0.3)]
+        return [Candidate(T=self._last_T, source=self.name)]
 
 
 class FiducialPrior:
-    """Visual (fiducial-marker) fixes as high-confidence seed candidates.
+    """Fiducial-marker fixes as seed candidates, age-gated.
 
     ``update()`` takes the fix in relocalize()'s own convention — map_T_world,
     PRE-inversion, the same frame-direction rule as ``LastPosePrior`` (invert
     a published world->map TF before passing it). ``ts`` is the fix time in
     ``now_fn``'s own timebase; None stamps arrival time.
 
-    A marker fix is a fresh measurement of the world->map edge; its trust
-    decays with the odometry drift accumulated since the sighting. propose()
-    therefore hard-gates on ``age_max_s`` and decays the informational
-    confidence as ``conf_max * exp(-age / age_tau_s)``. The judge never reads
-    confidence — a stale or wrong fix still has to win on wall fitness, like
-    every other prior.
-
-    The decay/cutoff defaults are engineering guesses, not tuned values;
-    tuning them belongs to #2137's autoresearch harness.
+    A marker fix is a fresh measurement of the world->map edge that drifts with
+    the odometry accumulated since the sighting, so propose() drops it once it
+    is older than ``age_max_s`` (a hard cutoff — no decay curve: nothing in the
+    judge weights a fix by age, and a stale fix still has to win on wall fitness
+    like every other prior). ``age_max_s`` is an engineering guess, not a tuned
+    value; tuning it belongs to #2137's autoresearch harness.
     """
 
     name = "fiducial"
@@ -152,14 +146,10 @@ class FiducialPrior:
     def __init__(
         self,
         *,
-        age_tau_s: float = 30.0,
         age_max_s: float = 120.0,
-        conf_max: float = 0.9,
         now_fn: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._age_tau_s = age_tau_s
         self._age_max_s = age_max_s
-        self._conf_max = conf_max
         self._now_fn = now_fn
         self._fix_T: np.ndarray | None = None
         self._fix_ts: float = 0.0
@@ -175,11 +165,9 @@ class FiducialPrior:
     ) -> list[Candidate]:
         if self._fix_T is None:
             return []
-        age = self._now_fn() - self._fix_ts
-        if age > self._age_max_s:
+        if self._now_fn() - self._fix_ts > self._age_max_s:
             return []
-        confidence = self._conf_max * float(np.exp(-max(age, 0.0) / self._age_tau_s))
-        return [Candidate(T=self._fix_T, source=self.name, confidence=confidence)]
+        return [Candidate(T=self._fix_T, source=self.name)]
 
 
 def relocalize_with_priors(

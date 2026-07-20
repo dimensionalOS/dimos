@@ -189,7 +189,7 @@ def test_priors_plumbing_stub_candidate_wins_with_right_source() -> None:
         def propose(
             self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
         ) -> list[Candidate]:
-            return [Candidate(T=T_true.copy(), source=self.name, confidence=0.9)]
+            return [Candidate(T=T_true.copy(), source=self.name)]
 
     priors: list[RelocPrior] = [_StubPrior()]
     T, fitness, winning_source = relocalize_with_priors(global_map, local_map, priors)
@@ -214,7 +214,6 @@ def test_last_pose_prior_set_enters_pool() -> None:
 
     assert len(candidates) == 1
     assert candidates[0].source == "last_pose"
-    assert candidates[0].confidence == 0.3
     np.testing.assert_array_equal(candidates[0].T, T_true)
 
 
@@ -233,7 +232,7 @@ def test_no_bypass_wrong_high_confidence_candidate_loses_to_correct_low_confiden
         def propose(
             self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
         ) -> list[Candidate]:
-            return [Candidate(T=wrong, source=self.name, confidence=0.99)]
+            return [Candidate(T=wrong, source=self.name)]
 
     class _UnderconfidentCorrectPrior:
         name = "underconfident_correct"
@@ -241,7 +240,7 @@ def test_no_bypass_wrong_high_confidence_candidate_loses_to_correct_low_confiden
         def propose(
             self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
         ) -> list[Candidate]:
-            return [Candidate(T=T_true.copy(), source=self.name, confidence=0.01)]
+            return [Candidate(T=T_true.copy(), source=self.name)]
 
     priors: list[RelocPrior] = [_OverconfidentWrongPrior(), _UnderconfidentCorrectPrior()]
     T, fitness, winning_source = relocalize_with_priors(global_map, local_map, priors)
@@ -369,22 +368,22 @@ def test_fiducial_prior_unset_proposes_nothing() -> None:
     assert FiducialPrior().propose(gm, lm) == []
 
 
-def test_fiducial_prior_fresh_fix_decays_with_age() -> None:
+def test_fiducial_prior_age_gate_hard_cutoff() -> None:
+    """A fresh fix proposes; it keeps proposing right up to ``age_max_s`` and
+    drops past it. Hard cutoff only -- no decay curve, no confidence."""
     gm, lm, T_true = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
     clock = {"now": 100.0}
-    p = FiducialPrior(age_tau_s=30.0, age_max_s=120.0, conf_max=0.9, now_fn=lambda: clock["now"])
+    p = FiducialPrior(age_max_s=120.0, now_fn=lambda: clock["now"])
     p.update(T_true, ts=100.0)
 
     fresh = p.propose(gm, lm)
     assert len(fresh) == 1 and fresh[0].source == "fiducial"
-    assert np.isclose(fresh[0].confidence, 0.9)
     assert fresh[0].T is T_true
 
-    clock["now"] = 130.0  # age 30 s = one tau
-    aged = p.propose(gm, lm)
-    assert np.isclose(aged[0].confidence, 0.9 * np.exp(-1.0))
+    clock["now"] = 219.0  # age 119 s < cutoff -> still proposes
+    assert len(p.propose(gm, lm)) == 1
 
-    clock["now"] = 221.0  # age 121 s > cutoff
+    clock["now"] = 221.0  # age 121 s > cutoff -> dropped
     assert p.propose(gm, lm) == []
 
 
@@ -396,7 +395,7 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
     T_wrong = T_true.copy()
     T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # confidently 6.4 m off
 
-    fid = FiducialPrior(conf_max=0.99, now_fn=lambda: 0.0)
+    fid = FiducialPrior(now_fn=lambda: 0.0)
     fid.update(T_wrong, ts=0.0)
 
     class NearTruthStub:
@@ -407,7 +406,7 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
         ) -> list[Candidate]:
             T_near = T_true.copy()
             T_near[:3, 3] += np.array([0.03, -0.02, 0.0])
-            return [Candidate(T=T_near, source=self.name, confidence=0.01)]
+            return [Candidate(T=T_near, source=self.name)]
 
     T, fitness, source = relocalize_with_priors(gm, lm, [fid, NearTruthStub()])
     assert source == "stub_near_truth"
@@ -452,7 +451,7 @@ def test_gravity_gate_is_per_source_no_walkover() -> None:
         def propose(
             self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
         ) -> list[Candidate]:
-            return [Candidate(T=T_tilted, source=self.name, confidence=0.5)]
+            return [Candidate(T=T_tilted, source=self.name)]
 
     lp = LastPosePrior()
     lp.update(T_stale)
