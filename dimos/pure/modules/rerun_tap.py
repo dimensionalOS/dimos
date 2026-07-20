@@ -21,7 +21,7 @@ with no re-encode either way:
 - **Recording / over()**: splice it inline (``B.over(x=RerunTap().over(msg=a))``).
   Forwarding is just an object reference and ``over()`` is lazy, so the pipeline
   stays streaming — one message in flight, never a materialized list.
-- **Live**: bind ``msg`` to a topic and leave the ``msg`` Out **unbound**. The
+- **Live**: bind the ``msg`` In to a topic and leave the ``forwarded`` Out **unbound**. The
   tap is then a parallel subscriber (pubsub fans out to it and the real
   consumer); an unbound Out publishes nothing, so nothing is re-encoded.
 
@@ -124,7 +124,9 @@ class RerunTap(pm.PureModule):
         msg: RerunRenderable = pm.tick()
 
     class Out(pm.Out):
-        msg: RerunRenderable  # passthrough — forward the input; render is a side effect
+        forwarded: RerunRenderable  # passthrough of the input; render is a side effect
+        # (named distinctly from the In `msg` — legacy autoconnect keys on (name, type)
+        # and cannot express an In∩Out overlap, so the bridge needs one name per side)
 
     @pm.resource
     def rec(self) -> _Sink:
@@ -141,4 +143,4 @@ class RerunTap(pm.PureModule):
     def step(self, i: In) -> Out:
         """Log the message, forward it unchanged."""
         self.rec.log(self.entity_path, i.ts, i.msg)
-        return RerunTap.Out(msg=i.msg)
+        return RerunTap.Out(forwarded=i.msg)
