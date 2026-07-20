@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Copyright 2025-2026 Dimensional Inc.
 from __future__ import annotations
 
@@ -31,21 +45,27 @@ def _image(timestamp: float) -> Image:
     )
 
 
-def _module(tf: _FakeTF) -> ObjectSceneRegistrationModule:
-    module = object.__new__(ObjectSceneRegistrationModule)
-    module._target_frame = "map"
+def _module(tf: _FakeTF, monkeypatch: Any) -> ObjectSceneRegistrationModule:
+    # Avoid starting the module's RPC/event-loop resources in this unit test.
+    monkeypatch.setattr(
+        "dimos.core.module.ModuleBase.__init__",
+        lambda _self, config_args: None,
+    )
+    module = ObjectSceneRegistrationModule(
+        target_frame="map",
+        max_distance=0.0,
+        use_aabb=False,
+        max_obstacle_width=0.0,
+    )
     module._camera_info = MagicMock(K=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-    module._tf = tf
+    module._tf = tf  # type: ignore[assignment]
     module._latest_scene_snapshot = None
-    module._max_distance = 0.0
-    module._use_aabb = False
-    module._max_obstacle_width = 0.0
     return module
 
 
 def test_temporal_tf_lookup_uses_bounded_image_timestamp(monkeypatch: Any) -> None:
     tf = _FakeTF(MagicMock())
-    module = _module(tf)
+    module = _module(tf, monkeypatch)
     monkeypatch.setattr(ObjectSceneRegistrationModule, "tf", property(lambda self: self._tf))
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
@@ -67,7 +87,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
 ) -> None:
     old_transform = MagicMock(name="old_transform")
     tf = _FakeTF(old_transform)
-    module = _module(tf)
+    module = _module(tf, monkeypatch)
     monkeypatch.setattr(ObjectSceneRegistrationModule, "tf", property(lambda self: self._tf))
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
@@ -98,7 +118,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
 def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(monkeypatch: Any) -> None:
     depth = _image(3.0)
     transform = MagicMock(name="transform")
-    module = _module(_FakeTF(transform))
+    module = _module(_FakeTF(transform), monkeypatch)
     module._latest_scene_snapshot = (depth, transform)
 
     class _PointCloud:
