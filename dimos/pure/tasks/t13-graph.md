@@ -14,6 +14,80 @@ per-phase acceptance tests.
 
 ---
 
+## 0. Amendments — post-review (Ivan, 2026-07-20, BINDING)
+
+These resolve the ratification items and re-spec the runtime after review. Where
+an amendment supersedes original prose, **the amendment wins** and the superseded
+text is kept only for context. The Phase-A implementer builds to §0.
+
+### 0.1 Ratifications (accepted)
+
+- **T1 `BareSpec` amendment (§2.4): ACCEPTED.** Phase A implements it — bare In
+  fields become definable so graph rims can spell `class In(pm.In)`; module steps
+  still reject unsampled In fields via the relocated `[in-field-unsampled]` check.
+- **Error subclassing: ACCEPTED.** `PureGraphDefinitionError`/`PureGraphRunError`
+  subclass the module error types.
+- **`PureModule.__call__` unified operator + `PureModule.blueprint()`: RATIFIED**
+  (landed with this spec, live-tested).
+- **Q4 (GraphRun outputs are raw payloads): CONFIRMED.** `run.path.to_list()`
+  yields `Path` objects, not Out-row envelopes.
+- Q1/Q2/Q3/Q5/Q6/Q7/Q9 defaults stand unchanged.
+
+### 0.2 Runtime is bounded streaming — SUPERSEDES §6.2 (edge logs)
+
+There are **no edge logs**. The runtime never retains an append-only per-edge
+history. Fan-out is lossless *without* buffering by construction:
+
+- **Offline (`over()`): synchronous topological distribution.** Each edge value
+  is delivered to ALL of that edge's consumers *before* the producer advances, so
+  nothing is ever held for a lagging branch — one value in flight per edge, then
+  gone. This is lossless and bounded with zero fan-out buffer. The only offline
+  buffering is each member's own aligner hold, which T5 bounds to O(1) per port.
+  No capacity ring is used offline (no threads, no real-time deadline —
+  backpressure is just the pull semantics; a slow consumer slows the whole run,
+  losslessly).
+- **Live (rim/transports): bounded capacity rings (T8 model), drop-old.** Because
+  transports deliver asynchronously on their own threads, live fan-out uses the
+  landed per-port capacity/KeepLast rings — never unbounded. A slow live consumer
+  drops old; lossless-live-to-slow-sink is not offered (physics: drop or fall
+  behind real time).
+- **Independent divergent-rate output pulling is not a supported mode.** To read
+  two outputs at genuinely different rates, re-run (over() is deterministic and
+  re-invokable — a fresh run per call) or spill one to a store (§0.3). Never
+  buffer one output while draining another.
+
+### 0.3 Recording & query go through mem2 stores — SUPERSEDES §6.2/§6.3 interior taps + removes Q8
+
+Post-hoc inspection/query/replay is **not** a bespoke graph API. To keep edges,
+`.save()` them into a mem2 store and use mem2's existing query/replay:
+
+- **Per-edge = one `Observation` stream.** Payload is the edge's `.data`, ts is
+  `.ts`: `store.stream(path, PayloadType).append(msg, ts=msg.ts)`. Symmetric with
+  the ingestion path, which already unwraps `Observation → .data` (T6 boundary).
+- **A graph recording = one mem2 store holding N named typed streams**, keyed by
+  edge path (namespaced member path). Any backend — `MemoryStore` (RAM),
+  `SqliteStore` (disk), future — chosen by the caller. That store *is* the
+  replay/query system.
+- **No new "bundle" message type.** mem2 stores are already multi-stream. A
+  module's multi-field In/Out row is NOT stored atomically; it is reconstructed on
+  replay by `over()`'s deterministic alignment from the per-field streams (the
+  shared `ts` carries the bundle relationship). This is exactly the
+  `_record_then_debug_one_member` pattern.
+- **`GraphRun` exposes only the exported outputs** as bounded streams. Interior
+  edges stay addressable by path ONLY to *attach* a store or transport (record /
+  cross-process cut), never for in-memory readback. **Removed:** the
+  `GraphRun.stream("interior.path")` tap and the `graph-unknown-path` run error.
+- **Q8 (edge-log retention) is void** — there is nothing to retain, so nothing to
+  truncate.
+
+### 0.4 `cmd_vel` seam (Q10 / §7.4): RESOLVED — translator module, not covariant matching
+
+Do **not** make the legacy autoconnect matcher covariant. A small
+`TwistStamped → Twist` translator pure module bridges the command edge; GO2Connection
+changes to accept `TwistStamped` later. Phase B item.
+
+---
+
 ## 1. Scope and the settled model
 
 A `PureGraph` composes configured pure modules into a validated DAG by running
@@ -500,6 +574,11 @@ Run-surface (`PureGraphRunError`, `f"{g}.over(): {msg} [{slug}]"` style):
 
 ### 6.2 The pull engine: edge logs
 
+> **SUPERSEDED by §0.2/§0.3.** No edge logs; the runtime is bounded streaming
+> (offline: synchronous distribution, lossless, zero fan-out buffer; live: T8
+> capacity rings). Recording/query is `.save()` into a mem2 store, not an
+> in-memory tap. The text below is retained for context only.
+
 Runtime state per run: for every *edge* (identified by producer `PortRef`) an
 **edge log** — an append-only list plus its producer handle:
 
@@ -763,6 +842,9 @@ injected recorded costmap matches the charter's §5(c) sketch.
   namespace; (c) AST/varname sniffing — rejected: nondeterministic.
 - **Q2 `[graph-unused-input]` severity** — default: error (mypy-for-wiring
   strictness). Options: (a) error; (b) warning + plan flag.
+
+  USER ANSWER: B - warn
+
 - **Q3 export aliasing** — default: error for both alias and rim passthrough
   (target parity: one topic per edge). Options: (a) error; (b) legal locally,
   error only at `blueprint()` — rejected: wire() would mean different things
@@ -776,13 +858,12 @@ injected recorded costmap matches the charter's §5(c) sketch.
 - **Q7 pm surface** — default: graph names stay in `dimos.pure.graph` (the
   charter imports them from there); `pm.__all__` untouched, `test_pm_surface`
   unchanged. Option: re-export `PureGraph/Port/feedback` from `pm` later.
-- **Q8 edge-log retention** — default: unbounded per run (re-iterability,
-  offline scale ≈ example_hk_nav's). Option: refcounted truncation once all
-  readers pass an index — an optimization, not a semantic.
+- **Q8 edge-log retention** — VOID (resolved by §0.3): no edge logs exist, so
+  there is nothing to retain. Recording/query is `.save()` into a mem2 store.
 - **Q9 blueprint namespace** — default: `namespace or snake_case(cls.__name__)`;
   `namespace` is reserved in graph config (collision → T2 catalog).
-- **Q10 `cmd_vel` seam** — default: autoconnect covariant matching (§7.4 (a));
-  needs an owner call, it touches the legacy matcher.
+- **Q10 `cmd_vel` seam** — RESOLVED (§0.4): a `TwistStamped → Twist` translator
+  pure module, not covariant matching; GO2 accepts `TwistStamped` later.
 
 ## 12. Relitigation
 

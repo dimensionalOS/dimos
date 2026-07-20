@@ -76,8 +76,11 @@
 #
 # DEPLOYMENT — one wire(), three targets (§DEPLOY):
 #   • LOCAL single-process — over() runs the whole DAG in one process, lazy
-#     pull, in-process handoffs, every edge re-iterable through a run store.
-#     The native home now: dev, replay, offline batch.
+#     pull, in-process handoffs. Bounded streaming: offline fan-out distributes
+#     each edge value to all consumers before advancing (lossless, ~one msg/edge
+#     in flight, no edge logs); to keep an edge for query/replay, route it into a
+#     mem2 store (record=), which becomes your replay/query system. The native
+#     home now: dev, replay, offline batch.
 #   • MULTIPROCESS TODAY via the existing system — each member is already a
 #     legacy-compatible Module (the T8 bridge), so graph.blueprint() LOWERS the
 #     explicit edges into autoconnect wiring: one process per member (or
@@ -131,7 +134,7 @@ WORLD = "world"
 # is used twice (fan-out, §4). The cost->plan edge crosses a name boundary
 # (global_costmap -> costmap): explicit here, a remapping when lowered to
 # blueprints (§DEPLOY). odom_tf.tf / reloc outputs left unexported are NOT lost
-# — reachable by path for taps, transports, recording (§4).
+# — addressable by path to attach a transport or a recording store (§4).
 class NavStack(PureGraph):
     """Local pure nav DAG: hk lidar+odom -> map -> costmap -> plan, goal at origin."""
 
@@ -216,13 +219,17 @@ def _local_single_process() -> None:
     goal = PoseStamped(frame_id=WORLD, position=[0.0, 0.0, 0.0])
     goal.ts = 1.0  # below every recording ts, so latest() sees it from tick 1
 
+    rec = SqliteStore(path="nav_run.db")  # or MemoryStore() — a mem2 store, any backend
     with SqliteStore(path=str(get_data("go2_hongkong_office.db"))) as store:
         # store channels -> rim In ports BY NAME (.data-only), the offline dual of
         # autoconnect; remap= handles the exceptions. goal isn't a channel -> pass it.
-        run = NavStack().over(store, goal=[goal])
-        paths = run.path.to_list()  # an exported output, as a stream
-        # every interior edge is addressable by path and re-iterable afterward:
-        maps = run.stream("voxel_mapper.global_map").to_list()  # interior tap
+        # To KEEP an edge for query/replay, route it into a mem2 store (record=): each
+        # edge becomes one Observation stream keyed by path. No in-memory edge logs;
+        # the run itself is bounded streaming (one msg/edge in flight). The recording
+        # store IS your query/replay system afterward (rec.stream(path), over(rec), ...).
+        run = NavStack().over(store, goal=[goal], record={"voxel_mapper.global_map": rec})
+        paths = run.path.to_list()  # exported output, as a stream of payloads (Q4)
+        maps = rec.stream("voxel_mapper.global_map").to_list()  # from the recording store
         _use(paths, maps)
 
 
