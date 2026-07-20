@@ -85,6 +85,7 @@ all_blueprints = {
     "path-planner-eval": "dimos.navigation.nav_3d.evaluator.blueprints:path_planner_eval",
     "spot": "dimos.robot.bosdyn.spot.blueprints.spot:spot",
     "spot-record": "dimos.robot.bosdyn.spot.blueprints.spot_record:spot_record",
+    "spot-replay": "dimos.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",
     "teleop-hosted-go2": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",

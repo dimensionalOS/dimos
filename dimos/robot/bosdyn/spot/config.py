@@ -34,8 +34,8 @@ SPOT_API_PORT = 443
 REACHABILITY_PROBE_TIMEOUT_S = 2.0
 
 # not configutable, these are limits set by the spot API
-MAX_LINEAR_VELOCITY = 1.6
-MAX_ANGULAR_VELOCITY = 1.6
+MAX_LINEAR_VELOCITY = 1.599
+MAX_ANGULAR_VELOCITY = 1.599
 
 # Motor power / posture command timeouts (seconds).
 POWER_ON_TIMEOUT_S = 20.0
