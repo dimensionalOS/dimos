@@ -78,6 +78,7 @@ class Rule(enum.Enum):
     STATE_UNUSED = "state-unused"
     FOLD_STATE = "fold-state"
     BUNDLE_SHADOWED = "bundle-shadowed"
+    IN_FIELD_UNSAMPLED = "in-field-unsampled"
     NOT_CLASSIFIED = "not-classified"
 
 
@@ -340,6 +341,18 @@ def classify(cls: type[Any]) -> StepSpec:
             f"step: def step(self, state: State, i: In) -> tuple[State, Out]. Take it or "
             f"delete it.",
         )
+
+    # §2.4 (T13) — a module step's In bundle must sample every field; a BareSpec
+    # field (specifier-less, legal only on graph rims) fails at the module class
+    # statement, the same loudness the old bundle-time check gave.
+    for fname, fspec in in_type.fields().items():
+        if fspec.kind == "bare":
+            _fail(
+                cls,
+                Rule.IN_FIELD_UNSAMPLED,
+                f"In field {fname!r} needs a sampler specifier "
+                f"(tick()/latest()/interpolate()); plain defaults are only valid on Out bundles",
+            )
 
     # §5.6 — bundle coherence: a nested declaration the signature doesn't use.
     for attr, used in (("In", in_type), ("Out", out_type)):

@@ -104,6 +104,44 @@ def test_tagger_floor_zero_ceremony():
     assert spec.is_async is False
 
 
+def test_bare_in_field_rejected_at_module():
+    # §2.4 (T13): a specifier-less In field is legal at bundle definition (it
+    # classifies as "bare"), but a module step using it fails loudly at the
+    # module class statement — the old bundle-time [needs a sampler] check,
+    # relocated to stepspec as [in-field-unsampled].
+    class Bad:
+        class In(PmIn):
+            a: float = tick()
+            bare: float  # no sampler — legal on a graph rim, not on a module step
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        def step(self, i: In) -> Out:
+            raise NotImplementedError
+
+    e = _raises(Bad, Rule.IN_FIELD_UNSAMPLED)
+    assert "'bare'" in str(e.value)
+    assert "needs a sampler specifier" in str(e.value)
+
+
+def test_bare_in_field_with_default_rejected_at_module():
+    # A plain default on an In field is still bare (BareSpec captures the default);
+    # a module step rejects it just the same.
+    class Bad:
+        class In(PmIn):
+            a: float = tick()
+            flag: bool = False
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        def step(self, i: In) -> Out:
+            raise NotImplementedError
+
+    _raises(Bad, Rule.IN_FIELD_UNSAMPLED)
+
+
 def test_classify_stateless_multi_out():
     # QualityGate shape: the sparse Out field is T1's business; T3 sees a normal Out.
     class QualityGate:
