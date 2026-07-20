@@ -26,6 +26,7 @@ the "keep the suite fast" rule for this file.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation
@@ -43,6 +44,7 @@ from dimos.mapping.relocalization.relocalize import (
     refine_candidates,
     relocalize,
 )
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
 def _pcd(points: np.ndarray) -> o3d.geometry.PointCloud:
@@ -359,44 +361,99 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior: age gating/decay + judge integrity
+# FiducialPrior: multi-sighting Huber fusion + ambiguity gate + judge integrity
 # ---------------------------------------------------------------------------
+
+
+def _rigid_noise(rng: np.random.Generator, deg_std: float, m_std: float) -> np.ndarray:
+    """A small random rigid perturbation: rotation ~deg_std, translation ~m_std."""
+    T = np.eye(4)
+    T[:3, :3] = Rotation.from_rotvec(rng.normal(0.0, np.radians(deg_std), 3)).as_matrix()
+    T[:3, 3] = rng.normal(0.0, m_std, 3)
+    return T
+
+
+def _frontal_far_corners(k: np.ndarray, marker_length_m: float) -> np.ndarray:
+    """Corners of a small tag viewed head-on at 2 m (weak perspective) with a bit
+    of pixel noise -- the mirror-ambiguous regime the gate must reject."""
+    h = marker_length_m / 2.0
+    obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], dtype=np.float32)
+    pts, _ = cv2.projectPoints(obj, np.zeros(3), np.array([0.0, 0.0, 2.0]), k, np.zeros((0, 1)))
+    return pts.reshape(4, 2) + np.random.default_rng(0).normal(0.0, 0.3, (4, 2))
 
 
 def test_fiducial_prior_unset_proposes_nothing() -> None:
     gm, lm, _ = _rect_room_scene(seed=11, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    assert FiducialPrior().propose(gm, lm) == []
+    assert FiducialPrior({}).propose(gm, lm) == []
+
+
+def test_fiducial_prior_fuses_sightings_into_one_robust_candidate() -> None:
+    """Eight noisy sightings of one mapped tag PLUS a gross mirror-flip outlier
+    fuse into ONE candidate whose map_T_world lands near the truth. The lever arm
+    (map_T_marker 5.4 m from origin) turns the 150 deg outlier into a ~14 m
+    single-frame fix, so a <0.25 m fused error is the Huber-medoid rejecting it."""
+    gm, lm, _ = _rect_room_scene(seed=14, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    rng = np.random.default_rng(14)
+    map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
+    world_T_marker_true = _rigid(-40.0, (1.0, 0.5, 0.8))
+    truth = map_T_marker @ np.linalg.inv(world_T_marker_true)
+
+    prior = FiducialPrior({7: map_T_marker}, now_fn=lambda: 0.0)
+    for i in range(8):
+        prior.observe(7, world_T_marker_true @ _rigid_noise(rng, 2.0, 0.01), ts=float(i) * 0.1)
+    prior.observe(7, world_T_marker_true @ _rigid(150.0, (0.0, 0.0, 0.0)), ts=0.85)  # outlier
+
+    candidates = prior.propose(gm, lm)
+    assert len(candidates) == 1 and candidates[0].source == "fiducial"
+    assert np.linalg.norm(candidates[0].T[:3, 3] - truth[:3, 3]) < 0.25
+
+
+def test_fiducial_prior_drops_mirror_ambiguous_sighting() -> None:
+    """A head-on small tag whose flipped IPPE pose reprojects nearly as well is
+    dropped by the ambiguity gate (ours; jnav lacks it) -- no fix is stored."""
+    gm, lm, _ = _rect_room_scene(seed=15, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    k = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]])
+    info = CameraInfo.from_intrinsics(600.0, 600.0, 320.0, 240.0, 640, 480)
+    prior = FiducialPrior(
+        {7: np.eye(4)}, camera_info=info, marker_length_m=0.1, ambiguity_ratio_min=2.0
+    )
+    reason = prior.observe(7, np.eye(4), ts=0.0, corners_px=_frontal_far_corners(k, 0.1))
+    assert reason == "mirror_ambiguous"
+    assert prior.propose(gm, lm) == []
 
 
 def test_fiducial_prior_age_gate_hard_cutoff() -> None:
-    """A fresh fix proposes; it keeps proposing right up to ``age_max_s`` and
-    drops past it. Hard cutoff only -- no decay curve, no confidence."""
-    gm, lm, T_true = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
+    """A fused fix proposes right up to ``age_max_s`` and drops past it. Hard
+    cutoff only -- no decay curve, no confidence."""
+    gm, lm, _ = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
     clock = {"now": 100.0}
-    p = FiducialPrior(age_max_s=120.0, now_fn=lambda: clock["now"])
-    p.update(T_true, ts=100.0)
+    prior = FiducialPrior({7: np.eye(4)}, age_max_s=120.0, now_fn=lambda: clock["now"])
+    for i in range(3):  # >= min_observations -> a fused fix is stamped at now=100
+        prior.observe(7, np.eye(4), ts=float(i) * 0.1)
 
-    fresh = p.propose(gm, lm)
+    fresh = prior.propose(gm, lm)
     assert len(fresh) == 1 and fresh[0].source == "fiducial"
-    assert fresh[0].T is T_true
 
     clock["now"] = 219.0  # age 119 s < cutoff -> still proposes
-    assert len(p.propose(gm, lm)) == 1
+    assert len(prior.propose(gm, lm)) == 1
 
     clock["now"] = 221.0  # age 121 s > cutoff -> dropped
-    assert p.propose(gm, lm) == []
+    assert prior.propose(gm, lm) == []
 
 
 def test_fiducial_prior_never_bypasses_judge() -> None:
-    """A wrong marker fix (stale map, moved tag, bad PnP) at maximum
-    confidence must lose to a correct low-confidence candidate — the fiducial
-    tier gets no special treatment from the judge."""
+    """A consistent-but-wrong fused fix (stale map, moved tag) 6.4 m off must
+    lose to a correct candidate — the fiducial source gets no special treatment;
+    the judge ranks on wall fitness only."""
     gm, lm, T_true = _rect_room_scene(seed=13, yaw_deg=45.0, t=(2.0, 1.0, 0.0))
     T_wrong = T_true.copy()
-    T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # confidently 6.4 m off
+    T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # 6.4 m off
+    # world_T_marker chosen so the fused map_T_world (map_T_marker == I) is T_wrong.
+    world_T_marker = np.linalg.inv(T_wrong)
 
-    fid = FiducialPrior(now_fn=lambda: 0.0)
-    fid.update(T_wrong, ts=0.0)
+    fid = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
+    for i in range(4):
+        fid.observe(7, world_T_marker, ts=float(i) * 0.1)
 
     class NearTruthStub:
         name = "stub_near_truth"

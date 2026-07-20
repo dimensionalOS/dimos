@@ -35,7 +35,6 @@ from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
-from dimos.perception.fiducial.visual_relocalization_module import VisualRelocalizationModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
 
@@ -95,45 +94,31 @@ unitree_go2_markers = (
     .global_config(n_workers=11, robot_model="unitree_go2")
 )
 
-# No marker survey map ships with the repo, so marker_map_file defaults to
-# None and the module idles until one is configured (start() no-ops without a
-# map -- same convention as RelocalizationModule's map_file). Point it at a
-# real survey map with, e.g.:
-#   -o visualrelocalizationmodule.marker_map_file=/abs/path/to/office_markers.yaml
-# A bare name is resolved via `resolve_named_path` (checked, in order: as
-# given / relative to DIMOS_PROJECT_ROOT / the shared data dir, downloading
-# from LFS if it's registered there) -- never a user-specific absolute path.
-unitree_go2_visual_relocalization = autoconnect(
-    unitree_go2,
-    VisualRelocalizationModule.blueprint(
-        marker_map_file=None,
-        marker_length_m=0.10,
-        camera_info=GO2Connection.camera_info_static,
-    ),
-).global_config(n_workers=11, robot_model="unitree_go2")
-
 unitree_go2_relocalization = autoconnect(
     unitree_go2,
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11)
 
-# The full fiducial->judge path in one stack: VisualRelocalizationModule turns
-# marker sightings into world->map fixes on its `world_map_fix` Out stream, and
-# autoconnect wires that (by name+type) into RelocalizationModule's In of the
-# same name, where use_fiducial_prior=True feeds it to the shared judge as an
-# age-decayed candidate (never a bypass). Both map inputs stay unset: each
-# module no-ops until overrides point them at a premap + marker survey, e.g.
+# The full fiducial->judge path in one stack: MarkerDetectionStreamModule
+# publishes marker sightings on its `detections` Out stream, and autoconnect
+# wires that (by name+type) into RelocalizationModule's `detections` In, where
+# use_fiducial_prior=True Huber-fuses each tag's sightings into ONE world->map
+# candidate that competes in the shared judge on wall fitness (never a bypass).
+# The maps stay unset: each module no-ops until overrides point them at a
+# premap + a marker survey, e.g.
 #   -o relocalizationmodule.map_file=/abs/path/to/site.pc2.lcm
-#   -o visualrelocalizationmodule.marker_map_file=/abs/path/to/site_markers.yaml
-#   -o visualrelocalizationmodule.marker_length_m=0.10
-# The last line repeats the blueprint default only because CLI validation
-# (load_config_args) checks -o overrides against the module config alone, and
-# marker_length_m is required-no-default there: any visualrelocalizationmodule
-# override without it fails validation before the blueprint kwargs ever merge.
+#   -o relocalizationmodule.marker_map_file=/abs/path/to/site_markers.yaml
+# A bare name is resolved via `resolve_named_path` (checked, in order: as
+# given / relative to DIMOS_PROJECT_ROOT / the shared data dir, downloading
+# from LFS if registered) -- never a user-specific absolute path.
 unitree_go2_fiducial_relocalization = autoconnect(
     unitree_go2,
-    RelocalizationModule.blueprint(use_fiducial_prior=True),
-    VisualRelocalizationModule.blueprint(
+    MarkerDetectionStreamModule.blueprint(
+        marker_length_m=0.10,
+        camera_info=GO2Connection.camera_info_static,
+    ),
+    RelocalizationModule.blueprint(
+        use_fiducial_prior=True,
         marker_length_m=0.10,
         camera_info=GO2Connection.camera_info_static,
     ),

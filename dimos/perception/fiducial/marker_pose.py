@@ -132,7 +132,7 @@ def estimate_marker_pose_candidates(
     perspective the *wrong* mirror pose can reproject as well as the right one,
     which :func:`estimate_marker_pose` (best-solution-only) silently hides.
     Callers that must not trust a flipped pose compare the candidates'
-    reprojection errors (see ``visual_relocalization.localize_from_detections``).
+    reprojection errors (see :func:`ambiguity_gated_pose`).
     Non-finite solver output (observed on degenerate corner input) is dropped.
     """
     obj = _aruco_marker_object_points(marker_length_m)
@@ -149,6 +149,59 @@ def estimate_marker_pose_candidates(
         for i in range(n_solutions)
         if np.all(np.isfinite(rvecs[i])) and np.all(np.isfinite(tvecs[i]))
     ]
+
+
+def ambiguity_gated_pose(
+    corners_px: np.ndarray,
+    marker_length_m: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    *,
+    distortion_model: str | None = None,
+    ambiguity_ratio_min: float,
+) -> tuple[np.ndarray, float] | None:
+    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, gated on
+    the IPPE mirror ambiguity.
+
+    A planar square yields two IPPE poses (Collins & Bartoli); at weak
+    perspective the flipped mirror pose can reproject nearly as well as the true
+    one, so a pose whose runner-up reprojection error is within
+    ``ambiguity_ratio_min`` x the best is untrustworthy and rejected. Returns
+    ``None`` when the solver produced nothing or the view is mirror-ambiguous.
+    Schweighofer & Pinz, "Robust Pose Estimation from a Planar Target":
+    https://openreview.net/pdf?id=r1lWm-EYPB
+    """
+    candidates = estimate_marker_pose_candidates(
+        corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
+    )
+    if not candidates:
+        return None
+    scored = sorted(
+        (
+            (
+                marker_reprojection_error(
+                    corners_px,
+                    marker_length_m,
+                    camera_matrix,
+                    dist_coeffs,
+                    rvec,
+                    tvec,
+                    distortion_model=distortion_model,
+                ),
+                rvec,
+                tvec,
+            )
+            for rvec, tvec in candidates
+        ),
+        key=lambda item: item[0],
+    )
+    error, rvec, tvec = scored[0]
+    if len(scored) > 1 and error > 1e-12 and scored[1][0] / error < ambiguity_ratio_min:
+        return None  # the mirror explains the pixels almost as well: ambiguous view
+    pose = np.eye(4)
+    pose[:3, :3] = cv2.Rodrigues(rvec)[0]
+    pose[:3, 3] = tvec.reshape(3)
+    return pose, float(error)
 
 
 def rvec_tvec_to_transform(

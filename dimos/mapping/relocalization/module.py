@@ -33,7 +33,12 @@ from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.fiducial.apriltag_aggregation import matrix_from_pose7
+from dimos.perception.fiducial.fiducial_relocalization import load_marker_map
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -60,16 +65,30 @@ class Config(ModuleConfig):
     # True = RANSAC + a carried-forward last-pose seed both propose candidates,
     # judged by the same fine-ICP tail (dimos/mapping/relocalization/priors.py).
     use_last_pose_seed: bool = False
-    # True = fixes arriving on the `world_map_fix` In stream (the visual/marker
-    # module's world->map estimate) also propose into the same judge as a
-    # high-confidence-tier, age-decayed prior. Never bypasses the judge.
+    # True = marker sightings on the `detections` In stream (from
+    # MarkerDetectionStreamModule) are Huber-fused per tag into one world->map
+    # candidate that proposes into the same judge, age-gated. Never bypasses it.
     use_fiducial_prior: bool = False
+    # Surveyed marker map (map_T_marker per id), resolve_named_path convention;
+    # required for the fiducial prior (start() no-ops the prior without it).
+    marker_map_file: str | None = None
+    marker_length_m: float = 0.10
+    aruco_dictionary: str = "DICT_APRILTAG_36h11"
+    # IPPE mirror-ambiguity gate: best/runner-up reproj ratio a glimpse must
+    # beat. 2.0 provisional; 5.0 was single-recording village3 n=112 -- pending
+    # bigger-n. Only bites when corners_px reach the prior (offline harness /
+    # an enriched detections wire); today's Detection3DArray drops the pixels,
+    # so live the medoid/Huber fusion carries the mirror-flip rejection.
+    ambiguity_ratio_min: float = 2.0
+    # Static intrinsics for the ambiguity gate's solvePnP; same info the detector
+    # holds. The seam a per-deployment camera_info override plugs into later.
+    camera_info: CameraInfo | None = None
 
 
 class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
-    world_map_fix: In[Transform]  # visual/marker module's world->map estimate
+    detections: In[Detection3DArray]  # MarkerDetectionStreamModule's marker sightings
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
 
@@ -79,7 +98,8 @@ class RelocalizationModule(Module):
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
         self._last_pose_prior = LastPosePrior()
-        self._fiducial_prior = FiducialPrior()
+        # Built in start() once the marker map is loaded (needs map_T_marker).
+        self._fiducial_prior: FiducialPrior | None = None
 
     @rpc
     def start(self) -> None:
@@ -120,15 +140,42 @@ class RelocalizationModule(Module):
             .subscribe(self._publish_periodic)
         )
 
-        self.register_disposable(
-            self.world_map_fix.observable().subscribe(  # type: ignore[no-untyped-call]
-                self._on_fiducial_fix
-            )
-        )
+        if self.config.use_fiducial_prior:
+            self._start_fiducial_prior()
 
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
             f"loaded_map.frame_id={self._premap.frame_id!r}"
+        )
+
+    def _start_fiducial_prior(self) -> None:
+        """Load the surveyed marker map, build the FiducialPrior, and route the
+        detector's marker sightings into it. No-ops (prior stays off) without a
+        marker_map_file, mirroring start()'s no-map_file guard."""
+        if not self.config.marker_map_file:
+            logger.warning(
+                "relocalize: use_fiducial_prior set but no marker_map_file; "
+                "fiducial prior disabled"
+            )
+            return
+        marker_map = {
+            marker_id: transform.to_matrix()
+            for marker_id, transform in load_marker_map(
+                resolve_named_path(self.config.marker_map_file, ".yaml")
+            ).items()
+        }
+        self._fiducial_prior = FiducialPrior(
+            marker_map,
+            camera_info=self.config.camera_info,
+            marker_length_m=self.config.marker_length_m,
+            ambiguity_ratio_min=self.config.ambiguity_ratio_min,
+        )
+        self.register_disposable(
+            self.detections.observable().subscribe(self._on_detections)  # type: ignore[no-untyped-call]
+        )
+        logger.info(
+            "relocalize: fiducial prior enabled "
+            f"marker_map_file={self.config.marker_map_file!r} n_markers={len(marker_map)}"
         )
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
@@ -149,12 +196,47 @@ class RelocalizationModule(Module):
             return
         self._world_to_map.on_next(tf)
 
-    def _on_fiducial_fix(self, fix: Transform) -> None:
-        # The visual module publishes world->map; the prior stores relocalize()'s
-        # own convention (map_T_world) — invert here, once, at the boundary.
-        # Age is stamped at arrival in the prior's monotonic timebase (fix.ts is
-        # epoch); publish latency is negligible against the decay scales.
-        self._fiducial_prior.update(np.linalg.inv(fix.to_matrix()))
+    def _on_detections(self, msg: Detection3DArray) -> None:
+        """Feed each marker sighting's world_T_marker to the fiducial prior. The
+        wire Detection3DArray carries marker_id + the world-frame marker pose
+        (bbox.center) but NOT corners_px or the camera transform, so the prior
+        fuses on min-obs + time window; the pixel-gated ambiguity/reproj/view
+        checks activate wherever the corners are available (offline harness)."""
+        if self._fiducial_prior is None:
+            return
+        ts = msg.ts
+        for detection in msg.detections[: msg.detections_length]:
+            marker_id = self._marker_id_from_detection(detection)
+            if marker_id is None:
+                continue
+            center = detection.bbox.center  # world_T_marker (frame_id == world)
+            world_T_marker = matrix_from_pose7(
+                (
+                    center.position.x,
+                    center.position.y,
+                    center.position.z,
+                    center.orientation.x,
+                    center.orientation.y,
+                    center.orientation.z,
+                    center.orientation.w,
+                )
+            )
+            self._fiducial_prior.observe(marker_id, world_T_marker, ts)
+
+    @staticmethod
+    def _marker_id_from_detection(detection: Detection3D) -> int | None:
+        """Marker id from a wire Detection3D: the ``id`` field, else the numeric
+        tail of a ``DICT:id`` class label (the detector's marker_label encoding)."""
+        raw = str(getattr(detection, "id", "")).strip()
+        if raw.isdigit():
+            return int(raw)
+        for result in detection.results[: detection.results_length]:
+            class_id = str(result.hypothesis.class_id).strip()
+            if ":" in class_id:
+                tail = class_id.rsplit(":", 1)[1].strip()
+                if tail.isdigit():
+                    return int(tail)
+        return None
 
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
         assert self._premap is not None
@@ -163,7 +245,7 @@ class RelocalizationModule(Module):
         extra_priors: list[LastPosePrior | FiducialPrior] = []
         if self.config.use_last_pose_seed:
             extra_priors.append(self._last_pose_prior)
-        if self.config.use_fiducial_prior:
+        if self.config.use_fiducial_prior and self._fiducial_prior is not None:
             extra_priors.append(self._fiducial_prior)
         try:
             if extra_priors:

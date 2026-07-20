@@ -119,6 +119,29 @@ class TagEstimate:
     ts: float  # latest contributing glimpse's timestamp
 
 
+def pose7_from_matrix(matrix: np.ndarray) -> tuple[float, float, float, float, float, float, float]:
+    """4x4 homogeneous transform -> ``(x, y, z, qx, qy, qz, qw)``."""
+    translation = matrix[:3, 3]
+    quaternion = Rotation.from_matrix(matrix[:3, :3]).as_quat()  # x, y, z, w
+    return (
+        float(translation[0]),
+        float(translation[1]),
+        float(translation[2]),
+        float(quaternion[0]),
+        float(quaternion[1]),
+        float(quaternion[2]),
+        float(quaternion[3]),
+    )
+
+
+def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
+    """``(x, y, z, qx, qy, qz, qw)`` -> 4x4 homogeneous transform."""
+    matrix = np.eye(4)
+    matrix[:3, 3] = pose[:3]
+    matrix[:3, :3] = Rotation.from_quat(pose[3:7]).as_matrix()
+    return matrix
+
+
 def view_quality(pose_cam: tuple[float, ...] | list[float]) -> tuple[float, float]:
     """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
 
