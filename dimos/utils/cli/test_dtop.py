@@ -14,17 +14,19 @@
 
 import pytest
 
-from dimos.utils.cli.dtop import select_memory_metric
+from dimos.utils.cli.dtop import ResourceSpyApp, _compute_ranges
 
 
 @pytest.mark.parametrize(
-    ("pss_range", "expected"),
+    ("panel_pss", "expected"),
     [
-        pytest.param((0, 32 * 1048576), ("PSS", "pss"), id="pss"),
-        pytest.param((0, 0), ("RSS", "rss"), id="rss-fallback"),
+        pytest.param((0, 32 * 1048576), "PSS 0.0 MB", id="pss"),
+        pytest.param((0, 0), "RSS 64.0 MB", id="rss-fallback"),
     ],
 )
-def test_select_memory_metric_is_consistent_for_panel(
-    pss_range: tuple[int, int], expected: tuple[str, str]
+def test_make_lines_selects_one_memory_metric_for_panel(
+    panel_pss: tuple[int, int], expected: str
 ) -> None:
-    assert select_memory_metric({"pss": pss_range}) == expected
+    data = [{"pss": pss, "rss": 64 * 1048576} for pss in panel_pss]
+    line1, _ = ResourceSpyApp._make_lines(data[0], stale=False, ranges=_compute_ranges(data))
+    assert expected in line1.plain
