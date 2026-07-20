@@ -49,7 +49,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.pure import rim
+from dimos.pure import graph as pg, rim
 from dimos.pure.legacy import legacy_actor, legacy_blueprint
 from dimos.pure.stepspec import PureModuleDefinitionError
 
@@ -83,6 +83,19 @@ class PureEcho(pm.PureModule):
 
     def step(self, i: In) -> Out:
         return PureEcho.Out(echo=Ping(ts=i.ts, v=i.ping.v * self.gain))
+
+
+class EchoGraph(pg.PureGraph):
+    """A one-member pure graph wrapping PureEcho — the graph-lowering deploy twin."""
+
+    class In(pm.In):
+        ping: Ping
+
+    class Out(pm.Out):
+        echo: Ping
+
+    def wire(self, i: EchoGraph.In) -> EchoGraph.Out:
+        return EchoGraph.Out(echo=PureEcho()(ping=i.ping).echo)
 
 
 PROBE_LOG: list[str] = []
@@ -491,6 +504,44 @@ class TestBlueprintE2E:
             # The health topic we subscribed to above left a live LCM dispatcher thread;
             # reverse-stop the registry so the global thread-leak monitor stays green
             # (the "build_coordinator-style (reverse stop)" teardown spec §13.4 calls for).
+            for _t in list(mc._transport_registry.values()):
+                try:
+                    _t.stop()
+                except Exception:
+                    pass
+
+
+# ── the graph-lowering acceptance bar (T13 §9): a pure GRAPH beside a legacy ──
+
+
+@pytest.mark.skipif_macos_bug
+class TestGraphBlueprintE2E:
+    def test_graph_deploys_next_to_legacy(self) -> None:
+        # Scaled-down §7.4: EchoGraph.blueprint() lowers to a namespaced member
+        # atom that deploys under the coordinator next to a legacy module, with
+        # its rim In/Out exposed so data flows both directions on the shared bus.
+        bp = autoconnect(Blueprint.create(LegacyPinger), EchoGraph.blueprint())
+        mc = ModuleCoordinator.build(bp, {"g": {"viewer": "none"}})
+        try:
+            # The graph member deploys under its namespace, on its own worker (P9).
+            assert set(mc._deployed_modules) == {"legacypinger", "echo_graph/pure_echo"}
+            workers = mc._managers["python"].workers  # type: ignore[attr-defined]
+            owners = {w.worker_id for w in workers for m in w.module_names}
+            assert len(owners) >= 2
+
+            # Rim ping/echo stay exposed (bare) and link to the legacy pinger; the
+            # graph's interior health is namespaced, never colliding on the bus.
+            registry_names = {name for name, _ in mc._transport_registry}
+            assert {"ping", "echo"} <= registry_names
+            assert "echo_graph/health" in registry_names
+
+            # Data both directions: pinger -> graph member step -> pinger's In.
+            pinger = mc.get_instance("legacypinger")
+            echoed = pinger.peek_stream("echo", 10.0)
+            assert isinstance(echoed, Ping) and echoed.v > 0
+        finally:
+            mc.stop()
+            mc.stop()
             for _t in list(mc._transport_registry.values()):
                 try:
                     _t.stop()
