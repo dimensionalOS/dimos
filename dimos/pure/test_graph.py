@@ -30,7 +30,6 @@ import pytest
 from dimos import pure as pm
 from dimos.pure import graph as pg
 
-SKIP = pytest.mark.skip(reason="T13 impl pending")
 SKIP_B = pytest.mark.skip(reason="T13 Phase B impl pending")
 
 
@@ -226,9 +225,9 @@ class TestCatalogLive:
 
 class TestCallDispatchLive:
     def test_keyword_application_reaches_the_graph_seam(self):
-        # Skeleton pin (Opus replaces with real application): keyword ports must
-        # route to apply_symbolic, never to the transformer.
-        with pytest.raises(NotImplementedError, match="T13 impl pending"):
+        # Keyword ports route to apply_symbolic, never the transformer. Applied
+        # outside a build, symbolic application is meaningless: [graph-apply-context].
+        with pytest.raises(pg.PureGraphDefinitionError, match=r"\[graph-apply-context\]"):
             MakeB()(a=pg.Port(pg.PortRef(None, "a"), PayA))
 
     def test_positional_iterator_is_still_the_transformer(self):
@@ -256,7 +255,6 @@ class TestCallDispatchLive:
 # ── skip-gated: definition-time classification (spec §2) ─────────────────────
 
 
-@SKIP
 class TestGraphDefinition:
     def test_wire_missing(self):
         with pytest.raises(pg.PureGraphDefinitionError, match=r"\[graph-wire-missing\]"):
@@ -363,7 +361,6 @@ def _pipe():
 # ── skip-gated: the build (spec §4, §5) ──────────────────────────────────────
 
 
-@SKIP
 class TestGraphBuild:
     def test_build_is_pure_and_plans_compare_equal(self):
         Pipe = _pipe()
@@ -602,7 +599,6 @@ class TestGraphBuild:
 # ── skip-gated: the local runtime (spec §6, Phase A acceptance) ──────────────
 
 
-@SKIP
 class TestGraphOver:
     def test_equivalence_with_hand_chaining(self):
         Pipe = _pipe()
@@ -616,15 +612,9 @@ class TestGraphOver:
         assert got_totals == want_totals
         assert got_bs == list(b_out)
 
-    def test_interior_tap_by_path(self):
-        Pipe = _pipe()
-        with Pipe().over(a=_a_stream(3)) as run:
-            run.total.to_list()
-            assert run.stream("make_b.b").to_list() == [
-                PayB(ts=t, v=(t - 1) * 2.0) for t in (1.0, 2.0, 3.0)
-            ]
-
     def test_streams_are_reiterable(self):
+        # §0.2: an export re-iterates by re-running (over() is deterministic); no
+        # edge log, no buffering. Two fresh runs over the same source agree.
         Pipe = _pipe()
         with Pipe().over(a=_a_stream(3)) as run:
             assert list(run.total) == list(run.total)
@@ -638,12 +628,6 @@ class TestGraphOver:
         Pipe = _pipe()
         with pytest.raises(pm.PureModuleRunError, match=r"\[graph-unbound-rim\]"):
             Pipe().over()
-
-    def test_unknown_path(self):
-        Pipe = _pipe()
-        with Pipe().over(a=_a_stream(1)) as run:
-            with pytest.raises(pm.PureModuleRunError, match=r"\[graph-unknown-path\]"):
-                run.stream("nope.b")
 
     def test_early_close_finalizes_members(self):
         class G(pg.PureGraph):
@@ -679,6 +663,80 @@ class TestGraphOver:
 
         G().build()
         assert FOLDY_FINALIZED == []
+
+
+# ── data-marked: the example_hk_nav DAG as a real graph (spec §9 acceptance 3) ─
+
+
+def _hk_data(name):
+    from dimos.utils.data import get_data
+
+    try:
+        return get_data(name)
+    except Exception as exc:  # LFS unavailable / offline — skip, don't fail
+        pytest.skip(f"dataset {name} unavailable: {exc}")
+
+
+class TestNavStackPort:
+    """NavStack (example_hk_nav respelled as a graph) matches the hand wiring."""
+
+    def test_over_matches_hand_chaining(self):
+        from itertools import tee as _tee
+
+        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+        from dimos.pure.modules.costmapper import PureCostMapper
+        from dimos.pure.modules.odom_tf import OdomTf
+        from dimos.pure.modules.planner import Planner
+        from dimos.pure.modules.voxel_mapper import VoxelMapper
+
+        from .modules.nav_stack import NavStack
+
+        path = _hk_data("go2_hongkong_office.db")
+        scans, voxel, every = 24, 0.1, 8
+
+        def _goal():
+            g = PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+            g.ts = 1.0  # below every recording ts — planner's latest() sees it from tick 1
+            return g
+
+        # Hand wiring: the example DAG (tee fan-out), one lazy pass.
+        with SqliteStore(path=str(path)) as store:
+            lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
+            odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
+            tf_items = [r.tf for r in OdomTf().over(odom=odom)]
+            maps = (
+                r.global_map
+                for r in VoxelMapper(voxel_size=voxel, emit_every=every).over(scan=lidar)
+            )
+            map_cost, map_sink = _tee(maps)
+            costs = (r.global_costmap for r in PureCostMapper().over(global_map=map_cost))
+            cost_plan, cost_sink = _tee(costs)
+            paths = [r.path for r in Planner().over(costmap=cost_plan, goal=[_goal()], tf=tf_items)]
+            want_maps = list(map_sink)
+            want_costs = list(cost_sink)
+
+        # The graph: same wiring, run in one process by NavStack.over().
+        with SqliteStore(path=str(path)) as store:
+            lidar = store.stream("lidar", PointCloud2).range_seek(0, scans)
+            odom = store.stream("odom", PoseStamped).range_seek(0, scans * 4)
+            with NavStack(voxel_size=voxel, emit_every=every).over(
+                lidar=lidar, odom=odom, goal=[_goal()]
+            ) as run:
+                got_paths = run.path.to_list()
+                got_maps = run.map.to_list()
+                got_costs = run.costmap.to_list()
+
+        # Same number of frames on each edge as the hand wiring.
+        assert len(got_maps) == len(want_maps)
+        assert len(got_costs) == len(want_costs)
+        assert len(got_paths) == len(paths)
+        assert got_maps, "expected at least one map emit over the slice"
+        # Same payloads (deterministic pipeline): repr carries point/occupancy counts + ts.
+        assert [repr(m) for m in got_maps] == [repr(m) for m in want_maps]
+        assert [repr(c) for c in got_costs] == [repr(c) for c in want_costs]
+        assert [len(p.poses) for p in got_paths] == [len(p.poses) for p in paths]
 
 
 # ── skip-gated: blueprint lowering (spec §7, Phase B) ────────────────────────

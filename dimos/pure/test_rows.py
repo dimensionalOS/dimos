@@ -324,19 +324,23 @@ def test_error_specifier_without_annotation():
     assert "'x'" in msg
 
 
-def test_error_plain_field_on_in():
-    def build_default():
-        class B(In):
-            lidar: PointCloud2 = tick()
-            flag: bool = False
+def test_bare_in_field_defines_as_bare():
+    # §2.4 T1 amendment (T13): a specifier-less In field is legal at bundle
+    # definition (graph rims spell `class In(pm.In)` with bare fields); it
+    # classifies as "bare", with or without a plain default. Module-side
+    # loudness relocates to stepspec's [in-field-unsampled] (test_stepspec.py).
+    class WithDefault(In):
+        lidar: PointCloud2 = tick()
+        flag: bool = False
 
-    def build_bare():
-        class B(In):
-            lidar: PointCloud2 = tick()
-            bare: float
+    class WithoutDefault(In):
+        lidar: PointCloud2 = tick()
+        bare: float
 
-    _raises("needs a sampler specifier", build_default)
-    _raises("needs a sampler specifier", build_bare)
+    assert WithDefault.fields()["flag"].kind == "bare"
+    assert WithDefault.fields()["flag"].default is False
+    assert WithoutDefault.fields()["bare"].kind == "bare"
+    assert WithoutDefault.fields()["bare"].required
 
 
 def test_error_wrong_side_specifier():

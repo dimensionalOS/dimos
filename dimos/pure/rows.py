@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "UNSTAMPED",
+    "BareSpec",
     "BundleDefinitionError",
     "ContractSpec",
     "FieldSpec",
@@ -101,6 +102,14 @@ class TickSpec(FieldSpec):
     kind = "tick"
     side = "in"
     expect_hz: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class BareSpec(FieldSpec):
+    """In field with no sampler — legal only on graph rims (T13, introspection-only)."""
+
+    kind = "bare"
+    side = "in"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -443,11 +452,10 @@ def _process(cls: type[_Bundle]) -> None:
                 )
             own_specs[fname] = spec
         elif side == "in":
-            raise _err(
-                cls,
-                f"In field {fname!r} needs a sampler specifier "
-                "(tick()/latest()/interpolate()); plain defaults are only valid on Out bundles",
-            )
+            # §2.4 T1 amendment (T13): a specifier-less In field is legal at bundle
+            # definition — graph rims spell `class In(pm.In)` with bare fields. Module
+            # steps still reject BareSpec loudly via stepspec's [in-field-unsampled].
+            own_specs[fname] = BareSpec(default=f.default)
         else:
             own_specs[fname] = PlainSpec(default=f.default)
     cls.__pure_own_specs__ = own_specs
