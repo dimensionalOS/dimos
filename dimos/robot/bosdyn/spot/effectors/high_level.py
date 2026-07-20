@@ -30,9 +30,8 @@ at `SPOT_URDF_PATH` instead of Spot's live snapshot: `SpotHighLevel` subclasses
 `StaticTfPublisher`, which republishes those static extrinsics on an interval so
 the moving odom edge and rigid mounts together anchor every recorded frame.
 
-`bosdyn` is an optional extra (`uv sync --extra spot`); its imports live inside
-methods so this file stays importable — and blueprint discovery keeps working —
-on hosts where the SDK isn't installed.
+`bosdyn` (the Spot SDK, `uv sync --extra spot`) is a hard requirement to import
+this module — and therefore to discover the `spot` blueprint.
 """
 
 from __future__ import annotations
@@ -42,6 +41,29 @@ from collections.abc import AsyncIterator
 from dataclasses import field
 import time
 from typing import Any
+
+from bosdyn.client import create_standard_sdk  # type: ignore[import-not-found]
+from bosdyn.client.estop import (  # type: ignore[import-not-found]
+    EstopClient,
+    EstopEndpoint,
+    EstopKeepAlive,
+)
+from bosdyn.client.frame_helpers import (  # type: ignore[import-not-found]
+    BODY_FRAME_NAME,
+    VISION_FRAME_NAME,
+    get_a_tform_b,
+)
+from bosdyn.client.image import ImageClient  # type: ignore[import-not-found]
+from bosdyn.client.lease import LeaseClient, LeaseKeepAlive  # type: ignore[import-not-found]
+from bosdyn.client.math_helpers import SE3Pose  # type: ignore[import-not-found]
+from bosdyn.client.robot import Robot  # type: ignore[import-not-found]
+from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
+    RobotCommandBuilder,
+    RobotCommandClient,
+    blocking_sit,
+    blocking_stand,
+)
+from bosdyn.client.robot_state import RobotStateClient  # type: ignore[import-not-found]
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -154,12 +176,12 @@ class SpotHighLevel(StaticTfPublisher):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._robot: Any = None
-        self._command_client: Any = None
-        self._state_client: Any = None
-        self._image_client: Any = None
-        self._estop_keepalive: Any = None
-        self._lease_keepalive: Any = None
+        self._robot: Robot | None = None
+        self._command_client: RobotCommandClient | None = None
+        self._state_client: RobotStateClient | None = None
+        self._image_client: ImageClient | None = None
+        self._estop_keepalive: EstopKeepAlive | None = None
+        self._lease_keepalive: LeaseKeepAlive | None = None
         self._standing = False
         self._image_task: asyncio.Task[None] | None = None
         self._odom_task: asyncio.Task[None] | None = None
@@ -210,33 +232,15 @@ class SpotHighLevel(StaticTfPublisher):
         try:
             ip = await self.resolve_ip()
 
-            from bosdyn.client import create_standard_sdk  # type: ignore[import-not-found]
-            from bosdyn.client.estop import (  # type: ignore[import-not-found]
-                EstopClient,
-                EstopEndpoint,
-                EstopKeepAlive,
-            )
-            from bosdyn.client.image import ImageClient  # type: ignore[import-not-found]
-            from bosdyn.client.lease import (  # type: ignore[import-not-found]
-                LeaseClient,
-                LeaseKeepAlive,
-            )
-            from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
-                RobotCommandClient,
-                blocking_stand,
-            )
-            from bosdyn.client.robot_state import (  # type: ignore[import-not-found]
-                RobotStateClient,
-            )
-
             logger.info(f"Connecting to Spot at {ip}")
             sdk = await asyncio.to_thread(create_standard_sdk, "dimos-spot")
-            self._robot = await asyncio.to_thread(sdk.create_robot, ip)
-            await asyncio.to_thread(self._robot.authenticate, username, password)
+            robot = await asyncio.to_thread(sdk.create_robot, ip)
+            self._robot = robot
+            await asyncio.to_thread(robot.authenticate, username, password)
             await self.sync_clocks()
 
             if self.config.enable_estop:
-                estop_client = self._robot.ensure_client(EstopClient.default_service_name)
+                estop_client = robot.ensure_client(EstopClient.default_service_name)
                 endpoint = EstopEndpoint(
                     client=estop_client,
                     name="dimos-spot",
@@ -246,25 +250,22 @@ class SpotHighLevel(StaticTfPublisher):
                 self._estop_keepalive = EstopKeepAlive(endpoint)
 
             if self.config.acquire_lease:
-                lease_client = self._robot.ensure_client(LeaseClient.default_service_name)
+                lease_client = robot.ensure_client(LeaseClient.default_service_name)
                 await asyncio.to_thread(lease_client.take)
                 self._lease_keepalive = LeaseKeepAlive(lease_client)
 
-            self._command_client = self._robot.ensure_client(
-                RobotCommandClient.default_service_name
-            )
-            self._state_client = self._robot.ensure_client(RobotStateClient.default_service_name)
-            self._image_client = self._robot.ensure_client(ImageClient.default_service_name)
+            command_client = robot.ensure_client(RobotCommandClient.default_service_name)
+            self._command_client = command_client
+            self._state_client = robot.ensure_client(RobotStateClient.default_service_name)
+            self._image_client = robot.ensure_client(ImageClient.default_service_name)
 
             if self.config.power_on_at_start:
                 logger.info("Powering on Spot motors")
-                await asyncio.to_thread(self._robot.power_on, timeout_sec=POWER_ON_TIMEOUT_S)
+                await asyncio.to_thread(robot.power_on, timeout_sec=POWER_ON_TIMEOUT_S)
 
             if self.config.stand_at_start:
                 logger.info("Standing Spot")
-                await asyncio.to_thread(
-                    blocking_stand, self._command_client, timeout_sec=STAND_TIMEOUT_S
-                )
+                await asyncio.to_thread(blocking_stand, command_client, timeout_sec=STAND_TIMEOUT_S)
                 self._standing = True
 
             self.tf.start()
@@ -318,6 +319,10 @@ class SpotHighLevel(StaticTfPublisher):
 
     # the spot API can only poll - no callbacks
     async def _poll_images(self) -> None:
+        image_client = self._image_client
+        robot = self._robot
+        if image_client is None or robot is None:
+            return
         period = 1.0 / self.config.image_rate_hz
         config = self.config
         # bosdyn source name -> (image Out, CameraInfo Out, frame_id, quarter_turns).
@@ -392,10 +397,8 @@ class SpotHighLevel(StaticTfPublisher):
         while True:
             start = time.monotonic()
             try:
-                responses = await asyncio.to_thread(
-                    self._image_client.get_image_from_sources, sources
-                )
-                time_converter = self._robot.time_sync.get_robot_time_converter()
+                responses = await asyncio.to_thread(image_client.get_image_from_sources, sources)
+                time_converter = robot.time_sync.get_robot_time_converter()
             except Exception as error:
                 logger.error(f"Spot image capture failed: {error}")
                 await asyncio.sleep(period)
@@ -425,18 +428,16 @@ class SpotHighLevel(StaticTfPublisher):
             await asyncio.sleep(max(0.0, period - (time.monotonic() - start)))
 
     async def _poll_odom(self) -> None:
-        from bosdyn.client.frame_helpers import (  # type: ignore[import-not-found]
-            BODY_FRAME_NAME,
-            VISION_FRAME_NAME,
-            get_a_tform_b,
-        )
-        from bosdyn.client.math_helpers import SE3Pose  # type: ignore[import-not-found]
+        state_client = self._state_client
+        robot = self._robot
+        if state_client is None or robot is None:
+            return
 
         period = 1.0 / self.config.odom_rate_hz
         while True:
             start = time.monotonic()
             try:
-                state = await asyncio.to_thread(self._state_client.get_robot_state)
+                state = await asyncio.to_thread(state_client.get_robot_state)
             except Exception as error:
                 logger.error(f"Spot state capture failed: {error}")
                 await asyncio.sleep(period)
@@ -444,7 +445,7 @@ class SpotHighLevel(StaticTfPublisher):
 
             kinematic_state = state.kinematic_state
             # note:  creating new time_converter's is intenional, time_sync changes itself over time, time_converter doesn't
-            time_converter = self._robot.time_sync.get_robot_time_converter()
+            time_converter = robot.time_sync.get_robot_time_converter()
             ts = time_converter.local_seconds_from_robot_timestamp(
                 kinematic_state.acquisition_timestamp
             )
@@ -504,11 +505,9 @@ class SpotHighLevel(StaticTfPublisher):
     @rpc
     async def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send a Twist as a body velocity command, optionally for `duration` seconds."""
-        if self._command_client is None:
+        command_client = self._command_client
+        if command_client is None:
             return False
-        from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
-            RobotCommandBuilder,
-        )
 
         command = RobotCommandBuilder.synchro_velocity_command(
             v_x=clamp(twist.linear.x, -MAX_LINEAR_VELOCITY, MAX_LINEAR_VELOCITY),
@@ -518,7 +517,7 @@ class SpotHighLevel(StaticTfPublisher):
         window = duration if duration > 0 else self.config.cmd_vel_timeout
         try:
             await asyncio.to_thread(
-                self._command_client.robot_command,
+                command_client.robot_command,
                 command,
                 end_time_secs=time.time() + window,
             )
@@ -573,16 +572,11 @@ class SpotHighLevel(StaticTfPublisher):
     @skill
     async def stand(self) -> str:
         """Make Spot stand up. Spot must already be powered on."""
-        if self._command_client is None:
+        command_client = self._command_client
+        if command_client is None:
             return "Spot is not connected."
         try:
-            from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
-                blocking_stand,
-            )
-
-            await asyncio.to_thread(
-                blocking_stand, self._command_client, timeout_sec=STAND_TIMEOUT_S
-            )
+            await asyncio.to_thread(blocking_stand, command_client, timeout_sec=STAND_TIMEOUT_S)
             self._standing = True
             return "Spot is standing."
         except Exception as error:
@@ -592,14 +586,11 @@ class SpotHighLevel(StaticTfPublisher):
     @skill
     async def lie_down(self) -> str:
         """Make Spot lie down."""
-        if self._command_client is None:
+        command_client = self._command_client
+        if command_client is None:
             return "Spot is not connected."
         try:
-            from bosdyn.client.robot_command import (  # type: ignore[import-not-found]
-                blocking_sit,
-            )
-
-            await asyncio.to_thread(blocking_sit, self._command_client, timeout_sec=SIT_TIMEOUT_S)
+            await asyncio.to_thread(blocking_sit, command_client, timeout_sec=SIT_TIMEOUT_S)
             self._standing = False
             return "Spot is lying down."
         except Exception as error:
@@ -646,4 +637,7 @@ class SpotHighLevel(StaticTfPublisher):
         lands. `_poll_images` then pulls a live `RobotTimeConverter` each cycle rather
         than freezing one offset here, since the skew drifts and would go stale.
         """
-        await asyncio.to_thread(self._robot.time_sync.wait_for_sync)
+        robot = self._robot
+        if robot is None:
+            return
+        await asyncio.to_thread(robot.time_sync.wait_for_sync)
