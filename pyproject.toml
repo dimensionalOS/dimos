@@ -546,7 +546,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*|^dimos/memory2/pure(module|graph)_api_sketch[^/]*\\.py$"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*|^dimos/(memory2|pure)/pure(module|graph)_api_sketch[^/]*\\.py$"
 
 [[tool.mypy.overrides]]
 module = [
