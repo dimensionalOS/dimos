@@ -75,17 +75,13 @@ __all__ = [
 _TF_STREAM_SPEC: Final = TfSpec(name="tf")
 """Synthetic marker spec for the m.i.tf stream port (not a bundle field; spec §9.1)."""
 
-DEFAULT_CAPACITY: Final[int] = 16
-"""Default per-port ingress ring capacity — KeepLast-style drop-oldest (spec §5, AD1).
+DEFAULT_CAPACITY: Final[int] = 1
+"""Default per-port ingress ring capacity — KeepLast, coalesce-to-latest (spec §5, AD1).
 
-AD1 resolved the default to 1 (pure coalesce-to-latest); the pinned TR suite
-requires small same-thread bursts (up to 7 items) to survive a parked session
-thread, which capacity 1 cannot do under CPython scheduling — see the
-Implementation notes (T8a) appendix in ``tasks/t8-rim.md`` (relitigation
-record). 16 keeps the KeepLast semantics for any real producer/consumer rate
-mismatch while absorbing scheduling jitter. Per-port override
-``m.i.x.capacity = n`` (drop-oldest) or ``= None`` (unbounded, lossless —
-recorder-style modules)."""
+AD1's resolution: default 1, the house latest-wins semantic — a slow consumer
+sees the freshest frame, never a backlog of stale ones. Per-port override
+``m.i.x.capacity = n`` (shallow drop-oldest buffer) or ``= None`` (unbounded,
+lossless — recorder-style modules that must not drop a synchronous burst)."""
 
 STOP_JOIN_TIMEOUT: Final[float] = 5.0
 """stop()'s session-thread join bound — the rim's ONLY wall clock (spec §7.3 #6)."""

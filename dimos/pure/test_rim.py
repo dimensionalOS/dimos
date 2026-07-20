@@ -271,9 +271,14 @@ def _clear_logs() -> Iterator[None]:
 
 @pytest.fixture
 def live_echo() -> Iterator[tuple[Echo, FakeWire, FakeWire]]:
-    """A started Echo wired FakeWire→FakeWire; always stopped (thread hygiene)."""
+    """A started Echo wired FakeWire→FakeWire; always stopped (thread hygiene).
+
+    Lossless ingress (capacity=None): these tests assert zero-loss plumbing
+    (marshal order, subscriber fan-out) independent of the default KeepLast ring
+    — the default-1 drop behavior has its own test (test_backpressure_keeplast_default)."""
     m = Echo()
     win, wout = FakeWire(), FakeWire()
+    m.i.ping.capacity = None
     m.i.ping.transport = win
     m.o.pong.transport = wout
     rim.start_module(m)
@@ -442,6 +447,8 @@ class TestIngress:
     def test_hold_semantics_silent_secondary(self) -> None:
         m = TwoIn()
         wa, wb, wout = FakeWire(), FakeWire(), FakeWire()
+        m.i.a.capacity = None  # lossless: assert the hold, not the ring
+        m.i.b.capacity = None  # b's 0.5/5.0 burst must both land to bracket tick 1.0
         m.i.a.transport = wa
         m.i.b.transport = wb
         m.o.both.transport = wout
@@ -525,6 +532,7 @@ class TestLifecycle:
     def test_stop_drains_then_disposes(self) -> None:
         m = Stateful()
         win, wout = FakeWire(), FakeWire()
+        m.i.ping.capacity = None  # lossless: assert the drain processes all 3
         m.i.ping.transport = win
         m.o.total.transport = wout
         rim.start_module(m)
@@ -615,6 +623,7 @@ class TestEgress:
     def test_sparse_none_not_published(self) -> None:
         m = Sparse()
         win, walways, wrare = FakeWire(), FakeWire(), FakeWire()
+        m.i.ping.capacity = None  # lossless: both ticks must land to check sparse egress
         m.i.ping.transport = win
         m.o.always.transport = walways
         m.o.rare.transport = wrare
@@ -683,6 +692,7 @@ class TestAsync:
     def test_async_module_live(self) -> None:
         m = AsyncEcho()
         win, wout = FakeWire(), FakeWire()
+        m.i.ping.capacity = None  # lossless: assert all 5 flow through the live async window
         m.i.ping.transport = win
         m.o.pong.transport = wout
         rim.start_module(m)

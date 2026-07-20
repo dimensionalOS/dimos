@@ -1136,16 +1136,18 @@ and the auto-warm path are equivalent for it; no sketch amendment needed.
 Each deviation is forced by a pinned test or a verified structural fact;
 all else as written.
 
-1. **`DEFAULT_CAPACITY = 16`, not AD1's 1 — RELITIGATION.** Six original
-   TR tests (row-order, stop-drains, sparse, subscriber-exc, hold,
-   async-live) assert zero loss for same-thread inline bursts of 2-7
-   items. Empirically (CPython 3.12, 20/20) a burst loop never yields the
-   GIL to the parked session thread inside the 5 ms switch interval, so
-   capacity 1 deterministically evicts all but the last item. The burst
-   test pins default < 50; coherent range [7, 49]; 16 chosen. AD1's knob
-   surface is untouched — only the constant moved ("a one-constant change
-   later", t8-comparison). Re-pinning 1 means those six tests must pace
-   deliveries or go lossless.
+1. **`DEFAULT_CAPACITY = 1` — AD1 as written (relitigation reverted,
+   Ivan 2026-07-20).** An earlier T8a pass bumped the constant to 16 so
+   burst tests asserting zero loss over same-thread inline bursts of 2-7
+   items would pass (a burst loop never yields the GIL to the parked
+   session thread inside CPython's 5 ms switch interval, so capacity 1
+   evicts all but the last item). Reverted to AD1's 1: the default is
+   coalesce-to-latest, and a slow consumer must see the freshest frame,
+   not a backlog of stale ones — which capacity 16 would serve oldest-first.
+   The zero-loss tests now declare `capacity = None` (lossless is the
+   property they actually depend on); the KeepLast drop is proven by
+   `test_backpressure_keeplast_default` at the default. AD1's knob surface
+   was always untouched — only the constant moved back.
 2. **Scalars exempt from `[rim-unstamped-out]`.** TR pins bare `float`
    out-fields on transports while ts-less `Bare` raises. As built:
    int/float/complex/str/bytes pass; structured payloads need finite ts.

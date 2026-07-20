@@ -153,6 +153,55 @@ def test_over_early_exit_disposes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _SpyGrid.last is not None and _SpyGrid.last.disposed
 
 
+# ── tf: sensor-frame input transformed into the map frame ────────────────────
+
+
+def _shift_tf(dx: float, *ts: float) -> list[Any]:
+    """world <- sensor edge = a pure +dx translation, sampled at each ts."""
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    out = []
+    for t in ts:
+        tf = Transform(
+            translation=Vector3(dx, 0.0, 0.0), frame_id="world", child_frame_id="sensor", ts=t
+        )
+        tf.ts = t  # ctor swaps an explicit ts=0.0 for wall clock; force the sample ts
+        out.append(tf)
+    return out
+
+
+def test_over_tf_maps_sensor_into_world_frame() -> None:
+    # scans in "sensor"; a +10 m x tf carries them to "world" — identical to
+    # mapping the pre-shifted points with no tf wired.
+    dx = 10.0
+    sensor = [_cloud([[0.1, 0.2, 0.3], [2.1, 0.0, 0.0]], ts=1.0)]
+    tf = _shift_tf(dx, 0.0, 2.0)  # brackets the tick at ts=1.0
+    m = VoxelMapper(voxel_size=VOXEL, emit_every=0, sensor_frame="sensor")
+    (tf_out,) = list(m.over(scan=sensor, tf=tf))
+
+    world = [_cloud([[0.1 + dx, 0.2, 0.3], [2.1 + dx, 0.0, 0.0]], ts=1.0)]
+    (world_out,) = list(VoxelMapper(voxel_size=VOXEL, emit_every=0).over(scan=world))
+
+    np.testing.assert_array_equal(_centers(tf_out), _centers(world_out))
+    assert tf_out.global_map.frame_id == "world"
+
+
+def test_over_no_tf_is_passthrough() -> None:
+    # the historical shape: unwired tf → pose=None → scans insert as-is
+    m = VoxelMapper(voxel_size=VOXEL, emit_every=0, sensor_frame="sensor")
+    (out,) = list(m.over(scan=[_cloud([[0.1, 0.1, 0.1]], ts=1.0)]))
+    np.testing.assert_allclose(out.global_map.points_f32(), [[0.25, 0.25, 0.25]], atol=1e-6)
+
+
+def test_mapper2_over_tf_maps_sensor_into_world_frame() -> None:
+    dx = 10.0
+    sensor = [_cloud([[0.1, 0.2, 0.3]], ts=1.0)]
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=1, sensor_frame="sensor")
+    (out,) = list(m.over(scan=sensor, tf=_shift_tf(dx, 0.0, 2.0)))
+    np.testing.assert_allclose(out.global_map.points_f32(), [[10.25, 0.25, 0.25]], atol=1e-6)
+
+
 # ── real data: go2_hongkong_office (skip-guarded on missing dataset) ─────────
 
 N_SCANS = 300

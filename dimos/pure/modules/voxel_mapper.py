@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Voxel occupancy mapper over recorded world-frame lidar — the first real pure module.
+"""Voxel occupancy mapper over recorded lidar — the first real pure module.
 
 Accumulates ``PointCloud2`` scans into a sparse voxel grid, reusing
 :class:`dimos.mapping.voxels.VoxelGrid` (the repo's Open3D voxel-hashmap core),
@@ -28,14 +28,16 @@ sanctioned offline-natural shape and mirrors the proven
 ``dimos.mapping.voxels.VoxelMapTransformer`` one-to-one. Once T7 lands, this
 module can migrate to the sketch's Mealy-plus-resource spelling.
 
-No pose port: the reference dataset's scans arrive already transformed to the
-``world`` frame (LIO pipeline output) — verified empirically: per-scan bounding
-boxes track the robot's world-frame trajectory (scan centroids match the
-interpolated odom position throughout the run) and static geometry stays
-globally consistent. A sensor-frame dataset would add
-``pose: PoseStamped = pm.interpolate()`` (after
-``dimos.pure.interpolators.install()``) and transform each scan in step; this
-module deliberately keeps the simpler world-frame shape.
+Frame-agnostic input via an optional ``pose`` tf() port: it samples the
+``frame_id <- sensor_frame`` chain at each tick and every scan is transformed
+into ``frame_id`` (the grid/output frame, one source of truth) before insertion.
+Leave tf unwired — as the reference dataset does, its scans already world-frame
+LIO output — and ``pose`` defaults None, scans insert as-is (the historical
+shape). Wire ``over(tf=<stream>)`` (or a live ``m.i.tf`` feed) with
+``sensor_frame`` set to the scan's own frame to map a sensor-frame dataset in;
+the buffer composes the full chain, so only the two endpoints are named here. An
+unresolved tick falls through untransformed (optional-port passthrough), not
+dropped — wire tf only for genuinely sensor-framed data.
 
 Reference dataset ``get_data("go2_hongkong_office.db")`` — Go2 office session,
 558 s, 2026-05-06:
@@ -57,10 +59,6 @@ become 298 ticks. Ground truth
 first-300-scan map agrees 0.89 @ 1 voxel / 0.97 @ 2 voxels (0.1 m voxels).
 The full session (4227 ticks -> 120k voxels) agrees 0.73 / 0.85 / 0.94 @
 1 / 2 / 5 voxels — online LIO drifts from the PGO solution late in the run.
-
-``device`` defaults to ``"CPU:0"``: measured 5x faster than CUDA on this
-workload (~20k-point scans — GPU launch overhead dominates) and deterministic
-across machines; both devices produce identical grids.
 """
 
 from __future__ import annotations
@@ -69,22 +67,25 @@ from collections.abc import Iterator
 
 from dimos import pure as pm
 from dimos.mapping.voxels import VoxelGrid
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 __all__ = ["VoxelMapper", "VoxelMapper2"]
 
 
 class VoxelMapper(pm.PureModule):
-    """Fold world-frame lidar scans into a sparse voxel occupancy map."""
+    """Fold lidar scans into a sparse voxel occupancy map (optional tf into frame_id)."""
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 emits only at exhaustion
-    device: str = "CPU:0"  # o3d device; CPU measured faster than CUDA here
+    device: str = "GPU:0"  # o3d device; CPU measured faster than CUDA here
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
-    frame_id: str = "world"  # frame stamped on the emitted map
+    frame_id: str = "world"  # grid/output frame; also the pose tf() target
+    sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
 
     class In(pm.In):
         scan: PointCloud2 = pm.tick(expect_hz=8)
+        pose: Transform | None = pm.tf("{frame_id}", "{sensor_frame}", default=None)
 
     class Out(pm.Out):
         global_map: PointCloud2 = pm.contract(min_hz=0.25)  # occupied-voxel centers
@@ -103,12 +104,12 @@ class VoxelMapper(pm.PureModule):
         try:
             n = 0
             last_ts: float | None = None
-            for r in rows:
-                grid.add_frame(r.scan)
+            for row in rows:
+                grid.add_frame(row.scan if row.pose is None else row.scan.transform(row.pose))
                 n += 1
-                last_ts = r.ts
+                last_ts = row.ts
                 if self.emit_every > 0 and n % self.emit_every == 0:
-                    yield self._snapshot(grid, r.ts, n)
+                    yield self._snapshot(grid, row.ts, n)
             if last_ts is not None and (self.emit_every <= 0 or n % self.emit_every != 0):
                 yield self._snapshot(grid, last_ts, n)
         finally:
@@ -164,12 +165,14 @@ class VoxelMapper2(pm.PureModule):
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 never emits (no exhaustion flush)
-    device: str = "CPU:0"  # o3d device; CPU measured faster than CUDA here
+    device: str = "GPU:0"  # o3d device; CPU measured faster than CUDA here
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
-    frame_id: str = "world"  # frame stamped on the emitted map
+    frame_id: str = "world"  # grid/output frame; also the pose tf() target
+    sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
 
     class In(pm.In):
         scan: PointCloud2 = pm.tick(expect_hz=8)
+        pose: Transform | None = pm.tf("{frame_id}", "{sensor_frame}", default=None)
 
     class Out(pm.Out):
         global_map: PointCloud2 = pm.contract(min_hz=0.25)  # occupied-voxel centers
@@ -192,7 +195,7 @@ class VoxelMapper2(pm.PureModule):
 
     def step(self, s: State, i: In) -> tuple[State, Out | None]:
         """Add the scan to the grid, bump the counter, emit a snapshot on cadence."""
-        self.grid.add_frame(i.scan)
+        self.grid.add_frame(i.scan if i.pose is None else i.scan.transform(i.pose))
         n = s.n_scans + 1
         s = s.replace(n_scans=n)
         if self.emit_every > 0 and n % self.emit_every == 0:
