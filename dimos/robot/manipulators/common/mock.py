@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.stream import Out
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 _mock_hw = HardwareComponent(
     hardware_id="arm",
@@ -51,7 +53,15 @@ _mock_right = HardwareComponent(
     adapter_type="mock",
 )
 
-coordinator_dual_mock = ControlCoordinator.blueprint(
+
+class _DualMockCoordinator(ControlCoordinator):
+    left_arm_joints: Out[JointState]
+    right_arm_joints: Out[JointState]
+
+
+coordinator_dual_mock = _DualMockCoordinator.blueprint(
+    instance_name="ControlCoordinator",
+    publish_robot_joint_states=True,
     hardware=[_mock_left, _mock_right],
     tasks=[
         TaskConfig(name="traj_left", type="trajectory", joint_names=_mock_left.joints, priority=10),
