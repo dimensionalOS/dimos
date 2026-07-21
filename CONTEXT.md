@@ -45,15 +45,7 @@ or motion command has been issued.
 **Arm activation**:
 The transition from read-only startup to active control after gravity-model
 loadability and finite-`G(q)` preflight. Every enable and recovery path repeats
-this preflight and also requires explicit `openyam_operator_approved=true`
-(`--openyam-operator-approved`). Without approval, normal and error-recovery
-enable are rejected before motor enable. It does not imply gripper availability.
-
-**Operator approval**:
-The explicit, default-deny physical-enable configuration
-`openyam_operator_approved`, exposed through the
-`--openyam-operator-approved` CLI option. It is an additional gate and does not
-replace gravity preflight or other commissioning and validation gates.
+this preflight before motor enable. It does not imply gripper availability.
 
 **Gravity-compensation mode**:
 The active arm state with zero position and velocity gains and feed-forward

@@ -21,29 +21,6 @@ counted as an arm degree of freedom.
 - **THEN** it reports six arm degrees of freedom with the specified motor types
   and CAN ordering, while retaining CAN ID 7 as a separate gripper actuator
 
-### Requirement: Default-deny operator approval for physical enable
-Physical OpenYAM enable SHALL require the explicit operator configuration
-`openyam_operator_approved=true`, exposed through the CLI as
-`--openyam-operator-approved`. The default SHALL be false. The adapter SHALL
-reject both normal and error-recovery enable before motor enable when approval
-is absent or false. Approval SHALL NOT bypass gravity preflight, direction
-commissioning, or limit validation.
-
-#### Scenario: Normal enable lacks operator approval
-- **WHEN** normal physical enable is requested without
-  `openyam_operator_approved=true`
-- **THEN** the adapter rejects enable before motor enable
-
-#### Scenario: Error recovery lacks operator approval
-- **WHEN** error-recovery physical enable is requested without
-  `openyam_operator_approved=true`
-- **THEN** the adapter rejects recovery enable before motor enable
-
-#### Scenario: Operator approval is supplied by CLI
-- **WHEN** the operator explicitly supplies `--openyam-operator-approved`
-- **THEN** the resolved configuration sets `openyam_operator_approved=true`,
-  while all other safety gates still apply
-
 ### Requirement: Gripper capability is upstream-gated
 The system SHALL leave OpenYAM gripper position and command operations
 unavailable until a released upstream `can-motor-control` API provides a

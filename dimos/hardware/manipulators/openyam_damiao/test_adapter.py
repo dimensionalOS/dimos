@@ -76,22 +76,9 @@ def test_openyam_requires_gravity_comp_and_model() -> None:
         )
 
 
-def test_openyam_operator_gate_rejects_normal_and_recovery_enable() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_model_path=GRAVITY_MODEL_PATH, use_mock_bus=True)
-    runtime = Mock()
-    adapter._runtime = runtime
-
-    assert not adapter.activate()
-    assert not adapter.write_enable(True)
-    assert not adapter.write_clear_errors()
-    runtime.disable.assert_not_called()
-    runtime.enable.assert_not_called()
-
-
-def test_openyam_operator_gate_allows_approved_enable() -> None:
+def test_openyam_normal_enable_and_error_recovery() -> None:
     adapter = OpenYamDamiaoAdapter(
         gravity_model_path=GRAVITY_MODEL_PATH,
-        operator_approved=True,
         use_mock_bus=True,
     )
     runtime = Mock()

@@ -19,9 +19,6 @@ architectures SHALL include x86_64.
 - Require every enable and recovery path to load the gravity model and complete
   finite-`G(q)` preflight before zero-gain gravity operation; failures must
   disable with no motion command and must not send zero torque.
-- Default-deny physical enable unless the explicit operator configuration
-  `openyam_operator_approved` is true, exposed through the CLI as
-  `--openyam-operator-approved`.
 - Preserve physical encoder-zero home; initial positions are mock-only.
 
 **Non-Goals:**
@@ -78,15 +75,6 @@ preflight before sending any zero-gain command. If model loading, gravity
 evaluation, enabling, or recovery fails, the arm SHALL be disabled with no
 motion command; it SHALL not send zero torque as a failure response. Only
 after successful preflight may the command path send `Kp=Kd=0` and `tau=G(q)`.
-
-### Require explicit operator approval for physical enable
-
-Physical OpenYAM enable SHALL default to denied. The only approval input is the
-explicit operator configuration `openyam_operator_approved`, exposed as the
-`--openyam-operator-approved` CLI option. Both normal enable and error-recovery
-enable SHALL reject before motor enable when this value is absent or false.
-Operator approval does not bypass gravity-model preflight, direction
-commissioning, limit validation, or any other safety gate.
 
 Disabling SHALL be a no-motion operation by default. An optional park action
 may be requested explicitly as a separate operation; disabling must never

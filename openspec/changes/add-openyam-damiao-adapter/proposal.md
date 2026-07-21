@@ -31,9 +31,6 @@ including x86_64.
   gains. Disable is no-motion by default, while park is explicit; a failed
   disable remains unresolved energized/unknown, is never reported disabled,
   and escalates to operator/e-stop procedure.
-- Default-deny physical enable behind explicit `openyam_operator_approved`
-  configuration, exposed as `--openyam-operator-approved`; reject normal and
-  error-recovery enable before motor enable without it.
 
 ## Capabilities
 

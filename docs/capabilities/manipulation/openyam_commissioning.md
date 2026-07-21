@@ -76,21 +76,6 @@ released and integrated can gripper support be reconsidered. The direction
 commissioning procedure below applies to the six planning joints only, not the
 gripper.
 
-## Operator approval gate
-
-Physical OpenYAM startup is default-deny. The operator must explicitly approve
-the external direction-verification record and the safety preconditions before
-enabling the driver:
-
-```bash
-dimos --openyam-operator-approved run openyam-planner-coordinator
-```
-
-`--openyam-operator-approved` is a per-run acknowledgement, not a calibration
-or a bypass of the gravity-model and state preflights. Without it, the adapter
-will not enable motors, including an enable attempted during error recovery.
-Mock/simulation hardware is unaffected by this physical approval gate.
-
 ## External direction verification precondition
 
 Before starting this driver, have an approved vendor tool or controlled bench
