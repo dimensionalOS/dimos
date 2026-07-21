@@ -165,3 +165,56 @@ def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> No
     assert status.episodes_discarded == 0
     assert status.state == "idle"
     assert status.last_event == "init"
+
+
+# ── set_episode RPC (runtime / agent-driven trigger) ──────────────────────────
+
+
+def test_set_episode_start_sets_label(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    msg = m.set_episode("start", "kitchen run")
+    ev = _events(m)[-1]
+    assert ev.last_event == "start"
+    assert ev.state == "recording"
+    assert ev.task_label == "kitchen run"
+    assert "kitchen run" in msg
+
+
+def test_set_episode_save_carries_then_resets_label(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.set_episode("start", "kitchen run")
+    m.set_episode("save")
+    ev = _events(m)[-1]
+    assert ev.last_event == "save"
+    assert ev.state == "idle"
+    assert ev.episodes_saved == 1
+    # the terminating event still carries the take's label ...
+    assert ev.task_label == "kitchen run"
+    # ... but the next unlabeled take falls back to the config default (None).
+    m.set_episode("start")
+    assert _events(m)[-1].task_label is None
+
+
+def test_set_episode_discard(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.set_episode("start", "bad take")
+    m.set_episode("discard")
+    ev = _events(m)[-1]
+    assert ev.last_event == "discard"
+    assert ev.state == "idle"
+    assert ev.episodes_discarded == 1
+
+
+def test_set_episode_invalid_event_is_noop(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    msg = m.set_episode("bogus")
+    assert "error" in msg.lower()
+    assert _events(m) == []  # no transition emitted

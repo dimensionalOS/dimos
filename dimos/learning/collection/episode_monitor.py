@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel
 from reactivex.disposable import Disposable
@@ -86,6 +86,9 @@ class EpisodeMonitorModule(Module):
         self._saved: int = 0
         self._discarded: int = 0
         self._prev_bits: dict[str, bool] = {}  # rising-edge detection for buttons
+        # Label for the current take. Defaults to the config value so button-driven
+        # takes keep their prior behavior; set per-episode via `set_episode(..)`.
+        self._task_label: str | None = self.config.default_task_label
         self._lock = threading.Lock()
 
     @rpc
@@ -109,6 +112,35 @@ class EpisodeMonitorModule(Module):
             self._prev_bits = {}
             status = self._snapshot("init", time.time())
         return self._emit(status)
+
+    @rpc
+    def set_episode(self, event: str, task_label: str | None = None) -> str:
+        """Drive the episode state machine from an external caller (e.g. the agent).
+
+        This is the runtime/programmatic equivalent of pressing the record button.
+        It lets a skill start, save, or discard a labeled episode without any
+        physical controller.
+
+        Args:
+            event: one of "start", "save", or "discard".
+            task_label: description of the demonstrated task; applied on "start".
+
+        Returns:
+            A human-readable status string (also safe to surface to the agent).
+        """
+        if event not in ("start", "save", "discard"):
+            return f"error: unknown episode event '{event}'; use start, save, or discard."
+        if event == "start" and task_label is not None:
+            with self._lock:
+                self._task_label = task_label
+        self._transition(cast("EpisodeCommand", event), time.time())
+        with self._lock:
+            saved, discarded = self._saved, self._discarded
+        if event == "start":
+            return f"Recording started (task: {task_label})." if task_label else "Recording started."
+        if event == "save":
+            return f"Episode saved. Total saved this session: {saved}."
+        return f"Episode discarded. Total discarded this session: {discarded}."
 
     # ── port handlers ────────────────────────────────────────────────────────
 
@@ -164,6 +196,11 @@ class EpisodeMonitorModule(Module):
                 self._state = "idle"
             # Snapshot under the mutation's lock so the event matches the state.
             status = self._snapshot(event, ts)
+            # A terminated take's label must not leak into the next one. Reset here
+            # (inside _transition) so it happens regardless of entry point — button,
+            # keyboard, or the set_episode RPC.
+            if event in ("save", "discard"):
+                self._task_label = self.config.default_task_label
         self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
@@ -174,7 +211,7 @@ class EpisodeMonitorModule(Module):
             episodes_saved=self._saved,
             episodes_discarded=self._discarded,
             last_event=last_event,
-            task_label=self.config.default_task_label,
+            task_label=self._task_label,
         )
 
     def _emit(self, status: EpisodeStatus) -> EpisodeStatus:
