@@ -19,12 +19,14 @@ import importlib
 import pkgutil
 import re
 import time
+from typing import Any
 
 import typer
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic
+from dimos.protocol.pubsub.encoders import is_heavy_lcm_topic
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
@@ -122,7 +124,12 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
     # a wildcard subscription decodes each message from that suffix. Untyped keys
     # don't resolve to a type and are skipped by the encoder. The ignore reflects the
     # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
-    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg))  # type: ignore[arg-type]
+    def on_msg(message: Any, received_topic: Topic) -> None:
+        if is_heavy_lcm_topic(received_topic):
+            message = received_topic.lcm_type.lcm_decode(message)  # type: ignore[union-attr]
+        print(message)
+
+    bus.subscribe(Topic(f"{key}/**"), on_msg)  # type: ignore[arg-type]
 
     _listen_forever(
         f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "

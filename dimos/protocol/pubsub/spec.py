@@ -25,6 +25,10 @@ MsgT_co = TypeVar("MsgT_co", covariant=True)
 TopicT_co = TypeVar("TopicT_co", covariant=True)
 
 
+def accept_all(_: Any) -> bool:
+    return True
+
+
 class PubSubBaseMixin(Generic[TopicT, MsgT]):
     """Mixin class providing sugar methods for PubSub implementations.
     Depends on the basic publish and subscribe methods being implemented.
@@ -123,7 +127,11 @@ class AllPubSub(PubSub[TopicT, MsgT], ABC):
     """
 
     @abstractmethod
-    def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
+    def subscribe_all(
+        self,
+        callback: Callable[[MsgT, TopicT], Any],
+        accept: Callable[[TopicT], bool] = accept_all,
+    ) -> Callable[[], None]:
         """Subscribe to all topics."""
         ...
 
@@ -155,7 +163,11 @@ class DiscoveryPubSub(PubSub[TopicT, MsgT], ABC):
         """Get notified when new topics are discovered."""
         ...
 
-    def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
+    def subscribe_all(
+        self,
+        callback: Callable[[MsgT, TopicT], Any],
+        accept: Callable[[TopicT], bool] = accept_all,
+    ) -> Callable[[], None]:
         """Subscribe to all topics by subscribing to each discovered topic."""
         import threading
 
@@ -163,9 +175,10 @@ class DiscoveryPubSub(PubSub[TopicT, MsgT], ABC):
         lock = threading.Lock()
 
         def on_new_topic(topic: TopicT) -> None:
-            unsub = self.subscribe(topic, callback)
-            with lock:
-                subscriptions.append(unsub)
+            if accept(topic):
+                unsub = self.subscribe(topic, callback)
+                with lock:
+                    subscriptions.append(unsub)
 
         discovery_unsub = self.subscribe_new_topics(on_new_topic)
 
@@ -186,6 +199,10 @@ class SubscribeAllCapable(Protocol[MsgT_co, TopicT_co]):
     Both AllPubSub (native) and DiscoveryPubSub (synthesized) satisfy this.
     """
 
-    def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, Any], Any],
+        accept: Callable[[Any], bool] = accept_all,
+    ) -> Callable[[], None]:
         """Subscribe to all messages on all topics."""
         ...

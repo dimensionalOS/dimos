@@ -45,7 +45,10 @@ class DimosCliCall:
         # overrides whose module is absent from the blueprint, but rejects
         # unknown `-o` keys outright. Blueprints without an mcpclient (e.g.
         # `coordinator-mock`) would otherwise fail config validation.
-        global_overrides: list[str] = []
+        # Behavioral E2E asserts navigation/agent/memory, not visualization.
+        # Default GlobalConfig.viewer is "rerun", which pulls RerunBridgeModule
+        # and its native cargo build. Dedicated bridge tests cover that path.
+        global_overrides: list[str] = ["--viewer", "none"]
         env = os.environ.copy()
         if self.mcp_port is not None:
             global_overrides += ["--mcp-port", str(self.mcp_port)]

@@ -63,6 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
+      id-token: write  # For codecov-action's OIDC upload
 
     steps:
       - name: Checkout
@@ -134,6 +135,39 @@ jobs:
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+      - name: Test native Rerun bridge
+        run: |
+          source .venv/bin/activate
+          python -m pytest -v -m native_rust \
+            --cov=dimos/ \
+            --junitxml=junit.xml \
+            --override-ini="addopts=--timeout=600 --timeout-method=thread -v --import-mode=importlib -p no:launch_testing -p no:launch_ros" \
+            dimos/visualization/rerun/test_native_bridge.py
+      - name: Turn coverage into xml
+        run: |
+          source .venv/bin/activate
+          python -m coverage xml
+      - name: Upload coverage
+        uses: codecov/codecov-action@v7
+        with:
+          disable_search: true
+          fail_ci_if_error: true
+          files: ./coverage.xml
+          flags: native-rust
+          use_oidc: true
+          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+          # See the tests job "Upload coverage" step (same file, full comment there).
+          use_pypi: true
+          version: "11.2.8"
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          report_type: test_results
+          use_oidc: true
+          # See the "Upload coverage" step above.
+          use_pypi: true
+          version: "11.2.8"
 
   md-babel:
     timeout-minutes: 15
@@ -282,13 +316,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or native_rust)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or native_rust)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml

@@ -84,10 +84,6 @@ def _recording_dir() -> Path:
 _RECORDING_DIR = _recording_dir()
 
 
-def _render_global_map(msg: Any) -> Any:
-    return msg.to_rerun()
-
-
 def _render_path(msg: Any) -> Any:
     # The planner emits an empty path when it finds no route to the goal.
     # Logging those would blank the line, so drop them and keep the last path.
@@ -152,7 +148,7 @@ _nav_rerun_config = {
     },
     "visual_override": {
         **rerun_config["visual_override"],
-        "world/global_map": _render_global_map,
+        "world/global_map": {"bottom_cutoff": 0.0},
         "world/path": _render_path,
         "world/camera_info": None,
         "world/color_image": None,

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 import threading
@@ -23,9 +23,15 @@ from typing import Any, Literal
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import (
+    HEAVY_LCM_TYPE_NAMES,
+    DecodingError,
+    LCMEncoderMixin,
+    PickleEncoderMixin,
+)
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
-from dimos.protocol.pubsub.spec import AllPubSub
+from dimos.protocol.pubsub.patterns import Glob
+from dimos.protocol.pubsub.spec import AllPubSub, accept_all
 from dimos.protocol.service.zenohservice import ZenohService
 from dimos.utils.logging_config import setup_logger
 
@@ -91,9 +97,12 @@ class Topic(LCMTopic):
             Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
             Topic("dimos/data")           -> "dimos/data"
         """
-        if self.lcm_type is not None:
-            return f"{self.pattern}/{self.lcm_type.msg_name}"
-        return self.pattern
+        if self.lcm_type is None:
+            return self.pattern
+        name = self.pattern
+        if self.lcm_type.msg_name in HEAVY_LCM_TYPE_NAMES and name.startswith("dimos/"):
+            name = "dimos-heavy/" + name.removeprefix("dimos/")
+        return f"{name}/{self.lcm_type.msg_name}"
 
 
 def _topic_to_key_expr(topic: LCMTopic) -> str:
@@ -118,6 +127,9 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
         "dimos/data"                        -> Topic("dimos/data", default_lcm_type)
         "dimos/data/unknown.Foo"            -> Topic("dimos/data/unknown.Foo", default_lcm_type)
     """
+    if key_expr.startswith("dimos-heavy/"):
+        key_expr = "dimos/" + key_expr.removeprefix("dimos-heavy/")
+
     # Try to resolve the last segment as a message type
     parts = key_expr.rsplit("/", 1)
     if len(parts) == 2:
@@ -177,49 +189,93 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     ) -> Callable[[], None]:
         """Subscribe to a Zenoh key expression."""
         key_expr = _topic_to_key_expr(topic)
+        key_exprs = [key_expr]
+        if "*" in key_expr and key_expr.startswith("dimos/"):
+            key_exprs.append("dimos-heavy/" + key_expr.removeprefix("dimos/"))
+        return self._subscribe_keys(key_exprs, topic, callback, accept_all)
+
+    def _subscribe_keys(
+        self,
+        key_exprs: list[str],
+        topic: Topic,
+        callback: Callable[[bytes, Topic], None],
+        accept: Callable[[Topic], bool],
+    ) -> Callable[[], None]:
+        key_expr = _topic_to_key_expr(topic)
 
         def on_sample(sample: zenoh.Sample) -> None:
+            sample_key = str(sample.key_expr)
+            if sample_key == key_expr:
+                received_topic = topic
+            else:
+                received_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
+            if not accept(received_topic):
+                return
             try:
                 data = sample.payload.to_bytes()
             except Exception:
-                logger.error(f"Error reading payload from {key_expr}", exc_info=True)
+                logger.error(f"Error reading payload from {sample_key}", exc_info=True)
                 return
-            # Concrete subscriptions only ever receive their own key, so the
-            # subscribed topic can be passed through without re-parsing.
-            sample_key = str(sample.key_expr)
-            if sample_key == key_expr:
-                recv_topic = topic
-            else:
-                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
-            callback(data, recv_topic)
+            callback(data, received_topic)
 
-        sub = self.session.declare_subscriber(key_expr, on_sample)
+        subscribers = [self.session.declare_subscriber(expr, on_sample) for expr in key_exprs]
         with self._subscriber_lock:
             if self._stopped:
-                sub.undeclare()
+                for subscriber in subscribers:
+                    subscriber.undeclare()
                 return lambda: None
-            self._subscribers.append(sub)
+            self._subscribers.extend(subscribers)
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
-                if sub not in self._subscribers:
+                if any(subscriber not in self._subscribers for subscriber in subscribers):
                     return  # Already removed by stop() or a concurrent unsubscribe
-                self._subscribers.remove(sub)
-            sub.undeclare()
+                for subscriber in subscribers:
+                    self._subscribers.remove(subscriber)
+            for subscriber in subscribers:
+                subscriber.undeclare()
 
         return unsubscribe
 
-    def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
+    def _subscribe_for_all(
+        self,
+        topic: Topic,
+        callback: Callable[[Any, Topic], None],
+        accept: Callable[[Topic], bool],
+        heavy: bool | Sequence[str | Glob],
+    ) -> Callable[[], None]:
+        key_exprs = [topic.key_expr]
+        if heavy is True:
+            key_exprs.append("dimos-heavy/" + topic.key_expr.removeprefix("dimos/"))
+        elif heavy is not False:
+            for name in heavy:
+                if isinstance(name, Glob):
+                    chunks = [
+                        chunk if chunk in ("*", "**") else chunk.replace("*", "$*")
+                        for chunk in name.glob.removeprefix("/").split("/")
+                    ]
+                    key_expr = f"dimos-heavy/{'/'.join(chunks)}/*"
+                    key_exprs.append(str(zenoh.KeyExpr.autocanonize(key_expr)))
+                else:
+                    key_exprs.append(f"dimos-heavy/{name.removeprefix('/')}/*")
+        return self._subscribe_keys(key_exprs, topic, callback, accept)
+
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, Topic], Any],
+        accept: Callable[[Topic], bool] = accept_all,
+        heavy: bool | Sequence[str | Glob] = True,
+    ) -> Callable[[], None]:
         """Subscribe to all dimos topics, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
         """
-        latest: dict[str, tuple[bytes, Topic]] = {}
+        latest: dict[str, tuple[Any, Topic]] = {}
         lock = threading.Lock()
         wake = threading.Event()
         stop = threading.Event()
 
-        def collect(msg: bytes, topic: Topic) -> None:
+        def collect(msg: Any, topic: Topic) -> None:
             # Fast path on the Zenoh delivery thread: keep only the newest per topic.
             with lock:
                 latest[str(topic)] = (msg, topic)
@@ -254,7 +310,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             self._drain_stops.append(stop_drain)
             thread.start()
 
-        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
+        inner_unsub = self._subscribe_for_all(Topic("dimos/**"), collect, accept, heavy)
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
@@ -290,7 +346,21 @@ class Zenoh(  # type: ignore[misc]
 ):
     """Zenoh pub/sub with LCM encoding for typed DimosMsg."""
 
-    ...
+    def _subscribe_for_all(
+        self,
+        topic: Topic,
+        callback: Callable[[Any, Topic], None],
+        accept: Callable[[Topic], bool],
+        heavy: bool | Sequence[str | Glob],
+    ) -> Callable[[], None]:
+        def deliver(message: bytes, received_topic: Topic) -> None:
+            try:
+                decoded = self.decode(message, received_topic)
+            except DecodingError:
+                return
+            callback(decoded, received_topic)
+
+        return ZenohPubSubBase._subscribe_for_all(self, topic, deliver, accept, heavy)
 
 
 class PickleZenoh(
@@ -299,4 +369,18 @@ class PickleZenoh(
 ):
     """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
 
-    ...
+    def _subscribe_for_all(
+        self,
+        topic: Topic,
+        callback: Callable[[Any, Topic], None],
+        accept: Callable[[Topic], bool],
+        heavy: bool | Sequence[str | Glob],
+    ) -> Callable[[], None]:
+        def deliver(message: bytes, received_topic: Topic) -> None:
+            try:
+                decoded = self.decode(message, received_topic)
+            except DecodingError:
+                return
+            callback(decoded, received_topic)
+
+        return ZenohPubSubBase._subscribe_for_all(self, topic, deliver, accept, heavy)

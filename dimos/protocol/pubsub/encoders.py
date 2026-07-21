@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import pickle
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from dimos.msgs.protocol import DimosMsg
 
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
 EncodingT = TypeVar("EncodingT")
+
+HEAVY_LCM_TYPE_NAMES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 
 
 class DecodingError(Exception):
@@ -97,11 +99,11 @@ class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
 class LCMTopicProto(Protocol):
     """Protocol for topics usable with LCM encoders."""
 
-    topic: str  # At decode time, always concrete string
+    topic: Any
     lcm_type: type[DimosMsg] | None
 
 
-class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
+class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg | bytes, bytes]):
     """Encoder mixin for DimosMsg using LCM binary encoding."""
 
     def encode(self, msg: DimosMsg | bytes, _: LCMTopicProto) -> bytes:
@@ -109,7 +111,13 @@ class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
             return msg
         return msg.lcm_encode()
 
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg:
+    def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg | bytes:
+        if is_heavy_lcm_topic(topic):
+            return msg
         if topic.lcm_type is None:
             raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
         return topic.lcm_type.lcm_decode(msg)
+
+
+def is_heavy_lcm_topic(topic: LCMTopicProto) -> bool:
+    return topic.lcm_type is not None and topic.lcm_type.msg_name in HEAVY_LCM_TYPE_NAMES

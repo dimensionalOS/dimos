@@ -12,14 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+import re
+import threading
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
@@ -70,6 +75,16 @@ class MockLCMMessage:
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, MockLCMMessage) and self.data == other.data
+
+
+def _image_message() -> Image:
+    return Image(np.array([[[1, 2, 3]]], dtype=np.uint8), frame_id="camera", ts=1.0)
+
+
+def _pointcloud_message() -> PointCloud2:
+    return PointCloud2.from_numpy(
+        np.array([[1.0, 2.0, 3.0]], dtype=np.float32), frame_id="lidar", timestamp=1.0
+    )
 
 
 def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
@@ -169,3 +184,42 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
+
+
+@pytest.mark.parametrize("make_message", (_image_message, _pointcloud_message))
+@pytest.mark.parametrize("subscription", ("fixed", "pattern", "all"))
+def test_clause_2_typed_lcm_heavy_delivery_enters_callback_with_wire_bytes(
+    lcm: LCM,
+    make_message: Callable[[], Image | PointCloud2],
+    mocker,
+    subscription: str,
+    retry_until,
+) -> None:
+    """Clause 2 DIM-1125: typed LCM heavy subscriptions receive bytes before decode."""
+    message = make_message()
+    publisher_topic = Topic("/clause2/heavy", type(message))
+    callback_decode_counts: list[int] = []
+    payloads: list[Any] = []
+    received = threading.Event()
+    decode = mocker.spy(type(message), "lcm_decode")
+
+    def callback(payload: Any, _: Topic) -> None:
+        callback_decode_counts.append(decode.call_count)
+        payloads.append(payload)
+        received.set()
+
+    if subscription == "all":
+        lcm.subscribe_all(
+            callback, lambda received_topic: received_topic.topic == publisher_topic.topic
+        )
+    else:
+        subscriber_topic = (
+            Topic(re.compile("/clause2/heavy")) if subscription == "pattern" else publisher_topic
+        )
+        lcm.subscribe(subscriber_topic, callback)
+    retry_until(received, lambda: lcm.publish(publisher_topic, message))
+
+    assert callback_decode_counts == [0]
+    assert isinstance(payloads[0], bytes)
+    assert type(message).lcm_decode(payloads[0]).lcm_encode() == message.lcm_encode()
+    assert decode.call_count == 1

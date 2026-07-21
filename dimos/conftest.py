@@ -110,6 +110,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
+    config.addinivalue_line(
+        "markers",
+        "native_rust: tests that need a Rust toolchain and cargo-built native binaries",
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")

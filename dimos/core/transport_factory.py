@@ -27,6 +27,7 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
+from dimos.protocol.pubsub.encoders import HEAVY_LCM_TYPE_NAMES
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -54,9 +55,6 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
     return name if name.startswith("/") else "/" + name
 
 
-# High-rate sensor streams: drop stale frames under congestion, never stall the
-# publisher. Matched by message type since that is what makes them high-rate.
-_LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # Agent/human conversation channels: low-rate, and a dropped message loses a
 # whole turn of conversation.
 _NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle")
@@ -64,7 +62,7 @@ _NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle")
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
     """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    if getattr(msg_type, "msg_name", None) in _LATEST_WINS_TYPES:
+    if getattr(msg_type, "msg_name", None) in HEAVY_LCM_TYPE_NAMES:
         return QOS_LATEST_WINS
     if name.lstrip("/") in _NEVER_DROP_CHANNELS:
         return QOS_NEVER_DROP

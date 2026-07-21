@@ -25,6 +25,7 @@ from typing import (
 
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.pubsub.encoders import is_heavy_lcm_topic
 from dimos.utils import colors
 
 try:
@@ -165,6 +166,12 @@ class LCMTransport(PubSubTransport[T]):
     ) -> Callable[[], None]:
         if not self._started:
             self.start()
+        if isinstance(self.lcm, LCM) and is_heavy_lcm_topic(self.topic):
+            msg_type = cast("type[DimosMsg]", self.topic.lcm_type)
+            return self.lcm.subscribe(
+                self.topic,
+                lambda message, _: callback(cast("T", msg_type.lcm_decode(cast("bytes", message)))),
+            )
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type]
 
 
@@ -582,6 +589,12 @@ class ZenohTransport(PubSubTransport[T]):
     ) -> Callable[[], None]:
         if not self._started:
             self.start()
+        if is_heavy_lcm_topic(self.topic):
+            msg_type = cast("type[DimosMsg]", self.topic.lcm_type)
+            return self.zenoh.subscribe(
+                self.topic,
+                lambda message, _: callback(cast("T", msg_type.lcm_decode(cast("bytes", message)))),
+            )
         return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
 
 

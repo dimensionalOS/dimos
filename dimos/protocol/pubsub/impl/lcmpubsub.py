@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import re
 import threading
@@ -22,11 +22,12 @@ from typing import Any
 
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
+    HEAVY_LCM_TYPE_NAMES,
     LCMEncoderMixin,
     PickleEncoderMixin,
 )
 from dimos.protocol.pubsub.patterns import Glob
-from dimos.protocol.pubsub.spec import AllPubSub
+from dimos.protocol.pubsub.spec import AllPubSub, accept_all
 from dimos.protocol.service.lcmservice import LCMService
 from dimos.utils.logging_config import setup_logger
 
@@ -91,8 +92,29 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
         topic_str = str(topic) if isinstance(topic, Topic) else topic
         self.l.publish(topic_str, message)
 
-    def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
-        return self.subscribe(Topic(re.compile(".*")), callback)
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, Topic], Any],
+        accept: Callable[[Topic], bool] = accept_all,
+        heavy: bool | Sequence[str | Glob] = True,
+    ) -> Callable[[], None]:
+        def filtered(message: Any, topic: Topic) -> None:
+            if accept(topic):
+                callback(message, topic)
+
+        if heavy is True:
+            return self.subscribe(Topic(re.compile(".*")), filtered)
+        allowed = () if heavy is False else tuple(heavy)
+        heavy_types = "|".join(re.escape(name) for name in HEAVY_LCM_TYPE_NAMES)
+        if allowed:
+            allowed_channels = "|".join(
+                name.pattern if isinstance(name, Glob) else re.escape(name) for name in allowed
+            )
+            pattern = (
+                f"^(?:{allowed_channels})#(?:{heavy_types})$|^(?!(?:.*)#(?:{heavy_types})$).*$"
+            )
+            return self.subscribe(Topic(re.compile(pattern)), filtered)
+        return self.subscribe(Topic(re.compile(f"^(?!(?:.*)#(?:{heavy_types})$).*$")), filtered)
 
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
