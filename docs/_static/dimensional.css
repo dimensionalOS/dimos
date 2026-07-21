@@ -1,0 +1,384 @@
+/* DimOS presentation layer: a quiet, dark documentation shell with a
+   cyan technical accent. Furo supplies the responsive structure; these rules
+   tune its proportions toward the public Dimensional docs. */
+:root {
+  --dimos-teal: #159bbd;
+  --dimos-cyan: #39c7e7;
+  --dimos-ink: #e9eef0;
+  --dimos-muted: #9aa6ab;
+  --dimos-panel: #101416;
+  --dimos-line: #252d31;
+}
+
+body {
+  background: #080a0b;
+}
+
+/* Keep both color modes intentional instead of letting the theme's blue
+   defaults compete with the DimOS teal. */
+body[data-theme="dark"],
+body[data-theme="auto"] {
+  --color-background-primary: #080a0b;
+  --color-background-secondary: #0d1113;
+  --color-background-hover: #141a1d;
+  --color-foreground-primary: var(--dimos-ink);
+  --color-foreground-secondary: var(--dimos-muted);
+  --color-foreground-muted: #748187;
+  --color-background-border: var(--dimos-line);
+  --color-brand-primary: var(--dimos-cyan);
+  --color-brand-content: var(--dimos-cyan);
+}
+
+/* Slim the announcement into the compact promo strip used by the hosted
+   docs, without removing its text or keyboard accessibility. */
+.announcement {
+  display: none;
+}
+
+.announcement-content {
+  max-width: 72rem;
+  margin-inline: auto;
+}
+
+.page {
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
+  margin-top: 3.25rem;
+  min-height: calc(100vh - 3.25rem);
+}
+
+.dimos-topnav {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3.25rem;
+  border-bottom: 1px solid var(--dimos-line);
+  background: rgba(8, 10, 11, .96);
+  backdrop-filter: blur(12px);
+}
+
+.dimos-topnav-inner {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  width: min(84rem, 100%);
+  height: 100%;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.dimos-topnav-logo {
+  display: inline-flex;
+  align-items: center;
+  width: 8.5rem;
+  color: #dceef2;
+  font-size: .78rem;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-decoration: none;
+}
+
+.dimos-topnav-logo img {
+  width: 8.5rem;
+  max-height: 2rem;
+  object-fit: contain;
+}
+
+.dimos-topnav-search {
+  display: flex;
+  align-items: center;
+  width: min(22rem, 42vw);
+  margin-inline: auto;
+  padding: .42rem .7rem;
+  border: 1px solid #1d262a;
+  border-radius: 999px;
+  background: #111619;
+}
+
+.dimos-topnav-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--dimos-ink);
+  font: inherit;
+  font-size: .8rem;
+}
+
+.dimos-topnav-search input::placeholder { color: #7e8b90; }
+.dimos-topnav-search kbd { color: #758187; font-size: .68rem; }
+
+.dimos-topnav-link {
+  color: #dce5e8;
+  font-size: .78rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dimos-topnav-link:hover { color: var(--dimos-cyan); }
+
+.dimos-topnav-cta {
+  padding: .43rem .8rem;
+  border-radius: .55rem;
+  background: var(--dimos-teal);
+  color: white;
+  font-weight: 650;
+}
+
+.dimos-topnav-cta:hover { color: white; background: #20a9c8; }
+
+.sidebar-drawer {
+  width: 17rem;
+  border-right: 1px solid var(--dimos-line);
+}
+
+.sidebar-container {
+  background: #0b0e10;
+}
+
+.sidebar-brand {
+  display: none;
+}
+
+.sidebar-logo-container {
+  max-width: 8.5rem;
+}
+
+.sidebar-logo { max-height: 2.1rem; }
+.sidebar-brand-text { display: none; }
+.sidebar-search-container { display: none; }
+
+/* Furo's native sidebars are sticky to the viewport. Offset both scroll
+   regions by the same compact header height so neither can slide beneath it. */
+.sidebar-sticky,
+.toc-sticky {
+  top: 3.25rem;
+  height: calc(100vh - 3.25rem);
+}
+
+.sidebar-tree {
+  padding: 1rem .85rem 2rem;
+  font-size: .84rem;
+}
+
+.sidebar-tree .toctree-l1 > a {
+  color: #dce5e8;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.sidebar-tree .toctree-l1.current > a,
+.sidebar-tree a.current,
+.sidebar-tree a:hover {
+  color: var(--dimos-cyan);
+}
+
+/* The source page outline belongs in the right-hand TOC, not in the global
+   catalog sidebar. Page links still remain visible because they have no # in
+   their URL. :has() is supported by current evergreen browsers and leaves the
+   semantic navigation intact for non-CSS users. */
+.sidebar-tree li:has(> a[href*="#"]):not(.current-page) { display: none; }
+
+.main {
+  background: radial-gradient(circle at 85% 0%, rgba(21, 155, 189, .07), transparent 32rem);
+}
+
+.content {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding-inline: 2rem;
+}
+
+.article-container {
+  max-width: 42rem;
+  margin-inline: auto;
+}
+
+.content h1 {
+  margin-top: 1.25rem;
+  color: var(--dimos-ink);
+  font-size: clamp(2rem, 3.2vw, 2.25rem);
+  line-height: 1.12;
+  letter-spacing: -.035em;
+  font-weight: 720;
+}
+
+.content h2 {
+  margin-top: 2.8rem;
+  color: var(--dimos-ink);
+  font-size: 1.55rem;
+  letter-spacing: -.02em;
+}
+
+.content p,
+.content li {
+  color: #aeb8bc;
+  line-height: 1.65;
+}
+
+.toc-drawer {
+  width: 13rem;
+}
+
+/* Do not reserve a desktop grid track for pages with no page outline. */
+.toc-drawer.no-toc { display: none; }
+
+/* The rail is content-sized; the border should not run down an empty column. */
+.toc-drawer:not(.no-toc) {
+  align-self: start;
+  padding-inline-start: 1.1rem;
+}
+
+.toc-drawer:not(.no-toc) .toc-sticky {
+  height: auto;
+  max-height: calc(100vh - 4.5rem);
+  overflow-y: auto;
+  padding: .85rem 0 1rem 1rem;
+  border-left: 1px solid var(--dimos-line);
+}
+
+.toc-title {
+  display: block;
+  margin-bottom: .65rem;
+  color: #dce5e8;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.toc-tree {
+  font-size: .82rem;
+}
+
+.toc-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.toc-tree ul ul {
+  margin: .2rem 0 .25rem .45rem;
+  padding-left: .55rem;
+  border-left: 1px solid #1c272b;
+}
+
+.toc-tree a {
+  display: block;
+  padding: .25rem .45rem;
+  border-radius: .3rem;
+  color: #8f9da2;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.toc-tree > ul > li > a,
+.toc-tree li.active > a,
+.toc-tree a.current,
+.toc-tree a[aria-current="true"],
+.toc-tree a[aria-current="location"] {
+  color: var(--dimos-ink);
+  font-weight: 650;
+}
+
+.toc-tree li.active > a,
+.toc-tree a.current,
+.toc-tree a[aria-current="true"],
+.toc-tree a[aria-current="location"],
+.toc-tree a:hover {
+  background: rgba(57, 199, 231, .08);
+  color: var(--dimos-cyan);
+}
+
+/* The page outline is intentionally deferred to a dedicated Sphinx plugin.
+   Remove the drawer and both Furo toggle affordances at every breakpoint so
+   the article reclaims the full main column without an empty rail. */
+.toc-drawer,
+.toc-overlay-icon,
+.toc-content-icon,
+.toc-header-icon {
+  display: none !important;
+}
+
+.sd-card {
+  position: relative;
+  min-height: 10rem;
+  border: 1px solid #283237;
+  border-radius: .8rem;
+  background: rgba(15, 19, 21, .72);
+  box-shadow: none;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+
+.sd-card:hover {
+  border-color: #347f91;
+  background: #11191c;
+  transform: translateY(-2px);
+}
+
+.sd-card-body {
+  padding: 1.25rem 1.2rem 1.15rem 1.2rem;
+}
+
+.sd-card-title {
+  color: #f0f5f6;
+  font-size: 1rem;
+  letter-spacing: -.01em;
+}
+
+.dimos-card .sd-card-title::before {
+  display: block;
+  margin-bottom: .85rem;
+  color: var(--dimos-cyan);
+  font-size: 1.35rem;
+  line-height: 1;
+  font-weight: 400;
+}
+
+.dimos-icon-map .sd-card-title::before { content: "⌁"; }
+.dimos-icon-eye .sd-card-title::before { content: "⊙"; }
+.dimos-icon-robot .sd-card-title::before { content: "♙"; }
+.dimos-icon-brain .sd-card-title::before { content: "◌"; }
+.dimos-icon-rocket .sd-card-title::before { content: "↗"; }
+.dimos-icon-microchip .sd-card-title::before { content: "▦"; }
+.dimos-icon-diagram-project .sd-card-title::before { content: "⌘"; }
+.dimos-icon-bolt .sd-card-title::before { content: "ϟ"; }
+.dimos-icon-spark .sd-card-title::before { content: "◇"; }
+
+.sd-card p,
+.sd-card li {
+  margin-bottom: 0;
+  color: #aab5b9;
+  line-height: 1.45;
+}
+
+.sd-card strong { color: #f0f5f6; }
+.sd-card .highlight { overflow: visible; }
+.sd-card pre { white-space: normal; overflow: visible; }
+
+@media (max-width: 70rem) {
+  .article-container { max-width: 38rem; }
+}
+
+@media (max-width: 50rem) {
+  .page { margin-top: 3.25rem; }
+  .content { padding-inline: 1rem; }
+  .sidebar-drawer { width: min(17rem, 86vw); }
+  .toc-drawer,
+  .toc-drawer:not(.no-toc) { display: none; }
+  .dimos-topnav-link { display: none; }
+  .dimos-topnav-search { width: auto; flex: 1; margin-inline: 0; }
+  .dimos-topnav-cta { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-card { transition: none; }
+  .sd-card:hover { transform: none; }
+}
