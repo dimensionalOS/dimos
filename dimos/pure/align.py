@@ -536,6 +536,7 @@ class Aligner(Generic[InT]):
                     stats.drops_by_field[field_name] = stats.drops_by_field.get(field_name, 0) + 1
                 _DBG.warning(
                     "tick dropped: required tf field(s) unresolvable",
+                    bundle=self._bundle,
                     fields=sorted(unresolved),
                     tick_ts=tick_ts,
                     tf_frontier=None if ctx is None else ctx.frontier,
@@ -614,6 +615,7 @@ class Aligner(Generic[InT]):
                     if math.isfinite(p.last_ts) and ts > p.last_ts + _FUTURE_TS_OUTLIER_S:
                         _DBG.warning(
                             "dropping sample with implausible future ts (Go2 firmware bug)",
+                            bundle=self._bundle,
                             port=p.name,
                             ts=ts,
                             last_ts=p.last_ts,

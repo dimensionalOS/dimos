@@ -579,6 +579,7 @@ class TfContext:
         if math.isfinite(self._frontier) and ts > self._frontier + _FUTURE_TS_OUTLIER_S:
             _LOG.warning(
                 "dropping tf item with implausible future ts (Go2 firmware bug)",
+                owner=self.owner,
                 ts=ts,
                 frontier=self._frontier,
                 ahead_s=ts - self._frontier,
