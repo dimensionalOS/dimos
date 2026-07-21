@@ -30,7 +30,7 @@ its own worker via the T8 bridge. This is the **live** path: paced by the robot
 **Pure eval mode** (``--pure``, needs ``--replay``): the reason pure modules
 exist. The recording's mem2 store feeds :meth:`NavStack.over` **in-process** and
 the exported map/costmap/path fan into a single pure rerun consumer
-(:class:`~dimos.pure.modules.example_hk_nav.NavRerunSink`) via ``.save`` — the DAG
+(:class:`~dimos.pure.modules.rerunsink.NavRerunSink`) via ``.save`` — the DAG
 computes **once** (§0.5), there is **no wall clock in the data path**, so it runs
 **as fast as compute allows** (faster than realtime) while the rerun viewer updates
 live. mem2 db ──▶ NavStack (PureGraph) ──▶ pure rerun sink.
@@ -58,7 +58,7 @@ import argparse
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.pure.modules.nav_stack import NavStack
+from dimos.pure.modules.nav_stack import NavStack, NavStackPGO
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -68,7 +68,9 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 WORLD = "world"
 
 
-def go2_nav_blueprint(*, voxel_size: float = 0.1, connection: Blueprint | None = None) -> Blueprint:
+def go2_nav_blueprint(
+    *, voxel_size: float = 0.1, pgo: bool = False, connection: Blueprint | None = None
+) -> Blueprint:
     """Autoconnect the go2 rerun renderer + GO2Connection + click server + NavStack.
 
     Links are by the autoconnect (name, type) convention: GO2's ``lidar``/``odom``
@@ -86,7 +88,7 @@ def go2_nav_blueprint(*, voxel_size: float = 0.1, connection: Blueprint | None =
         vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
         connection or GO2Connection.blueprint(),
         RerunWebSocketServer.blueprint(),
-        NavStack.blueprint(voxel_size=voxel_size),
+        (NavStackPGO if pgo else NavStack).blueprint(voxel_size=voxel_size),
     ).remappings(
         [
             (RerunWebSocketServer, "clicked_point", "goal_point"),
@@ -95,7 +97,9 @@ def go2_nav_blueprint(*, voxel_size: float = 0.1, connection: Blueprint | None =
     )
 
 
-def run_pure(db_name: str, *, voxel_size: float = 0.1, sink: str = "spawn") -> int:
+def run_pure(
+    db_name: str, *, voxel_size: float = 0.1, pgo: bool = False, sink: str = "spawn"
+) -> int:
     """Faster-than-realtime in-process eval: mem2 db ▶ NavStack.over ▶ pure rerun sink.
 
     The recording's ``lidar``/``odom`` streams drive :meth:`NavStack.over`; a static
@@ -107,14 +111,14 @@ def run_pure(db_name: str, *, voxel_size: float = 0.1, sink: str = "spawn") -> i
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.pure.modules.example_hk_nav import NavRerunSink
+    from dimos.pure.modules.rerunsink import NavRerunSink
     from dimos.utils.data import get_data
 
     goal = PointStamped(x=0.0, y=0.0, z=0.0, frame_id=WORLD)
     goal.ts = 1.0  # below every recording ts, so the planner's latest() sees it from tick 1
 
     with SqliteStore(path=str(get_data(f"{db_name}.db"))) as store:
-        run = NavStack(voxel_size=voxel_size).over(
+        run = (NavStackPGO if pgo else NavStack)(voxel_size=voxel_size).over(
             lidar=store.stream("lidar", PointCloud2),
             odom=store.stream("odom", PoseStamped),
             goal_point=[goal],
@@ -138,6 +142,11 @@ def main() -> None:
     )
     parser.add_argument("--voxel-size", type=float, default=0.1)
     parser.add_argument(
+        "--pgo",
+        action="store_true",
+        help="map with PGOVoxelMapper: loop-closure-corrected keyframe map",
+    )
+    parser.add_argument(
         "--sink", choices=("grpc", "spawn"), default="spawn", help="rerun sink for --pure"
     )
     args = parser.parse_args()
@@ -145,7 +154,7 @@ def main() -> None:
     if args.pure:
         if args.replay is None:
             parser.error("--pure needs a recording: pass --replay DB")
-        run_pure(args.replay, voxel_size=args.voxel_size, sink=args.sink)
+        run_pure(args.replay, voxel_size=args.voxel_size, pgo=args.pgo, sink=args.sink)
         return
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -153,10 +162,12 @@ def main() -> None:
     if args.replay is not None:
         # GO2Connection replays its own db (ip='replay' + g.replay_db) — opaque to the graph.
         blueprint = go2_nav_blueprint(
-            voxel_size=args.voxel_size, connection=GO2Connection.blueprint(ip="replay")
+            voxel_size=args.voxel_size,
+            pgo=args.pgo,
+            connection=GO2Connection.blueprint(ip="replay"),
         ).global_config(replay_db=args.replay)
     else:
-        blueprint = go2_nav_blueprint(voxel_size=args.voxel_size).global_config(
+        blueprint = go2_nav_blueprint(voxel_size=args.voxel_size, pgo=args.pgo).global_config(
             robot_ip=args.robot_ip
         )
 

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 # Node type → RGBA color
 TYPE_COLORS: dict[int, tuple[int, int, int, int]] = {
-    0: (180, 180, 180, 200),  # normal — grey
+    0: (255, 255, 255, 255),  # normal — grey
     1: (0, 255, 0, 255),  # odom — green
     2: (255, 0, 0, 255),  # goal — red
     3: (255, 165, 0, 200),  # frontier — orange
@@ -138,8 +138,8 @@ class GraphNodes3D(Timestamped):
 
     def to_rerun(
         self,
-        z_offset: float = 1.7,
-        radii: float = 0.12,
+        z_offset: float = 0.25,
+        radii: float = 0.05,
     ) -> Archetype:
         """Render as ``rr.Points3D`` with type-based coloring."""
         import rerun as rr

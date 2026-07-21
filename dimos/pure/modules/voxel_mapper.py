@@ -69,8 +69,11 @@ from dimos import pure as pm
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.logging_config import setup_logger
 
 __all__ = ["VoxelMapper", "VoxelMapper2"]
+
+logger = setup_logger()
 
 
 class VoxelMapper(pm.PureModule):
@@ -78,7 +81,7 @@ class VoxelMapper(pm.PureModule):
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 emits only at exhaustion
-    device: str = "GPU:0"
+    device: str = "CUDA:0"
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
     frame_id: str = "world"  # grid/output frame; also the pose tf() target
     sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
@@ -99,7 +102,7 @@ class VoxelMapper(pm.PureModule):
             device=self.device,
             carve_columns=self.carve_columns,
             frame_id=self.frame_id,
-            show_startup_log=False,
+            show_startup_log=True,
         )
         try:
             n = 0
@@ -165,7 +168,7 @@ class VoxelMapper2(pm.PureModule):
 
     voxel_size: float = 0.1  # metric voxel edge length
     emit_every: int = 20  # emit every n scans; <= 0 never emits (no exhaustion flush)
-    device: str = "GPU:0"
+    device: str = "CUDA:0"
     carve_columns: bool = True  # clear re-observed (x, y) columns before insert
     frame_id: str = "world"  # grid/output frame; also the pose tf() target
     sensor_frame: str = "sensor"  # scan's own frame; pose samples frame_id <- sensor_frame
@@ -190,7 +193,7 @@ class VoxelMapper2(pm.PureModule):
             device=self.device,
             carve_columns=self.carve_columns,
             frame_id=self.frame_id,
-            show_startup_log=False,
+            show_startup_log=True,
         )
 
     def step(self, s: State, i: In) -> tuple[State, Out | None]:
