@@ -66,7 +66,6 @@ class PlanStatus(str, Enum):
     PLANNING = "planning"
     FRESH = "fresh"
     STALE = "stale"
-    EXECUTING = "executing"
     FAILED = "failed"
 
 
@@ -97,6 +96,7 @@ class PanelPlanState:
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
     plan: GeneratedPlan | None = None
+    plan_id: str | None = None
 
 
 @dataclass
@@ -112,7 +112,10 @@ class PanelState:
     backend_status: BackendConnectionStatus = BackendConnectionStatus.DISCONNECTED
     target_status: TargetStatus = TargetStatus.EMPTY
     action_status: ActionStatus = ActionStatus.IDLE
+    runtime_failure: bool = False
+    local_action_failure: bool = False
     manipulation_state: str = "DISCONNECTED"
+    ready_plan_id: str | None = None
     current_joints: list[float] | None = None
     cartesian_target: Pose | None = None
     feasibility: FeasibilityState = field(default_factory=FeasibilityState)
@@ -146,7 +149,7 @@ class PanelState:
             and bool(self.selected_group_ids)
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED"}
+            and self.manipulation_state in {"IDLE", "READY"}
             and self.plan_state.status != PlanStatus.PLANNING
         )
 
@@ -155,15 +158,24 @@ class PanelState:
             self.runtime == PanelRuntime.RUNNING
             and self.backend_status == BackendConnectionStatus.READY
             and self.action_status == ActionStatus.IDLE
+            and self.manipulation_state == "READY"
             and self.plan_state.status == PlanStatus.FRESH
+            and self.plan_state.plan_id is not None
+            and self.ready_plan_id is not None
+            and self.plan_state.plan_id == self.ready_plan_id
         )
 
     def can_cancel(self) -> bool:
-        return self.action_status in {
+        return self.manipulation_state in {
+            "PLANNING",
+            "DISPATCHING",
+            "RUNNING",
+            "CANCELLING",
+        } or self.action_status in {
             ActionStatus.RUNNING,
             ActionStatus.PREVIEWING,
             ActionStatus.EXECUTING,
-        } or (self.manipulation_state == "EXECUTING")
+        }
 
     def can_execute(self, action_status: ActionStatus | None = None) -> bool:
         plan = self.plan_state
@@ -173,9 +185,12 @@ class PanelState:
             and self.backend_status == BackendConnectionStatus.READY
             and effective_action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED"}
+            and self.manipulation_state == "READY"
             and plan.status == PlanStatus.FRESH
             and plan.plan is not None
+            and plan.plan_id is not None
+            and self.ready_plan_id is not None
+            and plan.plan_id == self.ready_plan_id
             and plan.group_ids == self.selected_group_ids
             and plan.target_sequence_id == self.latest_sequence_id
         ):

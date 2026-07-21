@@ -14,13 +14,18 @@
 
 """Generated-plan materialization tests."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation._test_manipulation_helpers import make_module
-from dimos.manipulation.manipulation_module import ManipulationState
+from dimos.manipulation._test_manipulation_helpers import (
+    close_test_runtimes,
+    install_runtime,
+    make_module,
+)
+from dimos.manipulation.execution_runtime import PreparedPlan
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -75,7 +80,14 @@ def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -
         ],
         max_velocity=velocity,
         max_acceleration=acceleration,
+        coordinator_task_name=f"task_{name}",
     )
+
+
+@pytest.fixture(autouse=True)
+def _close_runtime() -> Iterator[None]:
+    yield
+    close_test_runtimes()
 
 
 def _module(monkeypatch: pytest.MonkeyPatch):
@@ -96,8 +108,7 @@ def _module(monkeypatch: pytest.MonkeyPatch):
     module._world_monitor.world = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
     module._planner = MagicMock()
-    module._state = ManipulationState.PLANNING
-    module._planning_epoch = 1
+    install_runtime(module, [left, right])
     return module
 
 
@@ -115,13 +126,16 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert module._plan_selected_path(("left/group", "right/group"), path[0], path[-1], 1)
+    token = module._begin_group_planning()
+    assert token is not None
+    assert module._plan_selected_path(("left/group", "right/group"), path[0], path[-1], token)
     assert RecordingGenerator.calls == [[[0.0, 0.0, 0.0], [0.2, 0.1, 0.3]]]
     assert RecordingGenerator.limits == ([1.0, 1.0, 3.0], [2.0, 2.0, 4.0])
-    assert module._last_plan is not None
-    assert module._last_plan.path is not module._last_plan.trajectory.points
-    assert module._last_plan.trajectory.joint_names == names
-    assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
+    ready = module._execution_runtime.snapshot().ready_plan
+    assert isinstance(ready, PreparedPlan)
+    assert ready.generated_plan.path is not ready.generated_plan.trajectory.points
+    assert ready.generated_plan.trajectory.joint_names == names
+    assert ready.generated_plan.trajectory.points[-1].time_from_start == 1.0
 
 
 @pytest.mark.parametrize(
@@ -138,9 +152,11 @@ def test_rejects_malformed_or_nonfinite_waypoints(monkeypatch, path, message):
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
-    assert message in module._error_message
+    token = module._begin_group_planning()
+    assert token is not None
+    assert not module._plan_selected_path(("left/group",), path[0], path[-1], token)
+    assert module._execution_runtime.snapshot().ready_plan is None
+    assert message in (module.get_error() or "")
 
 
 def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatch):
@@ -152,8 +168,10 @@ def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatc
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
+    token = module._begin_group_planning()
+    assert token is not None
+    assert not module._plan_selected_path(("left/group",), path[0], path[-1], token)
+    assert module._execution_runtime.snapshot().ready_plan is None
     assert RecordingGenerator.calls == []
 
     module = _module(monkeypatch)
@@ -161,8 +179,10 @@ def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatc
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
+    token = module._begin_group_planning()
+    assert token is not None
+    assert not module._plan_selected_path(("left/group",), path[0], path[-1], token)
+    assert module._execution_runtime.snapshot().ready_plan is None
     assert len(RecordingGenerator.calls) == 1
 
 
@@ -173,9 +193,10 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch):
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
-    assert module._plan_selected_path(("left/group",), path[0], path[-1], 1)
+    token = module._begin_group_planning()
+    assert token is not None
+    assert module._plan_selected_path(("left/group",), path[0], path[-1], token)
     RecordingGenerator.calls = []
 
-    module._get_coordinator_client = MagicMock(return_value=None)
-    module._wait_for_trajectory_completion("left", timeout=0.0)
+    assert module.get_trajectory_status() is not None
     assert RecordingGenerator.calls == []

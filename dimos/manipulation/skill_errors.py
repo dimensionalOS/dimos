@@ -37,6 +37,12 @@ ManipulationError = Literal[
     "GRASP_ATTEMPTS_EXHAUSTED",
     "GRIPPER_FAILED",
     "WORLD_MONITOR_UNAVAILABLE",
+    "EXECUTION_CANCELLED",
+    "EXECUTION_REJECTED",
+    "EXECUTION_CANCEL_REJECTED",
+    "EXECUTION_CANCEL_UNRESOLVED",
+    "EXECUTION_DISPATCH_FAILED",
+    "RESET_FAILED",
 ]
 
 # Union of codes a manipulation skill may emit (common + manipulation-specific).

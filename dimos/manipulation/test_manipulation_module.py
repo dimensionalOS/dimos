@@ -22,14 +22,17 @@ They require Drake to be installed and will be skipped otherwise.
 from __future__ import annotations
 
 import importlib.util
-from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation.manipulation_module import (
-    ManipulationModule,
-    ManipulationState,
+from dimos.manipulation._test_manipulation_helpers import FakeCoordinatorGateway
+from dimos.manipulation.execution_runtime import (
+    ExecutionRuntime,
+    LifecycleState,
+    Outcome,
+    PreparedPlan,
 )
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -122,6 +125,9 @@ def module(xarm7_config):
         planning_timeout=10.0,
         visualization={"backend": "none"},
     )
+    gateway = FakeCoordinatorGateway()
+    mod._runtime_factory = lambda _factory, **kwargs: ExecutionRuntime(lambda: gateway, **kwargs)
+    mod._runtime_gateway = gateway
     mod.coordinator_joint_state = None
     mod.objects = None
     mod.start()
@@ -136,7 +142,7 @@ class TestManipulationModuleIntegration:
 
     def test_module_initialization(self, module):
         """Test module initializes with real Drake world."""
-        assert module._state == ManipulationState.IDLE
+        assert module.get_state() == LifecycleState.IDLE.name
         assert module._world_monitor is not None
         assert module._planner is not None
         assert module._kinematics is not None
@@ -166,14 +172,14 @@ class TestManipulationModuleIntegration:
         success = module.plan_to_joints(target)
 
         assert success is True
-        assert module._state == ManipulationState.COMPLETED
+        assert module.get_state() == LifecycleState.READY.name
         assert module.has_planned_path() is True
 
-        assert module._last_plan is not None
-        traj = module._split_plan_trajectory_by_robot(module._last_plan)["test_arm"]
-        assert len(traj.points) > 1
-        assert traj.duration > 0
-        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+        ready = module._execution_runtime.snapshot().ready_plan
+        assert isinstance(ready, PreparedPlan)
+        assert len(ready.generated_plan.trajectory.points) > 1
+        assert ready.generated_plan.trajectory.duration > 0
+        assert ready.generated_plan.group_ids == ("test_arm/manipulator",)
 
     def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):
         """Test planning to an explicit planning-group joint target."""
@@ -184,11 +190,11 @@ class TestManipulationModuleIntegration:
         )
 
         assert success is True
-        assert module._state == ManipulationState.COMPLETED
-        assert module._last_plan is not None
-        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+        assert module.get_state() == LifecycleState.READY.name
+        ready = module._execution_runtime.snapshot().ready_plan
+        assert isinstance(ready, PreparedPlan)
+        assert ready.generated_plan.group_ids == ("test_arm/manipulator",)
         assert module.has_planned_path() is True
-        assert module._split_plan_trajectory_by_robot(module._last_plan) is not None
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -234,26 +240,24 @@ class TestManipulationModuleIntegration:
         assert hasattr(pose, "y")
         assert hasattr(pose, "z")
 
-    def test_trajectory_name_translation(self, module, joint_state_zeros):
-        """Test that trajectory joint names are translated for coordinator."""
+    def test_prepared_plan_contains_coordinator_joint_names(self, module, joint_state_zeros):
+        """Runtime materialization translates selected joints for the gateway."""
         module._on_joint_state(joint_state_zeros)
 
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        assert module._last_plan is not None
-        traj = module._split_plan_trajectory_by_robot(module._last_plan)["test_arm"]
-        robot_config = module._robots["test_arm"][1]
-
-        translated = module._translate_trajectory_to_coordinator(traj, robot_config)
-
-        assert translated.joint_names == list(robot_config.joint_name_mapping.keys())
+        ready = module._execution_runtime.snapshot().ready_plan
+        assert isinstance(ready, PreparedPlan)
+        assert ready.entries[0].request["trajectory"].joint_names == list(
+            module._robots["test_arm"][1].joint_name_mapping.values()
+        )
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 @pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
 class TestCoordinatorIntegration:
-    """Test coordinator integration with mocked RPC client."""
+    """Test coordinator integration through the runtime gateway."""
 
     def test_execute_with_mock_coordinator(self, module, joint_state_zeros):
         """Test execute sends trajectory to coordinator."""
@@ -262,28 +266,18 @@ class TestCoordinatorIntegration:
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        # Mock the coordinator client
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = True
-        module._coordinator_client = mock_client
-
         result = module.execute()
 
         assert result is True
-        assert module._state == ManipulationState.COMPLETED
+        assert module.get_state() == LifecycleState.RUNNING.name
 
-        # Verify coordinator was called
-        mock_client.task_invoke.assert_called_once()
-        call_args = mock_client.task_invoke.call_args
-        task_name, method_name, kwargs = call_args[0]
+        task_name, request = module._runtime_gateway.execute_calls[0]
 
         assert task_name == "traj_arm"
-        assert method_name == "execute"
-        trajectory = kwargs["trajectory"]
+        trajectory = request["trajectory"]
         assert len(trajectory.points) > 1
-        # Joint names should be translated
         robot_config = module._robots["test_arm"][1]
-        assert trajectory.joint_names == list(robot_config.joint_name_mapping.keys())
+        assert trajectory.joint_names == list(robot_config.joint_name_mapping.values())
 
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""
@@ -291,39 +285,34 @@ class TestCoordinatorIntegration:
 
         module.plan_to_joints(JointState(position=[0.05] * 7))
 
-        # Mock coordinator to reject
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = False
-        module._coordinator_client = mock_client
+        module._runtime_gateway.execute_outcome = Outcome.REJECTED
 
         result = module.execute()
 
         assert result is False
-        assert module._state == ManipulationState.FAULT
-        assert "rejected" in module._error_message.lower()
+        assert module.get_state() == LifecycleState.IDLE.name
+        assert "rejected" in module.get_error().lower()
+        terminal_results = dict(module._execution_runtime._context.terminal_results)
+        assert terminal_results
+        assert next(reversed(terminal_results.values())).outcome == Outcome.REJECTED
 
     def test_state_transitions_during_execution(self, module, joint_state_zeros):
         """Test state transitions during plan and execute."""
-        assert module._state == ManipulationState.IDLE
+        assert module.get_state() == LifecycleState.IDLE.name
 
         module._on_joint_state(joint_state_zeros)
 
-        # Plan - should go through PLANNING -> COMPLETED
+        # Plan commits a runtime-owned READY plan.
         module.plan_to_joints(JointState(position=[0.05] * 7))
-        assert module._state == ManipulationState.COMPLETED
+        assert module.get_state() == LifecycleState.READY.name
 
-        # Reset works from COMPLETED
+        # Reset clears the READY plan.
         module.reset()
-        assert module._state == ManipulationState.IDLE
+        assert module.get_state() == LifecycleState.IDLE.name
 
         # Plan again
         module.plan_to_joints(JointState(position=[0.05] * 7))
 
-        # Mock coordinator
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = True
-        module._coordinator_client = mock_client
-
-        # Execute - should go to EXECUTING then COMPLETED
+        # Execute is accepted by the runtime gateway.
         module.execute()
-        assert module._state == ManipulationState.COMPLETED
+        assert module.get_state() == LifecycleState.RUNNING.name

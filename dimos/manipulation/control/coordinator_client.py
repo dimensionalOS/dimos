@@ -42,10 +42,12 @@ How it works:
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import math
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
@@ -56,6 +58,12 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 
 if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+
+
+class _IPythonModule(Protocol):
+    """Typed subset of the optional IPython module used by this client."""
+
+    def start_ipython(self, *, argv: list[str], user_ns: dict[str, Any]) -> None: ...
 
 
 class CoordinatorClient:
@@ -560,7 +568,9 @@ class CoordinatorShell:
 
 def interactive_mode(client: CoordinatorClient, initial_task: str) -> None:
     """Start IPython interactive mode."""
-    import IPython
+    if importlib.util.find_spec("IPython") is None:
+        raise RuntimeError("IPython is required for interactive mode")
+    ipython = cast("_IPythonModule", importlib.import_module("IPython"))
 
     shell = CoordinatorShell(client, initial_task)
 
@@ -571,7 +581,7 @@ def interactive_mode(client: CoordinatorClient, initial_task: str) -> None:
     print("\nType help() for available commands")
     print("=" * 60 + "\n")
 
-    IPython.start_ipython(  # type: ignore[no-untyped-call]
+    ipython.start_ipython(
         argv=[],
         user_ns={
             "help": shell.help,

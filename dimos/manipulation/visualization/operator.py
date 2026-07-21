@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import math
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
@@ -33,11 +33,21 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class OperatorStatus:
-    """Compact dynamic manipulation status."""
+    """One coherent projection of the manipulation runtime snapshot."""
 
     state: str
-    error: str
-    has_plan: bool
+    diagnostic: str = ""
+    ready_plan_status: str = "NONE"
+    ready_plan_id: str | None = None
+    # These two names are retained for callers that predate the snapshot API.
+    error: str | None = None
+    has_plan: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.error is None:
+            object.__setattr__(self, "error", self.diagnostic)
+        if self.has_plan is None:
+            object.__setattr__(self, "has_plan", self.ready_plan_status == "READY")
 
 
 @dataclass(frozen=True)
@@ -79,11 +89,14 @@ class ManipulationOperator:
         self._world_monitor = world_monitor
 
     def status(self) -> OperatorStatus:
-        """Return compact dynamic state without topology or joint telemetry."""
+        """Return a coherent runtime snapshot without topology or telemetry."""
+        snapshot: Any = self._module.get_execution_snapshot()
+        state_name = getattr(snapshot.state, "name", str(snapshot.state))
         return OperatorStatus(
-            state=self._module.get_state(),
-            error=self._module.get_error(),
-            has_plan=self._module.has_planned_path(),
+            state=state_name,
+            diagnostic=snapshot.diagnostic or "",
+            ready_plan_status="READY" if snapshot.has_ready_plan else "NONE",
+            ready_plan_id=(None if snapshot.ready_plan_id is None else str(snapshot.ready_plan_id)),
         )
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:

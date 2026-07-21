@@ -29,7 +29,7 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
-from dimos.manipulation.visualization.operator import TargetEvaluationResult
+from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -203,6 +203,7 @@ class Module:
         self.cancelled = 0
         self.cleared = 0
         self.last_plan: GeneratedPlan | None = None
+        self.state = "IDLE"
 
     def make_plan(self, group_ids: tuple[str, ...]) -> GeneratedPlan:
         names = [
@@ -223,6 +224,7 @@ class Module:
             status=PlanningStatus.SUCCESS,
         )
         self.last_plan = plan
+        self.state = "READY"
         return plan
 
     def list_robots(self) -> list[str]:
@@ -244,7 +246,7 @@ class Module:
         return JointState({"name": self.configs[name].joint_names, "position": [-0.5, -1.0]})
 
     def get_state(self) -> str:
-        return "IDLE"
+        return self.state
 
     def get_error(self) -> str:
         return ""
@@ -261,6 +263,7 @@ class Module:
 
     def execute(self) -> bool:
         self.executions += 1
+        self.state = "DISPATCHING"
         return True
 
     def cancel(self) -> bool:
@@ -300,11 +303,12 @@ class Operator:
         self.module = module
         self.monitor = monitor
 
-    def status(self) -> SimpleNamespace:
-        return SimpleNamespace(
+    def status(self) -> OperatorStatus:
+        return OperatorStatus(
             state=self.module.get_state(),
-            error=self.module.get_error(),
-            has_plan=True,
+            diagnostic=self.module.get_error(),
+            ready_plan_status="READY",
+            ready_plan_id="fake-plan",
         )
 
     def get_init_joints(self, robot_name: str) -> JointState | None:
@@ -532,6 +536,7 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
         group_ids=(left.id, right.id),
         target_sequence_id=gui.state.latest_sequence_id,
         plan=module.last_plan,
+        plan_id="fake-plan",
     )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
