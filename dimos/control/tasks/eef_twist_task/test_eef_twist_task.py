@@ -23,6 +23,7 @@ import pytest
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.eef_twist_task.eef_twist_task import EEFTwistTask, EEFTwistTaskConfig
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.std_msgs.Bool import Bool
 
 
 @dataclass
@@ -254,19 +255,19 @@ def test_gripper_defaults_open_and_appends_to_output(gripper_task: EEFTwistTask)
 
 
 def test_gripper_command_toggles_target(gripper_task: EEFTwistTask) -> None:
-    assert gripper_task.on_gripper_command(closed=True)
+    assert gripper_task.on_gripper_command(Bool(data=True), 0.0)
     closed = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
     assert closed is not None
     assert closed.positions[-1] == 0.0
 
-    assert gripper_task.on_gripper_command(closed=False)
+    assert gripper_task.on_gripper_command(Bool(data=False), 0.0)
     opened = gripper_task.compute(_state(0.6, positions=[0.1, 0.2, 0.3]))
     assert opened is not None
     assert opened.positions[-1] == 0.85
 
 
 def test_gripper_command_rejected_without_gripper_joint(task: EEFTwistTask) -> None:
-    assert task.on_gripper_command(closed=True) is False
+    assert task.on_gripper_command(Bool(data=True), 0.0) is False
 
 
 def test_estop_makes_task_inert(task: EEFTwistTask, fake_ik: FakeIK) -> None:

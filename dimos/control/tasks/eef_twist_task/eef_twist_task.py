@@ -41,6 +41,7 @@ from dimos.utils.transform_utils import twist_to_numpy
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+    from dimos.msgs.std_msgs.Bool import Bool
 
 logger = setup_logger()
 
@@ -84,10 +85,6 @@ class EEFTwistTask(BaseControlTask):
         self._hold_target: NDArray[np.floating[Any]] | None = None
         self._gripper_target: float = config.gripper_open_pos
 
-    @property
-    def name(self) -> str:
-        return self._name
-
     def claim(self) -> ResourceClaim:
         joints = self._joint_names
         if self._config.gripper_joint:
@@ -119,12 +116,12 @@ class EEFTwistTask(BaseControlTask):
             self._latest_twist = None if np.allclose(values, 0.0) else twist
         return True
 
-    def on_gripper_command(self, closed: bool) -> bool:
+    def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
         if not self._config.gripper_joint:
             return False
         with self._lock:
             self._gripper_target = (
-                self._config.gripper_closed_pos if closed else self._config.gripper_open_pos
+                self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
             )
         return True
 
