@@ -538,7 +538,6 @@ class WorldMonitor:
         """Get optional visualization backend."""
         return self._visualization
 
-
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""
         return self._state_monitors.get(robot_id)
