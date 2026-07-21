@@ -136,7 +136,7 @@ def teach(
             keys = "SPACE save · g gripper · d discard · q quit"
         else:
             state = "IDLE"
-            keys = "SPACE record · g gripper · q quit"
+            keys = "SPACE record · d undo last · g gripper · q quit"
         return f"[{state} | saved: {saved_count} | gripper: {gripper}]  {keys}"
 
     try:
@@ -192,12 +192,15 @@ def teach(
                 continue
 
             if command == "d":
+                status = monitor.discard_episode()
                 if recording:
-                    monitor.discard_episode()
                     recording = False
                     typer.echo(">> episode discarded")
+                elif status.last_event == "undo":
+                    saved_count = status.episodes_saved
+                    typer.echo(f">> previous saved episode discarded ({saved_count} remain)")
                 else:
-                    typer.echo(">> nothing to discard (not recording)")
+                    typer.echo(">> nothing saved to discard")
                 continue
 
             if command == "q":

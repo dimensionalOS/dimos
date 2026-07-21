@@ -83,6 +83,10 @@ On the hackathon Mac, OpenCV enumerates the external KS2A418 camera as index 0:
 uv run --no-sync dimos a1z teach --camera-index 0 --task "pick up the object"
 ```
 
+While recording, press `SPACE` to save the current episode or `d` to discard
+it. While idle, press `d` to discard the most recently saved episode; replay
+and dataset export will exclude it.
+
 The command prints the Memory2 `.db` path. Replay a saved episode by passing
 that path (the latest saved episode is selected by default):
 

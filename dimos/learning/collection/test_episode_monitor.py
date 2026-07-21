@@ -107,6 +107,35 @@ def test_discard_does_not_count_as_saved(
     assert last.episodes_discarded == 1
 
 
+def test_discard_while_idle_undoes_latest_save(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    _press(m, "B")
+    _press(m, "B")
+
+    _press(m, "Y")
+
+    last = _events(m)[-1]
+    assert last.last_event == "undo"
+    assert last.state == "idle"
+    assert last.episodes_saved == 0
+    assert last.episodes_discarded == 1
+
+
+def test_discard_while_idle_without_a_save_is_a_noop(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    _press(m, "Y")
+
+    last = _events(m)[-1]
+    assert last.last_event == "discard"
+    assert last.episodes_saved == 0
+    assert last.episodes_discarded == 0
+
+
 def test_start_while_recording_autocommits_previous(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:

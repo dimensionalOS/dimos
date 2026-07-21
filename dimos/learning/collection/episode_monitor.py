@@ -42,7 +42,7 @@ logger = setup_logger()
 # `start`/`save` based on the current state, so it never reaches the output.
 EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
 # What gets published as `EpisodeStatus.last_event` (`init` on boot).
-EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
+EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "undo", "init"]
 RecordingState: TypeAlias = Literal["idle", "recording"]
 
 
@@ -122,7 +122,7 @@ class EpisodeMonitorModule(Module):
 
     @rpc
     def discard_episode(self) -> EpisodeStatus:
-        """Discard the active episode and return the published status."""
+        """Discard the active episode, or undo the latest save when idle."""
         return self._transition("discard", time.time())
 
     # ── port handlers ────────────────────────────────────────────────────────
@@ -159,11 +159,13 @@ class EpisodeMonitorModule(Module):
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
         so one button can begin and end a take. The resolved event is what gets
-        published (DataPrep only ever sees start/save/discard).
+        published. An idle discard with a prior save resolves to ``undo`` so
+        DataPrep can retract that episode without changing older recordings.
         """
         with self._lock:
             if event == "toggle":
                 event = "save" if self._state == "recording" else "start"
+            resolved_event: EpisodeEvent = event
             if event == "start":
                 # Auto-commit any in-progress episode (matches DataPrep extractor).
                 if self._state == "recording":
@@ -176,9 +178,13 @@ class EpisodeMonitorModule(Module):
             elif event == "discard":
                 if self._state == "recording":
                     self._discarded += 1
+                elif self._saved > 0:
+                    self._saved -= 1
+                    self._discarded += 1
+                    resolved_event = "undo"
                 self._state = "idle"
             # Snapshot under the mutation's lock so the event matches the state.
-            status = self._snapshot(event, ts)
+            status = self._snapshot(resolved_event, ts)
         return self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
@@ -204,6 +210,7 @@ class EpisodeMonitorModule(Module):
             "start": "▶ RECORDING episode",
             "save": "✓ SAVED episode",
             "discard": "✗ DISCARDED episode",
+            "undo": "↶ DISCARDED previous saved episode",
             "init": "· ready",
         }.get(status.last_event, status.last_event)
         label = f" [{status.task_label}]" if status.task_label else ""
