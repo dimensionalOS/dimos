@@ -22,9 +22,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
-from dimos.robot.manipulators.openyam.blueprints.teleop import (
-    keyboard_teleop_openyam,
-)
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
     OPENYAM_PACKAGE_PATHS,
@@ -94,5 +91,3 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     assert len(kwargs["hardware"]) == 1
     assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF
     assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
-
-
