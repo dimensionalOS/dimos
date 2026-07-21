@@ -29,12 +29,12 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
 )
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+)
 from dimos.robot.manipulators.piper.blueprints.teleop import (
     coordinator_teleop_piper,
     keyboard_teleop_piper,
-)
-from dimos.robot.manipulators.openyam.blueprints.teleop import (
-    keyboard_teleop_openyam,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
