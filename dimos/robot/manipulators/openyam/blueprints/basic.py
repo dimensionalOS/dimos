@@ -20,11 +20,11 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.openyam.config import (
-    make_openyam_hardware,
     make_openyam_model_config,
+    openyam_hardware,
 )
 
-_openyam_planner_hw = make_openyam_hardware("arm")
+_openyam_planner_hw = openyam_hardware("arm")
 
 openyam_planner_coordinator = autoconnect(
     planner(robots=[make_openyam_model_config(name="arm")]),
@@ -34,7 +34,7 @@ openyam_planner_coordinator = autoconnect(
     ),
 )
 
-_openyam_hw = make_openyam_hardware("arm")
+_openyam_hw = openyam_hardware("arm")
 
 coordinator_openyam = ControlCoordinator.blueprint(
     hardware=[_openyam_hw],

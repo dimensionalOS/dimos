@@ -8,6 +8,11 @@ manipulation visualization supports Meshcat or Viser.
 
 ## Quick Start
 
+For the required vendor/approved-bench direction verification before OpenYAM
+planning or teleoperation, see the
+[OpenYAM direction commissioning guide](./openyam_commissioning.md). The
+DimOS driver does not issue commissioning position steps.
+
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
 
 ```bash

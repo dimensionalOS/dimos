@@ -16,17 +16,23 @@ from typing import Any
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+)
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
+    OPENYAM_GRAVITY_MODEL_PATH,
     OPENYAM_PACKAGE_PATHS,
     make_openyam_hardware,
     make_openyam_model_config,
+    openyam_hardware,
 )
 
 
@@ -57,6 +63,36 @@ def test_openyam_mock_hardware_has_gripper() -> None:
     assert hardware.adapter_type == "mock"
     assert hardware.joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert hardware.gripper_joints == ["arm/gripper"]
+
+
+def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: Any) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+    monkeypatch.setattr(global_config, "can_port", "can1")
+
+    hardware = openyam_hardware("arm")
+
+    assert hardware.adapter_type == "openyam_damiao"
+    assert hardware.address == "can1"
+    assert hardware.adapter_kwargs["gravity_model_path"] == OPENYAM_GRAVITY_MODEL_PATH
+    assert len(hardware.joints) == OPENYAM_DOF
+    assert hardware.gripper_joints == []
+    assert "initial_positions" not in hardware.adapter_kwargs
+
+    direct = make_openyam_hardware(
+        "arm",
+        adapter_type="openyam_damiao",
+        home_joints=[0.1] * OPENYAM_DOF,
+    )
+    assert "initial_positions" not in direct.adapter_kwargs
+
+
+def test_openyam_simulation_hardware_remains_mock(monkeypatch: Any) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+
+    hardware = openyam_hardware("arm")
+
+    assert hardware.adapter_type == "mock"
+    assert hardware.address is None
 
 
 def test_openyam_mock_adapter_set_get_behavior() -> None:
@@ -91,3 +127,14 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     assert len(kwargs["hardware"]) == 1
     assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF
     assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
+
+
+def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
+    blueprint = keyboard_teleop_openyam
+    task = next(
+        task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist"
+    )
+
+    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert task.params["ee_joint_id"] == OPENYAM_DOF
+    assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}

@@ -274,6 +274,8 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
+    "can-motor-control>=0.0.3; sys_platform == 'linux'",
+
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",

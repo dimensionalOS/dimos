@@ -570,6 +570,19 @@ wheels = [
 ]
 
 [[package]]
+name = "can-motor-control"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.11' and sys_platform == 'linux')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4f/3f/67a96cab4bc354d473ba8046fdfb8b49eb2c51c48b718aa4edbe1b04609d/can_motor_control-0.0.3.tar.gz", hash = "sha256:d56ce2ee322f634a52527bec9585026919eeaa8a3ab24569effbcc934110a2a1", size = 125413, upload-time = "2026-07-02T22:21:59.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/36/578b803a68c2286bad22bc28dd8882a0d63ad95c07293dee88bd4c68278c/can_motor_control-0.0.3-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:6610d298a969060c48067be1c04aff4878a854a3f67e771d2352390a66c8fd23", size = 528026, upload-time = "2026-07-02T22:21:58.112Z" },
+]
+
+[[package]]
 name = "cattrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1589,6 +1602,7 @@ agents = [
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aiortc" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
@@ -1707,6 +1721,7 @@ learning = [
 ]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "matplotlib" },
@@ -2010,6 +2025,7 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.3" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
