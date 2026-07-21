@@ -25,6 +25,7 @@ Features:
 - Aggregated preemption notifications
 """
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 import inspect
 import threading
@@ -82,6 +83,8 @@ class TaskConfig:
     priority: int = 10
     auto_start: bool = False
     params: dict[str, Any] = field(default_factory=dict)
+    # card input name -> the port this instance reads instead
+    stream_bind: dict[str, str] = field(default_factory=dict)
 
 
 class ControlCoordinatorConfig(ModuleConfig):
@@ -184,8 +187,9 @@ class ControlCoordinator(Module):
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
 
-        # Card-declared stream routes: stream name -> (task, handler, routing).
-        # Guarded by _task_lock; entries are added/pruned with their task.
+        # Card-declared stream routes, keyed by the port stream_bind resolved to:
+        # port -> (task, handler, routing). Guarded by _task_lock; entries are
+        # added/pruned with their task.
         self._routes: dict[str, list[tuple[ControlTask, str, Routing]]] = {}
 
         # Card-declared command names per task, keyed by task name.
@@ -211,6 +215,7 @@ class ControlCoordinator(Module):
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
         hardware_added: list[str] = []
+        tasks_added: list[TaskName] = []
 
         try:
             for component in self.config.hardware:
@@ -219,19 +224,22 @@ class ControlCoordinator(Module):
 
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
-                self.add_task(task, task_type=task_cfg.type)
+                if self.add_task(task, task_type=task_cfg.type, stream_bind=task_cfg.stream_bind):
+                    tasks_added.append(task.name)
                 if task_cfg.auto_start:
                     start = getattr(task, "start", None)
                     if callable(start):
                         start()
 
         except Exception:
-            # Rollback: clean up all successfully added hardware
+            # Roll back everything this call added, tasks first: an active task
+            # blocks removal of the hardware whose joints it claims.
+            for task_name in tasks_added:
+                with suppress(Exception):
+                    self.remove_task(task_name)
             for hw_id in hardware_added:
-                try:
+                with suppress(Exception):
                     self.remove_hardware(hw_id)
-                except Exception:
-                    pass
             raise
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
@@ -419,21 +427,34 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def add_task(self, task: ControlTask, task_type: str | None = None) -> bool:
-        """Register a task; ``task_type`` binds its card's input streams (if any)."""
+    def add_task(
+        self,
+        task: ControlTask,
+        task_type: str | None = None,
+        stream_bind: dict[str, str] | None = None,
+    ) -> bool:
+        """Register a task; ``task_type`` binds its card's input streams (if any).
+
+        ``stream_bind`` remaps those inputs to other ports (see ``TaskConfig``).
+        """
         if not isinstance(task, ControlTask):
             raise TypeError("task must implement ControlTask")
+        if task_type is None and stream_bind:
+            raise ValueError(
+                f"task {task.name!r} was given stream_bind {sorted(stream_bind)} but no "
+                "task_type; the inputs it remaps come from the type's card, so pass task_type"
+            )
 
         with self._task_lock:
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
-            self._tasks[task.name] = task
             if task_type is not None:
-                self._register_routes(task, task_type)
+                self._register_routes(task, task_type, stream_bind)
                 self._task_commands[task.name] = self._commands_for(task_type)
             else:
                 self._task_commands[task.name] = frozenset()
+            self._tasks[task.name] = task
             logger.info(f"Added task {task.name}")
         self._sync_stream_subscriptions()
         return True
@@ -452,7 +473,9 @@ class ControlCoordinator(Module):
         self._sync_stream_subscriptions()
         return True
 
-    def _register_routes(self, task: ControlTask, task_type: str) -> None:
+    def _register_routes(
+        self, task: ControlTask, task_type: str, stream_bind: dict[str, str] | None = None
+    ) -> None:
         # Inline: importing the registry runs task-manifest discovery at import time.
         from dimos.control.tasks.registry import control_task_registry
 
@@ -466,10 +489,38 @@ class ControlCoordinator(Module):
                 task_name=task.name,
                 task_type=task_type,
             )
-        for binding in bindings.consumes:
-            self._routes.setdefault(binding.stream, []).append(
-                (task, binding.handler, binding.routing)
+
+        where = f"task {task.name!r} (type {task_type!r})"
+        binds = stream_bind or {}
+        inputs = {binding.stream for binding in bindings.consumes}
+        unknown = sorted(set(binds) - inputs)
+        if unknown:
+            raise ValueError(
+                f"{where}: stream_bind key(s) {unknown} are not card inputs {sorted(inputs)}"
             )
+
+        ports = {name: binds.get(name, name) for name in inputs}
+        # All ports first: one typo must not leave the task half-wired.
+        for port in ports.values():
+            if not isinstance(getattr(self, port, None), In):
+                raise ValueError(
+                    f"{where}: this coordinator has no input port {port!r} — add "
+                    f"`{port}: In[...]` to your coordinator subclass, or fix the stream_bind entry"
+                )
+
+        for binding in bindings.consumes:
+            port = ports[binding.stream]
+            if binding.routing is Routing.DIRECT:
+                sharing = [t.name for t, _h, r in self._routes.get(port, ()) if r is Routing.DIRECT]
+                if sharing:
+                    logger.warning(
+                        "Port already has a 'direct' task; both get every message. "
+                        "stream_bind can give them separate ports",
+                        stream=port,
+                        task_name=task.name,
+                        also_bound=sharing,
+                    )
+            self._routes.setdefault(port, []).append((task, binding.handler, binding.routing))
 
     def _commands_for(self, task_type: str) -> frozenset[str]:
         """The command names the task type declares in its TASK_EXPOSES card."""
@@ -548,7 +599,10 @@ class ControlCoordinator(Module):
             return [name for name, task in self._tasks.items() if task.is_active()]
 
     def _dispatch(self, stream: str, msg: Any) -> None:
-        """Deliver a stream message to its card-routed tasks per each entry's routing rule."""
+        """Deliver a stream message to its card-routed tasks per each entry's routing rule.
+
+        BROADCAST and DIRECT are ungated, so only the other two rules appear below.
+        """
         t_now = time.perf_counter()
         with self._task_lock:
             entries = self._routes.get(stream)

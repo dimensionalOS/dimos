@@ -34,7 +34,6 @@ import os
 from typing import TYPE_CHECKING, cast
 
 from dimos.control.routing import (
-    CONSUMABLE_STREAMS,
     Routing,
     StreamBinding,
     TaskBindings,
@@ -217,8 +216,13 @@ class ControlTaskRegistry:
             where = f"{source}: task type {task_type!r}, stream {stream!r}"
             if not isinstance(stream, str):
                 raise TypeError(f"{where}: stream name must be a string")
-            if stream not in CONSUMABLE_STREAMS:
-                raise ValueError(f"{where}: unknown stream; allowed: {sorted(CONSUMABLE_STREAMS)}")
+            # A subclassed coordinator can declare ports this registry never
+            # sees, so port existence is checked at add_task() time instead.
+            if not stream.isidentifier() or stream.startswith("_"):
+                raise ValueError(
+                    f"{where}: stream must name a coordinator input port "
+                    "(a non-underscore Python identifier)"
+                )
             if (
                 not isinstance(spec, Sequence)
                 or isinstance(spec, str)
