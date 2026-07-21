@@ -247,7 +247,7 @@ def setup_logger(*, level: int | None = None) -> Any:
     log_file_path = _configure_structlog()
 
     if level is None:
-        level_name = os.getenv("DIMOS_LOG_LEVEL", "INFO")
+        level_name = os.getenv("DIMOS_LOG_LEVEL", "INFO").upper()
         level = getattr(logging, level_name)
 
     stdlib_logger = logging.getLogger(name)
