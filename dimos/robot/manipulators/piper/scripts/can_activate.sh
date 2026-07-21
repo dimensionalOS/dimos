@@ -15,23 +15,15 @@ DEFAULT_BITRATE="${2:-1000000}"
 # USB hardware address (optional parameter)
 USB_ADDRESS="${3}"
 echo "-------------------START-----------------------"
-# Check if ethtool is installed.
-if ! dpkg -l | grep -q "ethtool"; then
-    echo "\e[31mError: ethtool not detected in the system.\e[0m"
-    echo "Please use the following command to install ethtool:"
-    echo "sudo apt update && sudo apt install ethtool"
-    exit 1
-fi
-
-# Check if can-utils is installed.
-if ! dpkg -l | grep -q "can-utils"; then
-    echo "\e[31mError: can-utils not detected in the system.\e[0m"
-    echo "Please use the following command to install ethtool:"
-    echo "sudo apt update && sudo apt install can-utils"
-    exit 1
-fi
-
-echo "Both ethtool and can-utils are installed."
+# The helper uses iproute2's ip command and ethtool directly. Check commands
+# instead of distribution-specific package metadata.
+for command in ip ethtool; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "\e[31mError: $command is required but was not found.\e[0m"
+        echo "Install $command with your distribution's package manager."
+        exit 1
+    fi
+done
 
 # Retrieve the number of CAN modules in the current system.
 CURRENT_CAN_COUNT=$(ip link show type can | grep -c "link/can")
