@@ -1846,6 +1846,9 @@ webrtc = [
 autofix = [
     { name = "ruff" },
 ]
+coverage-gate = [
+    { name = "coverage" },
+]
 lint = [
     { name = "aiortc" },
     { name = "chromadb" },
@@ -2127,6 +2130,7 @@ provides-extras = ["misc", "visualization", "learning", "agents", "web", "percep
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
+coverage-gate = [{ name = "coverage", specifier = ">=7.0" }]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
     { name = "chromadb", specifier = ">=1.0.0" },

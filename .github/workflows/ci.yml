@@ -129,11 +129,25 @@ jobs:
           maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
           maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
-          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
+          # Under coverage so the test-file-coverage gate can prove these
+          # files run: they importorskip themselves out of every other job.
+          python -m coverage run -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+          # concurrency=multiprocessing makes `coverage run` write parallel
+          # data files; merge them into a single .coverage for the upload.
+          python -m coverage combine
+      - name: Upload coverage data for the test-file-coverage gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-rust
+          path: .coverage
+          include-hidden-files: true  # .coverage is a dotfile
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true  # tolerate job re-runs
 
   md-babel:
     timeout-minutes: 15
@@ -292,6 +306,15 @@ jobs:
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
+      - name: Upload coverage data for the test-file-coverage gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-tests-${{ matrix.os }}-${{ matrix.pyver }}
+          path: .coverage
+          include-hidden-files: true  # .coverage is a dotfile
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true  # tolerate job re-runs
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:
@@ -556,6 +579,18 @@ jobs:
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
+      - name: Upload coverage data for the test-file-coverage gate
+        # Linux only: the macOS leg is experimental (continue-on-error) and
+        # runs a strict subset of the Linux leg's markers.
+        if: matrix.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-self-hosted-${{ matrix.os }}
+          path: .coverage
+          include-hidden-files: true  # .coverage is a dotfile
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true  # tolerate job re-runs
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:
@@ -685,6 +720,15 @@ jobs:
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
+      - name: Upload coverage data for the test-file-coverage gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-self-hosted-large
+          path: .coverage
+          include-hidden-files: true  # .coverage is a dotfile
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true  # tolerate job re-runs
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:
@@ -709,6 +753,39 @@ jobs:
         if: failure()
         run: |
           df -h
+
+  test-file-coverage:
+    # Detects tests that silently never run: every test file must be fully
+    # line-covered by the union of all CI pytest jobs' coverage data.
+    # No `if:` needed: plain `needs` skips this job whenever an input job
+    # is skipped or failed. Fork PRs skip the self-hosted jobs and merge
+    # queues skip self-hosted-large-tests, so the gate runs on pushes and
+    # same-repo PRs only.
+    needs: [tests, self-hosted-tests, self-hosted-large-tests, rust]
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Install coverage
+        run: uv sync --only-group coverage-gate --frozen
+      - name: Download coverage data from all test jobs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-data-*
+          path: coverage-artifacts
+          # No merge-multiple: every file is named `.coverage` and would
+          # clobber; each artifact lands in its own subdirectory instead.
+      - name: Combine coverage data
+        run: uv run coverage combine coverage-artifacts/*/.coverage
+      - name: Check test-file coverage
+        run: uv run bin/check-test-file-coverage
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails

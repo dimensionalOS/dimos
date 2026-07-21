@@ -467,6 +467,10 @@ tests-self-hosted = [
     "pybind11>=2.12",
 ]
 
+# Env for the `test-file-coverage` CI gate job (combines the other jobs'
+# coverage data and runs bin/check-test-file-coverage).
+coverage-gate = ["coverage>=7.0"]
+
 [tool.uv]
 required-version = ">=0.9.17"
 default-groups = ["tests"]
@@ -640,6 +644,9 @@ asyncio_default_fixture_loop_scope = "function"
 branch = true
 source = ["dimos"]
 concurrency = ["multiprocessing", "thread"]
+# Record paths relative to the repo root so data files from different CI
+# machines/containers can be `coverage combine`d by the test-file-coverage job.
+relative_files = true
 
 [tool.coverage.report]
 exclude_also = [
@@ -647,7 +654,12 @@ exclude_also = [
   'assert False',
   ': \.\.\.(\s*#.*)?$',
   '^ +\.\.\.$',
-  'pytest.fail\('
+  'pytest.fail\(',
+  # Tests that no CI job can run, excluded so the test-file-coverage gate can
+  # require 100% line coverage on test files (matching a decorator line
+  # excludes the whole decorated function).
+  '@pytest\.mark\.skipif_in_ci',
+  '@pytest\.mark\.mujoco',
 ]
 
 [tool.largefiles]

@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Fail if any test file has unexecuted lines in the combined coverage data.
+
+Unexecuted lines in a test file mean tests silently never run: not collected,
+excluded by markers in every CI job, module-level importorskip, duplicate test
+names shadowing each other, or dead helper code.
+
+In CI the `test-file-coverage` job runs this against the combined data of all
+pytest jobs. Locally, run `bin/pytest-coverage` first to produce `.coverage`.
+Local runs cover MORE than CI (mujoco and skipif_in_ci tests run locally) but
+may lack ROS/self-hosted deps, so local-green != CI-green in either direction;
+CI is the source of truth.
+"""
+
+import os
+from pathlib import Path
+import sys
+
+from coverage import Coverage
+
+# Files exempt from the gate. Every entry needs a reason. Remove entries as
+# soon as some CI job executes the file.
+WHITELIST = {
+    "dimos/simulation/engines/test_robot_sim_binding.py": (
+        "whole file is mujoco-only (module-level pytestmark); no CI job runs mujoco tests"
+    ),
+}
+
+HINT = """\
+Common causes: file not collected by pytest, tests marker-excluded from every
+CI job, module-level importorskip, duplicate test function names (the later
+def shadows the earlier one), dead test helpers."""
+
+
+def main() -> int:
+    os.chdir(Path(__file__).resolve().parent.parent)
+    files = sorted(
+        {
+            str(p)
+            for pattern in ("**/test_*.py", "**/*_test.py", "**/conftest.py")
+            for p in Path("dimos").glob(pattern)
+        }
+    )
+    cov = Coverage()  # Reads [tool.coverage.*] from pyproject.toml.
+    cov.load()  # Reads .coverage from the repo root (or $COVERAGE_FILE).
+    if not cov.get_data().measured_files():
+        print("No coverage data found. Run bin/pytest-coverage first.")
+        return 1
+    failures = []
+    for path in files:
+        try:
+            _, statements, _, missing, missing_fmt = cov.analysis2(path)
+        except Exception as exc:
+            failures.append((path, f"no usable coverage data ({exc})"))
+            continue
+        if path in WHITELIST:
+            if statements and not missing:
+                print(f"warning: {path} is fully covered; remove its stale WHITELIST entry")
+        elif missing:
+            failures.append((path, f"missing lines {missing_fmt}"))
+    if failures:
+        for path, message in failures:
+            print(f"{path}: {message}")
+        print(f"\n{len(failures)} test file(s) with unexecuted lines.\n{HINT}")
+        return 1
+    print(f"OK: {len(files)} test files fully executed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
