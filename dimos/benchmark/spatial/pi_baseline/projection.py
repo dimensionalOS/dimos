@@ -13,7 +13,11 @@ import uuid
 
 from dimos.benchmark.spatial.corpus_loader import SpatialCorpusInstance
 from dimos.benchmark.spatial.pi_baseline.records import StagingRecord
-from dimos.benchmark.spatial.pi_baseline.topology import PinnedDirectory, TopologyError
+from dimos.benchmark.spatial.pi_baseline.topology import (
+    PinnedDirectory,
+    TopologyError,
+    fresh_directory_cursor,
+)
 from dimos.benchmark.spatial.utilities import JsonValue, canonical_json, validate_relative_path
 
 CaseV1: TypeAlias = dict[str, JsonValue]
@@ -26,6 +30,16 @@ _FORBIDDEN = {
     "topology",
     "geometry",
 }
+
+
+class DescriptorMismatchError(ValueError):
+    """Safe metadata for a staging descriptor-set mismatch."""
+
+    def __init__(self, expected_entry_count: int, actual_entry_count: int, actual_entries_sha256: str) -> None:
+        super().__init__()
+        self.expected_entry_count = expected_entry_count
+        self.actual_entry_count = actual_entry_count
+        self.actual_entries_sha256 = actual_entries_sha256
 
 
 def project_case(item: SpatialCorpusInstance) -> CaseV1:
@@ -257,42 +271,56 @@ def _verify_staging_descriptor(root: PinnedDirectory, staging: StagingRecord) ->
         relative = str(entry["path"])
         if hashlib.sha256(root.read_relative(relative)).hexdigest() != entry.get("sha256"):
             raise ValueError(f"staged inventory hash mismatch: {relative}")
-    if _descriptor_files(root.fd) != expected:
-        raise ValueError("staging contains unexpected files")
+    actual = _descriptor_files(root.fd)
+    if actual != expected:
+        actual_encoding = canonical_json(cast("JsonValue", sorted(actual)))
+        raise DescriptorMismatchError(
+            expected_entry_count=len(expected),
+            actual_entry_count=len(actual),
+            actual_entries_sha256=hashlib.sha256(actual_encoding).hexdigest(),
+        )
     root.verify()
 
 
 def _descriptor_files(fd: int, prefix: str = "") -> set[str]:
     result: set[str] = set()
-    for entry in os.scandir(fd):
-        relative = f"{prefix}{entry.name}"
-        info = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
-        if stat.S_ISDIR(info.st_mode):
-            child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            try:
-                result.update(_descriptor_files(child, relative + "/"))
-            finally:
-                os.close(child)
-        elif stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-            result.add(relative)
-        else:
-            raise ValueError("staging contains an unsupported entry")
+    with fresh_directory_cursor(fd) as cursor_fd:
+        with os.scandir(cursor_fd) as entries:
+            for entry in entries:
+                relative = f"{prefix}{entry.name}"
+                info = os.stat(entry.name, dir_fd=cursor_fd, follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(
+                        entry.name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=cursor_fd,
+                    )
+                    try:
+                        result.update(_descriptor_files(child, relative + "/"))
+                    finally:
+                        os.close(child)
+                elif stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    result.add(relative)
+                else:
+                    raise ValueError("staging contains an unsupported entry")
     return result
 
 
 def _remove_tree(parent: PinnedDirectory, name: str, child: PinnedDirectory) -> None:
     """Remove a failed staging child using only retained directory descriptors."""
     try:
-        for entry in os.scandir(child.fd):
-            info = os.stat(entry.name, dir_fd=child.fd, follow_symlinks=False)
-            if stat.S_ISDIR(info.st_mode):
-                nested = PinnedDirectory.open_at(child, entry.name)
-                try:
-                    _remove_tree(child, entry.name, nested)
-                finally:
-                    nested.close()
-            else:
-                os.unlink(entry.name, dir_fd=child.fd)
+        with fresh_directory_cursor(child.fd) as cursor_fd:
+            with os.scandir(cursor_fd) as entries:
+                for entry in entries:
+                    info = os.stat(entry.name, dir_fd=cursor_fd, follow_symlinks=False)
+                    if stat.S_ISDIR(info.st_mode):
+                        nested = PinnedDirectory.open_at(child, entry.name)
+                        try:
+                            _remove_tree(child, entry.name, nested)
+                        finally:
+                            nested.close()
+                    else:
+                        os.unlink(entry.name, dir_fd=child.fd)
         child.close()
         os.rmdir(name, dir_fd=parent.fd)
     except OSError:

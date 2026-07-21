@@ -378,7 +378,7 @@ def test_status_reconciles_once_and_passes_identical_snapshot_to_projection(
 ) -> None:
     snapshot = object()
     runtime = SimpleNamespace(store=SimpleNamespace())
-    monkeypatch.setattr(cli, "_build_runtime", lambda args: (runtime, None))
+    monkeypatch.setattr(cli, "_build_runtime", lambda args: (runtime, object()))
     calls = 0
 
     def collect(store: object) -> object:
@@ -411,6 +411,23 @@ def test_status_reconciles_once_and_passes_identical_snapshot_to_projection(
     assert cli.main(args) == 0
     assert calls == 1
     assert projected == [snapshot] if as_json else projected[0] is snapshot
+
+
+def test_keyboard_interrupt_exits_130_without_generic_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = SimpleNamespace(store=SimpleNamespace())
+    monkeypatch.setattr(cli, "_build_runtime", lambda args: (runtime, object()))
+    monkeypatch.setattr(
+        cli,
+        "execute_pi_operation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    monkeypatch.setattr(cli, "collect_operational_snapshot", lambda store: object())
+    assert cli.main(_arguments(tmp_path)) == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_environment_roots_do_not_bypass_required_flags(monkeypatch: pytest.MonkeyPatch) -> None:

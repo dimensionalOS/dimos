@@ -15,7 +15,7 @@ from dimos.benchmark.spatial.utilities import canonical_json
 _SHARED = """You are evaluating the supplied case only. Do not use online information or services to solve the task; package installation is allowed. The staged case inputs are available under /input; /input is read-only and /work is writable. Write generated files and other artifacts only under /work. Use only these three tools: sandbox_exec, read_generated_image, and submit_answer. You must call submit_answer exactly once before finishing, with the typed answer.
 """
 _VISUALIZATION_FORBIDDEN = "Visualization is forbidden. Do not call `read_generated_image`."
-_VISUALIZATION_ENCOURAGED = "Visualization is required for acceptance: generate an image under `/work` and successfully call the bounded `read_generated_image` operation at least once before submitting your answer."
+_VISUALIZATION_ENCOURAGED = "Visualization is required for acceptance: after at most two sandbox attempts, generate a useful PNG under `/work` and call `read_generated_image` using a relative path. The image must be an existing regular non-symlink PNG that can be decoded successfully and must satisfy the applicable configured byte, width, height, and pixel limits. After a successful read, stop exploration: do not run more analysis commands or generate more images. Use the available evidence and call `submit_answer` exactly once with your best answer, even if uncertain. Do not consume remaining turn or tool budget seeking confidence."
 
 PromptMode = Literal["visualization_forbidden", "visualization_encouraged"]
 

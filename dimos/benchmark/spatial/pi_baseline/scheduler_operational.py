@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, cast
 
 from .scheduler_models import (
     JobIdentity,
@@ -41,6 +42,8 @@ _REASONS = {
     "executor_interrupted": "executor_interrupted",
     "executor_cancelled": "executor_cancelled",
     "container_cleanup_failed": "container_cleanup_failed",
+    "post_image_policy_violation": "post_image_policy_violation",
+    "pre_image_policy_violation": "pre_image_policy_violation",
     "coordinator_cancelled": "coordinator_cancelled",
     "coordinator_restart": "coordinator_restart",
     "missing_terminal_outcome": "missing_terminal_outcome",
@@ -48,11 +51,24 @@ _REASONS = {
 
 
 _STATUS = Literal["failed", "interrupted", "cancelled"]
+_FAILURE_REASON = Literal[
+    "executor_failed",
+    "executor_interrupted",
+    "executor_cancelled",
+    "container_cleanup_failed",
+    "post_image_policy_violation",
+    "pre_image_policy_violation",
+    "coordinator_cancelled",
+    "coordinator_restart",
+    "missing_terminal_outcome",
+]
 _COMPATIBLE = {
     "executor_failed": "failed",
     "executor_interrupted": "interrupted",
     "executor_cancelled": "cancelled",
     "container_cleanup_failed": "failed",
+    "post_image_policy_violation": "failed",
+    "pre_image_policy_violation": "failed",
     "coordinator_cancelled": "cancelled",
     "coordinator_restart": "interrupted",
     "missing_terminal_outcome": "interrupted",
@@ -62,9 +78,7 @@ _COMPATIBLE = {
 def _safe_reason(outcome: TerminalOutcome) -> str:
     status = outcome.status
     reason = _REASONS.get(outcome.reason)
-    if reason is not None and (
-        _COMPATIBLE.get(reason) == status
-    ):
+    if reason is not None and (_COMPATIBLE.get(reason) == status):
         return reason
     return {
         "failed": "executor_failed",
@@ -74,7 +88,9 @@ def _safe_reason(outcome: TerminalOutcome) -> str:
     }[status]
 
 
-def _ensure_missing_outcome_event(store: FilesystemExperimentStore, context, outcome: TerminalOutcome) -> None:
+def _ensure_missing_outcome_event(
+    store: FilesystemExperimentStore, context, outcome: TerminalOutcome
+) -> None:
     expected = OperationalEvent(
         kind="finished",
         occurred_at=datetime.now(timezone.utc),
@@ -93,35 +109,50 @@ def _ensure_missing_outcome_event(store: FilesystemExperimentStore, context, out
 
 def _snapshot(
     definition: LoadedDefinition,
-    observation: Literal["reconciled", "busy_read_only"],
+    observation: Literal["reconciled", "busy_read_only", "busy_read_only_summary"],
     attempts: dict[str, tuple[RecoveredAttempt, ...]],
+    summaries: Mapping[str, JobSummary] | None = None,
 ) -> OperationalSnapshot:
     # LoadedDefinition is intentionally duck-typed here to keep this pure
     # reconstruction helper independent of the filesystem store.
     states: Counter[str] = Counter()
     failures: list[OperationalFailure] = []
+    cases = {item.case_id: item for item in definition.plan.cases}
+    conditions = {item.name: item for item in definition.plan.conditions}
     for planned in definition.plan.jobs:
-        case = next(item for item in definition.plan.cases if item.case_id == planned.case_id)
-        condition = next(item for item in definition.plan.conditions if item.name == planned.condition_name)
+        case = cases[planned.case_id]
+        condition = conditions[planned.condition_name]
         identifier = job_id(definition.plan, case, condition)
-        records = attempts.get(identifier, ())
-        latest = max(records, key=lambda item: item.context.attempt_number, default=None)
-        if latest is None:
-            state = "pending"
-        elif latest.outcome is None:
-            state = "running"
+        if summaries is not None:
+            summary = summaries.get(identifier)
+            state = "pending" if summary is None else summary.state
+            outcome = None if summary is None else summary.outcome
         else:
-            state = latest.outcome.status
-            if state in {"failed", "interrupted", "cancelled"} and len(failures) < 3:
+            records = attempts.get(identifier, ())
+            latest = max(records, key=lambda item: item.context.attempt_number, default=None)
+            state = (
+                "pending"
+                if latest is None
+                else ("running" if latest.outcome is None else latest.outcome.status)
+            )
+            outcome = None if latest is None else latest.outcome
+        if outcome is not None and state in {"failed", "interrupted", "cancelled"}:
+            if len(failures) < 3:
                 failures.append(
                     OperationalFailure(
                         job_id=identifier,
-                        state=state,
-                        reason=_safe_reason(latest.outcome),
+                        state=cast("_STATUS", state),
+                        reason=cast("_FAILURE_REASON", _safe_reason(outcome)),
+                        policy_telemetry=outcome.policy_telemetry,
                     )
                 )
         states[state] += 1
-    counts = OperationalCount(**{name: states[name] for name in ("pending", "running", "succeeded", "failed", "interrupted", "cancelled")})
+    counts = OperationalCount(
+        **{
+            name: states[name]
+            for name in ("pending", "running", "succeeded", "failed", "interrupted", "cancelled")
+        }
+    )
     return OperationalSnapshot(
         experiment_id=definition.manifest.experiment_id,
         workers=definition.manifest.workers,
@@ -148,12 +179,14 @@ def collect_operational_snapshot(store: FilesystemExperimentStore) -> Operationa
 
 
 def _busy_snapshot(store: FilesystemExperimentStore) -> OperationalSnapshot:
-    """Observe a busy store through descriptor-pinned, non-mutating reads only."""
+    """Observe a busy store through immutable definitions and job summaries only."""
     try:
-        definition, attempts = store.observe_experiment_read_only(
-            None, None
-        )
-        return _snapshot(definition, "busy_read_only", attempts)
+        definition = store.load_definition()
+        summaries = {
+            summary.identity.job_id: summary
+            for summary in store.summaries(definition.manifest.experiment_id)
+        }
+        return _snapshot(definition, "busy_read_only_summary", {}, summaries)
     except Exception as error:
         raise OperationalObservationError from error
 
@@ -163,12 +196,14 @@ def reconcile_idle_locked(
 ) -> tuple[LoadedDefinition, dict[str, JobSummary], dict[str, tuple[RecoveredAttempt, ...]]]:
     """Reconstruct state from the immutable definition and attempt records."""
     definition = store.load_definition()
-    store.recover_all_attempts(definition.manifest.experiment_id)
+    store.recover_all_attempts(definition.manifest.experiment_id, definition=definition)
     summaries: dict[str, JobSummary] = {}
     attempts_by_job: dict[str, tuple[RecoveredAttempt, ...]] = {}
+    cases = {case.case_id: case for case in definition.plan.cases}
+    conditions = {condition.name: condition for condition in definition.plan.conditions}
     for planned in definition.plan.jobs:
-        case = next(item for item in definition.plan.cases if item.case_id == planned.case_id)
-        condition = next(item for item in definition.plan.conditions if item.name == planned.condition_name)
+        case = cases[planned.case_id]
+        condition = conditions[planned.condition_name]
         identifier = job_id(definition.plan, case, condition)
         identity = JobIdentity(
             experiment_id=definition.manifest.experiment_id,
@@ -178,7 +213,9 @@ def reconcile_idle_locked(
         )
         records = tuple(
             record
-            for record in store.recover_attempts(definition.manifest.experiment_id, identifier)
+            for record in store.recover_attempts(
+                definition.manifest.experiment_id, identifier, definition=definition
+            )
             if record.context.attempt_number > 0
         )
         latest = max(records, key=lambda record: record.context.attempt_number, default=None)
@@ -196,7 +233,11 @@ def reconcile_idle_locked(
                     raise OperationalObservationError
             if outcome.reason == "missing_terminal_outcome":
                 _ensure_missing_outcome_event(store, latest.context, outcome)
-                records = tuple(store.recover_attempts(definition.manifest.experiment_id, identifier))
+                records = tuple(
+                    store.recover_attempts(
+                        definition.manifest.experiment_id, identifier, definition=definition
+                    )
+                )
                 latest = max(
                     (record for record in records if record.context.attempt_number > 0),
                     key=lambda record: record.context.attempt_number,

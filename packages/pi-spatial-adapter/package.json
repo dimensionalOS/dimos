@@ -7,9 +7,9 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && cp src/tool-definitions.v1.json dist/tool-definitions.v1.json",
+    "build": "tsc -p tsconfig.build.json && cp src/tool-definitions.v1.json dist/tool-definitions.v1.json && cp src/runtime-manifest.v1.json dist/runtime-manifest.v1.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run build && tsc -p tsconfig.test.json && cp src/tool-definitions.v1.json dist-test/src/tool-definitions.v1.json && node --test dist-test/test/*.test.js"
+    "test": "npm run build && tsc -p tsconfig.test.json && cp src/tool-definitions.v1.json dist-test/src/tool-definitions.v1.json && cp src/runtime-manifest.v1.json dist-test/src/runtime-manifest.v1.json && node --test dist-test/test/*.test.js"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.10",

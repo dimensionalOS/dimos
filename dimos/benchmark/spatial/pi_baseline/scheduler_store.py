@@ -412,10 +412,17 @@ class FilesystemExperimentStore:
                 continue
         return tuple(result)
 
-    def recover_attempts(self, experiment_id: str, job_id_value: str) -> tuple[RecoveredAttempt, ...]:
+    def recover_attempts(
+        self,
+        experiment_id: str,
+        job_id_value: str,
+        *,
+        definition: LoadedDefinition | None = None,
+    ) -> tuple[RecoveredAttempt, ...]:
         """Validate records through no-follow descriptors and quarantine corruption."""
         self._require_lock()
-        definition = self.load_definition()
+        if definition is None:
+            definition = self.load_definition()
         if experiment_id != definition.manifest.experiment_id:
             raise ValueError("attempt experiment does not match this store")
         root_name = _safe(job_id_value)
@@ -540,10 +547,13 @@ class FilesystemExperimentStore:
         finally:
             os.close(root_fd)
 
-    def recover_all_attempts(self, experiment_id: str) -> None:
+    def recover_all_attempts(
+        self, experiment_id: str, *, definition: LoadedDefinition | None = None
+    ) -> None:
         """Quarantine attempts for jobs absent from the current immutable plan too."""
         self._require_lock()
-        definition = self.load_definition()
+        if definition is None:
+            definition = self.load_definition()
         if experiment_id != definition.manifest.experiment_id:
             raise ValueError("attempt experiment does not match this store")
         expected = {

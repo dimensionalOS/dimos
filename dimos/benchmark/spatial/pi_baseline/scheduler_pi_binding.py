@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
 import tempfile
+from types import MappingProxyType
 from typing import Annotated, Literal, cast
 
 from pydantic import Field, model_validator
@@ -24,6 +27,28 @@ from dimos.benchmark.spatial.pi_baseline.config import (
     validate_node_adapter_command,
 )
 from dimos.benchmark.spatial.utilities import JsonValue, canonical_json, hash_file_sha256
+
+_RUNTIME_MANIFEST = "runtime-manifest.v1.json"
+_RUNTIME_FILES = (
+    "main.js",
+    "protocol.js",
+    "session.js",
+    "tools.js",
+    "tool-definitions.v1.json",
+)
+_HOST_MODULES = (
+    "config",
+    "evidence",
+    "gate",
+    "podman",
+    "projection",
+    "prompts",
+    "records",
+    "scheduler_executor",
+    "scheduler_models",
+    "topology",
+    "transaction",
+)
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 SafeRelativePath = Annotated[
@@ -76,10 +101,36 @@ class PiSelectedInput(SpatialModel):
         return self
 
 
+@dataclass(frozen=True)
+class PiAdmissionContext:
+    """Immutable, operation-scoped index produced by authoritative preflight."""
+
+    selected_by_case: Mapping[str, PiSelectedInput]
+    snapshot_digest: str
+
+    @classmethod
+    def from_snapshot(cls, snapshot: PiExecutionSnapshot) -> PiAdmissionContext:
+        return cls(
+            selected_by_case=MappingProxyType(
+                {item.case_id: item for item in snapshot.selected_inputs}
+            ),
+            snapshot_digest=snapshot.canonical_digest(),
+        )
+
+    def selected(self, case_id: str) -> PiSelectedInput:
+        try:
+            return self.selected_by_case[case_id]
+        except KeyError as error:
+            raise ValueError("Pi case is not one of the immutable selected inputs") from error
+
+
 class PiExecutionSnapshot(SpatialModel):
     """Non-secret, immutable execution inputs captured at experiment creation."""
 
-    snapshot_version: Literal["1.0"] = "1.0"
+    snapshot_version: Literal["1.1"] = "1.1"
+    policy_revision: Literal["pre-image-2-sandbox-plus-1-repair-2-image-post-image-1-submit-v1"] = (
+        "pre-image-2-sandbox-plus-1-repair-2-image-post-image-1-submit-v1"
+    )
     model: ModelConfig
     budgets: Budgets
     resource_limits: ResourceLimits
@@ -91,6 +142,7 @@ class PiExecutionSnapshot(SpatialModel):
     def validate_adapter_command(self) -> PiExecutionSnapshot:
         validate_node_adapter_command(self.node_adapter_command)
         return self
+
     scorer_revision: str = Field(min_length=1)
     implementation_digests: ImplementationDigests
     prompt_fingerprint: Digest = Field(pattern=r"^[0-9a-f]{64}$")
@@ -134,14 +186,73 @@ def artifact_bytes(snapshot_value: str) -> bytes:
         raise ValueError("invalid Pi artifact encoding") from error
 
 
+def runtime_adapter_artifacts(adapter_file: Path) -> dict[str, bytes]:
+    """Load the exact immutable JS/JSON files executed by the adapter."""
+    runtime_root = adapter_file.parent
+    manifest_path = runtime_root / _RUNTIME_MANIFEST
+    try:
+        manifest = json.loads(manifest_path.read_bytes())
+    except Exception as error:
+        raise ValueError("Pi adapter runtime manifest is missing or invalid") from error
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("record_type") != "pi-adapter-runtime-manifest"
+        or manifest.get("schema_version") != "1.1"
+        or manifest.get("files") != list(_RUNTIME_FILES)
+    ):
+        raise ValueError("Pi adapter runtime manifest is invalid")
+    actual = sorted(
+        path.name
+        for path in runtime_root.iterdir()
+        if path.is_file() and not path.is_symlink() and path.suffix in {".js", ".json"}
+    )
+    expected = sorted((*_RUNTIME_FILES, _RUNTIME_MANIFEST))
+    if actual != expected:
+        raise ValueError("Pi adapter runtime files do not match manifest")
+    return {
+        f"node.runtime.{name}": (runtime_root / name).read_bytes()
+        for name in (*_RUNTIME_FILES, _RUNTIME_MANIFEST)
+    }
+
+
+def host_module_paths(source_root: Path) -> dict[str, Path]:
+    """Return the bounded Python host-module closure executed by the Pi runner."""
+    root = source_root / "dimos/benchmark/spatial/pi_baseline"
+    return {name: root / f"{name}.py" for name in _HOST_MODULES}
+
+
 def verify_snapshot_artifacts(snapshot: PiExecutionSnapshot) -> None:
     """Reject snapshots whose stored bytes no longer match their declared digests."""
     required = {
-        "prompt.forbidden", "prompt.encouraged", "tools.schemas",
-        "node.main", "node.session", "node.tools", "node.protocol",
-        "node.package-lock", "node.package", "node.build", "node.tool-schema",
-        "controller", "runner", "scorer", "adapter",
-        "config.model", "config.budgets", "config.limits", "config.network", "config.image",
+        "prompt.forbidden",
+        "prompt.encouraged",
+        "tools.schemas",
+        "node.main",
+        "node.session",
+        "node.tools",
+        "node.protocol",
+        "node.package-lock",
+        "node.package",
+        "node.build",
+        "node.tool-schema",
+        "controller",
+        "runner",
+        "broker",
+        "scheduler_pi_executor",
+        *_HOST_MODULES,
+        "scorer",
+        "adapter",
+        "node.runtime.main.js",
+        "node.runtime.protocol.js",
+        "node.runtime.session.js",
+        "node.runtime.tools.js",
+        "node.runtime.tool-definitions.v1.json",
+        "node.runtime.runtime-manifest.v1.json",
+        "config.model",
+        "config.budgets",
+        "config.limits",
+        "config.network",
+        "config.image",
     }
     records = {item.name: item for item in snapshot.material_inventory}
     if len(records) != len(snapshot.material_inventory) or set(records) != required:
@@ -150,15 +261,32 @@ def verify_snapshot_artifacts(snapshot: PiExecutionSnapshot) -> None:
         data = artifact_bytes(record.bytes_b64)
         if not data or hashlib.sha256(data).hexdigest() != record.sha256:
             raise ValueError(f"Pi material bytes do not match digest: {name}")
-    if artifact_bytes(records["prompt.forbidden"].bytes_b64) != snapshot.prompt_text_forbidden.encode() or artifact_bytes(records["prompt.encouraged"].bytes_b64) != snapshot.prompt_text_encouraged.encode():
+    if (
+        artifact_bytes(records["prompt.forbidden"].bytes_b64)
+        != snapshot.prompt_text_forbidden.encode()
+        or artifact_bytes(records["prompt.encouraged"].bytes_b64)
+        != snapshot.prompt_text_encouraged.encode()
+    ):
         raise ValueError("Pi prompt text does not match snapshotted bytes")
-    if artifact_bytes(records["tools.schemas"].bytes_b64) != canonical_json(cast("JsonValue", snapshot.tool_definitions)):
+    if artifact_bytes(records["tools.schemas"].bytes_b64) != canonical_json(
+        cast("JsonValue", snapshot.tool_definitions)
+    ):
         raise ValueError("Pi tool definitions do not match snapshotted schema")
-    if hashlib.sha256(artifact_bytes(records["prompt.forbidden"].bytes_b64)).hexdigest() != snapshot.prompt_fingerprint:
+    if (
+        hashlib.sha256(artifact_bytes(records["prompt.forbidden"].bytes_b64)).hexdigest()
+        != snapshot.prompt_fingerprint
+    ):
         raise ValueError("Pi prompt bytes do not match prompt fingerprint")
-    if hashlib.sha256(artifact_bytes(records["tools.schemas"].bytes_b64)).hexdigest() != snapshot.tool_fingerprint:
+    if (
+        hashlib.sha256(artifact_bytes(records["tools.schemas"].bytes_b64)).hexdigest()
+        != snapshot.tool_fingerprint
+    ):
         raise ValueError("Pi tool schema bytes do not match tool fingerprint")
-    for digest_name, material_name in (("adapter", "adapter"), ("scorer", "scorer"), ("protocol", "node.protocol")):
+    for digest_name, material_name in (
+        ("adapter", "adapter"),
+        ("scorer", "scorer"),
+        ("protocol", "node.protocol"),
+    ):
         declared = getattr(snapshot.implementation_digests, digest_name).split("@sha256:")[-1]
         if declared != records[material_name].sha256:
             raise ValueError(f"Pi {digest_name} bytes do not match implementation digest")
@@ -191,6 +319,10 @@ def verify_runtime_artifacts(
     candidate = Path(command[1])
     if candidate.read_bytes() != artifact_bytes(records["adapter"].bytes_b64):
         raise ValueError("Pi adapter artifact drift detected")
+    runtime_files = runtime_adapter_artifacts(candidate)
+    for name, data in runtime_files.items():
+        if data != artifact_bytes(records[name].bytes_b64):
+            raise ValueError(f"Pi {name} artifact drift detected")
     source_root = Path(__file__).parents[4]
     for name, path in {
         "scorer": Path(__file__).with_name("scoring.py"),
@@ -203,7 +335,9 @@ def verify_runtime_artifacts(
         "node.package-lock": source_root / "packages/pi-spatial-adapter/package-lock.json",
         "node.package": source_root / "packages/pi-spatial-adapter/package.json",
         "node.build": source_root / "packages/pi-spatial-adapter/tsconfig.json",
-        "node.tool-schema": source_root / "packages/pi-spatial-adapter/src/tool-definitions.v1.json",
+        "node.tool-schema": source_root
+        / "packages/pi-spatial-adapter/src/tool-definitions.v1.json",
+        **host_module_paths(source_root),
     }.items():
         if path.read_bytes() != artifact_bytes(records[name].bytes_b64):
             raise ValueError(f"Pi {name} artifact drift detected")
@@ -211,14 +345,20 @@ def verify_runtime_artifacts(
 
     prompts = build_prompt_pair()
     expected_prompt = prompts.visualization_forbidden.encode()
-    if expected_prompt != artifact_bytes(records["prompt.forbidden"].bytes_b64) or prompts.visualization_encouraged.encode() != artifact_bytes(records["prompt.encouraged"].bytes_b64):
+    if expected_prompt != artifact_bytes(
+        records["prompt.forbidden"].bytes_b64
+    ) or prompts.visualization_encouraged.encode() != artifact_bytes(
+        records["prompt.encouraged"].bytes_b64
+    ):
         raise ValueError("Pi prompt material drift detected")
     expected_tools = canonical_json(cast("JsonValue", _shared_tool_schemas()))
     if expected_tools != artifact_bytes(records["tools.schemas"].bytes_b64):
         raise ValueError("Pi tool schema drift detected")
     for selected in snapshot.selected_inputs:
         schemas = _tool_schemas(cast("Literal['boolean', 'integer']", selected.answer_type.value))
-        if schemas[-1]["parameters"] != _submit_variant(snapshot.tool_definitions, selected.answer_type):
+        if schemas[-1]["parameters"] != _submit_variant(
+            snapshot.tool_definitions, selected.answer_type
+        ):
             raise ValueError("Pi selected input answer type does not match tool schema")
 
 
@@ -232,7 +372,10 @@ def _shared_tool_schemas() -> dict[str, JsonValue]:
     return cast(
         "dict[str, JsonValue]",
         json.loads(
-            (Path(__file__).parents[4] / "packages/pi-spatial-adapter/src/tool-definitions.v1.json").read_bytes()
+            (
+                Path(__file__).parents[4]
+                / "packages/pi-spatial-adapter/src/tool-definitions.v1.json"
+            ).read_bytes()
         ),
     )
 
@@ -257,22 +400,41 @@ def _tool_schemas(answer_type: Literal["boolean", "integer"]) -> list[dict[str, 
 def _submit_variant(tool_definitions: dict[str, object], answer_type: AnswerType) -> object:
     """Extract the selected answer variant from the immutable shared schema."""
     submit_value = tool_definitions.get("submit_answer")
-    submit = cast("dict[str, object] | None", submit_value) if isinstance(submit_value, dict) else None
+    submit = (
+        cast("dict[str, object] | None", submit_value) if isinstance(submit_value, dict) else None
+    )
     if submit is None or not isinstance(submit.get("variants"), dict):
         raise ValueError("Pi shared tool schema has no submit-answer variants")
     variants = cast("dict[str, object]", submit["variants"])
     return variants.get(answer_type.value)
 
 
-def verify_public_inputs(snapshot: PiExecutionSnapshot, corpus_root: Path) -> None:
-    """Materialize each recorded case and require the authoring corpus to be unchanged."""
+def verify_public_inputs(
+    snapshot: PiExecutionSnapshot,
+    corpus_root: Path,
+    *,
+    case_id: str | None = None,
+    selected_input: PiSelectedInput | None = None,
+) -> None:
+    """Materialize recorded cases and require the authoring corpus to be unchanged."""
     from dimos.benchmark.spatial.pi_baseline.integrity import verify_staging
     from dimos.benchmark.spatial.pi_baseline.projection import stage_public_instance
     from dimos.benchmark.spatial.pi_baseline.records import StagingRecord
 
     with tempfile.TemporaryDirectory(prefix="pi-verify-") as directory:
         parent = Path(directory)
-        for item in snapshot.selected_inputs:
+        if selected_input is not None:
+            selected = (selected_input,)
+        elif case_id is None:
+            selected = snapshot.selected_inputs
+        else:
+            selected = (
+                next((item for item in snapshot.selected_inputs if item.case_id == case_id), None),
+            )
+            if selected[0] is None:
+                raise ValueError("Pi case is not one of the immutable selected inputs")
+        for item in selected:
+            assert item is not None
             staged = stage_public_instance(corpus_root, parent, **item.selection.model_dump())
             verify_staging(
                 staged,
@@ -309,31 +471,55 @@ def verify_public_inputs(snapshot: PiExecutionSnapshot, corpus_root: Path) -> No
             )
             if actual != item.staging_inventory:
                 raise ValueError(f"selected staging inventory drift for {item.case_id}")
-            if hashlib.sha256((staged / "staging-manifest.v1.json").read_bytes()).hexdigest() != item.staging_manifest_sha256:
+            if (
+                hashlib.sha256((staged / "staging-manifest.v1.json").read_bytes()).hexdigest()
+                != item.staging_manifest_sha256
+            ):
                 raise ValueError(f"selected staging manifest drift for {item.case_id}")
-            if hashlib.sha256((staged / "provenance.v1.json").read_bytes()).hexdigest() != item.provenance_sha256:
+            if (
+                hashlib.sha256((staged / "provenance.v1.json").read_bytes()).hexdigest()
+                != item.provenance_sha256
+            ):
                 raise ValueError(f"selected provenance drift for {item.case_id}")
             schema = (
-                Path(__file__).parents[4] / "packages/pi-spatial-adapter/src/tool-definitions.v1.json"
+                Path(__file__).parents[4]
+                / "packages/pi-spatial-adapter/src/tool-definitions.v1.json"
             ).read_bytes()
             if hashlib.sha256(schema).hexdigest() != item.schema_sha256:
                 raise ValueError(f"selected staging schema drift for {item.case_id}")
-            release = cast("JsonValue", json.loads((staged / "staging-manifest.v1.json").read_bytes())["release"])
+            release = cast(
+                "JsonValue",
+                json.loads((staged / "staging-manifest.v1.json").read_bytes())["release"],
+            )
             if hashlib.sha256(canonical_json(release)).hexdigest() != item.release_sha256:
                 raise ValueError(f"selected release drift for {item.case_id}")
 
 
-def private_binding_digest(manifest_digest: str, snapshot: PiExecutionSnapshot, oracle_root: Path) -> str:
+def private_binding_digest(
+    manifest_digest: str, snapshot: PiExecutionSnapshot, oracle_root: Path
+) -> str:
     """Digest only private bytes and immutable public identities; never persist the path."""
     files = []
     for path in sorted(path for path in oracle_root.rglob("*") if path.is_file()):
-        files.append((path.relative_to(oracle_root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
+        files.append(
+            (
+                path.relative_to(oracle_root).as_posix(),
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+        )
     records = {item.name: item for item in snapshot.material_inventory}
     try:
         scorer_bytes = artifact_bytes(records["scorer"].bytes_b64)
     except KeyError as error:
         raise ValueError("Pi material inventory is incomplete") from error
-    payload = cast("JsonValue", {"manifest": manifest_digest, "scorer": hashlib.sha256(scorer_bytes).hexdigest(), "oracle": files})
+    payload = cast(
+        "JsonValue",
+        {
+            "manifest": manifest_digest,
+            "scorer": hashlib.sha256(scorer_bytes).hexdigest(),
+            "oracle": files,
+        },
+    )
     return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 

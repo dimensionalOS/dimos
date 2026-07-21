@@ -17,7 +17,12 @@ import uuid
 from dimos.benchmark.spatial.models import AnswerType
 from dimos.benchmark.spatial.pi_baseline.broker import CaseBroker, PolicyViolationError
 from dimos.benchmark.spatial.pi_baseline.config import PiBaselineConfig, PromptMode
-from dimos.benchmark.spatial.pi_baseline.controller import AdapterCleanupError, AdapterController
+from dimos.benchmark.spatial.pi_baseline.controller import (
+    PROTOCOL_VERSION,
+    AdapterCleanupError,
+    AdapterController,
+    AdapterRunError,
+)
 from dimos.benchmark.spatial.pi_baseline.evidence import (
     build_evidence_manifest,
     write_evidence_manifest,
@@ -32,6 +37,7 @@ from dimos.benchmark.spatial.pi_baseline.podman import (
     PersistentPodmanCase,
     PodmanLimits,
     PodmanRun,
+    PodmanTimeoutError,
     RootlessPodman,
 )
 from dimos.benchmark.spatial.pi_baseline.projection import stage_public_instance
@@ -41,6 +47,7 @@ from dimos.benchmark.spatial.pi_baseline.scoring import score_case
 from dimos.benchmark.spatial.pi_baseline.topology import (
     PinnedDirectory,
     PinnedRuntimeTopology,
+    fresh_directory_cursor,
     pin_runtime_topology,
 )
 from dimos.benchmark.spatial.pi_baseline.transaction import AnswerTransaction
@@ -186,7 +193,7 @@ def _run_condition(
         )
         _check_cancel(cancel_requested)
         topology.verify()
-        staging = topology.input.proc_path
+        staging = topology.input.path
         private = topology.private.path
         evidence = topology.output.path
         private_dir = topology.private
@@ -225,6 +232,8 @@ def _run_condition(
                 except Exception as error:
                     execution_error = error
                 if isinstance(execution_error, AdapterCleanupError):
+                    raise execution_error
+                if getattr(case, "poisoned", False) and execution_error is not None:
                     raise execution_error
                 try:
                     _check_cancel(cancel_requested)
@@ -349,7 +358,9 @@ def _run_condition(
             run_id=run_id,
             mode=mode,
             case_sha256=hashlib.sha256(evidence_dir.read_relative("case.v1.json")).hexdigest(),
-            manifest_sha256=hashlib.sha256(private_dir.read_bytes("evidence-manifest.v1.json")).hexdigest(),
+            manifest_sha256=hashlib.sha256(
+                private_dir.read_bytes("evidence-manifest.v1.json")
+            ).hexdigest(),
             review_bundle=_ref(private_dir, "evidence-manifest.v1.json"),
             private_score=_ref(private_dir, "score.v1.json"),
             transcript=_ref(private_dir, "adapter.transcript.ndjson"),
@@ -481,7 +492,7 @@ def _start_frame(
         else prompt_pair.visualization_encouraged
     )
     return {
-        "version": 1,
+        "version": PROTOCOL_VERSION,
         "type": "run_start",
         "id": run_id,
         "prompt": f"{shared_prompt}\n\nCase question:\n{case['question']['text']}",
@@ -513,7 +524,9 @@ def _release(staging: Path) -> tuple[str, str]:
 
 def _ref(directory: PinnedDirectory, name: str) -> ArtifactReference:
     """Return a durable logical reference, never a descriptor pathname."""
-    return ArtifactReference(path=name, sha256=hashlib.sha256(directory.read_relative(name)).hexdigest())
+    return ArtifactReference(
+        path=name, sha256=hashlib.sha256(directory.read_relative(name)).hexdigest()
+    )
 
 
 def _verify_removed(podman: RootlessPodman, request: PodmanRun) -> None:
@@ -588,55 +601,56 @@ def _export_public_staging_and_workspace(
 def _export_workspace_dir(
     source_fd: int, destination: PinnedDirectory, cancel_requested: threading.Event
 ) -> None:
-    for entry in os.scandir(source_fd):
-        _check_cancel(cancel_requested)
-        source_stat = os.stat(entry.name, dir_fd=source_fd, follow_symlinks=False)
-        if stat.S_ISLNK(source_stat.st_mode) or not (
-            stat.S_ISREG(source_stat.st_mode) or stat.S_ISDIR(source_stat.st_mode)
-        ):
-            raise ValueError("workspace contains an unsupported or symbolic-link entry")
-        if stat.S_ISDIR(source_stat.st_mode):
-            destination.mkdir(entry.name)
-            target = PinnedDirectory.open_at(destination, entry.name)
-            child_fd = os.open(
-                entry.name,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=source_fd,
-            )
-            try:
-                _export_workspace_dir(child_fd, target, cancel_requested)
-            finally:
-                os.close(child_fd)
-                target.close()
-            continue
-        source_fd_file = os.open(
-            entry.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=source_fd
-        )
-        try:
-            if not stat.S_ISREG(os.fstat(source_fd_file).st_mode):
-                raise ValueError("workspace contains an unsupported file")
-            data = os.read(source_fd_file, os.fstat(source_fd_file).st_size)
-            destination.write_bytes(entry.name, data)
-        finally:
-            if source_fd_file != -1:
-                os.close(source_fd_file)
+    with fresh_directory_cursor(source_fd) as cursor_fd:
+        with os.scandir(cursor_fd) as entries:
+            for entry in entries:
+                _check_cancel(cancel_requested)
+                source_stat = os.stat(entry.name, dir_fd=cursor_fd, follow_symlinks=False)
+                if stat.S_ISLNK(source_stat.st_mode) or not (
+                    stat.S_ISREG(source_stat.st_mode) or stat.S_ISDIR(source_stat.st_mode)
+                ):
+                    raise ValueError("workspace contains an unsupported or symbolic-link entry")
+                if stat.S_ISDIR(source_stat.st_mode):
+                    destination.mkdir(entry.name)
+                    target = PinnedDirectory.open_at(destination, entry.name)
+                    child_fd = os.open(
+                        entry.name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=cursor_fd,
+                    )
+                    try:
+                        _export_workspace_dir(child_fd, target, cancel_requested)
+                    finally:
+                        os.close(child_fd)
+                        target.close()
+                    continue
+                source_fd_file = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=cursor_fd)
+                try:
+                    if not stat.S_ISREG(os.fstat(source_fd_file).st_mode):
+                        raise ValueError("workspace contains an unsupported file")
+                    data = os.read(source_fd_file, os.fstat(source_fd_file).st_size)
+                    destination.write_bytes(entry.name, data)
+                finally:
+                    os.close(source_fd_file)
 
 
 def _descriptor_files(root: PinnedDirectory, prefix: str = "") -> tuple[str, ...]:
     result: list[str] = []
-    for entry in os.scandir(root.fd):
-        info = os.stat(entry.name, dir_fd=root.fd, follow_symlinks=False)
-        relative = f"{prefix}/{entry.name}" if prefix else entry.name
-        if stat.S_ISDIR(info.st_mode):
-            child = PinnedDirectory.open_at(root, entry.name)
-            try:
-                result.extend(_descriptor_files(child, relative))
-            finally:
-                child.close()
-        elif stat.S_ISREG(info.st_mode):
-            result.append(relative)
-        else:
-            raise ValueError("evidence contains an unsupported or symbolic-link entry")
+    with fresh_directory_cursor(root.fd) as cursor_fd:
+        with os.scandir(cursor_fd) as entries:
+            for entry in entries:
+                info = os.stat(entry.name, dir_fd=cursor_fd, follow_symlinks=False)
+                relative = f"{prefix}/{entry.name}" if prefix else entry.name
+                if stat.S_ISDIR(info.st_mode):
+                    child = PinnedDirectory.open_at(root, entry.name)
+                    try:
+                        result.extend(_descriptor_files(child, relative))
+                    finally:
+                        child.close()
+                elif stat.S_ISREG(info.st_mode):
+                    result.append(relative)
+                else:
+                    raise ValueError("evidence contains an unsupported or symbolic-link entry")
     return tuple(sorted(result))
 
 
@@ -661,6 +675,7 @@ def _retain_failure_record(
             target.write_bytes(
                 "tool-audit.json", canonical_json(cast("JsonValue", list(broker.audit))) + b"\n"
             )
+        adapter_reason = error.terminal_reason if isinstance(error, AdapterRunError) else None
         target.write_bytes(
             "failure.v1.json",
             canonical_json(
@@ -673,6 +688,20 @@ def _retain_failure_record(
                         "error": type(error).__name__,
                         "scoring_eligible": False,
                         "ledger_appended": False,
+                        **(
+                            {"adapter_reason": adapter_reason} if adapter_reason is not None else {}
+                        ),
+                        **(
+                            {"policy_telemetry": error.policy_telemetry.model_dump(mode="json")}
+                            if isinstance(error, AdapterRunError)
+                            and error.policy_telemetry is not None
+                            else {}
+                        ),
+                        **(
+                            {"subprocess": _subprocess_failure_diagnostic(error)}
+                            if _subprocess_failure_diagnostic(error) is not None
+                            else {}
+                        ),
                     },
                 )
             )
@@ -682,3 +711,35 @@ def _retain_failure_record(
             target.close()
     except Exception:
         return
+
+
+def _subprocess_failure_diagnostic(
+    error: Exception,
+) -> dict[str, JsonValue] | None:
+    if isinstance(error, PodmanTimeoutError):
+        return {
+            "timeout_operation": error.operation,
+            "deadline_source": error.deadline_source,
+            "stdout_truncated": error.stdout_truncated,
+            "stderr_truncated": error.stderr_truncated,
+            "stdout_bucket": error.stdout_bucket,
+            "stderr_bucket": error.stderr_bucket,
+        }
+    if not isinstance(error, subprocess.CalledProcessError):
+        return None
+    command = error.cmd
+    if isinstance(command, str):
+        tokens = command.split()
+    elif isinstance(command, (list, tuple)) and all(isinstance(item, str) for item in command):
+        tokens = list(command)
+    else:
+        tokens = []
+    executable = tokens[0].rsplit("/", 1)[-1] if tokens else ""
+    operation = "subprocess"
+    if executable == "podman":
+        subcommand = tokens[1] if len(tokens) > 1 else ""
+        if subcommand == "create" or (subcommand == "run" and "--detach" in tokens[2:]):
+            operation = "podman-create"
+        elif subcommand in {"start", "logs"}:
+            operation = f"podman-{subcommand}"
+    return {"operation": operation, "returncode": error.returncode}

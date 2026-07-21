@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import errno
 import hashlib
+import os
+from pathlib import Path
+import subprocess
 import threading
+import traceback
+from typing import cast
 
 from dimos.benchmark.spatial.models import SpatialModel
 from dimos.benchmark.spatial.pi_baseline.broker import PolicyViolationError
@@ -15,6 +21,7 @@ from dimos.benchmark.spatial.pi_baseline.config import (
 )
 from dimos.benchmark.spatial.pi_baseline.controller import AdapterCleanupError, AdapterRunError
 from dimos.benchmark.spatial.pi_baseline.podman import ContainerCleanupError, PodmanSecurityError
+from dimos.benchmark.spatial.pi_baseline.projection import DescriptorMismatchError
 from dimos.benchmark.spatial.pi_baseline.runner import ConditionRun, run_condition
 from dimos.benchmark.spatial.pi_baseline.scheduler_executor import (
     EventSink,
@@ -30,14 +37,15 @@ from dimos.benchmark.spatial.pi_baseline.scheduler_models import (
     TerminalOutcome,
 )
 from dimos.benchmark.spatial.pi_baseline.scheduler_pi_binding import (
+    PiAdmissionContext,
     PiExecutionSnapshot,
     PiRuntimeBindings,
     reconstruct_config,
     verify_public_inputs,
-    verify_runtime_artifacts,
     verify_snapshot_artifacts,
 )
 from dimos.benchmark.spatial.pi_baseline.topology import TopologyError
+from dimos.benchmark.spatial.utilities import JsonValue, canonical_json
 
 
 class PiCasePayload(SpatialModel):
@@ -81,6 +89,7 @@ class PiSchedulerExecutor(Executor):
         *,
         manifest_executor_fingerprint: str,
         manifest_selected_inputs_digest: str | None = None,
+        admission_context: PiAdmissionContext | None = None,
         condition_runner: ConditionRunner = _default_condition_runner,
     ) -> None:
         if snapshot.canonical_digest() != manifest_executor_fingerprint:
@@ -92,6 +101,9 @@ class PiSchedulerExecutor(Executor):
         self._snapshot = snapshot
         self._runtime_bindings = runtime_bindings
         self._condition_runner = condition_runner
+        self._admission_context = admission_context or PiAdmissionContext.from_snapshot(snapshot)
+        if self._admission_context.snapshot_digest != snapshot.canonical_digest():
+            raise ValueError("Pi admission context does not match execution snapshot")
 
     def run(
         self,
@@ -110,15 +122,14 @@ class PiSchedulerExecutor(Executor):
         # lifecycle event or adapter process can be created.
         if self._snapshot.selected_inputs:
             _check_cancel(cancel_requested)
-            verify_runtime_artifacts(self._snapshot, self._snapshot.node_adapter_command)
-        if self._snapshot.selected_inputs:
-            _check_cancel(cancel_requested)
-            recorded = {
-                item.case_id: item for item in self._snapshot.selected_inputs
-            }.get(case.case_id)
-            if recorded is None or recorded.selection != parsed_case.selection:
+            recorded = self._admission_context.selected(case.case_id)
+            if recorded.selection != parsed_case.selection:
                 raise ValueError("Pi case is not one of the immutable selected inputs")
-            verify_public_inputs(self._snapshot, self._runtime_bindings.corpus_root)
+            verify_public_inputs(
+                self._snapshot,
+                self._runtime_bindings.corpus_root,
+                selected_input=recorded,
+            )
         _check_cancel(cancel_requested)
         emit(ExecutorProgressEvent(kind="progress", code="executor_progress"))
         condition_run_id = _condition_run_id(context)
@@ -152,8 +163,6 @@ class PiSchedulerExecutor(Executor):
         )
         try:
             _check_cancel(cancel_requested)
-            if self._snapshot.selected_inputs:
-                verify_runtime_artifacts(self._snapshot, tuple(config.node_adapter_command))
             result = _invoke_condition_runner(
                 self._condition_runner,
                 config,
@@ -164,19 +173,29 @@ class PiSchedulerExecutor(Executor):
         except ExecutionInterrupted:
             raise
         except Exception as error:
+            _retain_scheduler_failure_record(
+                attempt_private_root,
+                parsed_condition.prompt_mode,
+                error,
+            )
             outcome = TerminalOutcome(
                 status="failed",
                 reason=_failure_reason(error),
+                policy_telemetry=(
+                    error.policy_telemetry if isinstance(error, AdapterRunError) else None
+                ),
             )
             return outcome
 
         _check_cancel(cancel_requested)
-        emit(ExecutorArtifactEvent(
-            kind="artifact",
-            code="artifact_recorded",
-            artifact_id=f"evidence-{context.attempt_id}",
-            artifact_sha256=result.evidence.manifest_sha256,
-        ))
+        emit(
+            ExecutorArtifactEvent(
+                kind="artifact",
+                code="artifact_recorded",
+                artifact_id=f"evidence-{context.attempt_id}",
+                artifact_sha256=result.evidence.manifest_sha256,
+            )
+        )
         return TerminalOutcome(status="succeeded", reason="Pi condition completed")
 
 
@@ -188,6 +207,13 @@ def _failure_reason(error: Exception) -> str:
         # controller's process/path details.
         return ContainerCleanupError.reason
     if isinstance(error, AdapterRunError):
+        if error.terminal_reason in {
+            "post_image_policy_violation",
+            "pre_image_policy_violation",
+        }:
+            return error.terminal_reason
+        if error.terminal_reason is not None:
+            return f"adapter_run_failed:{error.terminal_reason}"
         adapter_code = str(error)
         if adapter_code in {
             "adapter_protocol_error",
@@ -208,6 +234,140 @@ def _failure_reason(error: Exception) -> str:
             return f"policy:{error.code}"
         return "policy_violation"
     return "executor_failed"
+
+
+def _retain_scheduler_failure_record(
+    private_root: Path,
+    mode: PromptMode,
+    error: Exception,
+) -> None:
+    """Best-effort, redacted retention for failures before runner retention."""
+    directory_fd: int | None = None
+    file_fd: int | None = None
+    try:
+        path = private_root.expanduser()
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        directory_fd = os.open("/" if path.is_absolute() else ".", directory_flags)
+        components = path.parts[1:] if path.is_absolute() else path.parts
+        for component in components:
+            if component in {"", ".", ".."}:
+                raise OSError("unsafe private directory component")
+            try:
+                child_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            except FileNotFoundError:
+                os.mkdir(component, 0o700, dir_fd=directory_fd)
+                child_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = child_fd
+
+        record: dict[str, JsonValue] = {
+            "record_type": "pi-run-failure",
+            "schema_version": "1.0",
+            "mode": mode,
+            "error": type(error).__name__,
+            "message": _private_failure_message(error),
+            "traceback": cast("JsonValue", _structural_traceback(error)),
+            "scoring_eligible": False,
+            "ledger_appended": False,
+        }
+        if isinstance(error, OSError):
+            record["errno"] = error.errno
+            record["error_label"] = _os_error_label(error.errno)
+        if type(error) is DescriptorMismatchError:
+            record["descriptor_mismatch"] = {
+                "expected_entry_count": error.expected_entry_count,
+                "actual_entry_count": error.actual_entry_count,
+                "actual_entries_sha256": error.actual_entries_sha256,
+            }
+        if isinstance(error, AdapterRunError) and error.terminal_reason is not None:
+            record["adapter_reason"] = error.terminal_reason
+        subprocess_diagnostic = _subprocess_failure_diagnostic(error)
+        if subprocess_diagnostic is not None:
+            record["subprocess"] = subprocess_diagnostic
+        payload = canonical_json(cast("JsonValue", record)) + b"\n"
+        file_fd = os.open(
+            "failure.v1.json",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        offset = 0
+        while offset < len(payload):
+            written = os.write(file_fd, payload[offset:])
+            if written <= 0:
+                raise OSError("failure record write made no progress")
+            offset += written
+        os.fsync(file_fd)
+        os.fsync(directory_fd)
+    except Exception:
+        # Private diagnostics must never change the public execution result.
+        return
+    finally:
+        if file_fd is not None:
+            try:
+                os.close(file_fd)
+            except OSError:
+                pass
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                pass
+
+
+def _private_failure_message(error: Exception) -> str:
+    if isinstance(error, OSError):
+        return "os error"
+    return "scheduler exception"
+
+
+def _subprocess_failure_diagnostic(
+    error: Exception,
+) -> dict[str, JsonValue] | None:
+    if not isinstance(error, subprocess.CalledProcessError):
+        return None
+    command = error.cmd
+    if isinstance(command, str):
+        tokens = command.split()
+    elif isinstance(command, (list, tuple)) and all(isinstance(item, str) for item in command):
+        tokens = list(command)
+    else:
+        tokens = []
+    executable = tokens[0].rsplit("/", 1)[-1] if tokens else ""
+    operation = "subprocess"
+    if executable == "podman":
+        subcommand = tokens[1] if len(tokens) > 1 else ""
+        if subcommand == "create" or (subcommand == "run" and "--detach" in tokens[2:]):
+            operation = "podman-create"
+        elif subcommand in {"start", "logs"}:
+            operation = f"podman-{subcommand}"
+    return {"operation": operation, "returncode": error.returncode}
+
+
+def _os_error_label(errno_value: int | None) -> str:
+    if errno_value is None:
+        return "os_error"
+    labels = {
+        errno.ENOENT: "not_found",
+        errno.EACCES: "permission_denied",
+        errno.EEXIST: "already_exists",
+        errno.ELOOP: "symlink_loop",
+    }
+    return labels.get(errno_value, "os_error")
+
+
+def _structural_traceback(error: Exception) -> list[dict[str, JsonValue]]:
+    frames: list[dict[str, JsonValue]] = []
+    for frame, line_number in traceback.walk_tb(error.__traceback__):
+        module = frame.f_globals.get("__name__")
+        frames.append(
+            {
+                "module": module if isinstance(module, str) else "unknown",
+                "function": frame.f_code.co_name,
+                "line": line_number,
+            }
+        )
+    return frames
 
 
 def _check_cancel(cancel_requested: threading.Event) -> None:

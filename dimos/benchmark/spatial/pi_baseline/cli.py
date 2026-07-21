@@ -246,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
                 if not interrupted:
                     operation_error = error
                     diagnostic_errors.append(error)
+            except KeyboardInterrupt:
+                return 130
             except BaseException as error:
                 operation_error = error
                 diagnostic_errors.append(error)
@@ -295,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         print("pi-baseline: operation unavailable", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return 130
     except SystemExit:
         raise
     except BaseException as error:

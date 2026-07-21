@@ -7,7 +7,7 @@ import hashlib
 import re
 from typing import Annotated, Literal, cast
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from dimos.benchmark.spatial.models import SpatialModel
 from dimos.benchmark.spatial.utilities import JsonValue, canonical_json
@@ -61,12 +61,8 @@ class AttemptManifestSnapshot(SpatialModel):
 class QuarantineMetadata(SpatialModel):
     """Typed reservation metadata for an original quarantined attempt."""
 
-    quarantined_name: str = Field(
-        min_length=34, max_length=34, pattern=r"^q-[0-9a-f]{32}$"
-    )
-    original_name: str = Field(
-        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$"
-    )
+    quarantined_name: str = Field(min_length=34, max_length=34, pattern=r"^q-[0-9a-f]{32}$")
+    original_name: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$")
     original_attempt_number: int = Field(gt=0, le=1_000_000_000)
 
 
@@ -82,10 +78,70 @@ OperationalCode = Literal[
     "executor_interrupted",
     "executor_cancelled",
     "container_cleanup_failed",
+    "post_image_policy_violation",
+    "pre_image_policy_violation",
     "coordinator_cancelled",
     "coordinator_restart",
     "missing_terminal_outcome",
 ]
+
+PolicyFailureKind = Literal[
+    "prompt_returned_without_image",
+    "sandbox_limit_exceeded",
+    "premature_submission",
+    "image_attempt_failed",
+    "malformed_image_call",
+    "budget_exhausted_before_image",
+    "image_attempts_exhausted",
+    "image_retry_not_attempted",
+]
+ImageFailureCategory = Literal[
+    "argument_invalid",
+    "artifact_not_found_or_unsafe",
+    "artifact_too_large",
+    "not_png",
+    "png_invalid",
+    "dimensions_exceeded",
+    "reply_delivery_failed",
+    "adapter_result_rejected",
+    "unexpected_infrastructure_error",
+]
+
+
+class PreImagePolicyTelemetry(SpatialModel):
+    """Evaluation-neutral, public-safe encouraged-mode policy state."""
+
+    policy_revision: Literal["pre-image-2-sandbox-plus-1-repair-2-image-post-image-1-submit-v1"]
+    mode: Literal["visualization-encouraged"]
+    terminal_code: Literal["pre_image_policy_violation"]
+    failure_kind: PolicyFailureKind
+    sandbox_attempts: int = Field(ge=0, le=3)
+    image_attempted: bool
+    image_attempts: int = Field(ge=0, le=2)
+    image_delivered: bool
+    submission_attempted: bool
+    image_failure_category: ImageFailureCategory | None = None
+    repair_attempted: bool = False
+
+    @model_serializer(mode="wrap")
+    def serialize_safe(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+    @model_validator(mode="after")
+    def validate_state(self) -> PreImagePolicyTelemetry:
+        if self.image_attempts < int(self.image_attempted):
+            raise ValueError("image attempts must include attempted image reads")
+        if self.image_delivered and not self.image_attempted:
+            raise ValueError("delivered image must have been attempted")
+        if self.failure_kind == "sandbox_limit_exceeded" and self.sandbox_attempts != 2:
+            raise ValueError("sandbox limit telemetry requires two attempts")
+        if self.repair_attempted and self.sandbox_attempts < 3:
+            raise ValueError("repair telemetry requires the third sandbox attempt")
+        if self.failure_kind == "image_attempts_exhausted" and self.image_attempts != 2:
+            raise ValueError("exhausted image telemetry requires two attempts")
+        if self.failure_kind == "image_retry_not_attempted" and self.image_attempts != 1:
+            raise ValueError("unattempted image retry telemetry requires one attempt")
+        return self
 
 
 class LifecycleEvent(SpatialModel):
@@ -122,6 +178,9 @@ class OperationalEvent(SpatialModel):
     occurred_at: datetime
     message: OperationalCode
     payload: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    policy_telemetry: PreImagePolicyTelemetry | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_payload(self) -> OperationalEvent:
@@ -142,12 +201,18 @@ class OperationalEvent(SpatialModel):
                 "executor_interrupted",
                 "executor_cancelled",
                 "container_cleanup_failed",
+                "post_image_policy_violation",
+                "pre_image_policy_violation",
                 "missing_terminal_outcome",
             },
             "interrupted": {"coordinator_cancelled", "coordinator_restart", "executor_interrupted"},
         }[self.kind]
         if self.message not in codes:
             raise ValueError("operational event code is not allowlisted")
+        if self.message == "pre_image_policy_violation" and self.policy_telemetry is None:
+            raise ValueError("pre-image policy event requires safe telemetry")
+        if self.policy_telemetry is not None and self.message != "pre_image_policy_violation":
+            raise ValueError("policy telemetry is only valid for pre-image policy events")
         if any(key not in allowed for key in self.payload):
             raise ValueError("operational event contains a non-allowlisted field")
         if self.kind == "created" and any(
@@ -187,6 +252,9 @@ class TerminalOutcome(SpatialModel):
     status: OutcomeStatus
     reason: str
     exit_code: int | None = None
+    policy_telemetry: PreImagePolicyTelemetry | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ExperimentPlan(SpatialModel):
@@ -260,7 +328,17 @@ class OperationalCount(SpatialModel):
 
     @model_validator(mode="after")
     def validate_total(self) -> OperationalCount:
-        if min(self.pending, self.running, self.succeeded, self.failed, self.interrupted, self.cancelled) < 0:
+        if (
+            min(
+                self.pending,
+                self.running,
+                self.succeeded,
+                self.failed,
+                self.interrupted,
+                self.cancelled,
+            )
+            < 0
+        ):
             raise ValueError("operational counts must be non-negative")
         return self
 
@@ -275,10 +353,17 @@ class OperationalFailure(SpatialModel):
         "executor_interrupted",
         "executor_cancelled",
         "container_cleanup_failed",
+        "post_image_policy_violation",
+        "pre_image_policy_violation",
         "coordinator_cancelled",
         "coordinator_restart",
         "missing_terminal_outcome",
     ]
+    policy_telemetry: PreImagePolicyTelemetry | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_public(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 class OperationalSnapshot(SpatialModel):
@@ -288,7 +373,7 @@ class OperationalSnapshot(SpatialModel):
     schema_version: Literal["1.0"] = "1.0"
     experiment_id: SafeId
     workers: int = Field(gt=0)
-    observation: Literal["reconciled", "busy_read_only"]
+    observation: Literal["reconciled", "busy_read_only", "busy_read_only_summary"]
     counts: OperationalCount
     jobs: int = Field(ge=0)
     active: int = Field(ge=0)
@@ -309,6 +394,8 @@ class OperationalSnapshot(SpatialModel):
             "executor_interrupted": "interrupted",
             "executor_cancelled": "cancelled",
             "container_cleanup_failed": "failed",
+            "post_image_policy_violation": "failed",
+            "pre_image_policy_violation": "failed",
             "coordinator_cancelled": "cancelled",
             "coordinator_restart": "interrupted",
             "missing_terminal_outcome": "interrupted",

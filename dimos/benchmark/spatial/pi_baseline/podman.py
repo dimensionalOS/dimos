@@ -6,12 +6,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import re
 import subprocess
-from threading import Event
+from threading import Event, Lock, Thread
 import time
+from typing import IO, Literal, cast
 
 from .scheduler_executor import ExecutionInterrupted
 from .topology import PinnedRuntimeTopology
@@ -27,15 +27,80 @@ class ContainerCleanupError(RuntimeError):
     reason = "container_cleanup_failed"
 
 
+PodmanOperation = Literal[
+    "info",
+    "run",
+    "create",
+    "start",
+    "exec",
+    "logs",
+    "remove",
+    "exists",
+    "remove_cleanup",
+    "exists_cleanup",
+]
+DeadlineSource = Literal["controller_deadline", "command_cap"]
+CaptureBucket = Literal["empty", "small", "bounded", "truncated"]
+_PODMAN_OPERATIONS = frozenset(
+    {
+        "info",
+        "run",
+        "create",
+        "start",
+        "exec",
+        "logs",
+        "remove",
+        "exists",
+        "remove_cleanup",
+        "exists_cleanup",
+    }
+)
+
+
+class PodmanTimeoutError(TimeoutError):
+    """A bounded Podman operation exceeded its deadline."""
+
+    def __init__(
+        self,
+        operation: PodmanOperation,
+        deadline_source: DeadlineSource,
+        *,
+        stdout_truncated: bool = False,
+        stderr_truncated: bool = False,
+        stdout_bucket: CaptureBucket = "empty",
+        stderr_bucket: CaptureBucket = "empty",
+    ) -> None:
+        self.operation = operation
+        self.deadline_source = deadline_source
+        self.stdout_truncated = stdout_truncated
+        self.stderr_truncated = stderr_truncated
+        self.stdout_bucket = stdout_bucket
+        self.stderr_bucket = stderr_bucket
+        super().__init__("podman operation timed out")
+
+
+class PodmanCompletedProcess(subprocess.CompletedProcess[str]):
+    """A bounded process result with safe capture metadata."""
+
+    def __init__(
+        self,
+        args: list[str],
+        returncode: int,
+        stdout: str,
+        stderr: str,
+        *,
+        stdout_truncated: bool = False,
+        stderr_truncated: bool = False,
+    ) -> None:
+        super().__init__(args, returncode, stdout, stderr)
+        self.stdout_truncated = stdout_truncated
+        self.stderr_truncated = stderr_truncated
+
+
 _DIGEST = re.compile(r"^[a-z0-9][a-z0-9./_-]*@sha256:[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
 _CLEANUP_TIMEOUT_SECONDS = 30.0
 _CLEANUP_COMMAND_TIMEOUT_SECONDS = 10.0
-
-
-def _descriptor_mount_source(fd: int) -> str:
-    """Return a descriptor path that remains valid across Podman create/start."""
-    return f"/proc/{os.getpid()}/fd/{fd}"
 
 
 @dataclass(frozen=True)
@@ -67,10 +132,6 @@ class PodmanRun:
     def workspace_dir(self) -> Path:
         return self.topology.workspace.path
 
-    @property
-    def pass_fds(self) -> tuple[int, ...]:
-        return self.topology.fds
-
 
 class RootlessPodman:
     """Run constrained one-shot or persistent rootless Podman cases."""
@@ -84,6 +145,7 @@ class RootlessPodman:
             check=True,
             timeout=10.0,
             cancel_requested=cancel_requested,
+            operation="info",
         )
         return result.stdout.strip().lower() == "true"
 
@@ -111,16 +173,14 @@ class RootlessPodman:
             "--tmpfs",
             "/tmp:rw,size=64m,mode=1777",
             "--volume",
-            f"{_descriptor_mount_source(request.topology.input.fd)}:/input:ro",
+            f"{request.topology.input.path}:/input:ro,rprivate",
             "--volume",
-            f"{_descriptor_mount_source(request.topology.workspace.fd)}:/work:rw",
+            f"{request.topology.workspace.path}:/work:rw,rprivate",
             request.image,
             *request.args,
         ]
 
-    def persistent(
-        self, request: PodmanRun, cancel_requested: Event
-    ) -> PersistentPodmanCase:
+    def persistent(self, request: PodmanRun, cancel_requested: Event) -> PersistentPodmanCase:
         """Return the preferred per-case persistent container lifecycle."""
 
         self._validate(request)
@@ -136,21 +196,27 @@ class RootlessPodman:
                 command,
                 check=True,
                 timeout=request.limits.timeout_seconds,
-                pass_fds=request.pass_fds,
                 cancel_requested=cancel_requested,
+                operation="run",
             )
             return self._bounded(result, request.limits.output_bytes)
         finally:
             # --rm is not sufficient for interrupted or failed runtime setup.
-            subprocess.run(
+            _run_command(
                 [self.executable, "rm", "--force", name],
                 check=False,
-                capture_output=True,
-                text=True,
                 timeout=10.0,
+                cancel_requested=Event(),
+                operation="remove",
             )
 
-    def verify_removed(self, run_id: str, timeout_seconds: float = 10.0) -> bool:
+    def verify_removed(
+        self,
+        run_id: str,
+        timeout_seconds: float = 10.0,
+        *,
+        operation: Literal["exists", "exists_cleanup"] = "exists",
+    ) -> bool:
         """Return whether the named case no longer exists.
 
         A non-zero exit status is Podman's documented result for a missing
@@ -159,12 +225,12 @@ class RootlessPodman:
         """
 
         name = f"pi-baseline-{run_id}"
-        result = subprocess.run(
+        result = _run_command(
             [self.executable, "container", "exists", name],
             check=False,
-            capture_output=True,
-            text=True,
             timeout=timeout_seconds,
+            cancel_requested=Event(),
+            operation=operation,
         )
         if result.returncode == 0:
             return False
@@ -177,13 +243,19 @@ class RootlessPodman:
 
     @staticmethod
     def _bounded(
-        result: subprocess.CompletedProcess[str], limit: int
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
+        result: PodmanCompletedProcess | subprocess.CompletedProcess[str], limit: int
+    ) -> PodmanCompletedProcess:
+        stdout = result.stdout[:limit]
+        stderr = result.stderr[:limit]
+        return PodmanCompletedProcess(
             result.args,
             result.returncode,
-            result.stdout[:limit],
-            result.stderr[:limit],
+            stdout,
+            stderr,
+            stdout_truncated=getattr(result, "stdout_truncated", False)
+            or len(result.stdout.encode("utf-8")) > len(stdout.encode("utf-8")),
+            stderr_truncated=getattr(result, "stderr_truncated", False)
+            or len(result.stderr.encode("utf-8")) > len(stderr.encode("utf-8")),
         )
 
     @staticmethod
@@ -213,7 +285,12 @@ class PersistentPodmanCase:
         self.name = f"pi-baseline-{request.run_id}"
         self._started = False
         self._closed = False
+        self._poisoned = False
         self.cancel_requested = cancel_requested
+
+    @property
+    def poisoned(self) -> bool:
+        return self._poisoned
 
     def __enter__(self) -> PersistentPodmanCase:
         try:
@@ -221,20 +298,22 @@ class PersistentPodmanCase:
             if not self.adapter.is_rootless(self.cancel_requested):
                 raise PodmanSecurityError("Podman did not report rootless operation")
             _check_cancel(self.cancel_requested)
-            # This is deliberately immediately adjacent to create().  The
-            # descriptors, not their original pathnames, are the mount source.
+            # The validated absolute paths are the only container mounts.
             self.request.topology.verify()
             _run_command(
                 self.create_command(),
-                check=True, timeout=self.request.limits.timeout_seconds,
-                pass_fds=self.request.pass_fds,
+                check=True,
+                timeout=self.request.limits.timeout_seconds,
                 cancel_requested=self.cancel_requested,
+                operation="create",
             )
             _check_cancel(self.cancel_requested)
             _run_command(
                 [self.adapter.executable, "start", self.name],
-                check=True, timeout=self.request.limits.timeout_seconds,
+                check=True,
+                timeout=self.request.limits.timeout_seconds,
                 cancel_requested=self.cancel_requested,
+                operation="start",
             )
             self._started = True
             return self
@@ -246,7 +325,7 @@ class PersistentPodmanCase:
         self.close()
 
     def create_command(self) -> list[str]:
-        """Construct the single detached container creation command."""
+        """Construct the persistent container creation command."""
 
         request = self.request
         limits = request.limits
@@ -268,42 +347,55 @@ class PersistentPodmanCase:
             "--tmpfs",
             "/tmp:rw,size=64m,mode=1777",
             "--volume",
-            f"{_descriptor_mount_source(request.topology.input.fd)}:/input:ro",
+            f"{request.topology.input.path}:/input:ro,rprivate",
             "--volume",
-            f"{_descriptor_mount_source(request.topology.workspace.fd)}:/work:rw",
+            f"{request.topology.workspace.path}:/work:rw,rprivate",
             request.image,
             "sleep",
             "infinity",
         ]
 
-    def exec(self, command: str) -> subprocess.CompletedProcess[str]:
+    def exec(
+        self, command: str, *, controller_deadline: float | None = None
+    ) -> PodmanCompletedProcess:
         """Execute one shell command inside this case's existing container."""
 
         if not self._started or self._closed:
             raise RuntimeError("persistent Podman case is not running")
-        result = _run_command(
-            [
-                self.adapter.executable,
-                "exec",
-                "--workdir",
-                "/work",
-                self.name,
-                "sh",
-                "-lc",
-                command,
-            ],
-            check=False, timeout=self.request.limits.timeout_seconds,
-            cancel_requested=self.cancel_requested,
-        )
-        return self.adapter._bounded(result, self.request.limits.output_bytes)
+        try:
+            result = _run_command(
+                [
+                    self.adapter.executable,
+                    "exec",
+                    "--workdir",
+                    "/work",
+                    self.name,
+                    "sh",
+                    "-lc",
+                    command,
+                ],
+                check=False,
+                timeout=self.request.limits.timeout_seconds,
+                controller_deadline=controller_deadline,
+                capture_limit=self.request.limits.output_bytes,
+                cancel_requested=self.cancel_requested,
+                operation="exec",
+            )
+            return self.adapter._bounded(result, self.request.limits.output_bytes)
+        except PodmanTimeoutError:
+            self._poisoned = True
+            self.close()
+            raise
 
-    def logs(self) -> subprocess.CompletedProcess[str]:
+    def logs(self) -> PodmanCompletedProcess:
         """Collect bounded container logs before the case is closed."""
 
         result = _run_command(
             [self.adapter.executable, "logs", self.name],
-            check=True, timeout=self.request.limits.timeout_seconds,
+            check=True,
+            timeout=self.request.limits.timeout_seconds,
             cancel_requested=self.cancel_requested,
+            operation="logs",
         )
         return self.adapter._bounded(result, self.request.limits.output_bytes)
 
@@ -319,15 +411,15 @@ class PersistentPodmanCase:
             remaining = deadline - time.monotonic()
             command_timeout = min(_CLEANUP_COMMAND_TIMEOUT_SECONDS, remaining)
             try:
-                subprocess.run(
+                _run_command(
                     [self.adapter.executable, "rm", "--force", "--time", "0", self.name],
                     check=False,
-                    capture_output=True,
-                    text=True,
                     timeout=command_timeout,
+                    cancel_requested=Event(),
+                    operation="remove_cleanup",
                 )
-            except BaseException as error:
-                errors.append(f"force removal failed: {error}")
+            except BaseException:
+                errors.append("force removal failed")
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -336,16 +428,19 @@ class PersistentPodmanCase:
                 removed = self.adapter.verify_removed(
                     self.request.run_id,
                     timeout_seconds=min(_CLEANUP_COMMAND_TIMEOUT_SECONDS, remaining),
+                    operation="exists_cleanup",
                 )
-            except BaseException as error:
-                errors.append(f"removal verification failed: {error}")
+            except BaseException:
+                errors.append("removal verification failed")
             if removed:
                 self._closed = True
                 break
             time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
         if not removed:
-            raise ContainerCleanupError("failed to remove container (container_cleanup_failed)") from None
+            raise ContainerCleanupError(
+                "failed to remove container (container_cleanup_failed)"
+            ) from None
 
 
 def _check_cancel(cancel_requested: Event) -> None:
@@ -358,32 +453,140 @@ def _run_command(
     *,
     check: bool,
     timeout: float,
-    pass_fds: tuple[int, ...] = (),
+    controller_deadline: float | None = None,
+    capture_limit: int = 1_048_576,
     cancel_requested: Event,
-) -> subprocess.CompletedProcess[str]:
+    operation: PodmanOperation,
+) -> PodmanCompletedProcess:
     """Run Podman with short polling when cooperative cancellation is enabled."""
+    if operation not in _PODMAN_OPERATIONS:
+        raise ValueError("invalid Podman operation label")
     _check_cancel(cancel_requested)
+    if capture_limit <= 0:
+        raise ValueError("capture limit must be positive")
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        pass_fds=pass_fds,
     )
-    deadline = time.monotonic() + timeout
-    while process.poll() is None:
-        _check_cancel_process(process, cancel_requested)
-        if time.monotonic() >= deadline:
+    stdout_capture = _Capture(capture_limit)
+    stderr_capture = _Capture(capture_limit)
+    stdout_stream = getattr(process, "stdout", None)
+    stderr_stream = getattr(process, "stderr", None)
+    stdout_thread = Thread(target=_drain_stream, args=(stdout_stream, stdout_capture), daemon=True)
+    stderr_thread = Thread(target=_drain_stream, args=(stderr_stream, stderr_capture), daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    started = time.monotonic()
+    command_deadline = started + timeout
+    deadline = command_deadline
+    deadline_source: DeadlineSource = "command_cap"
+    if controller_deadline is not None and controller_deadline <= deadline:
+        deadline = controller_deadline
+        deadline_source = "controller_deadline"
+    timed_out = False
+    try:
+        while process.poll() is None:
+            _check_cancel_process(process, cancel_requested)
+            if time.monotonic() >= deadline:
+                timed_out = True
+                _terminate_process(process)
+                break
+            cancel_requested.wait(min(0.1, max(0.0, deadline - time.monotonic())))
+        if process.poll() is None:
             _terminate_process(process)
-            raise subprocess.TimeoutExpired(command, timeout)
-        cancel_requested.wait(min(0.1, max(0.0, deadline - time.monotonic())))
-    stdout, stderr = process.communicate()
-    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        process.wait(timeout=1.0)
+    finally:
+        _join_drainer(stdout_thread, stdout_stream)
+        _join_drainer(stderr_thread, stderr_stream)
+    if stdout_stream is None or stderr_stream is None:
+        communicate = getattr(process, "communicate", None)
+        fallback_stdout, fallback_stderr = (
+            cast("tuple[str, str]", communicate()) if callable(communicate) else ("", "")
+        )
+        if stdout_stream is None:
+            stdout_capture.append(fallback_stdout or "")
+        if stderr_stream is None:
+            stderr_capture.append(fallback_stderr or "")
+    stdout, stderr = stdout_capture.value(), stderr_capture.value()
+    if timed_out:
+        raise PodmanTimeoutError(
+            operation,
+            deadline_source,
+            stdout_truncated=stdout_capture.truncated,
+            stderr_truncated=stderr_capture.truncated,
+            stdout_bucket=stdout_capture.bucket,
+            stderr_bucket=stderr_capture.bucket,
+        )
+    result = PodmanCompletedProcess(
+        command,
+        process.returncode,
+        stdout,
+        stderr,
+        stdout_truncated=stdout_capture.truncated,
+        stderr_truncated=stderr_capture.truncated,
+    )
     if check and result.returncode:
         raise subprocess.CalledProcessError(
             result.returncode, command, output=stdout, stderr=stderr
         )
     return result
+
+
+class _Capture:
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.parts: list[str] = []
+        self.size = 0
+        self.truncated = False
+        self.lock = Lock()
+
+    @property
+    def bucket(self) -> CaptureBucket:
+        if self.truncated:
+            return "truncated"
+        if self.size == 0:
+            return "empty"
+        if self.size <= 4096:
+            return "small"
+        return "bounded"
+
+    def append(self, chunk: str) -> None:
+        with self.lock:
+            encoded = chunk.encode("utf-8", errors="replace")
+            remaining = self.limit - self.size
+            if remaining <= 0:
+                self.truncated = True
+                return
+            if len(encoded) > remaining:
+                self.parts.append(encoded[:remaining].decode("utf-8", errors="ignore"))
+                self.size = self.limit
+                self.truncated = True
+            else:
+                self.parts.append(chunk)
+                self.size += len(encoded)
+
+    def value(self) -> str:
+        with self.lock:
+            return "".join(self.parts)
+
+
+def _drain_stream(stream: IO[str] | None, capture: _Capture) -> None:
+    if stream is None:
+        return
+    while True:
+        chunk = stream.read(16 * 1024)
+        if not chunk:
+            return
+        capture.append(chunk)
+
+
+def _join_drainer(thread: Thread, stream: IO[str] | None) -> None:
+    thread.join(timeout=1.0)
+    if thread.is_alive() and stream is not None:
+        stream.close()
+        thread.join(timeout=1.0)
 
 
 def _check_cancel_process(process: subprocess.Popen[str], cancel_requested: Event) -> None:

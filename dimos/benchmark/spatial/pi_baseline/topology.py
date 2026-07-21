@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -10,6 +12,20 @@ import stat
 
 class TopologyError(ValueError):
     """Raised when a runtime root is unsafe or overlaps another root."""
+
+
+@contextmanager
+def fresh_directory_cursor(fd: int) -> Iterator[int]:
+    """Yield an independent, descriptor-anchored directory enumeration FD."""
+    cursor_fd = os.open(
+        ".",
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=fd,
+    )
+    try:
+        yield cursor_fd
+    finally:
+        os.close(cursor_fd)
 
 
 @dataclass
@@ -118,13 +134,6 @@ class PinnedDirectory:
             os.close(self.fd)
             self.fd = -1
 
-    @property
-    def proc_path(self) -> Path:
-        """A pathname rooted at this already-open descriptor."""
-        if self.fd < 0:
-            raise TopologyError("directory descriptor is closed")
-        return Path(f"/proc/self/fd/{self.fd}")
-
     def __truediv__(self, name: str) -> Path:
         """Expose the descriptive path for legacy adapters, never for access."""
         return self.path / name
@@ -162,10 +171,6 @@ class PinnedRuntimeTopology:
     output: PinnedDirectory
     private: PinnedDirectory
 
-    @property
-    def fds(self) -> tuple[int, ...]:
-        return (self.input.fd, self.workspace.fd)
-
     def verify(self) -> None:
         for directory in (self.input, self.workspace, self.output, self.private):
             directory.verify()
@@ -188,16 +193,20 @@ def pin_runtime_topology(
         # The walk, rather than Path.resolve()/lexical comparison, is the trust
         # boundary.  It rejects symlinked ancestors and records every component.
         for value in values:
-            pinned.append(value if isinstance(value, PinnedDirectory) else PinnedDirectory.open(value, create=True))
+            pinned.append(
+                value
+                if isinstance(value, PinnedDirectory)
+                else PinnedDirectory.open(value, create=True)
+            )
         identities = {(item.device, item.inode) for item in pinned}
         if len(identities) != len(pinned):
             raise TopologyError("runtime roots must have distinct directory identities")
         for index in range(len(pinned)):
             for other in range(index + 1, len(pinned)):
-                if (
-                    (pinned[index].device, pinned[index].inode) in pinned[other].ancestors
-                    or (pinned[other].device, pinned[other].inode) in pinned[index].ancestors
-                ):
+                if (pinned[index].device, pinned[index].inode) in pinned[other].ancestors or (
+                    pinned[other].device,
+                    pinned[other].inode,
+                ) in pinned[index].ancestors:
                     raise TopologyError("runtime roots must be distinct and non-overlapping")
         return PinnedRuntimeTopology(*pinned)
     except Exception:
@@ -209,7 +218,9 @@ def pin_runtime_topology(
 def _walk_directory(path: Path, *, create: bool) -> tuple[int, set[tuple[int, int]]]:
     raw = str(path)
     absolute = path.absolute()
-    current = os.open("/" if absolute.is_absolute() else ".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    current = os.open(
+        "/" if absolute.is_absolute() else ".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
     identities: set[tuple[int, int]] = {(os.fstat(current).st_dev, os.fstat(current).st_ino)}
     try:
         components = absolute.parts[1:] if absolute.is_absolute() else absolute.parts

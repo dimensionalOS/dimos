@@ -119,7 +119,9 @@ class SchedulerRuntime:
                 definition.manifest, definition.plan
             ):
                 records = attempts.get(identifier, ())
-                latest = max(records, key=lambda record: record.context.attempt_number, default=None)
+                latest = max(
+                    records, key=lambda record: record.context.attempt_number, default=None
+                )
                 if latest is None:
                     result.append(JobSummary(identity=identity, state="pending"))
                 elif latest.outcome is None:
@@ -268,7 +270,9 @@ class SchedulerRuntime:
 
         def emit(event: ExecutorEvent) -> None:
             try:
-                raw_event = event.model_dump(mode="python") if isinstance(event, BaseModel) else event
+                raw_event = (
+                    event.model_dump(mode="python") if isinstance(event, BaseModel) else event
+                )
                 validated = _EXECUTOR_EVENT_ADAPTER.validate_python(raw_event)
             except Exception:
                 if self.diagnostic is not None:
@@ -324,6 +328,7 @@ class SchedulerRuntime:
                             occurred_at=datetime.now(timezone.utc),
                             message=outcome.reason,
                             payload={"status": outcome.status},
+                            policy_telemetry=outcome.policy_telemetry,
                         ),
                     )
                 else:
@@ -363,7 +368,11 @@ class SchedulerRuntime:
         self._summaries = summaries
 
     def _safe_outcome(self, outcome: TerminalOutcome) -> TerminalOutcome:
-        if outcome.status == "failed" and outcome.reason == "container_cleanup_failed":
+        if outcome.status == "failed" and outcome.reason in {
+            "container_cleanup_failed",
+            "post_image_policy_violation",
+            "pre_image_policy_violation",
+        }:
             return outcome
         reasons = {
             "succeeded": "completed",
@@ -450,7 +459,9 @@ def internal_operation(
                 "interrupted",
                 "cancelled",
             }:
-                raise ValueError("only the latest failed, interrupted, or cancelled outcome may be retried")
+                raise ValueError(
+                    "only the latest failed, interrupted, or cancelled outcome may be retried"
+                )
         if operation == "run":
             selected = runtime._job_ids_with_state({"pending"})
             return runtime._execute(selected, allowed_states={"pending"}, capability=capability)

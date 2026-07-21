@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_LINE_BYTES = 64 * 1024;
 export const MAX_PENDING_REQUESTS = 4;
 export const MAX_PROMPT_BYTES = 32 * 1024;
@@ -35,11 +35,11 @@ export type ToolReply = Static<typeof ToolReplySchema>;
 export type InboundFrame = RunStart | ToolReply;
 
 export type OutboundFrame =
-  | { version: 1; type: "run_started"; id: string; tools: readonly string[] }
-  | { version: 1; type: "tool_call"; id: string; tool: string; params: Record<string, unknown> }
-  | { version: 1; type: "transcript"; event: string; delta?: string }
-  | { version: 1; type: "run_complete"; id: string; ok: boolean; reason: "submitted" | "max_turns" | "max_tool_calls" | "timeout" | "session_error" | "protocol_error"; error?: string }
-  | { version: 1; type: "protocol_error"; error: string };
+  | { version: 2; type: "run_started"; id: string; tools: readonly string[] }
+  | { version: 2; type: "tool_call"; id: string; tool: string; params: Record<string, unknown> }
+  | { version: 2; type: "transcript"; event: string; delta?: string }
+  | { version: 2; type: "run_complete"; id: string; ok: boolean; reason: "submitted" | "max_turns" | "max_tool_calls" | "timeout" | "session_error" | "protocol_error" | "pre_image_policy_violation" | "post_image_policy_violation"; error?: string }
+  | { version: 2; type: "protocol_error"; error: string };
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -55,7 +55,7 @@ export function parseFrame(line: string): InboundFrame {
   if (Buffer.byteLength(line, "utf8") > MAX_LINE_BYTES) throw new Error("NDJSON frame exceeds limit");
   let value: unknown;
   try { value = JSON.parse(line); } catch { throw new Error("invalid JSON frame"); }
-  if (!record(value) || value.version !== PROTOCOL_VERSION || typeof value.type !== "string") throw new Error("invalid protocol v1 frame");
+  if (!record(value) || value.version !== PROTOCOL_VERSION || typeof value.type !== "string") throw new Error("invalid protocol v2 frame");
   if (value.type === "run_start") {
     const budget = value.budget;
     const config = value.config;
@@ -72,7 +72,7 @@ export function parseFrame(line: string): InboundFrame {
   if (value.type === "tool_reply" && exactKeys(value, ["version", "type", "id", "ok", "result", "error"]) &&
       typeof value.id === "string" && value.id.length > 0 && value.id.length <= 128 && typeof value.ok === "boolean" &&
       (value.error === undefined || (typeof value.error === "string" && value.error.length <= 1024))) return value as ToolReply;
-  throw new Error("invalid or unsupported protocol v1 frame");
+  throw new Error("invalid or unsupported protocol v2 frame");
 }
 
 export function encodeFrame(frame: OutboundFrame): string {

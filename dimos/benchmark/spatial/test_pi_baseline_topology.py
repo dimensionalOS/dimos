@@ -18,14 +18,14 @@ def topology(tmp_path: Path):
     )
 
 
-def test_podman_mounts_use_pinned_fds_and_pass_fds(tmp_path: Path) -> None:
+def test_podman_mounts_use_validated_absolute_paths(tmp_path: Path) -> None:
     pinned = topology(tmp_path)
     request = PodmanRun("registry.example/pi@sha256:" + "a" * 64, "run-1", pinned)
     command = RootlessPodman().command(request)
 
-    assert f"/proc/self/fd/{pinned.input.fd}:/input:ro" in command
-    assert f"/proc/self/fd/{pinned.workspace.fd}:/work:rw" in command
-    assert request.pass_fds == (pinned.input.fd, pinned.workspace.fd)
+    assert f"{pinned.input.path}:/input:ro,rprivate" in command
+    assert f"{pinned.workspace.path}:/work:rw,rprivate" in command
+    assert not any(argument.startswith("/proc/") for argument in command)
     pinned.close()
 
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.benchmark.spatial.pi_baseline.config import PiBaselineConfig
-from dimos.benchmark.spatial.pi_baseline.controller import AdapterCleanupError
+from dimos.benchmark.spatial.pi_baseline.controller import PROTOCOL_VERSION, AdapterCleanupError
 from dimos.benchmark.spatial.pi_baseline.evidence import EvidenceManifest
 from dimos.benchmark.spatial.pi_baseline.prompts import build_prompt_pair
 import dimos.benchmark.spatial.pi_baseline.runner as runner_module
@@ -132,7 +132,13 @@ def test_paired_run_seals_evidence_and_leaves_human_gate(
         ),
     )
     cancel_requested, publication_lock = _operation_pair()
-    result = run_paired(_config(tmp_path), podman=FakePodman(), controller_factory=FakeAdapter, cancel_requested=cancel_requested, publication_lock=publication_lock)  # type: ignore[arg-type]
+    result = run_paired(
+        _config(tmp_path),
+        podman=FakePodman(),
+        controller_factory=FakeAdapter,
+        cancel_requested=cancel_requested,
+        publication_lock=publication_lock,
+    )  # type: ignore[arg-type]
     gate = json.loads(result.gate_path.read_text(encoding="utf-8"))
     assert gate["decision"] is None
     assert len(gate["smoke_runs"]) == 2
@@ -257,7 +263,9 @@ def test_end_to_end_operation_pair_identity_reaches_runner_boundaries(
     monkeypatch.setattr("dimos.benchmark.spatial.pi_baseline.runner.stage_public_instance", _stage)
     monkeypatch.setattr(
         "dimos.benchmark.spatial.pi_baseline.runner.score_case",
-        lambda *args, **kwargs: SimpleNamespace(model_dump_json=lambda: '{"record_type":"pi-score"}'),
+        lambda *args, **kwargs: SimpleNamespace(
+            model_dump_json=lambda: '{"record_type":"pi-score"}'
+        ),
     )
     cancel_requested, publication_lock = _operation_pair()
     seen: dict[str, object] = {}
@@ -274,8 +282,11 @@ def test_end_to_end_operation_pair_identity_reaches_runner_boundaries(
             return super().run(run_id, broker, start, event, lock)
 
     run_condition(
-        _config(tmp_path), mode="visualization-forbidden", podman=CapturingPodman(),
-        controller_factory=CapturingAdapter, cancel_requested=cancel_requested,
+        _config(tmp_path),
+        mode="visualization-forbidden",
+        podman=CapturingPodman(),
+        controller_factory=CapturingAdapter,
+        cancel_requested=cancel_requested,
         publication_lock=publication_lock,
     )
     assert seen["podman_event"] is cancel_requested
@@ -305,8 +316,12 @@ def test_stubborn_reader_cleanup_fails_and_container_cleanup_still_runs(
 
     with pytest.raises(AdapterCleanupError):
         run_condition(
-            _config(tmp_path), mode="visualization-forbidden", podman=CleanupPodman(),
-            controller_factory=StubbornAdapter, cancel_requested=Event(), publication_lock=Lock(),
+            _config(tmp_path),
+            mode="visualization-forbidden",
+            podman=CleanupPodman(),
+            controller_factory=StubbornAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
         )
     assert markers == ["container-created", "adapter-terminated", "absence-verified"]
     assert not list((tmp_path / "private").rglob("outcome.v1.json"))
@@ -322,26 +337,35 @@ def test_start_frame_composes_selected_prompt_with_case_question(tmp_path: Path)
 
     assert forbidden["prompt"] == pair.visualization_forbidden + "\n\nCase question:\nanswer"
     assert encouraged["prompt"] == pair.visualization_encouraged + "\n\nCase question:\nanswer"
-    assert (
-        str(forbidden["prompt"]).replace(
-            "Visualization is forbidden. Do not call `read_generated_image`.",
-            "Visualization is required for acceptance: generate an image under `/work` and successfully call the bounded `read_generated_image` operation at least once before submitting your answer.",
-        )
-        == encouraged["prompt"]
-    )
+    assert forbidden["version"] == encouraged["version"] == PROTOCOL_VERSION
+    assert "relative path" in str(encouraged["prompt"])
+    assert "regular non-symlink PNG" in str(encouraged["prompt"])
 
 
 def test_failed_adapter_still_verifies_container_removal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     class FailingAdapter(FakeAdapter):
-        def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+        def run(
+            self,
+            run_id: str,
+            broker: object,
+            start: dict[str, object],
+            cancel_requested: Event,
+            publication_lock: Lock,
+        ) -> object:
             raise RuntimeError("adapter failed")
 
     monkeypatch.setattr("dimos.benchmark.spatial.pi_baseline.runner.stage_public_instance", _stage)
     podman = FakePodman()
     with pytest.raises(RuntimeError, match="adapter failed"):
-        run_paired(_config(tmp_path), podman=podman, controller_factory=FailingAdapter, cancel_requested=Event(), publication_lock=Lock())  # type: ignore[arg-type]
+        run_paired(
+            _config(tmp_path),
+            podman=podman,
+            controller_factory=FailingAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
+        )  # type: ignore[arg-type]
     assert podman.removed
 
 
@@ -349,7 +373,14 @@ def test_policy_failures_retain_evidence_and_never_score_or_append(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     class PolicyAdapter(FakeAdapter):
-        def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+        def run(
+            self,
+            run_id: str,
+            broker: object,
+            start: dict[str, object],
+            cancel_requested: Event,
+            publication_lock: Lock,
+        ) -> object:
             if broker.prompt_mode == "visualization-forbidden":  # type: ignore[attr-defined]
                 with pytest.raises(ValueError, match="visualization_forbidden"):
                     broker.read_generated_image("missing.png")  # type: ignore[attr-defined]
@@ -368,7 +399,13 @@ def test_policy_failures_retain_evidence_and_never_score_or_append(
     )
     podman = FakePodman()
     with pytest.raises(ValueError, match="visualization_forbidden"):
-        run_paired(_config(tmp_path), podman=podman, controller_factory=PolicyAdapter, cancel_requested=Event(), publication_lock=Lock())  # type: ignore[arg-type]
+        run_paired(
+            _config(tmp_path),
+            podman=podman,
+            controller_factory=PolicyAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
+        )  # type: ignore[arg-type]
     private = tmp_path / "private" / "run-1" / "visualization-forbidden"
     assert (private / "compliance.v1.json").is_file()
     assert (private / "failure.v1.json").is_file()
@@ -381,7 +418,14 @@ def test_encouraged_policy_failure_is_retained_without_scoring_that_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     class EncouragedFailureAdapter(FakeAdapter):
-        def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+        def run(
+            self,
+            run_id: str,
+            broker: object,
+            start: dict[str, object],
+            cancel_requested: Event,
+            publication_lock: Lock,
+        ) -> object:
             if broker.prompt_mode == "visualization-forbidden":  # type: ignore[attr-defined]
                 broker.submit_answer(True)  # type: ignore[attr-defined]
             else:
@@ -401,8 +445,11 @@ def test_encouraged_policy_failure_is_retained_without_scoring_that_mode(
     )
     with pytest.raises(ValueError, match="visualization_required_before_submission"):
         run_paired(
-            _config(tmp_path), podman=FakePodman(), controller_factory=EncouragedFailureAdapter
-            , cancel_requested=Event(), publication_lock=Lock()
+            _config(tmp_path),
+            podman=FakePodman(),
+            controller_factory=EncouragedFailureAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
         )  # type: ignore[arg-type]
     private = tmp_path / "private" / "run-1" / "visualization-encouraged"
     assert json.loads((private / "compliance.v1.json").read_text())["scoring_eligible"] is False
@@ -424,11 +471,24 @@ def test_paired_outer_failure_record_keeps_a_pinned_descriptor(
     monkeypatch.setattr(runner_module, "_retain_failure_record", record)
 
     class FailingAdapter(FakeAdapter):
-        def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+        def run(
+            self,
+            run_id: str,
+            broker: object,
+            start: dict[str, object],
+            cancel_requested: Event,
+            publication_lock: Lock,
+        ) -> object:
             raise RuntimeError("paired failure")
 
     with pytest.raises(RuntimeError, match="paired failure"):
-        run_paired(_config(tmp_path), podman=FakePodman(), controller_factory=FailingAdapter, cancel_requested=Event(), publication_lock=Lock())  # type: ignore[arg-type]
+        run_paired(
+            _config(tmp_path),
+            podman=FakePodman(),
+            controller_factory=FailingAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
+        )  # type: ignore[arg-type]
 
     assert len(retained) == 2
     assert all(isinstance(private, runner_module.PinnedDirectory) for private in retained)
@@ -441,7 +501,14 @@ def test_workspace_symlink_is_rejected_without_following_host_content(
     outside.write_text("private", encoding="utf-8")
 
     class SymlinkAdapter(FakeAdapter):
-        def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+        def run(
+            self,
+            run_id: str,
+            broker: object,
+            start: dict[str, object],
+            cancel_requested: Event,
+            publication_lock: Lock,
+        ) -> object:
             work = broker.case.request.workspace_dir  # type: ignore[attr-defined]
             os.symlink(outside, work / "leak.txt")
             broker.submit_answer(True)  # type: ignore[attr-defined]
@@ -451,7 +518,13 @@ def test_workspace_symlink_is_rejected_without_following_host_content(
     monkeypatch.setattr("dimos.benchmark.spatial.pi_baseline.runner.stage_public_instance", _stage)
     podman = FakePodman()
     with pytest.raises(ValueError, match="symbolic-link"):
-        run_paired(_config(tmp_path), podman=podman, controller_factory=SymlinkAdapter, cancel_requested=Event(), publication_lock=Lock())  # type: ignore[arg-type]
+        run_paired(
+            _config(tmp_path),
+            podman=podman,
+            controller_factory=SymlinkAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
+        )  # type: ignore[arg-type]
     assert not (
         tmp_path
         / "out"
@@ -490,7 +563,13 @@ def test_final_evidence_write_failure_prevents_ledger_append(
         "dimos.benchmark.spatial.pi_baseline.runner.write_evidence_manifest", fail_final_manifest
     )
     with pytest.raises(OSError, match="evidence storage failure"):
-        run_paired(_config(tmp_path), podman=FakePodman(), controller_factory=FakeAdapter, cancel_requested=Event(), publication_lock=Lock())  # type: ignore[arg-type]
+        run_paired(
+            _config(tmp_path),
+            podman=FakePodman(),
+            controller_factory=FakeAdapter,
+            cancel_requested=Event(),
+            publication_lock=Lock(),
+        )  # type: ignore[arg-type]
     assert not (tmp_path / "ledger.jsonl").exists()
 
 
@@ -614,7 +693,14 @@ class _ReplacingPodman(FakePodman):
 
 
 class _DescriptorWritingAdapter(FakeAdapter):
-    def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+    def run(
+        self,
+        run_id: str,
+        broker: object,
+        start: dict[str, object],
+        cancel_requested: Event,
+        publication_lock: Lock,
+    ) -> object:
         request = broker.case.request  # type: ignore[attr-defined]
         topology = request.topology
         Path(f"/proc/self/fd/{topology.workspace.fd}/generated.txt").write_text(
@@ -628,7 +714,14 @@ class _DescriptorWritingAdapter(FakeAdapter):
 
 
 class _FailingDescriptorAdapter(_DescriptorWritingAdapter):
-    def run(self, run_id: str, broker: object, start: dict[str, object], cancel_requested: Event, publication_lock: Lock) -> object:
+    def run(
+        self,
+        run_id: str,
+        broker: object,
+        start: dict[str, object],
+        cancel_requested: Event,
+        publication_lock: Lock,
+    ) -> object:
         raise RuntimeError("descriptor-owned failure")
 
 

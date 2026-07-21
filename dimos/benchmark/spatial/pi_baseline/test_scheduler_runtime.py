@@ -20,6 +20,34 @@ from .scheduler_runtime import PreflightError, SchedulerRuntime
 from .scheduler_store import FilesystemExperimentStore
 
 
+def test_post_image_policy_outcome_survives_scheduler_normalization() -> None:
+    outcome = SchedulerRuntime._safe_outcome(
+        object.__new__(SchedulerRuntime),
+        TerminalOutcome(status="failed", reason="post_image_policy_violation"),
+    )
+    assert outcome == TerminalOutcome(status="failed", reason="post_image_policy_violation")
+
+
+def test_post_image_policy_outcome_persists_finished_event_and_projection(tmp_path) -> None:
+    runtime = make_runtime(
+        tmp_path,
+        FakeExecutor(TerminalOutcome(status="failed", reason="post_image_policy_violation")),
+        workers=1,
+        case_count=1,
+    )
+    result = runtime.run()[0]
+    assert result.outcome == TerminalOutcome(status="failed", reason="post_image_policy_violation")
+    assert result.latest_attempt_id is not None
+    attempt = AttemptContext(
+        identity=result.identity,
+        attempt_id=result.latest_attempt_id,
+        attempt_number=1,
+        directory_name=result.latest_attempt_id,
+    )
+    finished = [event for event in runtime.store.events(attempt) if event.kind == "finished"]
+    assert finished[0].message == "post_image_policy_violation"
+
+
 def make_plan(workers: int = 2, case_count: int = 4) -> ExperimentPlan:
     return expand_plan(
         "experiment",
@@ -176,8 +204,7 @@ def test_resume_runs_interrupted_jobs_but_not_failed_terminal_jobs(tmp_path) -> 
     assert all(
         summary.state == "succeeded"
         for summary in resumed.summaries()
-        if summary.identity.job_id
-        in {item.identity.job_id for item in interrupted + pending}
+        if summary.identity.job_id in {item.identity.job_id for item in interrupted + pending}
     )
     assert all(
         summary.state == "failed"
@@ -259,8 +286,14 @@ def test_cleanup_reason_is_preserved_only_for_failed_outcomes(tmp_path) -> None:
     runtime = make_runtime(tmp_path, FakeExecutor(), workers=1, case_count=1)
     cleanup = "container_cleanup_failed"
     assert runtime._safe_outcome(TerminalOutcome(status="failed", reason=cleanup)).reason == cleanup
-    assert runtime._safe_outcome(TerminalOutcome(status="succeeded", reason=cleanup)).reason == "completed"
-    assert runtime._safe_outcome(TerminalOutcome(status="interrupted", reason=cleanup)).reason == "executor_interrupted"
+    assert (
+        runtime._safe_outcome(TerminalOutcome(status="succeeded", reason=cleanup)).reason
+        == "completed"
+    )
+    assert (
+        runtime._safe_outcome(TerminalOutcome(status="interrupted", reason=cleanup)).reason
+        == "executor_interrupted"
+    )
 
 
 def test_artifact_cancellation_wins_before_scheduler_publication(tmp_path) -> None:
@@ -273,7 +306,10 @@ def test_artifact_cancellation_wins_before_scheduler_publication(tmp_path) -> No
             release.wait(1)
             emit(
                 ExecutorArtifactEvent(
-                    kind="artifact", code="artifact_recorded", artifact_id="artifact-1", artifact_sha256="a" * 64
+                    kind="artifact",
+                    code="artifact_recorded",
+                    artifact_id="artifact-1",
+                    artifact_sha256="a" * 64,
                 )
             )
             return self.outcome
@@ -287,8 +323,12 @@ def test_artifact_cancellation_wins_before_scheduler_publication(tmp_path) -> No
     thread.join(2)
     assert runtime.summaries()[0].state == "interrupted"
     with runtime.store.coordinator_lock():
-        attempts = runtime.store.recover_attempts("experiment", runtime.summaries()[0].identity.job_id)
-        assert not any(event.kind == "artifact" for event in runtime.store.events(attempts[0].context))
+        attempts = runtime.store.recover_attempts(
+            "experiment", runtime.summaries()[0].identity.job_id
+        )
+        assert not any(
+            event.kind == "artifact" for event in runtime.store.events(attempts[0].context)
+        )
 
 
 def test_artifact_publication_wins_when_cancel_waits_for_publication_lock(tmp_path) -> None:
@@ -306,7 +346,10 @@ def test_artifact_publication_wins_when_cancel_waits_for_publication_lock(tmp_pa
         def run(self, case, condition, context, emit, cancel_requested, publication_lock):
             emit(
                 ExecutorArtifactEvent(
-                    kind="artifact", code="artifact_recorded", artifact_id="artifact-1", artifact_sha256="a" * 64
+                    kind="artifact",
+                    code="artifact_recorded",
+                    artifact_id="artifact-1",
+                    artifact_sha256="a" * 64,
                 )
             )
             return self.outcome
@@ -328,9 +371,7 @@ def test_artifact_publication_wins_when_cancel_waits_for_publication_lock(tmp_pa
             "experiment", runtime.summaries()[0].identity.job_id
         )[0]
         artifacts = [
-            event
-            for event in runtime.store.events(attempt.context)
-            if event.kind == "artifact"
+            event for event in runtime.store.events(attempt.context) if event.kind == "artifact"
         ]
     assert len(artifacts) == 1
     assert artifacts[0].payload["artifact_id"] == "artifact-1"

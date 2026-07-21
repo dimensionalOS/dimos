@@ -8,5 +8,5 @@ test("compiled entrypoint emits a protocol error when stdin reaches EOF", () => 
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0);
   const frames = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.deepEqual(frames, [{ version: 1, type: "protocol_error", error: "missing run_start frame" }]);
+  assert.deepEqual(frames, [{ version: 2, type: "protocol_error", error: "missing run_start frame" }]);
 });

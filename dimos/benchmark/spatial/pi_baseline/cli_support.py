@@ -27,12 +27,15 @@ from dimos.benchmark.spatial.pi_baseline.scheduler_models import (
     ReviewDecision,
 )
 from dimos.benchmark.spatial.pi_baseline.scheduler_pi_binding import (
+    PiAdmissionContext,
     PiExecutionSnapshot,
     PiInventoryRecord,
     PiMaterialRecord,
     PiRuntimeBindings,
     PiSelectedInput,
+    host_module_paths,
     private_binding_digest,
+    runtime_adapter_artifacts,
     verify_public_inputs,
     verify_runtime_artifacts,
     verify_snapshot_artifacts,
@@ -76,6 +79,7 @@ class PiPreflightResult:
     store: FilesystemExperimentStore
     manifest_digest: str
     private_binding_digest: str
+    admission_context: PiAdmissionContext
 
 
 def _digest(value: JsonValue) -> str:
@@ -206,6 +210,7 @@ def create_definition(
             )
     prompts = build_prompt_pair()
     adapter_file = _adapter_artifact(spec_path.parent, config.node_adapter_command)
+    runtime_files = runtime_adapter_artifacts(Path(config.node_adapter_command[1]))
     scorer_file = Path(__file__).with_name("scoring.py")
     source_root = Path(__file__).parents[4]
     node_protocol = (source_root / "packages/pi-spatial-adapter/src/protocol.ts").read_bytes()
@@ -238,8 +243,12 @@ def create_definition(
         ).read_bytes(),
         "controller": Path(__file__).with_name("controller.py").read_bytes(),
         "runner": Path(__file__).with_name("runner.py").read_bytes(),
+        "broker": Path(__file__).with_name("broker.py").read_bytes(),
+        "scheduler_pi_executor": Path(__file__).with_name("scheduler_pi_executor.py").read_bytes(),
+        **{name: path.read_bytes() for name, path in host_module_paths(source_root).items()},
         "scorer": scorer_bytes,
         "adapter": adapter_file,
+        **runtime_files,
         "config.model": canonical_json(cast("JsonValue", config.model.model_dump(mode="json"))),
         "config.budgets": canonical_json(cast("JsonValue", config.budgets.model_dump(mode="json"))),
         "config.limits": canonical_json(
@@ -257,6 +266,7 @@ def create_definition(
         for name, data in material_files.items()
     )
     snapshot = PiExecutionSnapshot.from_material(
+        policy_revision="pre-image-2-sandbox-plus-1-repair-2-image-post-image-1-submit-v1",
         model=config.model,
         budgets=config.budgets,
         resource_limits=config.resource_limits,
@@ -493,6 +503,7 @@ def validate_pi_definition(
         raise ValueError("Pi manifest plan digest does not match the stored plan")
     if manifest.selected_inputs_digest != plan_selected_inputs_digest(plan):
         raise ValueError("Pi manifest selected input digest does not match the stored plan")
+    admission_context = PiAdmissionContext.from_snapshot(snapshot)
     if bindings is not None:
         verify_runtime_artifacts(snapshot, snapshot.node_adapter_command)
         verify_public_inputs(snapshot, bindings.corpus_root)
@@ -509,6 +520,7 @@ def validate_pi_definition(
         store=store,
         manifest_digest=canonical_manifest_digest,
         private_binding_digest=expected_private_binding,
+        admission_context=admission_context,
     )
 
 
@@ -605,6 +617,7 @@ def execute_pi_operation(
             result.snapshot,
             bindings,
             manifest_executor_fingerprint=result.manifest.executor_fingerprint,
+            admission_context=result.admission_context,
         )
         try:
             available = host_prerequisite()

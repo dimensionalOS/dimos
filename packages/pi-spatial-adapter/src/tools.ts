@@ -6,6 +6,10 @@ import type { OutboundFrame, ToolReply } from "./protocol.js";
 export const TOOL_NAMES = ["sandbox_exec", "read_generated_image", "submit_answer"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type AnswerType = "boolean" | "integer";
+export type PromptMode = "visualization_forbidden" | "visualization_encouraged";
+export const SECOND_SANDBOX_CUE = "Pre-image sandbox budget is exhausted. Your next and only permitted tool is read_generated_image using the relative PNG path you created. Do not call sandbox_exec or submit_answer.";
+export const IMAGE_RETRY_CUE = "Image read failed. You have one final image-read attempt. Call read_generated_image once with the relative path of an existing valid PNG under /work. Do not call sandbox_exec or submit_answer.";
+export const FINAL_IMAGE_CUE = "Use your final image-read attempt now with read_generated_image. Do not call sandbox_exec or submit_answer.";
 type ToolSchemaArtifact = {
   schema_version: "1.0";
   tools: ToolDefinition[];
@@ -49,19 +53,31 @@ export interface ToolBroker {
   reply(frame: ToolReply): void;
   close(reason: string): void;
   toolCallCount(): number;
+  sandboxAttempts(): number;
   submissionAccepted(): boolean;
+  visualizationSatisfied(): boolean;
 }
 export type ToolReplyResult = { text: string } | { image: { mimeType: "image/png"; data: string } };
 
 export function createBroker(send: (frame: OutboundFrame) => void, maxPending: number, maxCalls = 100, answerType: AnswerType = "boolean"): ToolBroker {
   let sequence = 0;
   let acceptedSubmission = false;
+  let visualizationSatisfied = false;
+  let sandboxAttemptCount = 0;
+  let imageRecovery = false;
+  let finalImageRequired = false;
   const pending = new Map<string, { tool: ToolName; resolve: (result: ToolReplyResult) => void; reject: (error: Error) => void }>();
   const reply = (frame: ToolReply): void => {
     const entry = pending.get(frame.id);
     if (!entry) throw new Error("unknown or duplicate tool reply");
     pending.delete(frame.id);
-    if (!frame.ok) { entry.reject(new Error(frame.error ?? "host tool failed")); return; }
+    if (!frame.ok) {
+      if (frame.error === "image_read_failed_retry_once" && typeof frame.result === "object" && frame.result !== null && !Array.isArray(frame.result)) {
+        imageRecovery = true;
+        entry.resolve({ text: JSON.stringify(frame.result) });
+      } else entry.reject(new Error(frame.error ?? "host tool failed"));
+      return;
+    }
     try { entry.resolve(validateToolResult(frame.result, entry.tool)); } catch (error) { entry.reject(error instanceof Error ? error : new Error("invalid tool result")); }
   };
   const request = (tool: ToolName, params: Record<string, unknown>): Promise<ToolReplyResult> => {
@@ -72,10 +88,15 @@ export function createBroker(send: (frame: OutboundFrame) => void, maxPending: n
     const id = `tool-${++sequence}`;
     return new Promise<ToolReplyResult>((resolve, reject) => {
       pending.set(id, { tool, resolve, reject });
-      send({ version: 1, type: "tool_call", id, tool, params });
+      send({ version: 2, type: "tool_call", id, tool, params });
     }).then((result) => {
       if (tool === "submit_answer" && "text" in result) {
         acceptedSubmission = isAcceptedSubmitReceipt(result.text, answerType);
+      }
+      if (tool === "read_generated_image" && "image" in result) visualizationSatisfied = true;
+      if (tool === "sandbox_exec") {
+        sandboxAttemptCount += 1;
+        if (imageRecovery) finalImageRequired = true;
       }
       return result;
     });
@@ -84,7 +105,15 @@ export function createBroker(send: (frame: OutboundFrame) => void, maxPending: n
     for (const entry of pending.values()) entry.reject(new Error(reason));
     pending.clear();
   };
-  return { request, reply, close, toolCallCount: () => sequence, submissionAccepted: () => acceptedSubmission };
+  return {
+    request,
+    reply,
+    close,
+    toolCallCount: () => sequence,
+    sandboxAttempts: () => sandboxAttemptCount,
+    submissionAccepted: () => acceptedSubmission,
+    visualizationSatisfied: () => visualizationSatisfied,
+  };
 }
 
 function isAcceptedSubmitReceipt(text: string, answerType: AnswerType): boolean {
@@ -111,14 +140,46 @@ function validateToolResult(value: unknown, tool: ToolName): ToolReplyResult {
   throw new Error("invalid host tool result");
 }
 
-export function toolDefinitions(broker: ToolBroker, answerType: AnswerType): ToolDefinition[] {
+export function toolDefinitions(
+  broker: ToolBroker,
+  answerType: AnswerType,
+  promptMode: PromptMode = "visualization_forbidden",
+): ToolDefinition[] {
   const make = (name: ToolName, label: string, description: string, parameters: ToolDefinition["parameters"]): ToolDefinition => ({
     name, label, description, parameters,
     execute: async (_id, params) => {
-      const result = await broker.request(name, params as Record<string, unknown>);
-      return "image" in result
-        ? { content: [{ type: "image", data: result.image.data, mimeType: result.image.mimeType }], details: {} }
-        : { content: [{ type: "text", text: result.text }], details: {} };
+      let result: ToolReplyResult;
+      try {
+        result = await broker.request(name, params as Record<string, unknown>);
+      } catch (error) {
+        if (name === "read_generated_image" && error instanceof Error && error.message === "image_read_failed_retry_once") {
+          return { content: [{ type: "text", text: IMAGE_RETRY_CUE }], details: {} };
+        }
+        throw error;
+      }
+      if ("image" in result) {
+        const content: Array<
+          | { type: "image"; data: string; mimeType: "image/png" }
+          | { type: "text"; text: string }
+        > = [{ type: "image", data: result.image.data, mimeType: result.image.mimeType }];
+        if (name === "read_generated_image" && promptMode === "visualization_encouraged") {
+          content.push({
+            type: "text",
+            text: "Visualization requirement satisfied. Stop further analysis now. Call submit_answer exactly once with your best answer from the evidence already available, even if uncertain. Do not call sandbox_exec or read_generated_image again.",
+          });
+        }
+        return { content, details: {} };
+      }
+      const recovery = name === "read_generated_image" ? imageRecoveryContract(result.text) : undefined;
+      const content = recovery
+        ? [{ type: "text" as const, text: JSON.stringify(recovery) }, { type: "text" as const, text: IMAGE_RETRY_CUE }]
+        : [{ type: "text" as const, text: result.text }];
+      if (name === "sandbox_exec" && promptMode === "visualization_encouraged" && broker.sandboxAttempts() === 3) {
+        content.push({ type: "text" as const, text: FINAL_IMAGE_CUE });
+      } else if (name === "sandbox_exec" && promptMode === "visualization_encouraged" && broker.sandboxAttempts() === 2) {
+        content.push({ type: "text" as const, text: SECOND_SANDBOX_CUE });
+      }
+      return { content, details: {} };
     },
   });
   return [
@@ -132,6 +193,16 @@ export function toolDefinitions(broker: ToolBroker, answerType: AnswerType): Too
       submitAnswerParameters(answerType),
     ),
   ];
+}
+
+function imageRecoveryContract(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (typeof record.category !== "string" || typeof record.sandbox_attempts !== "number" || typeof record.image_attempts !== "number") return undefined;
+    return { category: record.category, sandbox_attempts: record.sandbox_attempts, image_attempts: record.image_attempts };
+  } catch { return undefined; }
 }
 
 function validAnswer(value: unknown, answerType: AnswerType): boolean {
