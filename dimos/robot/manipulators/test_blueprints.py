@@ -29,6 +29,9 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
 )
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+)
 from dimos.robot.manipulators.piper.blueprints.teleop import keyboard_teleop_piper
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
@@ -121,6 +124,7 @@ def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:
         pytest.param(keyboard_teleop_piper, id="piper"),
         pytest.param(keyboard_teleop_openarm_mock, id="openarm-mock"),
         pytest.param(keyboard_teleop_openarm, id="openarm"),
+        pytest.param(keyboard_teleop_openyam, id="openyam"),
         pytest.param(keyboard_teleop_a750, id="a750"),
         pytest.param(keyboard_teleop_a1z, id="a1z"),
     ],

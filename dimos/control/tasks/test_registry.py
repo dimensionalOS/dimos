@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from dimos.control.routing import CONSUMABLE_STREAMS, Routing, StreamBinding, TaskBindings
+from dimos.control.routing import Routing, StreamBinding, TaskBindings
 from dimos.control.tasks.registry import ControlTaskRegistry, control_task_registry
 
 if TYPE_CHECKING:
@@ -128,8 +128,9 @@ def test_task_cards_are_well_formed() -> None:
         for task_type, streams in consumes_by_type.items():
             for stream, spec in streams.items():
                 where = f"{module.__name__}: {task_type!r} stream {stream!r}"
-                assert stream in CONSUMABLE_STREAMS, (
-                    f"{where} not in allowed set {sorted(CONSUMABLE_STREAMS)}"
+                # Which ports exist is the coordinator's check, not the card's.
+                assert stream.isidentifier() and not stream.startswith("_"), (
+                    f"{where} is not a usable port name"
                 )
                 handler, routing = spec
                 assert isinstance(handler, str) and handler, f"{where}: bad handler {handler!r}"
@@ -267,10 +268,21 @@ def test_register_bindings_runtime_and_conflict() -> None:
         )
 
 
+def test_register_bindings_accepts_any_port_name() -> None:
+    # No fixed set of ports: a coordinator subclass declares its own.
+    reg = ControlTaskRegistry()
+    reg.register_bindings("fake_custom_port", consumes={"wrench_command": ("on_wrench", "direct")})
+    assert reg.bindings_for("fake_custom_port").consumes == (
+        StreamBinding("wrench_command", "on_wrench", Routing.DIRECT),
+    )
+
+
 def test_register_bindings_rejects_bad_streams_and_routing() -> None:
     reg = ControlTaskRegistry()
-    with pytest.raises(ValueError, match="allowed"):
-        reg.register_bindings("fake_stream", consumes={"no_such_port": ("on_x", "broadcast")})
+    with pytest.raises(ValueError, match="input port"):
+        reg.register_bindings("fake_stream", consumes={"not a port": ("on_x", "broadcast")})
+    with pytest.raises(ValueError, match="input port"):
+        reg.register_bindings("fake_private_stream", consumes={"_private": ("on_x", "broadcast")})
     with pytest.raises(ValueError, match="routing"):
         reg.register_bindings("fake_routing", consumes={"joint_command": ("on_x", "round_robin")})
 
