@@ -13,8 +13,35 @@ The manipulation extra provides the verified software prerequisites: Drake and
 
 For real hardware, set `GlobalConfig.can_port` to the CAN interface used by the
 arm. The default hardware address is `can0`; the standard Piper configuration
-uses the mock adapter when no CAN port is configured. No separate DimOS hardware
-bring-up command is documented here.
+uses the mock adapter when no CAN port is configured. Prepare the CAN interface
+before running a hardware blueprint.
+
+## Bring up the Piper CAN interface
+
+Piper uses SocketCAN at 1,000,000 bit/s. For the default vendor setup, use
+DimOS's vendored copy of the upstream activation helper, pinned to upstream
+revision `4eddfcf8`:
+
+```bash
+bash dimos/robot/manipulators/piper/scripts/can_activate.sh can0 1000000
+```
+
+If the device already exposes `can0`, run the vendored helper directly. Verify
+the interface before starting a blueprint:
+
+```bash
+ip link show can0
+```
+
+### Optional SLCAN setup
+
+Use this separate path only with a serial-CAN adapter, such as `/dev/ttyACM0`;
+it is not the default/vendor Piper setup:
+
+```bash
+sudo slcand -o -c -s8 /dev/ttyACM0 can0
+sudo ip link set can0 up
+```
 
 ## Run a Piper blueprint
 
@@ -51,5 +78,4 @@ The Piper blueprints are defined in:
 
 The manipulation requirements include Drake and `piper-sdk`. Follow the
 hardware vendor's documentation for connecting and powering the arm; DimOS
-provides the integration and blueprint compositions, not a separate hardware
-bring-up procedure.
+provides the integration and blueprint compositions.

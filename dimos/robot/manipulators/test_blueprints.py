@@ -76,19 +76,41 @@ def test_quest_piper_teleop_routes_to_declarative_teleop_task() -> None:
     assert "coordinator_cartesian_command" in teleop_quest_piper.remapping_map.values()
 
 
+def test_piper_teleop_blueprints_declare_viser_manipulation() -> None:
+    for blueprint in (keyboard_teleop_piper, coordinator_teleop_piper):
+        kwargs = _manipulation_kwargs(blueprint)
+        assert kwargs["robots"][0].coordinator_task_name == "traj_arm"
+        assert kwargs["visualization"] == {"backend": "viser"}
+
+
+def test_quest_piper_composes_planner_with_trajectory_coordinator() -> None:
+    assert _module_kwargs(coordinator_teleop_piper, ControlCoordinator)
+    assert _module_kwargs(coordinator_teleop_piper, ManipulationModule)
+    coordinator_planner = next(
+        atom for atom in coordinator_teleop_piper.blueprints if atom.module is ManipulationModule
+    )
+    quest_planners = [
+        atom for atom in teleop_quest_piper.blueprints if atom.module is ManipulationModule
+    ]
+    assert quest_planners == [coordinator_planner]
+
+
 def test_piper_teleop_declares_teleop_task() -> None:
     tasks = _coordinator_tasks(coordinator_teleop_piper)
     assert [(task.name, task.type) for task in tasks] == [
         ("teleop_piper", "teleop_ik"),
+        ("traj_arm", "trajectory"),
     ]
 
 
 def test_piper_keyboard_declares_high_priority_gripper_servo() -> None:
     tasks = _coordinator_tasks(keyboard_teleop_piper)
     servo = next(task for task in tasks if task.name == "servo_gripper")
+    trajectory = next(task for task in tasks if task.name == "traj_arm")
     assert servo.type == "servo"
     assert servo.joint_names == ["arm/gripper"]
     assert servo.priority > next(task.priority for task in tasks if task.type == "eef_twist")
+    assert trajectory.type == "trajectory"
 
 
 def test_piper_keyboard_declares_gripper_endpoints_and_light_keyboard_kwargs() -> None:
@@ -101,7 +123,9 @@ def test_piper_keyboard_declares_gripper_endpoints_and_light_keyboard_kwargs() -
 
 def test_piper_quest_declares_normalized_gripper_endpoints() -> None:
     hardware = _module_kwargs(coordinator_teleop_piper, ControlCoordinator)["hardware"][0]
-    task = _coordinator_tasks(coordinator_teleop_piper)[0]
+    task = next(
+        task for task in _coordinator_tasks(coordinator_teleop_piper) if task.name == "teleop_piper"
+    )
 
     assert (hardware.gripper_closed_position, hardware.gripper_open_position) == (0.0, 0.07)
     assert task.params["gripper_open_pos"] == 1.0

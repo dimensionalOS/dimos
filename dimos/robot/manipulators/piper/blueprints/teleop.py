@@ -25,6 +25,7 @@ from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
     eef_twist_task,
     teleop_ik_task,
+    trajectory_task,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
@@ -44,6 +45,7 @@ _piper_keyboard_hw = make_piper_hardware(
     gripper_open_position=0.07,
     gripper_closed_position=0.0,
 )
+_piper_model = make_piper_model_config()
 
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -61,11 +63,12 @@ keyboard_teleop_piper = autoconnect(
                 priority=20,
                 params={"timeout": 0.0, "default_positions": [0.0]},
             ),
+            trajectory_task(_piper_keyboard_hw, name=_piper_model.coordinator_task_name),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_piper_model_config()],
-        visualization={"backend": "meshcat"},
+        robots=[_piper_model],
+        visualization={"backend": "viser"},
     ),
 )
 
@@ -97,7 +100,12 @@ coordinator_teleop_piper = autoconnect(
                     "gripper_closed_pos": 0.0,
                 },
             ),
+            trajectory_task(_piper_teleop_hw, name=_piper_model.coordinator_task_name),
         ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[_piper_model],
+        visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
 )
