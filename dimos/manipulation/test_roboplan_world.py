@@ -379,7 +379,7 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
         pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
-    assert world.add_obstacle(obstacle) is True
+    assert world.add_obstacle(obstacle) == "box"
     assert "box" in world._scene.geometry
     updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
@@ -388,7 +388,7 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     )
     assert world.get_obstacles()[0].pose is updated_pose
     np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
-    assert world.add_obstacle(obstacle) is False
+    assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("box")
     assert world.get_obstacles() == []
 

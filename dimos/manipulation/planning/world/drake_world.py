@@ -360,16 +360,18 @@ class DrakeWorld(WorldSpec):
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> bool:
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add an obstacle to the world."""
         with self._lock:
             # Use obstacle's name as ID (allows external ID management)
             obstacle_id = obstacle.name
+            if not obstacle_id:
+                return None
 
             # Check for duplicate in our tracking
             if obstacle_id in self._obstacles:
                 logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
-                return False
+                return None
 
             try:
                 if not self._finalized:
@@ -394,11 +396,11 @@ class DrakeWorld(WorldSpec):
                 # (can happen with concurrent access)
                 if "already been used" in str(e):
                     logger.debug(f"Obstacle '{obstacle_id}' already in SceneGraph, skipping")
-                    return False
+                    return None
                 else:
                     raise
 
-            return True
+            return obstacle_id
 
     def _add_obstacle_to_plant(self, obstacle: Obstacle, obstacle_id: str) -> Any:
         """Add obstacle to plant (before finalization)."""

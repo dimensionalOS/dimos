@@ -31,6 +31,7 @@ class FakeWorld:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
         self.obstacles: dict[str, Obstacle] = {}
+        self._next_obstacle_id = 1
 
     def add_robot(self, config):
         self.calls.append(("add_robot", config))
@@ -47,10 +48,12 @@ class FakeWorld:
 
     def add_obstacle(self, obstacle):
         self.calls.append(("add_obstacle", obstacle))
-        if obstacle.name in self.obstacles:
-            return False
-        self.obstacles[obstacle.name] = obstacle
-        return True
+        if any(candidate.name == obstacle.name for candidate in self.obstacles.values()):
+            return None
+        obstacle_id = f"world-obstacle-{self._next_obstacle_id}"
+        self._next_obstacle_id += 1
+        self.obstacles[obstacle_id] = obstacle
+        return obstacle_id
 
     def remove_obstacle(self, obstacle_id):
         self.calls.append(("remove_obstacle", obstacle_id))
@@ -60,6 +63,7 @@ class FakeWorld:
         return True
 
     def clear_obstacles(self) -> None:
+        self.obstacles.clear()
         return None
 
     def get_obstacles(self):
@@ -220,12 +224,12 @@ def test_world_monitor_coordinates_obstacle_visualization_after_world_mutation()
         dimensions=(0.1, 0.2, 0.3),
     )
 
-    assert monitor.add_obstacle(obstacle) == "box"
+    assert monitor.add_obstacle(obstacle) == "world-obstacle-1"
     assert fake_world.calls[-1] == ("add_obstacle", obstacle)
-    assert fake_viz.added_obstacles == [("box", obstacle)]
-    assert monitor.remove_obstacle("box") is True
-    assert fake_world.calls[-1] == ("remove_obstacle", "box")
-    assert fake_viz.removed_obstacles == ["box"]
+    assert fake_viz.added_obstacles == [("world-obstacle-1", obstacle)]
+    assert monitor.remove_obstacle("world-obstacle-1") is True
+    assert fake_world.calls[-1] == ("remove_obstacle", "world-obstacle-1")
+    assert fake_viz.removed_obstacles == ["world-obstacle-1"]
 
 
 def test_world_monitor_does_not_forward_duplicate_adds() -> None:
@@ -243,7 +247,7 @@ def test_world_monitor_does_not_forward_duplicate_adds() -> None:
     )  # type: ignore[arg-type]
     monitor.add_obstacle(obstacle)
     assert monitor.add_obstacle(obstacle) == ""
-    assert fake_viz.added_obstacles == [("box", obstacle)]
+    assert fake_viz.added_obstacles == [("world-obstacle-1", obstacle)]
 
 
 def test_world_monitor_clear_obstacles_forwards_removals_to_visualization() -> None:
@@ -263,10 +267,39 @@ def test_world_monitor_clear_obstacles_forwards_removals_to_visualization() -> N
             )
         )
 
+    fake_world.obstacles["native-obstacle-id"] = Obstacle(
+        name="native-name",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+
     monitor.clear_obstacles()
     assert fake_world.obstacles == {}
-    assert fake_viz.removed_obstacles == ["first", "second"]
+    assert fake_viz.removed_obstacles == []
     assert fake_viz.calls[-1] == ("clear_vis_obstacles",)
+
+
+def test_world_monitor_clear_resets_obstacle_source_mappings() -> None:
+    fake_world: Any = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    assert (
+        obstacle_monitor.add_static_obstacle(
+            "tracked",
+            "box",
+            PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+            (1, 1, 1),
+        )
+        == "world-obstacle-1"
+    )
+
+    monitor.clear_obstacles()
+
+    assert obstacle_monitor.remove_static_obstacle("tracked") is False
+    assert fake_world.obstacles == {}
 
 
 def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:

@@ -118,6 +118,14 @@ class WorldObstacleMonitor:
         """Check if monitor is running."""
         return self._running
 
+    def clear_tracking(self) -> None:
+        """Forget IDs for cleared obstacles while retaining the object cache."""
+        with self._lock:
+            self._collision_objects.clear()
+            self._perception_objects.clear()
+            self._perception_timestamps.clear()
+            self._object_obstacles.clear()
+
     def on_collision_object(self, msg: CollisionObjectMessage) -> None:
         """Handle explicit collision object message.
 

@@ -105,10 +105,9 @@ class WorldMonitor:
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add an obstacle, returning its name or empty string if not inserted."""
         with self._lock:
-            inserted = self._world.add_obstacle(obstacle)
-            if not inserted:
+            obstacle_id = self._world.add_obstacle(obstacle)
+            if obstacle_id is None:
                 return ""
-            obstacle_id = obstacle.name
             if self._visualization is not None:
                 try:
                     self._visualization.add_vis_obstacle(obstacle_id, obstacle)
@@ -128,11 +127,11 @@ class WorldMonitor:
             return removed
 
     def clear_obstacles(self) -> None:
-        """Remove all obstacles."""
+        """Remove all native obstacles and reset obstacle-source bookkeeping."""
         with self._lock:
-            obstacle_ids = [obstacle.name for obstacle in self._world.get_obstacles()]
-            for obstacle_id in obstacle_ids:
-                self.remove_obstacle(obstacle_id)
+            self._world.clear_obstacles()
+            if self._obstacle_monitor is not None:
+                self._obstacle_monitor.clear_tracking()
             if self._visualization is not None:
                 try:
                     self._visualization.clear_vis_obstacles()
