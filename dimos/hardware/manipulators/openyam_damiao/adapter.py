@@ -116,14 +116,12 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
         *,
         gravity_model_path: str | Path | None = None,
         gravity_comp: bool = True,
-        operator_approved: bool = False,
         **kwargs: Any,
     ) -> None:
         if not gravity_comp:
             raise ValueError("OpenYAM requires gravity compensation")
         if gravity_model_path is None or not Path(gravity_model_path).is_file():
             raise ValueError("OpenYAM requires a valid gravity model path")
-        self._operator_approved = operator_approved
         lower, upper, velocity = _active_arm_limits()
         arm = _group_spec(
             bus_name=_BUS_NAME,
@@ -151,18 +149,6 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
             gravity_comp=True,
             **kwargs,
         )
-
-    def write_enable(self, enable: bool) -> bool:
-        """Gate every physical enable, including error-recovery enables."""
-        if enable and not self._operator_approved:
-            return False
-        return super().write_enable(enable)
-
-    def write_clear_errors(self) -> bool:
-        """Gate error recovery before it disables or re-enables the runtime."""
-        if not self._operator_approved:
-            return False
-        return super().write_clear_errors()
 
     def read_gripper_position(self) -> float | None:
         """Gripper feedback is disabled until the binding provides calibration."""

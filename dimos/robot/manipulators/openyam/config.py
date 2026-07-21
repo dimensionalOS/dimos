@@ -81,7 +81,6 @@ def openyam_hardware(
         # planning/home positions into a live motor adapter.
         adapter_kwargs={
             "gravity_model_path": OPENYAM_GRAVITY_MODEL_PATH,
-            "operator_approved": global_config.openyam_operator_approved,
         },
         include_gripper=False,
     )

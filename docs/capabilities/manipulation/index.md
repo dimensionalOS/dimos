@@ -12,8 +12,6 @@ For the required vendor/approved-bench direction verification before OpenYAM
 planning or teleoperation, see the
 [OpenYAM direction commissioning guide](./openyam_commissioning.md). The
 DimOS driver does not issue commissioning position steps.
-Physical runs are default-deny until the operator supplies
-`--openyam-operator-approved` after completing the approved external checks.
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
 

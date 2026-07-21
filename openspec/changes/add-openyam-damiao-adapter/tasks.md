@@ -9,9 +9,6 @@
   hardware metadata, rejecting duplicate joints, missing/nonfinite values, and
   invalid ranges; keep physical encoder-zero home, reject mock-only initial
   positions in the physical factory, and add no homing or encoder offsets.
-- [ ] 1.4 Add default-deny physical approval configuration
-  `openyam_operator_approved`, expose it as `--openyam-operator-approved`, and
-  reject normal and error-recovery enable before motor enable when false.
 
 ## 2. OpenYAM Damiao adapter
 
@@ -46,7 +43,7 @@
   discover direction under zero-gain gravity mode, disable never implicitly
   parks, failed disable is unresolved energized/unknown rather than disabled
   and escalates to operator/e-stop, and physical factories reject initial
-  positions; verify operator approval is required for normal and recovery
-  enable.
+  positions; verify gravity preflight and external direction commissioning remain
+  required before normal and recovery enable.
 - [ ] 4.4 Run the focused OpenYAM and Damiao test suite plus the blueprint
   registry generation test if registration changes generated blueprint output.

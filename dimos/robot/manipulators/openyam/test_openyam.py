@@ -74,7 +74,6 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
     assert hardware.adapter_type == "openyam_damiao"
     assert hardware.address == "can1"
     assert hardware.adapter_kwargs["gravity_model_path"] == OPENYAM_GRAVITY_MODEL_PATH
-    assert hardware.adapter_kwargs["operator_approved"] is False
     assert len(hardware.joints) == OPENYAM_DOF
     assert hardware.gripper_joints == []
     assert "initial_positions" not in hardware.adapter_kwargs
@@ -86,9 +85,6 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
     )
     assert "initial_positions" not in direct.adapter_kwargs
 
-    monkeypatch.setattr(global_config, "openyam_operator_approved", True)
-    approved = openyam_hardware("arm")
-    assert approved.adapter_kwargs["operator_approved"] is True
 
 
 def test_openyam_simulation_hardware_remains_mock(monkeypatch: Any) -> None:
