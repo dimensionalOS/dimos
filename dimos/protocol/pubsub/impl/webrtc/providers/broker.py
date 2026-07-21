@@ -44,6 +44,7 @@ from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_can
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
+    Provider,
     ProviderConfig,
     wait_connected,
 )
@@ -75,8 +76,23 @@ class BrokerConfig(ProviderConfig):
     video_codec: str = "h264"
     audio_in: bool = False
 
-    def _create(self) -> BrokerProvider:
-        return BrokerProvider(self)
+    def _create(self) -> Provider:
+        # One CF session per blueprint, even across worker processes: the
+        # workers self-elect a single owner (machine-local flock). The owner
+        # runs the real session + a SessionRelay; every other worker resolves to
+        # a ProxyBrokerProvider that forwards over the local session bus. See
+        # broker_proxy.py.
+        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import (
+            ProxyBrokerProvider,
+            elect_session_owner,
+        )
+        from dimos.protocol.pubsub.impl.webrtc.providers.session_bus import session_key
+
+        session = session_key(self)
+        is_owner, lock_fd = elect_session_owner(session)
+        if not is_owner:
+            return ProxyBrokerProvider(session)
+        return _OwnerBrokerProvider(self, session, lock_fd)
 
 
 class BrokerProvider(AsyncProviderBase):
@@ -594,3 +610,39 @@ class BrokerProvider(AsyncProviderBase):
                     pass
 
         return _unsub
+
+
+class _OwnerBrokerProvider(BrokerProvider):
+    """The elected session owner (see broker_proxy.elect_session_owner).
+
+    A real ``BrokerProvider`` that additionally runs the ``SessionRelay`` which
+    bridges non-owner workers into this one CF session, and holds the
+    machine-local ownership lock for its lifetime. Non-owner workers get a
+    ``ProxyBrokerProvider`` instead, so exactly one CF session exists per
+    blueprint no matter how many workers bind broker transports.
+    """
+
+    def __init__(self, config: BrokerConfig, session: str, lock_fd: int | None) -> None:
+        super().__init__(config)
+        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import SessionRelay
+
+        self._session_relay = SessionRelay(session, self)
+        self._ownership_lock_fd = lock_fd
+
+    def start(self) -> None:
+        super().start()
+        # Start the relay only after the session is connected (is_connected
+        # True), so its provider.subscribe() calls don't recurse into start().
+        self._session_relay.start()
+
+    def stop(self) -> None:
+        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import release_session_owner
+
+        try:
+            self._session_relay.stop()
+        finally:
+            try:
+                super().stop()
+            finally:
+                release_session_owner(self._ownership_lock_fd)
+                self._ownership_lock_fd = None
