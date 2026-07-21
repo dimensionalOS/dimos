@@ -4,28 +4,42 @@ The A1Z integration uses native Linux SocketCAN, the vendor's 250 Hz MIT
 position-control loop, the G1Z URDF for gravity compensation, and the vendor
 G1Z gripper implementation.
 
-## Vendor SDK
+## Host setup
 
 The G1Z requires the vendor SDK's `gripper` branch; vendor `main` does not
 accept `with_gripper` and cannot actuate CAN motor 7.
 
-Run the one-command host setup as your normal user:
+Run the one-command hardware setup as your normal user. The pinned vendor SDK
+and, on macOS, the PyUSB/gs-usb transport are installed from the locked
+`galaxea-a1z` dependency group. Linux then configures SocketCAN; macOS installs
+or verifies Homebrew libusb and checks the attached HHS adapter without
+enabling the arm:
 
 ```bash
 ./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh
 ```
 
-The wrapper verifies G1Z support and, when needed, installs a known-working
-commit from the vendor's `gripper` branch into the DimOS virtual environment.
-It requests `sudo` only when invoking the Linux SocketCAN setup. Use
-`--sdk-only` to install or verify the Python SDK without touching CAN.
-
-For a manual SDK-only installation, use the same pinned source:
+Add `--with-lerobot` to install the dataset, training, and live-policy runtime
+in the same environment. Use `--sdk-only` to synchronize and verify Python
+dependencies without checking or configuring attached CAN hardware:
 
 ```bash
-uv pip install \
-  "a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224"
+./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh --with-lerobot
+./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh --sdk-only
 ```
+
+The equivalent manual dependency sync is:
+
+```bash
+uv sync --locked --inexact \
+  --group galaxea-a1z \
+  --extra learning \
+  --extra lerobot
+```
+
+Always include `--group galaxea-a1z` in later exact syncs, or rerun the setup
+script. The group keeps the non-PyPI vendor SDK and macOS transport inside
+`uv.lock`; no manual `uv pip install` step is required.
 
 DimOS deliberately has no Linux userspace-CAN fallback. After boot or
 reconnecting the HHS adapter, the one-command setup can be rerun, or the CAN
@@ -49,15 +63,24 @@ starting a hardware blueprint. Enabling the G1Z also initializes the gripper.
 
 ## Camera, teach, replay, and LeRobot export
 
-The teach command uses a standard Linux UVC camera through DimOS's generic
-`Webcam` and `CameraModule`. The default camera is `/dev/video0`; select another
-video device with `--camera-index N`. Each saved episode contains 640x480 RGB
-images at 15 Hz plus the measured six arm joints and gripper position.
+The teach command uses a standard UVC camera through DimOS's generic `Webcam`
+and `CameraModule`. On Linux, index N normally maps to `/dev/videoN`. On macOS,
+grant the terminal application Camera access in **System Settings → Privacy &
+Security → Camera**, then select the AVFoundation device index with
+`--camera-index N`. Use the index reported by OpenCV, not `ffmpeg`: their
+AVFoundation device ordering can differ. Each saved episode contains 640x480
+RGB images at 15 Hz plus the measured six arm joints and gripper position.
 
 After the CAN setup check passes, record one or more episodes:
 
 ```bash
 uv run dimos a1z teach --task "pick up the object"
+```
+
+On the hackathon Mac, OpenCV enumerates the external KS2A418 camera as index 0:
+
+```bash
+uv run --no-sync dimos a1z teach --camera-index 0 --task "pick up the object"
 ```
 
 The command prints the Memory2 `.db` path. Replay a saved episode by passing
@@ -84,12 +107,12 @@ The LeRobot output stores images as
 `observation.images.image`, the measured arm and gripper state as
 `observation.state`, and the next measured state as `action`.
 
-Install the optional LeRobot trainer/runtime before running the A1Z SDK setup
-(an exact `uv sync` removes packages installed outside the project lock):
+Install or verify the complete locked training runtime:
 
 ```bash
-uv sync --extra lerobot
-./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh --sdk-only
+./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh \
+  --sdk-only \
+  --with-lerobot
 ```
 
 Train an ACT checkpoint from the converted local dataset:
@@ -99,20 +122,25 @@ uv run lerobot-train \
   --dataset.repo_id=galaxea_a1z \
   --dataset.root=./a1z_lerobot_dataset \
   --policy.type=act \
-  --policy.device=cuda \
+  --policy.device=mps \
   --policy.push_to_hub=false \
   --output_dir=outputs/a1z_act \
   --job_name=a1z_act \
   --wandb.enable=false
 ```
 
-After `setup_a1z_can.sh` passes, run the trained policy. Loading and hardware
+Use `--policy.device=cuda` on an NVIDIA training host. Apple-silicon Macs use
+`mps`; CPU-only hosts can use `cpu` for a slow smoke test.
+
+After the host setup passes, run the trained policy. Loading and hardware
 initialization require confirmation, and inference starts only after live RGB
 and seven-joint observations are ready:
 
 ```bash
 uv run dimos a1z run-policy \
   outputs/a1z_act/checkpoints/last/pretrained_model \
+  --camera-index 0 \
+  --device mps \
   --task "pick up the object" \
   --duration 20
 ```

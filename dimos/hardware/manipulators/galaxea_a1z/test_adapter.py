@@ -536,6 +536,15 @@ def test_gripper_round_trips_meters_to_normalized(
     assert robot.gripper_fraction == pytest.approx(1.0)
 
 
+def test_gripper_uses_vendor_safe_torque_default(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    _connected_adapter(a1z_adapter_module, gripper=True)
+    robot = _FakeArmRobot.instances[-1]
+
+    assert robot.factory_kwargs["gripper_max_torque"] == pytest.approx(0.5)
+
+
 def test_configured_gripper_free_drive_tracks_adapter_lifecycle(
     a1z_adapter_module: ModuleType,
 ) -> None:

@@ -369,6 +369,15 @@ all = [
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
+# Galaxea does not publish the gripper-capable A1Z SDK on PyPI. Keep the
+# pinned Git dependency in a development group so it is locked for in-repo
+# hardware setup without leaking an unpublishable URL into project metadata.
+galaxea-a1z = [
+    "a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224",
+    "gs-usb==0.3.1; sys_platform == 'darwin'",
+    "pyusb==1.3.1; sys_platform == 'darwin'",
+]
+
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",

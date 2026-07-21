@@ -184,7 +184,7 @@ class GalaxeaA1ZAdapter:
         urdf_path: str | None = None,
         gripper: bool = False,
         gripper_free_drive: bool = False,
-        gripper_max_torque: float = 2.0,
+        gripper_max_torque: float = 0.5,
         gripper_max_opening_m: float = _GRIPPER_MAX_OPENING_M,
         transport: str = "auto",
         safe_start: bool = True,

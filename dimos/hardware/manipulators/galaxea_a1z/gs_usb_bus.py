@@ -35,18 +35,20 @@ Device quirks handled here:
   USB continuously - libusb releases the GIL while blocked - and recv()
   becomes a queue pop that always meets the SDK's budget.
 
-Requires: pip install pyusb gs_usb (plus libusb, e.g. brew install libusb).
+Requires the locked ``galaxea-a1z`` dependency group plus system libusb; run
+``dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh`` from the repo.
 Lives in galaxea_a1z/ because it is the only user today; promote to a shared
 location when a second CAN arm needs it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import contextlib
 import queue
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
 import can
 
@@ -63,6 +65,42 @@ _GS_CAN_MODE_LISTEN_ONLY = 1 << 0
 # keeps returning fresh state instead of replaying stale history.
 _RX_QUEUE_MAX_FRAMES = 8192
 _RX_READ_TIMEOUT_MS = 20
+_UsbInitialization = TypeVar("_UsbInitialization")
+
+
+def _initialize_ready_usb_device(
+    vendor_id: int,
+    product_id: int,
+    discover_timeout: float,
+    initialize: Callable[[Any, Any], _UsbInitialization],
+) -> _UsbInitialization:
+    """Wait for a USB device and complete a caller-supplied initialization.
+
+    After ``GsUsb.stop()``, this adapter briefly re-enumerates on macOS. During
+    that window PyUSB can find its descriptor while configuration or control
+    transfers still raise ``USBError(ENOENT, "Entity not found")``. Retry the
+    complete initialization so immediate DimOS restarts are reliable.
+    """
+    import usb.core  # type: ignore[import-untyped]
+
+    deadline = time.perf_counter() + discover_timeout
+    last_error: Exception | None = None
+    while True:
+        device = usb.core.find(idVendor=vendor_id, idProduct=product_id)
+        if device is not None:
+            try:
+                configuration = device.get_active_configuration()
+                return initialize(device, configuration)
+            except usb.core.USBError as exc:
+                last_error = exc
+
+        if time.perf_counter() >= deadline:
+            message = (
+                f"gs_usb adapter {vendor_id:04x}:{product_id:04x} not ready on USB "
+                f"(waited {discover_timeout:.0f}s)"
+            )
+            raise can.CanInitializationError(message) from last_error
+        time.sleep(0.25)
 
 
 class GsUsbMacBus(can.BusABC):
@@ -79,40 +117,35 @@ class GsUsbMacBus(can.BusABC):
         discover_timeout: float = 5.0,
         **_: Any,
     ) -> None:
-        from gs_usb.gs_usb import GS_CAN_MODE_HW_TIMESTAMP, GsUsb
-        import usb.core
+        from gs_usb.gs_usb import (  # type: ignore[import-untyped]
+            GS_CAN_MODE_HW_TIMESTAMP,
+            GsUsb,
+        )
 
-        # The adapter drops off the USB bus for a few seconds after a
-        # close (firmware reset on reopen, observed on hardware) - retry
-        # discovery instead of failing the first reconnect.
-        deadline = time.perf_counter() + discover_timeout
-        device = usb.core.find(idVendor=vendor_id, idProduct=product_id)
-        while device is None and time.perf_counter() < deadline:
-            time.sleep(0.25)
-            device = usb.core.find(idVendor=vendor_id, idProduct=product_id)
-        if device is None:
-            raise can.CanInitializationError(
-                f"gs_usb adapter {vendor_id:04x}:{product_id:04x} not found on USB "
-                f"(waited {discover_timeout:.0f}s)"
-            )
-        # No kernel driver claims the interface on macOS; gs_usb's detach
-        # call would raise, so neutralize it.
-        device.detach_kernel_driver = lambda intf: None  # type: ignore[method-assign]
+        def _initialize(device: Any, cfg: Any) -> tuple[Any, int]:
+            # No kernel driver claims the interface on macOS; gs_usb's detach
+            # call would raise, so neutralize it.
+            device.detach_kernel_driver = lambda intf: None
 
-        # The gs_usb library hardcodes TX endpoint 0x02; discover the real
-        # bulk OUT endpoint from the active configuration instead.
-        cfg = device.get_active_configuration()
-        intf = cfg[(0, 0)]
-        out_eps = [ep for ep in intf if not (ep.bEndpointAddress & 0x80)]
-        if not out_eps:
-            raise can.CanInitializationError("gs_usb adapter has no OUT endpoint")
-        self._out_endpoint = out_eps[0].bEndpointAddress
+            # The gs_usb library hardcodes TX endpoint 0x02; discover the real
+            # bulk OUT endpoint from the active configuration instead.
+            intf = cfg[(0, 0)]
+            out_eps = [ep for ep in intf if not (ep.bEndpointAddress & 0x80)]
+            if not out_eps:
+                raise can.CanInitializationError("gs_usb adapter has no OUT endpoint")
+            gs = GsUsb(device)
+            if not gs.set_bitrate(bitrate):
+                raise can.CanInitializationError(f"failed to set bitrate {bitrate}")
+            gs.start(_GS_CAN_MODE_LISTEN_ONLY if listen_only else 0)
+            return gs, out_eps[0].bEndpointAddress
 
-        self._gs = GsUsb(device)
-        if not self._gs.set_bitrate(bitrate):
-            raise can.CanInitializationError(f"failed to set bitrate {bitrate}")
+        self._gs, self._out_endpoint = _initialize_ready_usb_device(
+            vendor_id,
+            product_id,
+            discover_timeout,
+            _initialize,
+        )
         self._hw_timestamp_flag = GS_CAN_MODE_HW_TIMESTAMP
-        self._gs.start(_GS_CAN_MODE_LISTEN_ONLY if listen_only else 0)
         self._flush_rx()
 
         self._rx_queue: queue.Queue[can.Message] = queue.Queue(maxsize=_RX_QUEUE_MAX_FRAMES)
@@ -131,7 +164,7 @@ class GsUsbMacBus(can.BusABC):
         disable-command acks) parse as motor feedback with garbage velocity
         values and trip startup safety checks. Observed on hardware.
         """
-        from gs_usb.gs_usb_frame import GsUsbFrame
+        from gs_usb.gs_usb_frame import GsUsbFrame  # type: ignore[import-untyped]
 
         frame = GsUsbFrame()
         flushed = 0
@@ -141,12 +174,12 @@ class GsUsbMacBus(can.BusABC):
             print(f"GsUsbMacBus: flushed {flushed} stale frames from device queue")
         return flushed
 
-    @property
+    @property  # type: ignore[misc]
     def state(self) -> can.BusState:
         return can.BusState.ACTIVE
 
     def send(self, msg: can.Message, timeout: float | None = None) -> None:
-        from gs_usb.gs_usb_frame import GsUsbFrame
+        from gs_usb.gs_usb_frame import GsUsbFrame  # type: ignore[import-untyped]
 
         frame = GsUsbFrame(can_id=msg.arbitration_id, data=bytes(msg.data))
         hw_ts = bool(self._gs.device_flags & self._hw_timestamp_flag)
@@ -161,7 +194,7 @@ class GsUsbMacBus(can.BusABC):
         interpreter. TX echoes are discarded here so they never consume the
         consumer's drain budget.
         """
-        from gs_usb.gs_usb_frame import GsUsbFrame
+        from gs_usb.gs_usb_frame import GsUsbFrame  # type: ignore[import-untyped]
 
         frame = GsUsbFrame()
         while not self._rx_stop.is_set():
