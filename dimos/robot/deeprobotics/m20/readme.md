@@ -68,9 +68,9 @@ transport:
 
 ```bash
 sudo ./build/m20_drdds_zenoh_bridge \
-  --aligned  'dimos/aligned_points#sensor_msgs.PointCloud2' --aligned_topic /ALIGNED_POINTS \
-  --grid     'dimos/grid_map_3d#sensor_msgs.PointCloud2'    --grid_topic /grid_map_3d \
-  --odometry 'dimos/odom#nav_msgs.Odometry'                 --odom_topic /ODOM \
+  --aligned  'dimos/slam_aligned_points#sensor_msgs.PointCloud2' --aligned_topic /ALIGNED_POINTS \
+  --grid     'dimos/grid_map_3d#sensor_msgs.PointCloud2'         --grid_topic /grid_map_3d \
+  --odometry 'dimos/slam_odom#nav_msgs.Odometry'                 --odom_topic /ODOM \
   --iface eth1 --domain 0 \
   --connect tcp/10.21.31.103:7447
 ```
@@ -86,7 +86,7 @@ source .venv/bin/activate
 dimos spy --transport zenoh -n --duration 7 --interval 1
 ```
 
-The output should include `aligned_points`, `grid_map_3d`, and `odom`. For the
+The output should include `slam_aligned_points`, `grid_map_3d`, and `slam_odom`. For the
 complete dependency, topic, and connection options, see the
 [M20 drdds to Zenoh bridge documentation](onboard/drdds-zenoh-bridge/README.md).
 

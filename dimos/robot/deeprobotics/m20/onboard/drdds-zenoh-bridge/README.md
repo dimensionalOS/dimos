@@ -34,9 +34,9 @@ zenoh-c (`libzenohc.so` + headers, v1.5.x to match the consumer) must be in
 
 ```sh
 sudo ./build/m20_drdds_zenoh_bridge \
-    --aligned   'dimos/aligned_points#sensor_msgs.PointCloud2' --aligned_topic /ALIGNED_POINTS \
-    --grid      'dimos/grid_map_3d#sensor_msgs.PointCloud2'    --grid_topic    /grid_map_3d \
-    --odometry  'dimos/odom#nav_msgs.Odometry'                 --odom_topic    /ODOM \
+    --aligned   'dimos/slam_aligned_points#sensor_msgs.PointCloud2' --aligned_topic /ALIGNED_POINTS \
+    --grid      'dimos/grid_map_3d#sensor_msgs.PointCloud2'         --grid_topic    /grid_map_3d \
+    --odometry  'dimos/slam_odom#nav_msgs.Odometry'                 --odom_topic    /ODOM \
     --iface eth1 --domain 0
 ```
 
