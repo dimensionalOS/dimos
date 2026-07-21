@@ -1,0 +1,2 @@
+# Keep these small PR walkthrough images directly renderable without private LFS credentials.
+*.jpg -filter -diff -merge -text
