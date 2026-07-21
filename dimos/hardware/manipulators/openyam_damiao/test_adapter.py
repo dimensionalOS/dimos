@@ -59,7 +59,9 @@ def test_openyam_limits_are_loaded_from_active_model() -> None:
 
     limits = adapter.get_limits()
     assert limits.position_lower == pytest.approx([-3.92699, 0.0, 0.0, -1.65806, -1.5708, -2.35619])
-    assert limits.position_upper == pytest.approx([1.5708, 3.66519, 4.01426, 1.65806, 1.5708, 1.8326])
+    assert limits.position_upper == pytest.approx(
+        [1.5708, 3.66519, 4.01426, 1.65806, 1.5708, 1.8326]
+    )
     assert limits.velocity_max == pytest.approx([3.0, 10.0, 3.0, 10.0, 3.0, 10.0])
 
 
@@ -110,11 +112,11 @@ def test_openyam_operator_gate_allows_approved_enable() -> None:
 
 
 def test_openyam_xacro_limits_reject_duplicate_joint_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    joints = [
-        JointDescription(f"yam_joint{i}", "revolute", -1.0, 1.0, 1.0) for i in range(1, 7)
-    ]
+    joints = [JointDescription(f"yam_joint{i}", "revolute", -1.0, 1.0, 1.0) for i in range(1, 7)]
     joints.append(joints[0])
-    monkeypatch.setattr(adapter_module, "parse_model", lambda *args, **kwargs: ModelDescription(joints=joints))
+    monkeypatch.setattr(
+        adapter_module, "parse_model", lambda *args, **kwargs: ModelDescription(joints=joints)
+    )
 
     with pytest.raises(ValueError, match="duplicate"):
         adapter_module._active_arm_limits()
@@ -129,12 +131,17 @@ def test_openyam_xacro_limits_reject_bad_values(
 ) -> None:
     joints = [
         JointDescription(
-            f"yam_joint{i}", "revolute", lower if i == 1 else -1.0,
-            upper if i == 1 else 1.0, velocity if i == 1 else 1.0,
+            f"yam_joint{i}",
+            "revolute",
+            lower if i == 1 else -1.0,
+            upper if i == 1 else 1.0,
+            velocity if i == 1 else 1.0,
         )
         for i in range(1, 7)
     ]
-    monkeypatch.setattr(adapter_module, "parse_model", lambda *args, **kwargs: ModelDescription(joints=joints))
+    monkeypatch.setattr(
+        adapter_module, "parse_model", lambda *args, **kwargs: ModelDescription(joints=joints)
+    )
 
     with pytest.raises(ValueError):
         adapter_module._active_arm_limits()
