@@ -103,6 +103,7 @@ class DisplayScene:
     def has_reference_grid(self) -> bool:
         return False
 
+
 @pytest.mark.parametrize(
     ("result", "success", "collision_free", "expected"),
     [
