@@ -190,6 +190,11 @@ class ViserManipulationScene:
         self._ensure_robot_urdfs(robot_id, config)
         current = self._urdfs.get(f"{robot_id}:current")
         self.set_urdf_joints(current, config.joint_names, joint_state.position)
+        self.set_urdf_joints(
+            self._collision_fallback_urdfs.get(robot_id),
+            config.joint_names,
+            joint_state.position,
+        )
         if self._target_tracks_current.get(robot_id, True):
             self._set_target_joints(robot_id, config.joint_names, joint_state.position)
             self._set_target_visibility(robot_id, True)

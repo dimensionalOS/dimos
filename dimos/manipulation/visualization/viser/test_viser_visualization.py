@@ -712,6 +712,10 @@ class FakeViserUrdfWithoutCollision:
         self._collision_meshes = []
         self.show_visual = True
         self.show_collision = False
+        self.cfg = None
+
+    def update_cfg(self, cfg: Sequence[float]) -> None:
+        self.cfg = list(cfg)
 
 
 def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
@@ -1168,6 +1172,44 @@ def test_scene_missing_collision_uses_magenta_visual_substitute() -> None:
     assert scene._urdfs["robot1:current"].show_visual is True
     assert all(mesh.color == (210, 40, 220) for mesh in fallback._meshes)
     assert all(mesh.opacity == 0.35 for mesh in fallback._meshes)
+
+
+def test_scene_updates_collision_fallback_with_current_joints_across_recreation() -> None:
+    created: list[FakeViserUrdfWithoutCollision] = []
+
+    def make_urdf(*args: object, **kwargs: object) -> FakeViserUrdfWithoutCollision:
+        urdf = FakeViserUrdfWithoutCollision()
+        created.append(urdf)
+        return urdf
+
+    scene = ViserManipulationScene(FakeServer(), make_urdf, preview_fps=10.0)
+    scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    config = SimpleNamespace(
+        name="arm",
+        model_path="/tmp/arm.urdf",
+        package_paths={},
+        xacro_args={},
+        auto_convert_meshes=False,
+        joint_names=["joint1"],
+    )
+    joints = FakeJointState(["joint1"], position=[0.6])
+
+    scene.register_robot("robot1", config)
+    scene.update_current_robot("robot1", joints)
+    first_current = scene._urdfs["robot1:current"]
+    first_fallback = scene._collision_fallback_urdfs["robot1"]
+    assert first_current.cfg == [0.6]
+    assert first_fallback.cfg == [0.6]
+
+    scene._urdfs.pop("robot1:current")
+    scene.register_robot("robot1", config)
+    scene.update_current_robot("robot1", joints)
+    recreated_current = scene._urdfs["robot1:current"]
+    recreated_fallback = scene._collision_fallback_urdfs["robot1"]
+    assert recreated_current is not first_current
+    assert recreated_fallback is not first_fallback
+    assert recreated_current.cfg == [0.6]
+    assert recreated_fallback.cfg == [0.6]
 
 
 def test_scene_display_mode_survives_primary_robot_recreation() -> None:
