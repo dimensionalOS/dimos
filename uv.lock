@@ -26,7 +26,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-03T19:08:40.466827Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -653,6 +653,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/e0/df5e171f685f82f37b12e1f208064e24244911079d7b767447d1af7e0d70/build-1.5.0.tar.gz", hash = "sha256:302c22c3ba2a0fd5f3911918651341ebb3896176cbdec15bd421f80b1afc7647", size = 89796, upload-time = "2026-04-30T03:18:25.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/fe/6bea5c9162869c5beba5d9c8abbed835ec85bf1ec1fba05a3822325c45f3/build-1.5.0-py3-none-any.whl", hash = "sha256:13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f", size = 26018, upload-time = "2026-04-30T03:18:23.644Z" },
+]
+
+[[package]]
+name = "can-motor-control"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.11' and sys_platform == 'linux')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/df/4f57da2ecf0022b58e69c84ce49eae8e3c00863f18cefd73298c973917f8/can_motor_control-0.0.5.tar.gz", hash = "sha256:96914bcff093c9f90aca799fc9c83627ed67d48db6a55223e04aca756b0bfea5", size = 128944, upload-time = "2026-08-01T23:04:52.496Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/15/6a70b6296b52777d1688e493c53b8e505a5569075f8ec4b3f6b0fd07fe67/can_motor_control-0.0.5-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:e423f5d3eb5749dd20e3cb510a3f3661865842b02b64066ca4dce50a66db11ca", size = 528991, upload-time = "2026-08-01T23:04:50.992Z" },
 ]
 
 [[package]]
@@ -1702,6 +1715,7 @@ all = [
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
@@ -1830,6 +1844,7 @@ learning = [
 ]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "matplotlib" },
@@ -2151,6 +2166,7 @@ requires-dist = [
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.3" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },

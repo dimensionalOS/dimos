@@ -51,6 +51,7 @@ class GlobalConfig(BaseSettings):
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None
+    openyam_operator_approved: bool = False
     device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
