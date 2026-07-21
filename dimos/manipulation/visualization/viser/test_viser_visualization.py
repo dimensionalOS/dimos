@@ -874,7 +874,9 @@ def test_obstacle_mutations_and_close_are_safe_concurrently() -> None:
         try:
             for index in range(20):
                 scene.set_obstacles_visible(index % 2 == 0)
-                scene.add_vis_obstacle(f"obstacle-{index}", make_obstacle(ObstacleType.BOX, (1, 1, 1)))
+                scene.add_vis_obstacle(
+                    f"obstacle-{index}", make_obstacle(ObstacleType.BOX, (1, 1, 1))
+                )
         except BaseException as error:
             errors.append(error)
 
