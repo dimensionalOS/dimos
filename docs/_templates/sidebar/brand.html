@@ -1,0 +1,23 @@
+<div class="dimos-topnav" role="navigation" aria-label="Primary navigation">
+  <div class="dimos-topnav-inner">
+    <a class="dimos-topnav-logo" href="{{ pathto(master_doc) }}" aria-label="Dimensional home">
+      {% if logo_url %}<img src="{{ logo_url }}" alt="Dimensional"/>{% else %}DIMENSIONAL{% endif %}
+    </a>
+    <form class="dimos-topnav-search" method="get" action="{{ pathto('search') }}" role="search">
+      <span aria-hidden="true">⌕</span>
+      <input name="q" type="search" placeholder="Search docs" aria-label="Search documentation"/>
+      <kbd>Ctrl K</kbd>
+    </form>
+    <a class="dimos-topnav-link" href="https://github.com/dimensionalOS/dimos">dimensionalOS/dimos</a>
+    <a class="dimos-topnav-link dimos-topnav-cta" href="https://dimensionalos.com/prototype">Get started</a>
+  </div>
+</div>
+<script>
+  // Keep the public catalog's first level open while leaving every nested
+  // disclosure keyboard-toggleable through Furo's native checkboxes.
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(
+      ".sidebar-tree > ul > li.toctree-l1.has-children > input.toctree-checkbox"
+    ).forEach(function (toggle) { toggle.checked = true; });
+  });
+</script>

@@ -1,5 +1,5 @@
 ---
-title: "Concepts"
+title: "Usage"
 ---
 
 This page explains general concepts.

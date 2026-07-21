@@ -362,6 +362,15 @@ all = [
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
+# Dependencies for the Sphinx documentation build.
+docs = [
+    "sphinx>=7.4,<8",
+    "myst-parser>=3,<4",
+    "linkify-it-py>=2,<3",
+    "furo>=2024.8.6,<2026",
+    "sphinx-design>=0.6,<1",
+]
+
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",

@@ -230,6 +230,27 @@ jobs:
       #   working-directory: docs
       #   run: npm run validate
 
+  docs-build:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+      - name: Fetch documentation LFS assets
+        run: git lfs pull --include="docs/**" --exclude=""
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - name: Install documentation dependencies
+        run: uv sync --no-install-project --only-group docs --frozen
+      - name: Build Sphinx documentation
+        run: uv run --no-sync sphinx-build -W --keep-going -b html docs docs/_build/html
+
   tests:
     timeout-minutes: 20
     strategy:
@@ -733,6 +754,7 @@ jobs:
     - rust
     - md-babel
     - docs-validate
+    - docs-build
     - tests
     - cmu-nav-natives
     - self-hosted-tests
