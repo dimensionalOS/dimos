@@ -230,38 +230,37 @@ class ViserPanelGui:
             self._sync_robot_display_warning()
 
     def _robot_display_label(self) -> str:
-        if self.scene is None:
+        scene = self.scene
+        if scene is None:
             return ROBOT_DISPLAY_LABELS[0]
-        mode = str(getattr(self.scene, "robot_display_mode", "visual")).lower()
+        mode = str(scene.robot_display_mode).lower()
         return ROBOT_DISPLAY_MODES.get(mode, ROBOT_DISPLAY_LABELS[0])
 
     def _set_robot_display_mode(self, label: str) -> None:
         if self._closed or self.scene is None:
             return
+        scene = self.scene
         mode = str(label).lower()
         if mode not in ROBOT_DISPLAY_MODES:
             return
-        set_display_mode = getattr(self.scene, "set_robot_display_mode", None)
-        if not callable(set_display_mode):
-            self._sync_robot_display_dropdown()
-            self._sync_robot_display_warning()
-            return
-        set_display_mode(cast("RobotDisplayMode", mode))
+        scene.robot_display_mode = cast("RobotDisplayMode", mode)
         self._sync_robot_display_dropdown()
         self._sync_robot_display_warning()
 
     def _sync_robot_display_dropdown(self) -> None:
         handle = self._handles.get("robot_display")
-        if handle is None or self._closed or self.scene is None:
+        scene = self.scene
+        if handle is None or self._closed or scene is None:
             return
         self._set_optional_handle_attr(handle, "value", self._robot_display_label())
 
     def _sync_robot_display_warning(self) -> None:
         handle = self._handles.get("robot_display_warning")
-        if handle is None or self._closed or self.scene is None:
+        scene = self.scene
+        if handle is None or self._closed or scene is None:
             return
-        mode = str(getattr(self.scene, "robot_display_mode", "visual")).lower()
-        has_collision = bool(getattr(self.scene, "collision_geometry_available", False))
+        mode = str(scene.robot_display_mode).lower()
+        has_collision = scene.collision_geometry_available
         visible = mode in {"collision", "both"} and not has_collision
         self._set_optional_handle_attr(handle, "visible", visible)
 

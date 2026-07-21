@@ -87,17 +87,21 @@ class DisplayGui:
 
 class DisplayScene:
     def __init__(self, mode: str = "visual", has_collision: bool = True) -> None:
-        self.robot_display_mode = mode
+        self._robot_display_mode = mode
         self.collision_geometry_available = has_collision
         self.set_modes: list[str] = []
 
+    @property
+    def robot_display_mode(self) -> str:
+        return self._robot_display_mode
+
+    @robot_display_mode.setter
+    def robot_display_mode(self, mode: str) -> None:
+        self.set_modes.append(mode)
+        self._robot_display_mode = mode
+
     def has_reference_grid(self) -> bool:
         return False
-
-    def set_robot_display_mode(self, mode: str) -> None:
-        self.set_modes.append(mode)
-        self.robot_display_mode = mode
-
 
 @pytest.mark.parametrize(
     ("result", "success", "collision_free", "expected"),
@@ -167,27 +171,6 @@ def test_robot_display_control_applies_immediately_and_syncs_on_refresh() -> Non
     assert display_gui.dropdown.value == "Both"
     scene.robot_display_mode = "visual"
     panel._sync_robot_display_dropdown()
-    assert display_gui.dropdown.value == "Visual"
-
-
-def test_robot_display_control_defaults_and_noops_for_legacy_scene_stub() -> None:
-    scene = SimpleNamespace(has_reference_grid=lambda: False)
-    display_gui = DisplayGui()
-    panel = ViserPanelGui(
-        StatusOnlyServer(),
-        StatusOnlyAdapter(),
-        ViserVisualizationConfig(),
-        cast("ViserManipulationScene", scene),
-    )
-
-    panel._build_scene_controls(display_gui)
-    assert display_gui.dropdown is not None
-    assert display_gui.dropdown.value == "Visual"
-    callback = display_gui.dropdown.update_callback
-    assert callback is not None
-
-    callback(SimpleNamespace(target=SimpleNamespace(value="Collision")))
-
     assert display_gui.dropdown.value == "Visual"
 
 

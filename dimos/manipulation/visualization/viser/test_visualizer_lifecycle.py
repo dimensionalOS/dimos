@@ -471,7 +471,7 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
     config.joint_names = ["joint1"]
 
     scene.register_robot("robot-1", config)
-    scene.set_robot_display_mode(mode)  # type: ignore[arg-type]
+    scene.robot_display_mode = mode  # type: ignore[assignment]
     old_current = scene._urdfs["robot-1:current"]
     scene._urdfs.pop("robot-1:current")
 

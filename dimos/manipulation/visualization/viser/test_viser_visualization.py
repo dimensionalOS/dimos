@@ -1094,14 +1094,14 @@ def test_scene_display_mode_controls_only_primary_robot() -> None:
     target_state = (target._meshes[0].visible, target._meshes[0].color)
     preview_state = (preview._meshes[0].visible, preview._meshes[0].color)
 
-    scene.set_robot_display_mode("collision")
+    scene.robot_display_mode = "collision"
     assert (current.show_visual, current.show_collision) == (False, True)
     assert (target._meshes[0].visible, target._meshes[0].color) == target_state
     assert (preview._meshes[0].visible, preview._meshes[0].color) == preview_state
     assert all(mesh.color == (210, 40, 220) for mesh in current._collision_meshes)
     assert all(mesh.opacity == 0.35 for mesh in current._collision_meshes)
 
-    scene.set_robot_display_mode("both")
+    scene.robot_display_mode = "both"
     assert (current.show_visual, current.show_collision) == (True, True)
 
 
@@ -1145,7 +1145,7 @@ def test_scene_display_mode_falls_back_without_collision_geometry() -> None:
     scene._urdfs["robot1:target"]._collision_meshes = [FakeMesh()]
 
     assert scene.collision_geometry_available is False
-    scene.set_robot_display_mode("collision")
+    scene.robot_display_mode = "collision"
     assert scene.robot_display_mode == "collision"
     assert (current.show_visual, current.show_collision) == (False, False)
     assert scene._collision_fallback_urdfs["robot1"].show_visual is True
@@ -1164,11 +1164,11 @@ def test_scene_missing_collision_uses_magenta_visual_substitute() -> None:
     )
     scene.register_robot("robot1", config)
     fallback = scene._collision_fallback_urdfs["robot1"]
-    scene.set_robot_display_mode("collision")
+    scene.robot_display_mode = "collision"
     assert fallback.show_visual is True
     assert all(mesh.visible is True for mesh in fallback._meshes)
 
-    scene.set_robot_display_mode("both")
+    scene.robot_display_mode = "both"
     assert scene._urdfs["robot1:current"].show_visual is True
     assert all(mesh.color == (210, 40, 220) for mesh in fallback._meshes)
     assert all(mesh.opacity == 0.35 for mesh in fallback._meshes)
@@ -1232,7 +1232,7 @@ def test_scene_display_mode_survives_primary_robot_recreation() -> None:
         joint_names=["joint1"],
     )
     scene.register_robot("robot1", config)
-    scene.set_robot_display_mode("both")
+    scene.robot_display_mode = "both"
     scene._urdfs.pop("robot1:current")
     scene.register_robot("robot1", config)
 
@@ -1468,6 +1468,8 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
     target_updates = []
     target_pose_updates = []
     scene = SimpleNamespace(
+        robot_display_mode="visual",
+        collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
         set_target_joints=lambda *args: target_updates.append(args) or True,
@@ -1533,6 +1535,8 @@ def test_gui_cartesian_ik_result_does_not_rewrite_active_gizmo(
     target_joint_updates = []
     target_pose_updates = []
     scene = SimpleNamespace(
+        robot_display_mode="visual",
+        collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
         set_target_joints=lambda *args: target_joint_updates.append(args) or True,
@@ -1581,6 +1585,8 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(
     adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
     visual_states = []
     scene = SimpleNamespace(
+        robot_display_mode="visual",
+        collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
         set_target_joints=lambda *args: True,

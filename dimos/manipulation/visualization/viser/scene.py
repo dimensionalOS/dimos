@@ -105,6 +105,15 @@ class ViserManipulationScene:
         """Return the primary robot display mode for this scene session."""
         return self._robot_display_mode
 
+    @robot_display_mode.setter
+    def robot_display_mode(self, mode: RobotDisplayMode) -> None:
+        """Set the primary robot display mode and apply it immediately."""
+        if mode not in {"visual", "collision", "both"}:
+            raise ValueError(f"Unsupported robot display mode: {mode!r}")
+        self._robot_display_mode = mode
+        for robot_id in self._configs_by_id:
+            self._apply_robot_display_mode(robot_id)
+
     @property
     def collision_geometry_available(self) -> bool:
         """Return whether any primary robot has loaded collision geometry."""
@@ -113,14 +122,6 @@ class ViserManipulationScene:
             for key, urdf in self._urdfs.items()
             if key.endswith(":current")
         )
-
-    def set_robot_display_mode(self, mode: RobotDisplayMode) -> None:
-        """Set the primary robot display mode and apply it immediately."""
-        if mode not in {"visual", "collision", "both"}:
-            raise ValueError(f"Unsupported robot display mode: {mode!r}")
-        self._robot_display_mode = mode
-        for robot_id in self._configs_by_id:
-            self._apply_robot_display_mode(robot_id)
 
     def has_reference_grid(self) -> bool:
         """Return whether the Viser scene accepted the optional reference grid."""
