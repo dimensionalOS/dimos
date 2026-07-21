@@ -40,7 +40,14 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import (
+    ProxyBrokerProvider,
+    SessionRelay,
+    elect_session_owner,
+    release_session_owner,
+)
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
+from dimos.protocol.pubsub.impl.webrtc.providers.session_bus import session_key
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
@@ -77,17 +84,8 @@ class BrokerConfig(ProviderConfig):
     audio_in: bool = False
 
     def _create(self) -> Provider:
-        # One CF session per blueprint, even across worker processes: the
-        # workers self-elect a single owner (machine-local flock). The owner
-        # runs the real session + a SessionRelay; every other worker resolves to
-        # a ProxyBrokerProvider that forwards over the local session bus. See
-        # broker_proxy.py.
-        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import (
-            ProxyBrokerProvider,
-            elect_session_owner,
-        )
-        from dimos.protocol.pubsub.impl.webrtc.providers.session_bus import session_key
-
+        # One CF session per blueprint: workers self-elect one owner; the rest
+        # proxy over the local session bus. See broker_proxy.py.
         session = session_key(self)
         is_owner, lock_fd = elect_session_owner(session)
         if not is_owner:
@@ -624,20 +622,28 @@ class _OwnerBrokerProvider(BrokerProvider):
 
     def __init__(self, config: BrokerConfig, session: str, lock_fd: int | None) -> None:
         super().__init__(config)
-        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import SessionRelay
-
         self._session_relay = SessionRelay(session, self)
         self._ownership_lock_fd = lock_fd
 
     def start(self) -> None:
-        super().start()
-        # Start the relay only after the session is connected (is_connected
-        # True), so its provider.subscribe() calls don't recurse into start().
-        self._session_relay.start()
+        # On any bring-up failure, release the ownership lock so another worker
+        # can re-elect; otherwise this live process holds the flock with no
+        # owner running and wedges the session until it dies.
+        try:
+            super().start()
+            # Relay must start after the session connects, or its
+            # provider.subscribe() calls recurse into start().
+            self._session_relay.start()
+        except Exception:
+            try:
+                self._session_relay.stop()
+            except Exception:
+                logger.exception("failed to stop relay after owner start failure")
+            release_session_owner(self._ownership_lock_fd)
+            self._ownership_lock_fd = None
+            raise
 
     def stop(self) -> None:
-        from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import release_session_owner
-
         try:
             self._session_relay.stop()
         finally:

@@ -69,6 +69,7 @@ def is_reliable(channel: str) -> bool:
     """Whether *channel* needs every-message (reliable) delivery on the bus."""
     return channel in RELIABLE_CHANNELS
 
+
 # Reliable-queue sizing. Control-plane messages are small and low-rate, so a
 # small per-slot capacity keeps slots*capacity modest (unlike the 3.6MB frame
 # default). Sized for a burst without unbounded memory.

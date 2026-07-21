@@ -54,6 +54,15 @@ def elect_session_owner(session: str) -> tuple[bool, int | None]:
     lock_fd)``: the winner gets ``(True, fd)`` and MUST keep ``fd`` open for the
     provider's lifetime (closing it — or dying — releases ownership); losers get
     ``(False, None)`` and should proxy.
+
+    HARD SINGLE-HOST ASSUMPTION: the ``flock`` is advisory and host-local, and
+    the session bus it guards is machine-local shared memory. Election therefore
+    only deduplicates workers *on the same host*. If a blueprint's broker-bound
+    modules are ever split across two machines, each host elects its own owner
+    and you silently get one CF session per host — not one per blueprint. This
+    is correct only while every worker of a blueprint runs on one host; if that
+    ever stops holding, ownership must move to a coordinator-assigned (cross-
+    host) election, not this lock.
     """
     import fcntl
 
@@ -65,7 +74,14 @@ def elect_session_owner(session: str) -> tuple[bool, int | None]:
         os.close(fd)
         logger.info("CF session %s: another worker owns it — proxying", session)
         return False, None
-    logger.info("CF session %s: this worker is the owner", session)
+    # host+pid so a cross-host split (see single-host assumption above) is
+    # visible as two owner lines for one session on different hosts.
+    logger.info(
+        "CF session %s: this worker is the owner (host=%s pid=%s)",
+        session,
+        os.uname().nodename,
+        os.getpid(),
+    )
     return True, fd
 
 
@@ -145,7 +161,9 @@ class ProxyBrokerProvider:
         def _adapt(data: bytes, _subject: str) -> None:
             callback(data, topic)
 
-        return self._bytes_bus(topic).subscribe(session_bus.down_subject(self._session, topic), _adapt)
+        return self._bytes_bus(topic).subscribe(
+            session_bus.down_subject(self._session, topic), _adapt
+        )
 
     def set_video_frame(self, img: Any) -> None:
         """Robot → operator video: ship the frame to the owner's video track."""
@@ -242,7 +260,9 @@ class SessionRelay:
             except Exception:
                 logger.exception("relay: failed to forward video frame")
 
-        self._unsubs.append(self._video.subscribe(session_bus.video_subject(self._session), _to_track))
+        self._unsubs.append(
+            self._video.subscribe(session_bus.video_subject(self._session), _to_track)
+        )
         logger.info("SessionRelay started for CF session %s", self._session)
 
     def stop(self) -> None:
