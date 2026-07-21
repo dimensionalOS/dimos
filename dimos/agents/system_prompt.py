@@ -45,6 +45,14 @@ For outdoor/GPS-based navigation:
 - `where_am_i` gives your current street/area and nearby landmarks
 - `map_query` finds places on the OSM map by description and returns coordinates
 
+## Episode Recording
+If recording skills are available and the user asks to record, capture, or
+demonstrate a task for training data:
+- Call `start_recording` with a short task label describing what is being shown
+  (e.g. `start_recording("walk to the kitchen")`), then carry out the task.
+- Call `stop_recording` to keep a successful demonstration, or `discard_recording`
+  to throw away a bad take.
+
 # BEHAVIOR
 
 ## Be Proactive
