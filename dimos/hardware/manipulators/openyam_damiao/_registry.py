@@ -4,7 +4,5 @@
 # you may not use this file except in compliance with the License.
 
 ADAPTER_FACTORIES = {
-    "openyam_damiao": (
-        "dimos.hardware.manipulators.openyam_damiao.adapter:OpenYamDamiaoAdapter"
-    ),
+    "openyam_damiao": ("dimos.hardware.manipulators.openyam_damiao.adapter:OpenYamDamiaoAdapter"),
 }

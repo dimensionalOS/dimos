@@ -15,6 +15,8 @@ def __getattr__(name: str) -> object:
             OpenYamDamiaoAdapter,
         )
 
-        return {"OpenYAMDamiaoAdapter": OpenYAMDamiaoAdapter,
-                "OpenYamDamiaoAdapter": OpenYamDamiaoAdapter}[name]
+        return {
+            "OpenYAMDamiaoAdapter": OpenYAMDamiaoAdapter,
+            "OpenYamDamiaoAdapter": OpenYamDamiaoAdapter,
+        }[name]
     raise AttributeError(name)
