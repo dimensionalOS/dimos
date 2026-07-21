@@ -66,6 +66,7 @@ class ArmCommandModule(ArmTeleopModule):
         super().__init__(**kwargs)
         self._estopped = False
         self._last_twist_ts = 0.0
+        self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
 
@@ -105,13 +106,26 @@ class ArmCommandModule(ArmTeleopModule):
             logger.warning("cmd_raw decode failed", exc_info=True)
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Controller pose → robot frame. Overrides the quest version to drop
-        (not raise on) unexpected frame_ids from the wire."""
+        """Controller pose → robot frame. Drops unexpected frame_ids, plus stale
+        and out-of-order poses (cmd_unreliable is unordered/lossy)."""
         msg = PoseStamped.lcm_decode(data)
         try:
             hand = self._resolve_hand(msg.frame_id)
         except ValueError:
             return
+        ts = float(msg.ts)
+        if not math.isfinite(ts):
+            return
+        age = time.time() - ts
+        if age > self.config.cmd_stale_after_sec:
+            now = time.monotonic()
+            if now - self._last_stale_warn >= 1.0:
+                self._last_stale_warn = now
+                logger.warning("dropping stale pose: age=%.2fs — operator link lagging", age)
+            return
+        if ts <= self._last_pose_ts[hand]:
+            return
+        self._last_pose_ts[hand] = ts
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose

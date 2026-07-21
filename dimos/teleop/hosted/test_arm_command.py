@@ -73,8 +73,8 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
     return module
 
 
-def _pose_bytes(frame_id: str, ts: float = 1.0) -> bytes:
-    return PoseStamped(ts=ts, frame_id=frame_id).lcm_encode()
+def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
+    return PoseStamped(ts=time.time() if ts is None else ts, frame_id=frame_id).lcm_encode()
 
 
 def _twist_bytes(x: float = 0.1, ts: float | None = None) -> bytes:
@@ -123,6 +123,27 @@ def test_cmd_raw_bad_frame_id_dropped(module: ArmCommandModule) -> None:
 def test_cmd_raw_foreign_bytes_ignored(module: ArmCommandModule) -> None:
     module._on_cmd_raw(b"\x00\x01\x02\x03garbage-frame")
     assert module._current_poses[Hand.RIGHT] is None
+
+
+def test_stale_pose_dropped(module: ArmCommandModule) -> None:
+    module._on_cmd_raw(_pose_bytes("right", ts=time.time() - 1.0))
+    assert module._current_poses[Hand.RIGHT] is None
+
+
+def test_out_of_order_pose_dropped(module: ArmCommandModule) -> None:
+    t = time.time()
+    module._on_cmd_raw(_pose_bytes("right", ts=t))
+    module._on_cmd_raw(_pose_bytes("right", ts=t - 0.1))
+    accepted = module._current_poses[Hand.RIGHT]
+    module._on_cmd_raw(_pose_bytes("right", ts=t + 0.1))
+    assert module._current_poses[Hand.RIGHT] is not accepted
+
+
+def test_pose_watermark_is_per_hand(module: ArmCommandModule) -> None:
+    t = time.time()
+    module._on_cmd_raw(_pose_bytes("right", ts=t))
+    module._on_cmd_raw(_pose_bytes("left", ts=t - 0.05))
+    assert module._current_poses[Hand.LEFT] is not None
 
 
 # ─── Browser keyboard EE-twist → coordinator eef_twist ─────────────────
