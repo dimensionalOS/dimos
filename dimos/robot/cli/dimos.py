@@ -33,7 +33,7 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
-from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.constants import CONFIG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -331,7 +331,8 @@ def run(
         generate_run_id,
     )
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
-    from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
+    from dimos.utils.logging_config import setup_exception_handler
+    from dimos.utils.rundir import mint_run_dir
 
     setup_exception_handler()
 
@@ -343,16 +344,17 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(robot_types)
-    run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run
-    # cleanup can identify them via os.environ after main dies.
+    # cleanup can identify them via os.environ after main dies. The id stays an
+    # opaque unique tag; the run DIR is minted separately with the counter name.
+    run_id = generate_run_id(blueprint_name)
     os.environ[DIMOS_RUN_ID_ENV] = run_id
 
-    # Route structured logs (main.jsonl) to the per-run directory.
-    # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
-    set_run_log_dir(log_dir)
+    # Mint the counter-named per-run dir (LOG_DIR/NNN_blueprint): routes
+    # main.jsonl + debug.db there and repoints LOG_DIR/latest. Workers inherit
+    # DIMOS_RUN_LOG_DIR via forkserver.
+    log_dir = mint_run_dir(blueprint_name)
 
     blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 

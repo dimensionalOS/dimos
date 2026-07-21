@@ -151,9 +151,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.pure and args.replay is None:
+        parser.error("--pure needs a recording: pass --replay DB")
+
+    # Mint a counter-named per-run dir BEFORE building anything, so main.jsonl +
+    # debug.db land in LOG_DIR/NNN_<mode>/ (never a shared logs/debug.db). T16.
+    from dimos.utils.rundir import mint_run_dir
+
+    mint_run_dir("go2-nav-pure" if args.pure else "go2-nav")
+
     if args.pure:
-        if args.replay is None:
-            parser.error("--pure needs a recording: pass --replay DB")
         run_pure(args.replay, voxel_size=args.voxel_size, pgo=args.pgo, sink=args.sink)
         return
 

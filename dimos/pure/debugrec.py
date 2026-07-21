@@ -826,7 +826,7 @@ class DebugWriter:
 
 
 def _resolve_db(debug: Debug, run_dir: str | os.PathLike[str] | None) -> str:
-    """db resolution chain: ``Debug.db`` → ``run_dir`` → ``$DIMOS_RUN_LOG_DIR`` → run-log dir."""
+    """db resolution chain: ``Debug.db`` → ``run_dir`` → ``$DIMOS_RUN_LOG_DIR`` → mint (T16)."""
     if debug.db is not None:
         return str(Path(debug.db).resolve())
     if run_dir is not None:
@@ -834,17 +834,11 @@ def _resolve_db(debug: Debug, run_dir: str | os.PathLike[str] | None) -> str:
     env = os.environ.get("DIMOS_RUN_LOG_DIR")
     if env:
         return str(Path(env).resolve() / DEFAULT_DB_NAME)
-    return str(_run_log_root() / DEFAULT_DB_NAME)
+    # No run dir anywhere: minting one (label "debug") keeps this capture out of
+    # a shared logs/debug.db — the no-silent-cross-run-mixing invariant (T16).
+    from dimos.utils.rundir import mint_run_dir
 
-
-def _run_log_root() -> Path:
-    """The repo run-log dir where ``main.jsonl`` goes (Q4+Q7): the debug.db home."""
-    from dimos.utils.logging_config import _get_log_file_path, get_run_log_dir
-
-    run_dir = get_run_log_dir()
-    if run_dir is not None:
-        return run_dir
-    return Path(_get_log_file_path()).parent
+    return str(mint_run_dir("debug") / DEFAULT_DB_NAME)
 
 
 def session_for(
@@ -918,8 +912,34 @@ def load(source: str | os.PathLike[str]) -> DebugRun:
 
 
 def latest(root: str | os.PathLike[str] | None = None) -> DebugRun:
-    """The newest run with a debug.db under ``root`` (default: the run-log root)."""
-    base = Path(root) if root is not None else _run_log_root()
+    """The newest run's debug.db: the ``latest`` symlink first, else highest-NNN scan (T16).
+
+    ``root`` defaults to ``LOG_DIR`` (the counter root). Resolution order:
+    ``root/latest`` symlink → highest ``NNN_*`` run dir with a debug.db →
+    any debug.db under ``root`` by mtime (legacy flat layout).
+    """
+    from dimos.constants import LOG_DIR
+
+    base = Path(root) if root is not None else LOG_DIR
+
+    # 1. The atomically-maintained latest symlink (T16 mint repoints it).
+    link = base / "latest"
+    if link.is_symlink() or link.exists():
+        db = link / DEFAULT_DB_NAME if link.is_dir() else link
+        if db.exists():
+            return DebugRun(db)
+
+    # 2. Highest NNN_* run dir carrying a debug.db.
+    numbered = []
+    if base.is_dir():
+        for child in base.iterdir():
+            m = re.match(r"^(\d{3,})_", child.name)
+            if m and (child / DEFAULT_DB_NAME).exists():
+                numbered.append((int(m.group(1)), child / DEFAULT_DB_NAME))
+    if numbered:
+        return DebugRun(max(numbered, key=lambda nc: nc[0])[1])
+
+    # 3. Legacy flat layout: any debug.db under base, newest by mtime.
     candidates = [base / DEFAULT_DB_NAME, *base.glob(f"**/{DEFAULT_DB_NAME}")]
     existing = [c for c in candidates if c.exists()]
     if not existing:

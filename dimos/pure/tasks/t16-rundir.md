@@ -1,6 +1,6 @@
 # T16 — Per-run directories (counter-named, one system for logs + debug + health)
 
-Status: design draft (Ivan + session, 2026-07-21). Owner: unassigned.
+Status: **done** (2026-07-21). Owner: session.
 Motivating incident: successive `go2_nav` runs appended into one shared
 `logs/debug.db` — replaying the same recording writes identical data-time ts
 into the same streams, silently entangling runs (found 2026-07-21 within an
@@ -73,3 +73,39 @@ OPTIONS: a) always (default); b) only when capturing — fewer dirs, but logs st
 
 Q1 `NNN_label`; Q2 global counter; Q3 entrypoint mains always mint.
 Implementation is GO.
+
+## Implementation notes (2026-07-21)
+
+- **`dimos/utils/rundir.py`** — `mint_run_dir(label)` + `slugify(label)`.
+  Counter = one past the highest `^\d{3,}_` prefix under `LOG_DIR`; claimed via
+  a `mkdir(exist_ok=False)` retry loop (a losing racer increments and retries),
+  zero-padded 3 (rolls to 4+ digits naturally past 999). `set_run_log_dir(dir)`
+  routes `main.jsonl` + exports `DIMOS_RUN_LOG_DIR`; `LOG_DIR/latest` is
+  repointed atomically (`os.symlink` to a `.latest.<pid>.tmp` then
+  `os.replace` — no dangle window). The symlink target is relative when the run
+  dir is a direct child of `LOG_DIR`. `GlobalConfig.run_dir` override:
+  absolute used verbatim, relative resolved under `LOG_DIR`, existing dir
+  appended into (`mkdir(parents=True, exist_ok=True)`).
+- **`GlobalConfig.run_dir: str | None = None`** added.
+- **Minting sites**: `dimos run` (`robot/cli/dimos.py`) mints the counter DIR
+  via `mint_run_dir(blueprint_name)`; `DIMOS_RUN_ID` stays an independent opaque
+  tag from `generate_run_id()` (see coupling note below). `go2_nav.main()` mints
+  at startup with label `go2-nav-pure` / `go2-nav`, BOTH modes, before build.
+- **debugrec fallback** (`_resolve_db`): the old final branch landed on a shared
+  `logs/debug.db`; it now mints a run dir labelled `debug` — the
+  no-silent-cross-run-mixing invariant. `Debug(db=...)` and `$DIMOS_RUN_LOG_DIR`
+  are unchanged and mint nothing. `latest()` now resolves `LOG_DIR/latest`
+  first, then the highest `NNN_*` dir with a debug.db, then legacy flat-mtime.
+  `pm.debug_latest` re-exports it.
+- **generate_run_id / watchdog coupling**: `DIMOS_RUN_ID` is only ever an opaque
+  tag matched by `kill_run_processes` / the watchdog against descendants'
+  environ — its format is never parsed (the only format assertions live in
+  `test_daemon` testing `generate_run_id` directly). So the run id is kept
+  independent of the dir name: the dir gets the counter, the id keeps its
+  timestamp format. No watchdog change needed.
+- **Tests**: `dimos/utils/test_rundir.py` (21) — counter increment/global,
+  slugify, concurrent claim (8 threads → distinct dirs), latest atomic repoint,
+  run_dir override (abs/rel/append), rollover past 999, debugrec mint-fallback +
+  explicit-db/env untouched, `latest()` symlink-first then highest-NNN.
+  Isolated by monkeypatching `rundir.LOG_DIR` + resetting logging_config
+  globals/env (never writes the real `logs/`).
