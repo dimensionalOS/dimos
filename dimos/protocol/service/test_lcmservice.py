@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 import threading
 import time
 from unittest.mock import MagicMock, create_autospec, patch
@@ -188,17 +189,13 @@ class TestLCMService:
             assert "_call_thread_pool" not in state
             assert "_call_thread_pool_lock" not in state
 
-    def test_setstate_reinitializes_runtime_attrs(self) -> None:
+    def test_unpickling_reinitializes_runtime_attrs(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
             mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
             mock_lcm_class.return_value = mock_lcm_instance
 
             service = LCMService()
-            state = service.__getstate__()
-
-            # Simulate unpickling
-            new_service = object.__new__(LCMService)
-            new_service.__setstate__(state)
+            new_service = pickle.loads(pickle.dumps(service))
 
             assert new_service.l is None
             assert isinstance(new_service._stop_event, threading.Event)
@@ -214,11 +211,7 @@ class TestLCMService:
             mock_lcm_class.return_value = mock_lcm_instance
 
             service = LCMService()
-            state = service.__getstate__()
-
-            # Simulate unpickling
-            new_service = object.__new__(LCMService)
-            new_service.__setstate__(state)
+            new_service = pickle.loads(pickle.dumps(service))
 
             # Start should reinitialize LCM
             new_service.start()

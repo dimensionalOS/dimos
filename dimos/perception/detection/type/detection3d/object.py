@@ -21,6 +21,7 @@ import uuid
 
 import cv2
 from dimos_lcm.geometry_msgs import Pose
+from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
@@ -50,7 +51,7 @@ class Object(Detection3D):
     multiple detections over time.
     """
 
-    object_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    object_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     center: Vector3
     size: Vector3
     pose: PoseStamped
@@ -58,29 +59,46 @@ class Object(Detection3D):
     camera_transform: Transform | None = None
     mask: np.ndarray[Any, np.dtype[np.uint8]] | None = None
     detections_count: int = 1
+    visual_embedding: np.ndarray[Any, np.dtype[np.float32]] | None = None
+    observation_partial: bool = False
+    identity_status: str | None = None
+    identity_basis: str | None = None
+    last_seen_ts: float | None = None
 
-    def update_object(self, other: Object) -> None:
+    def __post_init__(self) -> None:
+        self.set_center(self.center)
+
+    def set_center(self, center: Vector3) -> None:
+        """Update the canonical center and its pose representation together."""
+        self.center = Vector3(center)
+        self.pose.position = self.center
+
+    def update_object(self, other: Object, *, accumulate_pointcloud: bool = True) -> None:
         """Update this object with data from another detection.
 
-        Accumulates pointclouds by transforming the new pointcloud to world frame
-        and adding it to the existing pointcloud. Updates center and camera_transform,
-        and increments the detections_count.
+        Optionally accumulates pointclouds already transformed to the world frame. Updates
+        geometry and bookkeeping from the new detection and increments ``detections_count``.
 
         Args:
             other: Another Object instance with newer detection data.
+            accumulate_pointcloud: Whether to retain points from earlier detections.
         """
         # Accumulate pointclouds (both are already in world frame) for visualization,
         # but use the latest single-detection geometry for obstacle sizing.
         # Recomputing size from accumulated clouds inflates obstacles unrealistically.
-        if other.camera_transform is not None and self.camera_transform is not None:
+        if (
+            accumulate_pointcloud
+            and other.camera_transform is not None
+            and self.camera_transform is not None
+        ):
             self.pointcloud = self.pointcloud + other.pointcloud
         else:
             self.pointcloud = other.pointcloud
 
         # Always use the latest detection's geometry (not accumulated cloud OBB)
-        self.center = other.center
         self.size = other.size
         self.pose = other.pose
+        self.set_center(other.center)
 
         self.camera_transform = other.camera_transform
         self.track_id = other.track_id
@@ -92,11 +110,29 @@ class Object(Detection3D):
         self.ts = other.ts
         self.frame_id = other.frame_id
         self.image = other.image
+        if other.visual_embedding is not None:
+            self.visual_embedding = other.visual_embedding
+        self.observation_partial = other.observation_partial
         self.detections_count += 1
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
         return self.pointcloud.oriented_bounding_box
+
+    def _detection3d_bbox_components(self) -> tuple[Vector3, Quaternion, Vector3]:
+        """Return canonical geometry without refitting the point cloud."""
+        center = self.center
+        size = self.size
+        orientation = self.pose.orientation
+        return (
+            Vector3(center.x, center.y, center.z),
+            Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
+            Vector3(
+                max(float(size.x), 1e-3),
+                max(float(size.y), 1e-3),
+                max(float(size.z), 1e-3),
+            ),
+        )
 
     def scene_entity_label(self) -> str:
         """Get label for scene visualization."""
@@ -106,17 +142,27 @@ class Object(Detection3D):
 
     def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        obb = self.get_oriented_bounding_box()
-        orientation = Quaternion.from_rotation_matrix(obb.R)
+        center, orientation, size = self._detection3d_bbox_components()
 
         msg = ROSDetection3D()
         msg.header = Header(self.ts, self.frame_id)
-        msg.id = str(self.track_id)
-        msg.bbox.center = Pose(
-            position=Vector3(obb.center[0], obb.center[1], obb.center[2]),
-            orientation=orientation,
+        msg.id = self.object_id
+        msg.results = [
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(
+                    class_id=self.name,
+                    score=self.confidence,
+                )
+            )
+        ]
+        msg.results_length = len(msg.results)
+        msg.bbox = BoundingBox3D(
+            center=Pose(
+                position=center,
+                orientation=orientation,
+            ),
+            size=size,
         )
-        msg.bbox.size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
 
         return msg
 
@@ -127,7 +173,10 @@ class Object(Detection3D):
             "track_id": self.track_id,
             "name": self.name,
             "detections": self.detections_count,
-            "last_seen": f"{round(time.time() - self.ts)}s ago",
+            "identity_status": self.identity_status,
+            "identity_basis": self.identity_basis,
+            "last_seen_ts": self.last_seen_ts,
+            "last_seen": f"{round(time.time() - (self.last_seen_ts or self.ts))}s ago",
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -137,6 +186,9 @@ class Object(Detection3D):
             "track_id": self.track_id,
             "class_id": self.class_id,
             "name": self.name,
+            "identity_status": self.identity_status,
+            "identity_basis": self.identity_basis,
+            "last_seen_ts": self.last_seen_ts,
             "mask": self.mask,
             "pointcloud": self.pointcloud.as_numpy(),
             "image": self.image.as_numpy() if self.image else None,
@@ -319,7 +371,7 @@ class Object(Detection3D):
 def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     """Aggregate all object pointclouds into a single colored pointcloud.
 
-    Each object's points are colored based on its track_id.
+    Each object's points are colored based on its object_id.
 
     Args:
         objects: List of Object instances with pointclouds
@@ -342,8 +394,8 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
             seed = int(obj.object_id, 16)
         except (ValueError, TypeError):
             seed = abs(hash(obj.object_id))
-        np.random.seed(abs(seed) % (2**32 - 1))
-        track_color = np.random.randint(50, 255, 3) / 255.0
+        rng = np.random.default_rng(abs(seed))
+        track_color = rng.integers(50, 255, 3) / 255.0
 
         if colors is not None:
             blended = np.clip(0.6 * colors + 0.4 * track_color, 0.0, 1.0)
@@ -373,21 +425,31 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     return pc
 
 
-def to_detection3d_array(objects: list[Object]) -> Detection3DArray:
+def to_detection3d_array(
+    objects: list[Object],
+    *,
+    frame_id: str | None = None,
+    ts: float | None = None,
+) -> Detection3DArray:
     """Convert a list of Objects to a ROS Detection3DArray message.
 
     Args:
         objects: List of Object instances
+        frame_id: Optional output frame override, including for an empty list.
+        ts: Optional output timestamp override, including for an empty list.
 
     Returns:
         Detection3DArray ROS message
     """
-    array = Detection3DArray()
-
-    if objects:
-        array.header = Header(objects[0].ts, objects[0].frame_id)
-
-    for obj in objects:
-        array.detections.append(obj.to_detection3d_msg())
-
-    return array
+    detections = [obj.to_detection3d_msg() for obj in objects]
+    resolved_frame_id = frame_id
+    if resolved_frame_id is None:
+        resolved_frame_id = objects[0].frame_id if objects else ""
+    resolved_ts = ts
+    if resolved_ts is None:
+        resolved_ts = objects[0].ts if objects else 0.0
+    return Detection3DArray(
+        detections_length=len(detections),
+        header=Header(resolved_ts, resolved_frame_id),
+        detections=detections,
+    )
