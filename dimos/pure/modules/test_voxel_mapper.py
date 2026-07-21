@@ -320,19 +320,39 @@ def test_mapper2_step_below_cadence_returns_none() -> None:
 # ── engine: synthetic streams through over() ─────────────────────────────────
 
 
-def test_mapper2_over_cadence_no_tail_flush() -> None:
-    # 5 scans, emit_every=2 → emits at 2 and 4 ONLY; the 5th (tail partial) is lost
+def test_mapper2_step_finish_flushes_tail() -> None:
+    # unit: finish() emits the trailing partial batch; None on a cadence-aligned tail
+    m = VoxelMapper2(voxel_size=VOXEL, emit_every=2)
+    s = VoxelMapper2.State()
+    for c in _grid_rows(5):
+        s, _ = m.step(s, VoxelMapper2.In(ts=c.ts, scan=c))
+    tail = m.finish(s)
+    assert tail is not None and tail.n_scans == 5 and tail.n_voxels == 5
+    # a cadence-aligned end has nothing to flush (the last tick already emitted)
+    m2 = VoxelMapper2(voxel_size=VOXEL, emit_every=2)
+    s2 = VoxelMapper2.State()
+    for c in _grid_rows(4):
+        s2, _ = m2.step(s2, VoxelMapper2.In(ts=c.ts, scan=c))
+    assert m2.finish(s2) is None
+    assert m2.finish(VoxelMapper2.State()) is None  # zero scans → nothing to flush
+
+
+def test_mapper2_over_cadence_tail_flush() -> None:
+    # 5 scans, emit_every=2 → emits at 2 and 4, and finish() flushes the 5th tail
     m = VoxelMapper2(voxel_size=VOXEL, emit_every=2)
     rows = list(m.over(scan=_grid_rows(5)))
-    assert [r.n_scans for r in rows] == [2, 4]  # NOT [2, 4, 5] — no exhaustion flush
-    assert [r.ts for r in rows] == [2.0, 4.0]  # engine-stamped from the tick row
-    assert [r.n_voxels for r in rows] == [2, 4]
+    assert [r.n_scans for r in rows] == [2, 4, 5]  # finish restores the exhaustion flush
+    assert [r.ts for r in rows] == [2.0, 4.0, 5.0]  # tail stamped from the last consumed tick
+    assert [r.n_voxels for r in rows] == [2, 4, 5]
     assert rows[-1].global_map.frame_id == "world"
 
 
-def test_mapper2_over_emits_nothing_below_first_cadence() -> None:
+def test_mapper2_over_emits_tail_below_first_cadence() -> None:
+    # never reaches a cadence point, but finish() still flushes the whole partial batch
     m = VoxelMapper2(voxel_size=VOXEL, emit_every=50)
-    assert list(m.over(scan=_grid_rows(49))) == []  # never reaches a cadence point
+    rows = list(m.over(scan=_grid_rows(49)))
+    assert [r.n_scans for r in rows] == [49]  # the fold's tail, via finish()
+    assert rows[0].ts == 49.0
 
 
 def test_mapper2_over_fresh_grid_per_run() -> None:
@@ -360,15 +380,15 @@ def test_mapper2_over_disposes_on_early_break(monkeypatch: pytest.MonkeyPatch) -
 # ── the comparison: fold and Mealy agree at shared cadence points ────────────
 
 
-def test_mapper2_matches_fold_at_shared_cadence() -> None:
-    """Both mappers over the SAME stream → identical maps at 2 & 4; fold alone emits 5."""
+def test_mapper2_matches_fold_full_parity() -> None:
+    """Both mappers over the SAME stream → identical maps at every emit, tail included."""
     clouds = _grid_rows(5)
     fold = list(VoxelMapper(voxel_size=VOXEL, emit_every=2).over(scan=clouds))
     mealy = list(VoxelMapper2(voxel_size=VOXEL, emit_every=2).over(scan=clouds))
-    # cadence points 2 & 4 are shared; fold adds a tail 5, Mealy cannot
+    # finish() closes the gap: cadence points 2 & 4 AND the tail 5 are all shared
     assert [r.n_scans for r in fold] == [2, 4, 5]
-    assert [r.n_scans for r in mealy] == [2, 4]
-    for f, m in zip(fold, mealy, strict=False):  # the common prefix must be voxel-identical
+    assert [r.n_scans for r in mealy] == [2, 4, 5]
+    for f, m in zip(fold, mealy, strict=True):  # every row voxel-identical, tail and all
         assert f.n_scans == m.n_scans and f.n_voxels == m.n_voxels
         assert f.ts == m.ts
         np.testing.assert_array_equal(_centers(f), _centers(m))
@@ -389,9 +409,9 @@ def hk_rows2() -> list[VoxelMapper2.Out]:
         return list(m.over(scan=lidar.range_seek(0, N_SCANS)))
 
 
-def test_mapper2_real_slice_no_tail_flush(hk_rows2: list[VoxelMapper2.Out]) -> None:
-    # fold emits 50..250 plus the 298 tail; Mealy emits 50..250 and stops
-    assert [r.n_scans for r in hk_rows2] == [50, 100, 150, 200, 250]
+def test_mapper2_real_slice_tail_flush(hk_rows2: list[VoxelMapper2.Out]) -> None:
+    # finish() flushes the 298 tail, matching the fold: 50..250 plus the 298 partial
+    assert [r.n_scans for r in hk_rows2] == [50, 100, 150, 200, 250, EXPECTED_TICKS]
     ts = [r.ts for r in hk_rows2]
     assert ts == sorted(ts) and len(set(ts)) == len(ts)
     assert hk_rows2[-1].n_voxels > 10_000
@@ -400,15 +420,17 @@ def test_mapper2_real_slice_no_tail_flush(hk_rows2: list[VoxelMapper2.Out]) -> N
 def test_mapper2_matches_fold_on_real_slice(
     hk_rows: list[VoxelMapper.Out], hk_rows2: list[VoxelMapper2.Out]
 ) -> None:
-    """Shared VoxelGrid core → the 250-scan snapshots are voxel-identical across shapes."""
-    fold_250 = next(r for r in hk_rows if r.n_scans == 250)
-    mealy_250 = next(r for r in hk_rows2 if r.n_scans == 250)
-    assert fold_250.n_voxels == mealy_250.n_voxels
-    # symmetric nearest-neighbour distance is 0 iff the voxel-center sets coincide
-    fwd = np.asarray(
-        mealy_250.global_map.pointcloud.compute_point_cloud_distance(fold_250.global_map.pointcloud)
-    )
-    rev = np.asarray(
-        fold_250.global_map.pointcloud.compute_point_cloud_distance(mealy_250.global_map.pointcloud)
-    )
-    assert float(fwd.max()) == 0.0 and float(rev.max()) == 0.0  # identical maps
+    """Shared VoxelGrid core → the 250-scan AND 298-tail snapshots are voxel-identical."""
+    for n in (250, EXPECTED_TICKS):
+        fold_n = next(r for r in hk_rows if r.n_scans == n)
+        mealy_n = next(r for r in hk_rows2 if r.n_scans == n)
+        assert fold_n.n_voxels == mealy_n.n_voxels
+        assert fold_n.ts == mealy_n.ts  # tail stamped from the same last consumed tick
+        # symmetric nearest-neighbour distance is 0 iff the voxel-center sets coincide
+        fwd = np.asarray(
+            mealy_n.global_map.pointcloud.compute_point_cloud_distance(fold_n.global_map.pointcloud)
+        )
+        rev = np.asarray(
+            fold_n.global_map.pointcloud.compute_point_cloud_distance(mealy_n.global_map.pointcloud)
+        )
+        assert float(fwd.max()) == 0.0 and float(rev.max()) == 0.0  # identical maps

@@ -119,10 +119,70 @@ class PairBatcher(pm.PureModule):
                 buf = []
 
 
+class Batcher(pm.PureModule):
+    """Mealy with a cadence emit + a finish() tail flush (the VoxelMapper2 shape)."""
+
+    every: int = 2
+
+    class In(pm.In):
+        x: Sample = pm.tick()
+
+    class Out(pm.Out):
+        total: float = pm.contract(min_hz=1)
+        n: int = 0
+
+    class State(NamedTuple):
+        total: float = 0.0
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out | None]:
+        s = Batcher.State(total=s.total + i.x.v, n=s.n + 1)
+        if s.n % self.every == 0:
+            return s, Batcher.Out(total=s.total, n=s.n)
+        return s, None
+
+    def finish(self, s: State) -> Out | None:
+        if s.n == 0 or s.n % self.every == 0:
+            return None
+        return Batcher.Out(total=s.total, n=s.n)
+
+
 def test_stateless_stamps_tick_ts() -> None:
     rows = list(Doubler().over(x=_stream((1.0, 1.0), (2.0, 3.0))))
     assert [r.y for r in rows] == [2.0, 6.0]
     assert [r.ts for r in rows] == [1.0, 2.0]
+
+
+def test_mealy_finish_tail_flush_over() -> None:
+    # cadence emits at 2 & 4; finish() flushes the 5th tail, stamped from the last tick
+    rows = list(
+        Batcher(every=2).over(x=_stream((1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (4.0, 1.0), (5.0, 1.0)))
+    )
+    assert [r.n for r in rows] == [2, 4, 5]
+    assert [r.ts for r in rows] == [2.0, 4.0, 5.0]
+
+
+def test_mealy_finish_tail_lands_in_rows_layer(tmp_path) -> None:
+    # T15 interaction: the finish emission is captured in the OUT rows layer under the
+    # last tick's seq — it is NOT a tick attempt (no extra TickDecision).
+    from dimos.pure import debugrec
+
+    db = tmp_path / "debug.db"
+    rows = list(
+        Batcher(every=2).over(
+            x=_stream((1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (4.0, 1.0), (5.0, 1.0)),
+            debug=pm.Debug(rows=True, db=db),
+        )
+    )
+    assert [r.n for r in rows] == [2, 4, 5]
+    with debugrec.load(db) as run:
+        md = run.module("batcher")
+        ticks = list(md.ticks())
+        out_rows = list(md.out_rows())
+    assert len(ticks) == 5 and all(t.fired for t in ticks)  # 5 attempts, no finish attempt
+    assert sum(t.emitted for t in ticks) == 2  # only the cadence ticks emitted at step time
+    assert [r.row.n for r in out_rows] == [2, 4, 5]  # the OUT layer sees the tail too
+    assert out_rows[-1].seq == ticks[-1].seq  # tail recorded under the last tick's seq
 
 
 def test_stateless_none_skips_and_config_changes_behavior() -> None:

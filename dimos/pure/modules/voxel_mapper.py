@@ -139,14 +139,14 @@ class VoxelMapper2(pm.PureModule):
     a scan counter — so it is checkpointable (T10-compatible); the heavy mutable
     accumulator lives in the resource, exactly where resources belong.
 
-    Deliberate behavioral difference from the fold version — a step never learns
-    the stream ended, so ``VoxelMapper2`` CANNOT emit the fold's final flush at
-    exhaustion. With ``emit_every=50`` over 298 ticks it emits at 50..250 and the
-    trailing 48-scan partial batch is silently not emitted; the fold emits a 298
-    row too. That is the price of the Mealy shape. What it buys: checkpointable
-    plain-data ``State`` and engine-managed grid lifecycle — the live-mapping
-    trade (resume a long mapping run from a checkpoint; the engine owns warmup
-    and teardown instead of a generator-local ``try/finally``).
+    The ``finish(state)`` hook (T14+) restores full fold parity: a step never
+    learns the stream ended, but ``finish`` is called once at exhaustion, so the
+    trailing partial batch flushes exactly as the fold's tail does. With
+    ``emit_every=50`` over 298 ticks both shapes emit at 50..250 and a 298 tail.
+    What the Mealy shape still buys over the fold: checkpointable plain-data
+    ``State`` and engine-managed grid lifecycle — the live-mapping trade (resume a
+    long mapping run from a checkpoint; the engine owns warmup and teardown
+    instead of a generator-local ``try/finally``).
 
     Comparison (fold ``VoxelMapper`` vs Mealy ``VoxelMapper2``)::
 
@@ -156,14 +156,14 @@ class VoxelMapper2(pm.PureModule):
         grid home         generator-local var         @resource (engine-owned)
         state home        closure locals (n, last_ts) State NamedTuple (plain data)
         grid lifecycle    try/finally dispose          warmup create / teardown dispose
-        exhaustion flush  YES (final partial batch)    NO (step can't see stream end)
+        exhaustion flush  YES (final partial batch)    YES (finish() tail flush)
         checkpointable    no (state is in the stack)   yes (State is plain data)
-        emit at 298?      yes                          no (last emit is 250)
-        logic LOC         28 (fold + _snapshot)        21 (State + grid + step)
+        emit at 298?      yes                          yes (finish flushes the tail)
+        logic LOC         28 (fold + _snapshot)        26 (State + grid + step + finish)
 
-    At the shared cadence points (50, 100, ...) the two emit identical maps —
-    same VoxelGrid, same insertion order — differing only in the fold's extra
-    tail row. See ``test_voxel_mapper.py`` for the cadence-parity test.
+    At every emit point (the shared cadence + the tail) the two emit identical
+    maps — same VoxelGrid, same insertion order. See ``test_voxel_mapper.py`` for
+    the full-parity test.
     """
 
     voxel_size: float = 0.1  # metric voxel edge length
@@ -208,3 +208,14 @@ class VoxelMapper2(pm.PureModule):
                 n_scans=n,
             )  # engine stamps ts from the tick row
         return s, None
+
+    def finish(self, s: State) -> Out | None:
+        """Flush the trailing partial batch at stream end (fold-tail parity)."""
+        n = s.n_scans
+        if n == 0 or (self.emit_every > 0 and n % self.emit_every == 0):
+            return None  # nothing consumed, or the last tick already emitted on cadence
+        return VoxelMapper2.Out(
+            global_map=self.grid.get_global_pointcloud2(),
+            n_voxels=len(self.grid),
+            n_scans=n,
+        )  # engine stamps ts from the last consumed tick row

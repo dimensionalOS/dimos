@@ -164,6 +164,23 @@ def test_step_placeholder_pose_skips_pgo(scripted: type[_ScriptedPGO]) -> None:
     assert out is not None and out.n_keyframes == 0 and out.n_voxels == 0  # empty map
 
 
+def test_finish_flushes_final_map(scripted: type[_ScriptedPGO]) -> None:
+    m = PGOVoxelMapper(voxel_size=VOXEL, emit_every=0)  # cadence off: only finish emits
+    s = PGOVoxelMapper.State()
+    for i in range(3):
+        scan = _cloud([[(i + 1) * 2.0, 0.0, 0.0]], float(i + 1))
+        s, out = m.step(
+            s,
+            PGOVoxelMapper.In(ts=float(i + 1), scan=scan, pose=_pose((i + 1) * 2.0, float(i + 1))),
+        )
+        assert out is None  # emit_every=0 → the step never emits
+    tail = m.finish(s)
+    assert tail is not None and tail.n_scans == 3 and tail.n_keyframes == 3 and tail.n_voxels == 3
+    assert tail.correction is not None  # a final corrected-frame transform is present
+    # nothing mapped → no final map to flush
+    assert PGOVoxelMapper(emit_every=0).finish(PGOVoxelMapper.State()) is None
+
+
 # ── engine: over() with the real PGO core, no loops on a straight line ────────
 
 
@@ -180,6 +197,20 @@ def test_over_no_loop_keyframe_map() -> None:
     assert rows[-1].n_voxels == 6
     assert float(np.abs(rows[-1].correction.translation.to_numpy()).max()) < 1e-2
     assert rows[-1].global_map.frame_id == "world"
+
+
+def test_over_finish_emits_final_map() -> None:
+    # emit_every=4 over 6 scans: step emits at 4, finish() flushes the final map at 6
+    scans = [_cloud([[i * 2.0, 0.0, 0.0]], float(i + 1)) for i in range(6)]
+    tfs = [_pose(i * 2.0, float(i)) for i in range(8)]  # brackets every tick
+    m = PGOVoxelMapper(voxel_size=VOXEL, emit_every=4)
+    rows = list(m.over(scan=scans, tf=tfs))
+    assert [r.n_scans for r in rows] == [4, 6]  # cadence 4 + finish tail 6
+    tail = rows[-1]
+    assert tail.n_keyframes == 6 and tail.n_loops == 0 and tail.n_voxels == 6
+    assert tail.correction is not None  # a final corrected-frame transform
+    assert tail.keyframes is not None and len(tail.keyframes.nodes) == 6  # viz rebuilt at the tail
+    assert tail.global_map.frame_id == "world"
 
 
 # ── real data: go2_hongkong_office closes loops (skip-guarded, self-hosted) ───

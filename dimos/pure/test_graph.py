@@ -96,6 +96,31 @@ class Foldy(pm.PureModule):
 
 FOLDY_FINALIZED: list[int] = []
 
+
+class BatchB(pm.PureModule):
+    """A -> B, emitting every 2nd tick plus a finish() tail flush (Mealy)."""
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+
+    class Out(pm.Out):
+        b: PayB
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out | None]:
+        s = s.replace(n=s.n + 1)
+        if s.n % 2 == 0:
+            return s, BatchB.Out(b=PayB(ts=i.ts, v=float(s.n)))
+        return s, None
+
+    def finish(self, s: State) -> Out | None:
+        if s.n == 0 or s.n % 2 == 0:
+            return None
+        return BatchB.Out(b=PayB(ts=float(s.n), v=float(s.n)))
+
+
 COUNT_CALLS: list[int] = []
 
 
@@ -661,6 +686,25 @@ class TestGraphOver:
         want_totals = [r.total for r in JoinB().over(b=b_join)]
         assert got_totals == want_totals
         assert got_bs == list(b_out)
+
+    def test_member_finish_tail_reaches_downstream(self):
+        # a Mealy member's finish() tail flows to its downstream consumer like any
+        # member output — the graph delivers the tail row, not just cadence emits.
+        class G(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                total: PayB
+
+            def wire(self, i: "G.In") -> "G.Out":
+                b = BatchB()(a=i.a)
+                return G.Out(total=JoinB()(b=b.b).total)
+
+        with G().over(a=_a_stream(5)) as run:
+            totals = run.total.to_list()
+        # BatchB emits at ticks 2 & 4, finish() flushes the 5th tail → 3 downstream rows
+        assert [t.v for t in totals] == [2.0, 4.0, 5.0]
 
     def test_streams_are_reiterable(self):
         # §0.2: an export re-iterates by re-running (over() is deterministic); no

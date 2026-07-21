@@ -47,7 +47,7 @@ planner composing it onto the robot's odom pose.
 from __future__ import annotations
 
 from dimos import pure as pm
-from dimos.mapping.loop_closure.pgo import PGOConfig, _PGOState, _transform_to_pose3
+from dimos.mapping.loop_closure.pgo import PGOConfig, PoseGraph, _PGOState, _transform_to_pose3
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.GraphNodes3D import GraphNode, GraphNodes3D
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
@@ -122,31 +122,45 @@ class PGOVoxelMapper(VoxelMapper2):
         n = s.n_scans + 1
         s = s.replace(n_scans=n)
         if closed or (self.emit_every > 0 and n % self.emit_every == 0):
-            snap = pgo.snapshot()
-            return s, PGOVoxelMapper.Out(
-                global_map=self.grid.get_global_pointcloud2(),
-                n_voxels=len(self.grid),
-                n_scans=n,
-                correction=pgo.correction(i.ts),
-                n_keyframes=pgo.n_keyframes,
-                n_loops=pgo.n_loops,
-                keyframes=GraphNodes3D(
-                    ts=i.ts,
-                    frame_id=self.frame_id,
-                    nodes=[
-                        GraphNode(t.x, t.y, t.z)
-                        for kf in snap.keyframes
-                        for t in (kf.optimized.translation,)
-                    ],
-                ),
-                loop_closures=LineSegments3D(
-                    ts=i.ts,
-                    frame_id=self.frame_id,
-                    segments=[
-                        ((a.x, a.y, a.z), (b.x, b.y, b.z))
-                        for lp in snap.loops
-                        for a, b in ((lp.source.translation, lp.target.translation),)
-                    ],
-                ),
-            )  # engine stamps ts from the tick row
+            return s, self._emit(pgo.snapshot(), i.ts, n)  # engine stamps ts from the tick row
         return s, None
+
+    def finish(self, s: VoxelMapper2.State) -> Out | None:
+        """Emit the final corrected map + viz at stream end; skip if nothing mapped."""
+        pgo = self.pgo
+        n = s.n_scans
+        if n == 0 or pgo.n_keyframes == 0 or (self.emit_every > 0 and n % self.emit_every == 0):
+            return None  # nothing mapped, or the last cadence tick already emitted this map
+        snap = pgo.snapshot()
+        ts = snap.keyframes[-1].ts if snap.keyframes else 0.0  # newest keyframe's data time
+        return self._emit(snap, ts, n)  # engine stamps ts from the last tick row
+
+    def _emit(self, snap: PoseGraph, ts: float, n: int) -> Out:
+        """Build the corrected-map + viz Out row; ``ts`` stamps the nested viz/correction."""
+        pgo = self.pgo
+        return PGOVoxelMapper.Out(
+            global_map=self.grid.get_global_pointcloud2(),
+            n_voxels=len(self.grid),
+            n_scans=n,
+            correction=pgo.correction(ts),
+            n_keyframes=pgo.n_keyframes,
+            n_loops=pgo.n_loops,
+            keyframes=GraphNodes3D(
+                ts=ts,
+                frame_id=self.frame_id,
+                nodes=[
+                    GraphNode(t.x, t.y, t.z)
+                    for kf in snap.keyframes
+                    for t in (kf.optimized.translation,)
+                ],
+            ),
+            loop_closures=LineSegments3D(
+                ts=ts,
+                frame_id=self.frame_id,
+                segments=[
+                    ((a.x, a.y, a.z), (b.x, b.y, b.z))
+                    for lp in snap.loops
+                    for a, b in ((lp.source.translation, lp.target.translation),)
+                ],
+            ),
+        )

@@ -239,6 +239,103 @@ def test_mealy_fresh_state_per_run():
     assert run() == run() == [2.0, 4.0]  # no state bleed across runs
 
 
+# ── mealy finish() tail flush (ACCEPTED design) ──────────────────────────────
+
+
+class Accumulator:  # Mealy + finish: per-tick running sum, finish flushes the scan count
+    class State(NamedTuple):
+        total: float = 0.0
+        n: int = 0
+
+    def __init__(self) -> None:
+        self.finished: list[int] = []
+
+    def step(self, state: State, i: Ping) -> tuple[State, Pong]:
+        nxt = Accumulator.State(total=state.total + i.x, n=state.n + 1)
+        return nxt, Pong(y=nxt.total)
+
+    def finish(self, state: State) -> Pong | None:
+        self.finished.append(state.n)  # observe that finish ran, exactly once
+        return Pong(y=float(state.n))
+
+
+class SilentFinisher:  # Mealy whose finish returns None (nothing to flush)
+    class State(NamedTuple):
+        n: int = 0
+
+    def step(self, state: State, i: Ping) -> tuple[State, Pong]:
+        return SilentFinisher.State(n=state.n + 1), Pong(y=i.x)
+
+    def finish(self, state: State) -> Pong | None:
+        return None
+
+
+def test_mealy_finish_flushes_at_exhaustion():
+    m = Accumulator()
+    hooks = RunHooks()
+    outs = list(
+        drive_mealy(
+            m,
+            iter(_rows(1.0, 2.0, 3.0)),
+            Accumulator.State(),
+            skips=False,
+            hooks=hooks,
+            finish=True,
+        )
+    )
+    assert [o.y for o in outs] == [1.0, 3.0, 6.0, 3.0]  # 3 step sums + finish count(3)
+    assert outs[-1].ts == 3.0  # tail stamped from the LAST consumed tick's ts
+    assert m.finished == [3]  # finish fired exactly once, at exhaustion
+    assert (hooks.ticks, hooks.emits) == (3, 4)  # 3 ticks; the tail counts as an emit
+
+
+def test_mealy_finish_none_emits_nothing():
+    hooks = RunHooks()
+    outs = list(
+        drive_mealy(
+            SilentFinisher(),
+            iter(_rows(1.0, 2.0)),
+            SilentFinisher.State(),
+            skips=False,
+            hooks=hooks,
+            finish=True,
+        )
+    )
+    assert [o.ts for o in outs] == [1.0, 2.0]  # no tail row
+    assert hooks.emits == 2
+
+
+def test_mealy_finish_not_fired_on_early_close():
+    m = Accumulator()
+    it = drive_mealy(
+        m,
+        iter(_rows(1.0, 2.0, 3.0)),
+        Accumulator.State(),
+        skips=False,
+        hooks=RunHooks(),
+        finish=True,
+    )
+    next(it)  # one step
+    it.close()  # consumer breaks out early — an abort, not a stream end
+    assert m.finished == []  # finish never ran
+
+
+def test_mealy_finish_skipped_on_empty_stream():
+    m = Accumulator()
+    outs = list(
+        drive_mealy(m, iter([]), Accumulator.State(), skips=False, hooks=RunHooks(), finish=True)
+    )
+    assert outs == [] and m.finished == []  # no tick consumed → no ts to stamp, no finish
+
+
+def test_mealy_finish_flag_off_never_calls_hook():
+    m = Accumulator()
+    outs = list(
+        drive_mealy(m, iter(_rows(1.0)), Accumulator.State(), skips=False, hooks=RunHooks())
+    )
+    assert m.finished == [] and len(outs) == 1  # finish=False (default): hook untouched
+
+
 # ── fold (spec §7) ───────────────────────────────────────────────────────────
 
 

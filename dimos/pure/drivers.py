@@ -229,7 +229,9 @@ def run_over(
             rows = debug.tap_in_rows(aligner)  # post-alignment capture point (doctrine #4)
     # ── dispatch: drivers self-finalize (§8.2); the tf tap wraps the out iterator ──
     if spec.kind is StepKind.MEALY:
-        driver = drive_mealy(module, rows, initial, skips=spec.skips, hooks=hooks)
+        driver = drive_mealy(
+            module, rows, initial, skips=spec.skips, hooks=hooks, finish=spec.has_finish
+        )
     elif spec.kind is StepKind.ASYNC_STATELESS:
         driver = drive_async(module, rows, max_inflight=max_inflight, skips=spec.skips, hooks=hooks)
     elif spec.kind is StepKind.FOLD:
@@ -436,9 +438,14 @@ def drive_mealy(
     *,
     skips: bool,
     hooks: RunHooks,
+    finish: bool = False,
 ) -> Iterator[_TOutRow]:
-    """Thread State from ``initial`` through a Mealy step, stamping emissions (spec §5.2)."""
-    return _finalized(_mealy_rows(module, rows, initial, skips, hooks), rows, hooks)
+    """Thread State from ``initial`` through a Mealy step, stamping emissions (spec §5.2).
+
+    ``finish`` (set from ``StepSpec.has_finish``) calls the module's ``finish(state)``
+    tail-flush ONCE on graceful stream exhaustion — never on early close or error.
+    """
+    return _finalized(_mealy_rows(module, rows, initial, skips, hooks, finish), rows, hooks)
 
 
 def _mealy_rows(
@@ -447,13 +454,16 @@ def _mealy_rows(
     initial: _TState,
     skips: bool,
     hooks: RunHooks,
+    finish: bool,
 ) -> Iterator[_TOutRow]:
     state = initial  # ONE reference, rebound per tick — never copied or aliased
     n = 0
+    last_ts = UNSTAMPED  # the newest consumed tick ts; stamps the finish tail (fold parity)
     on_step = hooks.on_step
     for row in rows:
         hooks.ticks += 1
         n += 1
+        last_ts = row.ts
         t0 = time.perf_counter() if on_step is not None else 0.0  # monotonic; durations only (§3)
         try:
             state, out = module.step(state, row)  # non-2-tuple unpack fails here (D14)
@@ -473,6 +483,17 @@ def _mealy_rows(
         if hooks.on_state is not None:  # T15 state layer: snapshot at the emit boundary
             hooks.on_state(row.ts, state)
         yield dataclasses.replace(out, ts=row.ts)
+    # Tail flush: only on graceful exhaustion (early close raises GeneratorExit at a
+    # yield above, skipping this; a step error propagates from the loop). Fires only
+    # when a tick was consumed — there is otherwise no ts to stamp, mirroring the
+    # fold's `last_ts is not None` guard. Not a tick attempt: no on_step/on_state, but
+    # the emitted row flows through the same out-row path (T15 tap, tf_out, egress).
+    if finish and n > 0:
+        mod_any: Any = module
+        tail = mod_any.finish(state)
+        if tail is not None:
+            hooks.emits += 1
+            yield dataclasses.replace(tail, ts=last_ts)
 
 
 # ── the async driver (spec §6) ───────────────────────────────────────────────

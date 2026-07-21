@@ -1502,3 +1502,269 @@ def test_classify_no_mutation():
     after = dict(vars(M))
     assert before.keys() == after.keys()
     assert all(before[k] is after[k] for k in before)
+
+
+# ── finish() — the optional Mealy tail-flush hook (ACCEPTED design) ───────────
+
+
+def test_classify_finish_ok():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: State) -> Out | None:
+            raise NotImplementedError
+
+    spec = classify(M)
+    assert spec.kind is StepKind.MEALY and spec.has_finish is True
+
+
+def test_classify_finish_bare_out_return_ok():
+    # -> Out (no | None) is also accepted; the driver treats a None return as no flush
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out]:
+            raise NotImplementedError
+
+        def finish(self, s: State) -> Out:
+            raise NotImplementedError
+
+    assert classify(M).has_finish is True
+
+
+def test_classify_no_finish_flag_default_false():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out]:
+            raise NotImplementedError
+
+    assert classify(M).has_finish is False
+
+
+def test_finish_not_mealy_stateless():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        def step(self, i: In) -> Out:
+            raise NotImplementedError
+
+        def finish(self, s: int) -> Out | None:
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_NOT_MEALY)
+
+
+def test_finish_not_mealy_fold():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        def fold(self, rows: Iterator[In]) -> Iterator[Out]:
+            raise NotImplementedError
+
+        def finish(self, s: int) -> Out | None:
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_NOT_MEALY)
+
+
+def test_finish_async_rejected():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        async def finish(self, s: State) -> Out | None:  # type: ignore[override]
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_NOT_FUNCTION)
+
+
+def test_finish_bad_arity():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: State, extra: In) -> Out | None:
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_PARAMS)
+
+
+def test_finish_unannotated_state():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s) -> Out | None:  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_UNANNOTATED)
+
+
+def test_finish_wrong_state_type():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: In) -> Out | None:  # In is a row, not the module's State
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_STATE)
+
+
+def test_finish_wrong_return_type():
+    class M:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: State) -> RowOut | None:  # RowOut != this class's Out
+            raise NotImplementedError
+
+    _raises(M, Rule.FINISH_RETURN)
+
+
+def test_finish_subclass_resolution():
+    # a subclass overriding Out + step + finish resolves State via the base and Out
+    # via its own body — the same subclass semantics step uses (PGOVoxelMapper shape)
+    class Base:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: State) -> Out | None:
+            raise NotImplementedError
+
+    class Sub(Base):
+        class Out(PmOut):  # type: ignore[misc]
+            y: float = 0.0
+            z: float = 0.0
+
+        def step(  # type: ignore[override]
+            self, state: Base.State, i: Base.In
+        ) -> tuple[Base.State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: Base.State) -> Out | None:
+            raise NotImplementedError
+
+    base_spec = classify(Base)
+    sub_spec = classify(Sub)
+    assert base_spec.has_finish and sub_spec.has_finish
+    assert sub_spec.out_type is Sub.Out and sub_spec.state_type is Base.State
+
+
+def test_finish_inherited_with_overridden_out_rejected():
+    # inheriting finish (typed against Base.Out) while overriding Out is a mismatch —
+    # the subclass must override finish too, exactly as it must override step
+    class Base:
+        class In(PmIn):
+            x: float = tick()
+
+        class Out(PmOut):
+            y: float = 0.0
+
+        class State(NamedTuple):
+            n: int = 0
+
+        def step(self, state: State, i: In) -> tuple[State, Out | None]:
+            raise NotImplementedError
+
+        def finish(self, s: State) -> Out | None:
+            raise NotImplementedError
+
+    class Sub(Base):
+        class Out(PmOut):  # type: ignore[misc]
+            y: float = 0.0
+            z: float = 0.0
+
+        def step(  # type: ignore[override]
+            self, state: Base.State, i: Base.In
+        ) -> tuple[Base.State, Out | None]:
+            raise NotImplementedError
+
+    _raises(Sub, Rule.FINISH_RETURN)

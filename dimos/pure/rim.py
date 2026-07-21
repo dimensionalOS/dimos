@@ -816,7 +816,11 @@ class _LiveSession:
         if spec.kind is StepKind.MEALY:
             state_type = spec.state_type
             assert state_type is not None  # T3: a MEALY spec always carries State
-            return drive_mealy(module, rows, state_type(), skips=spec.skips, hooks=hooks)
+            # finish (T14+): the tail flush fires on graceful stream end or stop() drain,
+            # once, before teardown — never on error unwind (the driver's own structure).
+            return drive_mealy(
+                module, rows, state_type(), skips=spec.skips, hooks=hooks, finish=spec.has_finish
+            )
         if spec.kind is StepKind.ASYNC_STATELESS:
             raw = getattr(module, "max_inflight", DEFAULT_MAX_INFLIGHT)
             _checked_max_inflight(module, raw)  # D6 validation eagerly, on the caller thread

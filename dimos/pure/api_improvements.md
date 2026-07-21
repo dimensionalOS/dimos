@@ -79,10 +79,40 @@ show that window. Load-bearing and unobservable.
 - **Mealy can't see stream end + tick-count cadence** — two dropped ticks meant
   a 600-scan slice never hit `n % 100 == 0` again, so no final map emission.
   Two fixes, both wanted:
-  - **`finish(s) -> Out | None` hook** (ACCEPTED — do this): optional Mealy
+  - **`finish(s) -> Out | None` hook** (ACCEPTED — DONE): optional Mealy
     method called once at stream exhaustion, giving the tail flush the fold
     shape already has. Restores `VoxelMapper` fold parity for `VoxelMapper2`
     and gives `PGOVoxelMapper` a final corrected-map emit.
+
+    Implemented: `stepspec` classifies + validates an optional `finish` on
+    Mealy classes (`[finish-not-mealy]`, `[finish-not-function]`,
+    `[finish-params]`, `[finish-unannotated]`, `[finish-state]`,
+    `[finish-return]`; `StepSpec.has_finish`). `drivers.drive_mealy(finish=...)`
+    calls it once after the row loop and stamps the returned Out with the last
+    consumed tick ts; `run_over` and the rim's `_dispatch` pass
+    `spec.has_finish`. The emitted row flows the normal out-row path (T15 tap,
+    tf_out, graph tees, rim egress), so graph downstream and `.save()` deliver
+    the tail like any member output — no graph/rim change beyond that one flag.
+
+    Decisions taken (proceeding on DEFAULT; none blocking):
+    - **Q: fire on an empty stream (0 ticks consumed)?** DEFAULT: no — there is
+      no last-tick ts to stamp, mirroring the fold's `last_ts is not None`
+      guard. A 0-tick run emits nothing from either shape.
+    - **Q: fire on early consumer close (generator `.close()`)?** DEFAULT: no —
+      an abort is not a stream end. Falls out for free: `finish` sits after the
+      `for` loop, so `GeneratorExit` at a suspended `yield` skips it. Also never
+      on error unwind (a step raise propagates from the loop). Live: fires on a
+      replay-fed source exhausting and on the graceful `stop()` drain, once,
+      before resource teardown.
+    - **Q: T15 rows-layer accounting?** DEFAULT: the finish emission is recorded
+      via `tap_out_rows` (OUT layer) under the LAST fired tick's seq — it is not
+      a tick attempt, so it gets no `TickDecision` and no `on_step`/`on_state`.
+      `hooks.emits` counts it (so a batch-only module no longer trips the
+      silent-run warning).
+    - **Q: replay (`ModuleDebug.replay`)?** DEFAULT: does not fire `finish`
+      (`drive_mealy` default `finish=False`; debugrec untouched to stay disjoint
+      from the concurrent T16 agent). Replay reproduces per-tick steps, not the
+      tail; the tail is already in the recorded OUT layer.
   - Data-time cadence (`emit_every_s`) as an alternative to tick counts —
     robust to drops.
 - **Resource lifecycle has no recreate-mid-run story** — the loop-closure

@@ -79,6 +79,12 @@ class Rule(enum.Enum):
     FOLD_STATE = "fold-state"
     BUNDLE_SHADOWED = "bundle-shadowed"
     IN_FIELD_UNSAMPLED = "in-field-unsampled"
+    FINISH_NOT_MEALY = "finish-not-mealy"
+    FINISH_NOT_FUNCTION = "finish-not-function"
+    FINISH_PARAMS = "finish-params"
+    FINISH_UNANNOTATED = "finish-unannotated"
+    FINISH_STATE = "finish-state"
+    FINISH_RETURN = "finish-return"
     NOT_CLASSIFIED = "not-classified"
 
 
@@ -117,6 +123,7 @@ class StepSpec:
     state_type: type[Any] | None
     skips: bool
     owner: type[Any]
+    has_finish: bool = False  # a Mealy class defines the optional finish() tail-flush hook
 
     @property
     def impl_name(self) -> str:
@@ -373,6 +380,9 @@ def classify(cls: type[Any]) -> StepSpec:
                 f"the declaration.",
             )
 
+    # finish() — the optional Mealy tail-flush hook (ACCEPTED design, api_improvements.md).
+    has_finish = _check_finish(cls, kind, out_type, state_type)
+
     return StepSpec(
         kind=kind,
         in_type=in_type,
@@ -380,6 +390,7 @@ def classify(cls: type[Any]) -> StepSpec:
         state_type=state_type,
         skips=skips,
         owner=owner,
+        has_finish=has_finish,
     )
 
 
@@ -582,6 +593,109 @@ def _check_mealy(
                     f"field a default.",
                 )
     return in_type, out_type, cast("type[Any]", state_cls), skips
+
+
+_FINISH_KIND_WORD: Final[dict[StepKind, str]] = {
+    StepKind.STATELESS: "stateless",
+    StepKind.ASYNC_STATELESS: "async stateless",
+    StepKind.FOLD: "fold",
+}
+
+
+def _check_finish(
+    cls: type[Any], kind: StepKind, out_type: type[Any], state_type: type[Any] | None
+) -> bool:
+    """Validate the optional Mealy ``finish(self, s: State) -> Out | None`` hook (§finish)."""
+    owner = _find_owner(cls, "finish")
+    if owner is None:
+        return False
+    if kind is not StepKind.MEALY:
+        _fail(
+            cls,
+            Rule.FINISH_NOT_MEALY,
+            f"defines finish but step is {_FINISH_KIND_WORD[kind]} — finish is the Mealy "
+            f"tail-flush hook (def finish(self, s: State) -> Out | None), called once when "
+            f"the tick stream ends. A fold already flushes its tail from generator locals; "
+            f"a stateless step accumulates nothing to flush.",
+        )
+    assert state_type is not None  # a MEALY spec always carries State (§5.3)
+    fn = vars(owner)["finish"]
+    if isinstance(fn, (staticmethod, classmethod)) or not isinstance(fn, types.FunctionType):
+        _fail(
+            cls,
+            Rule.FINISH_NOT_FUNCTION,
+            "finish must be a plain instance method — def finish(self, s: State) -> "
+            "Out | None — it reads config and resources through self.",
+        )
+    if (
+        inspect.iscoroutinefunction(fn)
+        or inspect.isasyncgenfunction(fn)
+        or inspect.isgeneratorfunction(fn)
+    ):
+        _fail(
+            cls,
+            Rule.FINISH_NOT_FUNCTION,
+            "finish cannot be async or a generator — it is called once at stream end and "
+            "returns one optional Out row: def finish(self, s: State) -> Out | None.",
+        )
+    params = list(inspect.signature(fn).parameters.values())
+    for p in params:
+        label = _PARAM_KIND_LABELS.get(p.kind)
+        if label is not None:
+            _fail(
+                cls,
+                Rule.FINISH_PARAMS,
+                f"finish parameter '{p.name}' is {label}; finish takes exactly "
+                f"(self, s: State), plain positional. The engine calls it positionally.",
+            )
+        if p.default is not inspect.Parameter.empty:
+            _fail(
+                cls,
+                Rule.FINISH_PARAMS,
+                f"finish parameter '{p.name}' has a default — the engine always passes the "
+                f"final State; remove it.",
+            )
+    data_params = params[1:]
+    if len(data_params) != 1:
+        _fail(
+            cls,
+            Rule.FINISH_PARAMS,
+            f"finish takes {len(data_params)} data parameter(s) — expected exactly "
+            f"def finish(self, s: State) -> Out | None (the final State only, no input row).",
+        )
+    hints = _resolve_step_hints(fn, owner, cls, name="finish")
+    sp = data_params[0]
+    if sp.name not in hints:
+        _fail(
+            cls,
+            Rule.FINISH_UNANNOTATED,
+            f"finish parameter '{sp.name}' has no annotation — annotate it with the "
+            f"module's State: def finish(self, s: State) -> Out | None.",
+        )
+    if "return" not in hints:
+        _fail(
+            cls,
+            Rule.FINISH_UNANNOTATED,
+            "finish has no return annotation — annotate it -> Out | None (None when there "
+            "is no tail to flush).",
+        )
+    if hints[sp.name] is not state_type:
+        _fail(
+            cls,
+            Rule.FINISH_STATE,
+            f"finish's state parameter is {_type_repr(hints[sp.name])} but {_clspath(cls)}"
+            f".State is {_type_repr(state_type)} — finish receives the class's own State "
+            f"(bare State inside the defining body; {_clspath(cls)}.State in a subclass).",
+        )
+    inner, _ = _split_optional(hints["return"])
+    if inner is not out_type:
+        _fail(
+            cls,
+            Rule.FINISH_RETURN,
+            f"finish returns {_type_repr(hints['return'])} — a finish returns "
+            f"{out_type.__qualname__} | None (the step's Out, or None to flush nothing).",
+        )
+    return True
 
 
 def _check_fold(

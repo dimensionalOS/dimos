@@ -172,6 +172,30 @@ class Stateful(pm.PureModule):
         return state, Stateful.Out(total=state.acc)
 
 
+class LiveBatcher(pm.PureModule):
+    """Mealy emitting every 2nd tick with a finish() tail flush (live finish coverage)."""
+
+    class In(pm.In):
+        ping: Ping = pm.tick()
+
+    class Out(pm.Out):
+        pong: Ping = pm.contract(min_hz=1)
+
+    class State(NamedTuple):
+        n: int = 0
+
+    def step(self, state: State, i: In) -> tuple[State, Out | None]:
+        state = LiveBatcher.State(n=state.n + 1)
+        if state.n % 2 == 0:
+            return state, LiveBatcher.Out(pong=Ping(ts=i.ts, v=float(state.n)))
+        return state, None
+
+    def finish(self, state: State) -> Out | None:
+        if state.n == 0 or state.n % 2 == 0:
+            return None
+        return LiveBatcher.Out(pong=Ping(ts=float(state.n), v=float(state.n)))
+
+
 class AsyncEcho(pm.PureModule):
     max_inflight: int = 2
 
@@ -491,6 +515,21 @@ class TestLifecycle:
         assert RESOURCE_LOG == ["create:a", "dispose:a"]  # 'a' created then unwound
         # no live session was left behind:
         assert rim.stats(m).state in ("new", "stopped")
+
+    def test_live_finish_flushes_tail_on_stop_drain(self) -> None:
+        """A Mealy finish() fires once on the graceful stop() drain, before teardown."""
+        m = LiveBatcher()
+        wout = FakeWire()
+        m.i.ping.capacity = None  # lossless: all 3 ticks reach the driver
+        m.i.ping.source = [Ping(ts=1.0, v=1.0), Ping(ts=2.0, v=1.0), Ping(ts=3.0, v=1.0)]
+        m.o.pong.transport = wout
+        rim.start_module(m)
+        try:
+            wait_for(lambda: rim.stats(m).ingress["ping"].received == 3)
+        finally:
+            rim.stop_module(m)  # drain: process the 3rd tick, then finish() flushes the tail
+        assert [p.v for p in wout.sent] == [2.0, 3.0]  # cadence emit (n=2) + finish tail (n=3)
+        assert rim.stats(m).state == "stopped"
 
     def test_concurrent_stop_joins_latch(self) -> None:
         """Second stop from another thread JOINS the latch, not returns early (G4, P15/P16)."""
