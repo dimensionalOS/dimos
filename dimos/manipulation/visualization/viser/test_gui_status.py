@@ -26,7 +26,7 @@ from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ROBOT_DISPLAY_LABELS, ViserPanelGui
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import FeasibilityStatus
 
 
@@ -86,19 +86,20 @@ class DisplayGui:
 
 
 class DisplayScene:
-    def __init__(self, mode: str = "visual", has_collision: bool = True) -> None:
-        self._robot_display_mode = mode
+    def __init__(self, mode: RobotDisplayMode | str = "visual", has_collision: bool = True) -> None:
+        self._robot_display_mode = RobotDisplayMode(mode)
         self.collision_geometry_available = has_collision
         self.set_modes: list[str] = []
 
     @property
-    def robot_display_mode(self) -> str:
+    def robot_display_mode(self) -> RobotDisplayMode:
         return self._robot_display_mode
 
     @robot_display_mode.setter
-    def robot_display_mode(self, mode: str) -> None:
-        self.set_modes.append(mode)
-        self._robot_display_mode = mode
+    def robot_display_mode(self, mode: RobotDisplayMode | str) -> None:
+        normalized_mode = RobotDisplayMode(mode)
+        self.set_modes.append(normalized_mode)
+        self._robot_display_mode = normalized_mode
 
     def has_reference_grid(self) -> bool:
         return False

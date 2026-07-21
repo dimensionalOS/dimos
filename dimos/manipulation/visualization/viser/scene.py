@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Protocol, TypeAlias, cast, get_args
+from typing import Protocol, TypeAlias, cast
 
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
@@ -73,11 +74,10 @@ REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
 
-RobotDisplayMode: TypeAlias = Literal["visual", "collision", "both"]
-ROBOT_DISPLAY_MODE_VALUES: tuple[RobotDisplayMode, ...] = get_args(RobotDisplayMode)
-_VISUAL_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[0]
-_COLLISION_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[1]
-_BOTH_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[2]
+class RobotDisplayMode(StrEnum):
+    VISUAL = "visual"
+    COLLISION = "collision"
+    BOTH = "both"
 
 SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
@@ -105,7 +105,7 @@ class ViserManipulationScene:
         self._preview_visible: dict[str, bool] = {}
         self._target_tracks_current: dict[str, bool] = {}
         self._collision_fallback_urdfs: dict[str, ViserUrdf] = {}
-        self._robot_display_mode: RobotDisplayMode = "visual"
+        self._robot_display_mode = RobotDisplayMode.VISUAL
         self._ensure_reference_grid()
 
     @property
@@ -114,11 +114,13 @@ class ViserManipulationScene:
         return self._robot_display_mode
 
     @robot_display_mode.setter
-    def robot_display_mode(self, mode: RobotDisplayMode) -> None:
+    def robot_display_mode(self, mode: RobotDisplayMode | str) -> None:
         """Set the primary robot display mode and apply it immediately."""
-        if mode not in ROBOT_DISPLAY_MODE_VALUES:
-            raise ValueError(f"Unsupported robot display mode: {mode!r}")
-        self._robot_display_mode = mode
+        try:
+            normalized_mode = RobotDisplayMode(mode)
+        except ValueError as error:
+            raise ValueError(f"Unsupported robot display mode: {mode!r}") from error
+        self._robot_display_mode = normalized_mode
         for robot_id in self._configs_by_id:
             self._apply_robot_display_mode(robot_id)
 
@@ -319,7 +321,7 @@ class ViserManipulationScene:
         self._configs_by_id.clear()
         self._preview_visible.clear()
         self._target_tracks_current.clear()
-        self._robot_display_mode = "visual"
+        self._robot_display_mode = RobotDisplayMode.VISUAL
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
         if not config.model_path:
@@ -416,17 +418,21 @@ class ViserManipulationScene:
         # Viser's public flags manage all links, including links whose mesh
         # handles are not exposed by the helper.  A model without collision
         # geometry falls back to its visual representation.
-        current.show_visual = mode in {_VISUAL_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
+        current.show_visual = mode in {RobotDisplayMode.VISUAL, RobotDisplayMode.BOTH}
         current.show_collision = has_collision and mode in {
-            _COLLISION_DISPLAY_MODE,
-            _BOTH_DISPLAY_MODE,
+            RobotDisplayMode.COLLISION,
+            RobotDisplayMode.BOTH,
         }
         fallback = self._collision_fallback_urdfs.get(robot_id)
         if fallback is not None:
-            fallback.show_visual = mode in {_COLLISION_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
+            fallback.show_visual = mode in {
+                RobotDisplayMode.COLLISION,
+                RobotDisplayMode.BOTH,
+            }
             fallback.show_collision = False
             self._set_handle_visibility(
-                fallback, mode in {_COLLISION_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
+                fallback,
+                mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
     def prepared_urdf_path(self, config: RobotModelConfig) -> Path:

@@ -35,7 +35,7 @@ from dimos.manipulation.visualization.viser.animation import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
     FeasibilityStatus,
@@ -1483,7 +1483,7 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
     target_updates = []
     target_pose_updates = []
     scene = SimpleNamespace(
-        robot_display_mode="visual",
+        robot_display_mode=RobotDisplayMode.VISUAL,
         collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
@@ -1550,7 +1550,7 @@ def test_gui_cartesian_ik_result_does_not_rewrite_active_gizmo(
     target_joint_updates = []
     target_pose_updates = []
     scene = SimpleNamespace(
-        robot_display_mode="visual",
+        robot_display_mode=RobotDisplayMode.VISUAL,
         collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
@@ -1600,7 +1600,7 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(
     adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
     visual_states = []
     scene = SimpleNamespace(
-        robot_display_mode="visual",
+        robot_display_mode=RobotDisplayMode.VISUAL,
         collision_geometry_available=False,
         has_reference_grid=lambda: False,
         ensure_target_controls=lambda *args: None,
