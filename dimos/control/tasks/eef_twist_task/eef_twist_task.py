@@ -111,6 +111,10 @@ class EEFTwistTask(BaseControlTask):
             logger.warning("EEFTwistTask rejecting non-finite twist", task=self._name)
             return False
         with self._lock:
+            if self._estopped:
+                # A twist in transit when E-STOP latched must not be stored, or
+                # it would replay on the next tick after the latch clears.
+                return False
             self._last_update_time = t_now
             # Zero twist → hold (None); non-zero → jog. The anchor persists either way.
             self._latest_twist = None if np.allclose(values, 0.0) else twist
@@ -120,6 +124,10 @@ class EEFTwistTask(BaseControlTask):
         if not self._config.gripper_joint:
             return False
         with self._lock:
+            if self._estopped:
+                # Reject new grip changes during a stop; the held target (from
+                # before E-STOP) is kept so a payload isn't dropped.
+                return False
             self._gripper_target = (
                 self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
             )

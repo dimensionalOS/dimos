@@ -281,3 +281,24 @@ def test_estop_makes_task_inert(task: EEFTwistTask, fake_ik: FakeIK) -> None:
     held = task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
     assert held is not None
     assert held.positions == [0.1, 0.2, 0.3]
+
+
+def test_twist_in_transit_during_estop_is_rejected(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    task.set_estop(True)
+    assert task.on_ee_twist_command(_twist(), t_now=1.0) is False
+
+    task.set_estop(False)
+    # Nothing was stored, so clearing holds the live pose (no replayed jog).
+    held = task.compute(_state(2.0, positions=[0.5, 0.6, 0.7]))
+    assert held is not None
+    assert held.positions == [0.5, 0.6, 0.7]
+
+
+def test_gripper_command_in_transit_during_estop_is_rejected(gripper_task: EEFTwistTask) -> None:
+    gripper_task.set_estop(True)
+    assert gripper_task.on_gripper_command(Bool(data=True), 0.0) is False
+    # Held target (default open) is untouched by the rejected close.
+    gripper_task.set_estop(False)
+    output = gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
+    assert output is not None
+    assert output.positions[-1] == 0.85
