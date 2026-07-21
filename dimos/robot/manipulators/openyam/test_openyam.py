@@ -86,7 +86,6 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
     assert "initial_positions" not in direct.adapter_kwargs
 
 
-
 def test_openyam_simulation_hardware_remains_mock(monkeypatch: Any) -> None:
     monkeypatch.setattr(global_config, "simulation", "mujoco")
 
