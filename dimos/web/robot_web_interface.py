@@ -17,6 +17,13 @@ Robot Web Interface wrapper for DIMOS.
 Provides a clean interface to the dimensional-interface FastAPI server.
 """
 
+from collections.abc import Mapping
+from typing import Any
+
+from reactivex import Observable
+from reactivex.subject import Subject
+
+from dimos.stream.audio.base import AudioEvent
 from dimos.web.dimos_interface.api.server import FastAPIServer
 
 
@@ -27,10 +34,10 @@ class RobotWebInterface(FastAPIServer):
         self,
         port: int = 5555,
         host: str | None = None,
-        text_streams=None,
-        audio_subject=None,
-        **streams,
-    ) -> None:  # type: ignore[no-untyped-def]
+        text_streams: Mapping[str, Observable[str]] | None = None,
+        audio_subject: Subject[AudioEvent] | None = None,
+        **streams: Observable[Any],
+    ) -> None:
         super().__init__(
             dev_name="Robot Web Interface",
             edge_type="Bidirectional",

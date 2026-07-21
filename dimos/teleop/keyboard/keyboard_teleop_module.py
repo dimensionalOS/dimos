@@ -102,8 +102,8 @@ def _gripper_key_codes() -> tuple[int, int]:
     if pygame is None:
         return (-1, -1)
     return (
-        pygame.K_LEFTBRACKET,
-        pygame.K_RIGHTBRACKET,
+        pygame.K_LEFTBRACKET,  # type: ignore[attr-defined]
+        pygame.K_RIGHTBRACKET,  # type: ignore[attr-defined]
     )
 
 
