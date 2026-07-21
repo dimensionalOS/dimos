@@ -24,11 +24,16 @@ state machine these events feed into `extract_episodes`.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+import threading
+from typing import cast
 
 import pytest
 import pytest_mock
 
 from dimos.learning.collection.episode_monitor import (
+    EpisodeAction,
+    EpisodeCommand,
     EpisodeMonitorModule,
     EpisodeStatus,
     KeyPress,
@@ -167,6 +172,17 @@ def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> No
     assert status.last_event == "init"
 
 
+def test_reset_counters_resets_task_label(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.set_episode("start", "old task")
+    m.reset_counters()
+    m.set_episode("start")
+
+    assert _events(m)[-1].task_label is None
+
+
 # ── set_episode RPC (runtime / agent-driven trigger) ──────────────────────────
 
 
@@ -215,6 +231,67 @@ def test_set_episode_invalid_event_is_noop(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
     m = make_monitor()
-    msg = m.set_episode("bogus")
+    msg = m.set_episode(cast("EpisodeAction", "bogus"))
     assert "error" in msg.lower()
     assert _events(m) == []  # no transition emitted
+
+
+@pytest.mark.parametrize("event", ["save", "discard"])
+def test_set_episode_termination_while_idle_is_noop(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    event: EpisodeAction,
+) -> None:
+    m = make_monitor()
+
+    msg = m.set_episode(event)
+
+    assert "no episode" in msg.lower()
+    assert _events(m) == []
+
+
+def test_concurrent_starts_keep_their_own_labels(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m = make_monitor()
+    original_transition = m._transition
+    barrier = threading.Barrier(2)
+
+    def synchronized_transition(
+        event: EpisodeCommand,
+        ts: float,
+        task_label: str | None = None,
+    ) -> EpisodeStatus | None:
+        barrier.wait(timeout=2)
+        return original_transition(event, ts, task_label)
+
+    monkeypatch.setattr(m, "_transition", synchronized_transition)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(m.set_episode, "start", "alpha"),
+            executor.submit(m.set_episode, "start", "beta"),
+        ]
+        for future in futures:
+            future.result(timeout=3)
+
+    assert sorted(event.task_label or "" for event in _events(m)) == ["alpha", "beta"]
+
+
+def test_recording_skills_drive_episode_state(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    assert "demo" in m.start_recording("demo")
+    assert "saved" in m.stop_recording().lower()
+    assert [event.last_event for event in _events(m)] == ["start", "save"]
+
+
+def test_discard_recording_skill_discards_episode(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    m.start_recording("bad take")
+    assert "discarded" in m.discard_recording().lower()
+    assert _events(m)[-1].last_event == "discard"

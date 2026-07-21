@@ -15,18 +15,15 @@
 
 """Go2 agentic blueprint with agent-triggered episode recording.
 
-Layers three modules onto `unitree_go2_agentic`:
+Layers two modules onto `unitree_go2_agentic`:
 - `Go2CollectionRecorder` — records camera/odom/cmd_vel/status to a session DB.
-- `EpisodeMonitorModule` — the start/save/discard state machine (also satisfies
-  `EpisodeControlSpec` for the skill below).
-- `EpisodeRecordingSkillContainer` — exposes start/stop/discard recording to the
-  agent over MCP.
+- `EpisodeMonitorModule` — exposes start/save/discard recording skills and emits
+  the episode-boundary status stream.
 
 Recording is opt-in: the default `unitree-go2-agentic` blueprint is unchanged.
 Export the recorded session DB afterwards with `dimos dataprep build`.
 """
 
-from dimos.agents.skills.episode_recording import EpisodeRecordingSkillContainer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.learning.collection.blueprint import _session_db
 from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
@@ -37,5 +34,4 @@ unitree_go2_agentic_record = autoconnect(
     unitree_go2_agentic,
     Go2CollectionRecorder.blueprint(db_path=_session_db("go2")),
     EpisodeMonitorModule.blueprint(),
-    EpisodeRecordingSkillContainer.blueprint(),
 )
