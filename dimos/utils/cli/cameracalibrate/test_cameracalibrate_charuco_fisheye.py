@@ -171,7 +171,9 @@ def test_calibrate_charuco_fisheye_thin_views_raise_got_vs_want() -> None:
 # --- rendered-board end-to-end: model routing (real cv2.aruco detection) ----------------------
 
 
-def _rendered_detectable_charuco_frames(spec: CharucoBoardSpec, count: int = 12) -> list[np.ndarray]:
+def _rendered_detectable_charuco_frames(
+    spec: CharucoBoardSpec, count: int = 12
+) -> list[np.ndarray]:
     """Warp a RENDERED ChArUco board to seeded poses so the real detector recovers corners.
 
     Projection uses a near-pinhole K with zero distortion (this exercises the DETECT + solver
@@ -254,16 +256,26 @@ def _write_frames(images_dir: Path, frames: list[np.ndarray]) -> None:
 
 def _cli_calibrate_args(images: Path, out_yaml: Path, model: str) -> list[str]:
     return [
-        "--board", "charuco",
-        "--source", "folder",
-        "--images", str(images),
-        "--distortion-model", model,
-        "--dict", _DICT,
-        "--squares-x", str(_SQUARES_X),
-        "--squares-y", str(_SQUARES_Y),
-        "--square-size-m", str(_SQUARE_SIZE_M),
-        "--marker-ratio", str(_MARKER_RATIO),
-        "--out", str(out_yaml),
+        "--board",
+        "charuco",
+        "--source",
+        "folder",
+        "--images",
+        str(images),
+        "--distortion-model",
+        model,
+        "--dict",
+        _DICT,
+        "--squares-x",
+        str(_SQUARES_X),
+        "--squares-y",
+        str(_SQUARES_Y),
+        "--square-size-m",
+        str(_SQUARE_SIZE_M),
+        "--marker-ratio",
+        str(_MARKER_RATIO),
+        "--out",
+        str(out_yaml),
         "--no-display",
     ]
 

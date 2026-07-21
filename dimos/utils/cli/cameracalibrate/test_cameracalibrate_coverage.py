@@ -74,9 +74,7 @@ def test_compute_coverage_increases_monotonically_as_new_cells_are_filled() -> N
         _rect_board_corners(410.0, 320.0, 200.0, 140.0),
     ]
 
-    overalls = [
-        compute_coverage(views[: i + 1], _IMAGE_WH).overall for i in range(len(views))
-    ]
+    overalls = [compute_coverage(views[: i + 1], _IMAGE_WH).overall for i in range(len(views))]
 
     # Monotonic non-decreasing across every prefix.
     assert all(b >= a - 1e-12 for a, b in pairwise(overalls)), overalls
@@ -143,11 +141,15 @@ def _chessboard_tile(cols: int, rows: int, square_px: int) -> np.ndarray:
     for yi in range(rows + 1):
         for xi in range(cols + 1):
             if (xi + yi) % 2 == 0:
-                img[yi * square_px : (yi + 1) * square_px, xi * square_px : (xi + 1) * square_px] = 0
+                img[
+                    yi * square_px : (yi + 1) * square_px, xi * square_px : (xi + 1) * square_px
+                ] = 0
     return img
 
 
-def _frame_with_board_at(canvas_w: int, canvas_h: int, tile: np.ndarray, ox: int, oy: int) -> np.ndarray:
+def _frame_with_board_at(
+    canvas_w: int, canvas_h: int, tile: np.ndarray, ox: int, oy: int
+) -> np.ndarray:
     canvas = np.full((canvas_h, canvas_w), 255, dtype=np.uint8)
     th, tw = tile.shape
     canvas[oy : oy + th, ox : ox + tw] = tile

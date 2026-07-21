@@ -54,7 +54,11 @@ _D_ZERO = np.zeros(5, dtype=np.float64)
 
 def _grid_corners(dx: float = 0.0, dy: float = 0.0) -> np.ndarray:
     """A deterministic 3x3 board-corner grid (shape (9, 1, 2)) shifted by (dx, dy) pixels."""
-    pts = [[[float(x) + dx, float(y) + dy]] for y in (100.0, 120.0, 140.0) for x in (100.0, 120.0, 140.0)]
+    pts = [
+        [[float(x) + dx, float(y) + dy]]
+        for y in (100.0, 120.0, 140.0)
+        for x in (100.0, 120.0, 140.0)
+    ]
     return np.asarray(pts, dtype=np.float32)
 
 

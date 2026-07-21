@@ -46,8 +46,12 @@ _GO2_FRONT_CAMERA_YAML = (
     Path(__file__).resolve().parents[3] / "robot" / "unitree" / "go2" / "front_camera_720.yaml"
 )
 
-_DEFAULT_CHECK_RMS_THRESHOLD_PX = 1.0  # median reprojection RMS at/below which a deployed calib passes
-_DEFAULT_CHECK_DRIFT_THRESHOLD_FRAC = 0.05  # 5% relative intrinsics drift (deployed vs fresh) is "large"
+_DEFAULT_CHECK_RMS_THRESHOLD_PX = (
+    1.0  # median reprojection RMS at/below which a deployed calib passes
+)
+_DEFAULT_CHECK_DRIFT_THRESHOLD_FRAC = (
+    0.05  # 5% relative intrinsics drift (deployed vs fresh) is "large"
+)
 # A planar chessboard yields one homography per view; >=3 views are needed to separate fx/fy/cx/cy
 # plus distortion in a fresh cv2.calibrateCamera. Fisheye may need more -- handled by cv2.error below.
 _MIN_DRIFT_CALIBRATION_FRAMES = 3
@@ -412,7 +416,9 @@ def _detect_charuco(gray: np.ndarray, spec: CharucoBoardSpec) -> _CharucoDetecti
         marker_corners, marker_ids, _rejected = detect_markers(g, dictionary)
         if marker_ids is None or len(marker_ids) == 0:
             return None
-        interpolate = cast("Callable[..., tuple[Any, Any, Any]]", cv2.aruco.interpolateCornersCharuco)
+        interpolate = cast(
+            "Callable[..., tuple[Any, Any, Any]]", cv2.aruco.interpolateCornersCharuco
+        )
         _n, charuco_corners, charuco_ids = interpolate(marker_corners, marker_ids, g, board)
 
     if charuco_ids is None or charuco_corners is None or len(charuco_ids) < _MIN_CHARUCO_CORNERS:
@@ -718,9 +724,15 @@ def _draw_capture_status(
 _COVERAGE_GRID = 6  # image binned into GRID x GRID cells for the area-fill metric
 # Per-axis sweep target ranges (ROS calibrator.py param_ranges): X pos, Y pos, board size, skew.
 _COVERAGE_PARAM_RANGES = (0.7, 0.7, 0.4, 0.5)
-_COVERAGE_MIN_PARAM_DISTANCE = 0.2  # L1 distance in (x,y,size,skew) a new view must add (ROS is_good_sample)
-_COVERAGE_MIN_CORNER_MOTION_PX = 8.0  # mean corner shift vs the last accepted view; rejects near-duplicates
-_COVERAGE_AUTOFINISH_MIN_FRAMES = 3  # never auto-finish on --min-coverage below this many accepted views
+_COVERAGE_MIN_PARAM_DISTANCE = (
+    0.2  # L1 distance in (x,y,size,skew) a new view must add (ROS is_good_sample)
+)
+_COVERAGE_MIN_CORNER_MOTION_PX = (
+    8.0  # mean corner shift vs the last accepted view; rejects near-duplicates
+)
+_COVERAGE_AUTOFINISH_MIN_FRAMES = (
+    3  # never auto-finish on --min-coverage below this many accepted views
+)
 
 _COVERAGE_AXIS_GUIDANCE = {
     "x": "move the board across the frame horizontally (LEFT <-> RIGHT)",
@@ -770,9 +782,7 @@ def _order_quad_corners(
     return up_left, up_right, down_right, down_left
 
 
-def _quad_area_px2(
-    ul: np.ndarray, ur: np.ndarray, dr: np.ndarray, dl: np.ndarray
-) -> float:
+def _quad_area_px2(ul: np.ndarray, ur: np.ndarray, dr: np.ndarray, dl: np.ndarray) -> float:
     """Shoelace area (px^2) of the ordered board quad ul -> ur -> dr -> dl."""
     poly = np.array([ul, ur, dr, dl], dtype=np.float64)
     x = poly[:, 0]
@@ -991,9 +1001,7 @@ class _CoverageTracker:
         self._accepted: list[np.ndarray] = []
 
     def accepts(self, corners_px: np.ndarray) -> bool:
-        return coverage_gate_accepts(
-            corners_px, self._accepted, self._image_wh, grid=self._grid
-        )
+        return coverage_gate_accepts(corners_px, self._accepted, self._image_wh, grid=self._grid)
 
     def add(self, corners_px: np.ndarray) -> None:
         self._accepted.append(np.asarray(corners_px, dtype=np.float32).reshape(-1, 2).copy())
@@ -1036,7 +1044,9 @@ def _draw_coverage_panel(preview: np.ndarray, progress: CoverageProgress) -> Non
         1,
     )
     y += row_h
-    cv2.putText(preview, progress.guidance, (8, y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 220), 1)
+    cv2.putText(
+        preview, progress.guidance, (8, y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 220), 1
+    )
 
 
 def _format_coverage_line(progress: CoverageProgress) -> str:
@@ -1164,7 +1174,9 @@ def _interactive_capture(
                     tracker.add(detection.corners)
                     progress = tracker.progress()
                     if no_display:
-                        typer.echo(f"[{len(accepted)}/{target_count}] {_format_coverage_line(progress)}")
+                        typer.echo(
+                            f"[{len(accepted)}/{target_count}] {_format_coverage_line(progress)}"
+                        )
                     if (
                         min_coverage is not None
                         and len(accepted) >= _COVERAGE_AUTOFINISH_MIN_FRAMES
@@ -1260,7 +1272,9 @@ def _interactive_capture_charuco(
                 detail = f"Detected {n_corners} charuco corners - SPACE saves"
                 color = (0, 180, 0)
             cv2.rectangle(preview, (0, 0), (preview.shape[1], 58), (0, 0, 0), thickness=-1)
-            cv2.putText(preview, status, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(
+                preview, status, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+            )
             cv2.putText(preview, detail, (12, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
             if coverage_guided and tracker is not None and not no_display:
                 _draw_coverage_panel(preview, tracker.progress())
@@ -1277,7 +1291,9 @@ def _interactive_capture_charuco(
                     tracker.add(detection.charuco_corners_px)
                     progress = tracker.progress()
                     if no_display:
-                        typer.echo(f"[{len(accepted)}/{target_count}] {_format_coverage_line(progress)}")
+                        typer.echo(
+                            f"[{len(accepted)}/{target_count}] {_format_coverage_line(progress)}"
+                        )
                     if (
                         min_coverage is not None
                         and len(accepted) >= _COVERAGE_AUTOFINISH_MIN_FRAMES
@@ -2612,7 +2628,9 @@ def run_check(
         result["n_frames_saved"] = len(saved)
 
     out_path = out if out is not None else _default_check_out_path(source_value, images)
-    _write_check_json(out_path, result, camera_info_path=Path(camera_info_path), source=source_value.value)
+    _write_check_json(
+        out_path, result, camera_info_path=Path(camera_info_path), source=source_value.value
+    )
     result["out_path"] = out_path
     return result
 
@@ -2713,11 +2731,7 @@ def run_check_report(
     if "out_path" in result:
         typer.echo(f"Wrote check JSON to {result['out_path']}")
 
-    if (
-        result["verdict"] == "DEGRADED"
-        and result["drift"].get("ran")
-        and sys.stdin.isatty()
-    ):
+    if result["verdict"] == "DEGRADED" and result["drift"].get("ran") and sys.stdin.isatty():
         # Interactive offer: reuse the fresh calibration the drift solve already computed.
         if typer.confirm(
             "Deployed calibration is DEGRADED. Write the fresh calibration from these "

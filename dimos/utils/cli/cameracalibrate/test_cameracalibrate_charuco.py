@@ -133,9 +133,7 @@ def test_build_charuco_board_metric_object_points() -> None:
 
 def test_build_charuco_board_rejects_unknown_dict() -> None:
     with pytest.raises(ValueError, match="unknown aruco dictionary"):
-        build_charuco_board(
-            dict_name="DICT_NOPE", squares_x=8, squares_y=6, square_size_m=0.03
-        )
+        build_charuco_board(dict_name="DICT_NOPE", squares_x=8, squares_y=6, square_size_m=0.03)
 
 
 def test_build_charuco_board_rejects_marker_ge_square() -> None:
@@ -248,9 +246,7 @@ def _synthetic_detectable_charuco_frames(
         H, _ = cv2.findHomography(src, dst, cv2.RANSAC, 2.0)
         if H is None:
             continue
-        warped = cv2.warpPerspective(
-            board_img, H, (_WIDTH, _HEIGHT), borderValue=255
-        )
+        warped = cv2.warpPerspective(board_img, H, (_WIDTH, _HEIGHT), borderValue=255)
         cc, ci, _mc2, _mi2 = detector.detectBoard(warped)
         if ci is not None and len(ci) >= 6:
             frames.append(warped)
@@ -293,16 +289,26 @@ def _write_deployed_yaml(path: Path, K: np.ndarray, D: np.ndarray) -> None:
 def _charuco_cli_args(images: Path, deployed: Path, out_json: Path) -> list[str]:
     return [
         "--check",
-        "--board", "charuco",
-        "--source", "folder",
-        "--images", str(images),
-        "--camera-info", str(deployed),
-        "--dict", _DICT,
-        "--squares-x", str(_SQUARES_X),
-        "--squares-y", str(_SQUARES_Y),
-        "--square-size-m", str(_SQUARE_SIZE_M),
-        "--marker-ratio", "0.8",
-        "--out", str(out_json),
+        "--board",
+        "charuco",
+        "--source",
+        "folder",
+        "--images",
+        str(images),
+        "--camera-info",
+        str(deployed),
+        "--dict",
+        _DICT,
+        "--squares-x",
+        str(_SQUARES_X),
+        "--squares-y",
+        str(_SQUARES_Y),
+        "--square-size-m",
+        str(_SQUARE_SIZE_M),
+        "--marker-ratio",
+        "0.8",
+        "--out",
+        str(out_json),
         "--no-display",
     ]
 
@@ -358,14 +364,22 @@ def test_cli_calibrate_charuco_folder_writes_yaml(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         [
-            "--board", "charuco",
-            "--source", "folder",
-            "--images", str(images),
-            "--dict", _DICT,
-            "--squares-x", str(_SQUARES_X),
-            "--squares-y", str(_SQUARES_Y),
-            "--square-size-m", str(_SQUARE_SIZE_M),
-            "--out", str(out_yaml),
+            "--board",
+            "charuco",
+            "--source",
+            "folder",
+            "--images",
+            str(images),
+            "--dict",
+            _DICT,
+            "--squares-x",
+            str(_SQUARES_X),
+            "--squares-y",
+            str(_SQUARES_Y),
+            "--square-size-m",
+            str(_SQUARE_SIZE_M),
+            "--out",
+            str(out_yaml),
             "--no-display",
         ],
     )
@@ -396,11 +410,16 @@ def test_cli_charuco_check_requires_squares(tmp_path: Path) -> None:
         app,
         [
             "--check",
-            "--board", "charuco",
-            "--source", "folder",
-            "--images", str(tmp_path),
-            "--camera-info", str(deployed),
-            "--square-size-m", str(_SQUARE_SIZE_M),
+            "--board",
+            "charuco",
+            "--source",
+            "folder",
+            "--images",
+            str(tmp_path),
+            "--camera-info",
+            str(deployed),
+            "--square-size-m",
+            str(_SQUARE_SIZE_M),
             "--no-display",
         ],
     )
