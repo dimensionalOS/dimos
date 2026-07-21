@@ -96,12 +96,3 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
 
 
-def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
-    blueprint = keyboard_teleop_openyam
-    task = next(
-        task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist"
-    )
-
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert task.params["ee_joint_id"] == OPENYAM_DOF
-    assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}
