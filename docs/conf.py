@@ -59,6 +59,7 @@ html_logo = "assets/dimensional-logo-master-transparent.png"
 html_favicon = "assets/favicon.png"
 html_static_path = ["_static"]
 html_css_files = ["dimensional.css"]
+html_js_files = ["searchtools-root.js"]
 templates_path = ["_templates"]
 html_theme_options = {
     "announcement": "DimOS documentation — build physical applications in Python.",
