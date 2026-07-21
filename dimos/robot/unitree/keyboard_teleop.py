@@ -18,7 +18,6 @@ import threading
 from typing import Any
 
 import pygame
-from pygame.constants import K_DOWN, K_LALT, K_LEFT, K_RALT, K_RIGHT, K_UP
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -57,20 +56,22 @@ def twist_from_keys(
     """Build a velocity command from the currently held keyboard keys."""
     twist = Twist()
 
-    forward = pygame.K_w in keys or K_UP in keys
-    backward = pygame.K_s in keys or K_DOWN in keys
+    forward = pygame.K_w in keys or pygame.K_UP in keys
+    backward = pygame.K_s in keys or pygame.K_DOWN in keys
     if forward != backward:
         twist.linear.x = linear_speed if forward else -linear_speed
 
-    alt_held = K_LALT in keys or K_RALT in keys
-    strafe_left = pygame.K_q in keys or (alt_held and (pygame.K_a in keys or K_LEFT in keys))
-    strafe_right = pygame.K_e in keys or (alt_held and (pygame.K_d in keys or K_RIGHT in keys))
+    alt_held = pygame.K_LALT in keys or pygame.K_RALT in keys
+    strafe_left = pygame.K_q in keys or (alt_held and (pygame.K_a in keys or pygame.K_LEFT in keys))
+    strafe_right = pygame.K_e in keys or (
+        alt_held and (pygame.K_d in keys or pygame.K_RIGHT in keys)
+    )
     if strafe_left != strafe_right:
         twist.linear.y = linear_speed if strafe_left else -linear_speed
 
     if not alt_held:
-        turn_left = pygame.K_a in keys or K_LEFT in keys
-        turn_right = pygame.K_d in keys or K_RIGHT in keys
+        turn_left = pygame.K_a in keys or pygame.K_LEFT in keys
+        turn_right = pygame.K_d in keys or pygame.K_RIGHT in keys
         if turn_left != turn_right:
             twist.angular.z = angular_speed if turn_left else -angular_speed
 

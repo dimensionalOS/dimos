@@ -55,10 +55,16 @@ K_w: int
 K_y: int
 K_SPACE: int
 K_ESCAPE: int
+K_DOWN: int
 K_LCTRL: int
+K_LALT: int
+K_LEFT: int
 K_LSHIFT: int
+K_RALT: int
 K_RCTRL: int
+K_RIGHT: int
 K_RSHIFT: int
+K_UP: int
 
 # --- submodules --------------------------------------------------------
 

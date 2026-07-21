@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import MagicMock, patch
+
 import pygame
 import pytest
 
-from dimos.robot.unitree.keyboard_teleop import twist_from_keys
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop, twist_from_keys
 
 
 @pytest.mark.parametrize(
@@ -74,3 +77,26 @@ def test_twist_from_keys_applies_speed_modifier(
 ) -> None:
     twist = twist_from_keys(keys, 0.5, 0.8, 2.0, 0.5)
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == expected
+
+
+def test_display_lists_arrow_and_strafe_controls() -> None:
+    teleop = object.__new__(KeyboardTeleop)
+    teleop._screen = MagicMock()
+    teleop._font = MagicMock()
+    teleop._keys_held = {pygame.K_UP}
+    teleop._window_title = "Keyboard Teleop"
+    teleop.boost_multiplier = 2.0
+    teleop.slow_multiplier = 0.5
+
+    with (
+        patch.object(pygame.key, "name", return_value="up"),
+        patch.object(pygame.draw, "circle"),
+        patch.object(pygame.display, "flip"),
+    ):
+        teleop._update_display(Twist())
+
+    rendered_text = [call.args[0] for call in teleop._font.render.call_args_list]
+    assert "Keys: UP" in rendered_text
+    assert "W/S or Up/Down: Move" in rendered_text
+    assert "A/D or Left/Right: Turn" in rendered_text
+    assert "Q/E or Alt + turn keys: Strafe" in rendered_text
