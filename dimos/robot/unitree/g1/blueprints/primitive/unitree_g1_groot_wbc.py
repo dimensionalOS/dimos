@@ -299,7 +299,7 @@ if global_config.simulation == "mujoco":
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+    from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import G1WholeBodyConnection
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
     _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
@@ -326,7 +326,7 @@ else:
         auto_start=True,
         params={"default_positions": ARM_DEFAULT_POSE},
     )
-    # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
+    # Same nav middle as unitree-g1, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
         PointLio.blueprint(),

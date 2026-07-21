@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.robot.unitree.g1.config import G1
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
@@ -27,6 +28,7 @@ from dimos.visualization.rerun.urdf_robot import (
 
 G1_RERUN_ROOT = "world/odom/g1"
 G1_RERUN_URDF = "g1_urdf/g1.fixed.urdf"
+G1_LIDAR_MOUNT_HEIGHT = G1.internal_odom_offsets["mid360_link"].z
 
 # Classic costmap palette, indexed by grid value + 1:
 # transparent unknown, blue free, orange occupied, red lethal.
@@ -74,12 +76,7 @@ def g1_static_robot(rr: Any) -> list[Any]:
 
 
 def g1_odometry_tf_override(odom: Any) -> Any:
-    """Publish odometry as a TF frame so sensor_scan/path/robot can reference it.
-
-    The z is zeroed because point clouds already have the full init_pose
-    transform applied (ground at z≈0). Using the raw odom.z (= mount height)
-    would double-count the vertical offset.
-    """
+    """Publish odometry as a TF frame so sensor_scan/path/robot can reference it."""
     import rerun as rr
 
     tf = rr.Transform3D(
@@ -97,4 +94,11 @@ def g1_odometry_tf_override(odom: Any) -> Any:
     )
     return [
         ("tf#/sensor", tf),
+        (
+            "world/global_map",
+            rr.Transform3D(
+                translation=[0.0, 0.0, G1_LIDAR_MOUNT_HEIGHT],
+                parent_frame="tf#/world",
+            ),
+        ),
     ]
