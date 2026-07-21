@@ -86,7 +86,9 @@ all_blueprints = {
     "teleop-hosted-go2": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
-    "teleop-hosted-xarm7": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_xarm7",
+    "teleop-hosted-module-xarm7": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_module_xarm7",
+    "teleop-hosted-xarm6": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm6",
+    "teleop-hosted-xarm7": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm7",
     "teleop-phone": "dimos.teleop.phone.blueprints:teleop_phone",
     "teleop-phone-go2": "dimos.teleop.phone.blueprints:teleop_phone_go2",
     "teleop-phone-go2-fleet": "dimos.teleop.phone.blueprints:teleop_phone_go2_fleet",
@@ -151,6 +153,7 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
@@ -181,6 +184,7 @@ all_modules = {
     "far-planner": "dimos.navigation.cmu_nav.modules.far_planner.far_planner.FarPlanner",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",
     "fast-lio2-recorder": "dimos.hardware.sensors.lidar.fastlio2.recorder.FastLio2Recorder",
+    "front-camera": "dimos.teleop.hosted.blueprints.cloudflare.FrontCamera",
     "g1-connection": "dimos.robot.unitree.g1.connection.G1Connection",
     "g1-connection-base": "dimos.robot.unitree.g1.connection.G1ConnectionBase",
     "g1-high-level-dds-sdk": "dimos.robot.unitree.g1.effectors.high_level.dds_sdk.G1HighLevelDdsSdk",
@@ -281,5 +285,6 @@ all_modules = {
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
     "world-belief-module": "dimos.perception.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.perception.worldbelief_recorder.WorldBeliefRecorder",
+    "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

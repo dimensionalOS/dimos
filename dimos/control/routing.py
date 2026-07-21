@@ -39,6 +39,7 @@ CONSUMABLE_STREAMS = frozenset(
         "joint_command",
         "coordinator_cartesian_command",
         "coordinator_ee_twist_command",
+        "gripper_command",
         "twist_command",
         "teleop_buttons",
     }

@@ -19,7 +19,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    make_gripper_joints,
+    make_joints,
+)
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -54,6 +59,11 @@ XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+XARM_GRIPPER_PARAMS = {
+    "gripper_joint": make_gripper_joints("arm")[0],
+    "gripper_open_pos": 0.85,
+    "gripper_closed_pos": 0.0,
+}
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
 

@@ -60,6 +60,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -163,6 +164,9 @@ class ControlCoordinator(Module):
 
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
+
+    # Input: Gripper toggle (True = closed) routed to eef_twist tasks' gripper.
+    gripper_command: In[Bool]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -608,6 +612,20 @@ class ControlCoordinator(Module):
         if names:
             joint_state = JointState(name=names, velocity=velocities)
             self._dispatch("joint_command", joint_state)
+
+    @rpc
+    def set_estop(self, estopped: bool) -> bool:
+        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
+        inert so the tick loop stops commanding the hardware within one tick.
+        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
+        if estopped:
+            logger.warning("E-STOP latched at coordinator")
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "set_estop", None)
+                if callable(handler):
+                    handler(estopped)
+        return True
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
