@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, Protocol, TypeAlias, cast
+from typing import Literal, Protocol, TypeAlias, cast, get_args
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -72,6 +72,10 @@ COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
 
 RobotDisplayMode: TypeAlias = Literal["visual", "collision", "both"]
+ROBOT_DISPLAY_MODE_VALUES: tuple[RobotDisplayMode, ...] = get_args(RobotDisplayMode)
+_VISUAL_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[0]
+_COLLISION_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[1]
+_BOTH_DISPLAY_MODE = ROBOT_DISPLAY_MODE_VALUES[2]
 
 SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
@@ -108,7 +112,7 @@ class ViserManipulationScene:
     @robot_display_mode.setter
     def robot_display_mode(self, mode: RobotDisplayMode) -> None:
         """Set the primary robot display mode and apply it immediately."""
-        if mode not in {"visual", "collision", "both"}:
+        if mode not in ROBOT_DISPLAY_MODE_VALUES:
             raise ValueError(f"Unsupported robot display mode: {mode!r}")
         self._robot_display_mode = mode
         for robot_id in self._configs_by_id:
@@ -378,13 +382,18 @@ class ViserManipulationScene:
         # Viser's public flags manage all links, including links whose mesh
         # handles are not exposed by the helper.  A model without collision
         # geometry falls back to its visual representation.
-        current.show_visual = mode in {"visual", "both"}
-        current.show_collision = has_collision and mode in {"collision", "both"}
+        current.show_visual = mode in {_VISUAL_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
+        current.show_collision = has_collision and mode in {
+            _COLLISION_DISPLAY_MODE,
+            _BOTH_DISPLAY_MODE,
+        }
         fallback = self._collision_fallback_urdfs.get(robot_id)
         if fallback is not None:
-            fallback.show_visual = mode in {"collision", "both"}
+            fallback.show_visual = mode in {_COLLISION_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
             fallback.show_collision = False
-            self._set_handle_visibility(fallback, mode in {"collision", "both"})
+            self._set_handle_visibility(
+                fallback, mode in {_COLLISION_DISPLAY_MODE, _BOTH_DISPLAY_MODE}
+            )
 
     @staticmethod
     def _has_collision_meshes(urdf: ViserUrdf) -> bool:

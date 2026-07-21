@@ -20,7 +20,11 @@ from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
-from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
+from dimos.manipulation.visualization.viser.scene import (
+    ROBOT_DISPLAY_MODE_VALUES,
+    RobotDisplayMode,
+    ViserManipulationScene,
+)
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
     BackendConnectionStatus,
@@ -68,8 +72,8 @@ PanelHandle: TypeAlias = (
 
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
-ROBOT_DISPLAY_LABELS = ("Visual", "Collision", "Both")
-ROBOT_DISPLAY_MODES = {label.lower(): label for label in ROBOT_DISPLAY_LABELS}
+ROBOT_DISPLAY_LABELS = tuple(mode.title() for mode in ROBOT_DISPLAY_MODE_VALUES)
+ROBOT_DISPLAY_MODES = {mode: mode.title() for mode in ROBOT_DISPLAY_MODE_VALUES}
 ROBOT_DISPLAY_COLLISION_WARNING = (
     "**Collision meshes unavailable.** Showing visual geometry with collision styling."
 )
@@ -234,7 +238,9 @@ class ViserPanelGui:
         if scene is None:
             return ROBOT_DISPLAY_LABELS[0]
         mode = str(scene.robot_display_mode).lower()
-        return ROBOT_DISPLAY_MODES.get(mode, ROBOT_DISPLAY_LABELS[0])
+        if mode not in ROBOT_DISPLAY_MODES:
+            return ROBOT_DISPLAY_LABELS[0]
+        return ROBOT_DISPLAY_MODES[cast("RobotDisplayMode", mode)]
 
     def _set_robot_display_mode(self, label: str) -> None:
         if self._closed or self.scene is None:
