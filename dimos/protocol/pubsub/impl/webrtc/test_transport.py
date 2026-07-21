@@ -29,7 +29,7 @@ from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
-from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig, BrokerProvider
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     AsyncProviderBase,
     ProviderConfig,
@@ -341,10 +341,13 @@ def test_raw_transport_pins_still_work() -> None:
 
 
 def test_broker_provider_requires_credentials() -> None:
+    # Construct the provider directly: _create() would run owner election (a
+    # machine-local flock) as a side effect, which these credential/internals
+    # tests don't exercise. The api_key check lives in BrokerProvider.__init__.
     with pytest.raises(RuntimeError, match="api_key required"):
-        BrokerConfig(robot_id="r1")._create()
+        BrokerProvider(BrokerConfig(robot_id="r1"))
     # robot_id is optional — the broker derives it from the API key.
-    assert BrokerConfig(api_key="key")._create() is not None
+    assert BrokerProvider(BrokerConfig(api_key="key")) is not None
 
 
 def test_backend_coercion_leaves_webrtc_untouched() -> None:
@@ -414,7 +417,7 @@ def test_broker_failed_channel_open_retries_next_heartbeat() -> None:
     """The broker id must be recorded only after a successful open — otherwise
     a createDataChannel failure is never retried (id matches, _dcs empty)."""
 
-    provider = BrokerConfig(api_key="key")._create()
+    provider = BrokerProvider(BrokerConfig(api_key="key"))
     # _pc is None, so _open_channel's assert fires — a stand-in for any
     # createDataChannel failure inside the heartbeat.
     with pytest.raises(AssertionError):
@@ -434,7 +437,7 @@ def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
     before abandoning the heartbeat loop."""
     import asyncio
 
-    provider = BrokerConfig(api_key="key")._create()
+    provider = BrokerProvider(BrokerConfig(api_key="key"))
     provider._config = provider._config.model_copy(update={"heartbeat_hz": 1000.0})  # fast ticks
 
     got: list[bytes] = []
@@ -454,10 +457,95 @@ def test_broker_disconnect_clears_channel_ids() -> None:
     _open_channel when the broker hands out the same SCTP ids."""
     import asyncio
 
-    provider = BrokerConfig(api_key="key")._create()
+    provider = BrokerProvider(BrokerConfig(api_key="key"))
     provider._dc_ids = {"cmd_unreliable": 5, "state_reliable": 6}
     asyncio.run(provider._disconnect())
     assert provider._dc_ids == {}
+
+
+# ─── Session-owner election (one CF session per blueprint) ───────────
+
+
+@pytest.fixture
+def _isolated_lockdir(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Point the election flock at a per-test dir. gettempdir() caches, so
+    patching it (not TMPDIR) is what actually redirects the lock path."""
+    import tempfile
+
+    from dimos.protocol.pubsub.impl.webrtc.providers import broker_proxy
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    return broker_proxy
+
+
+def test_first_worker_owns_second_proxies(_isolated_lockdir) -> None:  # type: ignore[no-untyped-def]
+    """One CF session per blueprint: the first _create() for a config wins the
+    flock (owner); a second call for the SAME session id must proxy, not open a
+    second session. Regression for owner/proxy split on repeat construction."""
+    from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import ProxyBrokerProvider
+
+    config = BrokerConfig(api_key="key")
+    first = config._create()
+    try:
+        assert isinstance(first, BrokerProvider), "first worker must own the real session"
+        second = config._create()
+        assert isinstance(second, ProxyBrokerProvider), "second worker must proxy"
+        assert second.session_id is None, "a proxy holds no CF session of its own"
+    finally:
+        first.stop()  # releases the ownership flock
+
+
+def test_ownership_lock_released_after_owner_stop(_isolated_lockdir) -> None:  # type: ignore[no-untyped-def]
+    """After the owner stops, the flock is free, so the next _create() for the
+    same config elects a fresh owner (a restart re-elects cleanly)."""
+    config = BrokerConfig(api_key="key")
+    first = config._create()
+    assert isinstance(first, BrokerProvider)
+    first.stop()
+
+    second = config._create()
+    try:
+        assert isinstance(second, BrokerProvider), "post-stop worker must re-own, not proxy"
+    finally:
+        second.stop()
+
+
+def test_owner_start_failure_releases_lock(_isolated_lockdir) -> None:  # type: ignore[no-untyped-def]
+    """If owner bring-up fails, the flock must be released — otherwise the live
+    process wedges the session for the whole run. After a failed owner start,
+    the next _create() must be able to re-elect an owner rather than proxy."""
+
+    class _RaisingRelay:
+        """Stand-in relay whose start() fails, exercising the owner start-failure
+        lock-release path without a real CF session."""
+
+        def start(self) -> None:
+            raise RuntimeError("relay boom")
+
+        def stop(self) -> None:
+            pass
+
+    config = BrokerConfig(api_key="key")
+    owner = config._create()
+    assert isinstance(owner, BrokerProvider)
+    owner._session_relay = _RaisingRelay()  # type: ignore[attr-defined]  # _OwnerBrokerProvider
+
+    async def _no_network() -> None:  # let super().start() succeed without CF
+        pass
+
+    owner._connect = _no_network  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="relay boom"):
+        owner.start()
+    owner.stop()  # tear down the loop thread super().start() spawned
+
+    # The failed owner must have freed the lock: a fresh _create() re-elects an
+    # owner, not a proxy.
+    survivor = config._create()
+    try:
+        assert isinstance(survivor, BrokerProvider), "failed owner must have freed the lock"
+    finally:
+        survivor.stop()
 
 
 def test_cloudflare_failed_subscribe_deregisters_callback() -> None:
