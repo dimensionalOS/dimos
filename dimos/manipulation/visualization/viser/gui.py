@@ -72,9 +72,7 @@ PanelHandle: TypeAlias = (
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 ROBOT_DISPLAY_LABELS = tuple(mode.value.title() for mode in RobotDisplayMode)
-ROBOT_DISPLAY_MODES: dict[str, RobotDisplayMode] = {
-    mode.value: mode for mode in RobotDisplayMode
-}
+ROBOT_DISPLAY_MODES: dict[str, RobotDisplayMode] = {mode.value: mode for mode in RobotDisplayMode}
 ROBOT_DISPLAY_COLLISION_WARNING = (
     "**Collision meshes unavailable.** Showing visual geometry with collision styling."
 )

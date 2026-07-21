@@ -74,10 +74,12 @@ REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
 
+
 class RobotDisplayMode(StrEnum):
     VISUAL = "visual"
     COLLISION = "collision"
     BOTH = "both"
+
 
 SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
