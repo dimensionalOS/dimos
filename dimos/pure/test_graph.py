@@ -159,6 +159,58 @@ class CollectSink(pm.PureModule):
 COLLECT_SAW: list[tuple[float, float | None]] = []
 
 
+class StaleStamp(pm.PureModule):
+    """Emits every tick, but its payload ts is FROZEN — mimics a cached/wall-clock ts.
+
+    The engine stamps the Out ROW from the tick (monotonic); the nested payload keeps
+    ``ts=999.0``. A consumer ticking on this payload sees a constant ts and drops all
+    but the first as ``nonmonotonic`` — unless the edge carries the row's engine ts
+    (T13 §0.6).
+    """
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+
+    class Out(pm.Out):
+        b: PayB
+
+    def step(self, i: In) -> Out:
+        return StaleStamp.Out(b=PayB(ts=999.0, v=i.a.v))  # frozen payload ts; row ts = i.ts
+
+
+class FutureStamp(pm.PureModule):
+    """Emits every tick with a payload ts far in the future — mimics a wall-clock stamp.
+
+    A ``latest`` sampler downstream pins this off-scale value as a pending head and
+    never advances the producer again (starvation) unless the edge carries the row ts.
+    """
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+
+    class Out(pm.Out):
+        b: PayB
+
+    def step(self, i: In) -> Out:
+        return FutureStamp.Out(b=PayB(ts=1e12 + i.a.v, v=i.a.v))  # off-scale payload ts
+
+
+class _StaleFan(pg.PureGraph):
+    """StaleStamp fanned to JoinB (tick) + a direct b export — the delivery hot path."""
+
+    class In(pm.In):
+        a: PayA
+
+    class Out(pm.Out):
+        b: PayB
+        total: PayB
+
+    def wire(self, i: "_StaleFan.In") -> "_StaleFan.Out":
+        s = StaleStamp()(a=i.a)
+        jn = JoinB()(b=s.b)
+        return _StaleFan.Out(b=s.b, total=jn.total)
+
+
 class _Fan(pg.PureGraph):
     """Fan CountUp's output to two exports (b direct, total through JoinB)."""
 
@@ -867,6 +919,115 @@ class TestTerminalDrive:
         FOLDY_FINALIZED.clear()
         G().over(a=_a_stream(5)).save(MemoryStore())
         assert FOLDY_FINALIZED == [1]
+
+
+# ── the edge-ts carry (spec §0.6): offline currency is the tick row's engine ts ──
+
+
+class LatestSink(pm.PureModule):
+    """Ticks on b; latest-samples total — a module sink that aligns on payload ts."""
+
+    class In(pm.In):
+        b: PayB = pm.tick()
+        total: PayB | None = pm.latest(default=None)
+
+    class Out(pm.Out):
+        n: int
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out]:
+        COLLECT_SAW.append((i.b.v, None if i.total is None else i.total.v))
+        return s.replace(n=s.n + 1), LatestSink.Out(n=s.n + 1)
+
+
+class TestEdgeTsCarry:
+    """A member whose nested payload ts is off (frozen / wall-clock) must still deliver.
+
+    Regression for the go2 nav bug: the PGO mapper's ``global_map`` carried a stale
+    grid ts (dropped at the cost mapper as ``nonmonotonic``) and the planner's ``path``
+    carried a wall-clock ts (starving the rerun sink's ``latest`` sampler). The offline
+    edge now carries the producer's engine ts, so every emit reaches every consumer.
+    """
+
+    def test_over_frozen_payload_ts_reaches_tick_consumer(self):
+        # StaleStamp emits b.ts=999 every tick; JoinB ticks on b. Without the ts carry,
+        # JoinB drops all but the first (nonmonotonic) — total would be length 1.
+        with _StaleFan().over(a=_a_stream(6)) as run:
+            totals = run.total.to_list()
+        assert len(totals) == 6  # every emit delivered, not collapsed to 1
+        assert [t.ts for t in totals] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]  # tick ts, monotonic
+
+    def test_save_store_frozen_payload_ts_records_every_edge(self):
+        from dimos.memory2.store.memory import MemoryStore
+
+        store = MemoryStore()
+        _StaleFan().over(a=_a_stream(6)).save(store)
+        # Both the direct b export and the JoinB total record every tick, on the tick ts.
+        assert [o.ts for o in store.stream("b")] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        assert [o.ts for o in store.stream("total")] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        assert [o.data.v for o in store.stream("total")] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+
+    def test_save_module_wallclock_latest_reaches_sampler(self):
+        # The real planner-starvation shape: the sink ticks on a data-scale stream (b
+        # from MakeB) and latest-samples an off-scale one (FutureStamp, ts=1e12+v).
+        # Without the ts carry the latest head sits far in the future forever, so the
+        # sampler pins its first pull as pending and never advances the producer —
+        # every tick samples None. With it, the sampled stream tracks the tick.
+        class FutFan(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                b: PayB
+                fut: PayB
+
+            def wire(self, i: "FutFan.In") -> "FutFan.Out":
+                return FutFan.Out(b=MakeB()(a=i.a).b, fut=FutureStamp()(a=i.a).b)
+
+        class BFutSink(pm.PureModule):
+            class In(pm.In):
+                b: PayB = pm.tick()
+                fut: PayB | None = pm.latest(default=None)
+
+            class Out(pm.Out):
+                n: int
+
+            class State(pm.State):
+                n: int = 0
+
+            def step(self, s: State, i: In) -> tuple[State, Out]:
+                COLLECT_SAW.append((i.b.v, None if i.fut is None else i.fut.v))
+                return s.replace(n=s.n + 1), BFutSink.Out(n=s.n + 1)
+
+        COLLECT_SAW.clear()
+        frames = FutFan().over(a=_a_stream(6)).save(BFutSink())
+        assert frames == 6
+        # The off-scale stream was sampled on every tick (its producer was not starved).
+        sampled = [f for _, f in COLLECT_SAW]
+        assert sampled == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]  # not all-None
+
+    def test_burst_chain_delivers_every_emission_once_in_order(self):
+        # A bursts (StaleStamp: dense, frozen payload ts) -> B (JoinB) -> C (JoinB).
+        # C must see every B emission exactly once, in tick order.
+        class Chain(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                out: PayB
+
+            def wire(self, i: "Chain.In") -> "Chain.Out":
+                a = StaleStamp()(a=i.a)
+                b = pg.named("b", JoinB())(b=a.b)
+                c = pg.named("c", JoinB())(b=b.total)
+                return Chain.Out(out=c.total)
+
+        with Chain().over(a=_a_stream(8)) as run:
+            got = run.out.to_list()
+        assert [p.ts for p in got] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+        assert [p.v for p in got] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
 
 
 # ── data-marked: the hk nav DAG as a real graph (spec §9 acceptance 3) ─

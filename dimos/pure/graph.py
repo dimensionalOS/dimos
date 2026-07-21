@@ -1002,11 +1002,33 @@ def _payload_iter(value: Any) -> Iterator[Any]:
 
 
 def _project(rows: Iterator[Any], field: str) -> Iterator[Any]:
-    """One consumer's view of a member's Out edge: its field's payloads, None dropped (sparse)."""
+    """One consumer's view of a member's Out edge: its field's payloads, engine-ts stamped, None dropped."""
     for row in rows:
         payload = getattr(row, field, None)
         if payload is not None:
+            _carry_row_ts(row, payload)
             yield payload
+
+
+def _carry_row_ts(row: Any, payload: Any) -> None:
+    """Stamp the edge currency with the producer's engine ts — the firing tick's ts (T13 §0.6).
+
+    The engine stamps the Out ROW from the tick that produced it, but a nested field
+    payload keeps whatever ts its own producer set — which may be wall-clock (a fresh
+    ``Path`` defaults ts to ``time.time()``) or stale/cached (a voxel grid snapshot
+    whose ts lags, and on a PGO loop-closure rebuild runs backwards). Downstream aligns
+    on the payload ts, so a non-monotonic or off-scale payload ts silently drops the
+    value (``nonmonotonic``) or, on a ``latest`` sampler, pins a far-future pending head
+    that starves the producer. The edge currency IS the tick's value: carry the row's
+    engine ts onto it so offline distribution stays lossless (§0.2) regardless of how a
+    member stamps its nested payloads.
+    """
+    row_ts = getattr(row, "ts", None)
+    if row_ts is not None and getattr(payload, "ts", None) != row_ts:
+        try:
+            payload.ts = row_ts
+        except (AttributeError, TypeError):
+            pass  # a payload with a read-only ts keeps its own (best effort, not fatal)
 
 
 def _cone(plan: GraphPlan, target: PortRef) -> tuple[set[str], set[str]]:

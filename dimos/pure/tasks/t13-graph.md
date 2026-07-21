@@ -119,6 +119,45 @@ rerun sinks. **This subsumes the deferred recording (§0.3) — they are one
 mechanism.** It lands before Phase B (blueprint lowering): it is what makes a
 graph usable rather than a demo.
 
+### 0.6 Edge currency carries the producer's engine ts (BINDING, 2026-07-21)
+
+**Symptom.** A full `NavStackPGO.over().save(NavRerunSink)` eval dropped ~30% of
+the map edge at the cost mapper (`nonmonotonic:global_map`) and starved the
+planner to a single output. Root cause: the offline edge yielded a member's
+**nested field payload** unchanged, and downstream alignment reads that
+payload's own `.ts`. The engine stamps the Out **row** from the firing tick
+(monotonic), but a nested payload keeps whatever ts its producer set:
+`min_cost_astar`'s `Path` defaults `ts` to `time.time()` (wall-clock, off the
+data-time scale — a `latest` sampler pins it as a far-future pending head and
+never advances the producer); the voxel grid's cached snapshot ts lags the tick
+and, on a PGO loop-closure rebuild, runs **backwards** (dropped as
+`nonmonotonic`, silently defeating the immediate refresh loop closure exists to
+deliver). The tee/round-robin distribution was faithful throughout — the defect
+was the currency ts, not delivery.
+
+**Resolution.** The edge currency **is** the firing tick's value, so it carries
+the producing Out row's engine ts. `_project` (the single member-edge delivery
+choke point, used by both the per-export `_RunInstance` and the terminal
+`_TerminalRun`) stamps `payload.ts = row.ts` when they differ. In a well-behaved
+module payload ts already equals the tick ts, so this is a no-op (the non-PGO
+`NavStack` equivalence is unchanged); it only corrects payloads a member
+mis-stamps (wall-clock / stale / cached). This keeps §0.2 offline distribution
+lossless — every produced tick reaches every consumer, aligned on data time —
+regardless of how a member stamps its nested payloads, and matches the module
+authors' own assumption (their `Out(...)` comments read "engine stamps ts from
+the tick row"). Rim sources are raw external payloads with true acquisition ts
+and do not pass through `_project`, so the carry applies to member edges only.
+
+*Decided default (no blocker raised):* re-stamp whenever the payload ts differs
+from the row ts. The narrower alternative — carry only to repair a non-monotonic
+step versus the edge's last delivered ts — was rejected: it does not fix the
+wall-clock case (a wall-clock stream is monotonic yet off-scale, so the `latest`
+sampler still starves), and edge currency being uniformly the tick ts is the
+simpler invariant. A member that deliberately emits a past-dated payload for
+downstream `interpolate()` by true acquisition time is not a pattern any landed
+module uses; should one arise, it carries its own explicit stamped sub-message
+rather than relying on the field payload's incidental ts.
+
 ---
 
 ## 1. Scope and the settled model
