@@ -726,9 +726,7 @@ def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
     urdf = FakeUrdf(("shoulder", "elbow", "wrist"))
     scene = ViserManipulationScene(server, lambda *args, **kwargs: urdf, preview_fps=10.0)
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    scene._load_robot_model = lambda config: FakeOwnedUrdf(
-        ("shoulder", "elbow", "wrist")
-    )
+    scene._load_robot_model = lambda config: FakeOwnedUrdf(("shoulder", "elbow", "wrist"))
 
     cfg = SimpleNamespace(
         name="arm",
