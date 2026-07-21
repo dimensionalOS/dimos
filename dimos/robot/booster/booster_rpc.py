@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic Booster booster-rpc connection (gRPC velocity control + WebSocket camera).
+"""Robot-agnostic transport for Booster robots (gRPC control, WebSocket camera).
 
-The transport layer for Booster robots, analogous to `unitree_webrtc.py` for
-Unitree: it owns the vendor SDK and exposes a non-blocking velocity sink, a camera
-stream, and stand/sit mode changes. It is robot-agnostic, so both the K1 and the T1
-connection Modules build on it. Robot-specific wiring (stream ports, camera
-intrinsics, blueprints) lives in each robot's `connection.py`.
-
-It owns no event loop and no threads: `run_sender()` and `run_camera()` are
-coroutines the connection Module spawns on its own loop.
+Owns the vendor SDK, in the role `unitree_webrtc.py` has for Unitree. Exposes a
+non-blocking velocity sink, a camera stream, and stand/sit mode changes for the
+K1 and T1 connection Modules. Owns no event loop and no threads: `run_sender()`
+and `run_camera()` are coroutines the connection Module spawns on its loop.
 """
 
 import asyncio
@@ -164,7 +160,7 @@ class BoosterRPCConnection:
         return bool(self._get_mode() == RobotMode.WALKING)
 
     def standup(self) -> bool:
-        """Arm the robot for walking; no-op if already WALKING.
+        """Arm the robot for walking. No-op if already WALKING.
 
         Refuses modes outside {WALKING, DAMPING, PREPARE} rather than forcing an unsafe transition.
         """

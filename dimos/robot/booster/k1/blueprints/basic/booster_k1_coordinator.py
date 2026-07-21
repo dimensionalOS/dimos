@@ -18,7 +18,7 @@
 Like unitree_go2_coordinator, a twist base (vx, vy, wz) is driven through the
 ControlCoordinator velocity task and the `transport_lcm` adapter (which republishes base
 velocity on /booster_k1/cmd_vel). The K1 reports no odometry, so there is no odom wiring.
-Built on `booster_k1_basic`, so it carries the rerun viewer + camera; the viewer-side WASD
+Built on `booster_k1_basic`, so it carries the rerun viewer and camera. The viewer-side WASD
 surfaces (tele_cmd_vel) are remapped onto /cmd_vel to feed the coordinator's twist_command.
 Add KeyboardTeleop for a pygame window (booster_k1_coordinator_keyboard_teleop).
 

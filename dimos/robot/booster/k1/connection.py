@@ -132,8 +132,8 @@ class K1Connection(Module, Camera):
             "inaccurate until replaced with a measured calibration."
         )
 
-        # Like the G1, the robot must be armed by the operator before launch. start()
-        # never commands mode transitions: a standup as a launch side effect is unsafe.
+        # The operator arms the robot before launch, the G1 convention. start()
+        # never commands mode transitions.
         if not self._connection.is_armed():
             logger.error(
                 "K1 is not in WALKING mode. Velocity commands will be dropped. "
