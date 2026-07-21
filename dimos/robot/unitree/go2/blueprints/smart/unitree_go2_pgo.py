@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""unitree_go2_pgo: run the jnav PGO live on a Go2's Livox Mid-360 + Point-LIO
-and visualize the optimized pose graph in Rerun.
+"""unitree_go2_pgo: run the jnav PGO live on the Go2's onboard lidar (no Mid-360
+mount) and visualize the optimized pose graph in Rerun.
 
-Point-LIO reads the Mid-360 and publishes a registered `lidar` (PointCloud2) plus
-`odometry` (Odometry); the PGO consumes both and emits a loop-closed `pose_graph`
-(Graph3D). The Rerun bridge renders that graph as nodes (keyframes) + edges (odom
-backbone in green, loop closures in yellow) via `Graph3D.to_rerun_multi`.
+GO2Connection streams the onboard lidar already accumulated in the odom/world
+frame plus the robot pose as a PoseStamped. The PGO instead wants a raw
+sensor-frame scan plus a nav_msgs Odometry, so SensorFrameLidarBridge sits in
+between: it subtracts the pose from every point (world -> base_link) and re-emits
+the scan as `lidar` alongside an `odometry`. The PGO consumes both and emits a
+loop-closed `pose_graph` (Graph3D), which the Rerun bridge renders as nodes
+(keyframes) + edges (odom backbone in green, loop closures in yellow).
 
-This is a passive observer rig — drive the dog however you like (Go2 app / a
-teleop blueprint) and watch the graph build and snap on loop closure. It needs
-only the Mid-360 + Point-LIO, so it deliberately does NOT pull in GO2Connection
-(whose own `lidar` Out would collide with Point-LIO's registered `lidar`).
+The onboard `lidar` Out is remapped to `world_lidar` so it feeds the bridge
+rather than colliding with the bridge's own base_link `lidar` Out into the PGO.
+For the Mid-360 + Point-LIO rig instead, see `unitree_go2_mid360_pgo`.
 
 Run on the dog:
     dimos run unitree-go2-pgo
@@ -32,9 +34,10 @@ Run on the dog:
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import PGO
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.sensor_frame_lidar_bridge import SensorFrameLidarBridge
 from dimos.visualization.rerun.bridge import RerunMulti
 from dimos.visualization.vis_module import vis_module
 
@@ -50,10 +53,11 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 
 
 unitree_go2_pgo = autoconnect(
-    PointLio.blueprint(),
+    GO2Connection.blueprint().remappings([(GO2Connection, "lidar", "world_lidar")]),
+    SensorFrameLidarBridge.blueprint(),
     PGO.blueprint(),
     vis_module(
         "rerun",
         rerun_config={"visual_override": {_POSE_GRAPH_PATH: _render_pose_graph}},
     ),
-).global_config(n_workers=3, robot_model="unitree_go2")
+).global_config(n_workers=4, robot_model="unitree_go2")
