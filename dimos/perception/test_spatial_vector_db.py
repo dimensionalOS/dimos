@@ -19,6 +19,7 @@ from dimos.perception.spatial_vector_db import SpatialVectorDB
 
 NEAR_FRAME_ID = "frame_near"
 FAR_FRAME_ID = "frame_far"
+NO_POS_FRAME_ID = "frame_no_pos"
 NEAR_POS = (1.5, -2.0, 0.3)
 FAR_POS = (30.0, 40.0, 0.0)
 
@@ -53,6 +54,13 @@ def db() -> SpatialVectorDB:
         np.array([0.0, 1.0]),
         _frame_metadata(FAR_FRAME_ID, FAR_POS),
     )
+    # Entry without position metadata — location queries must skip it, not crash.
+    db.add_image_vector(
+        NO_POS_FRAME_ID,
+        image,
+        np.array([1.0, 1.0]),
+        {"frame_id": NO_POS_FRAME_ID, "timestamp": 1700000000.0},
+    )
     return db
 
 
@@ -63,6 +71,12 @@ def test_query_by_location_returns_frames_within_radius(db: SpatialVectorDB) -> 
     assert results[0]["metadata"]["pos_x"] == NEAR_POS[0]
     assert results[0]["metadata"]["pos_y"] == NEAR_POS[1]
     assert results[0]["distance"] == pytest.approx(0.5)
+
+
+def test_query_by_location_skips_frames_without_position(db: SpatialVectorDB) -> None:
+    results = db.query_by_location(1.0, -2.0, radius=1e9)
+
+    assert [r["id"] for r in results] == [NEAR_FRAME_ID, FAR_FRAME_ID]
 
 
 def test_get_all_locations_returns_stored_coordinates(db: SpatialVectorDB) -> None:
