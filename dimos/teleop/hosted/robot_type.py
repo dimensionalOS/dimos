@@ -12,24 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Canonical robot kinds for hosted teleop.
+"""Robot kinds for hosted teleop - the cockpits the operator UI can render.
 
-Single source of truth (within dimos) for the set of cockpits the operator UI
-can render. Command modules declare their kind from here and push it to the
-broker provider (``BrokerProvider.set_robot_type``) at init, which sends it in
-the session POST. The broker is a separate service with no dimos dependency, so
-it re-validates the wire string against its own copy — the HTTP value is the
-contract, not this class.
-
-Kept out of the transport layer (``BrokerConfig`` takes a plain ``str``) so the
-generic provider never depends on this application-level enum.
+Command modules declare their kind and push it to the broker, which sends it in
+the session POST. The broker re-validates the wire string against its own copy.
 """
 
 from enum import StrEnum
 
 
 class RobotType(StrEnum):
-    """Operator cockpit kind. Value is the wire string sent to the broker."""
+    """Operator cockpit kind; value is the wire string sent to the broker."""
 
     GO2 = "go2"
     XARM = "xarm"

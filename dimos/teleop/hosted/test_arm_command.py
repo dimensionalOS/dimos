@@ -34,6 +34,7 @@ import pytest
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
@@ -57,6 +58,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
             video_jpeg_quality=80,
         )
 
+    monkeypatch.setattr(BrokerProvider, "_robot_type", None)
     monkeypatch.setattr(Module, "__init__", _fake_init)
     module = ArmCommandModule()
     for port in (

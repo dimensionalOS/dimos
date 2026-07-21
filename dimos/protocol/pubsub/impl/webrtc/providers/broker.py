@@ -95,19 +95,23 @@ class BrokerProvider(AsyncProviderBase):
     INBOUND_CHANNELS = ("cmd_unreliable", "state_reliable")
     OUTBOUND_CHANNELS = ("state_reliable_back", "map_unreliable")
 
-    # Robot kind for the create-session POST — the sole source of truth, declared
-    # by the hosted command module (its ROBOT_TYPE) via set_robot_type() at init.
-    # Class-level: exactly one broker session and one robot kind per process, and
-    # the command module + provider share that process. No default — if nothing
-    # declares it, _require_robot_type() raises rather than silently guessing.
+    # Robot kind for the create-session POST, declared by the command module at
+    # init (one session + one kind per process). No default: _require_robot_type
+    # raises rather than guess.
     _robot_type: ClassVar[str | None] = None
 
     @classmethod
     def set_robot_type(cls, robot_type: str) -> None:
         """Declare the robot kind sent to the broker at session create, so the
         operator UI auto-selects the cockpit. Called by the hosted command module
-        at init. Idempotent, last write wins."""
-        cls._robot_type = str(robot_type)
+        at init. Re-declaring the same kind is a no-op; a conflicting kind raises
+        (two command modules in one process would open the wrong cockpit)."""
+        if cls._robot_type is not None and cls._robot_type != robot_type:
+            raise RuntimeError(
+                f"robot_type already declared as {cls._robot_type!r}; refusing to "
+                f"override with {robot_type!r} — one robot kind per broker process"
+            )
+        cls._robot_type = robot_type
 
     @classmethod
     def _require_robot_type(cls) -> str:

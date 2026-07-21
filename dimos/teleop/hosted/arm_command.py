@@ -51,9 +51,7 @@ class ArmCommandConfig(ArmTeleopConfig):
 class ArmCommandModule(ArmTeleopModule):
     """Operator command/E-STOP plane for a coordinator-driven arm."""
 
-    # Robot kind this command surface targets. __init__ declares it to the shared
-    # broker provider (BrokerProvider.set_robot_type) so the session POST tells the
-    # operator UI which cockpit to open.
+    # Pushed to the broker at init so the session POST picks the arm cockpit.
     ROBOT_TYPE: ClassVar[RobotType] = RobotType.XARM
 
     config: ArmCommandConfig
@@ -71,8 +69,6 @@ class ArmCommandModule(ArmTeleopModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # Declare our kind to the shared broker provider (same worker); the
-        # session POST carries it so the operator UI picks the arm cockpit.
         BrokerProvider.set_robot_type(self.ROBOT_TYPE)
         self._estopped = False
         self._last_twist_ts = 0.0

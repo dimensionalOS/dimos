@@ -79,9 +79,7 @@ class Go2CommandConfig(ModuleConfig):
 class Go2CommandModule(Module):
     """Operator command/E-STOP/drive plane, driving GO2Connection over RPC."""
 
-    # Robot kind this command surface targets. __init__ declares it to the shared
-    # broker provider (BrokerProvider.set_robot_type) so the session POST tells the
-    # operator UI which cockpit to open.
+    # Pushed to the broker at init so the session POST picks the Go2 cockpit.
     ROBOT_TYPE: ClassVar[RobotType] = RobotType.GO2
 
     config: Go2CommandConfig
@@ -104,8 +102,6 @@ class Go2CommandModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         """Init command state (executor, safety epoch, posture, drive timers)."""
         super().__init__(**kwargs)
-        # Declare our kind to the shared broker provider (same worker); the
-        # session POST carries it so the operator UI picks the Go2 cockpit.
         BrokerProvider.set_robot_type(self.ROBOT_TYPE)
         self._estopped = False
         self._cmd = SerializedCommandExecutor(

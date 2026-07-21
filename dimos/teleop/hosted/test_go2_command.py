@@ -33,6 +33,7 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
 from dimos.teleop.hosted.go2_command import ALLOWED_SPORT_CMDS, Go2CommandModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -42,6 +43,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[Go2CommandModule]:
     """A Go2CommandModule with the command-plane state initialized for real
     (only the framework Module.__init__ is skipped) and its ports / driver ref /
     config mocked. The command executor is stopped (worker joined) on teardown."""
+    monkeypatch.setattr(BrokerProvider, "_robot_type", None)
     monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
     module = Go2CommandModule()
     module.go2 = MagicMock()
@@ -352,8 +354,6 @@ def test_nav_goal_rejected_when_estopped(
 def test_init_declares_robot_type_to_broker(module: Go2CommandModule) -> None:
     """__init__ pushes ROBOT_TYPE to the shared broker provider, which sends it
     in the session-create POST so the operator dashboard opens the Go2 cockpit."""
-    from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
-
     assert module.ROBOT_TYPE == "go2"
     assert BrokerProvider._robot_type == "go2"
 
@@ -361,8 +361,6 @@ def test_init_declares_robot_type_to_broker(module: Go2CommandModule) -> None:
 def test_broker_requires_declared_robot_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """No silent default: with no command module having declared a kind, the
     provider refuses to build a session rather than guessing 'go2'."""
-    from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
-
     monkeypatch.setattr(BrokerProvider, "_robot_type", None)
     with pytest.raises(RuntimeError, match="robot_type not declared"):
         BrokerProvider._require_robot_type()
