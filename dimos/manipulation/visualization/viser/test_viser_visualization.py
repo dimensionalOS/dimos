@@ -26,6 +26,7 @@ import pytest
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
+from dimos.manipulation.visualization.viser import scene as scene_module
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import (
     PreviewAnimator,
@@ -174,9 +175,8 @@ class FakeHandle:
 
 class FakeUrdf:
     def __init__(self, names: tuple[str, ...]) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=names)
+        self.actuated_joint_names = names
         self._meshes = []
-        self._collision_meshes = []
         self.show_visual = True
         self.show_collision = False
         self.cfg = None
@@ -187,6 +187,24 @@ class FakeUrdf:
 
     def remove(self) -> None:
         self.removed = True
+
+
+class FakeOwnedUrdf:
+    def __init__(
+        self,
+        names: tuple[str, ...] = ("joint1",),
+        *,
+        collision: bool = True,
+    ) -> None:
+        self.actuated_joint_names = names
+        self.collision_scene = SimpleNamespace(
+            geometry={"collision": object()} if collision else {}
+        )
+
+
+@pytest.fixture(autouse=True)
+def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scene_module.URDF, "load", lambda *args, **kwargs: FakeOwnedUrdf())
 
 
 class FakeJointState(JointState):
@@ -677,7 +695,7 @@ class FakeMesh:
 
 class FakeViserUrdfWithMeshes:
     def __init__(self, names: tuple[str, ...] = ("joint1", "joint2", "joint3")) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=names)
+        self.actuated_joint_names = names
         self._meshes = [FakeMesh(), FakeMesh()]
         self._collision_meshes = [FakeMesh(), FakeMesh()]
         for mesh in self._collision_meshes:
@@ -691,25 +709,10 @@ class FakeViserUrdfWithMeshes:
         self.cfg = list(cfg)
 
 
-class FakeViserUrdfWithCollisionRoot:
-    """Model Viser 1.0.30's collision representation without old mesh attr."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=("joint1",))
-        self._meshes = [FakeMesh(), FakeMesh()]
-        self._collision_root_frame = SimpleNamespace()
-        self.show_visual = True
-        self.show_collision = False
-
-    def update_cfg(self, cfg: Sequence[float]) -> None:
-        del cfg
-
-
 class FakeViserUrdfWithoutCollision:
     def __init__(self, *args: object, **kwargs: object) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=("joint1",))
+        self.actuated_joint_names = ("joint1",)
         self._meshes = [FakeMesh(), FakeMesh()]
-        self._collision_meshes = []
         self.show_visual = True
         self.show_collision = False
         self.cfg = None
@@ -723,6 +726,9 @@ def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
     urdf = FakeUrdf(("shoulder", "elbow", "wrist"))
     scene = ViserManipulationScene(server, lambda *args, **kwargs: urdf, preview_fps=10.0)
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    scene._load_robot_model = lambda config: FakeOwnedUrdf(
+        ("shoulder", "elbow", "wrist")
+    )
 
     cfg = SimpleNamespace(
         name="arm",
@@ -1042,6 +1048,7 @@ def test_scene_registers_goal_robot_coloring_and_updates_visibility() -> None:
         preview_fps=10.0,
     )
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    scene._load_robot_model = lambda config: FakeOwnedUrdf(("joint1", "joint2"))
     config = SimpleNamespace(
         name="arm",
         model_path="/tmp/arm.urdf",
@@ -1105,8 +1112,10 @@ def test_scene_display_mode_controls_only_primary_robot() -> None:
     assert (current.show_visual, current.show_collision) == (True, True)
 
 
-def test_scene_detects_collision_geometry_from_viser_root_frame() -> None:
-    scene = ViserManipulationScene(FakeServer(), FakeViserUrdfWithCollisionRoot, preview_fps=10.0)
+def test_scene_detects_collision_geometry_from_owned_model() -> None:
+    scene = ViserManipulationScene(
+        FakeServer(), lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1",)), preview_fps=10.0
+    )
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
     config = SimpleNamespace(
         name="arm",
@@ -1123,7 +1132,9 @@ def test_scene_detects_collision_geometry_from_viser_root_frame() -> None:
     assert "robot1" not in scene._collision_fallback_urdfs
 
 
-def test_scene_display_mode_falls_back_without_collision_geometry() -> None:
+def test_scene_display_mode_falls_back_without_collision_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     server = FakeServer()
     scene = ViserManipulationScene(
         server,
@@ -1131,6 +1142,7 @@ def test_scene_display_mode_falls_back_without_collision_geometry() -> None:
         preview_fps=10.0,
     )
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    monkeypatch.setattr(scene, "_load_robot_model", lambda config: FakeOwnedUrdf(collision=False))
     config = SimpleNamespace(
         name="arm",
         model_path="/tmp/arm.urdf",
@@ -1141,8 +1153,6 @@ def test_scene_display_mode_falls_back_without_collision_geometry() -> None:
     )
     scene.register_robot("robot1", config)
     current = scene._urdfs["robot1:current"]
-    current._collision_meshes = []
-    scene._urdfs["robot1:target"]._collision_meshes = [FakeMesh()]
 
     assert scene.collision_geometry_available is False
     scene.robot_display_mode = "collision"
@@ -1151,9 +1161,12 @@ def test_scene_display_mode_falls_back_without_collision_geometry() -> None:
     assert scene._collision_fallback_urdfs["robot1"].show_visual is True
 
 
-def test_scene_missing_collision_uses_magenta_visual_substitute() -> None:
+def test_scene_missing_collision_uses_magenta_visual_substitute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     scene = ViserManipulationScene(FakeServer(), FakeViserUrdfWithoutCollision, preview_fps=10.0)
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    monkeypatch.setattr(scene, "_load_robot_model", lambda config: FakeOwnedUrdf(collision=False))
     config = SimpleNamespace(
         name="arm",
         model_path="/tmp/arm.urdf",
@@ -1174,7 +1187,9 @@ def test_scene_missing_collision_uses_magenta_visual_substitute() -> None:
     assert all(mesh.opacity == 0.35 for mesh in fallback._meshes)
 
 
-def test_scene_updates_collision_fallback_with_current_joints_across_recreation() -> None:
+def test_scene_updates_collision_fallback_with_current_joints_across_recreation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     created: list[FakeViserUrdfWithoutCollision] = []
 
     def make_urdf(*args: object, **kwargs: object) -> FakeViserUrdfWithoutCollision:
@@ -1184,6 +1199,7 @@ def test_scene_updates_collision_fallback_with_current_joints_across_recreation(
 
     scene = ViserManipulationScene(FakeServer(), make_urdf, preview_fps=10.0)
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    monkeypatch.setattr(scene, "_load_robot_model", lambda config: FakeOwnedUrdf(collision=False))
     config = SimpleNamespace(
         name="arm",
         model_path="/tmp/arm.urdf",
@@ -1292,6 +1308,7 @@ def test_scene_target_controls_update_target_ghost_pose_and_feasibility() -> Non
         preview_fps=10.0,
     )
     scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    scene._load_robot_model = lambda config: FakeOwnedUrdf(("joint1", "joint2"))
     config = SimpleNamespace(
         name="arm",
         model_path="/tmp/arm.urdf",
