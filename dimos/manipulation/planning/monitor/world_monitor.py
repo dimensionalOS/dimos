@@ -83,13 +83,6 @@ class WorldMonitor:
         with self._lock:
             return PlanningSceneInfo(robots=dict(self._robot_configs))
 
-    def sync_visualization_scene(self) -> None:
-        """Synchronize startup scene metadata to the attached visualization."""
-        visualization = self._visualization
-        if visualization is None:
-            return
-        visualization.initialize_scene(self.planning_scene_info())
-
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
         with self._lock:
@@ -441,10 +434,13 @@ class WorldMonitor:
 
     # Lifecycle
 
-    def finalize(self) -> None:
-        """Finalize world. Must be called before collision checking."""
+    def finalize(self, visualization: VisualizationSpec | None = None) -> None:
+        """Finalize the world and initialize its optional visualization scene."""
         with self._lock:
             self._world.finalize()
+            self._visualization = visualization
+            if visualization is not None:
+                visualization.initialize_scene(self.planning_scene_info())
             logger.info("World finalized")
 
     @property
@@ -542,9 +538,6 @@ class WorldMonitor:
         """Get optional visualization backend."""
         return self._visualization
 
-    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
-        """Set optional visualization backend after monitor construction."""
-        self._visualization = visualization
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

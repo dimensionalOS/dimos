@@ -198,7 +198,7 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
 
     monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
     monitor.add_robot(_robot_config())
-    monitor.sync_visualization_scene()
+    monitor.finalize(fake_viz)  # type: ignore[arg-type]
 
     assert fake_viz.calls[0][0] == "initialize_scene"
     scene = fake_viz.calls[0][1]
