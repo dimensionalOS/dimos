@@ -91,6 +91,23 @@ def test_piper_keyboard_declares_high_priority_gripper_servo() -> None:
     assert servo.priority > next(task.priority for task in tasks if task.type == "eef_twist")
 
 
+def test_piper_keyboard_declares_gripper_endpoints_and_light_keyboard_kwargs() -> None:
+    hardware = _module_kwargs(keyboard_teleop_piper, ControlCoordinator)["hardware"][0]
+    keyboard_kwargs = _module_kwargs(keyboard_teleop_piper, KeyboardTeleopModule)
+
+    assert keyboard_kwargs == {}
+    assert (hardware.gripper_closed_position, hardware.gripper_open_position) == (0.0, 0.07)
+
+
+def test_piper_quest_declares_normalized_gripper_endpoints() -> None:
+    hardware = _module_kwargs(coordinator_teleop_piper, ControlCoordinator)["hardware"][0]
+    task = _coordinator_tasks(coordinator_teleop_piper)[0]
+
+    assert (hardware.gripper_closed_position, hardware.gripper_open_position) == (0.0, 0.07)
+    assert task.params["gripper_open_pos"] == 1.0
+    assert task.params["gripper_closed_pos"] == 0.0
+
+
 def test_planner_helper_defaults_to_no_visualization() -> None:
     blueprint = planner(robots=[make_xarm7_model_config(name="arm", add_gripper=True)])
 

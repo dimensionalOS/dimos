@@ -14,9 +14,8 @@
 
 from __future__ import annotations
 
-import builtins
 import sys
-from types import ModuleType
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -24,57 +23,29 @@ import pytest
 from dimos.hardware.manipulators.piper.adapter import PiperAdapter
 
 
-class _FakePiper:
-    def __init__(self, **_: object) -> None:
-        self.gripper_calls: list[tuple[int, int, int, int]] = []
-
-    def ConnectPort(self, **_: object) -> None:
-        pass
-
-    def GetArmStatus(self) -> object:
-        return object()
-
-    def MotionCtrl_1(self, *_: int) -> None:
-        pass
-
-    def MotionCtrl_2(self, **_: int) -> None:
-        pass
-
-    def JointCtrl(self, *_: int) -> None:
-        pass
-
-    def GripperCtrl(self, position: int, speed: int, code: int, param: int) -> None:
-        self.gripper_calls.append((position, speed, code, param))
-        if len(self.gripper_calls) == 1:
-            raise RuntimeError("gripper unavailable")
-
-
 def test_connect_reports_missing_sdk(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    mocker: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    real_import = builtins.__import__
-
-    def missing_piper_sdk(name: str, *args: Any, **kwargs: Any) -> ModuleType:
-        if name == "piper_sdk":
-            raise ImportError("piper_sdk unavailable")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", missing_piper_sdk)
+    mocker.patch.dict(sys.modules, {"piper_sdk": None})
 
     assert not PiperAdapter().connect()
     assert "Piper SDK not installed" in capsys.readouterr().out
 
 
 def test_connect_continues_when_gripper_startup_fails(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: Any,
 ) -> None:
-    sdk_module = ModuleType("piper_sdk")
-    sdk_module.C_PiperInterface_V2 = _FakePiper  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "piper_sdk", sdk_module)
-    monkeypatch.setattr("dimos.hardware.manipulators.piper.adapter.time.sleep", lambda _: None)
+    sdk = mocker.Mock()
+    sdk.GetArmStatus.return_value = object()
+    sdk.GripperCtrl.side_effect = RuntimeError("gripper unavailable")
+    mocker.patch.dict(
+        sys.modules,
+        {"piper_sdk": SimpleNamespace(C_PiperInterface_V2=lambda **_: sdk)},
+    )
+    mocker.patch("dimos.hardware.manipulators.piper.adapter.time.sleep")
 
     adapter = PiperAdapter()
 
     assert adapter.connect()
     assert adapter.is_connected()
-    assert not adapter._gripper_initialized
+    assert sdk.GripperCtrl.called

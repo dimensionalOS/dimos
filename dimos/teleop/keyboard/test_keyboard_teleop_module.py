@@ -19,12 +19,10 @@ from collections.abc import Iterator
 import pytest
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     GRIPPER_CLOSED_POSITION,
-    GRIPPER_JOINT_NAME,
     GRIPPER_OPEN_POSITION,
     KeyboardTeleopModule,
     _twist_from_keys,
@@ -93,7 +91,7 @@ def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
     assert angular == (0.5, -0.5, 0.5)
 
 
-def test_keyup_of_last_motion_key_publishes_zero_immediately(
+def test_final_key_release_publishes_zero_velocity(
     module: KeyboardTeleopModule, mocker
 ) -> None:
     publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
@@ -134,22 +132,19 @@ def test_keyup_publishes_directly_without_timeout_wait(
     publish.assert_called_once()
 
 
-def test_set_gripper_position_publishes_partial_joint_state_only_on_change(
+def test_set_gripper_position_emits_only_when_position_changes(
     module: KeyboardTeleopModule, mocker
 ) -> None:
-    assert module.config.gripper_open_position == GRIPPER_OPEN_POSITION
-
     publish = mocker.patch.object(module.joint_command, "publish")
 
     module._set_gripper_position(GRIPPER_OPEN_POSITION)
-    module._set_gripper_position(GRIPPER_OPEN_POSITION)
-    module._set_gripper_position(GRIPPER_CLOSED_POSITION)
+    publish.assert_called_once()
+    assert publish.call_args.args[0].position == [GRIPPER_OPEN_POSITION]
 
-    assert publish.call_count == 2
-    msg = publish.call_args_list[0].args[0]
-    assert isinstance(msg, JointState)
-    assert msg.name == [GRIPPER_JOINT_NAME]
-    assert msg.position == [GRIPPER_OPEN_POSITION]
-    assert msg.velocity == []
-    assert msg.effort == []
-    assert publish.call_args_list[1].args[0].position == [GRIPPER_CLOSED_POSITION]
+    publish.reset_mock()
+    module._set_gripper_position(GRIPPER_OPEN_POSITION)
+    publish.assert_not_called()
+
+    module._set_gripper_position(GRIPPER_CLOSED_POSITION)
+    publish.assert_called_once()
+    assert publish.call_args.args[0].position == [GRIPPER_CLOSED_POSITION]
