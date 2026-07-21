@@ -163,11 +163,6 @@ class TeleopIKTask(BaseControlTask):
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
         )
 
-    @property
-    def name(self) -> str:
-        """Unique task identifier."""
-        return self._name
-
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
         joints = self._joint_names
@@ -315,6 +310,10 @@ class TeleopIKTask(BaseControlTask):
             self.on_gripper_trigger(trigger)
 
         return True
+
+    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
+        """Uniform stream handler; ``on_buttons`` predates the (msg, t_now) contract."""
+        return self.on_buttons(msg)
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (delta pose from teleop)"""

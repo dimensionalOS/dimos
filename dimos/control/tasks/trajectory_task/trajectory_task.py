@@ -99,11 +99,6 @@ class JointTrajectoryTask(BaseControlTask):
 
         logger.info(f"JointTrajectoryTask {name} initialized for joints: {config.joint_names}")
 
-    @property
-    def name(self) -> str:
-        """Unique task identifier."""
-        return self._name
-
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
         return ResourceClaim(

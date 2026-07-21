@@ -40,6 +40,7 @@ CRITICAL WORKFLOW for relative movement requests (e.g. "move 20cm forward"):
 NEVER pass only the offset as coordinates — that would send the robot to near-origin.
 
 ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before retrying.
+After a planning failure, call reset before attempting more planning or motion.
 """
 
 MANIPULATION_AGENT_SYSTEM_PROMPT = """\
@@ -106,4 +107,5 @@ Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 # Error Recovery
 If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
 **reset**, then retry.
+After any planning failure, call **reset** before more planning or motion.
 """

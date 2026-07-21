@@ -15,3 +15,7 @@
 TASK_FACTORIES = {
     "servo": "dimos.control.tasks.servo_task.servo_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "servo": {"joint_command": ("on_joint_command", "claim_overlap")},
+}

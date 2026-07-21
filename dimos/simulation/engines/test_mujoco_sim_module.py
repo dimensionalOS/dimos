@@ -19,12 +19,13 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-from dimos.simulation.engines.mujoco_engine import MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
 class _FakeData:
@@ -82,6 +83,15 @@ class _FakeSimHooks:
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     events: list[str] = []
+    module = MujocoSimModule()
+    module._shm_ready_signaled = False
+    module._root_base_qpos_adr = 0
+    module._imu_quat_slice = None
+    module._imu_base_qpos_slice = slice(3, 7)
+    module._imu_gyro_slice = slice(0, 3)
+    module._imu_accel_slice = slice(3, 6)
+    module.odom = MagicMock()
+    module.imu = MagicMock()
 
     class _FakeHooks:
         def post_step(self, engine: Any) -> None:
@@ -102,7 +112,6 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         def cleanup(self) -> None:
             pass
 
-    module = MujocoSimModule()
     try:
         module._root_base_qpos_adr = 0
         module._imu_base_qpos_slice = slice(3, 7)
@@ -114,6 +123,56 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         module._publish_shm_and_lcm(_FakeEngine)
 
         assert events == ["joint_state", "imu", "ready"]
+    finally:
+        module.stop()
+
+
+def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
+    module = MujocoSimModule(base_frame_id="link7")
+    try:
+        module.config = MujocoSimModuleConfig(base_frame_id="link7")
+
+        class _FakeEngine:
+            def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray]:
+                raise AssertionError("TF publication must use the frame snapshot")
+
+            def disconnect(self) -> None:
+                pass
+
+        class _FakeTf:
+            transforms: tuple[Any, ...] = ()
+
+            def publish(self, *transforms: Any) -> None:
+                self.transforms = transforms
+
+            def stop(self) -> None:
+                pass
+
+        fake_tf = _FakeTf()
+        module._engine = _FakeEngine()
+        module._tf = fake_tf
+        frame = CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=np.ones((1, 1), dtype=np.float32),
+            cam_pos=np.array([1.0, 2.0, 3.0]),
+            cam_mat=np.eye(3),
+            fovy=60.0,
+            timestamp=1.0,
+            base_pos=np.array([1.0, 2.0, 2.0]),
+            base_mat=np.eye(3),
+        )
+
+        module._publish_tf(10.0, frame)
+
+        color_tf, depth_tf, camera_link_tf = fake_tf.transforms
+        assert color_tf.frame_id == "link7"
+        assert color_tf.child_frame_id == "wrist_camera_color_optical_frame"
+        assert np.allclose(color_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+        assert depth_tf.frame_id == "link7"
+        assert depth_tf.child_frame_id == "wrist_camera_depth_optical_frame"
+        assert camera_link_tf.frame_id == "link7"
+        assert camera_link_tf.child_frame_id == "wrist_camera_link"
+        assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
     finally:
         module.stop()
 
@@ -156,14 +215,10 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
         module.stop()
 
 
-def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
-    engine = object.__new__(MujocoEngine)
-    engine._lock = threading.Lock()
-    engine._reset_requested = False
-    engine._reset_done_events = []
-    engine._spawn_xy = None
-    engine._spawn_z = None
-    engine._spawn_yaw = None
+def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: Path) -> None:
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
     results: list[bool] = []
 
     def _wait_until_waiters_ready() -> None:
@@ -196,22 +251,25 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
     for thread in threads:
         thread.start()
 
-    _wait_until_waiters_ready()
-    with engine._lock:
-        assert engine._reset_requested
-        assert engine._spawn_xy == (1.0, 2.0)
-        assert engine._spawn_z == 0.5
-        assert engine._spawn_yaw == 0.25
-        done_events = engine._reset_done_events
-        engine._reset_done_events = []
-        engine._reset_requested = False
-    for done_event in done_events:
-        done_event.set()
+    try:
+        _wait_until_waiters_ready()
+        with engine._lock:
+            assert engine._reset_requested
+            assert engine._spawn_xy == (1.0, 2.0)
+            assert engine._spawn_z == 0.5
+            assert engine._spawn_yaw == 0.25
+            done_events = engine._reset_done_events
+            engine._reset_done_events = []
+            engine._reset_requested = False
+        for done_event in done_events:
+            done_event.set()
 
-    for thread in threads:
-        thread.join(timeout=1.0)
-        assert not thread.is_alive()
-    assert results == [True, True]
+        for thread in threads:
+            thread.join(timeout=1.0)
+            assert not thread.is_alive()
+        assert results == [True, True]
+    finally:
+        engine.disconnect()
 
 
 def _write_scene_xml(path: Path) -> None:

@@ -31,7 +31,7 @@ jobs:
           # glb contents, so pointer stubs for misc/DimSim assets are fine here.
           lfs: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 

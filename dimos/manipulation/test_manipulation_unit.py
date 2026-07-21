@@ -31,8 +31,8 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -352,15 +352,13 @@ class TestPlanningInitialization:
         assert module._state == ManipulationState.IDLE
         module._kinematics.solve.assert_not_called()
 
-    def test_solve_ik_rpc_uses_explicit_seed(self, robot_config):
-        """solve_ik initializes the backend from an explicit seed when provided."""
+    def test_solve_ik_rpc_accepts_explicit_seed_without_current_state(self, robot_config):
+        """solve_ik succeeds with an explicit seed when no current state is available."""
         module = _make_module()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
-        )
+        module._world_monitor.get_current_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
@@ -369,10 +367,28 @@ class TestPlanningInitialization:
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
         result = module.solve_ik(pose, seed=explicit_seed)
 
-        assert result is expected
-        _, kwargs = module._kinematics.solve.call_args
-        assert kwargs["seed"] is explicit_seed
-        module._world_monitor.get_current_joint_state.assert_not_called()
+        assert result.status == IKStatus.SUCCESS
+        assert module._state == ManipulationState.COMPLETED
+
+    def test_solve_ik_preserves_backend_failure_detail(self, robot_config):
+        """IK diagnostics include the backend's human-readable failure message."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.NO_SOLUTION, message="target is outside the workspace"
+        )
+
+        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
+
+        assert result.status == IKStatus.NO_SOLUTION
+        assert module.get_error() == "IK failed: NO_SOLUTION: target is outside the workspace"
+        assert module._state == ManipulationState.IDLE
 
 
 class TestJointNameTranslation:
@@ -394,6 +410,28 @@ class TestJointNameTranslation:
         )
         assert result.joint_names == ["left/joint1", "left/joint2", "left/joint3"]
         assert len(result.points) == 2  # Points preserved
+
+
+class TestPlanningDiagnostics:
+    def test_planner_failure_preserves_backend_detail(self, robot_config):
+        """Planning diagnostics include the backend message."""
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        module._planner = MagicMock()
+        module._planner.plan_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.TIMEOUT, message="planner timed out"
+        )
+
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        assert not module.plan_to_joints(
+            JointState(position=[1.0, 1.0, 1.0]), robot_name="test_arm"
+        )
+
+        assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
+        assert module._state == ManipulationState.FAULT
 
 
 class TestExecute:

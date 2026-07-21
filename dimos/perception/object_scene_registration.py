@@ -24,6 +24,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -61,8 +62,9 @@ class ObjectSceneRegistrationModule(Module):
     _detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
-    _latest_depth_image: Image | None = None
-    _latest_camera_transform: Any = None
+    # A tuple assignment/read is atomic, so depth and its transform cannot be
+    # observed from different frames by get_full_scene_pointcloud().
+    _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
 
     def __init__(
         self,
@@ -197,10 +199,12 @@ class ObjectSceneRegistrationModule(Module):
         voxel_size: float = 0.01,
     ) -> PointCloud2 | None:
         """Get full scene pointcloud from depth, including table/surfaces for collision filtering."""
-        if self._latest_depth_image is None or self._camera_info is None:
+        scene_snapshot = self._latest_scene_snapshot
+        if scene_snapshot is None or self._camera_info is None:
             return None
 
-        depth_cv = self._latest_depth_image.to_opencv()
+        depth_image, camera_transform = scene_snapshot
+        depth_cv = depth_image.to_opencv()
         h, w = depth_cv.shape[:2]
 
         # Zero out excluded object's depth
@@ -227,12 +231,12 @@ class ObjectSceneRegistrationModule(Module):
 
         pc = PointCloud2(
             pcd,
-            frame_id=self._latest_depth_image.frame_id,
-            ts=self._latest_depth_image.ts,
+            frame_id=depth_image.frame_id,
+            ts=depth_image.ts,
         )
 
-        if self._latest_camera_transform is not None:
-            pc = pc.transform(self._latest_camera_transform)
+        if camera_transform is not None:
+            pc = pc.transform(camera_transform)
 
         return pc
 
@@ -323,9 +327,6 @@ class ObjectSceneRegistrationModule(Module):
         if self._camera_info is None:
             return
 
-        # Cache depth image for full scene pointcloud generation
-        self._latest_depth_image = depth_image
-
         # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
         if self._target_frame != color_image.frame_id:
@@ -334,13 +335,14 @@ class ObjectSceneRegistrationModule(Module):
                 color_image.frame_id,
                 color_image.ts,
                 0.1,
+                forward_tolerance=0.2,
             )
             if camera_transform is None:
                 logger.info("Failed to lookup transform from camera frame to target frame")
                 return
 
-        # Cache camera transform for full scene pointcloud
-        self._latest_camera_transform = camera_transform
+        # Cache depth and transform together, only after the lookup succeeds.
+        self._latest_scene_snapshot = (depth_image, camera_transform)
 
         objects = Object.from_2d_to_list(
             detections_2d=detections_2d,
