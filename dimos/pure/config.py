@@ -28,7 +28,7 @@ import dataclasses
 import typing
 from typing import Any, ClassVar, Final, get_origin, get_type_hints
 
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 import typing_extensions
 
 from dimos.protocol.service.spec import BaseConfig
@@ -60,6 +60,7 @@ RESERVED_CONFIG_FIELDS: Final[frozenset[str]] = frozenset(
         "i",
         "o",
         "health",
+        "health_hz",
     }
 )
 
@@ -87,6 +88,9 @@ class PureModuleConfig(BaseConfig):
         validate_default=True,
         protected_namespaces=(),
     )
+
+    health_hz: float = Field(default=1.0, ge=0.0)
+    """Live health row cadence, Hz (T9); 0 disables rows (ring drain continues)."""
 
 
 # Sentinel: a field with no assigned value is REQUIRED (pydantic marks it with

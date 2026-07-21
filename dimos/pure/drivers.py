@@ -31,6 +31,7 @@ import dataclasses
 import enum
 import re
 import sys
+import time
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from dimos.pure.rows import UNSTAMPED, TfOutSpec, TfSpec
@@ -118,6 +119,8 @@ class RunHooks:
     awarmup: Callable[[], Awaitable[None]] = _anoop  # T7 RESOURCE SEAM — async creation on loop
     teardown: Callable[[], None] = _noop
     ateardown: Callable[[], Awaitable[None]] = _anoop
+    on_step: Callable[[float, float, bool], None] | None = None  # T15 (tick_ts, step_ms, emitted)
+    on_state: Callable[[float, Any], None] | None = None  # T15 (tick_ts, new_state) after an emit
 
 
 _T = TypeVar("_T")
@@ -179,6 +182,7 @@ def run_over(
     *,
     tf: Any | None = None,  # runtime-untyped like module; static type lives on over() (spec §8.3)
     hooks: RunHooks | None = None,
+    debug: Any | None = None,  # T15: a built debugrec.DebugSession (runtime-untyped like module)
 ) -> Iterator[Any]:
     """Validate eagerly, align via T5, dispatch on ``spec.kind`` (spec §4)."""
     hooks = RunHooks() if hooks is None else hooks
@@ -206,7 +210,23 @@ def run_over(
         ctx = TfContext.for_over(module, spec, tf)  # claims/wiring raise here, caller thread
     from dimos.pure.align import align  # lazy, permanently (spec §4)
 
-    rows = align(spec.in_type, {name: _coerce_stream(s) for name, s in streams.items()}, tf=ctx)
+    # T15 recorder seam: on_decision at the aligner, on_step/on_state on hooks,
+    # in-row tap before dispatch, out-row tap + inline drain outside (spec §C5).
+    on_decision = debug.on_decision if debug is not None else None
+    aligner = align(
+        spec.in_type,
+        {name: _coerce_stream(s) for name, s in streams.items()},
+        tf=ctx,
+        on_decision=on_decision,
+    )
+    rows: Iterator[Any] = aligner
+    if debug is not None:
+        debug.record_config(module)  # one config record, before any pull
+        hooks.on_step = debug.on_step
+        if spec.kind is StepKind.MEALY and debug.debug.state_on:
+            hooks.on_state = debug.on_state
+        if debug.debug.rows:
+            rows = debug.tap_in_rows(aligner)  # post-alignment capture point (doctrine #4)
     # ── dispatch: drivers self-finalize (§8.2); the tf tap wraps the out iterator ──
     if spec.kind is StepKind.MEALY:
         driver = drive_mealy(module, rows, initial, skips=spec.skips, hooks=hooks)
@@ -216,13 +236,16 @@ def run_over(
         driver = drive_fold(module, rows, hooks=hooks)
     else:
         driver = drive_stateless(module, rows, skips=spec.skips, hooks=hooks)
-    if ctx is None:
-        return driver
-    if out_tf:
-        from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §7.1)
+    if ctx is not None:
+        if out_tf:
+            from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §7.1)
 
-        return tf_out_tap(driver, module, ctx)
-    return _tf_released(driver, ctx)  # no tf_out fields: still release claims on teardown
+            driver = tf_out_tap(driver, module, ctx)
+        else:
+            driver = _tf_released(driver, ctx)  # no tf_out: still release claims on teardown
+    if debug is not None:
+        driver = debug.tap_out_rows(driver)  # out capture + inline drain + session close (§C5)
+    return _warned(driver, module, aligner, hooks)
 
 
 def _has_tf_fields(spec: StepSpec) -> tuple[bool, bool]:
@@ -238,6 +261,34 @@ def _tf_released(driver: Iterator[_T], ctx: Any) -> Iterator[_T]:
         yield from driver
     finally:
         ctx.release()
+
+
+def _warned(driver: Iterator[_T], module: Any, aligner: Any, hooks: RunHooks) -> Iterator[_T]:
+    """The unconditional end-of-run check (spec §End-of-run report): warn on ticks>0, rows==0.
+
+    Runs on run/graph teardown with or without debug capture — the one log line
+    that turns a 45-minute bisect into a read. The live rim warns from its own
+    finally (spec §C8); this covers over() and the graph's per-member run_over.
+    """
+    try:
+        yield from driver
+    finally:
+        try:
+            from dimos.pure.debugrec import silent_run_warning  # lazy: sanctioned recorder edge
+
+            # Tick count comes from the ALIGNER (attempts), not hooks.ticks (driver
+            # rows) — when every tick drops at alignment the driver sees zero rows,
+            # so hooks.ticks would be 0 and the very incident this warns about would
+            # stay silent. ticks_fired counts every tick that reached _fire.
+            stats = getattr(aligner, "stats", None)
+            if stats is not None:
+                msg = silent_run_warning(
+                    _cls(module), stats.ticks_fired, hooks.emits, stats.drops_by_field
+                )
+                if msg is not None:
+                    _LOG.warning(msg)
+        except Exception:  # the warning must never mask the run's own teardown
+            pass
 
 
 def _check_unknown_streams(module: Any, spec: StepSpec, streams: Mapping[str, Streamable]) -> None:
@@ -355,15 +406,19 @@ def _stateless_rows(
     hooks: RunHooks,
 ) -> Iterator[_TOutRow]:
     n = 0
+    on_step = hooks.on_step
     for row in rows:
         hooks.ticks += 1
         n += 1
+        t0 = time.perf_counter() if on_step is not None else 0.0  # monotonic; durations only (§3)
         try:
             out = module.step(row)
         except Exception as exc:
             hooks.errors += 1
             hooks.last_error = exc  # the raw original; the wrapper adds coordinates
             raise StepError(_step_error_msg(module, row.ts, n, exc), RunRule.STEP_ERROR) from exc
+        if on_step is not None:
+            on_step(row.ts, (time.perf_counter() - t0) * 1000.0, out is not None)
         if out is None:
             if skips:
                 hooks.skips += 1
@@ -395,15 +450,19 @@ def _mealy_rows(
 ) -> Iterator[_TOutRow]:
     state = initial  # ONE reference, rebound per tick — never copied or aliased
     n = 0
+    on_step = hooks.on_step
     for row in rows:
         hooks.ticks += 1
         n += 1
+        t0 = time.perf_counter() if on_step is not None else 0.0  # monotonic; durations only (§3)
         try:
             state, out = module.step(state, row)  # non-2-tuple unpack fails here (D14)
         except Exception as exc:
             hooks.errors += 1
             hooks.last_error = exc
             raise StepError(_step_error_msg(module, row.ts, n, exc), RunRule.STEP_ERROR) from exc
+        if on_step is not None:
+            on_step(row.ts, (time.perf_counter() - t0) * 1000.0, out is not None)
         if out is None:
             if skips:
                 hooks.skips += 1
@@ -411,6 +470,8 @@ def _mealy_rows(
             hooks.errors += 1
             raise PureModuleRunError(_none_no_skip_msg(module, row.ts), RunRule.STEP_NONE_NO_SKIP)
         hooks.emits += 1
+        if hooks.on_state is not None:  # T15 state layer: snapshot at the emit boundary
+            hooks.on_state(row.ts, state)
         yield dataclasses.replace(out, ts=row.ts)
 
 

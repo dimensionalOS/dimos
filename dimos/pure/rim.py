@@ -45,7 +45,7 @@ from dimos.pure.drivers import (
     run_over,
 )
 from dimos.pure.resources import attach_resources
-from dimos.pure.rows import FieldSpec, TfOutSpec, TfSpec, TickSpec
+from dimos.pure.rows import ContractSpec, FieldSpec, TfOutSpec, TfSpec, TickSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import InPort, InPorts, OutPort, OutPorts, Stamped
 from dimos.utils.logging_config import setup_logger
@@ -261,7 +261,11 @@ class PortIngress:
 
 @dataclasses.dataclass
 class RimStats:
-    """Snapshot of a module's live-session counters (spec §9); wall-clock-free."""
+    """Snapshot of a module's live-session counters (spec §9); wall-clock-free.
+
+    Satisfies ``health.SessionSnapshot`` structurally (T9/H5): ``frontier_ts``,
+    ``inflight``, ``rows_emitted``, ``published``, ``error`` are the pacer's
+    lock-free, acceptably-stale reads each wake."""
 
     state: str
     hooks: RunHooks
@@ -271,6 +275,13 @@ class RimStats:
     published: dict[str, int]
     egress_errors: int
     error: BaseException | None
+    frontier_ts: float = float("-inf")  # aligner tick-port watermark; -inf when no aligner yet
+    inflight: int = 0  # queued items across the session's in-port queues (benign race)
+
+    @property
+    def rows_emitted(self) -> int:
+        """Driver emit count (``RunHooks.emits``) — the out_hz numerator (T9/H5)."""
+        return self.hooks.emits
 
 
 # ── binding validation helpers ───────────────────────────────────────────────
@@ -615,6 +626,9 @@ class _LiveSession:
         self._driver: Iterator[Any] | None = None
         self._tf_ctx: Any = None  # TfContext | None — the tf side channel (T11, spec §9)
         self._thread: threading.Thread | None = None
+        self._debug: Any = None  # T15: a live debugrec.DebugSession, or None when off
+        self._health: Any = None  # T9: a health.HealthPacer, or None (over()/eval never build one)
+        self._health_publish: Callable[[Any], None] | None = None  # legacy health stream .publish
         self._queues: dict[str, _PortQueue] = {}
         self._ingress: dict[str, PortIngress] = {}
         self._out_ports: dict[str, RimOutPort] = {}
@@ -684,12 +698,39 @@ class _LiveSession:
             # T11: build the tf side channel (buffer + m.i.tf feed + claims) before
             #      the aligner; claims raise here, on the caller thread (spec §9.3).
             self._tf_ctx = self._build_tf_context()
+            # T15: allocate the live capture session (decisions-only ON when a run-log
+            #      dir exists; spec §C8). T9/Q3 widening: decisions are ALSO forced on
+            #      whenever health is on (hz > 0) — the pacer needs the decision fold for
+            #      the by-construction guarantee. None ⇒ nothing is wired (zero cost).
+            from dimos.pure import (
+                debugrec,  # lazy: sanctioned recorder edge (the tfbuffer pattern)
+                health as _health,  # lazy: sanctioned engine edge (H5)
+            )
+
+            path = debugrec.default_path(self._module)
+            hz = float(getattr(self._module.config, "health_hz", _health.DEFAULT_HEALTH_HZ))
+            self._debug = debugrec.session_for(
+                self._module, path=path, live=True, debug=(True if hz > 0 else None)
+            )
+            on_decision = self._debug.on_decision if self._debug is not None else None
             # 1. Eager aligner: T5's wiring errors name the module at start, on
             #    the caller thread, before any subscription exists (spec §6.1.1).
-            self._aligner = align(self._spec.in_type, feeds, tf=self._tf_ctx)
+            self._aligner = align(
+                self._spec.in_type, feeds, tf=self._tf_ctx, on_decision=on_decision
+            )
+            rows_iter: Iterator[Any] = self._aligner
+            if self._debug is not None:
+                self._debug.record_config(self._module)
+                hooks.on_step = self._debug.on_step
+                if self._spec.kind is StepKind.MEALY and self._debug.debug.state_on:
+                    hooks.on_state = self._debug.on_state
+                if self._debug.debug.rows:
+                    rows_iter = self._debug.tap_in_rows(self._aligner)
             # 3. Driver dispatch mirroring run_over (spec §6.1.3; D3 — the rim
             #    composes the public pieces, it does not call run_over live).
-            self._driver = self._dispatch(self._aligner, hooks)
+            self._driver = self._dispatch(rows_iter, hooks)
+            if self._debug is not None:
+                self._driver = self._debug.tap_out_rows(self._driver)  # capture + pacer drains
             if self._tf_ctx is not None and _declares_tf_out(self._spec.out_type.fields()):
                 from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §9.3)
 
@@ -715,6 +756,34 @@ class _LiveSession:
         thread.start()
         for pump in self._pumps:
             pump.start()
+        # T9: the rim-owned health pacer — one off-tick-path thread, two jobs
+        #     (emit the health row, drain the T15 ring; spec §H4). over()/run_over
+        #     never reach this code, so health is off under eval by construction.
+        if hz > 0 or self._debug is not None:
+            contracts = {
+                name: fs.min_hz
+                for name, fs in self._spec.out_type.fields().items()
+                if isinstance(fs, ContractSpec)
+            }
+            record: Callable[[Any, float], None] | None = None
+            if self._debug is not None:
+                stream = _health.health_stream(path)
+                writer = self._debug.writer
+
+                def _record_health(rec: Any, ts: float) -> None:
+                    writer.append_row(stream, rec, ts)
+
+                record = _record_health
+            self._health = _health.HealthPacer(
+                path,
+                snapshot=self.stats,
+                health_hz=hz,
+                contracts=contracts,
+                decisions=self._debug,
+                publish=self._health_publish,
+                record=record,
+            )
+            self._health.start()
 
     def _build_tf_context(self) -> Any:
         """Buffer (attached or fresh) + wired m.i.tf feed + claims → TfContext (spec §9.3)."""
@@ -797,6 +866,14 @@ class _LiveSession:
 
     def _unwind_start(self, hooks: RunHooks) -> None:
         """G3: reverse-unwind a failed start on the caller thread; original error re-raises."""
+        self._stop_health()  # T9: stop the pacer if one was started before the failure
+        if self._debug is not None:
+            try:
+                self._debug.close()  # unregister the just-built T15 session (spec §C8)
+            except Exception:
+                _LOG.warning(
+                    "%s debug close raised during unwind", _cls(self._module), exc_info=True
+                )
         if self._tf_ctx is not None:
             try:
                 self._tf_ctx.release()  # drop any claims taken before the failure (spec §9.3)
@@ -844,10 +921,36 @@ class _LiveSession:
                     self._tf_ctx.release()  # idempotent with the tap's own finally (spec §9.3)
                 except Exception:
                     _LOG.warning("%s tf release raised", _cls(self._module), exc_info=True)
+            # T15: final drain (flush the ring even on session death) + the
+            #      unconditional silent-run warning, regardless of capture (spec §C8).
+            self._debug_teardown()
             self._error = error
             self._seal_ingestion()  # a dead session consumes nothing (spec §6.1.5)
             with self._cond:
                 self._state = "stopped"
+
+    def _debug_teardown(self) -> None:
+        """Close the T15 session and emit the unconditional zero-rows warning (spec §C8)."""
+        try:
+            from dimos.pure.debugrec import silent_run_warning  # lazy: sanctioned recorder edge
+
+            aligner = self._aligner
+            if aligner is not None and self._hooks is not None:
+                msg = silent_run_warning(
+                    _cls(self._module),
+                    aligner.stats.ticks_fired,
+                    self._hooks.emits,
+                    aligner.stats.drops_by_field,
+                )
+                if msg is not None:
+                    _LOG.warning(msg)
+        except Exception:
+            _LOG.warning("%s debug teardown warning raised", _cls(self._module), exc_info=True)
+        if self._debug is not None:
+            try:
+                self._debug.close()
+            except Exception:
+                _LOG.warning("%s debug session close raised", _cls(self._module), exc_info=True)
 
     def _emit(self, row: Any) -> None:
         """Per-field fan-out in Out declaration order (spec §6.3): publish, then subscribers."""
@@ -910,10 +1013,21 @@ class _LiveSession:
                     self._safe_teardown(hooks)
             for pump in self._pumps:  # hygiene: pumps are bounded by the stop wake
                 pump.join(STOP_JOIN_TIMEOUT)
+            self._stop_health()  # T9: stop + join the pacer (flushes a last window)
             with self._cond:
                 self._state = "stopped"
         finally:
             self._stop_done.set()
+
+    def _stop_health(self) -> None:
+        """Stop + join the health pacer; never raises into teardown (spec §H4)."""
+        health = self._health
+        if health is not None:
+            self._health = None
+            try:
+                health.stop()
+            except Exception:
+                _LOG.warning("%s health pacer stop raised", _cls(self._module), exc_info=True)
 
     def _seal_ingestion(self) -> None:
         """Unsubscribe every binding; close closeable sources. Idempotent, thread-safe."""
@@ -948,6 +1062,8 @@ class _LiveSession:
             published=dict(self._published),
             egress_errors=self._egress_errors,
             error=self._error,
+            frontier_ts=aligner.frontier_ts if aligner is not None else float("-inf"),
+            inflight=sum(len(q.items) for q in self._queues.values()),  # benign race (H5)
         )
 
 
@@ -1024,12 +1140,14 @@ def warmup_module(module: Any) -> None:
     session.warmup()
 
 
-def start_module(module: Any) -> None:
+def start_module(module: Any, *, health_publish: Callable[[Any], None] | None = None) -> None:
     """``m.start()`` body (seam S4): auto-warm (D4) then go live (spec §6.1).
 
     Per-port ingress ring capacity is read from each ``m.i.<port>.capacity``
     (default ``DEFAULT_CAPACITY``, ``None`` = unbounded) — no ``port_depth``
-    argument (AD1, resolved by Ivan 2026-07-20; the knob rides the port)."""
+    argument (AD1, resolved by Ivan 2026-07-20; the knob rides the port).
+    ``health_publish`` is the T9 wire egress for health rows (the legacy actor's
+    ``health`` stream ``.publish``); bare rim sessions leave it None (spec §H5)."""
     state = ports_of(module)
     session = state.session
     if session is not None and session.state == "running":
@@ -1037,6 +1155,7 @@ def start_module(module: Any) -> None:
     if session is None or session.state == "stopped":
         session = _LiveSession(module, state.spec)
         state.session = session
+    session._health_publish = health_publish
     if session.state == "new":
         session.warmup()  # D4: start() auto-warms
     session.start()

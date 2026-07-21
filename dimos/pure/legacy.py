@@ -30,43 +30,51 @@ from __future__ import annotations
 
 import copyreg
 import types
-from typing import TYPE_CHECKING, Any, Final, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Final, Union, get_args, get_origin, get_type_hints
 
 from pydantic import create_model
 
 from dimos.core.core import rpc  # the bridge edge (spec §1)
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport_factory import make_transport, tf_backend
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.pure import rim
+from dimos.pure.health import Health
 from dimos.pure.module import PureModule
-from dimos.pure.rows import TfOutSpec
+from dimos.pure.rows import TfOutSpec, TfSpec
 from dimos.pure.stepspec import PureModuleDefinitionError
+from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
 
 __all__ = [
-    "HealthPlaceholder",
+    "TF_IN_STREAM",
     "legacy_actor",
     "legacy_blueprint",
 ]
 
 
-class HealthPlaceholder:
-    """Named placeholder health payload; T9 swaps the TYPE, not the mechanism.
+_HEALTH_PAYLOAD: type = Health
+"""Health stream payload type (T9): the ONE global flat health row.
 
-    Autoconnect keys the shared health topic on ``("health", <payload>)``
-    (spec §12, D12): a NAMED type keeps that key legible (never ``("health",
-    object)``) and unlikely to collide with a legacy ``Out[object]`` (AD2,
-    resolved by Ivan 2026-07-20). T9 replaces it with ``dimos.pure.health.Health``.
-    """
-
-
-_HEALTH_PAYLOAD: type = HealthPlaceholder
-"""Health stream payload type; T9 replaces with ``dimos.pure.health.Health`` (spec §12)."""
+Autoconnect keys the shared health topic on ``("health", Health)`` (spec §12,
+D12) — a single named class keeps the transport registry legible. T9 swapped
+the TYPE here; the mechanism (annotation synthesis, merge, adapter) is
+unchanged from T8's ``HealthPlaceholder``."""
 
 _HEALTH_STREAM: Final[str] = "health"
 """The conventionally-named extra topic (spec §12, D12): merged per-namespace."""
+
+TF_IN_STREAM: Final[str] = "tf_in"
+"""Actor-side name of the tf input stream (T14).
+
+tf arrives as an ORDINARY subscribed ``In[TFMessage]`` — no ``PubSubTF`` service, no
+``receive_msg`` rail, no second buffer: the rim feeds ``m.i.tf`` from it and
+``TfBuffer.ingest`` unpacks the batch. The stream cannot be called ``tf``: that name is
+taken on the legacy ``Module`` surface (``Module.tf``, guarded by ``_MODULE_SURFACE``),
+so the actor pins ``tf_in`` to the TF topic instead (see ``_tf_transport``)."""
 
 _MODULE_SURFACE: Final[frozenset[str]] = frozenset(dir(Module)) | {
     "config",
@@ -159,13 +167,19 @@ def legacy_actor(cls: type[PureModule], /, *, name: str | None = None) -> type[M
     def start(self: Any) -> None:
         Module.start(self)  # legacy start (main/handlers: no-ops)
         spec = type(self._pure).__pure_step__
-        for field in spec.in_type.fields():
+        for field, fs in spec.in_type.fields().items():
+            if isinstance(fs, TfSpec):
+                continue  # side channel: fed from tf_in below, never its own stream
             stream = getattr(self, field)
             if getattr(stream, "_transport", None) is not None:  # wired only (§11.3)
                 getattr(self._pure.i, field).source = stream  # In is Subscribable
         for field in spec.out_type.fields():
             getattr(self._pure.o, field).transport = getattr(self, field)  # Out is Publishable
-        rim.start_module(self._pure)
+        tf_stream = getattr(self, TF_IN_STREAM, None)  # T14: only when In declares tf()
+        if tf_stream is not None and getattr(tf_stream, "_transport", None) is not None:
+            self._pure.i.tf.source = tf_stream  # feeds the rim's TfBuffer (spec §9.3)
+        # T9: the synthesized health Out stream is the wire egress for the pacer's rows.
+        rim.start_module(self._pure, health_publish=getattr(self, _HEALTH_STREAM).publish)
 
     @rpc
     def stop(self: Any) -> None:
@@ -186,6 +200,8 @@ def legacy_actor(cls: type[PureModule], /, *, name: str | None = None) -> type[M
         "start": start,
         "stop": stop,
     }
+    if _declares_tf_in(cls):
+        namespace["blueprint"] = _tf_pinning_blueprint()
     actor = _ActorMeta(actor_name, (Module,), namespace)
     _ACTOR_CACHE[key] = actor
     return actor
@@ -224,12 +240,62 @@ def _validate_bridgeable(cls: type[PureModule]) -> None:
             f"Rename the field(s)."
         )
 
+    if TF_IN_STREAM in (in_names | out_names) and _declares_tf_in(cls):
+        raise PureModuleDefinitionError(
+            f"{cls.__qualname__}: field name {TF_IN_STREAM} collides with the synthesized tf "
+            f"input stream this module needs (its In declares tf() field(s)). Rename the field."
+        )
+
     config_clash = sorted(set(cls.__pure_config_model__.model_fields) & _RESERVED_CONFIG)
     if config_clash:
         raise PureModuleDefinitionError(
             f"{cls.__qualname__}: config field name(s) {', '.join(config_clash)} collide with "
             f"ModuleConfig fields absorbed by the actor. Rename the field(s)."
         )
+
+
+def _tf_pinning_blueprint() -> Any:
+    """``Module.blueprint`` + a ``tf_in`` transport pin on the TF topic (T14).
+
+    Autoconnect would otherwise give ``tf_in`` its name-derived ``/tf_in`` topic, which
+    nothing publishes. Pinning here (not at the call site) covers both spellings —
+    ``legacy_blueprint(cls)`` and ``legacy_actor(cls).blueprint(...)``.
+    """
+
+    @classproperty
+    def blueprint(actor_cls: Any) -> Any:
+        from dimos.core.coordination.blueprints import Blueprint
+
+        def create(**kwargs: Any) -> Blueprint:
+            return Blueprint.create(actor_cls, **kwargs).transports(
+                {(TF_IN_STREAM, TFMessage): _tf_transport()}
+            )
+
+        return create
+
+    return blueprint
+
+
+def _declares_tf_in(cls: type[PureModule]) -> bool:
+    """Does the pure ``In`` bundle declare any ``pm.tf()`` field? (then ``m.i.tf`` needs a feed)."""
+    return any(isinstance(fs, TfSpec) for fs in cls.__pure_step__.in_type.fields().values())
+
+
+def _tf_topic() -> str:
+    """Logical tf channel of the active backend's TF config (LCM ``/tf``, Zenoh ``dimos/tf``).
+
+    Read off ``tf_backend()``'s config rather than hardcoded so the LCM/Zenoh switch keeps
+    working; the ``dimos/`` namespace is stripped back to the logical name because
+    ``make_transport`` re-applies the right prefix per backend.
+    """
+    topic = get_type_hints(tf_backend())["config"]().topic
+    raw = str(getattr(topic, "topic", topic))
+    return raw[len("dimos/") :] if raw.startswith("dimos/") else raw
+
+
+def _tf_transport() -> Any:
+    """The pinned ``tf_in`` transport: ``TFMessage`` on the active backend's TF topic."""
+    return make_transport(_tf_topic(), TFMessage)
 
 
 def _stream_annotation(stream: Any, payload: Any) -> Any:
@@ -242,6 +308,8 @@ def _actor_annotations(cls: type[PureModule], config_model: type[ModuleConfig]) 
     spec = cls.__pure_step__
     annotations: dict[str, Any] = {}
     for field, fs in spec.in_type.fields().items():
+        if isinstance(fs, TfSpec):
+            continue  # tf() is a side channel resolved off the tf_in feed, not its own topic
         annotations[field] = _stream_annotation(In, _strip_optional(fs.annotation))
     for field, fs in spec.out_type.fields().items():
         if isinstance(fs, TfOutSpec):
@@ -249,6 +317,8 @@ def _actor_annotations(cls: type[PureModule], config_model: type[ModuleConfig]) 
         annotations[field] = _stream_annotation(
             Out, _strip_optional(fs.annotation)
         )  # Optional stripped
+    if _declares_tf_in(cls):
+        annotations[TF_IN_STREAM] = _stream_annotation(In, TFMessage)  # T14: tf is a plain input
     annotations[_HEALTH_STREAM] = _stream_annotation(Out, _HEALTH_PAYLOAD)  # §12: T9 swaps the type
     annotations["config"] = config_model
     return annotations

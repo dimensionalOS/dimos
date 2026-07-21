@@ -47,7 +47,13 @@ def test_config_fields() -> None:
     m = CostMapper(initial_safe_radius_meters=0.5)
     assert m.algo == "height_cost"
     assert m.initial_safe_radius_meters == 0.5
-    assert list(m.config.model_dump()) == ["algo", "occupancy", "initial_safe_radius_meters"]
+    # T9: health_hz is a PureModuleConfig base field, so it leads the dump order.
+    assert list(m.config.model_dump()) == [
+        "health_hz",
+        "algo",
+        "occupancy",
+        "initial_safe_radius_meters",
+    ]
 
 
 # ── stateless step, no engine ────────────────────────────────────────────────

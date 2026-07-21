@@ -96,6 +96,10 @@ InT = TypeVar("InT", bound=In)
 InterpolatorFn: TypeAlias = Callable[[Any, Any, float], Any]
 """``fn(a, b, alpha) -> value`` with alpha strictly inside (0, 1) (spec §6)."""
 
+DecisionHook: TypeAlias = Callable[[float, bool, "str | None", "dict[str, float]", int], None]
+"""T15 recorder seam ``(tick_ts, fired, drop_reason, ports, hold_pulls)``; builtins-only,
+so align.py imports nothing from debugrec. ``None`` short-circuits to zero per-tick cost."""
+
 _SUPPORTED_KINDS: Final = (TickSpec, LatestSpec, InterpolateSpec, TfSpec)
 """The In-side sampler kinds this resolver handles (spec §4.1; tf() is a side channel)."""
 
@@ -329,6 +333,7 @@ class Aligner(Generic[InT]):
         streams: Mapping[str, Iterable[Stamped]],
         *,
         tf: TfContext | None = None,
+        on_decision: DecisionHook | None = None,
     ) -> None:
         """Validate wiring eagerly (spec §7); pulls nothing until iteration."""
         # §7 #1 — in_type must be a pm.In subclass; fields() is called once and a
@@ -412,6 +417,7 @@ class Aligner(Generic[InT]):
         assert tick_port is not None  # a tick field was found in §7 #2
         self._tick: _PortState = tick_port
         self._held_tick_ts: float | None = None
+        self._on_decision: DecisionHook | None = on_decision
         self._ctx: TfContext | None = tf
         if tf is not None:
             self._stats.ports["tf"] = tf.port_stats  # T9 sees the stream-level counters
@@ -449,6 +455,10 @@ class Aligner(Generic[InT]):
         resolved: dict[str, Any] = {}
         brackets: list[tuple[str, Stamped, Stamped, float, InterpolatorFn]] = []
         missing_required: list[str] = []
+        # T15 recorder: build the resolved-sample-ts map only when the hook is set —
+        # no per-tick dict churn when capture is off (spec §Watch out for).
+        hook = self._on_decision
+        ports: dict[str, float] = {}
         # pass 1 — decide resolvability; interpolators are NOT called here (D12).
         for p in self._secondaries:
             spec = p.spec
@@ -457,33 +467,53 @@ class Aligner(Generic[InT]):
             if isinstance(spec, InterpolateSpec):
                 if head is not None and p.head_ts == tick_ts:
                     resolved[p.name] = head  # exact hit via pending head
+                    if hook is not None:
+                        ports[p.name] = tick_ts
                 elif newest is not None and p.newest_ts == tick_ts:
                     resolved[p.name] = newest  # exact hit via committed newest
+                    if hook is not None:
+                        ports[p.name] = tick_ts
                 elif newest is not None and head is not None:
                     interp = p.interp
                     assert interp is not None  # wired interpolate ports resolve one (§6.3)
                     alpha = (tick_ts - p.newest_ts) / (p.head_ts - p.newest_ts)
                     brackets.append((p.name, newest, head, alpha, interp))
+                    if hook is not None:
+                        ports[p.name] = tick_ts
                 elif not spec.required:
                     resolved[p.name] = spec.default
+                    if hook is not None:
+                        ports[p.name] = float("nan")
                 else:
                     missing_required.append(p.name)
             else:  # latest
                 candidate = head if (head is not None and p.head_ts == tick_ts) else newest
                 if candidate is not None:
                     resolved[p.name] = candidate
+                    if hook is not None:
+                        ports[p.name] = p.head_ts if candidate is head else p.newest_ts
                 elif not spec.required:
                     resolved[p.name] = spec.default
+                    if hook is not None:
+                        ports[p.name] = float("nan")
                 else:
                     missing_required.append(p.name)
         if missing_required:
             stats.ticks_dropped += 1
             for field_name in missing_required:
                 stats.drops_by_field[field_name] = stats.drops_by_field.get(field_name, 0) + 1
+            if hook is not None:
+                hook(tick_ts, False, "missing-required:" + ",".join(missing_required), ports, 0)
             return None
         # tf block — the demand-pulled side channel resolves at fire time (spec §6.3/§6.4).
         # Resolution IS the decision: required chains hold (pull) until resolvable or the
         # stream exhausts; optional chains take their default when unresolvable.
+        # THE HOLD is bounded: once the ingested frontier is a full horizon past the
+        # tick, a bracket around tick_ts could no longer survive eviction anyway — the
+        # tick is definitively unresolvable. Without the bound, one pre-tf-stream tick
+        # (e.g. a lidar scan stamped before the first odom sample) drains the ENTIRE tf
+        # stream into the horizon window and starves every later tick of its brackets.
+        hold_pulls = 0
         if self._tf_fields:
             ctx = self._ctx
             unresolved = {
@@ -491,21 +521,46 @@ class Aligner(Generic[InT]):
                 for name, spec in self._tf_fields
                 if spec.required and (ctx is None or ctx.resolve_field(name, tick_ts) is None)
             }
-            while unresolved and ctx is not None and ctx.pull():  # THE HOLD — pulling is the wait
+            while (
+                unresolved
+                and ctx is not None
+                and ctx.frontier <= tick_ts + ctx.buffer.horizon
+                and ctx.pull()
+            ):
+                if hook is not None:
+                    hold_pulls += 1
                 unresolved = {n for n in unresolved if ctx.resolve_field(n, tick_ts) is None}
             if unresolved:
                 stats.ticks_dropped += 1
                 for field_name in unresolved:
                     stats.drops_by_field[field_name] = stats.drops_by_field.get(field_name, 0) + 1
+                _DBG.warning(
+                    "tick dropped: required tf field(s) unresolvable",
+                    fields=sorted(unresolved),
+                    tick_ts=tick_ts,
+                    tf_frontier=None if ctx is None else ctx.frontier,
+                )
+                if hook is not None:
+                    hook(
+                        tick_ts,
+                        False,
+                        "tf-unresolvable:" + ",".join(sorted(unresolved)),
+                        ports,
+                        hold_pulls,
+                    )
                 return None
             for name, spec in self._tf_fields:
                 value = None if ctx is None else ctx.resolve_field(name, tick_ts)
                 resolved[name] = value if value is not None else spec.default
+                if hook is not None:
+                    ports[name] = tick_ts if value is not None else float("nan")
         # pass 2 — materialize brackets (user interpolation runs only for emitted rows).
         for bname, left, right, alpha, interp in brackets:
             resolved[bname] = interp(left, right, alpha)
         resolved[self._tick.name] = tick_item
         stats.rows_emitted += 1
+        if hook is not None:
+            hook(tick_ts, True, None, ports, hold_pulls)
         return self._in_type(ts=tick_ts, **resolved)
 
     def __iter__(self) -> Aligner[InT]:
@@ -564,9 +619,15 @@ class Aligner(Generic[InT]):
                             last_ts=p.last_ts,
                             ahead_s=ts - p.last_ts,
                         )
+                        # A dropped TICK sample is a lost trigger — a tick that never was;
+                        # secondary sample drops stay PortStats only (spec §C4 anchor 5).
+                        if p is tick and self._on_decision is not None:
+                            self._on_decision(ts, False, f"future-ts:{p.name}", {}, 0)
                         continue
                     if ts <= p.last_ts:
                         p.stats.dropped_nonmonotonic += 1
+                        if p is tick and self._on_decision is not None:
+                            self._on_decision(ts, False, f"nonmonotonic:{p.name}", {}, 0)
                         continue
                     p.head = item
                     p.head_ts = ts
@@ -613,12 +674,20 @@ class Aligner(Generic[InT]):
         """ts of the tick currently held mid-merge, else None (spec §8.2)."""
         return self._held_tick_ts
 
+    @property
+    def frontier_ts(self) -> float:
+        """Tick-port data watermark (-inf before the first accepted tick; T9/H5).
+
+        Lock-free, acceptably stale — the same read contract as ``stats``."""
+        return self._tick.last_ts
+
 
 def align(
     in_type: type[InT],
     streams: Mapping[str, Iterable[Stamped]],
     *,
     tf: TfContext | None = None,
+    on_decision: DecisionHook | None = None,
 ) -> Aligner[InT]:
     """Resolve stamped streams into tick-stamped In rows (validates now, pulls lazily)."""
-    return Aligner(in_type, streams, tf=tf)
+    return Aligner(in_type, streams, tf=tf, on_decision=on_decision)

@@ -85,6 +85,12 @@ def test_pm_surface_exports():
         "TfSpec",
         "tf",
         "tf_out",
+        # T15 — debug recorder (flat pm names; reader stays dimos.pure.debugrec)
+        "Debug",
+        "debug_latest",
+        "debug_load",
+        # T9 — health (the ONE global row users declare + autoconnect keys on)
+        "Health",
     }
     for name in pm.__all__:
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"

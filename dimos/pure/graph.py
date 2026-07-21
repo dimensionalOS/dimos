@@ -1031,10 +1031,17 @@ def _cone(plan: GraphPlan, target: PortRef) -> tuple[set[str], set[str]]:
 class _RunInstance:
     """One bounded pull over an export's cone; owns the member drivers for teardown."""
 
-    def __init__(self, plan: GraphPlan, sources: Mapping[str, Any], target_name: str) -> None:
+    def __init__(
+        self,
+        plan: GraphPlan,
+        sources: Mapping[str, Any],
+        target_name: str,
+        debug_config: Any = None,
+    ) -> None:
         """Wire the cone eagerly (drivers created, resources not yet acquired)."""
         self._members: list[tuple[str, Iterator[Any]]] = []
         self._closed = False
+        self._debug_config = debug_config
         self._export = self._build(plan, sources, target_name)
 
     def _build(
@@ -1074,7 +1081,14 @@ class _RunInstance:
                 continue
             spec = module.__pure_step__
             streams = {b.dst.field: edges[b.dst] for b in plan.bindings if b.dst.member == path}
-            gen = run_over(module, spec, streams, tf=tfs.get(path), hooks=RunHooks())
+            gen = run_over(
+                module,
+                spec,
+                streams,
+                tf=tfs.get(path),
+                hooks=RunHooks(),
+                debug=_member_debug_session(self._debug_config, path, module),
+            )
             self._members.append((path, gen))
             member_sinks = [
                 (ref.field, sink)
@@ -1113,11 +1127,16 @@ class _TerminalRun:
     """
 
     def __init__(
-        self, plan: GraphPlan, sources: Mapping[str, Any], records: Sequence[tuple[str, PortRef]]
+        self,
+        plan: GraphPlan,
+        sources: Mapping[str, Any],
+        records: Sequence[tuple[str, PortRef]],
+        debug_config: Any = None,
     ) -> None:
         """Wire the union cone eagerly (drivers created, resources not yet acquired)."""
         self._members: list[tuple[str, Iterator[Any]]] = []
         self._closed = False
+        self._debug_config = debug_config
         self.record_iters: dict[str, Iterator[Any]] = self._build(plan, sources, records)
 
     def _build(
@@ -1163,7 +1182,14 @@ class _TerminalRun:
                 continue
             spec = module.__pure_step__
             streams = {b.dst.field: edges[b.dst] for b in plan.bindings if b.dst.member == path}
-            gen = run_over(module, spec, streams, tf=tfs.get(path), hooks=RunHooks())
+            gen = run_over(
+                module,
+                spec,
+                streams,
+                tf=tfs.get(path),
+                hooks=RunHooks(),
+                debug=_member_debug_session(self._debug_config, path, module),
+            )
             self._members.append((path, gen))
             member_sinks = [
                 (ref.field, sink)
@@ -1208,6 +1234,23 @@ def _tee_members(
     return list(zip(sinks, tee(gen, len(sinks)), strict=True))
 
 
+def _member_debug_session(debug_config: Any, path: str, module: Any) -> Any:
+    """T15 seam: a per-member DebugSession (or None) for the graph's run_over calls.
+
+    Explicit ``.debug(config)`` scopes capture to its matched members; without
+    it, ``session_for`` consults ``DIMOS_PURE_DEBUG``. Member paths are the T13
+    dot-separated member paths the graph mints (spec §C7/§C9).
+    """
+    from dimos.pure import debugrec  # lazy: sanctioned recorder edge (engine-level)
+
+    if debug_config is not None:
+        rule = debugrec.resolve_debug(debug_config, path)
+        if rule is None:
+            return None  # explicit config: an unmatched member is off, no env fallback
+        return debugrec.session_for(module, path=path, debug=rule)
+    return debugrec.session_for(module, path=path, debug=None)  # env-driven default
+
+
 class EdgeStream:
     """A re-iterable exported output; each iteration is a fresh bounded run (spec §0.2)."""
 
@@ -1236,6 +1279,18 @@ class GraphRun(Generic[_TOut]):
         self._live: list[_RunInstance] = []
         self._terminals: list[_TerminalRun] = []
         self._closed = False
+        self._debug: Any = None  # T15: coerced DebugConfig from .debug(), else env-driven
+
+    def debug(self, config: bool | str | Any = True) -> GraphRun[_TOut]:
+        """Enable T15 capture for this run's members (spec §Toggle & API: graph.over(...).debug(...)).
+
+        ``config`` is any ``over(debug=)`` value (bool / grammar string / ``pm.Debug`` /
+        rule tuples); default ``True`` = decisions everywhere. Returns self.
+        """
+        from dimos.pure import debugrec  # lazy: sanctioned recorder edge
+
+        self._debug = debugrec.coerce_debug(config)
+        return self
 
     def __getattr__(self, name: str) -> EdgeStream:
         """Exported rim output as a stream; a non-export is a plain AttributeError."""
@@ -1248,7 +1303,7 @@ class GraphRun(Generic[_TOut]):
 
     def _drive(self, export_name: str) -> Iterator[Any]:
         """Spawn a bounded run for one export, tearing it down when the caller stops."""
-        inst = _RunInstance(self._plan, self._sources, export_name)
+        inst = _RunInstance(self._plan, self._sources, export_name, self._debug)
         self._live.append(inst)
         try:
             yield from inst.export()
@@ -1311,7 +1366,7 @@ class GraphRun(Generic[_TOut]):
         records: list[tuple[str, PortRef]] = list(self._plan.exports)
         for path, name in record.items():
             records.append((name, self._producer_ref(path)))
-        run = _TerminalRun(self._plan, self._sources, records)
+        run = _TerminalRun(self._plan, self._sources, records, self._debug)
         self._terminals.append(run)
         try:
             streams = {name: store.stream(name, self._out_type(name)) for name, _ in records}
@@ -1350,7 +1405,7 @@ class GraphRun(Generic[_TOut]):
             if src in produced:
                 records[src] = produced[src]
                 mapping[fld] = src
-        run = _TerminalRun(self._plan, self._sources, list(records.items()))
+        run = _TerminalRun(self._plan, self._sources, list(records.items()), self._debug)
         self._terminals.append(run)
         try:
             streams = {fld: run.record_iters[src] for fld, src in mapping.items()}
@@ -1441,7 +1496,7 @@ def _lower_blueprint(cls: type[Any], namespace: str | None, config: Mapping[str,
     stream topic. Lazy imports: this is the one ``dimos.core`` edge (spec §1).
     """
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.pure.legacy import legacy_blueprint
+    from dimos.pure.legacy import TF_IN_STREAM, legacy_blueprint
 
     ns = namespace or snake_case(cls.__name__)
     plan = build_graph(cast("Any", cls)(**config))
@@ -1482,6 +1537,11 @@ def _lower_blueprint(cls: type[Any], namespace: str | None, config: Mapping[str,
             remaps[_key(dst_member), b.dst.field] = topic
             if b.src not in export_by_ref:  # unexported producer path-qualifies its topic
                 remaps[_key(b.src.member), b.src.field] = topic
+
+    # T14: tf is one global rail (like the legacy TF service's topic), so members'
+    # tf_in stays bare — namespacing it would point the pin at a topic nobody publishes.
+    if any(s.name == TF_IN_STREAM for bp in atoms for atom in bp.blueprints for s in atom.streams):
+        expose.add(TF_IN_STREAM)
 
     entries = [(inst, old, new) for (inst, old), new in remaps.items()]
     return autoconnect(*atoms).remappings(entries).namespace(ns, expose=sorted(expose))

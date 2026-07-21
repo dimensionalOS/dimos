@@ -38,6 +38,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from dimos.pure.debugrec import Debug
     from dimos.pure.tfbuffer import TfSource
 
 __all__ = [
@@ -234,23 +235,44 @@ class EngineSurface:
 
     @overload
     def over(
-        self: AsyncStateless[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+        self: AsyncStateless[_TIn, _TOut],
+        *,
+        tf: TfSource | None = None,
+        debug: bool | str | Debug | None = None,
+        **streams: Streamable,
     ) -> Iterator[_TOut]: ...
     @overload
     def over(
-        self: Mealy[_TState, _TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+        self: Mealy[_TState, _TIn, _TOut],
+        *,
+        tf: TfSource | None = None,
+        debug: bool | str | Debug | None = None,
+        **streams: Streamable,
     ) -> Iterator[_TOut]: ...
     @overload
     def over(
-        self: Stateless[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+        self: Stateless[_TIn, _TOut],
+        *,
+        tf: TfSource | None = None,
+        debug: bool | str | Debug | None = None,
+        **streams: Streamable,
     ) -> Iterator[_TOut]: ...
     @overload
     def over(
-        self: Fold[_TIn, _TOut], *, tf: TfSource | None = None, **streams: Streamable
+        self: Fold[_TIn, _TOut],
+        *,
+        tf: TfSource | None = None,
+        debug: bool | str | Debug | None = None,
+        **streams: Streamable,
     ) -> Iterator[_TOut]: ...
-    def over(self: Any, *, tf: Any = None, **streams: Streamable) -> Iterator[Any]:
+    def over(
+        self: Any, *, tf: Any = None, debug: Any = None, **streams: Streamable
+    ) -> Iterator[Any]:
         """Align streams, drive the step, yield typed Out rows (T5 + T6)."""
+        from dimos.pure.debugrec import session_for  # lazy: sanctioned recorder edge
         from dimos.pure.drivers import run_over  # lazy: sanctioned edge #2
         from dimos.pure.stepspec import step_spec  # lazy: sanctioned edge #1
 
-        return run_over(self, step_spec(type(self)), streams, tf=tf)
+        return run_over(
+            self, step_spec(type(self)), streams, tf=tf, debug=session_for(self, debug=debug)
+        )

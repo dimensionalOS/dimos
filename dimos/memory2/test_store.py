@@ -627,3 +627,40 @@ class TestStoreLifecycle:
         # Backend always registers its components, so _disposables is always set
         assert backend._disposables is not None
         assert backend._disposables.is_disposed
+
+
+class TestDottedStreamNames:
+    """T15 relaxation: dot-separated stream names round-trip end to end.
+
+    ``validate_identifier`` allows ``.`` so a debug store can namespace streams
+    by module path (``nav_stack.voxel_mapper2.decisions``). Every SQL site that
+    names a stream quotes the identifier, so a dotted name is one atom — this
+    exercises the base table, the rtree/blob derived tables, and delete_stream.
+    """
+
+    def test_dotted_stream_roundtrip(self, sqlite_session: SqliteStore) -> None:
+        """Create, append with explicit ts, read back, and delete a dotted stream."""
+        name = "nav_stack.voxel_mapper2.decisions"
+        s = sqlite_session.stream(name, dict)
+        s.append({"seq": 0}, ts=1.0)
+        s.append({"seq": 1}, ts=2.0)
+        assert name in sqlite_session.list_streams()
+        assert [obs.data for obs in sqlite_session.stream(name, dict)] == [{"seq": 0}, {"seq": 1}]
+
+        raw = "nav_stack.voxel_mapper2.raw.pose"
+        rs = sqlite_session.stream(raw, dict)
+        rs.append({"x": 1}, ts=3.0)
+        assert [obs.data for obs in sqlite_session.stream(raw, dict)] == [{"x": 1}]
+
+        sqlite_session.delete_stream(name)
+        assert name not in sqlite_session.list_streams()
+        assert raw in sqlite_session.list_streams()  # sibling untouched
+
+    def test_invalid_stream_names_still_rejected(self) -> None:
+        """A slash, a leading/trailing/doubled dot, or an empty segment still raises."""
+        from dimos.memory2.utils.validation import validate_identifier
+
+        validate_identifier("a.b.c")  # dotted is now legal
+        for bad in ("a/b", ".a", "a.", "a..b", "", "a-b", "1a.b"):
+            with pytest.raises(ValueError, match="Invalid stream name"):
+                validate_identifier(bad)

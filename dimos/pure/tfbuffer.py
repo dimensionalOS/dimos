@@ -37,10 +37,11 @@ import threading
 from typing import Any, Final, TypeAlias, TypeVar
 
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.pure.align import AlignmentError, PortStats
+from dimos.pure.align import _FUTURE_TS_OUTLIER_S, AlignmentError, PortStats
 from dimos.pure.interpolators import interp_transform
 from dimos.pure.rows import TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepSpec
+from dimos.utils.logging_config import setup_logger
 
 __all__ = [
     "DEFAULT_TF_HORIZON",
@@ -59,6 +60,8 @@ __all__ = [
 
 DEFAULT_TF_HORIZON: Final[float] = 10.0
 """Per-edge retention window in data-time seconds (tf.py ``buffer_size`` parity)."""
+
+_LOG: Final = setup_logger()  # reachable in forkserver workers (bare getLogger is swallowed)
 
 STATIC_OWNER: Final[str] = "<static>"
 """Writer-registry owner token for statics (spec §4.4)."""
@@ -567,9 +570,24 @@ class TfContext:
         except StopIteration:
             self.stream = None
             return False
+        # TEMPORARY — Go2 firmware bug, the tf twin of the aligner ports' guard: a
+        # corrupt stamp ~75 days in the future would latch the frontier (a running
+        # max — advance_past and the tick hold stop pulling forever) AND evict the
+        # whole edge history via the horizon window, expiring every later good
+        # sample. Drop the item WITHOUT latching. Remove with the aligner's guard.
+        ts = _item_max_ts(item)
+        if math.isfinite(self._frontier) and ts > self._frontier + _FUTURE_TS_OUTLIER_S:
+            _LOG.warning(
+                "dropping tf item with implausible future ts (Go2 firmware bug)",
+                ts=ts,
+                frontier=self._frontier,
+                ahead_s=ts - self._frontier,
+            )
+            self.port_stats.dropped_nonmonotonic += 1
+            return True
         self.buffer.ingest(item)  # data errors raise here (spec §6.2, §10 D-family)
         self.port_stats.accepted += 1
-        self._frontier = max(self._frontier, _item_max_ts(item))
+        self._frontier = max(self._frontier, ts)
         return True
 
     def advance_past(self, ts: float) -> None:
@@ -580,6 +598,11 @@ class TfContext:
     def pull(self) -> bool:
         """Pull + ingest one tf item; False once the stream is exhausted (spec §6.3)."""
         return self._pull_one()
+
+    @property
+    def frontier(self) -> float:
+        """Running-max ts of every ingested tf item (-inf before the first)."""
+        return self._frontier
 
     def resolve_field(self, name: str, at: float) -> Transform | None:
         """Resolve one tf() field's declared chain at ``at`` (spec §6.4)."""

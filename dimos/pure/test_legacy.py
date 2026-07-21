@@ -49,6 +49,9 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, RemoteOut, Transport
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.pure import graph as pg, rim
 from dimos.pure.legacy import legacy_actor, legacy_blueprint
 from dimos.pure.stepspec import PureModuleDefinitionError
@@ -96,6 +99,47 @@ class EchoGraph(pg.PureGraph):
 
     def wire(self, i: EchoGraph.In) -> EchoGraph.Out:
         return EchoGraph.Out(echo=PureEcho()(ping=i.ping).echo)
+
+
+class PureTfConsumer(pm.PureModule):
+    """T14: a REQUIRED tf() port — unresolvable through the bridge before tf_in existed."""
+
+    class In(pm.In):
+        ping: Ping = pm.tick()
+        pose: Transform = pm.tf("world", "base")  # required: no default=
+
+    class Out(pm.Out):
+        echo: Ping = pm.contract(min_hz=1)
+
+    def step(self, i: In) -> Out:
+        return PureTfConsumer.Out(echo=Ping(ts=i.ts, v=i.pose.translation.x))
+
+
+class PureTfOptional(pm.PureModule):
+    """Optional tf: legal inside a graph without an in-graph tf source."""
+
+    class In(pm.In):
+        ping: Ping = pm.tick()
+        pose: Transform | None = pm.tf("world", "base", default=None)
+
+    class Out(pm.Out):
+        echo: Ping = pm.contract(min_hz=1)
+
+    def step(self, i: In) -> Out:
+        return PureTfOptional.Out(echo=i.ping)
+
+
+class TfGraph(pg.PureGraph):
+    """A graph around a tf consumer: tf_in must survive the namespace boundary bare."""
+
+    class In(pm.In):
+        ping: Ping
+
+    class Out(pm.Out):
+        echo: Ping
+
+    def wire(self, i: TfGraph.In) -> TfGraph.Out:
+        return TfGraph.Out(echo=PureTfOptional()(ping=i.ping).echo)
 
 
 PROBE_LOG: list[str] = []
@@ -465,6 +509,53 @@ class TestDeployPath:
         # __name__); legacy.py defines no 'PureEcho' symbol, so it fails LOUDLY:
         with pytest.raises(AttributeError):
             getattr(sys.modules[a.__module__], a.__name__)
+
+
+# ── T14: tf as an ordinary subscribed input (tasks/t14-tf-standard-input.md) ─
+
+
+def _tf_sample(ts: float, x: float) -> Transform:
+    t = Transform(translation=Vector3(x, 0.0, 0.0), frame_id="world", child_frame_id="base", ts=ts)
+    t.ts = ts  # the ctor swaps an explicit ts=0.0 for wall clock
+    return t
+
+
+class TestTfInput:
+    def test_actor_exposes_tf_in_and_no_tf_field_stream(self) -> None:
+        a = legacy_actor(PureTfConsumer)
+        hints = get_type_hints(a)
+        assert hints["tf_in"] == In[TFMessage]
+        # the tf() FIELD is a side channel, never its own topic:
+        assert "pose" not in hints
+
+    def test_blueprint_pins_tf_in_to_the_tf_topic(self) -> None:
+        bp = legacy_blueprint(PureTfConsumer)
+        transport = bp.transport_map[("tf_in", TFMessage)]
+        assert "tf" in str(getattr(transport, "topic", None))
+
+    def test_graph_keeps_tf_in_bare_across_the_namespace(self) -> None:
+        bp = TfGraph.blueprint()
+        assert ("tf_in", TFMessage) in bp.transport_map  # unprefixed: the shared tf rail
+        assert {s.name for a in bp.blueprints for s in a.streams} >= {"tf_in"}
+        assert not any(new == "tf_graph/tf_in" for new in bp.remapping_map.values())
+
+    def test_required_tf_port_resolves_and_emits(self) -> None:
+        """The regression: before tf_in, m.i.tf was never bound → every tick dropped."""
+        inst = legacy_actor(PureTfConsumer)(g=GlobalConfig(viewer="none"))
+        tin, ttf, tout = FakeLegacyTransport(), FakeLegacyTransport(), FakeLegacyTransport()
+        try:
+            inst.set_transport("ping", tin)
+            inst.set_transport("tf_in", ttf)
+            inst.set_transport("echo", tout)
+            inst.build()
+            inst.start()
+            # tf must bracket the tick ts (no extrapolation) and carry the frontier past it.
+            ttf.broadcast(None, TFMessage(_tf_sample(0.0, 1.0), _tf_sample(2.0, 3.0)))
+            tin.broadcast(None, Ping(ts=1.0, v=0.0))
+            wait_for(lambda: len(tout.sent) == 1)
+            assert tout.sent[0].v == pytest.approx(2.0)  # interpolated at ts=1.0
+        finally:
+            inst.stop()
 
 
 # ── the acceptance bar (spec §13.4): blueprint e2e over real workers ─────────

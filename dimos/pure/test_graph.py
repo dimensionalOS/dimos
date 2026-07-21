@@ -825,7 +825,7 @@ class TestTerminalDrive:
         assert FOLDY_FINALIZED == [1]
 
 
-# ── data-marked: the example_hk_nav DAG as a real graph (spec §9 acceptance 3) ─
+# ── data-marked: the hk nav DAG as a real graph (spec §9 acceptance 3) ─
 
 
 def _hk_data(name):
@@ -838,7 +838,7 @@ def _hk_data(name):
 
 
 class TestNavStackPort:
-    """NavStack (example_hk_nav respelled as a graph) matches the hand wiring."""
+    """NavStack (the hk nav DAG as a graph) matches the hand wiring."""
 
     def test_over_matches_hand_chaining(self):
         from itertools import tee as _tee

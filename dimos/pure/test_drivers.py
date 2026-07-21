@@ -127,7 +127,7 @@ def _stub_align(monkeypatch, rows_ret):
     """Install a fake dimos.pure.align; returns the recorded (in_type, streams) calls."""
     calls: list[tuple[type, dict]] = []
 
-    def align(in_type, streams, *, tf=None):
+    def align(in_type, streams, *, tf=None, on_decision=None):
         calls.append((in_type, dict(streams)))
         return iter(rows_ret)
 

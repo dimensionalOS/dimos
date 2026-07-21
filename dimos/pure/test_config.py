@@ -84,6 +84,7 @@ def test_canonical_model_dump():
     # Sketch §5c verbatim: THE canonical serialization, declaration-ordered.
     c = _go2()(prefix="go2a", robot_ip="192.168.12.1")
     assert c.config.model_dump() == {
+        "health_hz": 1.0,  # T9: the engine health cadence knob, inherited by every module
         "prefix": "go2a",
         "robot_ip": "192.168.12.1",
         "odom_timeout": 0.5,
@@ -152,7 +153,7 @@ def test_machinery_members_are_not_fields():
             raise NotImplementedError
 
     fields = Mapper.__pure_config_model__.model_fields
-    assert set(fields) == {"voxel_size"}
+    assert set(fields) == {"voxel_size", "health_hz"}  # T9: inherited engine knob
     for bad in ("Payload", "helper", "LIMIT"):
         with pytest.raises(ValidationError):
             Mapper(**{bad: 1})
@@ -245,8 +246,9 @@ def test_model_dump_declaration_order_with_inheritance():
         gamma: int = 3
         alpha: int = 99  # override: new default, ORIGINAL position
 
-    assert list(Child().config.model_dump()) == ["alpha", "beta", "gamma"]
-    assert Child().config.model_dump() == {"alpha": 99, "beta": 2, "gamma": 3}
+    # T9: health_hz is a PureModuleConfig base field, so it leads the declaration order.
+    assert list(Child().config.model_dump()) == ["health_hz", "alpha", "beta", "gamma"]
+    assert Child().config.model_dump() == {"health_hz": 1.0, "alpha": 99, "beta": 2, "gamma": 3}
 
 
 def test_shape_subclass_inherits_and_extends_fields():
@@ -261,7 +263,7 @@ def test_shape_subclass_inherits_and_extends_fields():
 
     m = HeightCostMapper(resolution=0.2)
     assert m.resolution == 0.2 and m.max_height == 0.35
-    assert list(m.config.model_dump()) == ["resolution", "max_height"]
+    assert list(m.config.model_dump()) == ["health_hz", "resolution", "max_height"]  # T9 base field
 
 
 def test_voxelgridmapper_style_construction():
@@ -288,7 +290,11 @@ def test_voxelgridmapper_style_construction():
 
     m = VoxelGridMapper(emit_every=2)
     assert m.voxel_size == 0.05 and m.emit_every == 2
-    assert set(VoxelGridMapper.__pure_config_model__.model_fields) == {"voxel_size", "emit_every"}
+    assert set(VoxelGridMapper.__pure_config_model__.model_fields) == {
+        "voxel_size",
+        "emit_every",
+        "health_hz",  # T9: inherited engine knob
+    }
     spec = step_spec(VoxelGridMapper)
     assert spec.kind is StepKind.MEALY
     assert spec.state_type is VoxelGridMapper.State
@@ -325,7 +331,7 @@ def test_eq_is_class_scoped():
 
 def test_repr_shows_config():
     c = _go2()(prefix="go2a")
-    assert repr(c) == "Go2Connection(prefix='go2a', robot_ip=None, odom_timeout=0.5)"
+    assert repr(c) == "Go2Connection(health_hz=1.0, prefix='go2a', robot_ip=None, odom_timeout=0.5)"
 
 
 def test_reduce_rebuilds_from_config():

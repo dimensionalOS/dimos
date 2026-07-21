@@ -40,12 +40,18 @@ from dimos.pure.config import (
     FrozenModuleError,
     PureModuleConfig,
 )
+from dimos.pure.debugrec import (
+    Debug,
+    latest as debug_latest,
+    load as debug_load,
+)
 from dimos.pure.drivers import (
     PureModuleRunError,
     RunHooks,
     StepError,
     run_over,
 )
+from dimos.pure.health import Health
 from dimos.pure.module import PureModule
 from dimos.pure.resources import resource
 from dimos.pure.rows import (
@@ -96,10 +102,12 @@ __all__ = [
     "BundleDefinitionError",
     "ConfigFieldError",
     "ContractSpec",
+    "Debug",
     "EngineSurface",
     "FieldSpec",
     "Fold",
     "FrozenModuleError",
+    "Health",
     "In",
     "InPort",
     "InPorts",
@@ -127,6 +135,8 @@ __all__ = [
     "TickSpec",
     "align",
     "contract",
+    "debug_latest",
+    "debug_load",
     "interpolate",
     "latest",
     "register_interpolator",

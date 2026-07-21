@@ -457,6 +457,36 @@ class TestOverIntegration:
         rows = list(Follower().over(odom=[S(ts=0.5, v=0.0), S(ts=2.0, v=0.0)], tf=tf_stream))
         assert len(rows) == 1  # tick at 2.0 has no right bracket, stream exhausted: drop
 
+    def test_pre_stream_tick_does_not_drain_the_hold(self) -> None:
+        # A tick stamped BEFORE the first tf sample can never resolve (no
+        # extrapolation). The hold must give up once the frontier is a horizon
+        # past it — NOT drain the whole tf stream into the eviction window and
+        # starve every later tick of its brackets (default horizon: 10 s).
+        from dimos.pure.test_align import S
+
+        Follower = self._consumer()
+        ticks = [S(ts=0.5, v=0.0), S(ts=12.0, v=0.0), S(ts=44.0, v=0.0)]
+        tf_stream = [_tfm("world", "base", float(t), x=float(t)) for t in range(1, 46)]
+        rows = list(Follower().over(odom=ticks, tf=tf_stream))
+        # the pre-stream tick drops; both later ticks keep their brackets
+        assert [r.x for r in rows] == [pytest.approx(12.0), pytest.approx(44.0)]
+
+    def test_future_ts_outlier_tf_item_dropped(self) -> None:
+        # Go2 firmware bug twin (aligner ports already guard): one corrupt
+        # far-future tf stamp must not latch the frontier or evict the edge's
+        # good history — the tick after it still resolves.
+        from dimos.pure.test_align import S
+
+        Follower = self._consumer()
+        tf_stream = [
+            _tfm("world", "base", 1.0, x=1.0),
+            _tfm("world", "base", 2.0, x=2.0),
+            _tfm("world", "base", 2.0 + 75 * 86400.0, x=99.0),  # corrupt: ~75 days ahead
+            _tfm("world", "base", 3.0, x=3.0),
+        ]
+        rows = list(Follower().over(odom=[S(ts=2.5, v=0.0)], tf=tf_stream))
+        assert [r.x for r in rows] == [pytest.approx(2.5)]  # bracketed by the good 2.0/3.0
+
     def test_optional_tf_defaults_without_holding(self) -> None:
         from dimos.msgs.geometry_msgs.Transform import Transform
         from dimos.pure.test_align import S

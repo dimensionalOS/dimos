@@ -154,6 +154,10 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 
+from dimos.pure.cli import pure_app
+
+main.add_typer(pure_app, name="pure")
+
 
 def arg_help(
     config: type[BaseModel],
