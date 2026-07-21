@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import os
 import platform
 import re
@@ -30,6 +31,13 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
+
+# Zenoh multicast discovery is partitioned by port: the domain string hashes to a
+# port in [BASE, BASE+SPAN). Different domains land on different ports and never
+# discover each other, so machines with different domains don't collide.
+ZENOH_MULTICAST_GROUP = "224.0.0.224"
+ZENOH_MULTICAST_PORT_BASE = 10000
+ZENOH_MULTICAST_PORT_SPAN = 50000
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -84,6 +92,13 @@ class GlobalConfig(BaseSettings):
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
+    # Partitions zenoh's multicast discovery so machines don't collide on shared
+    # topics. Defaults to this machine's hostname, so each machine gets its own
+    # partition. Set the same DIMOS_ZENOH_DOMAIN on machines that SHOULD share.
+    zenoh_domain: str = Field(
+        default_factory=platform.node,
+        validation_alias=AliasChoices("DIMOS_ZENOH_DOMAIN", "zenoh_domain"),
+    )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True
@@ -106,6 +121,12 @@ class GlobalConfig(BaseSettings):
             if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
+
+    @property
+    def zenoh_multicast_address(self) -> str:
+        digest = hashlib.sha256(self.zenoh_domain.encode()).digest()
+        offset = int.from_bytes(digest[:4], "big") % ZENOH_MULTICAST_PORT_SPAN
+        return f"{ZENOH_MULTICAST_GROUP}:{ZENOH_MULTICAST_PORT_BASE + offset}"
 
     @property
     def unitree_connection_type(self) -> str:

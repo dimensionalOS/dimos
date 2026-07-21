@@ -18,8 +18,10 @@ import json
 import threading
 from typing import Any
 
+from pydantic import Field
 import zenoh
 
+from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -28,14 +30,21 @@ zenoh.init_log_from_env_or("warn")
 logger = setup_logger()
 
 
+def _default_multicast_address() -> str:
+    return global_config.zenoh_multicast_address
+
+
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
+    # Multicast discovery group+port. Partitioned per zenoh_domain so machines
+    # on different domains never discover each other (see GlobalConfig).
+    multicast_address: str = Field(default_factory=_default_multicast_address)
     connect: list[str] = []
     listen: list[str] = []
 
     @property
     def session_key(self) -> str:
-        return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
+        return f"{self.mode}|{self.multicast_address}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
 
 
 class ZenohSessionPool:
@@ -50,6 +59,9 @@ class ZenohSessionPool:
             if key not in self._sessions:
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
+                zconfig.insert_json5(
+                    "scouting/multicast/address", json.dumps(config.multicast_address)
+                )
                 if config.connect:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
