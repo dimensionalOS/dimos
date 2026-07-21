@@ -138,7 +138,7 @@ class ViserManipulationVisualizer:
             self.close()
             raise
 
-    def add_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         """Render an accepted obstacle without changing planner state."""
         if self._closed:
             return
@@ -146,11 +146,11 @@ class ViserManipulationVisualizer:
         if self._scene is None:
             return
         try:
-            self._scene.add_obstacle(obstacle_id, obstacle)
+            self._scene.add_vis_obstacle(obstacle_id, obstacle)
         except Exception:
             logger.exception("Could not visualize manipulation obstacle %s", obstacle_id)
 
-    def remove_obstacle(self, obstacle_id: str) -> None:
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Remove the visual representation for an accepted obstacle ID."""
         if self._closed:
             return
@@ -158,11 +158,11 @@ class ViserManipulationVisualizer:
         if self._scene is None:
             return
         try:
-            self._scene.remove_obstacle(obstacle_id)
+            self._scene.remove_vis_obstacle(obstacle_id)
         except Exception:
             logger.exception("Could not remove manipulation obstacle visualization %s", obstacle_id)
 
-    def clear_obstacles(self) -> None:
+    def clear_vis_obstacles(self) -> None:
         """Remove all manipulation obstacle representations."""
         if self._closed:
             return
@@ -170,7 +170,7 @@ class ViserManipulationVisualizer:
         if self._scene is None:
             return
         try:
-            self._scene.clear_obstacles()
+            self._scene.clear_vis_obstacles()
         except Exception:
             logger.exception("Could not clear manipulation obstacle visualization")
 

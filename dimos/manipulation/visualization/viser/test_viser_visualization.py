@@ -768,9 +768,9 @@ def test_scene_renders_obstacle_primitives_with_pose_and_fallback_appearance() -
     scene = ViserManipulationScene(
         server, lambda *args, **kwargs: FakeUrdf(("j1",)), preview_fps=10.0
     )
-    scene.add_obstacle("box-1", make_obstacle(ObstacleType.BOX, (1.0, 2.0, 3.0)))
-    scene.add_obstacle("sphere-1", make_obstacle(ObstacleType.SPHERE, (0.5,)))
-    scene.add_obstacle("cylinder-1", make_obstacle(ObstacleType.CYLINDER, (0.25, 1.0)))
+    scene.add_vis_obstacle("box-1", make_obstacle(ObstacleType.BOX, (1.0, 2.0, 3.0)))
+    scene.add_vis_obstacle("sphere-1", make_obstacle(ObstacleType.SPHERE, (0.5,)))
+    scene.add_vis_obstacle("cylinder-1", make_obstacle(ObstacleType.CYLINDER, (0.25, 1.0)))
 
     assert [handle.name.split(":", 1)[0] for handle in server.entities[-3:]] == [
         "box",
@@ -783,13 +783,13 @@ def test_scene_renders_obstacle_primitives_with_pose_and_fallback_appearance() -
 
     explicit_color = make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0))
     explicit_color.color = (0.1, 0.8, 0.3, 0.35)
-    scene.add_obstacle("explicit-color", explicit_color)
+    scene.add_vis_obstacle("explicit-color", explicit_color)
     assert server.entities[-1].kwargs["color"] == (26, 204, 76)
     assert server.entities[-1].kwargs["opacity"] == 0.35
 
     invalid_color = make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0))
     invalid_color.color = (float("nan"), 0.0, 0.0, 0.5)
-    scene.add_obstacle("fallback", invalid_color)
+    scene.add_vis_obstacle("fallback", invalid_color)
     assert server.entities[-1].kwargs["color"] == (55, 190, 210)
     assert server.entities[-1].kwargs["opacity"] == 0.55
 
@@ -800,7 +800,7 @@ def test_scene_mesh_failure_keeps_proxy_label_and_visibility_state() -> None:
         server, lambda *args, **kwargs: FakeUrdf(("j1",)), preview_fps=10.0
     )
     scene.set_obstacles_visible(False)
-    scene.add_obstacle("mesh-1", make_obstacle(ObstacleType.MESH))
+    scene.add_vis_obstacle("mesh-1", make_obstacle(ObstacleType.MESH))
 
     mesh_failure_entities = [handle for handle in server.entities if "mesh-1" in handle.name]
     assert len(mesh_failure_entities) == 2
@@ -808,9 +808,9 @@ def test_scene_mesh_failure_keeps_proxy_label_and_visibility_state() -> None:
     assert any("mesh-failure-proxy" in handle.name for handle in mesh_failure_entities)
     assert any("mesh-failure-label" in handle.name for handle in mesh_failure_entities)
 
-    scene.add_obstacle("mesh-2", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
+    scene.add_vis_obstacle("mesh-2", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
     assert server.entities[-1].visible is False
-    scene.remove_obstacle("mesh-1")
+    scene.remove_vis_obstacle("mesh-1")
     assert all(handle.removed for handle in mesh_failure_entities)
 
 
@@ -819,10 +819,10 @@ def test_scene_clear_obstacles_removes_all_obstacle_entities() -> None:
     scene = ViserManipulationScene(
         server, lambda *args, **kwargs: FakeUrdf(("j1",)), preview_fps=10.0
     )
-    scene.add_obstacle("first", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
-    scene.add_obstacle("second", make_obstacle(ObstacleType.SPHERE, (0.5,)))
+    scene.add_vis_obstacle("first", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
+    scene.add_vis_obstacle("second", make_obstacle(ObstacleType.SPHERE, (0.5,)))
 
-    scene.clear_obstacles()
+    scene.clear_vis_obstacles()
 
     assert all(handle.removed for handle in server.entities)
 
@@ -837,14 +837,14 @@ def test_obstacle_toggle_exists_when_panel_is_disabled_and_late_callback_is_safe
     toggle = server.checkboxes["manipulation.obstacles"]
     assert toggle.value is True
     assert toggle.update_callback is not None
-    scene.add_obstacle("visible", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
+    scene.add_vis_obstacle("visible", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
     toggle.update_callback(SimpleNamespace(target=SimpleNamespace(value=False)))
     visible_entity = server.entities[-1]
     assert visible_entity.visible is False
     scene.close()
     toggle.update_callback(SimpleNamespace(target=SimpleNamespace(value=True)))
     entity_count = len(server.entities)
-    scene.add_obstacle("late", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
+    scene.add_vis_obstacle("late", make_obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0)))
     assert len(server.entities) == entity_count
 
 
@@ -858,7 +858,7 @@ def test_successful_mesh_rendering_uses_native_mesh_handle(tmp_path: Path) -> No
     obstacle = make_obstacle(ObstacleType.MESH)
     obstacle.mesh_path = str(mesh_path)
 
-    scene.add_obstacle("mesh-ok", obstacle)
+    scene.add_vis_obstacle("mesh-ok", obstacle)
 
     assert server.entities[-1].name.startswith("mesh:/manipulation/obstacles/mesh-ok")
 
@@ -874,7 +874,7 @@ def test_obstacle_mutations_and_close_are_safe_concurrently() -> None:
         try:
             for index in range(20):
                 scene.set_obstacles_visible(index % 2 == 0)
-                scene.add_obstacle(f"obstacle-{index}", make_obstacle(ObstacleType.BOX, (1, 1, 1)))
+                scene.add_vis_obstacle(f"obstacle-{index}", make_obstacle(ObstacleType.BOX, (1, 1, 1)))
         except BaseException as error:
             errors.append(error)
 

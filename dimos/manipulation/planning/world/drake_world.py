@@ -991,6 +991,18 @@ class DrakeWorld(WorldSpec):
         """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
         return None
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def clear_vis_obstacles(self) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         if self._meshcat is not None:

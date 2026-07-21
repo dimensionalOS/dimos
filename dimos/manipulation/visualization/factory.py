@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.visualization.config import (
@@ -29,65 +29,7 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.manipulation.planning.spec.models import (
-        JointPath,
-        Obstacle,
-        PlanningSceneInfo,
-        WorldRobotID,
-    )
     from dimos.manipulation.planning.spec.protocols import WorldSpec
-
-
-@runtime_checkable
-class _MeshcatVisualizationSource(Protocol):
-    """Native visualization operations exposed by a planning world."""
-
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None: ...
-    def get_visualization_url(self) -> str | None: ...
-    def publish_visualization(self, ctx: object | None = None) -> None: ...
-    def show_preview(self, robot_id: WorldRobotID) -> None: ...
-    def hide_preview(self, robot_id: WorldRobotID) -> None: ...
-    def animate_path(
-        self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0
-    ) -> None: ...
-    def close(self) -> None: ...
-
-
-class _MeshcatVisualizationAdapter:
-    """VisualizationSpec facade for worlds that render obstacles natively."""
-
-    def __init__(self, world: _MeshcatVisualizationSource) -> None:
-        self._world = world
-
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
-        self._world.initialize_scene(scene)
-
-    def add_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
-        return None
-
-    def remove_obstacle(self, obstacle_id: str) -> None:
-        return None
-
-    def clear_obstacles(self) -> None:
-        return None
-
-    def get_visualization_url(self) -> str | None:
-        return self._world.get_visualization_url()
-
-    def publish_visualization(self, ctx: object | None = None) -> None:
-        self._world.publish_visualization(ctx)
-
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        self._world.show_preview(robot_id)
-
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        self._world.hide_preview(robot_id)
-
-    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
-        self._world.animate_path(robot_id, path, duration)
-
-    def close(self) -> None:
-        self._world.close()
 
 
 def create_manipulation_visualization(
@@ -102,8 +44,8 @@ def create_manipulation_visualization(
         return None
 
     if isinstance(config, MeshcatVisualizationConfig):
-        if isinstance(world, _MeshcatVisualizationSource):
-            return _MeshcatVisualizationAdapter(world)
+        if isinstance(world, VisualizationSpec):
+            return world
         raise ValueError("meshcat visualization requires a world that implements VisualizationSpec")
 
     if isinstance(config, ViserVisualizationConfig):

@@ -126,12 +126,12 @@ class ViserManipulationScene:
                 for handle in handles:
                     self._set_handle_visibility(handle, self._obstacles_visible)
 
-    def add_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         """Render one accepted planner obstacle under the local obstacle namespace."""
         with self._lock:
             if self._closed:
                 return
-            self.remove_obstacle(obstacle_id)
+            self.remove_vis_obstacle(obstacle_id)
             position, wxyz = self._obstacle_pose(obstacle)
             color, opacity = self._obstacle_appearance(obstacle)
             path = f"{OBSTACLE_NAMESPACE}/{obstacle_id}"
@@ -217,7 +217,7 @@ class ViserManipulationScene:
                 handles.extend((proxy, label))
             self._obstacle_handles[obstacle_id] = handles
 
-    def remove_obstacle(self, obstacle_id: str) -> None:
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Remove every scene entity belonging to an obstacle ID."""
         with self._lock:
             if self._closed:
@@ -225,11 +225,11 @@ class ViserManipulationScene:
             for handle in self._obstacle_handles.pop(obstacle_id, []):
                 self._remove_scene_handle(handle)
 
-    def clear_obstacles(self) -> None:
+    def clear_vis_obstacles(self) -> None:
         """Remove every obstacle entity while retaining the robot scene."""
         with self._lock:
             for obstacle_id in list(self._obstacle_handles):
-                self.remove_obstacle(obstacle_id)
+                self.remove_vis_obstacle(obstacle_id)
 
     def _ensure_obstacle_control(self) -> None:
         """Create the one stable local obstacle control, independent of the panel."""

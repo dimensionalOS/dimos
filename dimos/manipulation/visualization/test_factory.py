@@ -65,13 +65,13 @@ class FakeVisualization:
     def close(self) -> None:
         return None
 
-    def add_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         return None
 
-    def remove_obstacle(self, obstacle_id: str) -> None:
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
         return None
 
-    def clear_obstacles(self) -> None:
+    def clear_vis_obstacles(self) -> None:
         return None
 
 
@@ -201,6 +201,15 @@ class FakeMeshcatWorld(FakeWorld):
     def close(self) -> None:
         self.visualization_calls.append(("close",))
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        self.visualization_calls.append(("add_vis_obstacle", obstacle_id, obstacle))
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        self.visualization_calls.append(("remove_vis_obstacle", obstacle_id))
+
+    def clear_vis_obstacles(self) -> None:
+        self.visualization_calls.append(("clear_vis_obstacles",))
+
 
 def test_config_defaults_to_no_visualization() -> None:
     config = ManipulationModuleConfig()
@@ -258,7 +267,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         world_monitor=world_monitor,
         manipulation_module=MagicMock(),
     )
-    assert visualization is not fake_world
+    assert visualization is fake_world
     assert isinstance(visualization, VisualizationSpec)
     scene = PlanningSceneInfo(robots={})
     obstacle = Obstacle(
@@ -275,9 +284,9 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     visualization.hide_preview("robot-1")
     visualization.animate_path("robot-1", path, 2.5)
     visualization.close()
-    visualization.add_obstacle("box", obstacle)
-    visualization.remove_obstacle("box")
-    visualization.clear_obstacles()
+    visualization.add_vis_obstacle("box", obstacle)
+    visualization.remove_vis_obstacle("box")
+    visualization.clear_vis_obstacles()
     assert fake_world.visualization_calls == [
         ("initialize_scene", scene),
         ("get_visualization_url",),
@@ -286,6 +295,9 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         ("hide_preview", "robot-1"),
         ("animate_path", "robot-1", path, 2.5),
         ("close",),
+        ("add_vis_obstacle", "box", obstacle),
+        ("remove_vis_obstacle", "box"),
+        ("clear_vis_obstacles",),
     ]
     assert fake_world.native_calls == []
 

@@ -117,7 +117,7 @@ class WorldMonitor:
             inserted = len(self._world.get_obstacles()) > obstacle_count
             if inserted and self._visualization is not None:
                 try:
-                    self._visualization.add_obstacle(obstacle_id, obstacle)
+                    self._visualization.add_vis_obstacle(obstacle_id, obstacle)
                 except Exception:
                     logger.exception("Obstacle visualization add failed for '%s'", obstacle_id)
             return obstacle_id
@@ -128,7 +128,7 @@ class WorldMonitor:
             removed = self._world.remove_obstacle(obstacle_id)
             if removed and self._visualization is not None:
                 try:
-                    self._visualization.remove_obstacle(obstacle_id)
+                    self._visualization.remove_vis_obstacle(obstacle_id)
                 except Exception:
                     logger.exception("Obstacle visualization remove failed for '%s'", obstacle_id)
             return removed
@@ -141,7 +141,7 @@ class WorldMonitor:
                 self.remove_obstacle(obstacle_id)
             if self._visualization is not None:
                 try:
-                    self._visualization.clear_obstacles()
+                    self._visualization.clear_vis_obstacles()
                 except Exception:
                     logger.exception("Obstacle visualization clear failed")
 

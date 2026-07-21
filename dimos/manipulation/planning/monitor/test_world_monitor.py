@@ -155,16 +155,16 @@ class FakeViz:
     def close(self) -> None:
         self.calls.append(("close", None))
 
-    def add_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         self.added_obstacles.append((obstacle_id, obstacle))
-        self.calls.append(("add_obstacle", obstacle_id, obstacle))
+        self.calls.append(("add_vis_obstacle", obstacle_id, obstacle))
 
-    def remove_obstacle(self, obstacle_id: str) -> None:
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
         self.removed_obstacles.append(obstacle_id)
-        self.calls.append(("remove_obstacle", obstacle_id))
+        self.calls.append(("remove_vis_obstacle", obstacle_id))
 
-    def clear_obstacles(self) -> None:
-        self.calls.append(("clear_obstacles",))
+    def clear_vis_obstacles(self) -> None:
+        self.calls.append(("clear_vis_obstacles",))
 
 
 def _robot_config() -> RobotModelConfig:
@@ -264,7 +264,7 @@ def test_world_monitor_clear_obstacles_forwards_removals_to_visualization() -> N
     monitor.clear_obstacles()
     assert fake_world.obstacles == {}
     assert fake_viz.removed_obstacles == ["first", "second"]
-    assert fake_viz.calls[-1] == ("clear_obstacles",)
+    assert fake_viz.calls[-1] == ("clear_vis_obstacles",)
 
 
 def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
