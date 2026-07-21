@@ -34,6 +34,7 @@ from booster_rpc import (  # type: ignore[import-not-found]
     RpcApiId,
 )
 import cv2
+import grpc  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.observable import Observable
 from reactivex.subject import Subject
@@ -48,7 +49,8 @@ logger = setup_logger()
 
 SEND_HZ = 30.0  # gRPC send rate to the robot, kept under booster-rpc's ~58/sec move ceiling
 CMD_VEL_TIMEOUT_S = 0.5  # dead-man: send one zero if no new command arrives within this window
-MODE_TRANSITION_TIMEOUT_S = 10.0  # give up if the robot never reports the requested mode
+MODE_TRANSITION_TIMEOUT_S = 15.0  # give up if the robot never reports the requested mode
+MODE_REQUEST_RETRY_S = 1.0  # the robot ignores mode requests while mid-motion, so re-issue
 MODE_POLL_S = 0.1
 
 
@@ -72,9 +74,11 @@ class BoosterRPCConnection:
         self._sender_done = Event()
         self._sender_done.set()
         self._send_failed = False
+        self._send_count = 0
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT_S
         self.send_hz = SEND_HZ
         self.mode_transition_timeout = MODE_TRANSITION_TIMEOUT_S
+        self.mode_request_retry = MODE_REQUEST_RETRY_S
 
     def stop(self) -> None:
         self._sender_stop.set()
@@ -142,6 +146,18 @@ class BoosterRPCConnection:
             # The robot rejects moves outside a locomotion mode ("Failed to move: code = 100").
             self._send_failed = True
             logger.warning("Booster move failed: %s: %s", type(e).__name__, e)
+        finally:
+            self._send_count += 1
+
+    def confirm_stop(self, timeout: float = 1.0) -> bool:
+        """Block until the queued zero command has been transmitted. False if rejected or unsent."""
+        target = self._send_count + 2
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._send_count >= target:
+                return not self._send_failed
+            time.sleep(1.0 / self.send_hz)
+        return False
 
     def standup(self) -> bool:
         """Arm the robot for walking; no-op if already WALKING.
@@ -149,6 +165,8 @@ class BoosterRPCConnection:
         Refuses modes outside {WALKING, DAMPING, PREPARE} rather than forcing an unsafe transition.
         """
         mode = self._get_mode()
+        if mode is None:
+            return False
         if mode == RobotMode.WALKING:
             return True
         if mode not in (RobotMode.DAMPING, RobotMode.PREPARE):
@@ -163,27 +181,40 @@ class BoosterRPCConnection:
         return self._change_mode(RobotMode.WALKING)
 
     def _change_mode(self, target: RobotMode) -> bool:
-        """Request `target` and wait until the robot reports it."""
-        with self._lock:
-            self._conn.change_mode(target)
+        """Request `target` until the robot reports it.
+
+        The robot silently ignores mode requests while it is still physically completing
+        the previous transition, so the request is re-issued while polling.
+        """
         start = time.monotonic()
         deadline = start + self.mode_transition_timeout
         while time.monotonic() < deadline:
-            if self._get_mode() == target:
-                logger.info(
-                    "Booster mode -> %s (confirmed in %.2fs)", target, time.monotonic() - start
-                )
-                return True
-            time.sleep(MODE_POLL_S)
+            try:
+                with self._lock:
+                    self._conn.change_mode(target)
+            except grpc.RpcError as e:
+                logger.warning("Booster change_mode(%s) failed: %s", target, e)
+            retry_at = min(time.monotonic() + self.mode_request_retry, deadline)
+            while time.monotonic() < retry_at:
+                if self._get_mode() == target:
+                    logger.info(
+                        "Booster mode -> %s (confirmed in %.2fs)", target, time.monotonic() - start
+                    )
+                    return True
+                time.sleep(MODE_POLL_S)
         logger.warning(
             "Booster mode %s not reached within %ss", target, self.mode_transition_timeout
         )
         return False
 
-    def _get_mode(self) -> RobotMode:
-        with self._lock:
-            mode: RobotMode = self._conn.get_mode()
-        return mode
+    def _get_mode(self) -> RobotMode | None:
+        try:
+            with self._lock:
+                mode: RobotMode = self._conn.get_mode()
+            return mode
+        except grpc.RpcError as e:
+            logger.warning("Booster get_mode failed: %s", e)
+            return None
 
     def sit(self) -> bool:
         with self._lock:

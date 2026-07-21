@@ -28,6 +28,7 @@ import pytest
 pytest.importorskip("booster_rpc")
 
 from booster_rpc import RobotMode
+import grpc
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -108,6 +109,17 @@ class TestSenderLoop:
         await asyncio.sleep(0.1)
         assert _sent(conn) == []  # no command -> never active -> nothing sent
 
+    async def test_confirm_stop_reports_delivered_zero(self, conn, start_sender):
+        conn.send_hz = 200.0
+        start_sender()
+        conn.move(_twist())  # queue a zero command
+        assert await asyncio.to_thread(conn.confirm_stop, 1.0) is True
+        assert (0.0, 0.0, 0.0) in _sent(conn)
+
+    def test_confirm_stop_false_when_sender_not_running(self, conn):
+        conn.move(_twist())
+        assert conn.confirm_stop(timeout=0.1) is False
+
 
 class TestStandup:
     def test_returns_true_when_already_walking(self, conn):
@@ -135,3 +147,17 @@ class TestStandup:
         conn._conn.get_mode.return_value = RobotMode.PREPARE  # never reaches WALKING
         assert conn.standup() is False
         conn._conn.change_mode.assert_called_once_with(RobotMode.WALKING)
+
+    def test_rerequests_mode_until_the_robot_accepts(self, conn):
+        # The robot ignores requests while mid-motion, accepting only a later re-request.
+        conn.mode_request_retry = 0.05
+        conn._conn.get_mode.side_effect = lambda: (
+            RobotMode.WALKING if conn._conn.change_mode.call_count >= 3 else RobotMode.PREPARE
+        )
+        assert conn.standup() is True
+        assert conn._conn.change_mode.call_count >= 3
+        assert all(c.args[0] == RobotMode.WALKING for c in conn._conn.change_mode.call_args_list)
+
+    def test_transport_error_returns_false_instead_of_raising(self, conn):
+        conn._conn.get_mode.side_effect = grpc.RpcError("transient")
+        assert conn.standup() is False

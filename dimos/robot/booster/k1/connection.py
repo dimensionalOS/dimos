@@ -178,13 +178,19 @@ class K1Connection(Module, Camera):
         if duration <= 0:
             return "Specify a positive duration (seconds). Compute it from the distance and speed."
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
+        zero = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
             self.move(twist)
             time.sleep(CMD_REFRESH_S)
-        self.move(Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)))
-        if self._connection.send_failed:
-            return "The robot rejected the move commands. Check that it is armed (mode WALKING)."
+            if self._connection.send_failed:
+                self.move(zero)
+                return (
+                    "The robot rejected the move commands. Check that it is armed (mode WALKING)."
+                )
+        self.move(zero)
+        if not self._connection.confirm_stop():
+            return "Sent movement commands but could not confirm the stop. Verify the robot halted."
         return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."
 
     @skill
