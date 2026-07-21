@@ -14,10 +14,9 @@
 
 """Declarative stream-binding cards for control tasks.
 
-Task manifests (``_registry.py``) stay import-free: they declare bindings as
-plain strings, and ``ControlTaskRegistry`` converts them to the typed forms
-here at load time. ``ControlCoordinator`` builds its stream route table from
-them when tasks are registered.
+A card says which coordinator input a task reads, and which method gets it:
+
+    TASK_CONSUMES = {"servo": {"joint_command": ("on_joint_command", "claim_overlap")}}
 """
 
 from __future__ import annotations
@@ -32,28 +31,16 @@ class Routing(str, Enum):
     CLAIM_OVERLAP = "claim_overlap"  # deliver when msg names joints the task claims
     BY_TASK_NAME = "by_task_name"  # deliver when msg.frame_id == task.name
     BROADCAST = "broadcast"  # deliver to every task consuming this stream
-
-
-CONSUMABLE_STREAMS = frozenset(
-    {
-        "joint_command",
-        "coordinator_cartesian_command",
-        "coordinator_ee_twist_command",
-        "gripper_command",
-        "twist_command",
-        "teleop_buttons",
-    }
-)
-"""Coordinator input ports that cards may bind."""
+    DIRECT = "direct"  # like broadcast, but the port is meant to have one task on it
 
 
 @dataclass(frozen=True)
 class StreamBinding:
     """One input stream a task consumes: coordinator port -> task handler.
 
-    ``handler`` names a method on the task instance with signature
-    ``(msg, t_now) -> Any``; the task receives the raw message and owns
-    digestion, the coordinator owns only routing.
+    ``stream`` names the port, unless ``TaskConfig.stream_bind`` remaps it.
+    ``handler`` is a task method ``(msg, t_now) -> Any``: it gets the raw
+    message and owns digestion, the coordinator owns only routing.
     """
 
     stream: str
