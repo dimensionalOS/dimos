@@ -105,7 +105,6 @@ dependencies = [
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
-    "yourdfpy>=0.0.60",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
     "reactivex",
@@ -281,6 +280,7 @@ manipulation = [
 
     # Visualization (Optional)
     "viser[urdf]>=1.0.29",
+    "yourdfpy>=0.0.60",
     "xacro",
 
     # Other
