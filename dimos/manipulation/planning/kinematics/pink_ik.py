@@ -144,7 +144,13 @@ class PinkIK:
             except ValueError as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
             except Exception as exc:
-                return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
+                # QP infeasibility can be seed-specific; let the remaining
+                # attempts retry from perturbed seeds instead of aborting.
+                if fallback_result is None:
+                    fallback_result = _failure(
+                        IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
+                    )
+                continue
 
             if not result.is_success() or result.joint_state is None:
                 if fallback_result is None:
