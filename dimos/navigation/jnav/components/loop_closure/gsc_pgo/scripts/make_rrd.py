@@ -22,17 +22,42 @@ Importable: `build(...)` writes the rrd and returns its path (used by post_proce
 Standalone: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH [--lidar=...] [--odom=...] [--tags=...] [--out=...]
 """
 
+import colorsys
 import json
 from pathlib import Path
 import sys
 
+import cv2
 from gtsam import Point3, Pose3, Rot3
 import numpy as np
 import rerun as rr
 
 from dimos.navigation.jnav.utils import recording_db as rdb
+from dimos.navigation.jnav.utils.apriltags import filter_glimpses, read_raw_tag_stream
+from dimos.navigation.jnav.utils.trajectory_metrics import nearest_index
 
 SCAN_STRIDE, VOXEL = 8, 0.10
+TAG_SIZE_M = 0.10  # matches post_process --tag-size default
+TAG_DICT = "DICT_APRILTAG_36h11"
+TAG_IMAGE_PX = 200  # 36h11 incl. border is 10 modules; render each as 20 px
+# marker-frame corners (OpenCV aruco: x right, y up, z out), texcoord order TL TR BR BL
+TAG_CORNERS = np.array(
+    [
+        [-TAG_SIZE_M / 2, TAG_SIZE_M / 2, 0.0],
+        [TAG_SIZE_M / 2, TAG_SIZE_M / 2, 0.0],
+        [TAG_SIZE_M / 2, -TAG_SIZE_M / 2, 0.0],
+        [-TAG_SIZE_M / 2, -TAG_SIZE_M / 2, 0.0],
+    ]
+)
+
+
+def tag_image(marker_id):
+    """RGB bitmap of the actual AprilTag, for texturing its 3D placement."""
+    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, TAG_DICT))
+    grayscale = cv2.aruco.generateImageMarker(dictionary, marker_id, TAG_IMAGE_PX)
+    return np.repeat(grayscale[:, :, None], 3, axis=2)
+
+
 COLORS = {"raw": [220, 60, 60]}
 PALETTE = [
     [60, 120, 230],
@@ -42,8 +67,69 @@ PALETTE = [
     [80, 220, 220],
     [240, 130, 60],
 ]
-# same relaxed gates post_process uses, for placing landmark markers
-GATE = dict(s=25.0, r=3.5, px=12.0, d=1.5, a=65.0, lv=1.5, av=150.0)
+# relaxed vs the detection defaults: landmarks are display markers, not PGO factors
+LANDMARK_GATES = dict(
+    min_sharpness=25.0,
+    max_reproj_px=3.5,
+    min_tag_px=12.0,
+    max_distance_m=1.5,
+    max_view_angle_deg=65.0,
+    max_linear_speed_mps=1.5,
+    max_angular_speed_dps=150.0,
+)
+
+
+def cli_arg(flag, default=""):
+    """``--flag=value`` lookup in sys.argv."""
+    return next(
+        (item.split("=", 1)[1] for item in sys.argv if item.startswith(flag + "=")), default
+    )
+
+
+Z_GRADIENT_PERCENTILES = (2.0, 98.0)  # clip outlier floors/ceilings out of the color range
+GRADIENT_DARK = 0.3  # gradient start: this fraction of the stream color
+GRADIENT_LIGHT = 0.7  # gradient end: blended this far toward white
+
+
+def shade(base_color, t):
+    """Colors along the dark->light gradient of ``base_color`` at fractions ``t`` in [0, 1]."""
+    base = np.asarray(base_color, float)
+    dark = base * GRADIENT_DARK
+    light = base + (255.0 - base) * GRADIENT_LIGHT
+    return (dark + (light - dark) * np.asarray(t, float)[:, None]).astype(np.uint8)
+
+
+def z_gradient_colors(points, base_color):
+    """Per-point colors: the stream color shaded dark (low z) to light (high z)."""
+    z_values = points[:, 2]
+    low, high = np.percentile(z_values, Z_GRADIENT_PERCENTILES)
+    return shade(base_color, np.clip((z_values - low) / ((high - low) or 1.0), 0.0, 1.0))
+
+
+TRAJECTORY_DARK = 0.45  # gradient start: this fraction of the full-vibrance color
+
+
+def vibrant(base_color):
+    """The fully-saturated pure hue of ``base_color`` (so paths pop against the muted clouds)."""
+    red, green, blue = (channel / 255.0 for channel in base_color)
+    hue, _lightness, _saturation = colorsys.rgb_to_hls(red, green, blue)
+    return [round(channel * 255) for channel in colorsys.hls_to_rgb(hue, 0.5, 1.0)]
+
+
+def gradient_trajectory(positions, base_color):
+    """(segments, colors) for a path shaded dark (start) to full vibrance (finish)."""
+    segments = np.stack([positions[:-1], positions[1:]], axis=1)
+    t = np.linspace(0.0, 1.0, len(segments))[:, None]
+    full = np.asarray(vibrant(base_color), float)
+    return segments, (full * (TRAJECTORY_DARK + (1.0 - TRAJECTORY_DARK) * t)).astype(np.uint8)
+
+
+def pose3_from_xyzquat(xyzquat):
+    """(x, y, z, qx, qy, qz, qw) -> Pose3."""
+    return Pose3(
+        Rot3.Quaternion(xyzquat[6], xyzquat[3], xyzquat[4], xyzquat[5]),
+        Point3(xyzquat[0], xyzquat[1], xyzquat[2]),
+    )
 
 
 def build(
@@ -53,18 +139,13 @@ def build(
     tag_stream="raw_april_tags",
     out_name="corrected_compare.rrd",
 ):
-    recording_dir = Path(rec).expanduser()
-    db_path = recording_dir / "mem2.db"
+    rec_path = Path(rec).expanduser()
+    db_path = rec_path / "mem2.db" if rec_path.is_dir() else rec_path
+    recording_dir = db_path.parent
     out_path = recording_dir / out_name
     store = rdb.store(db_path)
     intrinsics = json.loads((recording_dir / "camera_intrinsics.json").read_text())
-    optical_in_base = np.array(intrinsics["optical_in_base"], float)
-    base_to_optical = Pose3(
-        Rot3.Quaternion(
-            optical_in_base[6], optical_in_base[3], optical_in_base[4], optical_in_base[5]
-        ),
-        Point3(optical_in_base[0], optical_in_base[1], optical_in_base[2]),
-    )
+    base_to_optical = pose3_from_xyzquat(np.array(intrinsics["optical_in_base"], float))
 
     def accumulate(stream_name):
         scans = []
@@ -81,138 +162,116 @@ def build(
         return all_points[unique_indices]
 
     def traj(stream_name):
-        return np.array(
-            [
-                [
-                    observation.data.pose.position.x,
-                    observation.data.pose.position.y,
-                    observation.data.pose.position.z,
-                ]
-                for observation in store.stream(stream_name)
-            ],
-            np.float32,
-        )
+        return rdb.odometry_rows(db_path, stream_name)[:, 1:4].astype(np.float32)
 
     def landmarks(gt_odom):
-        odom_poses = [
-            (
-                observation.ts,
-                Pose3(
-                    Rot3.Quaternion(
-                        observation.data.pose.orientation.w,
-                        observation.data.pose.orientation.x,
-                        observation.data.pose.orientation.y,
-                        observation.data.pose.orientation.z,
-                    ),
-                    Point3(
-                        observation.data.pose.position.x,
-                        observation.data.pose.position.y,
-                        observation.data.pose.position.z,
-                    ),
-                ),
-            )
-            for observation in store.stream(gt_odom)
-        ]
-        odom_timestamps = np.array([timestamp for timestamp, _ in odom_poses])
+        odom_rows = rdb.odometry_rows(db_path, gt_odom)
+        detections = filter_glimpses(
+            read_raw_tag_stream(store, tag_stream), exclude_tags=(), **LANDMARK_GATES
+        )
         positions_by_marker = {}
-        for tag_observation in store.stream(tag_stream):
-            tag_metrics = tag_observation.tags
-            if not (
-                float(tag_metrics["sharpness"]) >= GATE["s"]
-                and float(tag_metrics["reproj_px"]) <= GATE["r"]
-                and float(tag_metrics["tag_px"]) >= GATE["px"]
-                # older tag streams lack distance/view-angle; unknown passes the gate
-                and float(tag_metrics.get("distance_m", 0.0)) <= GATE["d"]
-                and float(tag_metrics.get("view_angle_deg", 0.0)) <= GATE["a"]
-                and (
-                    float(tag_metrics["lin_speed"]) < 0
-                    or float(tag_metrics["lin_speed"]) <= GATE["lv"]
-                )
-                and (
-                    float(tag_metrics["ang_speed"]) < 0
-                    or float(tag_metrics["ang_speed"]) <= GATE["av"]
-                )
-            ):
-                continue
-            tag_pose = tag_observation.data
-            closest_base_pose = odom_poses[
-                int(np.argmin(np.abs(odom_timestamps - float(tag_observation.ts))))
-            ][1]
-            tag_in_world = closest_base_pose.compose(base_to_optical).compose(
-                Pose3(
-                    Rot3.Quaternion(
-                        tag_pose.orientation.w,
-                        tag_pose.orientation.x,
-                        tag_pose.orientation.y,
-                        tag_pose.orientation.z,
-                    ),
-                    Point3(tag_pose.x, tag_pose.y, tag_pose.z),
-                )
+        best_by_marker = {}  # lowest-reproj detection: its rotation orients the tag square
+        for detection in detections:
+            base_pose = pose3_from_xyzquat(
+                odom_rows[nearest_index(odom_rows[:, 0], detection["ts"])][1:]
             )
-            positions_by_marker.setdefault(int(tag_metrics["marker_id"]), []).append(
+            tag_in_world = base_pose.compose(base_to_optical).compose(
+                pose3_from_xyzquat(detection["t_cam_marker"])
+            )
+            marker_id = detection["marker_id"]
+            positions_by_marker.setdefault(marker_id, []).append(
                 np.asarray(tag_in_world.translation())
             )
-        mean_positions = [
-            np.mean(positions, 0) for marker_id, positions in sorted(positions_by_marker.items())
-        ]
-        labels = [f"tag{marker_id}" for marker_id in sorted(positions_by_marker)]
-        return np.array(mean_positions), labels
+            if (
+                marker_id not in best_by_marker
+                or detection["reproj_px"] < best_by_marker[marker_id][0]
+            ):
+                best_by_marker[marker_id] = (detection["reproj_px"], tag_in_world)
+        marker_ids = sorted(positions_by_marker)
+        mean_positions = [np.mean(positions_by_marker[mid], 0) for mid in marker_ids]
+        rotations = [np.asarray(best_by_marker[mid][1].rotation().matrix()) for mid in marker_ids]
+        return np.array(mean_positions), rotations, marker_ids
 
     streams = store.list_streams()
     corrected_lidars = sorted(
         stream_name
         for stream_name in streams
-        if "_corrected" in stream_name and "_lidar" in stream_name
+        if "_corrected" in stream_name and "lidar" in stream_name
     )
     print("raw + corrected lidar streams:", corrected_lidars)
 
     rr.init("corrected_compare")
     rr.save(str(out_path))
+    raw_cloud = accumulate(lidar_stream)
     rr.log(
         "raw/cloud",
-        rr.Points3D(accumulate(lidar_stream), colors=COLORS["raw"], radii=0.02),
+        rr.Points3D(raw_cloud, colors=z_gradient_colors(raw_cloud, COLORS["raw"]), radii=0.02),
         static=True,
     )
+    raw_segments, raw_traj_colors = gradient_trajectory(traj(odom_stream), [255, 120, 120])
     rr.log(
-        "raw/trajectory", rr.LineStrips3D([traj(odom_stream)], colors=[255, 120, 120]), static=True
+        "raw/trajectory",
+        rr.LineStrips3D(raw_segments, colors=raw_traj_colors),
+        static=True,
     )
     for lidar_index, lidar_name in enumerate(corrected_lidars):
         color = PALETTE[lidar_index % len(PALETTE)]
         cloud = accumulate(lidar_name)
-        rr.log(f"{lidar_name}/cloud", rr.Points3D(cloud, colors=color, radii=0.02), static=True)
+        rr.log(
+            f"{lidar_name}/cloud",
+            rr.Points3D(cloud, colors=z_gradient_colors(cloud, color), radii=0.02),
+            static=True,
+        )
         print(f"  logged {lidar_name}: {len(cloud):,} pts")
-        odom_name = lidar_name.replace("_lidar", "_odometry")
-        if odom_name in streams:
+        odom_candidates = [lidar_name.replace("lidar", stem) for stem in ("odometry", "odom")]
+        odom_name = next((name for name in odom_candidates if name in streams), "")
+        if odom_name:
+            segments, traj_colors = gradient_trajectory(traj(odom_name), color)
             rr.log(
                 f"{lidar_name}/trajectory",
-                rr.LineStrips3D([traj(odom_name)], colors=color),
+                rr.LineStrips3D(segments, colors=traj_colors),
                 static=True,
             )
     # landmarks placed against the first available corrected odometry
     corrected_odoms = sorted(
         stream_name
         for stream_name in streams
-        if "_corrected" in stream_name and "_odometry" in stream_name
+        if "_corrected" in stream_name and "odom" in stream_name
     )
     if corrected_odoms:
-        landmark_positions, labels = landmarks(corrected_odoms[0])
-        if len(landmark_positions):
+        landmark_positions, landmark_rotations, marker_ids = landmarks(corrected_odoms[0])
+        for center, rotation, marker_id in zip(
+            landmark_positions, landmark_rotations, marker_ids, strict=True
+        ):
+            vertices = TAG_CORNERS @ rotation.T + center
             rr.log(
-                "landmarks",
-                rr.Points3D(landmark_positions, colors=[255, 230, 0], radii=0.25, labels=labels),
+                f"landmarks/tag{marker_id}",
+                rr.Mesh3D(
+                    vertex_positions=vertices,
+                    triangle_indices=[[0, 1, 2], [0, 2, 3]],
+                    vertex_texcoords=[[0, 0], [1, 0], [1, 1], [0, 1]],
+                    albedo_texture=tag_image(marker_id),
+                ),
                 static=True,
             )
-            print(f"  logged {len(labels)} landmarks")
+        if marker_ids:
+            rr.log(
+                "landmarks/labels",
+                rr.Points3D(
+                    landmark_positions,
+                    colors=[255, 230, 0],
+                    radii=0.005,
+                    labels=[f"tag{marker_id}" for marker_id in marker_ids],
+                ),
+                static=True,
+            )
+            print(f"  logged {len(marker_ids)} landmarks")
     print("wrote", out_path)
     return out_path
 
 
-def _arg(flag, default=None):
-    return next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith(flag + "=")), default)
-
-
 if __name__ == "__main__":
-    rec_arg = _arg("--rec")
+    rec_arg = cli_arg("--rec")
     if not rec_arg:
         sys.exit(
             "usage: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH [--lidar=...] [--odom=...] "
@@ -220,8 +279,8 @@ if __name__ == "__main__":
         )
     build(
         rec_arg,
-        lidar_stream=_arg("--lidar", "pointlio_lidar"),
-        odom_stream=_arg("--odom", "pointlio_odometry"),
-        tag_stream=_arg("--tags", "raw_april_tags"),
-        out_name=_arg("--out", "corrected_compare.rrd"),
+        lidar_stream=cli_arg("--lidar", "pointlio_lidar"),
+        odom_stream=cli_arg("--odom", "pointlio_odometry"),
+        tag_stream=cli_arg("--tags", "raw_april_tags"),
+        out_name=cli_arg("--out", "corrected_compare.rrd"),
     )

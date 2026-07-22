@@ -66,7 +66,7 @@ from dimos.protocol.tf.static_tf_publisher import (
 
 CAMERA_ANGLE_UP = math.radians(10)
 
-# Mid-360 box: pitched down from bottom_screw_frame, then offset back/up in that frame
+# Mid-360 box: pitched down from camera_bottom_screw_frame, then offset back/up in that frame
 BOX_PITCH_DOWN = math.radians(26) + CAMERA_ANGLE_UP
 BOX_BACK = 0.085
 BOX_UP = 0.037  # ~4cm up
@@ -96,25 +96,32 @@ IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
 # The physical mount tree (parent -> child). The gravity-flat "world" helper frame from
 # the offline tooling is omitted here — during recording, world comes from odometry.
+# RealSense frames carry the driver's ``camera_`` prefix (see RealSenseCamera / the
+# realsense2_camera driver); the Mid-360 branch keeps mid360_link (what Point-LIO stamps).
 FRAMES: list[FrameSpec] = [
-    ("bottom_screw_frame", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("link", "bottom_screw_frame", (MESH_X_OFFSET, DEPTH_PY, DEPTH_PZ), (0.0, 0.0, 0.0)),
-    ("depth_frame", "link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("depth_optical_frame", "depth_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("infra1_frame", "link", (0.0, DEPTH_TO_INFRA1_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("infra1_optical_frame", "infra1_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("infra2_frame", "link", (0.0, DEPTH_TO_INFRA2_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("infra2_optical_frame", "infra2_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("color_frame", "link", (0.0, DEPTH_TO_COLOR_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("color_optical_frame", "color_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("accel_frame", "link", IMU_XYZ, (0.0, 0.0, 0.0)),
-    ("accel_optical_frame", "accel_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("gyro_frame", "link", IMU_XYZ, (0.0, 0.0, 0.0)),
-    ("gyro_optical_frame", "gyro_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("box_pitch_frame", "bottom_screw_frame", (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
+    ("camera_bottom_screw_frame", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    (
+        "camera_link",
+        "camera_bottom_screw_frame",
+        (MESH_X_OFFSET, DEPTH_PY, DEPTH_PZ),
+        (0.0, 0.0, 0.0),
+    ),
+    ("camera_depth_frame", "camera_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("camera_depth_optical_frame", "camera_depth_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("camera_infra1_frame", "camera_link", (0.0, DEPTH_TO_INFRA1_OFFSET, 0.0), (0.0, 0.0, 0.0)),
+    ("camera_infra1_optical_frame", "camera_infra1_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("camera_infra2_frame", "camera_link", (0.0, DEPTH_TO_INFRA2_OFFSET, 0.0), (0.0, 0.0, 0.0)),
+    ("camera_infra2_optical_frame", "camera_infra2_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("camera_color_frame", "camera_link", (0.0, DEPTH_TO_COLOR_OFFSET, 0.0), (0.0, 0.0, 0.0)),
+    ("camera_color_optical_frame", "camera_color_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("camera_accel_frame", "camera_link", IMU_XYZ, (0.0, 0.0, 0.0)),
+    ("camera_accel_optical_frame", "camera_accel_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("camera_gyro_frame", "camera_link", IMU_XYZ, (0.0, 0.0, 0.0)),
+    ("camera_gyro_optical_frame", "camera_gyro_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    ("box_pitch_frame", "camera_bottom_screw_frame", (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
     ("box_center", "box_pitch_frame", (-BOX_BACK, 0.0, BOX_UP), (0.0, 0.0, 0.0)),
-    ("lidar_frame", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
-    ("imu_frame", "lidar_frame", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
+    ("mid360_link", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
+    ("imu_frame", "mid360_link", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
 ]
 
 

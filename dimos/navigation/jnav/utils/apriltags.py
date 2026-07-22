@@ -680,6 +680,55 @@ def detect_raw_detections(
     return raw_detections, speed_available, len(images)
 
 
+def glimpse_passes(
+    detection: Detection,
+    *,
+    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
+    max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG,
+    min_sharpness: float = DEFAULT_MIN_SHARPNESS,
+    max_reproj_px: float = DEFAULT_MAX_REPROJ_PX,
+    min_tag_px: float = DEFAULT_MIN_TAG_PX,
+    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
+    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
+) -> str | None:
+    """None when a glimpse passes every per-glimpse quality gate, else the rejection reason."""
+    if detection["sharpness"] < min_sharpness:
+        return "blur"
+    if detection["reproj_px"] > max_reproj_px:
+        return "reproj"
+    if detection["tag_px"] < min_tag_px:
+        return "small"
+    distance, view_angle = view_quality(detection["t_cam_marker"])
+    if distance > max_distance_m:
+        return "far"
+    if view_angle > max_view_angle_deg:
+        return "oblique"
+    speed = detection["speed"]
+    if speed is not None and (speed[0] > max_linear_speed_mps or speed[1] > max_angular_speed_dps):
+        return "motion"
+    return None
+
+
+def filter_glimpses(
+    raw_detections: list[Detection],
+    *,
+    exclude_tags: Iterable[int] = (),
+    **thresholds: float,
+) -> list[Detection]:
+    """Per-glimpse gating with NO clustering: every clean sighting survives, annotated
+    with distance_m / view_angle_deg for downstream quality weighting."""
+    excluded = set(exclude_tags)
+    kept: list[Detection] = []
+    for detection in raw_detections:
+        if detection["marker_id"] in excluded:
+            continue
+        if glimpse_passes(detection, **thresholds) is not None:
+            continue
+        distance_m, view_angle_deg = view_quality(detection["t_cam_marker"])
+        kept.append({**detection, "distance_m": distance_m, "view_angle_deg": view_angle_deg})
+    return kept
+
+
 def gate_detections(
     raw_detections: list[Detection],
     *,
@@ -699,27 +748,18 @@ def gate_detections(
     rejected: dict[str, int] = defaultdict(int)
     kept: list[Detection] = []
     for detection in raw_detections:
-        if detection["sharpness"] < min_sharpness:
-            rejected["blur"] += 1
-            continue
-        if detection["reproj_px"] > max_reproj_px:
-            rejected["reproj"] += 1
-            continue
-        if detection["tag_px"] < min_tag_px:
-            rejected["small"] += 1
-            continue
-        distance, view_angle = view_quality(detection["t_cam_marker"])
-        if distance > max_distance_m:
-            rejected["far"] += 1
-            continue
-        if view_angle > max_view_angle_deg:
-            rejected["oblique"] += 1
-            continue
-        speed = detection["speed"]
-        if speed is not None and (
-            speed[0] > max_linear_speed_mps or speed[1] > max_angular_speed_dps
-        ):
-            rejected["motion"] += 1
+        reason = glimpse_passes(
+            detection,
+            max_distance_m=max_distance_m,
+            max_view_angle_deg=max_view_angle_deg,
+            min_sharpness=min_sharpness,
+            max_reproj_px=max_reproj_px,
+            min_tag_px=min_tag_px,
+            max_linear_speed_mps=max_linear_speed_mps,
+            max_angular_speed_dps=max_angular_speed_dps,
+        )
+        if reason is not None:
+            rejected[reason] += 1
             continue
         kept.append(detection)
 
@@ -769,6 +809,75 @@ def _write_tag_stream(
             pose=tuple(pose),
             tags=tags,
         )
+
+
+def read_raw_tag_stream(store: Any, stream_name: str) -> list[Detection]:
+    """Read a persisted raw tag stream back into ``detect_raw_detections``-shaped dicts."""
+    detections: list[Detection] = []
+    for observation in store.stream(stream_name):
+        pose = observation.data
+        tags = observation.tags
+        lin_speed = float(tags.get("lin_speed", -1.0))
+        ang_speed = float(tags.get("ang_speed", -1.0))
+        detections.append(
+            {
+                "ts": float(observation.ts),
+                "marker_id": int(tags["marker_id"]),
+                "t_cam_marker": [
+                    pose.x,
+                    pose.y,
+                    pose.z,
+                    pose.orientation.x,
+                    pose.orientation.y,
+                    pose.orientation.z,
+                    pose.orientation.w,
+                ],
+                "sharpness": float(tags["sharpness"]),
+                "reproj_px": float(tags["reproj_px"]),
+                "tag_px": float(tags["tag_px"]),
+                "speed": None if lin_speed < 0 else (lin_speed, ang_speed),
+            }
+        )
+    return detections
+
+
+def ensure_raw_tag_stream(
+    store: Any,
+    intrinsics_json: dict[str, Any] | None,
+    *,
+    raw_stream: str = "raw_april_tags",
+    image_stream: str = "color_image",
+    marker_length: float = 0.10,
+    dictionary: str = "DICT_APRILTAG_36h11",
+) -> bool:
+    """Detect + persist the unfiltered tag stream when absent; returns whether it exists.
+
+    ``intrinsics_json`` is the parsed camera_intrinsics.json (or None when the recording
+    has no camera, in which case nothing can be detected)."""
+    if raw_stream in store.list_streams():
+        return True
+    if intrinsics_json is None or image_stream not in store.list_streams():
+        return False
+    print(
+        f"{raw_stream} missing -- detecting AprilTags over {image_stream} "
+        f"(tag_size={marker_length} m, dict={dictionary})...",
+        flush=True,
+    )
+    camera_matrix = np.array(intrinsics_json["intrinsics"], float).reshape(3, 3)
+    distortion = np.array(intrinsics_json.get("distortion", []), float)
+    raw_detections, _, n_images = detect_raw_detections(
+        store,
+        camera_matrix,
+        distortion,
+        image_stream=image_stream,
+        marker_length=marker_length,
+        dictionary=dictionary,
+    )
+    _write_tag_stream(store, raw_stream, raw_detections, diagnostics=True)
+    print(
+        f"wrote {raw_stream}: {len(raw_detections)} detections over {n_images} images", flush=True
+    )
+    return True
 
 
 def write_april_streams(

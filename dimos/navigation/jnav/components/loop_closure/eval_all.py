@@ -20,7 +20,7 @@ to eval_results/comparison.md. A failed module doesn't stop the rest.
 
 Usage:
     uv run python dimos/navigation/jnav/components/loop_closure/eval_all.py \\
-        --db-path ~/datasets/go2_recordings/<recording>/mem2.db \\
+        --db-path ~/datasets/RECORDINGS_DIR/<recording>/mem2.db \\
         [--camera-intrinsics-json-path <path>]   # default: sidecar next to db
         [--only gsc_pgo,ivan_pgo]                # subset by directory name
         [--with-rrd true] [--lockstep true]

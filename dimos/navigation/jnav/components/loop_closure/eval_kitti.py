@@ -37,7 +37,7 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.navigation.jnav.components.loop_closure.eval import run_module_graph
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay import run_module_graph
 from dimos.navigation.jnav.utils.kitti import kitti_odometry_error
 from dimos.navigation.jnav.utils.module_loading import (
     filter_config_for_module,
