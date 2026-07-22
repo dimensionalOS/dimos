@@ -62,7 +62,11 @@ def render_surface_map(
     tight = np.array([4.0, 8.0, 48.0])
     open_ = np.array([150.0, 200.0, 255.0])
     colors = (tight + norm[:, None] * (open_ - tight)).astype(np.uint8)
-    return rr.Points3D(positions=pts, colors=colors, radii=voxel_size / 2)
+    return rr.Points3D(
+        positions=pts,
+        colors=colors,
+        radii=voxel_size * 0.5,
+    )
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
@@ -98,7 +102,7 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
         ]
         for p1, p2 in msg._segments
     ]
-    return rr.LineStrips3D(strips, colors=colors, radii=[0.04] * len(strips))
+    return rr.LineStrips3D(strips, colors=colors, radii=[0.01] * len(strips))
 
 
 def planner_visual_override(
