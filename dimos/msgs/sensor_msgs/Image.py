@@ -392,7 +392,7 @@ class Image(Timestamped):
     def brightness(self) -> float:
         """Return mean brightness in [0, 1].
 
-        Strides to ~256px on the long edge first — ~O(N/step²) cheaper than
+        Strides to ~256 pixels on the long edge first — ~O(N/step²) cheaper than
         reading every pixel, and the mean converges quickly (CLT).
         """
         max_val = 65535.0 if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16) else 255.0
@@ -403,8 +403,8 @@ class Image(Timestamped):
     def sharpness(self) -> float:
         """Return sharpness score.
 
-        Downsamples to ~160px wide before computing Laplacian variance
-        for fast evaluation (~10-20x cheaper than full-res Sobel).
+        Downsamples to ~160 pixels wide before computing Laplacian variance
+        for fast evaluation (~10-20x cheaper than full-res :brand:`Sobel`).
         """
         gray = self.to_grayscale().data
         # Downsample to ~160px wide for cheap evaluation

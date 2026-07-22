@@ -68,7 +68,7 @@ class DisabledModuleProxy:
 @dataclass(frozen=True)
 class StreamRef:
     name: str
-    type: type
+    msg_type: type
     direction: Literal["in", "out"]
 
 
@@ -123,7 +123,7 @@ class BlueprintAtom:
                 direction = "in" if origin == In else "out"
                 type_ = get_args(annotation)[0]
                 streams.append(
-                    StreamRef(name=name, type=type_, direction=direction)  # type: ignore[arg-type]
+                    StreamRef(name=name, msg_type=type_, direction=direction)  # type: ignore[arg-type]
                 )
             # linking to unknown module via Spec
             elif is_spec(annotation):
@@ -291,7 +291,7 @@ class Blueprint:
 
         Stream names listed in *expose* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary:
+        namespace boundary::
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud

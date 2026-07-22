@@ -467,21 +467,22 @@ tests-self-hosted = [
     "pybind11>=2.12",
 ]
 
-# Sphinx documentation. Installs the project (autodoc imports dimos modules) plus
-# the extras needed to import the documented modules: `agents` for the MCP client,
-# `web` for the MCP server.
+# Sphinx documentation. One group with everything the docs build needs: Sphinx, the
+# spelling checker, and the project itself (autodoc imports dimos modules) with the
+# extras to import the documented modules — `agents` for the MCP client, `web` for the
+# MCP server. Gated to the single build interpreter (3.12); spelling is additionally
+# gated to non-Windows because pyenchant needs the native enchant library (conf.py
+# loads the spelling extension only when it imports cleanly, so an HTML-only build
+# without enchant, e.g. Read the Docs, simply skips it).
 docs = [
-    # Docs are only ever built on the single build interpreter (3.12), so gate the
-    # toolchain to it rather than constraining it to the project's 3.10 floor.
-    "sphinx; python_version >= '3.12'",
-    "dimos[agents,web]",
-]
-
-# `docs` plus the spelling checker. Gated to non-Windows because pyenchant needs
-# the native enchant library. Mirrors aiohttp's doc.in / doc-spelling.in split.
-docs-spelling = [
-    {include-group = "docs"},
+    # Pinned <9: Sphinx 9's autodoc can't import the langchain stack (its importer
+    # trips pydantic ``__pydantic_extra__`` schema generation on langchain's
+    # ``BaseMessage``), and its stricter cross-reference resolution splits
+    # ``Literal[...]`` and large field-default annotations into invalid references.
+    # Revisit for the ``.. autotype::`` directive once those are fixed upstream.
+    "sphinx<9; python_version >= '3.12'",
     "sphinxcontrib-spelling; platform_system != 'Windows' and python_version >= '3.12'",
+    "dimos[agents,web]",
 ]
 
 [tool.uv]

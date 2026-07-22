@@ -47,7 +47,7 @@ logger = setup_logger()
 
 
 class ActorFuture:
-    """Mimics Dask's ActorFuture - wraps a result with .result() method."""
+    """Mimics :brand:`Dask`'s :class:`~distributed.ActorFuture` - wraps a result with a ``.result()`` method."""
 
     def __init__(self, value: Any) -> None:
         self._value = value

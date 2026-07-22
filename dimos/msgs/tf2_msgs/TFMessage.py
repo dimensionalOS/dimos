@@ -132,12 +132,11 @@ class TFMessage:
         origin while keeping TF visualization isolated from semantic entities
         like `world/robot/...`.
 
-        Returns:
-            List of (entity_path, rr.Transform3D) tuples
-
         Example:
-            for path, transform in tf_msg.to_rerun():
-                rr.log(path, transform)
+            .. code-block:: python
+
+                for path, transform in tf_msg.to_rerun():
+                    rr.log(path, transform)
         """
         results: RerunMulti = []
         for transform in self.transforms:

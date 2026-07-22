@@ -90,8 +90,8 @@ def test_get_connection_set() -> None:
     assert BlueprintAtom.create(CatModule, kwargs={"k": "v"}) == BlueprintAtom(
         module=CatModule,
         streams=(
-            StreamRef(name="pet_cat", type=Petting, direction="in"),
-            StreamRef(name="scratches", type=Scratch, direction="out"),
+            StreamRef(name="pet_cat", msg_type=Petting, direction="in"),
+            StreamRef(name="scratches", msg_type=Scratch, direction="out"),
         ),
         module_refs=(),
         kwargs={"k": "v"},
@@ -106,8 +106,8 @@ def test_autoconnect() -> None:
             BlueprintAtom(
                 module=ModuleA,
                 streams=(
-                    StreamRef(name="data1", type=Data1, direction="out"),
-                    StreamRef(name="data2", type=Data2, direction="out"),
+                    StreamRef(name="data1", msg_type=Data1, direction="out"),
+                    StreamRef(name="data2", msg_type=Data2, direction="out"),
                 ),
                 module_refs=(),
                 kwargs={},
@@ -115,9 +115,9 @@ def test_autoconnect() -> None:
             BlueprintAtom(
                 module=ModuleB,
                 streams=(
-                    StreamRef(name="data1", type=Data1, direction="in"),
-                    StreamRef(name="data2", type=Data2, direction="in"),
-                    StreamRef(name="data3", type=Data3, direction="out"),
+                    StreamRef(name="data1", msg_type=Data1, direction="in"),
+                    StreamRef(name="data2", msg_type=Data2, direction="in"),
+                    StreamRef(name="data3", msg_type=Data3, direction="out"),
                 ),
                 module_refs=(ModuleRef(name="module_a", spec=ModuleA),),
                 kwargs={},
@@ -169,11 +169,11 @@ def test_future_annotations_support() -> None:
     # Test that streams are properly extracted from modules with future annotations
     out_blueprint = BlueprintAtom.create(FutureModuleOut, kwargs={})
     assert len(out_blueprint.streams) == 1
-    assert out_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="out")
+    assert out_blueprint.streams[0] == StreamRef(name="data", msg_type=FutureData, direction="out")
 
     in_blueprint = BlueprintAtom.create(FutureModuleIn, kwargs={})
     assert len(in_blueprint.streams) == 1
-    assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
+    assert in_blueprint.streams[0] == StreamRef(name="data", msg_type=FutureData, direction="in")
 
 
 def test_autoconnect_merges_disabled_modules() -> None:

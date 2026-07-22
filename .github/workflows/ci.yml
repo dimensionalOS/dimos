@@ -244,7 +244,7 @@ jobs:
       - name: Install enchant (pyenchant needs the native C library)
         run: sudo apt-get update && sudo apt-get install -y libenchant-2-2
       - name: Install docs dependencies
-        run: uv sync --only-group docs-spelling --frozen
+        run: uv sync --only-group docs --frozen
       - name: Build HTML docs (strict)
         run: uv run make -C docs html
       - name: Check docs spelling

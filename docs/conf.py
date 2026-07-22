@@ -37,6 +37,7 @@ github_repo_url = f"{github_url}/{github_repo_slug}"
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",  # parse the Google-style ``Args:``/``Returns:`` docstrings
     "sphinx.ext.extlinks",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
@@ -47,6 +48,7 @@ try:
 
     extensions.append("sphinxcontrib.spelling")
 except ImportError:
+    # Spelling is optional locally (e.g. unavailable in Windows), checked in CI.
     pass
 
 source_suffix = ".rst"
@@ -55,6 +57,13 @@ exclude_patterns = ["_build"]
 
 # The default language to highlight source code in.
 highlight_language = "python3"
+
+# An inline ``:bash:`` role (a code role with Bash highlighting) for shell commands
+# referenced in prose, matching the highlighting of ``.. code-block:: bash`` blocks.
+rst_prolog = """
+.. role:: bash(code)
+   :language: bash
+"""
 
 # -- Options for autodoc -----------------------------------------------------
 
@@ -66,12 +75,22 @@ autodoc_member_order = "bysource"
 autodoc_typehints = "signature"
 autoclass_content = "class"
 add_module_names = False
+autodoc_default_options = {
+    "members": True,
+    "undoc-members": True,
+    # model_config is pydantic's internal ClassVar and not part of the dimos API.
+    "exclude-members": "model_config",
+}
 
 # -- Options for intersphinx -------------------------------------------------
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    "pydantic": ("https://docs.pydantic.dev/latest/", None),
+    "dask": ("https://distributed.dask.org/en/stable/", None),
+    "reactivex": ("https://rxpy.readthedocs.io/en/latest/", None),
+    "rerun": ("https://ref.rerun.io/docs/python/stable/", None),
 }
 
 # -- Options for extlinks ----------------------------------------------------
@@ -110,19 +129,39 @@ nitpick_ignore: list[tuple[str, str]] = [
     ("py:class", "P"),
     ("py:class", "R"),
     ("py:class", "dimos.core.stream.T"),
+    ("py:class", "dimos.core.core.T"),
+    # Upstream entities that are not documented.
+    ("py:class", "langchain_core.messages.base.BaseMessage"),
+    ("py:class", "distributed.ActorFuture"),
+    # TODO(PY315): Fix these references with lazy imports.
+    ("py:class", "Observable"),
+    ("py:class", "DisposableBase"),
+    ("py:class", "np.ndarray"),
+    ("py:class", "np.dtype"),
+    ("py:class", "Connection"),
+]
+
+nitpick_ignore_regex = [
+    # TODO: Add Sphinx docs to dimos_lcm.
+    ("py:class", r"dimos_lcm([._].*)?"),
+    # TODO(PY315): Fix these references with lazy imports.
+    ("py:class", r"rr([._].*)?"),
+    ("py:class", r"Archetype"),
 ]
 
 
 def setup(app):
     """Register a ``:brand:`` role for product names that have no built-in role.
 
-    The role renders its text as ordinary prose but carries the ``spellingIgnore``
-    marker the spelling checker honours, so brand names need no wordlist entry.
+    The role wraps its text in an inline node — a ``<span class="brand">`` — so it
+    renders as ordinary prose, can be styled via CSS, and is skipped by the spelling
+    checker.
     """
 
     def brand(name, rawtext, text, lineno, inliner, options=None, content=None):
-        node = nodes.Text(text)
-        node.spellingIgnore = True
-        return [node], []
+        # A structural ``inline`` node (rather than tagging a Text node) survives
+        # doctree pickling — CI builds html before spelling — and carries a
+        # ``brand`` class for styling.
+        return [nodes.inline(rawtext, text, classes=["brand"])], []
 
     app.add_role("brand", brand)

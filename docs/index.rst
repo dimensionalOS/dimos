@@ -118,17 +118,17 @@ Featured runfiles
 
    * - Run command
      - What it does
-   * - ``dimos --replay run unitree-go2``
+   * - :bash:`dimos --replay run unitree-go2`
      - Quadruped navigation replay — SLAM, costmap, A* planning
-   * - ``dimos --replay --replay-db go2_bigoffice run unitree-go2-memory``
+   * - :bash:`dimos --replay --replay-db go2_bigoffice run unitree-go2-memory`
      - Quadruped temporal memory replay
-   * - ``dimos --simulation run unitree-go2-agentic``
+   * - :bash:`dimos --simulation run unitree-go2-agentic`
      - Quadruped agentic + MCP server in simulation
-   * - ``dimos --simulation run unitree-g1-sim``
+   * - :bash:`dimos --simulation run unitree-g1-sim`
      - Humanoid in MuJoCo simulation
-   * - ``dimos --replay run drone-basic``
+   * - :bash:`dimos --replay run drone-basic`
      - Drone video + telemetry replay
-   * - ``dimos run demo-camera``
+   * - :bash:`dimos run demo-camera`
      - Webcam demo — no hardware needed
 
 Full blueprint docs are in
@@ -182,7 +182,7 @@ Blueprints
 ----------
 
 Blueprints are instructions for how to construct and wire modules. Each
-:class:`~dimos.core.module.Module` exposes a ``.blueprint()`` factory, and
+:class:`~dimos.core.module.Module` exposes a :attr:`~dimos.core.module.Module.blueprint` factory, and
 :func:`~dimos.core.coordination.blueprints.autoconnect` composes several into a single
 :class:`~dimos.core.coordination.blueprints.Blueprint`. Blueprints can be composed, remapped,
 or have transports overridden with
@@ -207,7 +207,7 @@ See :doc:`api` for the full API reference.
 Development
 ===========
 
-.. code-block:: sh
+.. code-block:: bash
 
    export GIT_LFS_SKIP_SMUDGE=1
    git clone https://github.com/dimensionalOS/dimos.git
