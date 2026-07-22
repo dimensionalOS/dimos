@@ -33,7 +33,7 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.teleop.hosted.go2_command import ALLOWED_SPORT_CMDS, Go2CommandModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -43,7 +43,6 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[Go2CommandModule]:
     """A Go2CommandModule with the command-plane state initialized for real
     (only the framework Module.__init__ is skipped) and its ports / driver ref /
     config mocked. The command executor is stopped (worker joined) on teardown."""
-    monkeypatch.setattr(BrokerProvider, "_robot_type", None)
     monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
     module = Go2CommandModule()
     module.go2 = MagicMock()
@@ -348,22 +347,12 @@ def test_nav_goal_rejected_when_estopped(
     assert acks == [(13, False)]
 
 
-# ─── robot-type declaration (operator UI cockpit select) ─────────────
+# ─── robot-type (operator UI view select) ────────────────────────────
 
 
-def test_init_declares_robot_type_to_broker(module: Go2CommandModule) -> None:
-    """__init__ pushes ROBOT_TYPE to the shared broker provider, which sends it
-    in the session-create POST so the operator dashboard opens the Go2 cockpit."""
-    assert module.ROBOT_TYPE == "go2"
-    assert BrokerProvider._robot_type == "go2"
-
-
-def test_broker_requires_declared_robot_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No silent default: with no command module having declared a kind, the
-    provider refuses to build a session rather than guessing 'go2'."""
-    monkeypatch.setattr(BrokerProvider, "_robot_type", None)
-    with pytest.raises(RuntimeError, match="robot_type not declared"):
-        BrokerProvider._require_robot_type()
-
-    BrokerProvider.set_robot_type("go2")
-    assert BrokerProvider._require_robot_type() == "go2"
+def test_robot_type_is_a_plain_broker_config_field() -> None:
+    """robot_type rides on BrokerConfig like robot_name/robot_id: unset by
+    default (the session POST omits it), and settable through the broker config
+    flow (env / -o)."""
+    assert BrokerConfig(api_key="k").robot_type is None
+    assert BrokerConfig(api_key="k", robot_type="go2").robot_type == "go2"

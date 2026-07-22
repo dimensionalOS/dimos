@@ -30,6 +30,10 @@ Drive routing (kept off RPC): broker cmd_unreliable → Go2CommandModule
 ``cmd_vel_in`` → guard → ``tele_cmd_vel`` → MovementManager (arbitrates manual vs
 nav) → GO2Connection ``cmd_vel``. ``state_reliable`` is fanned to BOTH
 HostedStatsModule and Go2CommandModule.
+
+Operator view: set ``TRANSPORTS__BROKER__ROBOT_TYPE`` (see default.env) so the
+broker opens the right cockpit — ``go2`` for the teleop-hosted-go2-* blueprints,
+``arm`` for teleop-hosted-xarm6/7. Unset lets the operator pick.
 """
 
 from __future__ import annotations

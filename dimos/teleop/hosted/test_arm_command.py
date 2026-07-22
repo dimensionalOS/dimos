@@ -34,7 +34,6 @@ import pytest
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
@@ -58,7 +57,6 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
             video_jpeg_quality=80,
         )
 
-    monkeypatch.setattr(BrokerProvider, "_robot_type", None)
     monkeypatch.setattr(Module, "__init__", _fake_init)
     module = ArmCommandModule()
     for port in (
@@ -278,12 +276,3 @@ def test_robot_state_reports_estop_and_engage(module: ArmCommandModule) -> None:
     payload = json.loads(module.robot_state.publish.call_args.args[0])
     assert payload["estopped"] is True
     assert payload["engaged"] == {"left": False, "right": False}
-
-
-def test_init_declares_robot_type_to_broker(module: ArmCommandModule) -> None:
-    """__init__ pushes ROBOT_TYPE to the shared broker provider, which sends it
-    in the session-create POST so the operator dashboard opens the arm cockpit."""
-    from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerProvider
-
-    assert module.ROBOT_TYPE == "arm"
-    assert BrokerProvider._robot_type == "arm"
