@@ -14,10 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-from importlib import resources
-from pathlib import Path
 import subprocess
 
 import typer
@@ -25,20 +21,12 @@ import typer
 app = typer.Typer(help="Piper robot commands")
 
 
-@contextmanager
-def _can_activation_helper() -> Iterator[Path]:
-    """Materialize the bundled CAN helper for this invocation."""
-    package = resources.files("dimos.robot.manipulators.piper.scripts")
-    with resources.as_file(package / "can_activate.sh") as helper:
-        yield helper
-
-
 @app.command("can-activate")
 def can_activate(
     interface: str = typer.Argument(..., help="CAN interface to configure"),
     bitrate: int = typer.Option(1_000_000, "--bitrate", help="CAN bitrate"),
 ) -> None:
-    """Configure a Piper CAN interface using the bundled helper."""
+    """Configure an existing Piper SocketCAN interface."""
     if not typer.confirm(
         "This will request sudo to configure CAN. Continue?",
         default=False,
@@ -46,5 +34,10 @@ def can_activate(
         typer.echo("Aborted.")
         raise typer.Exit(1)
 
-    with _can_activation_helper() as helper:
-        subprocess.run([str(helper), interface, str(bitrate)], check=True)
+    commands = [
+        ["sudo", "ip", "link", "set", interface, "down"],
+        ["sudo", "ip", "link", "set", interface, "type", "can", "bitrate", str(bitrate)],
+        ["sudo", "ip", "link", "set", interface, "up"],
+    ]
+    for command in commands:
+        subprocess.run(command, check=True)

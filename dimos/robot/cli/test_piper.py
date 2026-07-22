@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from typer.testing import CliRunner
 
@@ -31,11 +31,14 @@ def test_can_activate_confirms_before_spawning(monkeypatch):
 
     assert result.exit_code == 0, result.output
     confirm.assert_called_once()
-    run.assert_called_once()
-    command = run.call_args.args[0]
-    assert command[0].endswith("can_activate.sh")
-    assert command[1:] == ["can1", "500000"]
-    assert run.call_args.kwargs == {"check": True}
+    assert run.call_args_list == [
+        call(["sudo", "ip", "link", "set", "can1", "down"], check=True),
+        call(
+            ["sudo", "ip", "link", "set", "can1", "type", "can", "bitrate", "500000"],
+            check=True,
+        ),
+        call(["sudo", "ip", "link", "set", "can1", "up"], check=True),
+    ]
 
 
 def test_can_activate_rejection_does_not_spawn(monkeypatch):
@@ -51,10 +54,15 @@ def test_can_activate_rejection_does_not_spawn(monkeypatch):
     run.assert_not_called()
 
 
-def test_bundled_helper_and_license_are_available():
-    package = piper.resources.files("dimos.robot.manipulators.piper.scripts")
+def test_can_activate_uses_default_bitrate(monkeypatch):
+    monkeypatch.setattr(piper.typer, "confirm", Mock(return_value=True))
+    run = Mock()
+    monkeypatch.setattr(piper.subprocess, "run", run)
 
-    with piper._can_activation_helper() as helper:
-        assert helper.name == "can_activate.sh"
-        assert helper.is_file()
-    assert (package / "LICENSE").is_file()
+    result = runner.invoke(piper.app, ["can0"])
+
+    assert result.exit_code == 0, result.output
+    assert run.call_args_list[1] == call(
+        ["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "1000000"],
+        check=True,
+    )

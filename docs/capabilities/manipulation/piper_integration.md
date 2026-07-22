@@ -12,17 +12,26 @@ sudo slcand -o -c -s8 /dev/ttyACM0 can0
 sudo ip link set can0 up
 ```
 
-## Bring up the Piper CAN interface
+This is a separate prerequisite for serial-CAN adapters. It is not needed when
+the Piper adapter already exposes a native SocketCAN interface.
+
+## Bring up a native Piper CAN interface
 
 Piper uses SocketCAN at 1,000,000 bit/s. For the default vendor setup, use
-DimOS's vendored copy of the upstream activation helper:
+the DimOS CLI to configure an existing CAN interface and bring it up:
 
 ```bash
-bash dimos/robot/manipulators/piper/scripts/can_activate.sh can0 1000000
+dimos piper can-activate can0
 ```
 
-If the device already exposes `can0`, run the vendored helper directly. Verify
-the interface before starting a blueprint:
+For a non-default bitrate, pass `--bitrate` explicitly:
+
+```bash
+dimos piper can-activate can0 --bitrate 500000
+```
+
+The command asks for confirmation before requesting sudo. Verify the interface
+before starting a blueprint:
 
 ```bash
 ip link show can0
@@ -45,7 +54,7 @@ dimos --can-port can0 run keyboard-teleop-piper
 The Quest teleoperation composition is available as:
 
 ```bash
-dimos --can-port can0 run keyboard-teleop-piper
+dimos --can-port can0 run teleop-quest-piper
 ```
 
 Note that ommitting the `--can-port` argument will fallback the control coordinator to use fake hardware adapter. This is good for testing.
