@@ -99,6 +99,9 @@ class EpisodeMonitorModule(Module):
         # takes keep their prior behavior; set per-episode via `set_episode(..)`.
         self._task_label: str | None = self.config.default_task_label
         self._lock = threading.Lock()
+        # Keep state mutation, snapshot creation, and publication in one ordered
+        # transition without holding the state lock during subscriber I/O.
+        self._transition_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -108,20 +111,22 @@ class EpisodeMonitorModule(Module):
         self.register_disposable(Disposable(self.keyboard.subscribe(self._on_keyboard)))
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
-        with self._lock:
-            status = self._snapshot("init", time.time())
-        self._emit(status)
+        with self._transition_lock:
+            with self._lock:
+                status = self._snapshot("init", time.time())
+            self._emit(status)
 
     @rpc
     def reset_counters(self) -> EpisodeStatus:
-        with self._lock:
-            self._state = "idle"
-            self._saved = 0
-            self._discarded = 0
-            self._prev_bits = {}
-            self._task_label = self.config.default_task_label
-            status = self._snapshot("init", time.time())
-        return self._emit(status)
+        with self._transition_lock:
+            with self._lock:
+                self._state = "idle"
+                self._saved = 0
+                self._discarded = 0
+                self._prev_bits = {}
+                self._task_label = self.config.default_task_label
+                status = self._snapshot("init", time.time())
+            return self._emit(status)
 
     @rpc
     def set_episode(self, event: EpisodeCommand, task_label: str | None = None) -> str:
@@ -226,29 +231,32 @@ class EpisodeMonitorModule(Module):
         so one button can begin and end a take. The resolved event is what gets
         published (DataPrep only ever sees start/save/discard).
         """
-        with self._lock:
-            if event is EpisodeCommand.TOGGLE:
-                event = EpisodeCommand.SAVE if self._state == "recording" else EpisodeCommand.START
-            if event is EpisodeCommand.START:
-                # Auto-commit any in-progress episode (matches DataPrep extractor).
-                if self._state == "recording":
+        with self._transition_lock:
+            with self._lock:
+                if event is EpisodeCommand.TOGGLE:
+                    event = (
+                        EpisodeCommand.SAVE if self._state == "recording" else EpisodeCommand.START
+                    )
+                if event is EpisodeCommand.START:
+                    # Auto-commit any in-progress episode (matches DataPrep extractor).
+                    if self._state == "recording":
+                        self._saved += 1
+                    if task_label is not None:
+                        self._task_label = task_label
+                    self._state = "recording"
+                elif event is EpisodeCommand.SAVE:
+                    if self._state != "recording":
+                        return None
                     self._saved += 1
-                if task_label is not None:
-                    self._task_label = task_label
-                self._state = "recording"
-            elif event is EpisodeCommand.SAVE:
-                if self._state != "recording":
-                    return None
-                self._saved += 1
-                self._state = "idle"
-            elif event is EpisodeCommand.DISCARD:
-                if self._state != "recording":
-                    return None
-                self._discarded += 1
-                self._state = "idle"
-            # Snapshot under the mutation's lock so the event matches the state.
-            status = self._snapshot(event.value, ts)
-        return self._emit(status)
+                    self._state = "idle"
+                elif event is EpisodeCommand.DISCARD:
+                    if self._state != "recording":
+                        return None
+                    self._discarded += 1
+                    self._state = "idle"
+                # Snapshot under the mutation's lock so the event matches the state.
+                status = self._snapshot(event.value, ts)
+            return self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
@@ -262,7 +270,7 @@ class EpisodeMonitorModule(Module):
         )
 
     def _emit(self, status: EpisodeStatus) -> EpisodeStatus:
-        """Publish + log a snapshot. Must run outside the lock (does I/O)."""
+        """Publish + log a snapshot. Must run outside the state lock (does I/O)."""
         self.status.publish(status)
         self._log_status(status)
         return status

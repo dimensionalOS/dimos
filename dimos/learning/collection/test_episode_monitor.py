@@ -284,6 +284,33 @@ def test_concurrent_starts_keep_their_own_labels(
     assert sorted(event.task_label or "" for event in _events(m)) == ["alpha", "beta"]
 
 
+def test_concurrent_transitions_publish_in_state_order(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m = make_monitor()
+    original_emit = m._emit
+    alpha_ready = threading.Event()
+    release_alpha = threading.Event()
+
+    def delayed_emit(status: EpisodeStatus) -> EpisodeStatus:
+        if status.task_label == "alpha":
+            alpha_ready.set()
+            assert release_alpha.wait(timeout=2)
+        return original_emit(status)
+
+    monkeypatch.setattr(m, "_emit", delayed_emit)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        alpha = executor.submit(m.set_episode, EpisodeCommand.START, "alpha")
+        assert alpha_ready.wait(timeout=2)
+        beta = executor.submit(m.set_episode, EpisodeCommand.START, "beta")
+        release_alpha.set()
+        alpha.result(timeout=3)
+        beta.result(timeout=3)
+
+    assert [event.task_label for event in _events(m)] == ["alpha", "beta"]
+
+
 def test_recording_skills_drive_episode_state(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
