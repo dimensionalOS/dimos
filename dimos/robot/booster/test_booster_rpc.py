@@ -138,6 +138,17 @@ class TestSenderLoop:
         t.join()
         assert result["ok"] is False
 
+    def test_motion_delivered_only_counts_accepted_nonzero_sends(self, conn):
+        baseline = conn.send_count
+        conn._send(0.0, 0.0, 0.0)
+        assert conn.motion_delivered_since(baseline) is False
+        conn._conn.move.side_effect = RuntimeError("rejected")
+        conn._send(0.3, 0.0, 0.0)
+        assert conn.motion_delivered_since(baseline) is False
+        conn._conn.move.side_effect = None
+        conn._send(0.3, 0.0, 0.0)
+        assert conn.motion_delivered_since(baseline) is True
+
     def test_stop_is_idempotent(self, conn):
         # dimos shutdown stops modules twice, the second call must be a no-op.
         conn.stop()
@@ -222,10 +233,12 @@ class TestWalkEnvelope:
 def make_k1(request):
     """Builds a real K1Connection with the transport mocked, torn down after the test."""
 
-    def build(send_failed=False, stop_confirmed=True):
+    def build(send_failed=False, stop_confirmed=True, motion_delivered=True):
         conn = MagicMock()
         conn.send_failed = send_failed
         conn.confirm_stop.return_value = stop_confirmed
+        conn.send_count = 0
+        conn.motion_delivered_since.return_value = motion_delivered
         with patch("dimos.robot.booster.k1.connection.make_connection", return_value=conn):
             k1 = K1Connection(ip="mock")
         request.addfinalizer(k1._close_module)
@@ -276,6 +289,12 @@ class TestWalkSkill:
         k1, conn = make_k1(stop_confirmed=False)
         result = k1.walk(x=0.3, duration=0.15)
         assert "could not confirm the stop" in result
+
+    def test_undelivered_motion_is_reported(self, make_k1):
+        # A stalled sender can deliver only the final zero, never the movement.
+        k1, conn = make_k1(motion_delivered=False)
+        result = k1.walk(x=0.3, duration=0.15)
+        assert "may not have moved" in result
 
     def test_is_armed_only_in_walking(self, conn):
         conn._conn.get_mode.return_value = RobotMode.WALKING

@@ -215,6 +215,7 @@ class K1Connection(Module, Camera):
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
         zero = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
         deadline = time.monotonic() + duration
+        baseline = self._connection.send_count
         rejected = False
         try:
             while time.monotonic() < deadline:
@@ -226,8 +227,11 @@ class K1Connection(Module, Camera):
         finally:
             self.move(zero)
         stopped = self._connection.confirm_stop()
+        moved = self._connection.motion_delivered_since(baseline)
         if rejected:
             return "The robot rejected the move commands. Check that it is armed (mode WALKING)."
+        if not moved:
+            return "Could not confirm any movement command was delivered. The robot may not have moved."
         if not stopped:
             return "Sent movement commands but could not confirm the stop. Verify the robot halted."
         return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."

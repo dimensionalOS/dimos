@@ -75,6 +75,7 @@ class BoosterRPCConnection:
         self._send_failed = False
         self._send_count = 0
         self._last_send: tuple[int, tuple[float, float, float], bool] = (0, (0.0, 0.0, 0.0), False)
+        self._last_motion_ok = 0
         self._stopped = False
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT_S
         self.send_hz = SEND_HZ
@@ -122,6 +123,16 @@ class BoosterRPCConnection:
         with self._cmd_lock:
             return self._send_failed
 
+    @property
+    def send_count(self) -> int:
+        with self._cmd_lock:
+            return self._send_count
+
+    def motion_delivered_since(self, baseline: int) -> bool:
+        """True if a nonzero command was transmitted and accepted after `baseline`."""
+        with self._cmd_lock:
+            return self._last_motion_ok > baseline
+
     async def run_sender(self) -> None:
         """Issue the latest command at `send_hz` until stopped, with a dead-man stop."""
         period = 1.0 / self.send_hz
@@ -156,6 +167,8 @@ class BoosterRPCConnection:
             self._send_failed = failed
             self._send_count += 1
             self._last_send = (self._send_count, (vx, vy, vyaw), failed)
+            if not failed and (vx, vy, vyaw) != (0.0, 0.0, 0.0):
+                self._last_motion_ok = self._send_count
 
     def confirm_stop(self, timeout: float = 1.0) -> bool:
         """Block until a zero command is transmitted and accepted. False otherwise.
