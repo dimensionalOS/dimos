@@ -38,7 +38,7 @@ _DEFAULT_LCM_PORT = "7667"
 
 # Map a domain to a stable multicast group + port inside the safe
 # admin-scoped space (239.255.76.0/24, dynamic ports 49152-65535).
-def lcm_endpoint_for_domain(domain: str) -> tuple[str, int]:
+def domain_to_addr(domain: str) -> tuple[str, int]:
     digest = hashlib.sha256(domain.encode()).digest()
     address = f"239.255.76.{1 + digest[0] % 254}"
     port = 49152 + (digest[1] << 8 | digest[2]) % 16384
