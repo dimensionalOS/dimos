@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -60,16 +61,22 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
 
 
 def load_marker_map(path: str | Path) -> dict[int, Transform]:
-    """``marker_id -> map_T_marker`` from a survey JSON.
+    """``marker_id -> map_T_marker`` from a survey JSON or YAML.
 
     Schema (``meta`` is provenance, ignored here)::
 
         {"meta": {...},
          "markers": {"<tag_id>": {"translation": [x, y, z],
                                   "rotation": [qx, qy, qz, qw]}}}  # map_T_tag
+
+    A ``.yaml``/``.yml`` survey parses too (the eval overlay's loader
+    eval_module.load_markers_xyz accepts both, and the marker-map derivation
+    pipeline writes yaml); any other suffix goes through yaml.safe_load, a JSON
+    superset, so a bare-name or extensionless survey still loads.
     """
-    with open(path) as f:
-        data = json.load(f) or {}
+    path = Path(path)
+    text = path.read_text()
+    data = (json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)) or {}
     return {
         int(marker_id): _validated_entry(int(marker_id), entry)
         for marker_id, entry in (data.get("markers", {}) or {}).items()

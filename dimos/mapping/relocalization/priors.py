@@ -75,7 +75,7 @@ class PriorConfigBase(BaseConfig):
     ``enabled`` alone decides whether a prior proposes into the judge today.
     ``tier``/``weight``/``max_age_s`` are declared but read by NOTHING yet -- the
     judge ranks purely on wall fitness, never on self-reported trust. They are the
-    seam the Phase-4 fusion arbiter will read; surfacing them now keeps a preset
+    seam a future fusion arbiter will read; surfacing them now keeps a preset
     written today working once that arbiter lands.
     """
 
@@ -145,7 +145,7 @@ class Candidate:
     ``global_map``'s frame. A candidate carries only WHICH transform and WHICH
     source -- no self-reported confidence, since ``refine_candidates`` ranks purely
     on wall-only fine-scale fitness, so a "trusted" prior still loses to one that
-    fits the walls. (Composite confidence is the Phase-4 fusion arbiter's job.)
+    fits the walls. (Composite confidence is a future fusion arbiter's job.)
     """
 
     T: np.ndarray
@@ -337,7 +337,11 @@ class FiducialPrior:
     ) -> list[Candidate]:
         now = self._now_fn()
         candidates: list[Candidate] = []
-        for fix_T, fix_ts in self._fixes.values():
+        # Snapshot before iterating: observe() runs on the detections transport
+        # thread and self._fixes[id] = ... on a NEW tag id changes the dict size
+        # mid-iteration -> "dictionary changed size during iteration". list() over
+        # the values view is one GIL-atomic C copy, so the reload never tears.
+        for fix_T, fix_ts in list(self._fixes.values()):
             age_s = now - fix_ts
             # Negative age == fix_ts and now came from different clocks. Left as-is,
             # `<= age_max_s` is always true and a stale fix proposes forever (age gate

@@ -48,6 +48,7 @@ from dimos.mapping.loop_closure.pgo import PGO
 from dimos.mapping.relocalization.module import Config as RelocConfig
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.utils.data import get_data_dir
 from dimos.utils.testing.waiting import wait_until
@@ -196,9 +197,20 @@ test_unitree_go2_fiducial_relocalization_replay.py -m self_hosted
     def log_text() -> str:
         return log_path.read_text(errors="replace") if log_path.exists() else ""
 
+    # RelocalizationModule publishes the world->map fix through self.tf.publish
+    # (module.py, self.tf.publish(tf.now())), which the LCM backend emits as a
+    # Transform inside a TFMessage on the shared /tf channel (LCMTF default topic
+    # Topic("/tf", TFMessage), protocol/tf/tf.py). /tf also carries every other
+    # module's transforms, so keep only the world->map ones this test asserts on.
     fixes: list[Transform] = []
-    fix_transport: LCMTransport[Transform] = LCMTransport("/world_map_fix", Transform)
-    unsubscribe = fix_transport.subscribe(fixes.append)
+
+    def _collect_fixes(msg: TFMessage) -> None:
+        fixes.extend(
+            t for t in msg.transforms if (t.frame_id, t.child_frame_id) == ("world", "map")
+        )
+
+    fix_transport: LCMTransport[TFMessage] = LCMTransport("/tf", TFMessage)
+    unsubscribe = fix_transport.subscribe(_collect_fixes)
     proc: subprocess.Popen[bytes] | None = None
     try:
         with log_path.open("wb") as fh:

@@ -14,13 +14,16 @@
 
 """Tests for eval_module.py's PURE analysis -- the code the offline held-out driver
 and the in-process RelocEval Module SHARE, exercised with
-no LCM bus, no replay, no DB. Two properties:
+no LCM bus, no replay, no DB. Three properties:
 
   * umeyama_alignment recovers a KNOWN rigid map_B_T_map_A (and scale) from
     constructed corresponding point sets to ~1e-9, always a proper rotation.
   * compute_stats + format_report + stats_to_dict aggregate a small synthetic Fix
     list correctly: per-source won counts, %traj (over covered odom), medians, and
     the success gate tally.
+  * the accept key and the log join stay honest: a yaw-only fix is its own accept, a
+    health line labels exactly one fix, and degenerate shared tags hold med_err out
+    with a reason instead of reporting an arbitrary Umeyama transform.
 
 Deterministic: numpy default_rng + fixed scipy Rotations; no wall-clock, no random.
 """
@@ -32,9 +35,12 @@ from scipy.spatial.transform import Rotation
 
 from dimos.mapping.relocalization.eval_module import (
     Fix,
+    HealthLine,
     aligned_err_t_m,
     compute_stats,
+    dedup_tf_fixes,
     format_report,
+    label_fixes_from_log,
     resolve_heldout_alignment,
     stats_to_dict,
     umeyama_alignment,
@@ -119,6 +125,118 @@ def test_resolve_alignment_from_shared_markers() -> None:
     assert mat is not None
     np.testing.assert_allclose(mat, _rt(rot, trans), atol=1e-9)
     assert "Umeyama over 4 shared tags" in reason
+
+
+def test_resolve_alignment_collinear_tags_held_out() -> None:
+    """>=3 shared tags that lie on a LINE leave the rotation about that line
+    unconstrained -- Umeyama's SVD would return an arbitrary transform. Guard must
+    return None with a collinearity reason, never a fabricated med_err."""
+    # four tags on the x-axis in map_A; map_B is any rigid image (still a line)
+    rot = Rotation.from_euler("xyz", [15.0, -20.0, 35.0], degrees=True).as_matrix()
+    trans = np.array([1.0, -2.0, 0.5])
+    markers_a = {i: (float(i), 0.0, 0.0) for i in (1, 2, 3, 4)}
+    markers_b = {i: tuple(rot @ np.array(p) + trans) for i, p in markers_a.items()}
+    mat, reason = resolve_heldout_alignment(markers_a, markers_b)
+    assert mat is None and "collinear" in reason
+    # a well-spread (non-collinear) set of the SAME count still resolves
+    markers_a2 = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0), 4: (1.0, 1.0, 0.4)}
+    markers_b2 = {i: tuple(rot @ np.array(p) + trans) for i, p in markers_a2.items()}
+    mat2, _ = resolve_heldout_alignment(markers_a2, markers_b2)
+    assert mat2 is not None
+    np.testing.assert_allclose(mat2, _rt(rot, trans), atol=1e-9)
+
+
+def test_resolve_alignment_degenerate_run_b_survey_held_out() -> None:
+    """map_A well spread but the run-B survey collapsed onto a LINE: cov goes
+    rank-deficient and Umeyama returns an arbitrary rotation. Both sides are gated,
+    so this is held out naming map_B."""
+    markers_a = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0), 4: (1.0, 1.0, 0.4)}
+    markers_b = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (2.0, 0.0, 0.0), 4: (3.0, 0.0, 0.0)}
+    mat, reason = resolve_heldout_alignment(markers_a, markers_b)
+    assert mat is None
+    assert "collinear in map_B" in reason and "med_err held out" in reason
+
+
+def test_resolve_alignment_coincident_tags_held_out() -> None:
+    """Shared tags that all sit at one point have no extent at all -- held out with
+    the coincide reason, never a fabricated number."""
+    markers_a = {i: (1.0, 2.0, 3.0) for i in (1, 2, 3)}
+    markers_b = {i: (0.0, 0.0, 0.0) for i in (1, 2, 3)}
+    mat, reason = resolve_heldout_alignment(markers_a, markers_b)
+    assert mat is None and "coincide in map_A" in reason
+
+
+# --------------------------------------------------------------------------- #
+# dedup_tf_fixes: rotation is part of the accept key (yaw-only fix not dropped)
+# --------------------------------------------------------------------------- #
+def test_dedup_keeps_yaw_only_fix() -> None:
+    """A second accept at the SAME origin but a corrected yaw (symmetric-scene flip)
+    is a distinct fix -- translation-only dedup would silently drop it."""
+    origin = np.array([2.0, 3.0, 0.0])
+    pose_a = _rt(Rotation.from_euler("z", 0.0, degrees=True).as_matrix(), origin)
+    pose_b = _rt(Rotation.from_euler("z", 180.0, degrees=True).as_matrix(), origin)
+    # republished twice each (every PUBLISH_INTERVAL_S) before the flip lands
+    samples = [(0.0, pose_a), (0.1, pose_a), (0.2, pose_b), (0.3, pose_b)]
+    fixes = dedup_tf_fixes(samples)
+    assert len(fixes) == 2
+    np.testing.assert_allclose(fixes[0][1], pose_a)
+    np.testing.assert_allclose(fixes[1][1], pose_b)
+
+
+def test_dedup_collapses_repeats() -> None:
+    """Identical republished poses collapse to one accept (rotation guard does not
+    over-split on the repeats)."""
+    pose = _rt(np.eye(3), np.array([1.0, 0.0, 0.0]))
+    assert len(dedup_tf_fixes([(0.0, pose), (0.1, pose), (0.2, pose)])) == 1
+
+
+# --------------------------------------------------------------------------- #
+# label_fixes_from_log: nearby accepts from different priors keep their own source
+# --------------------------------------------------------------------------- #
+def test_label_nearby_fixes_keep_distinct_sources() -> None:
+    """Two accepts 1.5 cm apart from different priors: each TF fix must get its OWN
+    health line (source+fitness), not the nearest-overwritten one. Consume-once
+    prevents both fixes collapsing onto a single health entry."""
+    t_a = np.array([0.000, 0.0, 0.0])
+    t_b = np.array([0.015, 0.0, 0.0])  # 1.5 cm away, inside the 2 cm join tolerance
+    fix_a = _rt(np.eye(3), t_a)
+    fix_b = _rt(np.eye(3), t_b)
+    health = [
+        HealthLine(source="ransac", fitness=0.9, published_t=tuple(t_a)),
+        HealthLine(source="fiducial", fitness=0.7, published_t=tuple(t_b)),
+    ]
+    fixes = label_fixes_from_log([(0.0, fix_a), (0.1, fix_b)], health)
+    assert [f.source for f in fixes] == ["ransac", "fiducial"]
+    assert [f.fitness for f in fixes] == [0.9, 0.7]
+
+
+def test_label_second_nearby_fix_never_reuses_a_claimed_line() -> None:
+    """Two accepts 1.5 cm apart with only ONE health line near them: the line belongs
+    to the fix that owns it, and the other stays ``unknown``. Reusing it would stamp
+    a second accept with a source and fitness that are not its own."""
+    health = [
+        HealthLine(source="ransac", fitness=0.9, published_t=(0.0, 0.0, 0.0)),
+        HealthLine(source="fiducial", fitness=0.7, published_t=(5.0, 0.0, 0.0)),  # far away
+    ]
+    tf_fixes = [
+        (0.0, _rt(np.eye(3), np.array([0.000, 0.0, 0.0]))),
+        (0.1, _rt(np.eye(3), np.array([0.015, 0.0, 0.0]))),
+    ]
+    fixes = label_fixes_from_log(tf_fixes, health)
+    assert [f.source for f in fixes] == ["ransac", "unknown"]
+    assert fixes[0].fitness == 0.9 and np.isnan(fixes[1].fitness)
+
+
+def test_label_equal_distance_tie_is_stable() -> None:
+    """A fix equidistant from two health lines takes the EARLIER (log order); a
+    later equally-close line never overwrites it."""
+    fix = _rt(np.eye(3), np.array([0.010, 0.0, 0.0]))  # 1 cm from each
+    health = [
+        HealthLine(source="ransac", fitness=0.9, published_t=(0.0, 0.0, 0.0)),
+        HealthLine(source="fiducial", fitness=0.7, published_t=(0.020, 0.0, 0.0)),
+    ]
+    fixes = label_fixes_from_log([(0.0, fix)], health)
+    assert fixes[0].source == "ransac" and fixes[0].fitness == 0.9
 
 
 def test_resolve_alignment_no_run_b_is_held_out() -> None:

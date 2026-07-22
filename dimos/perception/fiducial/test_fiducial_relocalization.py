@@ -19,6 +19,7 @@ import tempfile
 from typing import Any
 
 import pytest
+import yaml
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.fiducial.fiducial_relocalization import load_marker_map
@@ -29,6 +30,14 @@ def _write_marker_json(payload: Any) -> str:
     fd, path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w") as f:
         json.dump(payload, f)
+    return path
+
+
+def _write_marker_yaml(payload: Any) -> str:
+    """Serialize a survey payload to a temp YAML file; caller unlinks in finally."""
+    fd, path = tempfile.mkstemp(suffix=".yaml")
+    with os.fdopen(fd, "w") as f:
+        yaml.safe_dump(payload, f)
     return path
 
 
@@ -66,6 +75,56 @@ def test_load_marker_map_parses_schema_and_ignores_meta() -> None:
         assert t12.child_frame_id == "marker_12"
         assert (t12.translation.x, t12.translation.y, t12.translation.z) == (-0.5, 4.0, 0.25)
         assert (t12.rotation.z, t12.rotation.w) == (half_sqrt2, half_sqrt2)
+    finally:
+        os.unlink(path)
+
+
+def test_load_marker_map_parses_yaml_survey() -> None:
+    """Invariant: a ``.yaml`` survey loads identically to JSON -- the runtime loader
+    accepts the format the derivation pipeline writes (RECORDING.markers.yaml) and the
+    eval overlay reads, so an existing YAML marker survey handed to marker_map_file
+    still builds map_T_marker. Same schema, same int keys, same [x,y,z]/[qx,qy,qz,qw]."""
+    payload = {
+        "markers": {
+            "10": {
+                "translation": [-4.1657, -30.985, 0.2677],
+                "rotation": [0.1958, -0.6668, -0.6949, 0.1847],
+            }
+        }
+    }
+    path = _write_marker_yaml(payload)
+    try:
+        markers = load_marker_map(path)
+
+        assert set(markers) == {10}
+        assert isinstance(next(iter(markers)), int)  # id parsed to int
+        t10 = markers[10]
+        assert t10.frame_id == "map"
+        assert t10.child_frame_id == "marker_10"
+        assert (t10.translation.x, t10.translation.y, t10.translation.z) == (
+            -4.1657,
+            -30.985,
+            0.2677,
+        )
+        assert (t10.rotation.x, t10.rotation.y, t10.rotation.z, t10.rotation.w) == (
+            0.1958,
+            -0.6668,
+            -0.6949,
+            0.1847,
+        )
+    finally:
+        os.unlink(path)
+
+
+def test_load_marker_map_yaml_survey_validates() -> None:
+    """Invariant: the loud validation is format-agnostic -- a malformed YAML entry
+    (short rotation) raises the same ValueError as JSON, so YAML surveys are not a
+    silent bypass around the survey-quality gate."""
+    payload = {"markers": {"9": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 1.0]}}}
+    path = _write_marker_yaml(payload)
+    try:
+        with pytest.raises(ValueError, match=r"marker 9: rotation must be \[x, y, z, w\]"):
+            load_marker_map(path)
     finally:
         os.unlink(path)
 

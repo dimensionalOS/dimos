@@ -72,6 +72,9 @@ SOURCE_COLORS: dict[str, str] = {
 }
 SUCCESS_T_M = 1.0  # held-out translation gate (m); matches score_replay.SUCCESS_T_M
 _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same accept
+_TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
+_COLLINEAR_RATIO = 1e-2  # shared-tag 2nd/1st singular value below this -> collinear
+_TAG_SPREAD_MIN_M = 1e-6  # principal spread below this -> the shared tags coincide
 
 
 # --------------------------------------------------------------------------- #
@@ -225,6 +228,20 @@ def _rt_to_matrix(rot: np.ndarray, trans: np.ndarray) -> np.ndarray:
     return m
 
 
+def _degenerate_reason(pts: np.ndarray, frame: str) -> str | None:
+    """Why this shared-tag set cannot pin a rotation, or None if it can. sv[0] is the
+    point cloud's principal extent (m), sv[1] the spread off that axis: coincident
+    points have no extent, a line has no spread off it, and either leaves rotation
+    free about that axis -- Umeyama's SVD then returns an ARBITRARY proper rotation
+    with a ~0 residual, and errors from it would read as real accuracy."""
+    sv = np.linalg.svd(pts - pts.mean(axis=0), compute_uv=False)
+    if sv[0] <= _TAG_SPREAD_MIN_M:
+        return f"coincide in {frame} (spread {sv[0]:.2e} m)"
+    if sv[1] / sv[0] < _COLLINEAR_RATIO:
+        return f"are (near-)collinear in {frame} (spread ratio {sv[1] / sv[0]:.2e})"
+    return None
+
+
 def resolve_heldout_alignment(
     markers_map_a: dict[int, tuple[float, float, float]],
     markers_map_b: dict[int, tuple[float, float, float]] | None,
@@ -247,6 +264,16 @@ def resolve_heldout_alignment(
         )
     src = np.array([markers_map_a[i] for i in shared], dtype=float)
     dst = np.array([markers_map_b[i] for i in shared], dtype=float)
+    # Either frame's tags being degenerate underdetermines the rotation (cov =
+    # dst_c.T @ src_c goes rank-deficient), so BOTH sides are gated -- a collapsed
+    # run-B survey is as fabricated a number as a collinear run-A one.
+    for pts, frame in ((src, "map_A"), (dst, "map_B")):
+        why = _degenerate_reason(pts, frame)
+        if why is not None:
+            return None, (
+                f"{len(shared)} shared tags {shared} {why}; rotation "
+                "underdetermined, med_err held out"
+            )
     rot, trans, scale = umeyama_alignment(src, dst, with_scale=True)
     reason = f"Umeyama over {len(shared)} shared tags {shared} (scale={scale:.4f})"
     return _rt_to_matrix(rot, trans), reason
@@ -307,20 +334,35 @@ class EvalStats:
     held_out_note: str
 
 
+def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
+    """Geodesic angle (rad) between two rotations: the residual rotation's angle,
+    ||log(Ra^T Rb)||. arccos clamped for numerical safety."""
+    r_rel = rot_a.T @ rot_b
+    cos = (float(np.trace(r_rel)) - 1.0) / 2.0
+    return float(np.arccos(max(-1.0, min(1.0, cos))))
+
+
 def dedup_tf_fixes(
     tf_samples: list[tuple[float, np.ndarray]],
 ) -> list[tuple[float, np.ndarray]]:
     """Collapse republished world->map TFs (every PUBLISH_INTERVAL_S) to distinct
-    accepts. Each accept publishes a new translation that then repeats until the
-    next, so a change beyond _TF_DEDUP_EPS_M starts a new fix -- recovering the
-    accept sequence from the stream alone (no log)."""
+    accepts. Each accept publishes a new pose that then repeats until the next, so a
+    change beyond _TF_DEDUP_EPS_M OR _TF_DEDUP_EPS_RAD starts a new fix -- recovering
+    the accept sequence from the stream alone (no log). Rotation is part of the key:
+    a yaw-only correction (e.g. a symmetric-scene flip) keeps the origin, so on
+    translation alone it would be silently dropped."""
     fixes: list[tuple[float, np.ndarray]] = []
     last_t: np.ndarray | None = None
+    last_r: np.ndarray | None = None
     for wall, mat in sorted(tf_samples, key=lambda s: s[0]):
-        t = np.asarray(mat)[:3, 3]
-        if last_t is None or float(np.linalg.norm(t - last_t)) > _TF_DEDUP_EPS_M:
+        pose = np.asarray(mat)
+        t = pose[:3, 3]
+        r = pose[:3, :3]
+        moved = last_t is None or float(np.linalg.norm(t - last_t)) > _TF_DEDUP_EPS_M
+        turned = last_r is None or _rot_angle_rad(last_r, r) > _TF_DEDUP_EPS_RAD
+        if moved or turned:
             fixes.append((wall, mat))
-            last_t = t
+            last_t, last_r = t, r
     return fixes
 
 
@@ -328,23 +370,32 @@ def label_fixes_from_log(
     tf_fixes: list[tuple[float, np.ndarray]], health: list[HealthLine]
 ) -> list[Fix]:
     """Attach (source, fitness) from health lines to stream-derived TF fixes by
-    nearest published translation (<=2 cm), the same join replay_bench uses.
+    nearest published translation (<=2 cm), the same join replay_bench uses. Each
+    health line is a distinct accept, so it is consumed once: two accepts from
+    different priors within 2 cm cannot both claim the same line, and equal-distance
+    lines resolve to the earliest (log order) -- a later tie never overwrites.
     Unmatched fixes keep source ``unknown`` -- the trajectory still stands."""
     fixes: list[Fix] = []
+    used: set[int] = set()
     for wall, mat in tf_fixes:
         t = np.asarray(mat)[:3, 3]
-        best: HealthLine | None = None
-        best_d = 0.02
-        for h in health:
+        best_i: int | None = None
+        best_d = 0.02  # 2 cm join tolerance (matches replay_bench)
+        for i, h in enumerate(health):
+            if i in used:
+                continue
             d = float(np.linalg.norm(np.asarray(h.published_t) - t))
-            if d <= best_d:
-                best, best_d = h, d
+            if d <= best_d and (best_i is None or d < best_d):  # strict: first wins ties
+                best_i, best_d = i, d
+        if best_i is not None:
+            used.add(best_i)
+        matched = health[best_i] if best_i is not None else None
         fixes.append(
             Fix(
                 ts=wall,
                 world_map_fix=mat,
-                source=best.source if best else "unknown",
-                fitness=best.fitness if best else float("nan"),
+                source=matched.source if matched else "unknown",
+                fitness=matched.fitness if matched else float("nan"),
             )
         )
     return fixes

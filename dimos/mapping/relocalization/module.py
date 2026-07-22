@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import time
 from typing import Any
 
@@ -55,6 +56,9 @@ FRAME_WORLD = "world"
 
 PUBLISH_INTERVAL_S = 2.0  # s; for loaded_map + TF
 MAP_SUFFIX = ".pc2.lcm"
+# Survey formats load_marker_map parses. A name already carrying one keeps it;
+# only a bare name gets the .json default (see _start_fiducial_prior).
+MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
 SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
 
 
@@ -172,10 +176,15 @@ class RelocalizationModule(Module):
                 "relocalize: fiducial prior enabled but no marker_map_file; fiducial prior disabled"
             )
             return
+        # A bare name gets the .json default; a name that already states its format
+        # keeps it -- resolve_named_path appends the suffix when the file isn't local,
+        # so a .json default would look up "<survey>.yaml.json", which nothing writes
+        # (the marker-map derivation pipeline writes yaml).
+        suffix = "" if Path(marker_map_file).suffix in MARKER_MAP_SUFFIXES else ".json"
         marker_map = {
             marker_id: transform.to_matrix()
             for marker_id, transform in load_marker_map(
-                resolve_named_path(marker_map_file, ".json")
+                resolve_named_path(marker_map_file, suffix)
             ).items()
         }
         self._fiducial_prior = FiducialPrior(

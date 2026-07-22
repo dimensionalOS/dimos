@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
 from typing import cast
 
 import cv2
@@ -37,6 +38,7 @@ import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import ValidationError
 import pytest
 from scipy.spatial.transform import Rotation
+import yaml
 
 from dimos.core.coordination.blueprints import config_key
 from dimos.core.coordination.worker_manager_python import _merge_config_kwargs
@@ -460,6 +462,45 @@ def test_fiducial_prior_age_gate_hard_cutoff() -> None:
 
     clock["now"] = 221.0  # age 121 s > cutoff -> dropped
     assert prior.propose(gm, lm) == []
+
+
+def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
+    """propose() must iterate a SNAPSHOT of self._fixes, not the live dict. In the
+    module, observe() runs on the detections transport thread while _try_relocalize
+    -> propose() runs on the global_map transport thread; a NEW tag id landing in
+    self._fixes mid-iteration otherwise raises "dictionary changed size during
+    iteration", which the boundary except swallows -> a silently dropped reloc
+    cycle. Writer inserts fresh ids while the reader hammers propose(); pre-fix this
+    fails within a few rounds, post-fix it never does."""
+    gm, lm, _ = _rect_room_scene(seed=17, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    prior = FiducialPrior({}, now_fn=lambda: 0.0)
+    for tag_id in range(50):  # a real iteration window for the writer to race into
+        prior._fixes[tag_id] = (np.eye(4), 0.0)
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def _writer() -> None:
+        tag_id = 1000
+        while not stop.is_set():
+            prior._fixes[tag_id] = (np.eye(4), 0.0)  # new key -> dict size changes
+            tag_id += 1
+
+    writer = threading.Thread(target=_writer, name="detections_writer")
+    writer.start()
+    try:
+        for _ in range(2000):
+            try:
+                prior.propose(gm, lm)
+            except RuntimeError as exc:  # "dictionary changed size during iteration"
+                errors.append(exc)
+                break
+    finally:
+        stop.set()
+        writer.join(timeout=5.0)
+
+    assert not writer.is_alive()
+    assert errors == [], f"propose() raced with concurrent observe(): {errors!r}"
 
 
 def test_fiducial_prior_never_bypasses_judge() -> None:
@@ -1457,6 +1498,65 @@ def test_start_fiducial_prior_loads_map_and_wires_detections(monkeypatch) -> Non
     event, kwargs = rec.infos[0]
     assert event == "fiducial prior enabled"
     assert kwargs["n_markers"] == 2
+
+
+def test_start_fiducial_prior_loads_a_yaml_survey(tmp_path: Path) -> None:
+    """A `.yaml` marker survey loads through the real path (real resolve_named_path,
+    real load_marker_map) into map_T_marker matrices.
+
+    The marker-map derivation pipeline writes yaml (test_unitree_go2_fiducial_
+    relocalization_replay.py's marker_map_file fixture, `<rec>.markers.yaml`), so a
+    deployment pointing marker_map_file at that survey must start, not fail parsing."""
+    survey = tmp_path / "site_markers.yaml"
+    survey.write_text(
+        yaml.safe_dump(
+            {"markers": {13: {"translation": [1.0, 2.0, 3.0], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+        )
+    )
+    m = _bare_module(
+        Config(priors=[FiducialPriorConfig(marker_map_file=str(survey), marker_length_m=0.1)])
+    )
+    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
+
+    m._start_fiducial_prior()
+
+    assert isinstance(m._fiducial_prior, FiducialPrior)
+    assert set(m._fiducial_prior._map_T_marker) == {13}
+    assert m._fiducial_prior._map_T_marker[13][:3, 3].tolist() == [1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize(
+    ("marker_map_file", "expected_suffix"),
+    [
+        ("site_markers", ".json"),  # bare name -> the default survey format
+        ("site_markers.json", ""),  # already stated -> unchanged
+        ("site_markers.yaml", ""),  # never "site_markers.yaml.json"
+        ("site_markers.yml", ""),
+    ],
+)
+def test_marker_map_resolution_keeps_a_stated_survey_suffix(
+    monkeypatch, marker_map_file: str, expected_suffix: str
+) -> None:  # type: ignore[no-untyped-def]
+    """Invariant: only a bare marker_map_file gets the .json default appended.
+    resolve_named_path appends its suffix when the file isn't local (a data-dir
+    name), so passing .json unconditionally would look up '<survey>.yaml.json' --
+    a name nothing writes -- and a yaml survey would fail at start()."""
+    m = _bare_module(Config(priors=[FiducialPriorConfig(marker_map_file=marker_map_file)]))
+    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
+    seen: list[tuple[str, str]] = []
+
+    def _record(name: str, suffix: str) -> str:
+        seen.append((name, suffix))
+        return name
+
+    monkeypatch.setattr(module_mod, "resolve_named_path", _record)
+    monkeypatch.setattr(module_mod, "load_marker_map", lambda path: {})
+
+    m._start_fiducial_prior()
+
+    assert seen == [(marker_map_file, expected_suffix)]
 
 
 def test_o_override_marker_map_file_reaches_fiducial_prior(tmp_path: Path) -> None:
