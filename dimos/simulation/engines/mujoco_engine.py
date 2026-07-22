@@ -461,15 +461,6 @@ class MujocoEngine(SimulationEngine):
             )
             depth = state.depth_renderer.render().copy()
 
-            # Correct MuJoCo depth Z-bias: depth values are ~9cm too large due to
-            # znear/zfar linearization or camera coordinate system offset.
-            # Empirically measured: detected world-frame Z is consistently 9.1cm too low.
-            # Root cause: MuJoCo's depth rendering appears to use znear=0.09 or similar,
-            # which needs to be subtracted to get linear distance from camera.
-            depth_bias_correction = 0.09  # meters
-            depth = depth - depth_bias_correction
-            depth = np.maximum(depth, 0.0)  # clamp to non-negative
-
             frame = CameraFrame(
                 rgb=rgb,
                 depth=depth.astype(np.float32),

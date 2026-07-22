@@ -64,7 +64,10 @@ XARM_GRIPPER_PARAMS = {
     "gripper_open_pos": 0.85,
     "gripper_closed_pos": 0.0,
 }
-XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
+# Camera at (0.45, 0, 0.52) looking down at the table, matching the view the
+# scan poses were tuned for when link_base spawned 0.12m up. The base now
+# spawns at the world origin, so the pitch chain is folded 0.12m higher.
+XARM7_SIM_HOME = [0.0, -0.25521, 0.0, 1.2448, 0.0, 1.50044, 0.0]
 
 
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
