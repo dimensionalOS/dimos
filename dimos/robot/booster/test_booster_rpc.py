@@ -19,8 +19,9 @@ out, so no robot or `booster_rpc` runtime behavior is needed.
 """
 
 import asyncio
+import threading
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,6 +34,12 @@ import grpc
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.booster.booster_rpc import BoosterRPCConnection
+from dimos.robot.booster.k1.connection import (
+    WALK_MAX_LINEAR_MPS,
+    K1Connection,
+    _clamp,
+    _clamp_linear,
+)
 
 
 def _twist(vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0) -> Twist:
@@ -120,6 +127,33 @@ class TestSenderLoop:
         conn.move(_twist())
         assert conn.confirm_stop(timeout=0.1) is False
 
+    def test_confirm_stop_ignores_nonzero_sends(self, conn):
+        # A concurrent publisher overwriting the stop must not count as a stop.
+        result: dict[str, bool] = {}
+        t = threading.Thread(target=lambda: result.update(ok=conn.confirm_stop(timeout=0.3)))
+        t.start()
+        time.sleep(0.05)
+        conn._send(0.4, 0.0, 0.0)
+        conn._send(0.4, 0.0, 0.0)
+        t.join()
+        assert result["ok"] is False
+
+    def test_stop_is_idempotent(self, conn):
+        # dimos shutdown stops modules twice, the second call must be a no-op.
+        conn.stop()
+        close_calls = conn._conn.close.call_count
+        conn.stop()
+        assert conn._conn.close.call_count == close_calls
+
+    def test_confirm_stop_confirms_the_zero_itself(self, conn):
+        result: dict[str, bool] = {}
+        t = threading.Thread(target=lambda: result.update(ok=conn.confirm_stop(timeout=0.5)))
+        t.start()
+        time.sleep(0.05)
+        conn._send(0.0, 0.0, 0.0)
+        t.join()
+        assert result["ok"] is True
+
 
 class TestStandup:
     def test_returns_true_when_already_walking(self, conn):
@@ -160,6 +194,88 @@ class TestStandup:
     def test_transport_error_returns_false_instead_of_raising(self, conn):
         conn._conn.get_mode.side_effect = grpc.RpcError("transient")
         assert conn.standup() is False
+
+    def test_vendor_operation_failure_returns_false(self, conn):
+        # The SDK raises RuntimeError when the robot reports OPERATION_FAIL.
+        conn._conn.get_mode.return_value = RobotMode.PREPARE
+        conn._conn.change_mode.side_effect = RuntimeError("OPERATION_FAIL")
+        assert conn.standup() is False
+
+    def test_sit_returns_false_on_vendor_failure(self, conn):
+        conn._conn.call.side_effect = RuntimeError("OPERATION_FAIL")
+        assert conn.sit() is False
+
+
+class TestWalkEnvelope:
+    def test_clamp_limits_both_signs(self):
+        assert _clamp(2.0, WALK_MAX_LINEAR_MPS) == WALK_MAX_LINEAR_MPS
+        assert _clamp(-2.0, WALK_MAX_LINEAR_MPS) == -WALK_MAX_LINEAR_MPS
+        assert _clamp(0.3, WALK_MAX_LINEAR_MPS) == 0.3
+
+    def test_linear_clamp_bounds_the_vector_magnitude(self):
+        x, y = _clamp_linear(0.5, 0.5, WALK_MAX_LINEAR_MPS)
+        assert (x**2 + y**2) ** 0.5 == pytest.approx(WALK_MAX_LINEAR_MPS)
+        assert _clamp_linear(0.1, 0.2, WALK_MAX_LINEAR_MPS) == (0.1, 0.2)
+
+
+@pytest.fixture
+def make_k1(request):
+    """Builds a real K1Connection with the transport mocked, torn down after the test."""
+
+    def build(send_failed=False, stop_confirmed=True):
+        conn = MagicMock()
+        conn.send_failed = send_failed
+        conn.confirm_stop.return_value = stop_confirmed
+        with patch("dimos.robot.booster.k1.connection.make_connection", return_value=conn):
+            k1 = K1Connection(ip="mock")
+        request.addfinalizer(k1._close_module)
+        return k1, conn
+
+    return build
+
+
+class TestWalkSkill:
+    pass
+
+    def test_rejects_non_finite_input(self, make_k1):
+        k1, conn = make_k1()
+        assert "finite" in k1.walk(x=float("nan"), duration=1.0)
+        conn.move.assert_not_called()
+
+    def test_walks_then_confirms_the_stop(self, make_k1):
+        k1, conn = make_k1()
+        result = k1.walk(x=0.3, duration=0.15)
+        assert "then stopped" in result
+        conn.confirm_stop.assert_called_once()
+        last_twist = conn.move.call_args_list[-1].args[0]
+        assert (last_twist.linear.x, last_twist.angular.z) == (0.0, 0.0)
+
+    def test_clamps_the_commanded_velocity(self, make_k1):
+        k1, conn = make_k1()
+        k1.walk(x=5.0, duration=0.15)
+        first_twist = conn.move.call_args_list[0].args[0]
+        assert first_twist.linear.x == WALK_MAX_LINEAR_MPS
+
+    def test_caps_duration(self, make_k1, monkeypatch):
+        monkeypatch.setattr("dimos.robot.booster.k1.connection.WALK_MAX_DURATION_S", 0.15)
+        k1, conn = make_k1()
+        start = time.perf_counter()
+        result = k1.walk(x=0.2, duration=60.0)
+        assert time.perf_counter() - start < 2.0
+        assert "0.15s" in result
+
+    def test_rejected_sends_still_stop_and_report(self, make_k1):
+        k1, conn = make_k1(send_failed=True)
+        result = k1.walk(x=0.3, duration=1.0)
+        assert "rejected" in result
+        last_twist = conn.move.call_args_list[-1].args[0]
+        assert last_twist.linear.x == 0.0
+        conn.confirm_stop.assert_called_once()
+
+    def test_unconfirmed_stop_is_reported(self, make_k1):
+        k1, conn = make_k1(stop_confirmed=False)
+        result = k1.walk(x=0.3, duration=0.15)
+        assert "could not confirm the stop" in result
 
     def test_is_armed_only_in_walking(self, conn):
         conn._conn.get_mode.return_value = RobotMode.WALKING

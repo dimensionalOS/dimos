@@ -27,6 +27,7 @@ and must only be invoked deliberately, with the robot secured and clear.
 
 import asyncio
 from concurrent.futures import Future
+import math
 import time
 from typing import Any
 
@@ -58,6 +59,25 @@ CAMERA_CX = 272.0
 CAMERA_CY = 153.0
 CAMERA_INFO_REPUBLISH_S = 1.0  # re-emit static intrinsics on a timer for late subscribers
 CMD_REFRESH_S = 0.1  # walk() resend period, kept well below booster_rpc.CMD_VEL_TIMEOUT_S
+
+# Walk skill envelope. Speeds match the teleop-validated range, the duration cap
+# keeps a walk well inside the default RPC timeout.
+WALK_MAX_LINEAR_MPS = 0.5
+WALK_MAX_YAW_RPS = 1.0
+WALK_MAX_DURATION_S = 30.0
+
+
+def _clamp(value: float, limit: float) -> float:
+    return max(-limit, min(limit, value))
+
+
+def _clamp_linear(x: float, y: float, limit: float) -> tuple[float, float]:
+    """Scale the linear velocity vector so its magnitude stays within the envelope."""
+    norm = math.hypot(x, y)
+    if norm <= limit:
+        return x, y
+    scale = limit / norm
+    return x * scale, y * scale
 
 
 class ConnectionConfig(ModuleConfig):
@@ -175,6 +195,9 @@ class K1Connection(Module, Camera):
         """Walk at the given velocity for `duration` seconds, then stop (blocks until stopped).
 
         A positive `duration` is required. Pick it from the distance and speed.
+        Linear speed is clamped to 0.5 m/s magnitude, yaw to 1.0 rad/s, duration
+        to 30 s. Not for use alongside the coordinator blueprints, their velocity
+        stream overrides this skill.
 
         Args:
             x: Forward velocity (m/s)
@@ -182,33 +205,46 @@ class K1Connection(Module, Camera):
             yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds), must be > 0
         """
+        if not all(math.isfinite(v) for v in (x, y, yaw, duration)):
+            return "All arguments must be finite numbers."
         if duration <= 0:
             return "Specify a positive duration (seconds). Compute it from the distance and speed."
+        x, y = _clamp_linear(x, y, WALK_MAX_LINEAR_MPS)
+        yaw = _clamp(yaw, WALK_MAX_YAW_RPS)
+        duration = min(duration, WALK_MAX_DURATION_S)
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
         zero = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
         deadline = time.monotonic() + duration
-        while time.monotonic() < deadline:
-            self.move(twist)
-            time.sleep(CMD_REFRESH_S)
-            if self._connection.send_failed:
-                self.move(zero)
-                return (
-                    "The robot rejected the move commands. Check that it is armed (mode WALKING)."
-                )
-        self.move(zero)
-        if not self._connection.confirm_stop():
+        rejected = False
+        try:
+            while time.monotonic() < deadline:
+                self.move(twist)
+                time.sleep(CMD_REFRESH_S)
+                if self._connection.send_failed:
+                    rejected = True
+                    break
+        finally:
+            self.move(zero)
+        stopped = self._connection.confirm_stop()
+        if rejected:
+            return "The robot rejected the move commands. Check that it is armed (mode WALKING)."
+        if not stopped:
             return "Sent movement commands but could not confirm the stop. Verify the robot halted."
         return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."
 
     @skill
     def stand(self) -> str:
-        """Make the robot stand up from a sitting or damping position."""
-        return "Robot is now standing." if self.standup() else "Failed to stand up."
+        """Stand the robot up from a damping or prepare state. Blocks through the sequence."""
+        if self.standup():
+            return "The robot reports WALKING mode after the stand sequence."
+        return "The stand sequence failed. Check the robot state."
 
     @skill
     def liedown(self) -> str:
-        """Make the robot lie down."""
-        return "Robot is now sitting." if self.sit() else "Failed to sit down."
+        """Command the robot to lie down."""
+        if self.sit():
+            return "Lie-down command accepted. The robot lowers itself, completion is not reported."
+        return "The lie-down command failed."
 
     @skill
     def observe(self) -> Image | None:

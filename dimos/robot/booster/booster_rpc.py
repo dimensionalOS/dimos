@@ -43,6 +43,9 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
+# The SDK raises RuntimeError when the robot reports OPERATION_FAIL.
+SDK_ERRORS = (grpc.RpcError, RuntimeError)
+
 SEND_HZ = 30.0  # gRPC send rate to the robot, kept under booster-rpc's ~58/sec move ceiling
 CMD_VEL_TIMEOUT_S = 0.5  # dead-man: send one zero if no new command arrives within this window
 MODE_TRANSITION_TIMEOUT_S = 15.0  # give up if the robot never reports the requested mode
@@ -71,12 +74,18 @@ class BoosterRPCConnection:
         self._sender_done.set()
         self._send_failed = False
         self._send_count = 0
+        self._last_send: tuple[int, tuple[float, float, float], bool] = (0, (0.0, 0.0, 0.0), False)
+        self._stopped = False
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT_S
         self.send_hz = SEND_HZ
         self.mode_transition_timeout = MODE_TRANSITION_TIMEOUT_S
         self.mode_settle = MODE_SETTLE_S
 
     def stop(self) -> None:
+        with self._cmd_lock:
+            if self._stopped:
+                return
+            self._stopped = True
         self._sender_stop.set()
         self._sender_done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._send(0.0, 0.0, 0.0)
@@ -110,7 +119,8 @@ class BoosterRPCConnection:
     @property
     def send_failed(self) -> bool:
         """True if the robot rejected the most recent command sent to it."""
-        return self._send_failed
+        with self._cmd_lock:
+            return self._send_failed
 
     async def run_sender(self) -> None:
         """Issue the latest command at `send_hz` until stopped, with a dead-man stop."""
@@ -134,24 +144,33 @@ class BoosterRPCConnection:
             self._sender_done.set()
 
     def _send(self, vx: float, vy: float, vyaw: float) -> None:
+        failed = False
         try:
             with self._lock:
                 self._conn.move(vx, vy, vyaw)
-            self._send_failed = False
         except Exception as e:
             # The robot rejects moves outside a locomotion mode ("Failed to move: code = 100").
-            self._send_failed = True
+            failed = True
             logger.warning("Booster move failed: %s: %s", type(e).__name__, e)
-        finally:
+        with self._cmd_lock:
+            self._send_failed = failed
             self._send_count += 1
+            self._last_send = (self._send_count, (vx, vy, vyaw), failed)
 
     def confirm_stop(self, timeout: float = 1.0) -> bool:
-        """Block until the queued zero command has been transmitted. False if rejected or unsent."""
-        target = self._send_count + 2
+        """Block until a zero command is transmitted and accepted. False otherwise.
+
+        Confirms the zero itself. Sends of other commands, for example from a
+        concurrent publisher that overwrote the stop, never count as a stop.
+        """
+        with self._cmd_lock:
+            baseline = self._send_count
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self._send_count >= target:
-                return not self._send_failed
+            with self._cmd_lock:
+                count, command, failed = self._last_send
+            if count > baseline and command == (0.0, 0.0, 0.0):
+                return not failed
             time.sleep(1.0 / self.send_hz)
         return False
 
@@ -191,7 +210,7 @@ class BoosterRPCConnection:
         try:
             with self._lock:
                 self._conn.change_mode(target)
-        except grpc.RpcError as e:
+        except SDK_ERRORS as e:
             logger.warning("Booster change_mode(%s) failed: %s", target, e)
             return False
         deadline = start + self.mode_transition_timeout
@@ -216,12 +235,16 @@ class BoosterRPCConnection:
             with self._lock:
                 mode: RobotMode = self._conn.get_mode()
             return mode
-        except grpc.RpcError as e:
+        except SDK_ERRORS as e:
             logger.warning("Booster get_mode failed: %s", e)
             return None
 
     def sit(self) -> bool:
-        with self._lock:
-            self._conn.call(RpcApiId.ROBOT_LIE_DOWN)
+        try:
+            with self._lock:
+                self._conn.call(RpcApiId.ROBOT_LIE_DOWN)
+        except SDK_ERRORS as e:
+            logger.warning("Booster lie-down failed: %s", e)
+            return False
         logger.info("Booster lying down")
         return True
