@@ -102,7 +102,10 @@ def find_section_markers() -> list[tuple[str, int, str]]:
 
         for fname in filenames:
             full_path = os.path.join(dirpath, fname)
-            rel_path = os.path.join(rel_dir, fname)
+            # Normalize to forward slashes so the WHITELIST (written with "/")
+            # matches regardless of the host OS's path separator (os.sep is "\\"
+            # on Windows, which would otherwise never equal the "/" entries).
+            rel_path = os.path.join(rel_dir, fname).replace(os.sep, "/")
 
             if not _should_scan(full_path):
                 continue
