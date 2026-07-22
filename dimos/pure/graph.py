@@ -1042,7 +1042,9 @@ def _cone(plan: GraphPlan, target: PortRef) -> tuple[set[str], set[str]]:
     """The ancestor members + rim inputs feeding one export (drive only what it needs)."""
     members: set[str] = set()
     rims: set[str] = set()
-    stack = [target.member] if target.member is not None else []
+    if target.member is None:  # rim passthrough: the "cone" is the source itself
+        return members, {target.field}
+    stack = [target.member]
     while stack:
         path = stack.pop()
         if path in members:
@@ -1374,18 +1376,22 @@ class GraphRun(Generic[_TOut]):
         )
 
     def _producer_ref(self, path: str) -> PortRef:
-        """Resolve an output name or interior edge path to its producing port (spec §0.5)."""
+        """Resolve an output name, rim input name, or interior edge path (spec §0.5)."""
         for name, ref in self._plan.exports:
             if name == path:
                 return ref
+        if any(n == path for n, _ in self._plan.inputs):
+            return PortRef(None, path)  # rim passthrough: record the source stream
         if "." in path:
             member, _, field = path.rpartition(".")
             for p, m in self._plan.members:
                 if p == member and field in m.__pure_step__.out_type.fields():
                     return PortRef(member, field)
-        available = [n for n, _ in self._plan.exports] + [
-            f"{p}.{f}" for p, m in self._plan.members for f in m.__pure_step__.out_type.fields()
-        ]
+        available = (
+            [n for n, _ in self._plan.exports]
+            + [n for n, _ in self._plan.inputs]
+            + [f"{p}.{f}" for p, m in self._plan.members for f in m.__pure_step__.out_type.fields()]
+        )
         raise _e_unknown_path(self._plan.graph, path, available)
 
     def _out_type(self, name: str) -> type[Any] | None:
@@ -1427,7 +1433,10 @@ class GraphRun(Generic[_TOut]):
         from dimos.pure.rows import TfSpec  # data layer; local to keep the surface honest
 
         spec = type(sink).__pure_step__
-        produced: dict[str, PortRef] = {n: ref for n, ref in self._plan.exports}
+        # Rim inputs are feedable by name too (a sink rendering raw lidar next to
+        # the maps built from it); exported outputs shadow a same-named rim.
+        produced: dict[str, PortRef] = {n: PortRef(None, n) for n, _ in self._plan.inputs}
+        produced.update({n: ref for n, ref in self._plan.exports})
         for path, name in record.items():
             produced[name] = self._producer_ref(path)
         records: dict[str, PortRef] = {}

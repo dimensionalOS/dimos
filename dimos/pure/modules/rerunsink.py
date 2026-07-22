@@ -46,7 +46,10 @@ class NavRerunSink(pm.PureModule):
     save_path: str | None = None
 
     class In(pm.In):
-        map: PointCloud2 = pm.tick(expect_hz=0.5)  # the driving stage
+        # raw scans drive the render: lidar-rate frames, everything else sampled.
+        # (save() feeds `lidar` straight from the graph's rim input — spec §0.5.)
+        lidar: PointCloud2 = pm.tick(expect_hz=5.0)
+        map: PointCloud2 | None = pm.latest(default=None)
         costmap: OccupancyGrid | None = pm.latest(default=None)
         path: Path | None = pm.latest(default=None)
         robot: Transform | None = pm.latest(default=None)

@@ -59,6 +59,7 @@ class _Sink:
     def __init__(self, stream: rr.RecordingStream, timeline: str) -> None:
         self._stream = stream
         self._timeline = timeline
+        self._rendered: dict[str, float] = {}  # entity path -> last logged payload ts
 
     def log(self, entity_path: str, ts: float, msg: RerunRenderable) -> None:
         """Log one message's archetype(s) under entity_path at data-time ts."""
@@ -69,6 +70,15 @@ class _Sink:
                 self._stream.log(f"{entity_path}/{suffix}", archetype)
         else:
             self._stream.log(entity_path, data)
+
+    def log_changed(self, entity_path: str, ts: float, msg: RerunRenderable) -> None:
+        """Log only when this entity's payload ts moved — latest-sampled ports re-present
+        the same message every tick; re-logging it would bloat the recording."""
+        key = getattr(msg, "ts", ts)
+        if self._rendered.get(entity_path) == key:
+            return
+        self._rendered[entity_path] = key
+        self.log(entity_path, ts, msg)
 
     def dispose(self) -> None:
         """Flush pending chunks to the sink at teardown."""
@@ -102,11 +112,14 @@ def open_sink(
 
 
 def render_fields(rec: _Sink, entity_path: str, row: Any) -> None:
-    """Log every present, renderable field of a row under entity_path/<field> at row.ts."""
+    """Log every present, renderable field of a row under entity_path/<field> at row.ts.
+
+    Change-detected per field: a latest-sampled port re-presents its newest message
+    on every tick, but each distinct sample is logged once."""
     for name in type(row).fields():
         value = getattr(row, name)
         if value is not None and hasattr(value, "to_rerun"):
-            rec.log(f"{entity_path}/{name}", row.ts, value)
+            rec.log_changed(f"{entity_path}/{name}", row.ts, value)
 
 
 class RerunTap(pm.PureModule):

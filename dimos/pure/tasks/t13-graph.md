@@ -113,6 +113,10 @@ compute ONCE. The model:
   ONLY as a one-off single-output convenience. Any multi-output consumption goes
   through the terminal drive and is compute-once. Interior edges may also be
   routed into the sink by path (record an interior edge) — same single pass.
+- **Rim inputs are recordable by name too** (2026-07-22): a sink In port (or
+  `record=` path) matching a rim input name tees the *source stream* into the
+  drive — a render sink shows raw lidar next to the maps built from it without
+  any member re-exporting its input. Exported outputs shadow a same-named rim.
 
 Phase A.5 delivers the terminal-drive engine + `.save(sink)` for mem2 stores and
 rerun sinks. **This subsumes the deferred recording (§0.3) — they are one

@@ -811,6 +811,27 @@ class TestGraphOver:
         assert FOLDY_FINALIZED == []
 
 
+RIM_SAW: list[tuple[float, float | None]] = []
+
+
+class RimSink(pm.PureModule):
+    """Ticks on the rim input a; latest-samples the derived b."""
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+        b: PayB | None = pm.latest(default=None)
+
+    class Out(pm.Out):
+        n: int
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out]:
+        RIM_SAW.append((i.a.v, None if i.b is None else i.b.v))
+        return s.replace(n=s.n + 1), RimSink.Out(n=s.n + 1)
+
+
 # ── skip-gated: the terminal drive — compute-once multi-output (spec §0.5) ───
 
 
@@ -901,6 +922,23 @@ class TestTerminalDrive:
     def test_bad_sink_type_raises(self):
         with pytest.raises(TypeError, match="neither a mem2 store"):
             _pipe()().over(a=_a_stream(2)).save(object())
+
+    def test_rim_input_records_by_name(self):
+        # spec §0.5: a record= path naming a rim input tees the source stream
+        from dimos.memory2.store.memory import MemoryStore
+
+        store = MemoryStore()
+        _Fan().over(a=_a_stream(3)).save(store, record={"a": "raw_a"})
+        assert [o.data.v for o in store.stream("raw_a")] == [0.0, 1.0, 2.0]
+
+    def test_rim_input_feeds_module_sink_port(self):
+        # spec §0.5: a sink In port named after a rim input samples the source
+        RIM_SAW.clear()
+        frames = _Fan().over(a=_a_stream(3)).save(RimSink())
+        assert frames == 3
+        # tick a and edge b share ts; latest resolves inclusively (newest <= T,
+        # spec §5.4), so each tick sees the b derived from that same a.
+        assert RIM_SAW == [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]
 
     def test_save_disposes_resources_once(self):
         # The terminal drive owns member drivers; teardown fires once at exhaustion.
