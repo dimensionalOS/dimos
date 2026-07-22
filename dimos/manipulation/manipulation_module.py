@@ -1210,8 +1210,8 @@ class ManipulationModule(Module):
     ) -> bool:
         """Wait for trajectory execution to complete.
 
-        Polls the coordinator task state via task_invoke. Falls back to waiting
-        for the trajectory duration if the coordinator is unavailable.
+        Polls the coordinator task state via task_invoke. Raises RuntimeError
+        if the coordinator is unavailable.
 
         Args:
             robot_name: Robot to monitor
@@ -1220,6 +1220,9 @@ class ManipulationModule(Module):
 
         Returns:
             True if trajectory completed successfully
+
+        Raises:
+            RuntimeError: If ControlCoordinator is unavailable
         """
         robot = self._get_robot(robot_name)
         if robot is None:
@@ -1228,12 +1231,9 @@ class ManipulationModule(Module):
         client = self._get_coordinator_client()
 
         if client is None or not config.coordinator_task_name:
-            # No coordinator — wait for trajectory duration as fallback
-            traj = self._planned_trajectories.get(rname)
-            if traj is not None:
-                logger.info(f"No coordinator status — waiting {traj.duration:.1f}s for trajectory")
-                time.sleep(traj.duration + 0.5)
-            return True
+            msg = "ControlCoordinator unavailable; cannot verify trajectory execution"
+            logger.error(msg)
+            raise RuntimeError(msg)
 
         # Poll task state via task_invoke
         start = time.time()
