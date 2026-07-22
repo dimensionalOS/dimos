@@ -73,6 +73,10 @@ REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
+GROUND_TRUTH_COLOR = (60, 220, 120)
+DETECTION_COLOR = (255, 150, 0)
+POSE_ERROR_LINE_COLOR = (255, 80, 80)
+OVERLAY_MARKER_RADIUS = 0.02
 
 
 class RobotDisplayMode(StrEnum):
@@ -108,6 +112,9 @@ class ViserManipulationScene:
         self._target_tracks_current: dict[str, bool] = {}
         self._collision_fallback_urdfs: dict[str, ViserUrdf] = {}
         self._robot_display_mode = RobotDisplayMode.VISUAL
+        # Overlay marker handles keyed by scene-node name, tracked so each
+        # refresh can clear the previous set before drawing the new one.
+        self._overlay_handles: dict[str, object] = {}
         self._ensure_reference_grid()
 
     @property
@@ -306,7 +313,116 @@ class ViserManipulationScene:
         target = self._urdfs.get(f"{robot_id}:target")
         self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)
 
+    def render_ground_truth(self, objects: Sequence[tuple[str, float, float, float]]) -> None:
+        """Draw fixed scene-truth markers (green) under /ground_truth/."""
+        self._render_markers("/ground_truth", objects, GROUND_TRUTH_COLOR, suffix="(truth)")
+
+    def render_detections(
+        self,
+        objects: Sequence[tuple[str, float, float, float]],
+        ground_truth: Sequence[tuple[str, float, float, float]] = (),
+    ) -> None:
+        """Draw detected-object markers (orange) and pose-error lines to truth.
+
+        Each detection is matched to its nearest ground-truth object in XY so
+        the connecting error line survives per-scan label drift.
+        """
+        self._render_markers("/detected", objects, DETECTION_COLOR, suffix="")
+        self._clear_overlay_prefix("/pose_error")
+        if not ground_truth:
+            return
+        for index, (_name, dx, dy, dz) in enumerate(objects):
+            nearest = self._nearest_truth(dx, dy, ground_truth)
+            if nearest is None:
+                continue
+            _, tx, ty, tz = nearest
+            self._add_overlay_line(
+                f"/pose_error/{index}",
+                (dx, dy, dz),
+                (tx, ty, tz),
+                POSE_ERROR_LINE_COLOR,
+            )
+
+    @staticmethod
+    def _nearest_truth(
+        x: float, y: float, ground_truth: Sequence[tuple[str, float, float, float]]
+    ) -> tuple[str, float, float, float] | None:
+        best: tuple[str, float, float, float] | None = None
+        best_d = float("inf")
+        for entry in ground_truth:
+            d = (x - entry[1]) ** 2 + (y - entry[2]) ** 2
+            if d < best_d:
+                best, best_d = entry, d
+        return best
+
+    def _render_markers(
+        self,
+        prefix: str,
+        objects: Sequence[tuple[str, float, float, float]],
+        color: tuple[int, int, int],
+        *,
+        suffix: str,
+    ) -> None:
+        self._clear_overlay_prefix(prefix)
+        try:
+            scene = self.server.scene
+        except AttributeError:
+            return
+        for index, (name, x, y, z) in enumerate(objects):
+            marker_name = f"{prefix}/{index}"
+            try:
+                handle = scene.add_icosphere(
+                    marker_name,
+                    radius=OVERLAY_MARKER_RADIUS,
+                    color=color,
+                    position=(float(x), float(y), float(z)),
+                )
+            except Exception:
+                logger.warning("Could not add overlay marker %s", marker_name, exc_info=True)
+                continue
+            self._overlay_handles[marker_name] = handle
+            label_name = f"{prefix}/{index}/label"
+            label_text = f"{name} {suffix}".strip()
+            try:
+                label = scene.add_label(
+                    label_name, label_text, position=(float(x), float(y), float(z) + 0.05)
+                )
+                self._overlay_handles[label_name] = label
+            except Exception:
+                logger.debug("Viser add_label unavailable for %s", label_name, exc_info=True)
+
+    def _add_overlay_line(
+        self,
+        name: str,
+        start: tuple[float, float, float],
+        end: tuple[float, float, float],
+        color: tuple[int, int, int],
+    ) -> None:
+        try:
+            scene = self.server.scene
+        except AttributeError:
+            return
+        try:
+            import numpy as np
+
+            points = np.array([[list(start), list(end)]], dtype=float)
+            handle = scene.add_line_segments(name, points=points, colors=color, line_width=3.0)
+        except Exception:
+            logger.debug("Viser add_line_segments unavailable for %s", name, exc_info=True)
+            return
+        self._overlay_handles[name] = handle
+
+    def _clear_overlay_prefix(self, prefix: str) -> None:
+        for key in [k for k in self._overlay_handles if k == prefix or k.startswith(f"{prefix}/")]:
+            handle = self._overlay_handles.pop(key, None)
+            if handle is not None:
+                self._remove_scene_handle(handle)
+
     def close(self) -> None:
+        for key in list(self._overlay_handles):
+            handle = self._overlay_handles.pop(key, None)
+            if handle is not None:
+                self._remove_scene_handle(handle)
         for key in list(self._handles):
             self._remove_handle(key)
         if self._grid_handle is not None:

@@ -98,6 +98,8 @@ class ViserPanelGui:
         self._suppress_target_callbacks = False
         self._handles: dict[str, PanelHandle] = {}
         self._joint_sliders: dict[str, GuiSliderHandle[float]] = {}
+        self._viewpoints: dict[str, list[float]] = {}
+        self._viewpoint_counter = 0
         self._worker = TargetEvaluationWorker(
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
@@ -193,6 +195,149 @@ class ViserPanelGui:
         clear_button.on_click(lambda _: self._submit_clear())
         self._handles["clear"] = clear_button
         self._build_joint_sliders()
+        self._build_interaction_controls(gui)
+
+    def _interaction_enabled(self) -> bool:
+        return self.config.scan_tool is not None or bool(self.config.ground_truth_objects)
+
+    def _build_interaction_controls(self, gui: GuiApi) -> None:
+        """Optional R3 controls: ground-truth overlay, scan-from-here, viewpoints.
+
+        Gated so the generic panel (no scan_tool, no ground truth) is unchanged.
+        """
+        if not self._interaction_enabled():
+            return
+        self._render_ground_truth_overlay()
+        if self.config.scan_tool is not None:
+            folder = gui.add_folder("Perception", expand_by_default=True)
+            self._handles["perception_folder"] = folder
+            with folder:
+                prompt_input = gui.add_text("Scan prompt", initial_value=self.config.scan_prompt)
+                self._handles["scan_prompt"] = prompt_input
+                scan_button = gui.add_button("Scan from here")
+                scan_button.on_click(lambda _: self._submit_scan())
+                self._handles["scan"] = scan_button
+                scan_status = gui.add_markdown("No scan yet.")
+                self._handles["scan_status"] = scan_status
+
+        vp_folder = gui.add_folder("Viewpoints", expand_by_default=False)
+        self._handles["viewpoints_folder"] = vp_folder
+        with vp_folder:
+            bookmark_button = gui.add_button("Bookmark current pose")
+            bookmark_button.on_click(lambda _: self._bookmark_viewpoint())
+            self._handles["bookmark"] = bookmark_button
+            vp_dropdown = gui.add_dropdown(
+                "Saved viewpoints", options=["(none)"], initial_value="(none)"
+            )
+            self._handles["viewpoints"] = vp_dropdown
+            goto_button = gui.add_button("Go to viewpoint")
+            goto_button.on_click(lambda _: self._goto_viewpoint())
+            self._handles["goto_viewpoint"] = goto_button
+
+    def _render_ground_truth_overlay(self) -> None:
+        if self.scene is None or not self.config.ground_truth_objects:
+            return
+        truth = [(o.name, o.x, o.y, o.z) for o in self.config.ground_truth_objects]
+        try:
+            self.scene.render_ground_truth(truth)
+        except Exception:
+            logger.warning("Failed to render ground-truth overlay", exc_info=True)
+
+    def _ground_truth_tuples(self) -> list[tuple[str, float, float, float]]:
+        return [(o.name, o.x, o.y, o.z) for o in self.config.ground_truth_objects]
+
+    def _submit_scan(self) -> None:
+        if self._closed or self.config.scan_tool is None:
+            return
+        tool = self.config.scan_tool
+        prompt_handle = self._handles.get("scan_prompt")
+        prompt = str(getattr(prompt_handle, "value", self.config.scan_prompt) or "")
+        operation_id = self._next_operation_id()
+
+        def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
+            self._set_scan_status("Scanning…")
+            objects = self.adapter.scan(tool, prompt)
+            if not self._operation_is_current(operation_id):
+                return
+            if self.scene is not None:
+                self.scene.render_detections(
+                    [(o["name"], o["x"], o["y"], o["z"]) for o in objects],
+                    self._ground_truth_tuples(),
+                )
+            self._set_scan_status(self._format_scan_result(objects))
+            self._finish_operation(f"scan={len(objects)}", operation_id=operation_id)
+
+        self._operation_worker.submit(
+            operation,
+            timeout_seconds=max(self.config.preview_request_timeout, 180.0),
+            on_error=lambda message: self._set_operation_error(message, operation_id),
+        )
+
+    def _format_scan_result(self, objects: list[dict]) -> str:
+        if not objects:
+            return "**Scan complete:** no objects detected."
+        lines = [f"**Scan complete:** {len(objects)} object(s)"]
+        truth = self._ground_truth_tuples()
+        for obj in objects:
+            line = f"- `{obj['name']}` ({obj['x']:.3f}, {obj['y']:.3f}, {obj['z']:.3f})"
+            nearest = self._nearest_truth(obj["x"], obj["y"], truth)
+            if nearest is not None:
+                err = ((obj["x"] - nearest[1]) ** 2 + (obj["y"] - nearest[2]) ** 2) ** 0.5
+                line += f" — {err * 100:.1f}cm from `{nearest[0]}`"
+            lines.append(line)
+        return "\n\n".join(lines)
+
+    @staticmethod
+    def _nearest_truth(
+        x: float, y: float, truth: list[tuple[str, float, float, float]]
+    ) -> tuple[str, float, float, float] | None:
+        best, best_d = None, float("inf")
+        for entry in truth:
+            d = (x - entry[1]) ** 2 + (y - entry[2]) ** 2
+            if d < best_d:
+                best, best_d = entry, d
+        return best
+
+    def _set_scan_status(self, text: str) -> None:
+        self._set_handle_value("scan_status", text)
+
+    def _bookmark_viewpoint(self) -> None:
+        if self._closed or self.state.selected_robot is None:
+            return
+        current = self.adapter.get_current_joint_state(self.state.selected_robot)
+        if current is None:
+            self._set_recoverable_error("No joint state to bookmark")
+            return
+        self._viewpoint_counter += 1
+        label = f"vp{self._viewpoint_counter}"
+        self._viewpoints[label] = list(current.position)
+        handle = self._handles.get("viewpoints")
+        options = list(self._viewpoints.keys()) or ["(none)"]
+        self._set_optional_handle_attr(handle, "options", options)
+        self._set_optional_handle_attr(handle, "value", label)
+        self.state.last_result = f"bookmarked {label}"
+        self.refresh()
+
+    def _goto_viewpoint(self) -> None:
+        if self._closed or self.state.selected_robot is None:
+            return
+        handle = self._handles.get("viewpoints")
+        label = str(getattr(handle, "value", "") or "")
+        values = self._viewpoints.get(label)
+        if values is None:
+            self._set_recoverable_error("Select a saved viewpoint first")
+            return
+        config = self.adapter.get_robot_config(self.state.selected_robot)
+        if config is None:
+            return
+        # Reuse the joint-target path: set sliders -> evaluate -> user clicks
+        # Plan/Execute. Every move stays collision-checked planning, no servo.
+        self._set_slider_values(list(config.joint_names), values)
+        self.state.joint_target = [float(v) for v in values]
+        self._submit_joint_target_evaluation()
+        self.refresh()
 
     def _build_scene_controls(self, gui: GuiApi) -> None:
         if self.scene is None:

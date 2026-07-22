@@ -33,6 +33,13 @@ class TargetEvaluation(TypedDict, total=False):
     orientation_error: float
 
 
+class DetectedObject(TypedDict):
+    name: str
+    x: float
+    y: float
+    z: float
+
+
 class RobotInfo(TypedDict):
     name: RobotName
     world_robot_id: WorldRobotID
