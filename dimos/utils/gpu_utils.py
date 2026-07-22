@@ -15,9 +15,8 @@
 
 def is_cuda_available():  # type: ignore[no-untyped-def]
     try:
-        import pycuda.driver as cuda
+        import torch
 
-        cuda.init()
-        return cuda.Device.count() > 0
+        return torch.cuda.is_available()
     except Exception:
         return False
