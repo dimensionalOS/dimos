@@ -64,6 +64,7 @@ all_blueprints = {
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner",
     "go2-zenoh-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_basic",
+    "go2-zenoh-htc": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_htc",
     "go2-zenoh-nav": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav",
     "go2-zenoh-raycaster": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_raycaster",
     "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
