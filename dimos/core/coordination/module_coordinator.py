@@ -713,8 +713,7 @@ def _materialize_transports(
         config = None
         config_cls = spec.config_cls
         if config_cls is not None:
-            # Config-field kwargs pinned on the spec (e.g. robot_type in a
-            # blueprint) are defaults; CLI/env transports.<name>.* overrides win.
+            # Config-field kwargs pinned on the spec
             spec_fields = {k: v for k, v in spec.kwargs.items() if k in config_cls.model_fields}
             sub = overrides.get(transport_config_name(config_cls), {})
             config = config_cls(**{**spec_fields, **sub})
