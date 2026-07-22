@@ -20,7 +20,7 @@ from typing import Literal, TypeAlias
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.constants import DEFAULT_BUILD_NATIVE
+from dimos.constants import DEFAULT_BUILD_NATIVE, MACHINE_ID
 from dimos.models.vl.types import VlModelName
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
@@ -83,6 +83,10 @@ class GlobalConfig(BaseSettings):
     transport: TransportBackend = Field(
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
+    )
+    zenoh_password: str = Field(
+        default=MACHINE_ID,
+        validation_alias=AliasChoices("DIMOS_ZENOH_PASSWORD", "zenoh_password"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
