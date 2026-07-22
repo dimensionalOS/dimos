@@ -31,7 +31,7 @@ else:
 
 if sys.platform == "linux":
     MACHINE_ID = Path("/etc/machine-id").read_text().strip()
-if os.sys.platform == "darwin":
+elif sys.platform == "darwin":
     parts = subprocess.run(
         ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
         capture_output=True,
