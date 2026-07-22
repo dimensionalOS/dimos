@@ -34,7 +34,6 @@ from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -97,7 +96,6 @@ def _rerun_blueprint() -> Any:
                 # viewer.
                 overrides={
                     "world/pointlio_map": rrb.EntityBehavior(visible=False),
-                    "world/local_map": rrb.EntityBehavior(visible=False),
                     "world/lidar": rrb.EntityBehavior(visible=False),
                     "world/nodes": rrb.EntityBehavior(visible=False),
                 },
@@ -109,11 +107,7 @@ def _rerun_blueprint() -> Any:
     )
 
 
-def _convert_map(grid: PointCloud2) -> Any:
-    return grid.to_rerun(voxel_size=0.025)
-
-
-def _render_global_map(msg: Any) -> Any:
+def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.02)
 
 
@@ -125,20 +119,19 @@ def _render_path(msg: Any) -> Any:
     return msg
 
 
-def _rerun_config(
-    visual_override: dict[str, Any] | None = None, max_hz: dict[str, Any] | None = None
-) -> dict[str, Any]:
+def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
         "blueprint": _rerun_blueprint,
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
-            "world/pointlio_map": _convert_map,
+            "world/pointlio_map": _render_map,
             "world/lidar": None,
-            "world/local_map": None,
-            "world/global_map": _render_global_map,
+            "world/local_map": _render_map,
+            "world/global_map": _render_map,
             "world/path": _render_path,
             **planner_visual_override(planner_viz_hz),
+            **(visual_override or {}),
         },
     }
 
@@ -150,16 +143,6 @@ go2_zenoh_basic = autoconnect(
     GO2Zenoh.blueprint(mid360_mount_rpy_deg=MID360_MOUNT_RPY_DEG),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
-
-# Shared by the raycaster/nav/htc layers below.
-_ray_tracer = RayTracingVoxelMap.blueprint(
-    voxel_size=voxel_size,
-    emit_every=1,
-    global_emit_every=50,
-    min_health=-1,
-    max_health=5,
-    support_min=4,
-)
 
 # global_map is remapped off so the planner runs purely on the
 # incremental local_map + region_bounds pair.
@@ -180,8 +163,22 @@ _mls_planner = MLSPlannerNative.blueprint(
 # PointLio does locally (frames odom / mid360_link, xyz+intensity at point_step 16).
 go2_zenoh_raycaster = autoconnect(
     go2_zenoh_basic,
-    _ray_tracer,
+    # Re-declared with the pointlio map muted: the raytraced maps replace it here, and
+    # autoconnect keeps the newest duplicate, so this vis module wins over basic's.
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
+    ),
+    RayTracingVoxelMap.blueprint(
+        voxel_size=voxel_size,
+        emit_every=1,
+        global_emit_every=50,
+        min_health=-1,
+        max_health=5,
+        support_min=4,
+    ),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
+
 
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
