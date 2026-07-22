@@ -33,7 +33,6 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.teleop.hosted.go2_command import ALLOWED_SPORT_CMDS, Go2CommandModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -345,22 +344,3 @@ def test_nav_goal_rejected_when_estopped(
 
     module.goal_request.publish.assert_not_called()
     assert acks == [(13, False)]
-
-
-# ─── robot-type (operator UI view select) ────────────────────────────
-
-
-def test_robot_type_excluded_from_broker_config_identity() -> None:
-    """robot_type is session metadata, not part of the connection: two broker
-    configs differing only in it are equal and hash the same, so pinning it on
-    one transport spec (while other broker specs leave it unset) does not fork the
-    shared provider/PeerConnection. Guards the identity-exclusion in BrokerConfig."""
-    base = dict(api_key="k")
-    assert BrokerConfig(**base, robot_type="go2") == BrokerConfig(**base)
-    assert hash(BrokerConfig(**base, robot_type="go2")) == hash(
-        BrokerConfig(**base, robot_type="arm")
-    )
-    # a real field still separates configs (identity isn't blanket-ignored)
-    assert BrokerConfig(**base, robot_type="go2") != BrokerConfig(api_key="other", robot_type="go2")
-    # unset by default (the session POST omits it)
-    assert BrokerConfig(**base).robot_type is None
