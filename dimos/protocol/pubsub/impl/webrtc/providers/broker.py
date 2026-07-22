@@ -92,7 +92,9 @@ class BrokerConfig(ProviderConfig):
         return hash(self._identity())
 
     def _identity(self) -> tuple[tuple[str, Any], ...]:
-        return tuple((k, v) for k, v in self.__dict__.items() if k != "robot_type")
+        # model_dump (declared fields only) not __dict__, so no pydantic internals
+        # can leak into the singleton key.
+        return tuple((k, v) for k, v in self.model_dump().items() if k != "robot_type")
 
 
 class BrokerProvider(AsyncProviderBase):

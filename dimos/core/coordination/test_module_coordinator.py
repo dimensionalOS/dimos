@@ -23,6 +23,7 @@ from dimos.core._test_future_annotations_helper import (
     FutureModuleOut,
 )
 from dimos.core.coordination.blueprints import (
+    Blueprint,
     DisabledModuleProxy,
     autoconnect,
 )
@@ -31,6 +32,7 @@ from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
     _all_name_types,
     _check_requirements,
+    _materialize_transports,
     _verify_no_conflicts_with_existing,
     _verify_no_name_conflicts,
 )
@@ -871,3 +873,34 @@ def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
         assert restored.whoami() == "robot0/namedmodule"
     finally:
         restored.stop_rpc_client()
+
+
+def _materialize_one(spec, overrides=None):
+    """Run a single TransportSpec through _materialize_transports and return the
+    built transport."""
+    bp = Blueprint(blueprints=(), transport_map=MappingProxyType({("s", bytes): spec}))
+    return _materialize_transports(bp, overrides or {})[("s", bytes)]
+
+
+def test_spec_config_kwarg_reaches_provider_config() -> None:
+    """A config-field kwarg pinned on a WebRTC spec (e.g. robot_type in a hosted
+    blueprint) must survive materialization. Regression: the coordinator builds a
+    provider config from CLI/env overrides and passes it as config=, which the
+    transport's `config or config_cls(**kwargs)` guard would otherwise let win
+    unconditionally — silently dropping the spec kwarg."""
+    from dimos.core.transport import CloudflareTransport
+
+    t = _materialize_one(CloudflareTransport.spec("state_reliable", robot_type="go2"))
+    assert t._config.robot_type == "go2"
+
+
+def test_cli_override_beats_spec_config_kwarg() -> None:
+    """transports.<name>.* CLI/env overrides take precedence over a spec-pinned
+    config kwarg (the pin is a default)."""
+    from dimos.core.transport import CloudflareTransport
+
+    t = _materialize_one(
+        CloudflareTransport.spec("state_reliable", robot_type="go2"),
+        {"broker": {"robot_type": "arm"}},
+    )
+    assert t._config.robot_type == "arm"
