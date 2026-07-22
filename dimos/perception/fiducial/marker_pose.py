@@ -128,7 +128,8 @@ def estimate_marker_pose_candidates(
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Return every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric``.
 
-    A planar square has two IPPE solutions (Collins & Bartoli); at weak
+    A planar square has two IPPE solutions (Collins & Bartoli 2014,
+    https://link.springer.com/article/10.1007/s11263-014-0725-5); at weak
     perspective the *wrong* mirror pose can reproject as well as the right one,
     which :func:`estimate_marker_pose` (best-solution-only) silently hides.
     Callers that must not trust a flipped pose compare the candidates'
@@ -163,13 +164,12 @@ def ambiguity_gated_pose(
     """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, gated on
     the IPPE mirror ambiguity.
 
-    A planar square yields two IPPE poses (Collins & Bartoli); at weak
+    A planar square yields two IPPE poses (Collins & Bartoli 2014,
+    https://link.springer.com/article/10.1007/s11263-014-0725-5); at weak
     perspective the flipped mirror pose can reproject nearly as well as the true
     one, so a pose whose runner-up reprojection error is within
     ``ambiguity_ratio_min`` x the best is untrustworthy and rejected. Returns
     ``None`` when the solver produced nothing or the view is mirror-ambiguous.
-    Schweighofer & Pinz, "Robust Pose Estimation from a Planar Target":
-    https://openreview.net/pdf?id=r1lWm-EYPB
     """
     candidates = estimate_marker_pose_candidates(
         corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
@@ -196,12 +196,13 @@ def ambiguity_gated_pose(
         key=lambda item: item[0],
     )
     error, rvec, tvec = scored[0]
+    # error > 1e-12 px guards the ratio div-by-zero when the best pose fits the corners exactly
     if len(scored) > 1 and error > 1e-12 and scored[1][0] / error < ambiguity_ratio_min:
         return None  # the mirror explains the pixels almost as well: ambiguous view
-    pose = np.eye(4)
-    pose[:3, :3] = cv2.Rodrigues(rvec)[0]
-    pose[:3, 3] = tvec.reshape(3)
-    return pose, float(error)
+    cam_optical_T_marker = np.eye(4)
+    cam_optical_T_marker[:3, :3] = cv2.Rodrigues(rvec)[0]
+    cam_optical_T_marker[:3, 3] = tvec.reshape(3)
+    return cam_optical_T_marker, float(error)
 
 
 def rvec_tvec_to_transform(

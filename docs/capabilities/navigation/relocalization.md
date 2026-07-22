@@ -87,10 +87,10 @@ Open the companion `{DB_NAME}.rrd` in Rerun to verify loop closure before deploy
 
 ## 3. Relocalize in replay
 
-Test alignment without the robot. `unitree-go2-relocalization` is `unitree-go2` plus `RelocalizationModule`:
+Test alignment without the robot. `unitree-go2-relocalization-lidar` is `unitree-go2` plus `RelocalizationModule` (RANSAC prior only):
 
 ```bash
-dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
+dimos --replay --replay-db recording_go2 run unitree-go2-relocalization-lidar \
   -o relocalizationmodule.map_file=recording_go2
 ```
 
@@ -102,12 +102,12 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
 Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
 relocalize skipped: n_pts=37770 < MIN_LOCAL_POINTS=50000
 relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
-relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
+relocalize: source=ransac fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
 ```
 
-`relocalize skipped` means the live submap is still warming up- fewer than `MIN_LOCAL_POINTS` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
+`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live. `source=` names which proposer won the fitness judge (`ransac`, `fiducial`, or `last_pose`).
 
-You can replay a different `.db` from the same physical space against the same premap to test generalization.
+> **Held-out rule.** To *measure* relocalization, the premap must come from a **different run** of the same space than the recording you replay. Replaying the same recording the premap was built from measures memorization, not relocalization. Score a held-out pair with the `--eval` flag; see [Relocalization benchmark](/docs/capabilities/navigation/relocalization_benchmark.md).
 
 ### Rerun visualization
 
@@ -121,7 +121,7 @@ Watch alignment in Rerun, which is enabled by default on Go2 blueprints:
 Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
-dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
+dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization-lidar \
   -o relocalizationmodule.map_file=recording_go2
 ```
 
@@ -134,7 +134,7 @@ Before sending navigation goals, walk through this checklist:
 
 ## How it works
 
-The `unitree-go2-relocalization` blueprint is the standard [Go2 navigation stack](/docs/capabilities/navigation/deep_dive.md) plus `RelocalizationModule`:
+The `unitree-go2-relocalization-lidar` blueprint is the standard [Go2 navigation stack](/docs/capabilities/navigation/deep_dive.md) plus `RelocalizationModule`:
 
 <details>
 <summary>diagram source</summary>
@@ -143,19 +143,20 @@ The `unitree-go2-relocalization` blueprint is the standard [Go2 navigation stack
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.svg import to_svg
 from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.priors import RansacPriorConfig
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-unitree_go2_relocalization = autoconnect(
+unitree_go2_relocalization_lidar = autoconnect(
     unitree_go2,
-    RelocalizationModule.blueprint(),
+    RelocalizationModule.blueprint(priors=[RansacPriorConfig()]),
 ).global_config(n_workers=11)
 
-to_svg(unitree_go2_relocalization, "assets/go2_reloc_blueprint.svg")
+to_svg(unitree_go2_relocalization_lidar, "assets/go2_reloc_blueprint.svg")
 ```
 
 </details>
 
-![unitree-go2-relocalization blueprint module graph](assets/go2_reloc_blueprint.svg)
+![unitree-go2-relocalization-lidar blueprint module graph](assets/go2_reloc_blueprint.svg)
 
 Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from the merged map only while [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) has a good alignment; until then it falls back to the live map alone.
 
@@ -175,20 +176,37 @@ CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`
 |-------|---------|-------------|
 | `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
-| `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
+| `min_local_points` | `50000` | Minimum live map points before a relocalization is attempted |
+| `reloc_interval_s` | `2.0` | Seconds between relocalization attempts |
+| `gravity_tilt_max_deg` | `10.0` | Reject a candidate whose up axis tilts more than this from world-z (degrees) |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
-| `use_last_pose_seed` | `false` | Carry the last accepted pose forward as an extra candidate; it competes through the same wall-fitness judge as RANSAC, never bypassing it |
-| `use_fiducial_prior` | `false` | Feed visual marker fixes from the `world_map_fix` In stream into the judge as age-decayed candidates; same no-bypass rule |
+| `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 
-With `use_fiducial_prior` enabled, the module consumes a `world_map_fix` `Transform` In stream (a world → map estimate); `VisualRelocalizationModule` publishes a matching Out stream, so the two autoconnect by name/type when blueprinted together.
+### Priors
 
-Constants are not overridable via CLI today:
+`priors` is a list of candidate proposers, each an equal, toggleable entry keyed by `type`. Every entry competes through the same wall-fitness judge; none bypasses it. The list is set by preset (blueprint), not by a flat `-o` override (the dotted override parser cannot index a list).
+
+| `type` | Enabled by default | Own params |
+|--------|--------------------|------------|
+| `ransac` | yes | none — the search knobs live in `relocalize.py` |
+| `last_pose` | no | none — the seed is captured at runtime |
+| `fiducial` | no | `marker_map_file`, `marker_length_m`, `aruco_dictionary`, `ambiguity_ratio_min`, `camera_info`, `age_max_s`, `aggregation` |
+
+Every entry also carries `enabled` plus the inert fusion fields (`tier`, `weight`, `max_age_s`) the Phase-4 arbiter will read. The three Go2 presets:
+
+| Blueprint | Priors |
+|-----------|--------|
+| `unitree-go2-relocalization-lidar` | `ransac` |
+| `unitree-go2-relocalization-lidar-fiducial` | `ransac` + `fiducial` |
+| `unitree-go2-relocalization-fiducial` | `fiducial` only |
+
+The `fiducial` type needs a surveyed `marker_map_file` (`.json` of `map_T_tag` per id) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings fuse into one `world→map` candidate (medoid seed + Huber IRLS), age-gated, competing on wall fitness; it never publishes a pose on its own.
+
+One constant is not overridable via CLI:
 
 | Constant | Value | Role |
 |----------|-------|------|
-| `MIN_LOCAL_POINTS` | `50_000` | Minimum live map points before attempting relocalization |
-| `RELOC_INTERVAL` | `2.0` s | Throttle between relocalization attempts |
-| `PUBLISH_INTERVAL` | `2.0` s | TF publish rate |
+| `PUBLISH_INTERVAL` | `2.0` s | TF and `loaded_map` publish rate |
 
 To accept all candidates for visualization only (not for production nav):
 

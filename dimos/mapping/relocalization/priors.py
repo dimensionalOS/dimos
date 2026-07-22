@@ -29,12 +29,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import time
-from typing import Protocol
+from typing import Annotated, Literal, Protocol
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+from pydantic import Field
 
-from dimos.mapping.relocalization.relocalize import generate_ransac_candidates, refine_candidates
+from dimos.mapping.relocalization.relocalize import (
+    GRAVITY_TILT_MAX_DEG,
+    generate_ransac_candidates,
+    refine_candidates,
+)
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.perception.fiducial.apriltag_aggregation import (
     AggregationConfig,
@@ -49,21 +54,98 @@ from dimos.perception.fiducial.marker_pose import (
     ambiguity_gated_pose,
     camera_info_to_cv_matrices,
 )
+from dimos.protocol.service.spec import BaseConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+# ---------------------------------------------------------------------------
+# Prior configs -- one pydantic config per prior, keyed by a Literal ``type``
+# into a discriminated union, so every prior is an EQUAL, toggleable entry (no
+# always-on RANSAC special case). Pattern from the per-backend kinematics configs
+# at dimos/manipulation/planning/kinematics/config.py:26-57. A blueprint is just
+# a preset of this list.
+# ---------------------------------------------------------------------------
+
+
+class PriorConfigBase(BaseConfig):
+    """Fields every prior shares: the on/off toggle plus the (INERT) fusion surface.
+
+    ``enabled`` alone decides whether a prior proposes into the judge today.
+    ``tier``/``weight``/``max_age_s`` are declared but read by NOTHING yet -- the
+    judge ranks purely on wall fitness, never on self-reported trust. They are the
+    seam the Phase-4 fusion arbiter will read; surfacing them now keeps a preset
+    written today working once that arbiter lands.
+    """
+
+    enabled: bool = True
+    tier: int = Field(default=0, ge=0)  # INERT: fusion-arbiter priority tier (0 = base)
+    weight: float = Field(default=1.0, ge=0.0)  # INERT: fusion-arbiter blend weight
+    # INERT: fusion-arbiter age-decay half-life (s). NOT a live gate -- the only
+    # live age cutoff is FiducialPriorConfig.age_max_s below.
+    max_age_s: float = Field(default=120.0, ge=0.0)
+
+
+class RansacPriorConfig(PriorConfigBase):
+    """Multi-scale FPFH+RANSAC global search (``RansacPrior``). No params of its
+    own -- the search knobs live in relocalize.py."""
+
+    type: Literal["ransac"] = "ransac"
+
+
+class LastPosePriorConfig(PriorConfigBase):
+    """Last accepted fix carried forward as one seed (``LastPosePrior``). No params
+    -- the seed is captured at runtime, not configured."""
+
+    type: Literal["last_pose"] = "last_pose"
+
+
+class FiducialPriorConfig(PriorConfigBase):
+    """Marker sightings Huber-fused into one world->map candidate per tag
+    (``FiducialPrior``). Owns the whole fiducial parameter surface."""
+
+    type: Literal["fiducial"] = "fiducial"
+    # Surveyed marker map (map_T_marker per id), a .json path resolved via
+    # resolve_named_path; required -- start() no-ops the prior without it.
+    marker_map_file: str | None = None
+    marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
+    # Tag family the DETECTOR decodes; not read here (this module fuses decoded
+    # sightings). Blueprints thread it into MarkerDetectionStreamModule so detector
+    # + prior share one source of truth.
+    aruco_dictionary: str = "DICT_APRILTAG_36h11"
+    # IPPE mirror-ambiguity gate: best/runner-up reproj ratio a glimpse must beat
+    # (1.0 = off). Only bites when corners_px reach the prior (offline harness);
+    # the live wire drops the pixels, so the medoid/Huber fusion carries the
+    # mirror-flip rejection. Collins & Bartoli 2014
+    # https://link.springer.com/article/10.1007/s11263-014-0725-5
+    ambiguity_ratio_min: float = Field(default=2.0, ge=1.0)
+    # Intrinsics for the ambiguity gate's solvePnP. None -> pixel-gated path skipped.
+    camera_info: CameraInfo | None = None
+    # LIVE hard cutoff (s): propose() drops a fused fix older than this. Distinct
+    # from the INERT base max_age_s (fusion arbiter, unread today).
+    age_max_s: float = Field(default=120.0, ge=0.0)
+    # Per-glimpse gate + fusion knobs for the aggregator, so a deployment can
+    # retune fusion without code changes.
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
+
+
+# Discriminated on ``type`` (kinematics/config.py:54 is the exemplar).
+PriorConfig = Annotated[
+    RansacPriorConfig | LastPosePriorConfig | FiducialPriorConfig,
+    Field(discriminator="type"),
+]
 
 
 @dataclass
 class Candidate:
     """One proposed local_map->global_map transform, pre-judging.
 
-    ``T`` uses relocalize()'s own convention: the 4x4 transform that maps
-    ``local_map`` into ``global_map``'s frame (same as generate_ransac_
-    candidates()'s and refine_candidates()'s transforms -- see
-    ``relocalize()``'s docstring). A candidate carries only WHICH transform and
-    WHICH source proposed it -- no self-reported confidence: ``refine_candidates``
-    ranks every candidate purely on wall-only fine-scale fitness, so a candidate
-    from a "trusted" prior still loses to one that actually fits the walls. (A
-    calibrated composite confidence is the Phase-4 fusion arbiter's job, read
-    from measured signals downstream of the judge, not asserted by the proposer.)
+    ``T`` uses relocalize()'s convention: the 4x4 mapping ``local_map`` into
+    ``global_map``'s frame. A candidate carries only WHICH transform and WHICH
+    source -- no self-reported confidence, since ``refine_candidates`` ranks purely
+    on wall-only fine-scale fitness, so a "trusted" prior still loses to one that
+    fits the walls. (Composite confidence is the Phase-4 fusion arbiter's job.)
     """
 
     T: np.ndarray
@@ -89,9 +171,8 @@ class RelocPrior(Protocol):
 
 
 class RansacPrior:
-    """Wraps relocalize.py's existing multi-scale FPFH+RANSAC global search --
-    a real geometric search over the full map, proposing its raw candidate pool
-    into the judge like any other source."""
+    """Wraps relocalize.py's multi-scale FPFH+RANSAC global search, proposing its
+    raw candidate pool into the judge like any other source."""
 
     name = "ransac"
 
@@ -105,21 +186,16 @@ class RansacPrior:
 
 
 class LastPosePrior:
-    """Carries the last accepted relocalization forward as a single seed
-    candidate for the next call -- cheap continuous tracking to compete
-    alongside (not replace) a fresh RANSAC search.
+    """Carries the last accepted relocalization forward as one seed candidate --
+    cheap continuous tracking competing alongside (not replacing) fresh RANSAC.
 
-    Frame convention (relocalize()'s own, NOT the published TF -- every pose
-    here names its frame per repo convention): ``relocalize()``/
-    ``refine_candidates()`` return T such that
-    ``global_map_points = T @ local_map_points``. In the live pipeline
-    (module.py) ``local_map`` is ``VoxelGridMapper``'s world-frame
-    accumulated cloud and ``global_map`` is the loaded premap in the ``map``
-    frame, so this stored seed is ``map_T_world``. module.py inverts
-    relocalize()'s T to ``world_T_map`` only when it publishes the
-    world->map TF -- callers of ``update()`` must pass the PRE-inversion T
-    (relocalize()/refine_candidates's own return value), never the published
-    TF.
+    Frame convention (relocalize()'s own, NOT the published TF):
+    ``relocalize()``/``refine_candidates()`` return T with
+    ``global_map_points = T @ local_map_points``. In the live pipeline ``local_map``
+    is VoxelGridMapper's world-frame cloud and ``global_map`` the premap in the
+    ``map`` frame, so this seed is ``map_T_world``. module.py inverts to
+    ``world_T_map`` only when publishing the TF -- ``update()`` callers must pass
+    the PRE-inversion T, never the published TF.
     """
 
     name = "last_pose"
@@ -143,30 +219,26 @@ class LastPosePrior:
 class FiducialPrior:
     """Fiducial marker sightings -> ONE robust world->map candidate per tag.
 
-    The aggregation pipeline lives here (apriltag_aggregation, ported from
-    jnav): ``observe()`` takes one marker sighting, gates it, and Huber-fuses
-    the visit's sightings (medoid seed + IRLS: weighted-mean translation +
-    Markley quaternion mean); ``propose()`` composes each fused pose with the
-    surveyed marker map into a candidate for the judge. No confidence -- the
-    judge ranks it on wall fitness like every source.
+    ``observe()`` gates one sighting and Huber-fuses the visit's sightings (medoid
+    seed + IRLS: weighted-mean translation + Markley quaternion mean); ``propose()``
+    composes each fused pose with the surveyed marker map into a candidate. No
+    confidence -- the judge ranks it on wall fitness like every source.
 
-    Fusing the drift-free WORLD pose of the marker (``world_T_marker``, which the
-    detector already computes) means camera motion within a 5 s visit never
-    enters the fused pose. What the caller can supply drives the gates; a gate
-    whose input is absent is skipped (graceful degradation, gate_reason):
-     - ``corners_px`` + ``camera_info`` -> the IPPE mirror-ambiguity gate (ours;
-       jnav lacks it) runs a full solvePnPGeneric and drops a glimpse whose
-       flipped pose reprojects nearly as well, plus reproj/tag-px/view gates;
-     - ``world_T_optical`` alone -> the distance/view-angle gates;
-     - neither (a pixel-less wire delivery) -> fuse on min-obs + time window,
-       leaning on the medoid/Huber to reject the mirror-flip outliers instead.
+    Fusing the marker's drift-free WORLD pose (``world_T_marker``) keeps camera
+    motion within a visit out of the fused pose. Available inputs drive the gates;
+    a gate whose input is absent is skipped (graceful degradation):
+     - ``corners_px`` + ``camera_info`` -> IPPE mirror-ambiguity gate (full
+       solvePnPGeneric, drops a glimpse whose flip reprojects nearly as well) plus
+       reproj/tag-px/view gates;
+     - ``world_T_optical`` alone -> distance/view-angle gates;
+     - neither (pixel-less wire) -> fuse on min-obs + time window, leaning on the
+       medoid/Huber to reject mirror-flip outliers.
 
-    Frame convention (relocalize()'s own, per repo rule): a candidate's ``T`` is
-    map_T_world = ``map_T_marker @ inv(world_T_marker_fused)`` -- the same
-    local_map(world)->global_map(map) direction the RANSAC pool uses. propose()
-    drops a tag's fix once it is older than ``age_max_s`` (hard cutoff, no decay:
-    nothing downstream weights a fix by age). Defaults are engineering guesses;
-    tuning them belongs to #2137's autoresearch harness.
+    Frame convention: a candidate's ``T`` is map_T_world =
+    ``map_T_marker @ inv(world_T_marker_fused)`` -- the same
+    local_map(world)->global_map(map) direction RANSAC uses. propose() drops a fix
+    older than ``age_max_s`` (hard cutoff, no decay). Defaults are engineering
+    guesses; tuning belongs to #2137's autoresearch harness.
     """
 
     name = "fiducial"
@@ -176,8 +248,8 @@ class FiducialPrior:
         marker_map: dict[int, np.ndarray],
         *,
         camera_info: CameraInfo | None = None,
-        marker_length_m: float = 0.10,
-        ambiguity_ratio_min: float = 2.0,
+        marker_length_m: float = 0.10,  # 10 cm tag
+        ambiguity_ratio_min: float = 2.0,  # flip must reproject >=2x worse to keep
         config: AggregationConfig | None = None,
         age_max_s: float = 120.0,
         now_fn: Callable[[], float] = time.monotonic,
@@ -190,7 +262,9 @@ class FiducialPrior:
         self._age_max_s = age_max_s
         self._now_fn = now_fn
         self._aggregator = TagAggregator(config if config is not None else AggregationConfig())
-        # marker_id -> (map_T_world 4x4, arrival ts in now_fn's timebase).
+        # marker_id -> (map_T_world 4x4, arrival ts). Single-timebase invariant: ts
+        # is stamped by now_fn here and MUST be compared only against now_fn() in
+        # propose() -- mixing clocks makes age negative and neuters the age gate.
         self._fixes: dict[int, tuple[np.ndarray, float]] = {}
 
     def observe(
@@ -262,28 +336,39 @@ class FiducialPrior:
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
         now = self._now_fn()
-        return [
-            Candidate(T=fix_T, source=self.name)
-            for fix_T, fix_ts in self._fixes.values()
-            if now - fix_ts <= self._age_max_s
-        ]
+        candidates: list[Candidate] = []
+        for fix_T, fix_ts in self._fixes.values():
+            age_s = now - fix_ts
+            # Negative age == fix_ts and now came from different clocks. Left as-is,
+            # `<= age_max_s` is always true and a stale fix proposes forever (age gate
+            # disabled). Clamp to fresh and warn so the misconfig surfaces loudly.
+            if age_s < 0:
+                logger.warning(
+                    "fiducial fix age negative; clamping",
+                    age_s=round(age_s, 2),
+                    hint="fix_ts and now must share one clock (now_fn)",
+                )
+                age_s = 0.0
+            if age_s <= self._age_max_s:
+                candidates.append(Candidate(T=fix_T, source=self.name))
+        return candidates
 
 
 def relocalize_with_priors(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
     priors: list[RelocPrior],
+    gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float, str]:
-    """Gather candidates from every prior, judge them all through the one
-    shared fine-ICP tail (``refine_candidates``), and report which prior's
-    candidate actually won.
+    """Gather candidates from every prior, judge them through the shared fine-ICP
+    tail (``refine_candidates``), report which prior's candidate won.
 
-    No source bypasses the judge: a prior with high self-reported confidence
-    whose candidate doesn't fit the walls loses to one that does, same as
-    plain ``relocalize()``'s RANSAC-only pool always has.
+    No source bypasses the judge -- a candidate that doesn't fit the walls loses.
+    ``gravity_tilt_max_deg`` threads to the judge's gravity gate, defaulting to the
+    module constant so behavior is unchanged unless overridden.
 
-    Returns ``(T, fitness, winning_source)``. Raises ``ValueError`` if every
-    prior proposed zero candidates -- there is nothing for the judge to rank.
+    Returns ``(T, fitness, winning_source)``. Raises ``ValueError`` if every prior
+    proposed zero candidates.
     """
     all_transforms: list[np.ndarray] = []
     sources: list[str] = []
@@ -295,10 +380,20 @@ def relocalize_with_priors(
     if not all_transforms:
         raise ValueError("relocalize_with_priors: no prior proposed any candidate")
 
+    # Proposal census: which prior offered candidates this cycle. A fiducial source
+    # absent here means no tag reached min_observations -- distinct from proposing
+    # then losing the judge below.
+    counts = {s: sources.count(s) for s in sorted(set(sources))}
+    logger.info("relocalize candidates", counts=counts)
+
     # sources= makes the judge's gravity gate per-source — a lone upright
     # seed must never orphan another source's all-tilted pool (the
     # gravity-gate walkover; see refine_candidates).
     T, fitness, winning_index = refine_candidates(
-        global_map, local_map, all_transforms, sources=sources
+        global_map,
+        local_map,
+        all_transforms,
+        sources=sources,
+        gravity_tilt_max_deg=gravity_tilt_max_deg,
     )
     return T, fitness, sources[winning_index]

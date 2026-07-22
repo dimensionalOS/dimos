@@ -26,7 +26,7 @@ import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
@@ -293,9 +293,18 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
             d = d.setdefault(p, {})
         d[parts[-1]] = v
 
-    # We don't need this config, but this atleast validates the user input first.
-    # This will help catch misspellings and similar mistakes.
-    config(**kwargs)
+    # Validate the -o/env/config overlay early to catch misspellings and bad
+    # values. This overlay is PARTIAL: it layers over each module's blueprint
+    # preset (merged at deploy in _merge_config_kwargs), so a required field absent
+    # here is normal -- the preset fills it. Tolerate "missing" errors; still raise
+    # on unknown keys (typos) and type errors. Without this, a partial -o on a
+    # module whose config has a required field (e.g. relocalizationmodule.priors)
+    # would be rejected before the preset is ever merged in.
+    try:
+        config(**kwargs)
+    except ValidationError as exc:
+        if any(err["type"] != "missing" for err in exc.errors()):
+            raise
 
     return kwargs  # type: ignore[no-any-return]
 
@@ -306,6 +315,9 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    eval_reloc: bool = typer.Option(
+        False, "--eval", help="Attach the RelocEval collector (per-source reloc table + trajectory PNG)"
+    ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
@@ -357,6 +369,21 @@ def run(
             get_module_by_name_or_exit(name).blueprints[0].module for name in disable
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    if eval_reloc:
+        # Best-effort: add the in-process reloc collector on its own worker. It
+        # declares no In/Out (it subscribes to /tf + /odom directly in start()), so
+        # there is nothing to autowire; bump n_workers by one for its slot. If a
+        # stack pins n_workers tightly this may need a manual `-o g.n_workers=...`.
+        # The VERIFIED eval path needs no CLI wiring at all: run the held-out matrix
+        # via the offline held-out driver, which shells out to the shipped blueprint
+        # and calls the same RelocEval report offline.
+        from dimos.mapping.relocalization.eval_module import RelocEval
+
+        n_workers = int(blueprint.global_config_overrides.get("n_workers", 12))
+        blueprint = autoconnect(blueprint, RelocEval.blueprint()).global_config(
+            n_workers=n_workers + 1
+        )
 
     if show_help:
         print("Blueprint arguments:")
@@ -867,10 +894,40 @@ def cameracalibrate(
         "--topic-timeout-sec",
         help="Abort --source topic if no frames arrive within this many seconds.",
     ),
-    cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
-    rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
+    board: str = typer.Option(
+        "chessboard",
+        "--board",
+        help="Calibration target: 'chessboard' (--cols/--rows) or 'charuco' (--dict/--squares-x/-y).",
+    ),
+    cols: int | None = typer.Option(
+        None, "--cols", help="Inner chessboard corner columns (--board chessboard)"
+    ),
+    rows: int | None = typer.Option(
+        None, "--rows", help="Inner chessboard corner rows (--board chessboard)"
+    ),
     square_size_m: float = typer.Option(
-        ..., "--square-size-m", help="Chessboard square size in meters"
+        ..., "--square-size-m", help="Square size in meters (chessboard square or charuco square)"
+    ),
+    charuco_dict: str = typer.Option(
+        "DICT_4X4_50",
+        "--dict",
+        help="--board charuco: predefined aruco dictionary name, e.g. DICT_4X4_50.",
+    ),
+    squares_x: int | None = typer.Option(
+        None, "--squares-x", help="--board charuco: number of squares along X (not inner corners)."
+    ),
+    squares_y: int | None = typer.Option(
+        None, "--squares-y", help="--board charuco: number of squares along Y (not inner corners)."
+    ),
+    marker_ratio: float = typer.Option(
+        0.8,
+        "--marker-ratio",
+        help="--board charuco: markerLength/squareLength (ignored if --marker-size-m is given).",
+    ),
+    marker_size_m: float | None = typer.Option(
+        None,
+        "--marker-size-m",
+        help="--board charuco: aruco marker size in meters (overrides --marker-ratio).",
     ),
     out: Path | None = typer.Option(None, "--out", help="Optional ROS CameraInfo YAML output path"),
     preview_out: Path | None = typer.Argument(
@@ -879,6 +936,23 @@ def cameracalibrate(
     camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
     target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
     no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    guided: bool = typer.Option(
+        False,
+        "--guided",
+        help=(
+            "COVERAGE-GUIDED capture (webcam/topic): auto-accept only frames that improve board "
+            "X/Y/size/skew coverage, draw progress bars, and print where to move the board next "
+            "(like ROS camera_calibration)."
+        ),
+    ),
+    min_coverage: float | None = typer.Option(
+        None,
+        "--min-coverage",
+        help=(
+            "--guided: finish capture early once overall coverage reaches this fraction [0-1] "
+            "(default off); --target-count stays the hard cap."
+        ),
+    ),
     distortion_model: str = typer.Option(
         "plumb_bob",
         "--distortion-model",
@@ -887,9 +961,100 @@ def cameracalibrate(
             "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
         ),
     ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help=(
+            "CHECK mode: instead of calibrating, verify a DEPLOYED CameraInfo (--camera-info) "
+            "against the boards seen on this source and report reprojection RMS + intrinsics drift."
+        ),
+    ),
+    camera_info: Path | None = typer.Option(
+        None,
+        "--camera-info",
+        help="--check: deployed CameraInfo YAML to test (default: Go2 front 720p static calib).",
+    ),
+    rms_threshold_px: float = typer.Option(
+        1.0,
+        "--rms-threshold-px",
+        help="--check: median reprojection RMS (px) at/below which the deployed calibration passes.",
+    ),
+    no_drift: bool = typer.Option(
+        False,
+        "--no-drift",
+        help="--check: skip the fresh-calibration drift comparison (reprojection RMS only).",
+    ),
+    min_frame_diff_px: float = typer.Option(
+        8.0,
+        "--min-frame-diff-px",
+        help=(
+            "Frame-diversity gate on the manual SPACE path: accept a frame only if its board "
+            "corners moved at least this many pixels (mean) from the nearest kept frame, so the "
+            "retained views are varied. 0 disables the gate."
+        ),
+    ),
+    frames_out: Path | None = typer.Option(
+        None,
+        "--frames-out",
+        help=(
+            "Directory to save each accepted frame as frame_000.png ... (reusable poses). "
+            "Defaults to a 'frames/' dir next to --out when --out is given; no frames are saved "
+            "otherwise. Applies to calibrate and --check."
+        ),
+    ),
 ) -> None:
-    """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
-    from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
+    """Calibrate camera intrinsics and write ROS CameraInfo YAML.
+
+    With ``--check`` the command flips to a read-only health check: it does NOT calibrate or write
+    a YAML; it scores how well ``--camera-info`` explains the boards on this source and writes a
+    JSON to ``--out`` (or a default next to the source).
+    """
+    from dimos.utils.cli.cameracalibrate.cameracalibrate import (
+        _DEFAULT_CHECK_DRIFT_THRESHOLD_FRAC,
+        _GO2_FRONT_CAMERA_YAML,
+        run_calibration,
+        run_check_report,
+    )
+
+    if board == "chessboard" and (cols is None or rows is None):
+        raise typer.BadParameter("--cols and --rows are required when --board chessboard")
+    if board == "charuco" and (squares_x is None or squares_y is None):
+        raise typer.BadParameter("--squares-x and --squares-y are required when --board charuco")
+    resolved_cols = int(cols) if cols is not None else 0
+    resolved_rows = int(rows) if rows is not None else 0
+
+    # Default: a 'frames/' dir next to --out; skip saving when neither --frames-out nor --out is set.
+    resolved_frames_out = frames_out
+    if resolved_frames_out is None and out is not None:
+        resolved_frames_out = out.parent / "frames"
+
+    if check:
+        run_check_report(
+            source=source,
+            device_index=device_index,
+            images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
+            cols=resolved_cols,
+            rows=resolved_rows,
+            square_size_m=square_size_m,
+            camera_info=camera_info if camera_info is not None else _GO2_FRONT_CAMERA_YAML,
+            rms_threshold_px=rms_threshold_px,
+            drift_threshold_frac=_DEFAULT_CHECK_DRIFT_THRESHOLD_FRAC,
+            check_drift=not no_drift,
+            out=out,
+            target_count=target_count,
+            no_display=no_display,
+            frames_out=resolved_frames_out,
+            min_frame_diff_px=min_frame_diff_px,
+            board=board,
+            dict_name=charuco_dict,
+            squares_x=squares_x,
+            squares_y=squares_y,
+            marker_size_m=marker_size_m,
+            marker_ratio=marker_ratio,
+        )
+        return
 
     if preview_out is not None and out is None:
         raise typer.BadParameter("preview output requires --out")
@@ -901,8 +1066,8 @@ def cameracalibrate(
             images=images,
             topic=topic,
             topic_timeout_sec=topic_timeout_sec,
-            cols=cols,
-            rows=rows,
+            cols=resolved_cols,
+            rows=resolved_rows,
             square_size_m=square_size_m,
             out=out,
             preview_out=preview_out,
@@ -910,6 +1075,16 @@ def cameracalibrate(
             target_count=target_count,
             no_display=no_display,
             distortion_model=distortion_model,
+            board=board,
+            dict_name=charuco_dict,
+            squares_x=squares_x,
+            squares_y=squares_y,
+            marker_size_m=marker_size_m,
+            marker_ratio=marker_ratio,
+            coverage_guided=guided,
+            min_coverage=min_coverage,
+            min_frame_diff_px=min_frame_diff_px,
+            frames_out=resolved_frames_out,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -919,6 +1094,8 @@ def cameracalibrate(
         f"Detected pattern: {tuple(result.get('pattern_size', (cols, rows)))} "
         f"({result.get('pattern_label', 'requested inner corners')})"
     )
+    if "frames_dir" in result:
+        typer.echo(f"Saved {result.get('n_frames_saved', 0)} frame(s) to {result['frames_dir']}")
     if out is not None:
         typer.echo(f"Wrote camera info YAML to {out}")
     if preview_out is not None:

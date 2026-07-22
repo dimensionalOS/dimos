@@ -14,17 +14,14 @@
 
 """ArUco / AprilTag detection as memory2 transforms.
 
-Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`
-and emits one :class:`Detection3DMarker` observation per detected marker, with
-``.pose`` composed into world frame from the upstream observation's camera pose.
-This module also keeps marker smoothing helpers and ``MarkersPerFrame``, which
-collapses marker fan-out back into one ``Detection3DArray`` per source image.
-The companion module :class:`MarkerTfModule` remains the right choice for live
-TF publication.
+Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`,
+emitting one :class:`Detection3DMarker` per marker with ``.pose`` composed into
+world frame from the upstream camera pose. Also holds the smoothing helpers and
+``MarkersPerFrame`` (collapses marker fan-out back to one ``Detection3DArray``
+per source image). :class:`MarkerTfModule` handles live TF publication.
 
-Skips frames where the upstream observation has no ``.pose`` (debug log):
-without a camera-in-world pose, we can't honor the "always world-frame"
-output contract.
+Frames with no upstream ``.pose`` are skipped (debug log): without a camera-in-
+world pose we can't honor the always-world-frame output contract.
 """
 
 from __future__ import annotations
@@ -60,6 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory2.type.observation import Observation
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -98,13 +96,13 @@ def _pose_tuple_to_transform(
 def _average_marker_pose(
     buffer: TimestampedBufferCollection[Detection3DMarker],
 ) -> tuple[Vector3, Quaternion]:
-    """Mean translation; quaternion mean with hemisphere alignment.
+    """Mean translation; sign-aligned linear quaternion mean (small-angle
+    approximation of the Markley eigenvector average).
+    https://ntrs.nasa.gov/citations/20070017872
 
-    Quaternions q and -q encode the same rotation, so naive averaging can
-    cancel. We pick the first sample as a hemisphere reference and flip the
-    sign of any sample whose dot product against it is negative before
-    summing. For closely-spaced rotations within a short window this is
-    indistinguishable from a proper SLERP-style average.
+    q and -q are the same rotation, so naive averaging can cancel: flip any
+    sample whose dot against the first (hemisphere reference) is negative. For
+    closely-spaced rotations in a short window this matches a SLERP average.
     """
     items = list(buffer)
     n = len(items)
@@ -142,6 +140,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         world_frame: str = "world",
         smoothing_window: float = 0.0,
         emit_empty_frames: bool = False,
+        ambiguity_ratio_min: float = 1.0,
     ) -> None:
         if marker_length_m <= 0:
             raise ValueError(f"marker_length_m must be > 0, got {marker_length_m}")
@@ -153,6 +152,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.world_frame = world_frame
         self.smoothing_window = smoothing_window
         self.emit_empty_frames = emit_empty_frames
+        self.ambiguity_ratio_min = ambiguity_ratio_min
         self._detector = create_aruco_detector(aruco_dictionary)
         self._camera_info_key: tuple[Any, ...] | None = None
         self._resolved_camera_info: CameraInfo | None = None
@@ -177,7 +177,6 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         if key != self._camera_info_key:
             self._cam_mtx, self._dist = camera_info_to_cv_matrices(info)
             self._detector = create_aruco_detector(self.aruco_dictionary)
-            self._resolved_camera_info = info
             self._camera_info_key = key
         return info
 
@@ -187,15 +186,15 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         for obs in upstream:
             pose_tuple = obs.pose_tuple
             if pose_tuple is None:
-                logger.debug("DetectMarkers: obs %s has no .pose; skipping", obs.id)
+                logger.debug("marker frame skipped: no camera-in-world pose", obs_id=obs.id)
                 continue
 
             info = self._resolve_camera_info()
             if info is None:
-                logger.debug("DetectMarkers: no CameraInfo for obs %s; skipping", obs.id)
+                logger.debug("marker frame skipped: no CameraInfo", obs_id=obs.id)
                 continue
-            assert self._cam_mtx is not None
-            assert self._dist is not None
+            assert self._cam_mtx is not None, "camera matrix unset despite resolved CameraInfo"
+            assert self._dist is not None, "dist coeffs unset despite resolved CameraInfo"
 
             image = obs.data
             image_size_mismatch = (
@@ -205,11 +204,11 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
             )
             if image_size_mismatch:
                 logger.debug(
-                    "DetectMarkers: image %sx%s != CameraInfo %sx%s; skip",
-                    image.width,
-                    image.height,
-                    info.width,
-                    info.height,
+                    "marker frame skipped: image size != CameraInfo",
+                    img_w=image.width,
+                    img_h=image.height,
+                    info_w=info.width,
+                    info_h=info.height,
                 )
                 continue
 
@@ -228,6 +227,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 marker_length_m=self.marker_length_m,
                 aruco_dictionary=self.aruco_dictionary,
                 world_frame=self.world_frame,
+                ambiguity_ratio_min=self.ambiguity_ratio_min,
                 detector=self._detector,
                 camera_matrix=self._cam_mtx,
                 dist_coeffs=self._dist,
@@ -270,18 +270,15 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
                 yielded_det = det
                 if self.smoothing_window > 0:
-                    # Buffer raw detections per marker_id over a sliding
-                    # window; emit the windowed-mean pose so each successive
-                    # detection refines the same marker's estimate instead
-                    # of producing a fresh independent observation.
+                    # Emit the windowed-mean pose so each detection refines the
+                    # same marker's estimate rather than a fresh observation.
                     buf = self._buffers.setdefault(
                         mid, TimestampedBufferCollection(self.smoothing_window)
                     )
                     buf.add(det)
                     avg_center, avg_orient = _average_marker_pose(buf)
-                    # Drop `transform` (camera-in-world): the averaged pose is
-                    # built from many frames, so any single camera transform is
-                    # inconsistent with center/orientation.
+                    # Drop `transform` (camera-in-world): the averaged pose spans
+                    # many frames, so any single camera transform is inconsistent.
                     yielded_det = dataclasses.replace(
                         det, center=avg_center, orientation=avg_orient, transform=None
                     )
@@ -305,13 +302,11 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     """Collapse marker fan-out back into one Detection3DArray per image frame.
 
-    ``DetectMarkers`` normally emits one observation per decoded marker. For
-    live LCM semantics, downstream consumers need a single array for each
-    processed image, including empty arrays for frames where no marker decoded.
+    ``DetectMarkers`` emits one observation per decoded marker, but live LCM
+    consumers need one array per processed image (empty ones included).
     ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
-    those empty frames and tags every marker observation with the source image
-    and frame marker count so this transformer can emit without waiting for a
-    later timestamp.
+    empty frames and tags each marker with the source image + frame marker
+    count, so this transformer emits without waiting for a later timestamp.
     """
 
     def __init__(self, frame_id: str = "world") -> None:
@@ -393,16 +388,10 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     def _source_pose(
         obs: Observation[Detection3DMarker | None],
         detections: list[Detection3DMarker],
-    ) -> Any | None:
+    ) -> Transform | Pose | None:
+        # Both branches are re-coerced to the storage 7-tuple by ``derive(pose=)``
+        # via observation._to_tuple, which maps Transform.translation/rotation
+        # and Pose.position/orientation to (x, y, z, qx, qy, qz, qw).
         if detections and detections[0].transform is not None:
-            transform = detections[0].transform
-            return (
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
-                transform.rotation.x,
-                transform.rotation.y,
-                transform.rotation.z,
-                transform.rotation.w,
-            )
+            return detections[0].transform
         return obs.pose

@@ -24,16 +24,17 @@ the reloc handler and asserts the prior ends up holding the fused
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import threading
 from uuid import uuid4
 
 import numpy as np
-import yaml
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.transport import LCMTransport
 from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.priors import FiducialPriorConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -43,7 +44,7 @@ from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.test_helpers import blank_image
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import (
-    unitree_go2_fiducial_relocalization,
+    unitree_go2_relocalization_lidar_fiducial,
 )
 from dimos.utils.threadpool import get_max_workers, get_scheduler
 
@@ -95,7 +96,7 @@ def _lcm(topic_ns: str, name: str, type_: type) -> LCMTransport:  # type: ignore
 
 
 def test_unitree_go2_fiducial_relocalization_composes_full_path() -> None:
-    bp = unitree_go2_fiducial_relocalization
+    bp = unitree_go2_relocalization_lidar_fiducial
     assert isinstance(bp, Blueprint)
 
     modules = [b.module for b in bp.blueprints]
@@ -103,10 +104,20 @@ def test_unitree_go2_fiducial_relocalization_composes_full_path() -> None:
     assert MarkerDetectionStreamModule in modules
 
     reloc = next(b for b in bp.blueprints if b.module is RelocalizationModule)
-    assert reloc.kwargs["use_fiducial_prior"] is True
-    assert reloc.kwargs["marker_length_m"] == 0.10
-    assert reloc.kwargs["camera_info"].frame_id == "camera_optical"
-    assert "marker_map_file" not in reloc.kwargs  # stays unset -> prior no-ops
+    by_type = {type(p).__name__: p for p in reloc.kwargs["priors"]}
+    # lidar + fiducial: both priors present and enabled.
+    assert set(by_type) == {"RansacPriorConfig", "FiducialPriorConfig"}
+    assert by_type["RansacPriorConfig"].enabled is True
+    fid = by_type["FiducialPriorConfig"]
+    assert fid.enabled is True
+    assert fid.marker_length_m == 0.10
+    assert fid.camera_info.frame_id == "camera_optical"
+    assert fid.marker_map_file is None  # stays unset -> prior no-ops until surveyed
+
+    # aruco_dictionary is wired from the fiducial prior config into the detector,
+    # so detector and prior decode/fuse the same tag family from one source.
+    detector = next(b for b in bp.blueprints if b.module is MarkerDetectionStreamModule)
+    assert detector.kwargs["aruco_dictionary"] == fid.aruco_dictionary
 
     # ModuleCoordinator._connect_streams' grouping key: one shared (name, type)
     # entry means the detector Out and the reloc In land on the same transport --
@@ -127,7 +138,7 @@ def test_default_config_is_noop_until_maps_configured() -> None:
     """Blueprint defaults (no map_file, no marker_map_file) must start and idle;
     a marker frame arriving on the detections handler stays a no-op."""
     ns = f"test_fidreloc_{uuid4().hex[:8]}"
-    reloc = RelocalizationModule(use_fiducial_prior=True)
+    reloc = RelocalizationModule(priors=[FiducialPriorConfig()])
     reloc.set_transport("global_map", _lcm(ns, "global_map", PointCloud2))
     reloc.set_transport("detections", _lcm(ns, "detections", Detection3DArray))
     try:
@@ -150,15 +161,16 @@ def test_detections_reach_fiducial_prior_as_fused_fix(tmp_path: Path) -> None:
     premap_file.write_bytes(
         PointCloud2.from_numpy(rng.uniform(-1, 1, (64, 3)), timestamp=10.0).lcm_encode()
     )
-    marker_map_file = tmp_path / "markers.yaml"
+    marker_map_file = tmp_path / "markers.json"
     marker_map_file.write_text(
-        yaml.safe_dump(
-            {"markers": {_MARKER_ID: {"translation": [0.0, 0.0, 0.0], "rotation": [0, 0, 0, 1]}}}
+        json.dumps(
+            {"markers": {str(_MARKER_ID): {"translation": [0.0, 0.0, 0.0], "rotation": [0, 0, 0, 1]}}}
         )
     )
 
     reloc = RelocalizationModule(
-        use_fiducial_prior=True, map_file=str(premap_file), marker_map_file=str(marker_map_file)
+        priors=[FiducialPriorConfig(marker_map_file=str(marker_map_file))],
+        map_file=str(premap_file),
     )
     reloc.set_transport("global_map", _lcm(ns, "global_map", PointCloud2))
     reloc.set_transport("detections", _lcm(ns, "detections", Detection3DArray))

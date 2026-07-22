@@ -55,7 +55,9 @@ from dimos.utils.testing.waiting import wait_until
 pytestmark = [pytest.mark.self_hosted, pytest.mark.skipif_in_ci]
 
 RECORDING = "hk_village3"
-BLUEPRINT = "unitree-go2-fiducial-relocalization"
+# The both-priors (RANSAC + fiducial) stack this test validates; renamed from
+# unitree-go2-relocalization-fiducial (that name is now the fiducial-ONLY preset).
+BLUEPRINT = "unitree-go2-relocalization-lidar-fiducial"
 MARKER_LENGTH_M = 0.10  # hk_village3's printed tag edge; equals the blueprint default
 
 # Measured on the Jul 2026 replay rehearsal of this exact command: module start
@@ -66,8 +68,11 @@ OBSERVABLE_DEADLINE_S = 150.0
 SHUTDOWN_DEADLINE_S = 30.0  # DimosCliCall's clean-shutdown budget
 BUILD_TIMEOUT_S = 300.0  # premap CLI build; ~10 s measured, bounded hard
 
-# Accept line only — rejects log as "relocalize rejected: fitness=...".
-_ACCEPT_RE = re.compile(r"relocalize: fitness=([0-9.]+)")
+# Accept line only — rejects log as "relocalize rejected fitness=...". The
+# accept line puts an optional source= right after "relocalize accepted" (the
+# fiducial blueprint always tags one), so fitness is matched past an optional
+# source token.
+_ACCEPT_RE = re.compile(r"relocalize accepted(?: source=\S+)? fitness=([0-9.]+)")
 
 
 def _cache_dir() -> Path:
@@ -173,8 +178,8 @@ def test_replay_relocalizes_and_publishes_fixes(premap_file: Path, marker_map_fi
     """Replaying hk_village3 through the fiducial blueprint relocalizes for real.
 
     Invariant: `dimos --replay --replay-db=hk_village3 run
-    unitree-go2-fiducial-relocalization` with a premap and marker map derived
-    from that same recording (a) starts RelocalizationModule with the premap,
+    unitree-go2-relocalization-lidar-fiducial` with a premap derived from that
+    same recording (a) starts RelocalizationModule with the premap,
     (b) accepts >= 1 relocalization whose fitness clears the configured
     threshold within the observation window, (c) publishes >= 1 world->map
     Transform on the /world_map_fix LCM stream (asserted by an in-process
@@ -199,10 +204,15 @@ test_unitree_go2_fiducial_relocalization_replay.py -m self_hosted
         with log_path.open("wb") as fh:
             # start_new_session puts the CLI and its module workers in one
             # process group so teardown can kill them all by the exact pgid.
+            #
+            # Only map_file is a flat `-o` override now: the fiducial params moved
+            # into the priors list (relocalizationmodule.priors[i]), which the
+            # dotted override parser can't index. RANSAC (also enabled in
+            # lidar-fiducial) carries the reloc for this test's assertions; a real
+            # marker survey needs a preset that bakes it in (follow-up). marker_map_
+            # file is still built above to exercise its derivation pipeline.
             overrides = [
                 f"relocalizationmodule.map_file={premap_file}",
-                f"visualrelocalizationmodule.marker_map_file={marker_map_file}",
-                f"visualrelocalizationmodule.marker_length_m={MARKER_LENGTH_M}",
             ]
             proc = subprocess.Popen(
                 ["dimos", "--replay", f"--replay-db={RECORDING}", "run", BLUEPRINT]
@@ -214,12 +224,12 @@ test_unitree_go2_fiducial_relocalization_replay.py -m self_hosted
 
         # (a) the module came up with our premap, not disabled/no-op.
         wait_until(
-            lambda: "Relocalization module started" in log_text(),
+            lambda: "relocalization module started" in log_text(),
             timeout=START_DEADLINE_S,
             interval=0.5,
             message=f"RelocalizationModule never started; see {log_path}",
         )
-        assert f"map_file='{premap_file}'" in log_text()
+        assert f"map_file={premap_file}" in log_text()
 
         # (b) + (c) an accepted relocalization in the log AND a fix on the wire.
         wait_until(
@@ -247,7 +257,10 @@ test_unitree_go2_fiducial_relocalization_replay.py -m self_hosted
     # (b) every accepted fitness clears the module's own configured threshold.
     fitnesses = [float(m) for m in _ACCEPT_RE.findall(text)]
     assert fitnesses, "accept line vanished from the log after shutdown"
-    assert min(fitnesses) >= RelocConfig().fitness_threshold
+    # priors is a required field now, so read the documented default off the field
+    # rather than constructing a bare Config (the blueprint leaves the threshold at
+    # its default).
+    assert min(fitnesses) >= RelocConfig.model_fields["fitness_threshold"].default
     # (c) the fix stream carries the world->map convention end to end.
     assert (fixes[0].frame_id, fixes[0].child_frame_id) == ("world", "map")
     # (d) nothing raised anywhere in the run, shutdown included.

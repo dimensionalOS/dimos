@@ -24,11 +24,11 @@ robust multi-sighting fusion lives in
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import yaml
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -49,7 +49,7 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
     if not np.all(np.isfinite(np.asarray(translation, dtype=np.float64))):
         raise ValueError(f"marker {marker_id}: translation must be finite, got {translation!r}")
     norm = float(np.linalg.norm(np.asarray(rotation, dtype=np.float64)))
-    if not np.isfinite(norm) or norm < 1e-6:
+    if not np.isfinite(norm) or norm < 1e-6:  # 1e-6: unnormalizable, floor below a unit quaternion's round-off
         raise ValueError(f"marker {marker_id}: rotation quaternion norm is {norm}, not usable")
     return Transform(
         translation=Vector3(*translation),
@@ -60,9 +60,16 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
 
 
 def load_marker_map(path: str | Path) -> dict[int, Transform]:
-    """``marker_id -> map_T_marker`` from a survey YAML (``markers: {id: {translation, rotation}}``)."""
+    """``marker_id -> map_T_marker`` from a survey JSON.
+
+    Schema (``meta`` is provenance, ignored here)::
+
+        {"meta": {...},
+         "markers": {"<tag_id>": {"translation": [x, y, z],
+                                  "rotation": [qx, qy, qz, qw]}}}  # map_T_tag
+    """
     with open(path) as f:
-        data = yaml.safe_load(f) or {}
+        data = json.load(f) or {}
     return {
         int(marker_id): _validated_entry(int(marker_id), entry)
         for marker_id, entry in (data.get("markers", {}) or {}).items()

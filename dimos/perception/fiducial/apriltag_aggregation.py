@@ -14,32 +14,25 @@
 
 """Robust multi-sighting fiducial-marker pose aggregation.
 
-Ported from the jnav AprilTag PGO front end
-(``dimos/navigation/jnav/utils/apriltags.py``): time-cluster same-marker
-sightings, reject the bad glimpses through independent per-glimpse gates, and
-reduce each cluster to ONE robust pose -- the cluster medoid refined by
-Huber-weighted IRLS (weighted-mean translation + Markley quaternion eigen-mean),
-re-weighting each iteration so a lingering bad glimpse keeps losing influence.
+Time-cluster same-marker sightings, gate each glimpse independently, and reduce
+each cluster to ONE robust pose: the medoid refined by Huber-weighted IRLS
+(weighted-mean translation + Markley quaternion eigen-mean), re-weighting each
+iteration so a lingering bad glimpse keeps losing influence.
 
-The pose being fused is a 7-vector ``[x, y, z, qx, qy, qz, qw]`` and is
-frame-agnostic: the relocalization ``FiducialPrior`` fuses ``world_T_marker``
-(the frame-invariant world pose the detector already publishes, so drift over a
-5 s cluster does not enter), while jnav's PGO front end fused
-``camera_T_marker``. Only :func:`view_quality` reads a camera-relative pose --
-the caller computes ``distance``/``view_angle`` from it and passes the scalars
-in, so the fuse-pose and the geometry-gate pose stay explicit.
+The fused pose is a frame-agnostic 7-vector ``[x, y, z, qx, qy, qz, qw]``; the
+reloc ``FiducialPrior`` fuses ``world_T_marker`` (frame-invariant, so cluster
+drift does not enter). Only :func:`view_quality` reads a camera-relative pose --
+the caller passes ``distance``/``view_angle`` scalars in, keeping the fuse-pose
+and the geometry-gate pose distinct.
 
-Two entry points, mirroring jnav's batch/streaming split:
- - :func:`aggregate_visits` -- batch: gate + time-cluster a whole recording into
-   one Huber-refined estimate per (marker, visit). Used by the offline benefit
-   harness.
- - :class:`TagAggregator` -- streaming: a sliding time window per marker,
-   Huber-fused on demand once a marker has ``min_observations`` in-window
-   glimpses. Used by the live prior (incremental per-detection).
+Two entry points:
+ - :func:`aggregate_visits` -- batch: gate + cluster a whole recording into one
+   estimate per (marker, visit). Offline benefit harness.
+ - :class:`TagAggregator` -- streaming: sliding window per marker, fused on
+   demand once ``min_observations`` are in-window. Live prior.
 
-The sharpness (motion-blur) gate jnav applies up front is NOT re-applied here:
-these observations arrive post-detection, and in dimos the detector's
-``QualityWindow`` already drops blurry frames (marker_detection_stream_module).
+No up-front sharpness gate: the detector's ``QualityWindow`` already drops
+blurry frames before these post-detection observations arrive.
 """
 
 from __future__ import annotations
@@ -51,8 +44,8 @@ import math
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-# jnav thresholds (dimos/navigation/jnav/utils/apriltags.py), kept verbatim; a
-# glimpse must clear every one whose input is available (see gate_reason).
+# Per-glimpse gate thresholds; a glimpse must clear every one whose input is
+# available (see gate_reason).
 DEFAULT_MAX_DISTANCE_M = 1.0  # camera->tag range past which perspective is too weak
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # line-of-sight vs tag normal; grazing views mis-solve
 DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
@@ -63,15 +56,15 @@ DEFAULT_CLUSTER_GAP_S = 5.0  # sightings farther apart in time are separate visi
 DEFAULT_MIN_OBSERVATIONS = 3  # clusters thinner than this are unreliable
 DEFAULT_ROTATION_WEIGHT_M_PER_RAD = 0.5  # 1 rad of rot ~ 0.5 m of trans in pose distance
 DEFAULT_HUBER_DELTA_M = 0.05  # residual (m) past which a sample is down-weighted
-_HUBER_ITERATIONS = 5
+_HUBER_ITERATIONS = 5  # IRLS weights settle within ~5 iters at huber_delta_m scale
 
 
 @dataclass(frozen=True)
 class AggregationConfig:
     """Per-glimpse gate thresholds + clustering/fusion knobs.
 
-    Frozen value type (dimos convention for tunables that are pure numbers).
-    Defaults are jnav's; tuning them is the autoresearch harness's job (#2137).
+    Frozen value type (dimos convention for pure-number tunables). Default
+    tuning is the autoresearch harness's job (#2137).
     """
 
     max_distance_m: float = DEFAULT_MAX_DISTANCE_M
@@ -91,12 +84,10 @@ class AggregationConfig:
 class TagObservation:
     """One gated tag glimpse feeding the aggregator.
 
-    ``pose`` is the frame-invariant pose to fuse as ``(x, y, z, qx, qy, qz, qw)``
-    (``world_T_marker`` in the reloc prior). The quality fields drive the
-    per-glimpse gates; a field left ``None`` disables ITS gate only -- the same
-    graceful degradation as jnav's motion gate when no camera poses exist (e.g.
-    ``reproj_px``/``tag_px`` are ``None`` when the observation reached the prior
-    over a wire that dropped the pixels).
+    ``pose`` is the frame-invariant fuse pose ``(x, y, z, qx, qy, qz, qw)``
+    (``world_T_marker`` in the reloc prior). Quality fields drive the gates; a
+    ``None`` field disables ITS gate only, so a pixel-less wire-delivered
+    observation degrades gracefully.
     """
 
     ts: float
@@ -145,10 +136,9 @@ def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
 def view_quality(pose_cam: tuple[float, ...] | list[float]) -> tuple[float, float]:
     """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
 
-    distance is the camera->tag range; view_angle is the angle between the line
-    of sight and the tag's surface normal (0 == perfectly head-on). Only valid
-    on a camera-relative pose -- the fuse-pose (world_T_marker) would give
-    distance-from-world-origin, which is meaningless as a gate.
+    view_angle is line-of-sight vs the tag normal (0 == head-on). Camera-relative
+    only: on the fuse-pose (world_T_marker) distance would be from world origin,
+    meaningless as a gate.
     """
     translation = np.array(pose_cam[:3], dtype=np.float64)
     distance = float(np.linalg.norm(translation))
@@ -162,9 +152,8 @@ def view_quality(pose_cam: tuple[float, ...] | list[float]) -> tuple[float, floa
 def tag_pixel_size(corners_px: np.ndarray) -> float:
     """Tag side length in pixels: sqrt of the corner quad's image area (shoelace).
 
-    Small == few pixels on the tag == unreliable pose. jnav used
-    ``cv2.contourArea``; the shoelace formula is the same area for a simple quad
-    and keeps this core free of an OpenCV import.
+    Small == few tag pixels == unreliable pose. Shoelace matches
+    ``cv2.contourArea`` for a simple quad and keeps this core OpenCV-free.
     """
     quad = np.asarray(corners_px, dtype=np.float64).reshape(4, 2)
     x, y = quad[:, 0], quad[:, 1]
@@ -173,10 +162,9 @@ def tag_pixel_size(corners_px: np.ndarray) -> float:
 
 
 def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
-    """Rejection reason for a glimpse, or ``None`` if it clears every gate whose
-    input is present. Each gate is skipped when its field is ``None`` so a
-    pixel-less (wire-delivered) or odometry-less observation degrades to the
-    gates it CAN evaluate rather than failing shut."""
+    """Rejection reason, or ``None`` if the glimpse clears every gate whose input
+    is present. A ``None`` field skips ITS gate so a pixel-less or odometry-less
+    observation degrades to what it CAN evaluate rather than failing shut."""
     if obs.reproj_px is not None and obs.reproj_px > config.max_reproj_px:
         return "reproj"
     if obs.tag_px is not None and obs.tag_px < config.min_tag_px:
@@ -244,14 +232,11 @@ def cluster_medoid(
 
 def _huber_weights(residuals: np.ndarray, delta: float) -> np.ndarray:
     """IRLS Huber weights: 1 inside ``delta``, decaying as ``delta / r`` past it.
-
-    Huber loss (quadratic near zero, linear in the tail) as iteratively
-    reweighted least squares -- the standard robust M-estimator.
     https://en.wikipedia.org/wiki/Huber_loss
     """
     weights = np.ones_like(residuals)
     outside = residuals > delta
-    weights[outside] = delta / residuals[outside]
+    weights[outside] = delta / residuals[outside]  # Huber IRLS https://en.wikipedia.org/wiki/Huber_loss
     return weights
 
 
@@ -260,13 +245,11 @@ def robust_cluster_pose(
     rotation_weight_m_per_rad: float,
     huber_delta_m: float,
 ) -> tuple[float, float, float, float, float, float, float]:
-    """Cluster representative: the medoid, then refined by Huber-weighted IRLS.
-
-    Translation is a Huber-weighted mean; rotation is the Huber-weighted
-    quaternion eigen-mean (Markley's method: the largest-eigenvector of the
-    weighted outer-product scatter of the sign-aligned quaternions).
-    Re-weighting each iteration keeps down-weighting a lingering bad glimpse
-    (e.g. a mirror-flip PnP solution the ambiguity gate missed).
+    """Cluster representative: the medoid, refined by Huber-weighted IRLS --
+    weighted-mean translation + Markley quaternion eigen-mean (largest
+    eigenvector of the sign-aligned quaternions' weighted scatter). Re-weighting
+    each iteration keeps down-weighting a lingering bad glimpse (e.g. a mirror-
+    flip PnP solution the ambiguity gate missed).
     Markley quaternion averaging: https://ntrs.nasa.gov/citations/20070017872
     """
     medoid = cluster_medoid(cluster, rotation_weight_m_per_rad)
@@ -297,7 +280,7 @@ def robust_cluster_pose(
         scatter = (
             weights_r[:, None, None] * np.einsum("ni,nj->nij", quaternions, quaternions)
         ).sum(0)
-        estimate_quaternion = np.linalg.eigh(scatter)[1][:, -1]
+        estimate_quaternion = np.linalg.eigh(scatter)[1][:, -1]  # Markley quaternion eigen-mean (2007) https://ntrs.nasa.gov/citations/20070017872
         if estimate_quaternion @ reference < 0:
             estimate_quaternion = -estimate_quaternion
     fused = (*estimate_translation.tolist(), *estimate_quaternion.tolist())
@@ -345,11 +328,9 @@ def aggregate_visits(
 class TagAggregator:
     """Streaming robust pose per marker over a sliding time window.
 
-    ``observe()`` gates a glimpse and (if it passes) appends it to its marker's
-    window, purging glimpses older than ``time_window_s`` relative to the newest
-    one. ``robust_estimate()`` Huber-fuses a marker's in-window glimpses once
-    there are at least ``min_observations`` of them -- otherwise ``None`` (not
-    enough evidence to trust a fused pose yet).
+    ``observe()`` gates a glimpse and appends it to its marker's window, purging
+    glimpses older than ``time_window_s`` from the newest. ``robust_estimate()``
+    Huber-fuses once a marker has ``min_observations`` in-window.
     """
 
     def __init__(self, config: AggregationConfig) -> None:

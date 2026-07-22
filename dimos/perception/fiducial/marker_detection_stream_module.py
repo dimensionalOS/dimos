@@ -60,6 +60,7 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
     camera_info: CameraInfo | None = None
+    ambiguity_ratio_min: float = Field(2.0, ge=1.0)  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
@@ -95,6 +96,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                     aruco_dictionary=self.config.aruco_dictionary,
                     world_frame=self.config.world_frame,
                     smoothing_window=self.config.smoothing_window,
+                    ambiguity_ratio_min=self.config.ambiguity_ratio_min,
                     emit_empty_frames=True,
                 )
             ),
@@ -107,9 +109,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             return
         if not self._warned_distortion_model:
             logger.warning(
-                "MarkerDetectionStreamModule: distortion_model=%r may be unsupported; "
-                "using D as-is.",
-                camera_info.distortion_model,
+                "unsupported distortion_model, using D as-is",
+                distortion_model=camera_info.distortion_model,
             )
             self._warned_distortion_model = True
 
@@ -119,7 +120,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = getattr(image, "ts", None) or time.time()
+        ts = image.ts if image.ts else time.time()  # fallback: unstamped frame -> wallclock so TF lookup has a time_point
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tf.get(
             self.config.world_frame,
@@ -129,10 +130,10 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
         )
         if t_world_optical is None:
             logger.debug(
-                "MarkerDetectionStreamModule: no TF %s -> %s at ts=%s",
-                self.config.world_frame,
-                optical,
-                ts,
+                "no TF for frame; skipping frame",
+                world_frame=self.config.world_frame,
+                optical_frame=optical,
+                ts=round(ts, 3),
             )
             return
 

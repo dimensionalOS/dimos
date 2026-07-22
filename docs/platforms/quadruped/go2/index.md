@@ -17,7 +17,7 @@ title: "Unitree Go2"
 | `dimos run unitree-go2-spatial` | Navigation + spatial memory |
 | `dimos run unitree-go2-detection` | Navigation + object detection |
 | `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
-| `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.lcm` premap |
+| `dimos run unitree-go2-relocalization-lidar` | Navigation + align live scans to a saved `.pc2.lcm` premap |
 
 ## Deep Dive
 

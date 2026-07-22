@@ -20,6 +20,7 @@ from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.priors import FiducialPriorConfig, RansacPriorConfig
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -94,34 +95,52 @@ unitree_go2_markers = (
     .global_config(n_workers=11, robot_model="unitree_go2")
 )
 
-unitree_go2_relocalization = autoconnect(
+# lidar-only reloc: RANSAC alone aligns live scans to the premap. No marker
+# detector. The base every deployment starts from. Set the map with
+#   -o relocalizationmodule.map_file=/abs/path/to/site.pc2.lcm
+unitree_go2_relocalization_lidar = autoconnect(
     unitree_go2,
-    RelocalizationModule.blueprint(),
+    RelocalizationModule.blueprint(priors=[RansacPriorConfig()]),
 ).global_config(n_workers=11)
 
-# The full fiducial->judge path in one stack: MarkerDetectionStreamModule
-# publishes marker sightings on its `detections` Out stream, and autoconnect
-# wires that (by name+type) into RelocalizationModule's `detections` In, where
-# use_fiducial_prior=True Huber-fuses each tag's sightings into ONE world->map
-# candidate that competes in the shared judge on wall fitness (never a bypass).
-# The maps stay unset: each module no-ops until overrides point them at a
-# premap + a marker survey, e.g.
-#   -o relocalizationmodule.map_file=/abs/path/to/site.pc2.lcm
-#   -o relocalizationmodule.marker_map_file=/abs/path/to/site_markers.yaml
-# A bare name is resolved via `resolve_named_path` (checked, in order: as
-# given / relative to DIMOS_PROJECT_ROOT / the shared data dir, downloading
-# from LFS if registered) -- never a user-specific absolute path.
-unitree_go2_fiducial_relocalization = autoconnect(
+# lidar + fiducial: RANSAC and the fiducial prior BOTH propose into the shared
+# judge. WITH MarkerDetectionStreamModule -- its `detections` Out autoconnects
+# (by name+type) into RelocalizationModule's `detections` In, where each tag's
+# sightings Huber-fuse into ONE world->map candidate that competes on wall
+# fitness (never a bypass). The FiducialPriorConfig is the single source of the
+# fiducial family: its aruco_dictionary threads into the detector so both decode
+# and fuse the same tags. Maps stay unset -- the fiducial prior no-ops until its
+# marker survey is provided; a bare name resolves via resolve_named_path (as
+# given / DIMOS_PROJECT_ROOT / the shared data dir, LFS if registered).
+_lidar_fiducial_prior = FiducialPriorConfig(
+    marker_length_m=0.10,
+    camera_info=GO2Connection.camera_info_static,
+)
+unitree_go2_relocalization_lidar_fiducial = autoconnect(
     unitree_go2,
     MarkerDetectionStreamModule.blueprint(
-        marker_length_m=0.10,
+        marker_length_m=_lidar_fiducial_prior.marker_length_m,
         camera_info=GO2Connection.camera_info_static,
+        aruco_dictionary=_lidar_fiducial_prior.aruco_dictionary,
     ),
-    RelocalizationModule.blueprint(
-        use_fiducial_prior=True,
-        marker_length_m=0.10,
+    RelocalizationModule.blueprint(priors=[RansacPriorConfig(), _lidar_fiducial_prior]),
+).global_config(n_workers=12, robot_model="unitree_go2")
+
+# fiducial-only reloc: the fiducial prior is the SOLE proposer -- RANSAC disabled
+# (omitted from the priors list). WITH MarkerDetectionStreamModule. For deployments
+# that trust surveyed markers over the geometric global search.
+_fiducial_only_prior = FiducialPriorConfig(
+    marker_length_m=0.10,
+    camera_info=GO2Connection.camera_info_static,
+)
+unitree_go2_relocalization_fiducial = autoconnect(
+    unitree_go2,
+    MarkerDetectionStreamModule.blueprint(
+        marker_length_m=_fiducial_only_prior.marker_length_m,
         camera_info=GO2Connection.camera_info_static,
+        aruco_dictionary=_fiducial_only_prior.aruco_dictionary,
     ),
+    RelocalizationModule.blueprint(priors=[_fiducial_only_prior]),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
 unitree_go2_memory = autoconnect(
