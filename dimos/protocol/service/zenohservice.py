@@ -27,7 +27,8 @@ from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn")
+# temp: silence benign multi-homed duplicate-link "close (reason INVALID)" spam
+zenoh.init_log_from_env_or("warn,zenoh_transport::unicast::establishment=off")
 
 logger = setup_logger()
 
