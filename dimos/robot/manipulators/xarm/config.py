@@ -63,6 +63,7 @@ XARM_GRIPPER_PARAMS = {
     "gripper_joint": make_gripper_joints("arm")[0],
     "gripper_open_pos": 0.85,
     "gripper_closed_pos": 0.0,
+    "max_joint_delta_deg": 50.0,
 }
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 

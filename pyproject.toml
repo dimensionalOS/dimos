@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "robot/manipulators/piper/scripts/*",
 ]
 
 [tool.setuptools.exclude-package-data]

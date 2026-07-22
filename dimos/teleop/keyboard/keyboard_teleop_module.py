@@ -41,7 +41,7 @@ except ImportError:
     pygame = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from pygame.key import ScancodeWrapper  # type: ignore[attr-defined]
+    from pygame.key import _ScancodeWrapper
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -101,10 +101,7 @@ def _gripper_key_codes() -> tuple[int, int]:
     """Return pygame's bracket key codes without relying on stub attributes."""
     if pygame is None:
         return (-1, -1)
-    return (
-        pygame.K_LEFTBRACKET,  # type: ignore[attr-defined]
-        pygame.K_RIGHTBRACKET,  # type: ignore[attr-defined]
-    )
+    return pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET
 
 
 class KeyboardTeleopModule(Module):
@@ -267,7 +264,7 @@ class KeyboardTeleopModule(Module):
 
 
 def _twist_from_keys(
-    keys: ScancodeWrapper | set[int],
+    keys: _ScancodeWrapper | set[int],
     *,
     linear_speed: float,
     angular_speed: float,

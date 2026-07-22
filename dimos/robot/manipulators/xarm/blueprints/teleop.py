@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.control.components import make_gripper_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -160,24 +159,14 @@ coordinator_teleop_xarm7 = autoconnect(
                 hand="right",
                 name="teleop_xarm",
                 priority=20,
-                params={
-                    "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 1.0,
-                    "gripper_closed_pos": 0.0,
-                    "max_joint_delta_deg": 50.0,
-                },
+                params=XARM_GRIPPER_PARAMS,
             ),
             eef_twist_task(
                 _xarm7_teleop_hw,
                 model_path=XARM7_FK_MODEL,
                 ee_joint_id=7,
                 priority=10,
-                params={
-                    "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 1.0,
-                    "gripper_closed_pos": 0.0,
-                    "max_joint_delta_deg": 50.0,
-                },
+                params=XARM_GRIPPER_PARAMS,
             ),
         ],
     ),
@@ -195,24 +184,14 @@ coordinator_teleop_xarm6 = autoconnect(
                 hand="right",
                 name="teleop_xarm",
                 priority=20,
-                params={
-                    "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 1.0,
-                    "gripper_closed_pos": 0.0,
-                    "max_joint_delta_deg": 50.0,
-                },
+                params=XARM_GRIPPER_PARAMS,
             ),
             eef_twist_task(
                 _xarm6_teleop_hw,
                 model_path=XARM6_FK_MODEL,
                 ee_joint_id=6,
                 priority=10,
-                params={
-                    "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 1.0,
-                    "gripper_closed_pos": 0.0,
-                    "max_joint_delta_deg": 50.0,
-                },
+                params=XARM_GRIPPER_PARAMS,
             ),
         ],
     ),
