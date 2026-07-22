@@ -29,6 +29,10 @@ from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.obstacle_avoidance.module import (
+    ObstacleAvoidance,
+    ObstacleAvoidanceConfig,
+)
 from dimos.navigation.replanning_a_star.module import (
     ReplanningAStarPlanner,
     ReplanningAStarPlannerConfig,
@@ -53,20 +57,28 @@ map_save_path = map_save_dir / "m20_accumulated_map.pcd"
 M20_SIMPLE_NAV_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config/m20_simple_nav.yaml"
 
 
-def _load_m20_simple_nav_planner_config() -> dict[str, Any]:
+def _load_m20_simple_nav_config() -> tuple[dict[str, Any], dict[str, Any]]:
     payload = load_config_mapping(M20_SIMPLE_NAV_CONFIG_PATH)
     try:
         planner_values = payload["replanningastarplanner"]
+        obstacle_avoidance_values = payload["obstacleavoidance"]
     except KeyError:
         raise ValueError(
-            f"Config file {M20_SIMPLE_NAV_CONFIG_PATH} must define replanningastarplanner"
+            f"Config file {M20_SIMPLE_NAV_CONFIG_PATH} must define "
+            "replanningastarplanner and obstacleavoidance"
         ) from None
 
     planner_config = ReplanningAStarPlannerConfig.model_validate(planner_values)
-    return planner_config.model_dump(include=set(planner_values))
+    obstacle_avoidance_config = ObstacleAvoidanceConfig.model_validate(obstacle_avoidance_values)
+    return (
+        planner_config.model_dump(include=set(planner_values)),
+        obstacle_avoidance_config.model_dump(include=set(obstacle_avoidance_values)),
+    )
 
 
-M20_SIMPLE_NAV_PLANNER_CONFIG = _load_m20_simple_nav_planner_config()
+M20_SIMPLE_NAV_PLANNER_CONFIG, M20_SIMPLE_NAV_OBSTACLE_AVOIDANCE_CONFIG = (
+    _load_m20_simple_nav_config()
+)
 
 _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     executable="target/release/voxel_ray_tracing",
@@ -131,6 +143,20 @@ m20_simple_nav = autoconnect(
         robot_width=m20_width_clearance,
         robot_rotation_diameter=m20_rotation_diameter,
         **M20_SIMPLE_NAV_PLANNER_CONFIG,
-    ).remappings([(ReplanningAStarPlanner, "odometry", "slam_odom")]),
+    ).remappings(
+        [
+            (ReplanningAStarPlanner, "odometry", "slam_odom"),
+            (ReplanningAStarPlanner, "nav_cmd_vel", "raw_nav_cmd_vel"),
+        ]
+    ),
+    ObstacleAvoidance.blueprint(**M20_SIMPLE_NAV_OBSTACLE_AVOIDANCE_CONFIG).remappings(
+        [(ObstacleAvoidance, "odometry", "slam_odom")]
+    ),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="m20", robot_ip="10.21.31.103")
+).global_config(
+    n_workers=11,
+    robot_model="m20",
+    robot_ip="10.21.31.103",
+    robot_width=m20_width_clearance,
+    robot_rotation_diameter=m20_rotation_diameter,
+)

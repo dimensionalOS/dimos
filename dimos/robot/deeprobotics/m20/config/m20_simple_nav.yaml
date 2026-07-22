@@ -25,6 +25,18 @@ replanningastarplanner:
   # operators can compare raw and final paths during physical M20 validation.
   publish_raw_path: true
 
+  # Minimum active-path distance checked for occupied cells, in metres.
+  # The initial 3 m value preserves the target branch's existing behavior.
+  obstacle_lookahead_min_distance_m: 3.0
+
+  # Command-speed preview horizon, in seconds. Keep 0 to preserve a fixed 3 m
+  # lookahead; use 3.0 only after the dynamic preview is validated on M20.
+  obstacle_lookahead_time_s: 0.0
+
+  # Maximum active-path lookahead, in metres. It must be greater than or equal
+  # to the minimum. Keep 3 m while dynamic preview remains disabled.
+  obstacle_lookahead_max_distance_m: 3.0
+
   # Select costmap-aware constrained smoothing. This profile enables validation,
   # fractional backtracking, and safe fallback to the raw-resampled A* path.
   constrained_path_smoothing_enabled: true
@@ -68,3 +80,46 @@ replanningastarplanner:
   # Approximate spacing between final controller waypoints, in metres.
   # Smaller values preserve curves but increase message and controller work.
   path_resample_spacing_m: 0.10
+
+obstacleavoidance:
+  # Master switch for the autonomous-navigation stop filter. False preserves
+  # existing M20 behavior by passing planner commands through unchanged.
+  # Keep disabled until costmap cadence and physical braking are measured.
+  enabled: false
+
+  # Minimum forward occupied-cell detection boundary from the robot centre, in
+  # metres. This provisional value comes from MuJoCo and is not M20-calibrated.
+  stop_distance_m: 1.20
+
+  # Clear boundary required before a stopped robot can resume, in metres. Must
+  # be greater than stop_distance_m to provide spatial hysteresis.
+  resume_distance_m: 1.40
+
+  # Estimated sensing-to-command reaction time, in seconds. Replace this
+  # provisional value with the measured physical M20 end-to-end latency.
+  reaction_time_s: 0.50
+
+  # Deceleration used in v^2/(2a), in metres per second squared. Replace this
+  # provisional value with measured M20 emergency braking performance.
+  braking_deceleration_m_s2: 0.60
+
+  # Additional stopping-distance allowance after latency, braking, and robot
+  # footprint, in metres. Must be non-negative.
+  stop_safety_margin_m: 0.20
+
+  # Extra safety margin added to the forward width and rotation radius, in
+  # metres. Must be non-negative.
+  lateral_margin_m: 0.10
+
+  # Number of clear costmaps with distinct timestamps required before
+  # releasing a blocked autonomous command. Must be at least 1.
+  clear_costmap_count: 2
+
+  # Maximum accepted costmap age, in seconds. A nonzero autonomous command is
+  # replaced with zero after this timeout. The current global-map cadence must
+  # be increased or replaced by a local costmap before enabling this module.
+  costmap_timeout_s: 1.50
+
+  # Maximum accepted odometry age, in seconds. A nonzero autonomous command is
+  # replaced with zero after this timeout.
+  odometry_timeout_s: 0.50

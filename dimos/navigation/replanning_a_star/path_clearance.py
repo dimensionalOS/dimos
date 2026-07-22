@@ -23,10 +23,22 @@ from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 
 
+def obstacle_lookahead_distance_m(
+    command_speed_m_s: float,
+    *,
+    min_distance_m: float,
+    time_horizon_s: float,
+    max_distance_m: float,
+) -> float:
+    return min(
+        max_distance_m,
+        max(min_distance_m, abs(command_speed_m_s) * time_horizon_s),
+    )
+
+
 class PathClearance:
     _costmap: OccupancyGrid | None = None
     _last_costmap: OccupancyGrid | None = None
-    _path_lookup_distance: float = 3.0
     _max_distance_cache: float = 1.0
     _last_used_shape: tuple[int, ...] | None = None
     _last_mask: NDArray[np.bool_] | None = None
@@ -36,11 +48,23 @@ class PathClearance:
     _path: Path
     _pose_index: int
 
-    def __init__(self, global_config: GlobalConfig, path: Path) -> None:
+    def __init__(
+        self,
+        global_config: GlobalConfig,
+        path: Path,
+        *,
+        min_lookup_distance_m: float = 3.0,
+        lookup_time_horizon_s: float = 0.0,
+        max_lookup_distance_m: float = 3.0,
+    ) -> None:
         self._global_config = global_config
         self._path = path
         self._pose_index = 0
         self._lock = RLock()
+        self._min_lookup_distance_m = min_lookup_distance_m
+        self._lookup_time_horizon_s = lookup_time_horizon_s
+        self._max_lookup_distance_m = max_lookup_distance_m
+        self._path_lookup_distance = min_lookup_distance_m
 
     def update_costmap(self, costmap: OccupancyGrid) -> None:
         with self._lock:
@@ -50,11 +74,26 @@ class PathClearance:
         with self._lock:
             self._pose_index = index
 
+    def update_command_speed(self, command_speed_m_s: float) -> None:
+        distance = obstacle_lookahead_distance_m(
+            command_speed_m_s,
+            min_distance_m=self._min_lookup_distance_m,
+            time_horizon_s=self._lookup_time_horizon_s,
+            max_distance_m=self._max_lookup_distance_m,
+        )
+        with self._lock:
+            update_threshold_m = self._costmap.resolution if self._costmap is not None else 0.0
+            if abs(distance - self._path_lookup_distance) <= update_threshold_m:
+                return
+            self._path_lookup_distance = distance
+            self._last_mask = None
+
     @property
     def mask(self) -> NDArray[np.bool_]:
         with self._lock:
             costmap = self._costmap
             pose_index = self._pose_index
+            lookup_distance = self._path_lookup_distance
 
         assert costmap is not None
 
@@ -71,7 +110,7 @@ class PathClearance:
             path=self._path,
             robot_width=self._global_config.robot_width,
             pose_index=pose_index,
-            max_length=self._path_lookup_distance,
+            max_length=lookup_distance,
         )
 
         self._last_used_shape = costmap.grid.shape

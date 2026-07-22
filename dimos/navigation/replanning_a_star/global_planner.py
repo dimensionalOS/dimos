@@ -121,6 +121,9 @@ class GlobalPlanner(Resource):
         path_smoothing_backtracking_factor: float = 0.5,
         path_smoothing_max_backtracking_steps: int = 3,
         path_resample_spacing_m: float = 0.1,
+        obstacle_lookahead_min_distance_m: float = 3.0,
+        obstacle_lookahead_time_s: float = 0.0,
+        obstacle_lookahead_max_distance_m: float = 3.0,
     ) -> None:
         self.path = Subject()
         self.raw_path = Subject()
@@ -148,7 +151,12 @@ class GlobalPlanner(Resource):
         self._navigation_map = NavigationMap(self._global_config, "voronoi")
         self._navigation_map_near = NavigationMap(self._global_config, "gradient")
         self._local_planner = LocalPlanner(
-            self._global_config, self._navigation_map, self._goal_tolerance
+            self._global_config,
+            self._navigation_map,
+            self._goal_tolerance,
+            obstacle_lookahead_min_distance_m=obstacle_lookahead_min_distance_m,
+            obstacle_lookahead_time_s=obstacle_lookahead_time_s,
+            obstacle_lookahead_max_distance_m=obstacle_lookahead_max_distance_m,
         )
 
         self._replan_limiter = ReplanLimiter()

@@ -72,7 +72,14 @@ class LocalPlanner(Resource):
     _navigation_costmap_last: float = 0.0
 
     def __init__(
-        self, global_config: GlobalConfig, navigation_map: NavigationMap, goal_tolerance: float
+        self,
+        global_config: GlobalConfig,
+        navigation_map: NavigationMap,
+        goal_tolerance: float,
+        *,
+        obstacle_lookahead_min_distance_m: float = 3.0,
+        obstacle_lookahead_time_s: float = 0.0,
+        obstacle_lookahead_max_distance_m: float = 3.0,
     ) -> None:
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
@@ -86,6 +93,9 @@ class LocalPlanner(Resource):
         self._global_config = global_config
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
+        self._obstacle_lookahead_min_distance_m = obstacle_lookahead_min_distance_m
+        self._obstacle_lookahead_time_s = obstacle_lookahead_time_s
+        self._obstacle_lookahead_max_distance_m = obstacle_lookahead_max_distance_m
 
         speed = self._speed
         if global_config.nerf_speed < 1.0:
@@ -115,7 +125,13 @@ class LocalPlanner(Resource):
 
         with self._lock:
             self._path = path
-            self._path_clearance = PathClearance(self._global_config, self._path)
+            self._path_clearance = PathClearance(
+                self._global_config,
+                self._path,
+                min_lookup_distance_m=self._obstacle_lookahead_min_distance_m,
+                lookup_time_horizon_s=self._obstacle_lookahead_time_s,
+                max_lookup_distance_m=self._obstacle_lookahead_max_distance_m,
+            )
             self._path_distancer = PathDistancer(self._path)
             self._pose_index = 0
             self._thread = Thread(target=self._thread_entrypoint, daemon=True)
@@ -270,6 +286,7 @@ class LocalPlanner(Resource):
             with self._lock:
                 path_clearance.update_costmap(self._navigation_map.binary_costmap)
                 path_clearance.update_pose_index(self._pose_index)
+                path_clearance.update_command_speed(self._last_cmd_vel.linear.x)
 
             self._send_navigation_costmap(path, path_clearance)
 
