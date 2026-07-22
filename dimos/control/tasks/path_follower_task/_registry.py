@@ -15,3 +15,10 @@
 TASK_FACTORIES = {
     "path_follower": "dimos.control.tasks.path_follower_task.path_follower_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "path_follower": {
+        "path": ("on_path", "direct"),
+        "speed": ("on_speed", "direct"),
+    },
+}

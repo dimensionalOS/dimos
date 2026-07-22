@@ -7,11 +7,10 @@
     ".": "./cli.ts"
   },
   "tasks": {
-    "start": "deno run --allow-net --allow-read --unstable-net bridge/server.ts",
+    "start": "deno run --allow-net --allow-read --allow-env=LCM_DEFAULT_URL --unstable-net bridge/server.ts",
     "eval": "deno run --allow-all cli.ts eval"
   },
   "imports": {
-    "@dimos/lcm": "./vendor/lcm/mod.ts",
     "@dimos/msgs": "jsr:@dimos/msgs@^0.1.4",
     "@std/path": "jsr:@std/path@^1",
     "@std/http": "jsr:@std/http@^1",

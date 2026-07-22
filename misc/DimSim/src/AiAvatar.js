@@ -235,12 +235,11 @@ export class AiAvatar {
 
     if (gltf.animations?.length) {
       this.mixer = new THREE.AnimationMixer(this.model);
-      this._actions = {};
+      const actions = {};
       for (const clip of gltf.animations) {
-        this._actions[clip.name] = this.mixer.clipAction(clip);
+        actions[clip.name] = this.mixer.clipAction(clip);
       }
-      const idle =
-        this._actions["idle"] || this._actions["Idle"] || this._actions["Idle_A"];
+      const idle = actions["idle"] || actions["Idle"] || actions["Idle_A"];
       if (idle) idle.play();
       else this.mixer.clipAction(gltf.animations[0]).play();
     }

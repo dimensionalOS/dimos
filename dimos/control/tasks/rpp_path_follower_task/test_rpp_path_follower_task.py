@@ -97,7 +97,7 @@ def test_artifact_loaded_lazily_not_at_construction(artifact_path):
 def test_set_path_arms_and_loads_calibration(artifact_path):
     path, art = artifact_path
     task = _task(path, speed=0.7)
-    task.set_path(circle(radius=1.0), _odom())
+    task.start_path(circle(radius=1.0), _odom())
     assert task._artifact_loaded
     assert task.is_active()
     assert task.get_state() == "path_following"
@@ -114,7 +114,7 @@ def test_profile_speed_capped_to_cruise(artifact_path):
     path, _ = artifact_path
     # cruise 0.5 below the artifact's 0.8 max -> profile uses the cruise.
     task = _task(path, speed=0.5)
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     assert task._profile_cap.cfg.max_linear_speed == pytest.approx(0.5)
 
 
@@ -125,7 +125,7 @@ def test_set_speed_rebuilds_cap_after_load(artifact_path):
     so the run is cancelled before retuning (as between benchmark runs)."""
     path, art = artifact_path
     task = _task(path, speed=0.7)
-    task.set_path(straight_line(length=3.0), _odom())  # loads the artifact + arms
+    task.start_path(straight_line(length=3.0), _odom())  # loads the artifact + arms
     task.cancel()  # back to idle so a new speed can be set (as between runs)
     task.set_speed(0.4)
     assert task._config.speed == pytest.approx(0.4)
@@ -141,7 +141,7 @@ def test_set_speed_clamps_to_artifact_vmax(artifact_path):
     never exceeds what the plant can hold."""
     path, art = artifact_path  # artifact max_linear_speed = 0.8
     task = _task(path, speed=0.5)
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     task.cancel()
     task.set_speed(2.0)
     assert task._profile_cap.cfg.max_linear_speed == pytest.approx(
@@ -157,7 +157,7 @@ def test_set_speed_before_first_path_is_picked_up(artifact_path):
     assert not task._artifact_loaded
     task.set_speed(0.4)
     assert task._profile_cap is None  # nothing to rebuild yet
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     assert task._profile_cap.cfg.max_linear_speed == pytest.approx(0.4)
 
 
@@ -166,7 +166,7 @@ def test_set_speed_ignored_while_active(artifact_path):
     picks up the new speed cleanly."""
     path, _ = artifact_path
     task = _task(path, speed=0.7)
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     assert task.is_active()
     task.set_speed(0.3)
     assert task._config.speed == pytest.approx(0.7)  # unchanged while active
@@ -175,14 +175,14 @@ def test_set_speed_ignored_while_active(artifact_path):
 def test_set_path_resets_cleanly_on_replan(artifact_path):
     path, _ = artifact_path
     task = _task(path)
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     # Drive a couple ticks so progress advances.
     for k in range(5):
         task.compute(_state(0.5 * k, 0.0, 0.0))
     advanced = task._max_progress_idx
     assert advanced > 0
     # A replan (new path via set_path) resets progress to 0 — no stale carrot.
-    task.set_path(straight_line(length=3.0), _odom())
+    task.start_path(straight_line(length=3.0), _odom())
     assert task._max_progress_idx == 0
     assert task.get_state() == "path_following"
 
@@ -214,7 +214,7 @@ def test_drives_to_arrival_forward_only(artifact_path):
     )
     p = straight_line(length=3.0)
     plant.reset(0.0, 0.0, 0.0, 0.1)
-    task.set_path(p, _odom())
+    task.start_path(p, _odom())
     arrived = False
     for k in range(400):
         out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * 0.1))

@@ -27,8 +27,8 @@ followers in one coordinator — they would fight over the base joints.
 
 Interface (pure LCM pub/sub, identical to the RPP controller):
 
-    IN   path   (nav_msgs/Path)        -> coordinator.path  -> holonomic_follower.set_path
-    IN   speed  (std_msgs/Float32, m/s)-> coordinator.speed -> holonomic_follower.set_speed
+    IN   path   (nav_msgs/Path)        -> coordinator.path  -> holonomic_follower.on_path
+    IN   speed  (std_msgs/Float32, m/s)-> coordinator.speed -> holonomic_follower.on_speed
     OUT  odom   (geometry_msgs/PoseStamped, /go2/odom)  -- the Go2 leg odom
     OUT  cmd_vel(geometry_msgs/Twist,        /cmd_vel)  -- aggregated command echo
 
@@ -46,7 +46,8 @@ Run (one of two processes; the benchmark is the other)::
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
+from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -70,7 +71,7 @@ unitree_go2_holonomic_controller = (
         # under the default the commanded and achieved speeds disagree — the
         # robot runs hot and glides past the goal.
         GO2Connection.blueprint(velocity_api=True),
-        ControlCoordinator.blueprint(
+        PathFollowingCoordinator.blueprint(
             publish_joint_state=True,
             hardware=[
                 HardwareComponent(
@@ -90,7 +91,7 @@ unitree_go2_holonomic_controller = (
                     priority=20,
                     params={"zero_on_timeout": False},
                 ),
-                # Sole set_path/set_speed responder: the progress-indexed
+                # Sole path/speed consumer: the progress-indexed
                 # holonomic full-pose tracker. Self-calibrates from the
                 # vendored pose-domain artifact on the first path.
                 TaskConfig(

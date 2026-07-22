@@ -17,3 +17,10 @@ TASK_FACTORIES = {
         "dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_task:create_task"
     ),
 }
+
+TASK_CONSUMES = {
+    "holonomic_pose_follower": {
+        "path": ("on_path", "direct"),
+        "speed": ("on_speed", "direct"),
+    },
+}

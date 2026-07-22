@@ -17,3 +17,10 @@ TASK_FACTORIES = {
         "dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task:create_task"
     ),
 }
+
+TASK_CONSUMES = {
+    "rpp_path_follower": {
+        "path": ("on_path", "direct"),
+        "speed": ("on_speed", "direct"),
+    },
+}

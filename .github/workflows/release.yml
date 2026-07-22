@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Verify dispatched from a release/* branch
@@ -79,7 +79,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Build sdist
@@ -109,7 +109,6 @@ jobs:
       id-token: write      # For attest-build-provenance's OIDC sigstore signing
       attestations: write  # For uploading the SLSA build-provenance attestation
     env:
-      CIBW_ENABLE: "cpython-freethreading"
       CIBW_ARCHS: ${{ matrix.arch }}
       # Skip musllinux (Alpine) — Pinocchio's build ecosystem (pin/coal/cmeel-*)
       # is glibc-only; cmeel-assimp >= 6.0.5 has no musllinux wheels.
@@ -150,7 +149,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions
@@ -179,7 +178,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions

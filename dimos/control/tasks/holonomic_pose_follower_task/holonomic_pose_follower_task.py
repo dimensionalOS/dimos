@@ -43,7 +43,10 @@ from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import 
     ProgressPathReference,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -72,6 +75,13 @@ def _kp_for_tau(tau: float) -> float:
 
 def _clamp(v: float, limit: float) -> float:
     return max(-limit, min(limit, v))
+
+
+def _pose_stamped(pose: tuple[float, float, float]) -> PoseStamped:
+    return PoseStamped(
+        position=Vector3(pose[0], pose[1], 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose[2])),
+    )
 
 
 @dataclass
@@ -124,6 +134,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._last_pose: tuple[float, float, float] | None = None
         self._last_pose_t: float | None = None
         self._stop_started_t: float | None = None
+        self._pending_path: Path | None = None
 
     # ControlTask protocol
 
@@ -142,6 +153,13 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         return self._state in ("tracking", "settling", "stopping")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        if self._pending_path is not None:
+            # Arm a stream-delivered path on the first tick that carries a pose;
+            # the card handler has no odom to hand us.
+            armed = self._read_pose(state)
+            if armed is not None:
+                path, self._pending_path = self._pending_path, None
+                self.start_path(path, _pose_stamped(armed))
         if not self.is_active() or self._reference is None:
             return None
 
@@ -405,20 +423,17 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         )
         return True
 
-    def set_path(self, path: Path, odom: PoseStamped | None = None) -> None:
-        """Coordinator broadcast hook (``ControlCoordinator._on_path``)."""
-        if odom is None:
-            logger.warning(
-                f"HolonomicPoseFollowerTask '{self._name}': received path without odom; dropping."
-            )
-            return
-        logger.info(
-            f"HolonomicPoseFollowerTask '{self._name}': received path (n={len(path.poses)})"
-        )
-        self.start_path(path, odom)
+    def on_path(self, msg: Path, t_now: float) -> None:
+        """``path`` card handler. Latched, not armed here: the handler carries no
+        odom, so compute() arms it on the first tick that has a pose."""
+        logger.info(f"HolonomicPoseFollowerTask '{self._name}': received path (n={len(msg.poses)})")
+        self._pending_path = msg
+
+    def on_speed(self, msg: Float32, t_now: float) -> None:
+        """``speed`` card handler."""
+        self.set_speed(float(msg.data))
 
     def set_speed(self, speed: float) -> None:
-        """Coordinator broadcast hook (``ControlCoordinator._on_speed``)."""
         if self.is_active():
             logger.warning(
                 f"HolonomicPoseFollowerTask '{self._name}': ignoring set_speed while active"
@@ -485,6 +500,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._last_pose = None
         self._last_pose_t = None
         self._stop_started_t = None
+        self._pending_path = None
         return True
 
     def get_state(self) -> HolonomicPoseFollowerState:

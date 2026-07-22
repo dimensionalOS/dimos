@@ -55,6 +55,8 @@ from dimos.core.global_config import global_config as _gc
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.navigation.replanning_a_star.controllers import PController
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.protocol.service.spec import BaseConfig
@@ -63,7 +65,6 @@ from dimos.utils.trigonometry import angle_diff
 
 if TYPE_CHECKING:
     from dimos.core.global_config import GlobalConfig
-    from dimos.msgs.nav_msgs.Path import Path
 
 logger = setup_logger()
 
@@ -189,6 +190,7 @@ class PathFollowerTask(BaseControlTask):
         # (e.g. Benchmarker handing in RG-derived speeds across RPC). When
         # set, takes precedence over self._profile_cap in compute(). See
         # start_path() for how it's installed.
+        self._pending_path: Path | None = None
         self._velocity_profile: np.ndarray | None = None
         self._velocity_profile_pts: np.ndarray | None = None
 
@@ -209,6 +211,23 @@ class PathFollowerTask(BaseControlTask):
         return self._state in ("initial_rotation", "path_following", "final_rotation")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        if self._pending_path is not None:
+            # Arm a stream-delivered path on the first tick that carries a pose;
+            # the card handler has no odom to hand us.
+            pos = state.joints.joint_positions
+            px = pos.get(self._joint_names_list[0])
+            py = pos.get(self._joint_names_list[1])
+            pyaw = pos.get(self._joint_names_list[2])
+            if px is not None and py is not None and pyaw is not None:
+                path, self._pending_path = self._pending_path, None
+                self.start_path(
+                    path,
+                    PoseStamped(
+                        ts=state.t_now,
+                        position=Vector3(float(px), float(py), 0.0),
+                        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(pyaw))),
+                    ),
+                )
         if not self.is_active():
             return None
         if self._path is None or self._distancer is None:
@@ -531,26 +550,18 @@ class PathFollowerTask(BaseControlTask):
         # callers that still pump odom externally don't break.
         self._current_odom = odom
 
-    def set_path(self, path: Path, odom: PoseStamped | None = None) -> None:
-        """Coordinator broadcast hook for nav-stack-emitted paths.
-
-        ``ControlCoordinator._on_path`` calls this on every task exposing
-        ``set_path`` with a fresh odom snapshot, so a clicked nav goal (or a
-        replan) arms the follower the same way the benchmark's RPC
-        ``start_path`` does. Prefers the caller-supplied ``odom``; falls back to
-        ``self._current_odom`` for single-arg callers. Each call resets the
-        follower onto the new path — exactly what makes pursuit robust to
-        replanning (no clock to re-sync, no re-ramp from rest)."""
-        use_odom = odom if odom is not None else self._current_odom
-        if use_odom is None:
-            logger.warning(
-                f"PathFollowerTask '{self._name}': received path but no odom available; dropping."
-            )
-            return
+    def on_path(self, msg: Path, t_now: float) -> None:
+        """``path`` card handler. Latched, not armed here: the handler carries no
+        odom, so compute() arms it on the first tick that has a pose. Each new
+        path resets the pursuit — what makes it robust to replanning."""
         logger.info(
-            f"PathFollowerTask '{self._name}': received path from stream (n={len(path.poses)})"
+            f"PathFollowerTask '{self._name}': received path from stream (n={len(msg.poses)})"
         )
-        self.start_path(path, use_odom)
+        self._pending_path = msg
+
+    def on_speed(self, msg: Float32, t_now: float) -> None:
+        """``speed`` card handler."""
+        self.set_speed(float(msg.data))
 
     def set_speed(self, speed: float) -> None:
         """Set the follower's target/cruise speed at runtime.
@@ -600,6 +611,7 @@ class PathFollowerTask(BaseControlTask):
         self._path = None
         self._distancer = None
         self._current_odom = None
+        self._pending_path = None
         return True
 
     def get_state(self) -> PathFollowerState:

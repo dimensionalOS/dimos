@@ -303,7 +303,7 @@ def test_end_to_end_controller_benchmark_scoring(tmp_path):
 
     # Benchmark anchors the path to the robot's first odom (here the origin).
     ref = shift_path_to_start_at_pose(straight_line(length=2.0), _pose(plant.x, plant.y, plant.yaw))
-    task.set_path(ref, _pose(plant.x, plant.y, plant.yaw))
+    task.start_path(ref, _pose(plant.x, plant.y, plant.yaw))
 
     recorder = OdomRecorder()
     monitor = _monitor(ref, dwell_s=0.3)
@@ -374,7 +374,7 @@ def test_end_to_end_fullpose_benchmark_scoring(tmp_path):
     ref = shift_path_to_start_at_pose(
         straight_rotate(length=3.0), _pose(plant.x, plant.y, plant.yaw)
     )
-    task.set_path(ref, _pose(plant.x, plant.y, plant.yaw))
+    task.start_path(ref, _pose(plant.x, plant.y, plant.yaw))
 
     recorder = OdomRecorder()
     monitor = _monitor(ref, dwell_s=0.3)
