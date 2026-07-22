@@ -68,6 +68,11 @@ class BrokerConfig(ProviderConfig):
     api_key: str | None = None
     robot_id: str | None = None
     robot_name: str = "robot"
+    # Robot kind sent in the session-create POST so the operator UI auto-selects
+    # its view. Pinned on a broker transport spec in the hosted blueprint
+    # (robot_type=...); unset for standalone callers (the POST omits it and the
+    # operator picks).
+    robot_type: str | None = None
     stun_url: str = "stun:stun.cloudflare.com:3478"
     heartbeat_hz: float = 1.0
     ordered: bool = False
@@ -77,6 +82,21 @@ class BrokerConfig(ProviderConfig):
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
+
+    # robot_type is session metadata, not part of the connection — exclude it
+    # from equality/hash so pinning it on one transport spec (while the blueprint's
+    # other broker specs leave it unset) still resolves to ONE shared provider
+    # instead of forking a second PeerConnection.
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, BrokerConfig):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
+
+    def _identity(self) -> tuple[tuple[str, Any], ...]:
+        return tuple((k, v) for k, v in self.__dict__.items() if k != "robot_type")
 
 
 class BrokerProvider(AsyncProviderBase):
@@ -223,6 +243,9 @@ class BrokerProvider(AsyncProviderBase):
                     # robot_id is optional — broker derives it from the API key.
                     **({"robot_id": self._robot_id} if self._robot_id else {}),
                     "robot_name": self._robot_name,
+                    # Pinned on a broker spec in the blueprint; omitted when unset
+                    # (standalone callers) so the operator picks the view.
+                    **({"robot_type": self._config.robot_type} if self._config.robot_type else {}),
                     "sdp_offer": self._pc.localDescription.sdp,
                 },
             )
