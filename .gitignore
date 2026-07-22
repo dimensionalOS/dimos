@@ -107,3 +107,4 @@ recording*.db
 
 # codegraph
 .codegraph/
+yoloe-11l-seg.pt
