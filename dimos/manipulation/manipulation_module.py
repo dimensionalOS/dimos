@@ -63,6 +63,9 @@ from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSp
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
+from dimos.manipulation.planning.trajectory_generator.time_parameterizer import (
+    TrapezoidalTimeParameterizer,
+)
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
@@ -668,8 +671,17 @@ class ManipulationModule(Module):
         self._planned_paths[robot_name] = result.path
 
         _, _, traj_gen = self._robots[robot_name]
-        # Convert JointState path to list of position lists for trajectory generator
-        traj = traj_gen.generate([list(state.position) for state in result.path])
+        # Time-parameterize the geometric path into an executable trajectory.
+        # Honors planner-provided timestamps; else synthesizes a trapezoidal profile.
+        time_parameterizer = TrapezoidalTimeParameterizer(traj_gen)
+        try:
+            traj = time_parameterizer.parameterize(result)
+        except ValueError as exc:
+            # A bad planner timeline must not strand the module, nor leave a
+            # stale trajectory from a previous plan that execute() could pick up.
+            self._planned_paths.pop(robot_name, None)
+            self._planned_trajectories.pop(robot_name, None)
+            return self._fail(f"Time-parameterization failed: {exc}")
         self._planned_trajectories[robot_name] = traj
         logger.info(f"Trajectory: {traj.duration:.3f}s")
 
