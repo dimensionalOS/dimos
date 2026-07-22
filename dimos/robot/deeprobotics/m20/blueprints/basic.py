@@ -63,6 +63,11 @@ def _smooth_path_for_rerun(msg: Any) -> Any:
     return msg.to_rerun(color=(0, 255, 128), z_offset=0.60, radii=0.05)
 
 
+def _costmap_below_ground(grid: Any) -> Any:
+    """Render costmaps below the point-cloud floor without changing map coordinates."""
+    return grid.to_rerun(z_offset=-1.0)
+
+
 def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
@@ -137,12 +142,12 @@ def m20_rerun_blueprint() -> Any:
 rerun = autoconnect(
     RerunBridgeModule.blueprint(
         blueprint=m20_rerun_blueprint,
-        memory_limit="1GB",
+        memory_limit="40GB",
         max_hz={
             "world/color_image": 0,
             "world/color_image_rear": 0,
-            "world/global_map": 1.0,
-            "world/local_map": 2.0,
+            "world/global_map": 100.0,
+            "world/local_map": 200.0,
         },
         visual_override={
             # slam_odom is already represented by map -> base_link. Keeping a
@@ -154,6 +159,8 @@ rerun = autoconnect(
             "world/node_edges": _node_edges_on_surface,
             "world/raw_path": _raw_path_for_rerun,
             "world/path": _smooth_path_for_rerun,
+            "world/global_costmap": _costmap_below_ground,
+            "world/navigation_costmap": _costmap_below_ground,
         },
         static={"world/tf/base_link": _m20_static_scene},
     ),

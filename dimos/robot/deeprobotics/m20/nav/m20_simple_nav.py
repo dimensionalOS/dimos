@@ -72,14 +72,15 @@ _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
     executable="target/release/voxel_ray_tracing",
     build_command="cargo build --release --bin voxel_ray_tracing",
     voxel_size=voxel_size,
-    max_range=5.0,
+    max_range=8.0,
     shadow_depth=0.1,
     min_health=-1,
-    max_health=5,
+    max_health=10,
     emit_every=2,
     ray_subsample=1,
-    global_emit_every=10,
+    global_emit_every=1,
     auto_build=True,
+    support_min=0,
     # M20's onboard SLAM publishes this cloud already registered in map frame.
     registered_clouds=True,
 ).remappings(
