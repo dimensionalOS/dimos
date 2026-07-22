@@ -108,7 +108,7 @@ def _rerun_blueprint() -> Any:
 
 
 def _render_map(msg: Any) -> Any:
-    return msg.to_rerun(voxel_size=0.02)
+    return msg.to_rerun(voxel_size=0.01)
 
 
 def _render_path(msg: Any) -> Any:
@@ -130,7 +130,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/local_map": _render_map,
             "world/global_map": _render_map,
             "world/path": _render_path,
-            **planner_visual_override(planner_viz_hz),
+            **planner_visual_override(planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1),
             **(visual_override or {}),
         },
     }

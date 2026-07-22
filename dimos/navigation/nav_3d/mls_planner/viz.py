@@ -24,6 +24,7 @@ in one place; drawing and publishing cannot drift apart.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -38,8 +39,30 @@ if TYPE_CHECKING:
 _GRAPH_Z_LIFT = 0.05
 
 
-def render_surface_map(msg: PointCloud2) -> Archetype:
-    return msg.to_rerun(voxel_size=0.1, colors=[40, 75, 130])
+def render_surface_map(
+    msg: PointCloud2,
+    voxel_size: float = 0.1,
+    wall_clearance_m: float = 0.0,
+    clearance_clamp_m: float = 1.0,
+) -> Archetype:
+    """Floor cells colored by wall clearance: dark navy where tight, pale blue in the open.
+
+    Clearance rides the cloud's intensity channel; cells below ``wall_clearance_m`` are
+    untraversable and dropped. Falls back to a flat color when the channel is absent.
+    """
+    import rerun as rr
+
+    pts = msg.points_f32()
+    clearance = msg.intensities_f32()
+    if clearance is None or len(clearance) != len(pts):
+        return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
+    passable = clearance >= wall_clearance_m
+    pts, clearance = pts[passable], clearance[passable]
+    norm = np.clip(np.nan_to_num(clearance / clearance_clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
+    tight = np.array([4.0, 8.0, 48.0])
+    open_ = np.array([150.0, 200.0, 255.0])
+    colors = (tight + norm[:, None] * (open_ - tight)).astype(np.uint8)
+    return rr.Points3D(positions=pts, colors=colors, radii=voxel_size / 2)
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
@@ -78,14 +101,26 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
     return rr.LineStrips3D(strips, colors=colors, radii=[0.04] * len(strips))
 
 
-def planner_visual_override(viz_publish_hz: float) -> dict[str, Any]:
+def planner_visual_override(
+    viz_publish_hz: float,
+    voxel_size: float = 0.1,
+    wall_clearance_m: float = 0.0,
+    clearance_clamp_m: float = 1.0,
+) -> dict[str, Any]:
     """rerun overrides for the planner's debug entities, keyed off its own publish rate.
 
-    Pass the same value given to ``MLSPlannerNative.blueprint(viz_publish_hz=...)``.
+    Pass the same ``viz_publish_hz``, ``voxel_size`` and ``wall_clearance_m`` given to
+    ``MLSPlannerNative.blueprint(...)``.
     """
     on = viz_publish_hz > 0.0
+    surface = partial(
+        render_surface_map,
+        voxel_size=voxel_size,
+        wall_clearance_m=wall_clearance_m,
+        clearance_clamp_m=clearance_clamp_m,
+    )
     return {
-        "world/surface_map": render_surface_map if on else None,
+        "world/surface_map": surface if on else None,
         "world/nodes": render_nodes if on else None,
         "world/node_edges": render_node_edges if on else None,
     }

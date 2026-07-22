@@ -93,7 +93,7 @@ class GO2Zenoh(StaticTfPublisher):
 
         # Off the calling thread so start() returns; verbs sent before zenoh matches our
         # publisher against the bridge are dropped.
-        timer = threading.Timer(5.0, self._startup_pose)
+        timer = threading.Timer(4.0, self._startup_pose)
         timer.daemon = True
         timer.start()
         self.register_disposable(Disposable(timer.cancel))
