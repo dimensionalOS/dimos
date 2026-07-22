@@ -15,18 +15,12 @@
 
 """Go2 blueprints for a robot running the go2web zenoh bridge.
 
-The same stack as ``unitree_go2_nav_3d``, minus the two modules the robot now runs
-itself: no WebRTC ``GO2Connection`` and no local ``PointLio`` — odom, lidar and video
-arrive over zenoh already (see :class:`GO2Zenoh`), which is why the graphs run on the
-zenoh transport.
+The ``unitree_go2_nav_3d`` stack minus the modules the robot now runs itself: no WebRTC
+``GO2Connection``, no local ``PointLio``. Three layers, each a superset of the one above,
+so a failure can be bisected by dropping down a level:
 
-Three layers, each a superset of the one above it, so a failure can be bisected by
-dropping down a level:
-
-- ``go2-zenoh-basic`` — streams plus teleop. Confirms the bridge, the tf tree and the
-  camera without any mapping.
-- ``go2-zenoh-raycaster`` — adds :class:`RayTracingVoxelMap`, so the voxel maps can be
-  eyeballed before a planner consumes them.
+- ``go2-zenoh-basic`` — streams plus teleop; the bridge, tf and camera, no mapping.
+- ``go2-zenoh-raycaster`` — adds :class:`RayTracingVoxelMap`.
 - ``go2-zenoh-nav`` — the full stack: planner, goal relay and path follower.
 """
 
@@ -49,23 +43,19 @@ from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
-# Raise above 0 to see what the planner searched over: its traversable surface, the graph
-# nodes on it and the edges between them, coloured green->red by cost. Drives both the
-# planner's publishing and the rerun overrides. 2.0 is a good working rate.
+# Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
+# cost-coloured edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 0.0
 
-# The lidar mount rotation on this rig (fixed-axis rpy, degrees), feeding both the static
-# tf GO2Zenoh publishes and the rotation that levels its odometry — they must agree or nav
-# steers off-heading. 60 deg of tilt, carried on roll because the lidar sits yawed 90 deg
-# on its bracket; verified against Point-LIO's own attitude on the standing robot.
+# Feeds both the static tf GO2Zenoh publishes and the rotation that levels its odometry —
+# they must agree or nav steers off-heading. Verified against Point-LIO's own attitude.
 MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
 
 
 def _mount_rotation() -> list[float]:
     """base_link <- lidar rotation, so nav reads odometry in the level body frame.
 
-    base_link -> front_camera carries no rotation, so the composed base_link -> mid360_link
-    rotation is just the mount rpy above.
+    base_link -> front_camera carries no rotation, so this is just the mount rpy above.
     """
     rpy = Vector3(*(math.radians(d) for d in MID360_MOUNT_RPY_DEG))
     return list(Quaternion.from_euler(rpy).to_tuple())
@@ -74,11 +64,10 @@ def _mount_rotation() -> list[float]:
 def _camera_info_to_pinhole(camera_info: Any) -> Any:
     """Log the pinhole onto the video's entity instead of camera_info's own.
 
-    The rerun bridge names entities after topics, so camera_info and video land on
-    sibling paths — and a Pinhole only projects the entity it lives on and that entity's
-    children, which is why the frustum draws but stays empty. No ``optical_frame`` here:
-    the video carries frame_id ``camera_optical``, so the bridge already anchors that
-    entity to the tf frame, and a second parent would be rejected.
+    Entities are named after topics, so the two land on sibling paths — and a Pinhole only
+    projects its own entity and its children, hence a frustum that draws but stays empty.
+    No ``optical_frame``: the video's frame_id already anchors it, a second parent is
+    rejected.
     """
     return camera_info.to_rerun(image_topic="world/video")
 
@@ -86,9 +75,8 @@ def _camera_info_to_pinhole(camera_info: Any) -> Any:
 def _rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has.
 
-    The 2D view sits on ``world/video`` rather than ``world/color_image`` — over zenoh the
-    camera arrives as an H.264 ``CompressedVideo`` on the ``video`` port, decoded in the
-    viewer, and that is also where the pinhole is logged.
+    The 2D view sits on ``world/video``, not ``world/color_image`` — over zenoh the camera
+    arrives as H.264 on the ``video`` port, which is also where the pinhole is logged.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -101,9 +89,8 @@ def _rerun_blueprint() -> Any:
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
-                # Point-LIO's own world map duplicates what the ray tracer builds, and it
-                # is the heaviest cloud on the graph. Hidden rather than dropped, so it
-                # stays in the entity tree and can be ticked back on in the viewer.
+                # Hidden rather than dropped: still in the entity tree, tickable in the
+                # viewer.
                 overrides={
                     "world/pointlio_map": rrb.EntityBehavior(visible=False),
                     "world/local_map": rrb.EntityBehavior(visible=False),
@@ -144,11 +131,9 @@ _BRIDGE_OVERRIDE = {
     "world/pointlio_map": _convert_map,
     "world/lidar": _convert_scan,
 }
-# The clouds are what costs: the world maps run up to 300k points x 16 B per message at
-# ~2 Hz, the per-scan lidar ~10 Hz. Deliberately no entry for world/video — the throttle
-# drops whole messages, and dropping H.264 samples breaks decoding until the next
-# keyframe, so the camera has to be slowed at the source instead. (0 here would mean
-# unlimited, not off.)
+# The clouds are what costs: world maps up to 300k points at ~2 Hz, per-scan lidar ~10 Hz.
+# No entry for world/video on purpose — the throttle drops whole messages, and dropping
+# H.264 samples breaks decoding until the next keyframe. (0 means unlimited, not off.)
 _BRIDGE_MAX_HZ: dict[str, float] = {
     #    "world/lidar": 2.0,
     #    "world/pointlio_map": 0.5,
@@ -178,18 +163,16 @@ def _rerun_config(
     }
 
 
-# Bridge streams + teleop only: no mapping, no planning. cmd_vel still reaches the robot
-# through MovementManager, so this is the layer to drive from when something upstream is
-# suspect.
+# Streams + teleop only. cmd_vel still reaches the robot through MovementManager, so this
+# is the layer to drive from when something upstream is suspect.
 go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
     GO2Zenoh.blueprint(mid360_mount_rpy_deg=MID360_MOUNT_RPY_DEG),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 
-# Adds the voxel map. It consumes GO2Zenoh's lidar + odometry directly: the bridge stamps
-# them exactly as PointLio does locally (frames odom / mid360_link, xyz+intensity at
-# point_step 16).
+# Consumes GO2Zenoh's lidar + odometry directly: the bridge stamps them exactly as
+# PointLio does locally (frames odom / mid360_link, xyz+intensity at point_step 16).
 _ray_tracer = RayTracingVoxelMap.blueprint(
     voxel_size=voxel_size,
     emit_every=1,

@@ -14,17 +14,13 @@
 
 """The Go2 as it appears on the graph when it runs the go2web zenoh bridge.
 
-The bridge (go2web ``src/dimos_zenoh.rs``, on by default via the ``dimos_zenoh`` cargo
-feature) publishes Point-LIO odom, the per-scan and world clouds and H.264 video
-straight onto dimos's own zenoh keys, and consumes ``cmd_vel`` and ``command``. Nothing
-here produces the streams — declaring the ports is what puts the robot's topics on the
-graph, the same arrangement as a NativeModule whose binary publishes out of process (see
-:class:`PointLio`). The port names are the wire contract: the bridge's keys are
-``dimos/<port>/<msg.NAME>``, so renaming a port here silently disconnects it. Remap in
-the blueprint instead.
+The bridge (go2web ``src/dimos_zenoh.rs``) publishes odom, the clouds and H.264 video and
+consumes ``cmd_vel``/``command``; nothing here produces them, declaring the ports is what
+puts them on the graph. Port names are the wire contract — keys are
+``dimos/<port>/<msg.NAME>`` — so remap in the blueprint rather than renaming.
 
-What the bridge does not send, and this module supplies: the ``odom -> mid360_link`` tf
-edge, the static mount tree, and the camera intrinsics.
+This module adds what the bridge does not send: the ``odom -> mid360_link`` tf edge, the
+static mount tree, and the camera intrinsics.
 """
 
 from __future__ import annotations
@@ -51,9 +47,8 @@ from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 
-# Mount geometry, measured on this rig (metres). Kept here rather than shared with
-# go2_mid360_static_transforms: that describes the recording rig, which carries the
-# lidar at a different angle and hangs its tree off base_link.
+# Mount geometry measured on this rig (metres). Not go2_mid360_static_transforms — that
+# is the recording rig: different lidar angle, tree hung off base_link.
 CAMERA_XYZ = Vector3(0.32715, -0.00003, 0.04297)  # base_link -> front_camera
 MID360_XYZ = Vector3(-0.032, 0.0, 0.12)  # front_camera -> mid360_link: 3.2cm back, 12cm up
 # rpy mapping a sensor frame to its optical frame (x-right, y-down, z-forward)
@@ -61,12 +56,9 @@ OPTICAL_RPY = Vector3(-math.pi / 2, 0.0, -math.pi / 2)
 
 
 class GO2ZenohConfig(StaticTfPublisherConfig):
-    # Mid-360 mount rotation on the front_camera -> mid360_link edge: fixed-axis rpy,
-    # degrees. The lidar is yawed 90 deg on its bracket, so its 60 deg downward tilt
-    # lands on roll about the lidar's own x-axis rather than pitch — Point-LIO reports
-    # (-60.7, -1.4, +0.8) for this rig standing still, the 1.4 being the dog's stance.
-    # Both yaw signs level the body; they differ by 180 deg of heading, so flip the sign
-    # if the camera ends up looking backwards.
+    # front_camera -> mid360_link, fixed-axis rpy in degrees. The 60 deg tilt lands on
+    # roll because the lidar sits yawed 90 deg on its bracket. Both yaw signs level the
+    # body but differ by 180 deg of heading — flip it if the camera looks backwards.
     mid360_mount_rpy_deg: tuple[float, float, float] = (-60.0, 0.0, -90.0)
     camera_info_hz: float = Field(default=1.0, gt=0.0)
 
@@ -78,9 +70,8 @@ class GO2Zenoh(StaticTfPublisher):
 
     # Consumed by the on-robot bridge, never published here.
     cmd_vel: In[Twist]
-    # One-shot action verbs ("sit", "hello", ...) or a bare sport api id as a
-    # string. Consumed by the bridge too, but nothing else in the graph produces
-    # them, so the rpcs below publish onto it — no zenoh RPC, just a topic.
+    # Action verbs ("sit", "hello", ...) or a bare sport api id. The rpcs below publish
+    # onto it; nothing else in the graph does.
     command: In[String]
     odometry: Out[Odometry]
     lidar: Out[PointCloud2]  # per-scan, in the LIO's own sensor frame
@@ -100,9 +91,8 @@ class GO2Zenoh(StaticTfPublisher):
         )
         self.spawn(self._publish_camera_info())
 
-        # Off the calling thread: start() has to return for the rest of the graph to come
-        # up, and the first verbs go nowhere until zenoh has matched our command publisher
-        # against the bridge's subscriber. Cancelled by stop() if we never get that far.
+        # Off the calling thread so start() returns; verbs sent before zenoh matches our
+        # publisher against the bridge are dropped.
         timer = threading.Timer(3.0, self._startup_pose)
         timer.daemon = True
         timer.start()
@@ -159,11 +149,9 @@ class GO2Zenoh(StaticTfPublisher):
     def transforms(self) -> list[Transform]:
         """The mount tree, rooted at mid360_link because Point-LIO owns that frame.
 
-        The rig is measured outward from the body, but the only live edge here is
-        odom -> mid360_link. Publishing the measured direction as-is would leave
-        mid360_link with two parents (odom and front_camera) and the body would snap
-        between them at 35 Hz, so the two edges above the lidar are inverted and the
-        body hangs off the sensor instead.
+        Measured outward from the body, but odom -> mid360_link is the only live edge, so
+        the two edges above the lidar are inverted — otherwise mid360_link has two parents
+        and the body snaps between them at 35 Hz.
         """
         base_to_camera = Transform(
             translation=CAMERA_XYZ,
