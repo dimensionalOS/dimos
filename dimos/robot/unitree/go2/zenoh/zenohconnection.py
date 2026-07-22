@@ -93,11 +93,20 @@ class GO2Zenoh(StaticTfPublisher):
 
     @rpc
     def start(self) -> None:
-        super().start()  # static mount tree onto tf
+        super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._publish_tf, self.odometry))
         )
         self.spawn(self._publish_camera_info())
+
+        time.sleep(1)  # don't ask idk
+        self.standup()
+        self.set_lidar(False)
+
+    @rpc
+    def stop(self) -> None:
+        self.liedown()
+        super().stop()
 
     @rpc
     def send_command(self, verb: str) -> None:
@@ -109,7 +118,6 @@ class GO2Zenoh(StaticTfPublisher):
         """Same, by raw sport api id — the bridge parses a numeric verb."""
         self.send_command(str(api_id))
 
-    # The verbs the WebRTC GO2Connection exposes as rpcs, same names.
     @rpc
     def standup(self) -> None:
         self.send_command("stand-up")
@@ -136,8 +144,6 @@ class GO2Zenoh(StaticTfPublisher):
 
     @rpc
     def set_lidar(self, enabled: bool) -> None:
-        """The head L1 on/off (what obstacle avoidance runs on). Not the MID-360:
-        `odometry`, `lidar` and `pointlio_map` keep flowing either way."""
         self.send_command("lidar on" if enabled else "lidar off")
 
     def transforms(self) -> list[Transform]:
