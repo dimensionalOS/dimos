@@ -23,6 +23,7 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSce
 from dimos.manipulation.visualization.operator import (
     JointTargetRequest,
     ManipulationOperator,
+    OperatorStatus,
     PoseTargetRequest,
     TargetEvaluationResult,
 )
@@ -232,10 +233,16 @@ class ViserPanelGui:
         return self.operator.status().state
 
     def get_error(self) -> str:
-        return self.operator.status().error
+        return self.operator.status().error or ""
 
     def reset(self) -> bool:
-        return self.operator.reset()
+        result = self.operator.reset()
+        if result:
+            self.state.error = ""
+            self.state.action_status = ActionStatus.IDLE
+            self.state.runtime_failure = False
+            self.state.local_action_failure = False
+        return result
 
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
@@ -291,6 +298,7 @@ class ViserPanelGui:
             JointTargetRequest(tuple(group_ids), JointState({"name": names, "position": positions}))
         )
         self.state.plan_state.plan = plan
+        self.state.plan_state.plan_id = None
         return plan is not None
 
     def preview_path(self) -> bool:
@@ -304,6 +312,7 @@ class ViserPanelGui:
     def refresh(self) -> None:
         if self._closed:
             return
+        status = self.operator.status()
         robots = self.list_robots()
         groups = self.list_planning_groups()
         self.state.backend_status = (
@@ -320,7 +329,8 @@ class ViserPanelGui:
         if set(self.state.group_joint_targets) != initialized_groups:
             self._build_joint_sliders()
         self._sync_group_selector(groups)
-        self._refresh_selected_robot_state()
+        self._refresh_selected_robot_state(status)
+        self._apply_operator_status(status)
         self._ensure_scene_controls()
         self._sync_target_ghost_visibility()
         self._sync_preset_dropdown()
@@ -440,18 +450,56 @@ class ViserPanelGui:
             return
         self.scene.set_reference_grid_visible(bool(visible))
 
-    def _refresh_selected_robot_state(self) -> None:
+    def _refresh_selected_robot_state(self, status: OperatorStatus) -> None:
         robot_name = self.state.selected_robot
         if robot_name is None:
             self.state.current_joints = None
-            self.state.manipulation_state = self.get_module_state()
+            self.state.manipulation_state = status.state
             return
         current = self.get_current_joint_state(robot_name)
         self.state.current_joints = list(current.position) if current is not None else None
-        self.state.manipulation_state = self.get_module_state()
-        adapter_error = self.get_error()
-        if adapter_error:
-            self.state.error = adapter_error
+        self.state.manipulation_state = status.state
+
+    def _apply_operator_status(self, status: OperatorStatus) -> None:
+        """Project one operator snapshot onto the panel state."""
+        self.state.manipulation_state = status.state
+        self.state.ready_plan_id = getattr(status, "ready_plan_id", None)
+        snapshot_status = hasattr(status, "diagnostic")
+        diagnostic = getattr(status, "diagnostic", getattr(status, "error", ""))
+        if diagnostic:
+            self.state.error = diagnostic
+        elif snapshot_status and self.state.action_status != ActionStatus.FAILED:
+            self.state.error = ""
+        if status.state == "FAULT":
+            self.state.runtime_failure = True
+            self.state.action_status = ActionStatus.FAILED
+        elif status.state == "CANCELLING":
+            self.state.action_status = ActionStatus.CANCELLING
+        elif status.state in {"DISPATCHING", "RUNNING"}:
+            self.state.action_status = ActionStatus.EXECUTING
+        elif status.state == "PLANNING" and self.state.action_status == ActionStatus.IDLE:
+            self.state.action_status = ActionStatus.RUNNING
+        elif status.state in {"IDLE", "READY"}:
+            was_runtime_failure = self.state.runtime_failure
+            self.state.runtime_failure = False
+            if self.state.action_status in {
+                ActionStatus.RUNNING,
+                ActionStatus.EXECUTING,
+                ActionStatus.CANCELLING,
+            }:
+                self.state.action_status = ActionStatus.IDLE
+            elif was_runtime_failure and not self.state.local_action_failure:
+                self.state.action_status = ActionStatus.IDLE
+                if not diagnostic:
+                    self.state.error = ""
+        if status.state != "READY" and self.state.plan_state.status == PlanStatus.FRESH:
+            if status.state in {"DISPATCHING", "RUNNING", "CANCELLING", "IDLE", "FAULT"}:
+                self.state.plan_state.status = PlanStatus.STALE
+        if (
+            self.state.plan_state.status == PlanStatus.FRESH
+            and self.state.plan_state.plan_id != self.state.ready_plan_id
+        ):
+            self.state.plan_state.status = PlanStatus.STALE
 
     def _ensure_scene_controls(self) -> None:
         if self.scene is None:
@@ -910,6 +958,8 @@ class ViserPanelGui:
             or request.group_ids != self.state.selected_group_ids
         ):
             return
+        if self.state.manipulation_state == "FAULT":
+            return
         collision_free = result.collision_free
         success = result.success
         self.state.feasibility.status = self._feasibility_status(result, success, collision_free)
@@ -1093,9 +1143,11 @@ class ViserPanelGui:
                 )
                 return
             if ok:
+                status = self.operator.status()
                 self.state.plan_state.status = PlanStatus.FRESH
                 self.state.plan_state.group_ids = group_ids
                 self.state.plan_state.target_sequence_id = target_sequence_id
+                self.state.plan_state.plan_id = getattr(status, "ready_plan_id", None)
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
                 self.state.plan_state.plan = None
@@ -1172,7 +1224,6 @@ class ViserPanelGui:
                 )
                 return
             self.state.action_status = ActionStatus.EXECUTING
-            self.state.plan_state.status = PlanStatus.EXECUTING
             ok = self.execute()
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
@@ -1181,9 +1232,13 @@ class ViserPanelGui:
                 return
             if not ok:
                 self.state.plan_state.status = PlanStatus.FAILED
-            self._finish_operation(
-                f"execute={ok}", operation_id=operation_id, selection_epoch=selection_epoch
-            )
+                self._finish_operation(
+                    f"execute={ok}", operation_id=operation_id, selection_epoch=selection_epoch
+                )
+            else:
+                # True means dispatch was accepted, not that motion completed.
+                self.state.last_result = "execute=True (dispatched)"
+                self.refresh()
 
         self._operation_worker.submit(
             operation, on_error=lambda message: self._set_operation_error(message, operation_id)
@@ -1209,10 +1264,7 @@ class ViserPanelGui:
     def _mark_cancelled_plan_state(self, cancelled_action: ActionStatus) -> None:
         if self.state.plan_state.status == PlanStatus.PLANNING:
             self.state.plan_state.status = PlanStatus.FAILED
-        elif (
-            cancelled_action == ActionStatus.EXECUTING
-            or self.state.plan_state.status == PlanStatus.EXECUTING
-        ):
+        elif cancelled_action == ActionStatus.EXECUTING:
             self.state.plan_state.status = PlanStatus.STALE
 
     def _restart_operation_worker(self) -> None:
@@ -1269,9 +1321,12 @@ class ViserPanelGui:
             and not self._operation_is_current(operation_id, selection_epoch)
         ):
             return
+        if self.state.manipulation_state == "FAULT":
+            return
         self.state.action_status = ActionStatus.IDLE
         if clear_error:
             self.state.error = ""
+            self.state.local_action_failure = False
         self.state.last_result = result
         self.refresh()
 
@@ -1283,13 +1338,18 @@ class ViserPanelGui:
     def _set_recoverable_error(self, message: str) -> None:
         if self._closed:
             return
-        self.state.error = message
         self.refresh()
+        if self.state.manipulation_state == "FAULT":
+            return
+        # This is a panel-local validation message, not a runtime diagnostic.
+        self.state.error = message
+        self._update_status_text()
 
     def _set_error(self, message: str) -> None:
         if self._closed:
             return
         self.state.action_status = ActionStatus.FAILED
+        self.state.local_action_failure = True
         self.state.error = message
         self.refresh()
 

@@ -74,12 +74,20 @@ def test_selection_epoch_change_resets_plan_and_invalidates_sequence() -> None:
     assert state.plan_state.status == PlanStatus.NONE
 
 
-def test_cancel_is_available_for_running_preview_and_execute_actions() -> None:
+def test_cancel_uses_only_the_runtime_lifecycle_gate() -> None:
     state = PanelState()
 
-    for action in (ActionStatus.RUNNING, ActionStatus.PREVIEWING, ActionStatus.EXECUTING):
-        state.action_status = action
-        assert state.can_cancel() is True
+    for lifecycle in ("PLANNING", "DISPATCHING", "RUNNING", "CANCELLING"):
+        state.manipulation_state = lifecycle
+        for action in ActionStatus:
+            state.action_status = action
+            assert state.can_cancel() is True
+
+    for lifecycle in ("IDLE", "READY", "FAULT"):
+        state.manipulation_state = lifecycle
+        for action in (ActionStatus.RUNNING, ActionStatus.PREVIEWING, ActionStatus.EXECUTING):
+            state.action_status = action
+            assert state.can_cancel() is False
 
 
 def test_operation_worker_uses_per_operation_timeout() -> None:

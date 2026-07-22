@@ -33,6 +33,7 @@ from dimos.manipulation.visualization.viser.state import (
     OperationWorker,
     PanelRuntime,
     PlanStatus,
+    TargetEvaluationRequest,
     TargetEvaluationWorker,
     TargetStatus,
 )
@@ -58,7 +59,9 @@ class FakeOperator:
         self.module = module or FakeOperatorBackend()
 
     def status(self) -> OperatorStatus:
-        return OperatorStatus(state="IDLE", error="", has_plan=False)
+        return OperatorStatus(
+            state="READY", diagnostic="", ready_plan_status="READY", ready_plan_id="fake-plan"
+        )
 
     def get_init_joints(self, robot_name: str) -> None:
         return None
@@ -273,7 +276,10 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(gui, "_operation_worker", FakeTimeoutSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.manipulation_state = "READY"
+    gui.state.ready_plan_id = "fake-plan"
     gui.state.plan_state.status = PlanStatus.FRESH
+    gui.state.plan_state.plan_id = "fake-plan"
     gui._submit_preview()
 
     assert submissions == [{"timeout_seconds": 0.25}]
@@ -290,11 +296,13 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "READY"
     gui.state.selected_group_ids = ("arm/manipulator",)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
+    gui.state.ready_plan_id = "fake-plan"
+    gui.state.plan_state.plan_id = "fake-plan"
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
         trajectory=JointTrajectory(),
@@ -327,11 +335,13 @@ def test_gui_selection_change_clears_invalidated_preview(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "READY"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
+    gui.state.ready_plan_id = "fake-plan"
+    gui.state.plan_state.plan_id = "fake-plan"
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
         trajectory=JointTrajectory(),
@@ -363,11 +373,13 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "READY"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
+    gui.state.ready_plan_id = "fake-plan"
+    gui.state.plan_state.plan_id = "fake-plan"
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
         trajectory=JointTrajectory(),
@@ -470,3 +482,81 @@ def test_gui_ignores_stale_timed_out_operation_finish() -> None:
 
     assert gui.state.action_status == ActionStatus.FAILED
     assert gui.state.error == "Operation timed out after 5.0s"
+
+
+def test_gui_projects_all_runtime_states_and_fault_reset_preserves_local_failure() -> None:
+    gui = make_gui()
+    gui.state.runtime = PanelRuntime.RUNNING
+    gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.selected_group_ids = ("arm/manipulator",)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.action_status = ActionStatus.IDLE
+
+    expected_actions = {
+        "IDLE": ActionStatus.IDLE,
+        "PLANNING": ActionStatus.RUNNING,
+        "READY": ActionStatus.IDLE,
+        "DISPATCHING": ActionStatus.EXECUTING,
+        "RUNNING": ActionStatus.EXECUTING,
+        "CANCELLING": ActionStatus.CANCELLING,
+        "FAULT": ActionStatus.FAILED,
+    }
+    for state, expected_action in expected_actions.items():
+        gui._apply_operator_status(
+            OperatorStatus(
+                state=state,
+                diagnostic="fault" if state == "FAULT" else "",
+                ready_plan_status="READY" if state == "READY" else "NONE",
+                ready_plan_id="fake-plan" if state == "READY" else None,
+            )
+        )
+        assert gui.state.manipulation_state == state
+        assert gui.state.action_status == expected_action
+
+    gui._apply_operator_status(OperatorStatus("IDLE"))
+    assert gui.state.can_plan() is True
+
+    gui.state.action_status = ActionStatus.FAILED
+    gui.state.local_action_failure = True
+    gui._apply_operator_status(OperatorStatus("FAULT", diagnostic="fault"))
+    gui._apply_operator_status(
+        OperatorStatus("READY", ready_plan_status="READY", ready_plan_id="fake-plan")
+    )
+
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.local_action_failure is True
+
+
+def test_late_local_callbacks_cannot_clear_runtime_fault() -> None:
+    gui = make_gui()
+    gui.state.manipulation_state = "FAULT"
+    gui.state.action_status = ActionStatus.FAILED
+    gui.state.runtime_failure = True
+    gui.state.error = "runtime fault"
+    gui.state.selected_group_ids = ("arm/manipulator",)
+
+    gui._finish_operation("preview=True")
+    gui._apply_target_evaluation_result(
+        TargetEvaluationRequest(0, "joints", group_ids=("arm/manipulator",)),
+        TargetEvaluationResult(True, "FEASIBLE", "ok", True),
+    )
+
+    assert gui.state.manipulation_state == "FAULT"
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.error == "runtime fault"
+    assert gui.state.can_cancel() is False
+
+
+def test_stale_execute_validation_cannot_replace_runtime_fault_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gui = make_gui()
+    gui._apply_operator_status(OperatorStatus("FAULT", diagnostic="hardware fault"))
+    monkeypatch.setattr(gui, "refresh", lambda: None)
+
+    gui._submit_execute()
+
+    assert gui.state.manipulation_state == "FAULT"
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.error == "hardware fault"
+    assert gui.state.can_execute() is False

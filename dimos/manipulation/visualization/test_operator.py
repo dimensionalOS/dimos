@@ -15,6 +15,9 @@
 """Focused tests for the manipulation visualization operator facade."""
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
@@ -76,7 +79,7 @@ def _robot_config(
 
 class FakeModule:
     def __init__(self) -> None:
-        self.state = "COMPLETED"
+        self.state = "IDLE"
         self.error = ""
         self.has_plan = True
         self.plan = GeneratedPlan(
@@ -110,6 +113,14 @@ class FakeModule:
 
     def get_state(self) -> str:
         return self.state
+
+    def get_execution_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            state=self.state,
+            diagnostic=self.error,
+            has_ready_plan=self.has_plan,
+            ready_plan_id="fake-plan" if self.has_plan else None,
+        )
 
     def get_error(self) -> str:
         return self.error
@@ -251,12 +262,31 @@ def test_status_is_compact_and_does_not_read_topology_or_telemetry() -> None:
 
     status = operator.status()
 
-    assert status.state == "COMPLETED"
+    assert status.state == "IDLE"
     assert status.error == ""
     assert status.has_plan is True
     assert module.topology_calls == 0
     assert module.telemetry_calls == 0
     assert monitor.telemetry_calls == 0
+
+
+@pytest.mark.parametrize(
+    "state",
+    ("IDLE", "PLANNING", "READY", "DISPATCHING", "RUNNING", "CANCELLING", "FAULT"),
+)
+def test_status_projects_every_runtime_lifecycle_state_from_one_snapshot(state: str) -> None:
+    operator, module, _ = _operator()
+    module.state = state
+    module.has_plan = state == "READY"
+    module.error = "runtime fault" if state == "FAULT" else ""
+
+    status = operator.status()
+
+    assert status.state == state
+    assert status.diagnostic == ("runtime fault" if state == "FAULT" else "")
+    assert status.has_plan is (state == "READY")
+    assert status.ready_plan_status == ("READY" if state == "READY" else "NONE")
+    assert status.ready_plan_id == ("fake-plan" if state == "READY" else None)
 
 
 def test_evaluate_joint_target_accepts_exact_global_selection_domain() -> None:
