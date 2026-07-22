@@ -791,6 +791,19 @@ class ControlCoordinator(Module):
             return hw.adapter.read_gripper_position()
 
     @rpc
+    def set_hardware_teach_mode(self, hardware_id: str, enabled: bool) -> bool:
+        """Toggle an adapter's optional hand-teaching mode without reconnecting it."""
+        with self._hardware_lock:
+            hw = self._hardware.get(hardware_id)
+            if hw is None or isinstance(hw, ConnectedTwistBase):
+                return False
+            setter = getattr(hw.adapter, "set_teach_mode", None)
+            if not callable(setter):
+                logger.warning(f"Hardware '{hardware_id}' does not support teach mode")
+                return False
+            return bool(setter(enabled))
+
+    @rpc
     def start(self) -> None:
         """Start the coordinator control loop."""
         if self._tick_loop and self._tick_loop.is_running:

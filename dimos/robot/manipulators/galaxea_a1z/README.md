@@ -87,6 +87,18 @@ While recording, press `SPACE` to save the current episode or `d` to discard
 it. While idle, press `d` to discard the most recently saved episode; replay
 and dataset export will exclude it.
 
+For a live show-and-tell loop, keep teaching, replay, and the Rerun camera in
+one running stack:
+
+```bash
+uv run --no-sync dimos a1z demo --camera-index 0 --task "pick up the object"
+```
+
+Press `SPACE` to start/save a demonstration, `h` to move to its recorded start
+pose, `r` to replay it, and `z` to return to zero-gravity teaching. Repeat as
+many times as needed without reconnecting the arm. `g` toggles the gripper,
+`d` discards, and `q` quits.
+
 The command prints the Memory2 `.db` path. Replay a saved episode by passing
 that path (the latest saved episode is selected by default):
 

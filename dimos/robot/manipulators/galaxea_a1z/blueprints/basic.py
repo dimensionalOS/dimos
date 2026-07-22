@@ -19,6 +19,8 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
+import rerun.blueprint as rrb
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
@@ -30,6 +32,7 @@ from dimos.memory2.module import OnExisting
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.manipulators.a1z.config import A1Z_G1Z_MODEL_PATH
 from dimos.robot.manipulators.galaxea_a1z.config import galaxea_a1z_hardware
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 A1Z_REPLAY_TASK_NAME = "teach_replay_arm"
 A1Z_POLICY_TASK_NAME = "lerobot_servo_arm"
@@ -134,6 +137,54 @@ def make_a1z_replay_blueprint() -> Blueprint:
                 )
             ],
         )
+    )
+
+
+def _a1z_demo_rerun_blueprint() -> rrb.Blueprint:
+    return rrb.Blueprint(
+        rrb.Spatial2DView(origin="world/color_image", name="Live A1Z camera"),
+    )
+
+
+def make_a1z_teach_replay_demo_blueprint(
+    db_path: Path,
+    *,
+    task_label: str | None = None,
+    camera_index: int = 0,
+) -> Blueprint:
+    """Run interactive teaching and replay with one hardware connection."""
+    hardware = galaxea_a1z_hardware(
+        "arm",
+        gripper=True,
+        dynamics_urdf_path=_A1Z_DYNAMICS_URDF,
+        adapter_kwargs={"zero_gravity": True},
+    )
+    return autoconnect(
+        ControlCoordinator.blueprint(
+            hardware=[hardware],
+            tasks=[
+                TaskConfig(
+                    name=A1Z_REPLAY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=hardware.all_joints,
+                    priority=10,
+                )
+            ],
+        ),
+        EpisodeMonitorModule.blueprint(default_task_label=task_label),
+        CollectionRecorder.blueprint(
+            db_path=db_path,
+            on_existing=OnExisting.ERROR,
+            root_frame="coordinator",
+            default_frame_id="coordinator",
+            tf_tolerance=1.5,
+            record_tf=False,
+        ),
+        _a1z_camera(camera_index),
+        RerunBridgeModule.blueprint(
+            blueprint=_a1z_demo_rerun_blueprint,
+            max_hz={"world/color_image": A1Z_TEACH_CAMERA_FPS},
+        ),
     )
 
 

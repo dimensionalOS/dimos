@@ -24,6 +24,8 @@ from typing import Any
 import typer
 
 from dimos.constants import STATE_DIR
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 app = typer.Typer(help="Record and replay Galaxea A1Z hand-taught episodes")
 
@@ -72,6 +74,28 @@ def _read_key(message: str) -> str:
     if key in ("\r", "\n"):
         return ""
     return key.lower()
+
+
+def _execute_demo_trajectory(control: Any, trajectory: JointTrajectory, label: str) -> None:
+    accepted = control.task_invoke(
+        "teach_replay_arm",
+        "execute",
+        {"trajectory": trajectory},
+    )
+    if not accepted:
+        raise RuntimeError(f"ControlCoordinator rejected the {label} trajectory")
+
+    deadline = time.monotonic() + trajectory.duration + 5.0
+    while time.monotonic() < deadline:
+        state = TrajectoryState(control.task_invoke("teach_replay_arm", "get_state", {}))
+        if state == TrajectoryState.COMPLETED:
+            typer.echo(f">> {label} complete")
+            return
+        if state in (TrajectoryState.ABORTED, TrajectoryState.FAULT):
+            raise RuntimeError(f"{label} ended in state {state.name}")
+        time.sleep(0.05)
+    control.task_invoke("teach_replay_arm", "cancel", {})
+    raise TimeoutError(f"{label} did not complete before its safety timeout")
 
 
 @app.command()
@@ -245,6 +269,215 @@ def teach(
 
 
 @app.command()
+def demo(
+    output: Path | None = typer.Argument(
+        None,
+        help="Memory2 .db output (default: timestamped file under the DimOS state directory)",
+    ),
+    task: str | None = typer.Option(None, "--task", help="Task label stored with each episode"),
+    camera_index: int = typer.Option(0, "--camera-index", min=0),
+    speed: float = typer.Option(1.0, "--speed", min=0.01, help="Replay speed"),
+) -> None:
+    """Teach and replay repeatedly in one live stack with a Rerun camera view."""
+    from dimos.control.coordinator import ControlCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
+    from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
+        A1Z_REPLAY_TASK_NAME,
+        make_a1z_teach_replay_demo_blueprint,
+    )
+    from dimos.robot.manipulators.galaxea_a1z.teach_replay import (
+        PreparedEpisode,
+        build_approach_trajectory,
+        build_replay_trajectory,
+        load_recorded_episode,
+        prepare_episode,
+    )
+
+    db_path = (output or _default_recording_path()).expanduser().resolve()
+    if db_path.exists():
+        typer.echo(f"error: refusing to overwrite existing recording: {db_path}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo("A1Z teach/replay demo")
+    typer.echo(f"Recording: {db_path}")
+    typer.echo(f"Camera: /dev/video{camera_index} (live in Rerun)")
+    typer.echo("The arm starts hand-drivable. Keep the workspace clear.\n")
+
+    coordinator: ModuleCoordinator | None = None
+    control: Any = None
+    monitor: Any = None
+    recording = False
+    teach_mode = True
+    at_start_pose = False
+    saved_count = 0
+    gripper_open: bool | None = None
+    prepared: PreparedEpisode | None = None
+    episode_started_at = 0.0
+
+    def _status() -> str:
+        mode = "ZERO-GRAVITY" if teach_mode else "POSITION"
+        state = "RECORDING" if recording else "IDLE"
+        if recording:
+            elapsed = time.monotonic() - episode_started_at
+            state += f" {int(elapsed // 60)}:{int(elapsed % 60):02d}"
+        return (
+            f"[{state} | {mode} | saved: {saved_count}]  "
+            "SPACE record/save · g gripper · h start pose · r replay · "
+            "z zero-gravity · d discard · q quit"
+        )
+
+    def _toggle_gripper() -> None:
+        nonlocal at_start_pose, gripper_open
+        target_open = not gripper_open
+        target = _GRIPPER_OPEN_M if target_open else _GRIPPER_CLOSED_M
+        if not control.set_gripper_position(_TEACH_HARDWARE_ID, target):
+            typer.echo(">> gripper command rejected", err=True)
+            return
+        gripper_open = target_open
+        if not teach_mode:
+            at_start_pose = False
+        typer.echo(f">> gripper {'opening' if target_open else 'closing'}")
+
+    def _refresh_prepared() -> PreparedEpisode:
+        deadline = time.monotonic() + 2.0
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                return prepare_episode(load_recorded_episode(db_path), speed=speed)
+            except (OSError, ValueError) as exc:
+                last_error = exc
+                time.sleep(0.05)
+        raise RuntimeError(f"saved episode was not readable: {last_error}")
+
+    try:
+        coordinator = ModuleCoordinator.build(
+            make_a1z_teach_replay_demo_blueprint(
+                db_path,
+                task_label=task,
+                camera_index=camera_index,
+            ),
+            {},
+        )
+        monitor = coordinator.get_instance(EpisodeMonitorModule)
+        control = coordinator.get_instance(ControlCoordinator)
+        measured = control.get_gripper_position(_TEACH_HARDWARE_ID)
+        gripper_open = measured is not None and measured > _GRIPPER_OPEN_M / 2
+        typer.echo("Ready. Rerun is showing the live camera.")
+
+        while True:
+            command = _read_key(_status())
+
+            if command == "g":
+                _toggle_gripper()
+                continue
+
+            if command in (" ", ""):
+                if not teach_mode:
+                    typer.echo(">> press z for zero-gravity before recording")
+                elif not recording:
+                    monitor.start_episode()
+                    recording = True
+                    episode_started_at = time.monotonic()
+                    typer.echo(">> episode started")
+                else:
+                    status = monitor.save_episode()
+                    recording = False
+                    saved_count = status.episodes_saved
+                    prepared = _refresh_prepared()
+                    at_start_pose = False
+                    typer.echo(f">> episode saved ({saved_count} total); h=start pose, r=replay")
+                continue
+
+            if command == "h":
+                if recording:
+                    typer.echo(">> save or discard the active episode first")
+                    continue
+                if prepared is None:
+                    typer.echo(">> record an episode first")
+                    continue
+                if teach_mode:
+                    if not control.set_hardware_teach_mode(_TEACH_HARDWARE_ID, False):
+                        typer.echo(">> hold the arm still and press h again", err=True)
+                        continue
+                    teach_mode = False
+                approach = build_approach_trajectory(control.get_joint_positions(), prepared)
+                typer.echo(f">> moving to recorded start pose ({approach.duration:.2f}s)")
+                _execute_demo_trajectory(control, approach, "start-pose move")
+                at_start_pose = True
+                continue
+
+            if command == "r":
+                if recording:
+                    typer.echo(">> save or discard the active episode first")
+                elif prepared is None:
+                    typer.echo(">> record an episode first")
+                elif teach_mode:
+                    typer.echo(">> press h to enter position mode and move to the start pose")
+                elif not at_start_pose:
+                    typer.echo(">> press h to return to the recorded start pose")
+                else:
+                    trajectory = build_replay_trajectory(prepared)
+                    typer.echo(f">> replaying ({trajectory.duration:.2f}s)")
+                    _execute_demo_trajectory(control, trajectory, "replay")
+                    at_start_pose = False
+                continue
+
+            if command == "z":
+                if recording:
+                    typer.echo(">> already recording in zero-gravity")
+                elif teach_mode:
+                    typer.echo(">> already in zero-gravity")
+                elif control.set_hardware_teach_mode(_TEACH_HARDWARE_ID, True):
+                    teach_mode = True
+                    at_start_pose = False
+                    typer.echo(">> zero-gravity enabled; move the arm by hand")
+                else:
+                    typer.echo(">> zero-gravity transition failed; press z again", err=True)
+                continue
+
+            if command == "d":
+                status = monitor.discard_episode()
+                if recording:
+                    recording = False
+                    typer.echo(">> episode discarded")
+                elif status.last_event == "undo":
+                    saved_count = status.episodes_saved
+                    prepared = _refresh_prepared() if saved_count else None
+                    typer.echo(f">> previous episode discarded ({saved_count} remain)")
+                else:
+                    typer.echo(">> nothing saved to discard")
+                continue
+
+            if command == "q":
+                if recording:
+                    typer.echo(">> save or discard the active episode before quitting")
+                    continue
+                break
+
+            typer.echo(f">> unrecognized key {command!r}")
+    except KeyboardInterrupt:
+        typer.echo("\nDemo interrupted.", err=True)
+        if recording and monitor is not None:
+            monitor.discard_episode()
+        if control is not None:
+            control.task_invoke(A1Z_REPLAY_TASK_NAME, "cancel", {})
+    except Exception as exc:
+        typer.echo(f"A1Z demo failed: {exc}", err=True)
+        raise typer.Exit(1)
+    finally:
+        if coordinator is not None:
+            typer.echo("Support the arm before motors disable.")
+            try:
+                _press_enter("Press ENTER when the arm is supported")
+            except (KeyboardInterrupt, EOFError):
+                pass
+            coordinator.stop()
+
+    typer.echo(f"Saved Memory2 recording: {db_path}")
+
+
+@app.command()
 def replay(
     source: Path = typer.Argument(..., help="Memory2 recording .db"),
     episode: int = typer.Option(-1, "--episode", "-e", help="Saved episode index; -1 is latest"),
@@ -253,7 +486,6 @@ def replay(
     """Validate and replay one saved A1Z episode through ControlCoordinator."""
     from dimos.control.coordinator import ControlCoordinator
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
     from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
         A1Z_REPLAY_TASK_NAME,
         make_a1z_replay_blueprint,

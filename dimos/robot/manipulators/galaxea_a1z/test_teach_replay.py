@@ -34,22 +34,25 @@ from dimos.robot.manipulators.galaxea_a1z.blueprints.basic import (
     A1Z_TEACH_CAMERA_WIDTH,
     make_a1z_learned_policy_blueprint,
     make_a1z_policy_blueprint,
+    make_a1z_replay_blueprint,
     make_a1z_teach_blueprint,
+    make_a1z_teach_replay_demo_blueprint,
 )
-
-
-class CustomPolicyModule(LeRobotPolicyModule):
-    pass
-
-
 from dimos.robot.manipulators.galaxea_a1z.teach_replay import (
     _REPLAY_VELOCITY_MAX,
     A1Z_JOINT_NAMES,
     RecordedEpisode,
+    build_approach_trajectory,
     build_execution_trajectory,
+    build_replay_trajectory,
     load_recorded_episode,
     prepare_episode,
 )
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+
+class CustomPolicyModule(LeRobotPolicyModule):
+    pass
 
 
 def _positions(count: int = 5) -> np.ndarray:
@@ -86,6 +89,35 @@ def test_teach_blueprint_records_from_configured_webcam(tmp_path: Path) -> None:
     assert (transform.frame_id, transform.child_frame_id) == ("coordinator", "camera_link")
     assert recorder_atom.kwargs["tf_tolerance"] == 1.5
     assert blueprint.blueprints.index(camera_atom) > blueprint.blueprints.index(recorder_atom)
+
+
+def test_demo_blueprint_keeps_teach_replay_camera_and_rerun_live(tmp_path: Path) -> None:
+    blueprint = make_a1z_teach_replay_demo_blueprint(
+        tmp_path / "demo.db",
+        camera_index=4,
+    )
+    control_atom = next(atom for atom in blueprint.blueprints if atom.module is ControlCoordinator)
+    camera_atom = next(atom for atom in blueprint.blueprints if atom.module is CameraModule)
+    rerun_atom = next(atom for atom in blueprint.blueprints if atom.module is RerunBridgeModule)
+
+    hardware = control_atom.kwargs["hardware"][0]
+    camera = camera_atom.kwargs["hardware"]()
+    trajectory_task = control_atom.kwargs["tasks"][0]
+
+    assert hardware.adapter_kwargs["zero_gravity"] is True
+    assert trajectory_task.joint_names == hardware.all_joints == list(A1Z_JOINT_NAMES)
+    assert camera.config.camera_index == 4
+    assert rerun_atom.kwargs["max_hz"] == {"world/color_image": A1Z_TEACH_CAMERA_FPS}
+
+
+def test_replay_blueprint_keeps_trajectory_task() -> None:
+    blueprint = make_a1z_replay_blueprint()
+    control_atom = next(atom for atom in blueprint.blueprints if atom.module is ControlCoordinator)
+
+    hardware = control_atom.kwargs["hardware"][0]
+    trajectory_task = control_atom.kwargs["tasks"][0]
+
+    assert trajectory_task.joint_names == hardware.all_joints == list(A1Z_JOINT_NAMES)
 
 
 def test_policy_blueprint_wires_camera_policy_and_seven_joint_servo() -> None:
@@ -219,3 +251,18 @@ def test_execution_trajectory_approaches_then_replays_all_seven_joints() -> None
         previous.time_from_start < current_point.time_from_start
         for previous, current_point in zip(trajectory.points, trajectory.points[1:], strict=False)
     )
+
+
+def test_demo_splits_start_pose_move_from_replay() -> None:
+    positions = _positions()
+    positions[:, 0] = np.linspace(0.2, 0.4, len(positions))
+    prepared = prepare_episode(_recorded(positions), smoothing_window_s=0.0)
+    current = dict(zip(A1Z_JOINT_NAMES, [0.0, 0.4, -0.4, 0.1, 0.0, 0.0, 0.03], strict=True))
+
+    approach = build_approach_trajectory(current, prepared)
+    replay = build_replay_trajectory(prepared)
+
+    assert approach.points[0].positions == pytest.approx(list(current.values()))
+    assert approach.points[-1].positions == pytest.approx(prepared.positions[0])
+    assert replay.points[0].positions == pytest.approx(prepared.positions[0])
+    assert replay.points[-1].positions == pytest.approx(prepared.positions[-1])

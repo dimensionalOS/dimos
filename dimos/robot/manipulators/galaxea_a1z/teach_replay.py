@@ -211,6 +211,32 @@ def build_execution_trajectory(
     final_hold_s: float = 0.35,
 ) -> JointTrajectory:
     """Prepend a minimum-jerk approach and append a final hold."""
+    approach = build_approach_trajectory(
+        current_positions,
+        prepared,
+        sample_rate_hz=sample_rate_hz,
+    )
+    replay = build_replay_trajectory(prepared, final_hold_s=final_hold_s)
+    replay_offset = approach.duration + settle_s
+    points = list(approach.points)
+    points.extend(
+        TrajectoryPoint(
+            time_from_start=float(replay_offset + point.time_from_start),
+            positions=point.positions,
+            velocities=point.velocities,
+        )
+        for point in replay.points
+    )
+    return JointTrajectory(points=points, joint_names=list(A1Z_JOINT_NAMES))
+
+
+def build_approach_trajectory(
+    current_positions: dict[str, float],
+    prepared: PreparedEpisode,
+    *,
+    sample_rate_hz: float = 100.0,
+) -> JointTrajectory:
+    """Build a minimum-jerk move from the live pose to the recorded start."""
     missing = [name for name in A1Z_JOINT_NAMES if name not in current_positions]
     if missing:
         raise ValueError(f"Current robot state is missing {missing}")
@@ -237,10 +263,19 @@ def build_execution_trajectory(
         for ts, q, dq in zip(approach_ts, approach_q, approach_velocity, strict=True)
     ]
 
-    replay_offset = approach_duration + settle_s
-    points.extend(
+    points[-1].velocities = [0.0] * len(A1Z_JOINT_NAMES)
+    return JointTrajectory(points=points, joint_names=list(A1Z_JOINT_NAMES))
+
+
+def build_replay_trajectory(
+    prepared: PreparedEpisode,
+    *,
+    final_hold_s: float = 0.35,
+) -> JointTrajectory:
+    """Build replay-only motion, assuming the arm is at the recorded start."""
+    points = [
         TrajectoryPoint(
-            time_from_start=float(replay_offset + ts),
+            time_from_start=float(ts),
             positions=q.tolist(),
             velocities=dq.tolist(),
         )
@@ -250,10 +285,10 @@ def build_execution_trajectory(
             prepared.velocities,
             strict=True,
         )
-    )
+    ]
     points.append(
         TrajectoryPoint(
-            time_from_start=float(replay_offset + prepared.duration + final_hold_s),
+            time_from_start=float(prepared.duration + final_hold_s),
             positions=prepared.positions[-1].tolist(),
             velocities=[0.0] * len(A1Z_JOINT_NAMES),
         )

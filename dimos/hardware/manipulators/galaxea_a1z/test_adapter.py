@@ -305,6 +305,26 @@ def test_zero_gravity_uses_vendor_teaching_startup(
     assert robot.gravity_comp_factor == 0.7
 
 
+def test_runtime_teach_mode_switches_gains_without_restarting(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    adapter = _connected_adapter(a1z_adapter_module, zero_gravity=True)
+    robot = _FakeArmRobot.instances[-1]
+    assert adapter.activate()
+    starts_before = robot.actions.count("start")
+
+    assert adapter.set_teach_mode(False)
+    position_hold = robot.actions[-1][1]
+    assert np.allclose(position_hold["pos"], robot.state["pos"])
+    assert np.allclose(position_hold["kp"], robot._default_kp)
+
+    assert adapter.set_teach_mode(True)
+    free_drive = robot.actions[-1][1]
+    assert np.allclose(free_drive["kp"], np.zeros(6))
+    assert np.allclose(free_drive["kd"], robot._default_kd * 0.5)
+    assert robot.actions.count("start") == starts_before
+
+
 def test_safe_start_reports_joint_motion_and_removes_force(
     a1z_adapter_module: ModuleType,
     capsys: pytest.CaptureFixture[str],

@@ -32,9 +32,8 @@ Lifecycle mapping:
 SAFETY: the A1 arm has no brakes. Disabling motors (deactivate, write_enable
 (False), disconnect) lets the arm fall freely. Lower or support the arm first.
 
-Zero-gravity (teaching) mode is chosen at construction time via the
-zero_gravity kwarg and cannot be switched at runtime; teach recording requires
-zero_gravity=True.
+Zero-gravity (teaching) mode is selected initially with ``zero_gravity`` and
+can be switched safely at runtime with ``set_teach_mode()``.
 """
 
 from __future__ import annotations
@@ -339,6 +338,46 @@ class GalaxeaA1ZAdapter:
             return False
         self._control_mode = mode
         return True
+
+    def set_teach_mode(self, enabled: bool) -> bool:
+        """Switch between hand-drivable gravity compensation and position hold.
+
+        The SDK control loop stays running. Entering position control first
+        captures the measured pose and applies the vendor's normal PD gains;
+        entering teach mode keeps gravity compensation active while removing
+        position stiffness.
+        """
+        robot = self._robot
+        if robot is None or not robot.is_running or robot.is_estopped:
+            return False
+
+        default_kp = np.asarray(
+            getattr(robot, "_default_kp", np.array([30.0, 30.0, 30.0, 20.0, 5.0, 5.0])),
+            dtype=float,
+        )
+        default_kd = np.asarray(
+            getattr(robot, "_default_kd", np.array([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])),
+            dtype=float,
+        )
+        try:
+            positions, _ = self._validated_startup_state(
+                robot.get_joint_state(),
+                phase="teach-mode transition",
+                max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+            )
+            robot.command_joint_state(
+                {
+                    "pos": positions.copy(),
+                    "vel": np.zeros(self._dof),
+                    "kp": np.zeros(self._dof) if enabled else default_kp,
+                    "kd": default_kd * 0.5 if enabled else default_kd,
+                }
+            )
+            self._zero_gravity = enabled
+            return True
+        except Exception as exc:
+            print(f"Galaxea A1Z teach-mode transition failed: {exc}")
+            return False
 
     def get_control_mode(self) -> ControlMode:
         """Get current control mode."""

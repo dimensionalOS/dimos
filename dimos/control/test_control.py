@@ -81,6 +81,21 @@ def connected_hardware(mock_adapter):
     return ConnectedHardware(adapter=mock_adapter, component=component)
 
 
+def test_set_hardware_teach_mode_dispatches_optional_adapter(
+    connected_hardware: ConnectedHardware,
+    mock_adapter: MagicMock,
+) -> None:
+    coordinator = ControlCoordinator()
+    coordinator._hardware = {"test_arm": connected_hardware}
+    mock_adapter.set_teach_mode = MagicMock(return_value=True)
+
+    try:
+        assert coordinator.set_hardware_teach_mode("test_arm", True)
+        mock_adapter.set_teach_mode.assert_called_once_with(True)
+    finally:
+        coordinator.stop()
+
+
 @pytest.fixture
 def trajectory_task():
     """Create a JointTrajectoryTask for testing."""
