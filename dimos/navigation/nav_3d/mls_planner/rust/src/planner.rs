@@ -134,18 +134,34 @@ fn nearest_cell(
     best.map(|(_, id)| id)
 }
 
-/// Cells reachable from the sources over passable edges.
-fn reachable_set(cells: &SurfaceCells, sources: &[CellId]) -> AHashSet<CellId> {
-    let mut visited: AHashSet<CellId> = sources.iter().copied().collect();
-    let mut queue: VecDeque<CellId> = sources.iter().copied().collect();
-    while let Some(u) = queue.pop_front() {
+/// Reachable cells: a CellId-indexed membership mask and the list of ids.
+struct Reachable {
+    mask: Vec<bool>,
+    list: Vec<CellId>,
+}
+
+/// Flood the sources' connected component over passable edges.
+fn reachable_set(cells: &SurfaceCells, sources: &[CellId]) -> Reachable {
+    let mut mask = vec![false; cells.slot_capacity()];
+    let mut list: Vec<CellId> = Vec::new();
+    for &s in sources {
+        if !mask[s as usize] {
+            mask[s as usize] = true;
+            list.push(s);
+        }
+    }
+    let mut head = 0;
+    while head < list.len() {
+        let u = list[head];
+        head += 1;
         for edge in cells.neighbors(u) {
-            if edge.cost.is_finite() && visited.insert(edge.dest) {
-                queue.push_back(edge.dest);
+            if edge.cost.is_finite() && !mask[edge.dest as usize] {
+                mask[edge.dest as usize] = true;
+                list.push(edge.dest);
             }
         }
     }
-    visited
+    Reachable { mask, list }
 }
 
 /// Position of the goal-component node nearest the reachable component's
@@ -153,7 +169,7 @@ fn reachable_set(cells: &SurfaceCells, sources: &[CellId]) -> AHashSet<CellId> {
 fn frontier_goal_pos(
     plg: &PlannerGraph,
     goal_cell: CellId,
-    reachable: &AHashSet<CellId>,
+    reachable: &Reachable,
 ) -> Option<(f32, f32, f32)> {
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
     let (goal_node, _) = goal_node_of(plg, goal_cell, &node_cells)?;
@@ -165,7 +181,11 @@ fn frontier_goal_pos(
         .map(|n| n.pos)
         .collect();
     let mut best: Option<(f32, (f32, f32, f32))> = None;
-    for s in plg.nodes.iter().filter(|n| reachable.contains(&n.cell_id)) {
+    for s in plg
+        .nodes
+        .iter()
+        .filter(|n| reachable.mask[n.cell_id as usize])
+    {
         for &g in &goal_nodes {
             let d2 = (s.pos.0 - g.0).powi(2) + (s.pos.1 - g.1).powi(2) + (s.pos.2 - g.2).powi(2);
             if best.is_none_or(|(bd, _)| d2 < bd) {
@@ -257,7 +277,7 @@ pub fn plan(
     // node on each side there is no approach point, so aim at the goal.
     let reachable = reachable_set(&plg.cells, &start_cells);
     let aim = frontier_goal_pos(plg, goal_cell, &reachable).unwrap_or(goal_pose);
-    let target_cell = nearest_cell(&plg.cells, reachable.iter().copied(), aim, voxel_size)?;
+    let target_cell = nearest_cell(&plg.cells, reachable.list.iter().copied(), aim, voxel_size)?;
     if target_cell == goal_cell {
         return None;
     }
