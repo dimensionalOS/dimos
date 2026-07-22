@@ -889,7 +889,7 @@ class MujocoSimModule(
                 self._stop_event.wait(timeout=interval * 0.5)
                 continue
             last_timestamp = frame.timestamp
-            ts = time.time()
+            ts = frame.timestamp
 
             if self.config.enable_color:
                 color_img = Image(
