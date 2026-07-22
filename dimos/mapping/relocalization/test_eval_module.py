@@ -52,6 +52,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+import dimos.mapping.relocalization.eval_module as eval_mod
 from dimos.mapping.relocalization.eval_module import (
     SOURCE_COLORS,
     SOURCES,
@@ -66,6 +67,7 @@ from dimos.mapping.relocalization.eval_module import (
     label_fixes_from_log,
     parse_census,
     parse_health_lines,
+    parse_run_log,
     resolve_heldout_alignment,
     stats_to_dict,
     umeyama_alignment,
@@ -611,6 +613,105 @@ def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch
         assert by["ransac"].won == 1 and by["fiducial"].won == 1, rendering
         assert by["fiducial"].med_fit == 0.7, rendering
         assert stats.rejects == 0, rendering
+
+
+# --------------------------------------------------------------------------- #
+# The LEGACY wire format. These lines cannot be re-emitted -- the f-string call
+# sites are gone -- so unlike every other parser test they are a FIXTURE, copied
+# verbatim (paths shortened) out of a real archived capture,
+# trial/harness/out/results_dimos/survey2_heldout.replay_run.log. That archive is
+# the trial's evidence: when the parser stopped understanding this format it
+# returned [] and the run's 24/28 fiducial-proposal census silently read as null.
+# --------------------------------------------------------------------------- #
+_LEGACY_CONSOLE_LOG = "\n".join([
+    "22:11:37.254 [inf][pping/relocalization/module.py] relocalize: fiducial prior enabled"
+    " marker_map_file='/tmp/survey1.marker_map.yaml' n_markers=5",
+    "22:11:49.281 [inf][pping/relocalization/priors.py] relocalize candidates: ransac=34",
+    "22:11:50.589 [inf][pping/relocalization/module.py] relocalize: fitness=0.756"
+    " time_cost=13.0s n_pts=89003 reloc_t=[-2.467, -8.645, -0.086] TF 'world' -> 'map'"
+    " published_t=[-8.849, -1.587, 0.073] source=ransac",
+    "22:12:06.431 [inf][pping/relocalization/priors.py] relocalize candidates:"
+    " fiducial=1 ransac=34",
+    "22:12:08.022 [inf][pping/relocalization/module.py] relocalize: fitness=0.568"
+    " time_cost=17.4s n_pts=122958 reloc_t=[0.145, -11.99, -0.079] TF 'world' -> 'map'"
+    " published_t=[-9.046, 7.87, -0.105] source=fiducial",
+    "22:19:52.114 [war][pping/relocalization/module.py] relocalize rejected:"
+    " fitness=0.449 < threshold=0.45 time_cost=35.1s n_pts=269597",
+])
+
+
+def test_parsers_read_the_legacy_f_string_format() -> None:
+    """The archived format parses to the same records the current one does: two
+    accepts with their OWN source (the legacy line puts `source=` last, which is
+    how a positional regex silently labelled every accept ransac), the published
+    translation off bare `published_t=`, two census cycles with fiducial in one,
+    and one reject. The `fiducial prior enabled` line carries no fitness and must
+    not be counted as an accept."""
+    health = parse_health_lines(_LEGACY_CONSOLE_LOG)
+    assert [h.source for h in health] == ["ransac", "fiducial"]
+    assert [h.fitness for h in health] == [0.756, 0.568]
+    assert health[0].published_t_m == (-8.849, -1.587, 0.073)
+
+    census = parse_census(_LEGACY_CONSOLE_LOG)
+    assert census == [{"ransac": 34}, {"fiducial": 1, "ransac": 34}]
+    assert count_rejects(_LEGACY_CONSOLE_LOG) == 1
+
+
+def test_legacy_census_drives_the_prior_activity_line() -> None:
+    """End of the chain the regression broke: legacy census -> compute_stats ->
+    the prior-activity line. `1/2 cycles` is the evidence that vanished as null."""
+    stats = compute_stats(
+        [], np.empty((0,)), parse_census(_LEGACY_CONSOLE_LOG), 1,
+        mode="held_out", held_out_note="n",
+    )
+    assert stats.fiducial_proposed_cycles == 1 and stats.census_cycles == 2
+    assert "fiducial proposed 1/2 cycles" in format_report(stats, title="legacy")
+
+
+def test_current_format_parses_through_the_same_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The legacy support is ADDITIVE: bytes the emitters render today still parse
+    to the same records, in both renderings, through one parser."""
+    m = _multi_source_module()
+    monkeypatch.setattr(
+        module_mod, "_relocalize_with_priors",
+        lambda *a, **k: (_rt(np.eye(3), np.array([1.0, 2.0, 0.0])), 0.61, "fiducial"),
+    )
+    monkeypatch.setattr(priors_mod, "refine_candidates", lambda *a, **k: (np.eye(4), 0.9, 0))
+
+    with _capture_run_log(module_mod, priors_mod) as log:
+        relocalize_with_priors(
+            None, None, [_StubPrior("ransac", 34), _StubPrior("fiducial", 1)]  # type: ignore[arg-type]
+        )
+        assert m._try_relocalize(_StubCloud(89003)) is not None  # type: ignore[arg-type]
+
+    for rendering, text in log.both():
+        health = parse_health_lines(text)
+        assert [h.source for h in health] == ["fiducial"], f"{rendering}: {text!r}"
+        assert health[0].fitness == 0.61, rendering
+        assert parse_census(text) == [{"ransac": 34, "fiducial": 1}], rendering
+
+
+def test_parse_run_log_warns_when_a_log_yields_nothing(tmp_path: Path) -> None:
+    """A log the parser reads NOTHING out of must say so, naming the file. Silence
+    here is indistinguishable from a real 'the fiducial prior never proposed', and
+    that is exactly how the legacy captures' census went missing unnoticed."""
+    empty = tmp_path / "nothing.replay_run.log"
+    empty.write_text("22:11:37.254 [inf][core/module.py] some other module started\n")
+
+    with _capture_run_log(eval_mod) as log:
+        assert parse_run_log(empty) == ([], [], 0)
+
+    for rendering, text in log.both():
+        assert "no relocalize records" in text, f"{rendering}: {text!r}"
+        assert str(empty) in text, rendering
+
+    # ...and a log that DOES parse stays quiet.
+    real = tmp_path / "legacy.replay_run.log"
+    real.write_text(_LEGACY_CONSOLE_LOG)
+    with _capture_run_log(eval_mod) as quiet:
+        health, census, n_rejects = parse_run_log(real)
+    assert (len(health), len(census), n_rejects) == (2, 2, 1)
+    assert "no relocalize records" not in quiet.console
 
 
 # --------------------------------------------------------------------------- #

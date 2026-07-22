@@ -73,7 +73,19 @@ def set_run_log_dir(log_dir: str | Path) -> None:
 
 
 def get_run_log_dir() -> Path | None:
-    return _RUN_LOG_DIR
+    """This run's log directory, or None when no run directory is configured.
+
+    Only the CLI main process calls set_run_log_dir(), so the module global is
+    None in every forkserver module worker; those workers inherit the directory
+    as DIMOS_RUN_LOG_DIR (process_lifecycle.py:114). Reading the env var second
+    is what makes a worker resolve the same directory as the main process --
+    same order as _get_log_file_path(), which is why logs land in the run
+    directory even where this getter used to return None.
+    """
+    if _RUN_LOG_DIR is not None:
+        return _RUN_LOG_DIR
+    env_log_dir = os.environ.get("DIMOS_RUN_LOG_DIR")
+    return Path(env_log_dir) if env_log_dir else None
 
 
 def _get_log_directory() -> Path:

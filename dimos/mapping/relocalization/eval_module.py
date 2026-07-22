@@ -115,24 +115,44 @@ _RERUN_PROBE_TIMEOUT_S = 0.2  # the bridge's proxy is local -- it answers or it 
 #   priors.py census          -> event "relocalize candidates", counts a dict;
 #                                console renders it as a python repr,
 #                                `counts={'ransac': 34, 'fiducial': 2}`
+#
+# AND the LEGACY rendering, from before the emitters moved to structlog kwargs --
+# one f-string per record, bare key names:
+#
+#   `relocalize: fitness=0.756 time_cost=13.0s n_pts=89003 reloc_t=[...]
+#    TF 'world' -> 'map' published_t=[-8.849, -1.587, 0.073] source=ransac`
+#   census: `relocalize candidates: fiducial=1 ransac=34`
+#
+# Every archived capture is in that format, so dropping it does not fail -- it
+# returns [] and the census reads as "the fiducial prior never proposed". Same
+# two formats, same key-anchored approach, as trial/harness/reloc_log.py.
+#
+# Key-anchored and never positional: the legacy line puts `source=` LAST, so a
+# regex that assumed field order would miss it and every accept would fall back to
+# ransac -- "fiducial won 0" as a parser artifact rather than a measurement.
 # --------------------------------------------------------------------------- #
 _EVENT_ACCEPT = "relocalize accepted"
 _EVENT_REJECT = "relocalize rejected"
 _EVENT_CENSUS = "relocalize candidates"
+# Legacy accepts are the only `relocalize:` lines carrying a fitness (the prior-
+# enabled / skipped lines have their own shapes).
+_LEGACY_ACCEPT_RE = re.compile(r"relocalize:\s*fitness=")
 
 # dimos colorizes the console only when stdout is a tty (logging_config.py), so a
 # log captured through a pty carries SGR codes BETWEEN key and `=`. Strip first.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # Console kwargs render as `key=value` with the value verbatim -- `[1.0, 2.0]` and
 # `{'ransac': 34}` contain spaces, so each field gets its own key-anchored regex;
-# splitting the line on whitespace would tear those values apart.
+# splitting the line on whitespace would tear those values apart. The `_m` suffix
+# is optional: current emitters name the unit, legacy ones do not.
 _CONSOLE_RE: dict[str, re.Pattern[str]] = {
-    "source": re.compile(r"\bsource=(\S+)"),
+    "source": re.compile(r"\bsource=([A-Za-z_]\w*)"),
     "fitness": re.compile(r"\bfitness=([-\d.eE+]+)"),
-    "published_t_m": re.compile(r"\bpublished_t_m=\[([^\]]+)\]"),
+    "published_t_m": re.compile(r"\bpublished_t(?:_m)?=\[([^\]]+)\]"),
     "counts": re.compile(r"\bcounts=\{([^}]*)\}"),
 }
 _COUNT_RE = re.compile(r"'(\w+)':\s*(\d+)")  # one entry of counts={...}'s dict repr
+_LEGACY_COUNT_RE = re.compile(r"\b([a-z_]+)=(\d+)")  # legacy census: `ransac=34 fiducial=2`
 
 
 @dataclass
@@ -163,24 +183,57 @@ def _console_fields(text: str) -> dict[str, Any]:
     counts = _CONSOLE_RE["counts"].search(text)
     if counts is not None:
         fields["counts"] = {k: int(n) for k, n in _COUNT_RE.findall(counts.group(1))}
+    elif _EVENT_CENSUS in text:
+        # Legacy census: the counts ARE the kwargs -- `relocalize candidates:
+        # ransac=34 fiducial=2`. Read only the tail, so nothing before the event
+        # name (a timestamp, a pid) can be mistaken for a proposal count.
+        legacy = _LEGACY_COUNT_RE.findall(text.split(_EVENT_CENSUS, 1)[1])
+        if legacy:
+            fields["counts"] = {k: int(n) for k, n in legacy}
     return fields
 
 
-def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
-    """``(event, kwargs)`` for one relocalize log line in EITHER rendering, or None
-    when the line is neither (another module's log, a banner, a blank)."""
-    text = _ANSI_RE.sub("", line).strip()
-    if text.startswith("{"):
-        try:
-            obj = json.loads(text)
-        except json.JSONDecodeError:
+def _event_of(text: str, obj: dict[str, Any] | None) -> str | None:
+    """Which record this line is, in either format and either rendering. jsonl
+    states it in ``event``; a console line renders the event verbatim into the
+    message, and a LEGACY jsonl line carries the whole f-string as its event."""
+    if obj is not None:
+        ev = obj.get("event")
+        if not isinstance(ev, str):
             return None
-        event = obj.get("event")
-        return (event, obj) if isinstance(event, str) else None
+        text = ev
     for event in (_EVENT_ACCEPT, _EVENT_REJECT, _EVENT_CENSUS):
         if event in text:
-            return event, _console_fields(text)
-    return None
+            return event
+    return _EVENT_ACCEPT if _LEGACY_ACCEPT_RE.search(text) else None
+
+
+def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
+    """``(event, kwargs)`` for one relocalize log line in EITHER rendering and
+    EITHER wire format, or None when the line is none of them (another module's
+    log, a banner, a blank).
+
+    Console matches and jsonl keys are merged, jsonl winning: a current jsonl
+    record carries its kwargs as real typed values, while a legacy jsonl record
+    hides them inside the ``event`` f-string, where the same key-anchored regexes
+    find them (JSON escaping leaves `key=value` untouched)."""
+    text = _ANSI_RE.sub("", line).strip()
+    obj: dict[str, Any] | None = None
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        obj = parsed
+    event = _event_of(text, obj)
+    if event is None:
+        return None
+    fields = _console_fields(text)
+    if obj is not None:
+        fields.update({k: v for k, v in obj.items() if v is not None})
+    return event, fields
 
 
 def parse_health_lines(log_text: str) -> list[HealthLine]:
@@ -224,6 +277,30 @@ def parse_census(log_text: str) -> list[dict[str, int]]:
 def count_rejects(log_text: str) -> int:
     records = (_parse_line(raw) for raw in log_text.splitlines())
     return sum(1 for r in records if r is not None and r[0] == _EVENT_REJECT)
+
+
+def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], int]:
+    """Every relocalize record in a run log FILE: ``(accepts, census, n_rejects)``.
+
+    A log the parser reads NOTHING out of is announced, because downstream it is
+    indistinguishable from a real measurement: no census reads as "the fiducial
+    prior never proposed", and every fix falls back to ``unknown``. That is not
+    hypothetical -- dropping the legacy f-string format silently turned a 24/28
+    fiducial-proposal census into ``null`` on every archived capture, with no
+    error anywhere. Zero records means the parser or the log is wrong; say so.
+    """
+    text = path.read_text(errors="replace")
+    health = parse_health_lines(text)
+    census = parse_census(text)
+    n_rejects = count_rejects(text)
+    if not health and not census and not n_rejects:
+        logger.warning(
+            "run log yielded no relocalize records; census and per-source labels "
+            "will be empty -- check the log format against this parser",
+            run_log=str(path),
+            n_lines=text.count("\n") + 1,
+        )
+    return health, census, n_rejects
 
 
 def resolve_run_log(run_log_file: str | None) -> Path | None:
@@ -854,16 +931,15 @@ def run_offline_report(
                 f.success = bool(f.err_t_m < SUCCESS_T_M)
 
     census: list[dict[str, int]] = []
-    log_text = ""
+    log_rejects: int | None = None
     if run_log is None:
         cand = replay_json.with_name(replay_json.name.replace(".replay.json", ".replay_run.log"))
         run_log = cand if cand.exists() else None
     if run_log is not None:
-        log_text = run_log.read_text(errors="replace")
-        census = parse_census(log_text)
+        _health, census, log_rejects = parse_run_log(run_log)
     n_rejects = meta.get("n_rejects")
-    if n_rejects is None and log_text:
-        n_rejects = count_rejects(log_text)
+    if n_rejects is None:
+        n_rejects = log_rejects
 
     note = (
         "held-out: premap+markers from run A, replay run B of the same scene; map "
@@ -1059,10 +1135,7 @@ class RelocEval(Module):
         census: list[dict[str, int]] = []
         n_rejects: int | None = None
         if log_path is not None:
-            log_text = log_path.read_text(errors="replace")
-            health = parse_health_lines(log_text)
-            census = parse_census(log_text)
-            n_rejects = count_rejects(log_text)
+            health, census, n_rejects = parse_run_log(log_path)
         fixes = label_fixes_from_log(tf_fixes, health)
 
         odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 4), dtype=float)
