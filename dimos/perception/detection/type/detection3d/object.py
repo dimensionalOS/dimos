@@ -308,22 +308,9 @@ class Object(Detection3D):
                 ts=depth_image.ts,
             )
 
-            # Compute bounding box in camera frame first (for distance filtering)
-            if use_aabb:
-                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
-                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
-                aabb_extent = aabb.max_bound - aabb.min_bound
-                center_cam = aabb_center
-                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
-                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
-            else:
-                obb = pc.pointcloud.get_oriented_bounding_box()
-                center_cam = obb.center
-                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
-                orientation = Quaternion.from_rotation_matrix(obb.R)
-
-            # Skip objects too far from camera (background detections)
+            # Early cull: skip objects too far from camera using point cloud mean
             if max_distance > 0:
+                center_cam = np.asarray(pc.pointcloud.get_center())
                 dist = (center_cam[0] ** 2 + center_cam[1] ** 2 + center_cam[2] ** 2) ** 0.5
                 if dist > max_distance:
                     continue
@@ -335,14 +322,24 @@ class Object(Detection3D):
             else:
                 frame_id = depth_image.frame_id
 
+            # Compute bounding box in the target frame (world or camera)
+            if use_aabb:
+                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
+                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+                aabb_extent = aabb.max_bound - aabb.min_bound
+                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
+                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+            else:
+                obb = pc.pointcloud.get_oriented_bounding_box()
+                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
+                orientation = Quaternion.from_rotation_matrix(obb.R)
+
             if max_obstacle_width > 0:
                 sx = min(sx, max_obstacle_width)
                 sy = min(sy, max_obstacle_width)
             size = Vector3(sx, sy, sz)
-
-            center = Vector3(center_cam[0], center_cam[1], center_cam[2])
-            if camera_transform is not None:
-                center = camera_transform.apply_to_point(center)
 
             pose = PoseStamped(
                 ts=det.ts,
