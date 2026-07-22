@@ -228,7 +228,7 @@ class _WholeBodySimHooks:
         if jhi == jlo:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
-        return chi - t * (chi - clo)
+        return clo + t * (chi - clo)
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
