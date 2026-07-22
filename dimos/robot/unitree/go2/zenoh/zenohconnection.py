@@ -16,8 +16,8 @@
 
 The bridge (go2web ``src/dimos_zenoh.rs``, on by default via the ``dimos_zenoh`` cargo
 feature) publishes Point-LIO odom, the per-scan and world clouds and H.264 video
-straight onto dimos's own zenoh keys, and consumes ``cmd_vel``. Nothing
-here produces any of it — declaring the ports is what puts the robot's topics on the
+straight onto dimos's own zenoh keys, and consumes ``cmd_vel`` and ``command``. Nothing
+here produces the streams — declaring the ports is what puts the robot's topics on the
 graph, the same arrangement as a NativeModule whose binary publishes out of process (see
 :class:`PointLio`). The port names are the wire contract: the bridge's keys are
 ``dimos/<port>/<msg.NAME>``, so renaming a port here silently disconnects it. Remap in
@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 
@@ -74,8 +75,12 @@ class GO2Zenoh(StaticTfPublisher):
 
     config: GO2ZenohConfig
 
-    # Owned by the on-robot bridge, never published here.
+    # Consumed by the on-robot bridge, never published here.
     cmd_vel: In[Twist]
+    # One-shot action verbs ("sit", "hello", ...) or a bare sport api id as a
+    # string. Consumed by the bridge too, but nothing else in the graph produces
+    # them, so the rpcs below publish onto it — no zenoh RPC, just a topic.
+    command: In[String]
     odometry: Out[Odometry]
     lidar: Out[PointCloud2]  # per-scan, in the LIO's own sensor frame
     pointlio_map: Out[PointCloud2]  # accumulated world map, frame `odom`
@@ -93,6 +98,46 @@ class GO2Zenoh(StaticTfPublisher):
             Disposable(self.odometry.transport.subscribe(self._publish_tf, self.odometry))
         )
         self.spawn(self._publish_camera_info())
+        self.standup()
+
+    @rpc
+    def stop(self) -> None:
+        self.liedown()
+
+    @rpc
+    def send_command(self, verb: str) -> None:
+        """Fire an action verb at the bridge (see go2web ``topics::sport_id``)."""
+        self.command.transport.publish(String(verb))
+
+    @rpc
+    def sport_command(self, api_id: int) -> None:
+        """Same, by raw sport api id — the bridge parses a numeric verb."""
+        self.send_command(str(api_id))
+
+    # The verbs the WebRTC GO2Connection exposes as rpcs, same names.
+    @rpc
+    def standup(self) -> None:
+        self.send_command("stand-up")
+
+    @rpc
+    def liedown(self) -> None:
+        self.send_command("stand-down")
+
+    @rpc
+    def balance_stand(self) -> None:
+        self.send_command("balance")
+
+    @rpc
+    def sit(self) -> None:
+        self.send_command("sit")
+
+    @rpc
+    def hello(self) -> None:
+        self.send_command("hello")
+
+    @rpc
+    def jump(self) -> None:
+        self.send_command("jump")
 
     def transforms(self) -> list[Transform]:
         """The mount tree, rooted at mid360_link because Point-LIO owns that frame.
