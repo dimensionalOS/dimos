@@ -68,10 +68,6 @@ class BrokerConfig(ProviderConfig):
     api_key: str | None = None
     robot_id: str | None = None
     robot_name: str = "robot"
-    # Robot kind sent in the session-create POST so the operator UI auto-selects
-    # its view. Pinned on a broker transport spec in the hosted blueprint
-    # (robot_type=...); unset for standalone callers (the POST omits it and the
-    # operator picks).
     robot_type: str | None = None
     stun_url: str = "stun:stun.cloudflare.com:3478"
     heartbeat_hz: float = 1.0
@@ -244,7 +240,6 @@ class BrokerProvider(AsyncProviderBase):
                     **({"robot_id": self._robot_id} if self._robot_id else {}),
                     "robot_name": self._robot_name,
                     # Pinned on a broker spec in the blueprint; omitted when unset
-                    # (standalone callers) so the operator picks the view.
                     **({"robot_type": self._config.robot_type} if self._config.robot_type else {}),
                     "sdp_offer": self._pc.localDescription.sdp,
                 },
