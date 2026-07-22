@@ -50,15 +50,13 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.navigation.jnav.components.loop_closure.eval import (
-    run_module_graph,
-    tf_pose_samples,
-)
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay import run_module_graph
 from dimos.navigation.jnav.utils.module_loading import (
     filter_config_for_module,
     load_module_class,
 )
 from dimos.navigation.jnav.utils.recording_db import ODOM_MATCH_TOLERANCE_S, store
+from dimos.navigation.jnav.utils.recording_tf import tf_pose_samples
 from dimos.navigation.jnav.utils.trajectory_metrics import (
     drift_delta_lookup,
     pose7_lookup,

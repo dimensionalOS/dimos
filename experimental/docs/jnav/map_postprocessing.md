@@ -38,13 +38,13 @@ python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.p
 **2. Solve.** Two stages, one command:
 
 ```
-python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/post_process.py both --rec=PATH
+python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/post_process.py --rec=PATH
 ```
 
 - **Tag PGO (GTSAM).** Odometry between-poses are stiff on roll/pitch and z (gravity isn't drifting) and loose on yaw, where the real error lives. The tag sightings are landmark factors, weighted by how good each detection was. This fixes the big-picture drift.
 - **ICP refinement.** Lidar submaps that are close in space but far apart in time get aligned to each other. This cleans up the local geometry the tags don't directly constrain.
 
-It writes `gt_pointlio_odometry` and `gt_pointlio_lidar` back into the db, optionally a `.pc2.lcm` of the corrected cloud, and opens a comparison view. Run `odom`, `lidar`, or `both`.
+It writes `pointlio_odometry_corrected` and `pointlio_lidar_corrected` back into the db, optionally a `.pc2.lcm` of the corrected cloud, and opens a comparison view. Both are written by default; `--no-odom` / `--no-lidar` opt out.
 
 **3. Look at it.** `post_process.py` opens the rrd for you, but you can rebuild it anytime:
 
@@ -52,7 +52,7 @@ It writes `gt_pointlio_odometry` and `gt_pointlio_lidar` back into the db, optio
 python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH
 ```
 
-Raw cloud in red, every `gt_*` version in its own color, tag landmarks marked. Add another correction method and it shows up automatically — good for comparing approaches side by side.
+Raw cloud in red, every `*_corrected` version in its own color, tag landmarks marked. Add another correction method and it shows up automatically — good for comparing approaches side by side.
 
 ## What `add_april.py` records in `summary.json`
 

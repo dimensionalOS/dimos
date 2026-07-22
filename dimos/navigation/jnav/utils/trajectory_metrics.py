@@ -36,6 +36,43 @@ PoseLookup = Callable[[float], "np.ndarray | None"]
 PoseLookup7 = Callable[[float], "np.ndarray | None"]
 
 
+def nearest_index(times: np.ndarray, timestamp: float) -> int:
+    """Index of the sample nearest in time (``times`` sorted ascending)."""
+    index = int(np.searchsorted(times, timestamp))
+    index = min(max(index, 0), len(times) - 1)
+    if index > 0 and abs(float(times[index - 1]) - timestamp) < abs(
+        float(times[index]) - timestamp
+    ):
+        index -= 1
+    return index
+
+
+def thin_pairs_by_path_section(
+    pairs: Iterable[tuple[int, int]], positions: np.ndarray, section_length: float
+) -> list[tuple[int, int]]:
+    """Keep at most one index pair per ``section_length`` meters of path.
+
+    ``positions`` (N, 3) are poses in path order; each pose is bucketed by cumulative arc
+    length, and every bucket may participate in only one kept pair — greedy in the given
+    pair order, so sort ``pairs`` best-first. ``section_length <= 0`` keeps everything.
+    """
+    pairs = list(pairs)
+    if section_length <= 0:
+        return pairs
+    steps = np.linalg.norm(np.diff(np.asarray(positions, float), axis=0), axis=1)
+    arc_length = np.concatenate([[0.0], np.cumsum(steps)])
+    sections = (arc_length // section_length).astype(int)
+    used: set[int] = set()
+    kept: list[tuple[int, int]] = []
+    for first, second in pairs:
+        if int(sections[first]) in used or int(sections[second]) in used:
+            continue
+        used.add(int(sections[first]))
+        used.add(int(sections[second]))
+        kept.append((first, second))
+    return kept
+
+
 def trajectory_lookup(times: np.ndarray, positions: np.ndarray, tolerance: float) -> PoseLookup:
     """A ``time -> [x, y, z]`` nearest-sample lookup over a (ts, position) trajectory."""
     if len(times) == 0:
@@ -266,3 +303,31 @@ def lidar_voxel_agreement(
         "voxel_size_m": voxel_size,
         "scans_used": used,
     }
+
+
+_RRD_MAX_PATH_POINTS = 5000
+
+
+def _subsampled_path(positions: np.ndarray) -> np.ndarray:
+    stride = max(1, len(positions) // _RRD_MAX_PATH_POINTS)
+    return positions[::stride]
+
+
+def write_trajectory_rrd(rrd_path: Any, raw_positions: np.ndarray, graph: list[GraphPose]) -> None:
+    """Raw + corrected trajectories (no tag rendering — tags are scored as
+    odom-relative, not placed in 3D)."""
+    import rerun as rr
+
+    rr.init("jnav_loop_closure_eval", spawn=False)
+    rr.save(str(rrd_path))
+    rr.log(
+        "trajectory/raw_odom",
+        rr.LineStrips3D([_subsampled_path(raw_positions)], colors=[[200, 90, 90]]),
+        static=True,
+    )
+    corrected = np.asarray([[node[1], node[2], node[3]] for node in graph], dtype=np.float64)
+    rr.log(
+        "trajectory/corrected",
+        rr.LineStrips3D([_subsampled_path(corrected)], colors=[[90, 200, 120]]),
+        static=True,
+    )

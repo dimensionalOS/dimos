@@ -42,10 +42,7 @@ def load_module_class(module_path: Path, module_name: str) -> type:
 
 
 def filter_config_for_module(module_class: type, config: dict[str, Any]) -> dict[str, Any]:
-    """Drop config keys the module's Config class doesn't declare.
-
-    DEFAULT_PGO_CONFIG carries cmu-specific knobs (use_scan_context, ...);
-    other loop-closure modules shouldn't crash on them."""
+    """Drop config keys the module's Config class doesn't declare."""
     try:
         config_class = get_type_hints(module_class)["config"]
         known = set(config_class.model_fields)

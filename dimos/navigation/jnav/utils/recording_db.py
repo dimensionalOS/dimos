@@ -24,6 +24,8 @@ from __future__ import annotations
 import atexit
 from collections.abc import Iterator
 from pathlib import Path
+import re
+import sqlite3
 from typing import Any
 
 import numpy as np
@@ -101,6 +103,29 @@ def payload_pose(payload: Any) -> Pose:
         payload.orientation.z,
         payload.orientation.w,
     )
+
+
+def odometry_rows(db_path: Path, stream_name: str) -> np.ndarray:
+    """All poses of an odometry stream as an (N, 8) array: ts, x, y, z, qx, qy, qz, qw.
+
+    Reads the pose columns straight from sqlite (read-only) instead of decoding
+    every message — orders of magnitude faster on 100k+ row streams."""
+    # the stream name is interpolated as a table name (SQLite can't parameterize those)
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", stream_name):
+        raise ValueError(f"unsafe stream name: {stream_name!r}")
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        return np.array(
+            list(
+                connection.execute(
+                    "select ts,pose_x,pose_y,pose_z,pose_qx,pose_qy,pose_qz,pose_qw "
+                    f"from {stream_name} order by ts"
+                )
+            ),
+            float,
+        )
+    finally:
+        connection.close()
 
 
 def odometry_lookup(db_path: Path, stream_name: str) -> PoseLookup:

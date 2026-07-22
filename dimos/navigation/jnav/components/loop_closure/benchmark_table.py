@@ -14,10 +14,10 @@
 
 """Resumable PGO benchmark over (environment x implementation/config).
 
-Fills one big table: every environment (go2 recordings, hk_village; kitti once
-converted) scored against every PGO column (gsc_pgo in several configs, the
-basic unrefined_pgo, ivan_pgo, ivan_pgo_transformer). Each cell is one eval.py
-subprocess (sequential — they share the isolated LCM bus).
+Fills one big table: every environment (go2 recordings, hk_village) scored
+against every PGO column (gsc_pgo in its default config plus a couple of
+one-feature ablations). Each cell is one eval.py subprocess (sequential — they
+share the isolated LCM bus).
 
 CHECKPOINTED: a cell is skipped when its summary.json already exists and its
 fingerprint still matches the db (size+mtime) and EVAL_VERSION. Kill it any
@@ -27,12 +27,11 @@ The universal score is **voxel agreement** (re-anchoring scans onto the
 corrected trajectory should collapse double walls — ground-truth-free and
 needs no camera), so tagless environments (kitti, hk_village) still get a
 real number. April-tag agreement is reported additionally wherever a camera +
-intrinsics sidecar exists.
+intrinsics file exists.
 
 Usage:
-    uv run python dimos/navigation/jnav/components/loop_closure/benchmark_table.py
-    ... [--go2-root ~/datasets/go2_recordings] [--with-hk-village] [--force]
-    ... [--only-env NAME] [--only-col NAME] [--table-only]
+    uv run python .../benchmark_table.py --dataset-dir ~/datasets/RECORDINGS_DIR
+    ... [--with-hk-village] [--force] [--only-env NAME] [--only-col NAME] [--table-only]
 """
 
 from __future__ import annotations
@@ -51,103 +50,128 @@ EVAL_PY = LOOP_CLOSURE_DIR / "eval.py"
 RESULTS_DIR = LOOP_CLOSURE_DIR / "eval_results"
 TABLE_PATH = RESULTS_DIR / "benchmark_table.md"
 
-DEFAULT_GO2_ROOT = Path("~/datasets/go2_recordings").expanduser()
-# loop_closure/modules/jnav/navigation/dimos/<repo_root> -> parents[4] is repo root.
 LFS_DATA_DIR = LOOP_CLOSURE_DIR.parents[4] / "data"  # repo_root/data (hk_village*.db)
-
-# Shared loop-closure thresholds for the gsc_pgo configs (mirrors recordings_eval).
-_CMU_BASE: dict[str, Any] = {
-    "loop_search_radius": 3.0,
-    "loop_time_thresh": 5.0,
-    "min_loop_detect_duration": 2.0,
-    "key_pose_delta_trans": 0.5,
-}
-
-
-@dataclass(frozen=True)
-class Column:
-    """One implementation+config = one table column."""
-
-    name: str  # column label + results-suffix (disambiguates same-class modules)
-    module_dir: str  # subdir under loop_closure/ holding module.py (class PGO)
-    overrides: dict[str, Any] = field(default_factory=dict)
-
-
-COLUMNS: list[Column] = [
-    Column("cmu_stock", "gsc_pgo", {}),
-    Column("cmu_scan_context", "gsc_pgo", {**_CMU_BASE, "use_scan_context": True}),
-    Column("cmu_radius", "gsc_pgo", {**_CMU_BASE, "use_scan_context": False}),
-    Column(
-        "cmu_scan_context_far",
-        "gsc_pgo",
-        {
-            **_CMU_BASE,
-            "use_scan_context": True,
-            "loop_candidate_max_distance_m": 0.0,
-            "loop_score_thresh": 10000.0,
-        },
-    ),
-    Column("unrefined", "unrefined_pgo", {}),
-    Column("ivan", "ivan_pgo", {"publish_global_map": False}),
-    Column("ivan_transformer", "ivan_pgo_transformer", {}),
-]
 
 
 @dataclass(frozen=True)
 class Environment:
     """One dataset = one table row."""
 
-    name: str  # results-dir recording key
-    db_path: Path
+    db_path: str  # mem2.db path, relative to the dataset dir
     odom_stream: str
     lidar_stream: str
     camera_stream: str | None = None
-    intrinsics_json: Path | None = None
+    intrinsics_json: str | None = None  # camera-intrinsics file, relative to the dataset dir
 
 
-def discover_go2(root: Path) -> list[Environment]:
-    environments = []
-    for db_path in sorted(root.glob("*/mem2.db")):
-        recording = db_path.parent
-        sidecar = recording / "camera_intrinsics.json"
-        environments.append(
-            Environment(
-                name=recording.name,
-                db_path=db_path,
-                odom_stream="fastlio_odometry",
-                lidar_stream="fastlio_lidar",
-                camera_stream="color_image",
-                intrinsics_json=sidecar if sidecar.exists() else None,
-            )
-        )
-    return environments
+@dataclass(frozen=True)
+class LoopClosureModule:
+    """One implementation (+ optional config override) = one table column."""
+
+    module_name: str  # class name inside module.py (e.g. PGO)
+    module_dir: str  # subdir under loop_closure/ holding module.py
+    config: dict[str, Any] = field(default_factory=dict)
 
 
-def discover_hk_village(data_dir: Path) -> list[Environment]:
-    # hk_village LFS dbs publish world-frame lidar + PoseStamped odom; no camera
-    # intrinsics sidecar, so they score on voxel agreement alone.
-    environments = []
-    for db_path in sorted(data_dir.glob("hk_village*.db")):
-        environments.append(
-            Environment(
-                name=db_path.stem,
-                db_path=db_path,
-                odom_stream="odom",
-                lidar_stream="lidar",
-                camera_stream=None,
-                intrinsics_json=None,
-            )
-        )
-    return environments
+# Ordered; the dict key is the row name and the results-dir key. Bare keys use pointlio;
+# a `_fastlio` suffix marks the fastlio-odom variant of the same recording. Paths are
+# relative to --dataset-dir. grassy_field last (feature-poor field, lowest priority).
+RECORDINGS: dict[str, Environment] = {
+    "huge_loop_realsense": Environment(
+        db_path="2026-06-04_12-57pm-PST__huge_loop_realsense/mem2.db",
+        odom_stream="pointlio_odometry",
+        lidar_stream="pointlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-04_12-57pm-PST__huge_loop_realsense/camera_intrinsics.json",
+    ),
+    "huge_loop_realsense_fastlio": Environment(
+        db_path="2026-06-04_12-57pm-PST__huge_loop_realsense/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-04_12-57pm-PST__huge_loop_realsense/camera_intrinsics.json",
+    ),
+    "huge_loop_go2": Environment(
+        db_path="2026-06-04_12-56pm-PST__huge_loop_go2/mem2.db",
+        odom_stream="pointlio_odometry",
+        lidar_stream="pointlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-04_12-56pm-PST__huge_loop_go2/camera_intrinsics.json",
+    ),
+    "china_office1": Environment(
+        db_path="2026-06-12_03-26am-PST__china_office1/mem2.db",
+        odom_stream="pointlio_odometry",
+        lidar_stream="pointlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-12_03-26am-PST__china_office1/camera_intrinsics.json",
+    ),
+    "gir_stairs2": Environment(
+        db_path="2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
+        odom_stream="pointlio_odometry",
+        lidar_stream="pointlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-02_10-03pm-PST__gir_stairs2/camera_intrinsics.json",
+    ),
+    "outdoor_small_loop": Environment(
+        db_path="2026-05-28_10-54am-PST__outdoor_small_loop/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-05-28_10-54am-PST__outdoor_small_loop/camera_intrinsics.json",
+    ),
+    "gir_stairs1": Environment(
+        db_path="2026-06-01_6-05pm-PST__gir_stairs1/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-01_6-05pm-PST__gir_stairs1/camera_intrinsics.json",
+    ),
+    "gir_park1": Environment(
+        db_path="2026-06-02_11-12pm-PST__gir_park1/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-02_11-12pm-PST__gir_park1/camera_intrinsics.json",
+    ),
+    "gir_park1_2": Environment(
+        db_path="2026-06-02_11-33pm-PST__gir_park1_2/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-02_11-33pm-PST__gir_park1_2/camera_intrinsics.json",
+    ),
+    "grassy_field": Environment(
+        db_path="2026-06-01_05-32pm-PST__grassy_field/mem2.db",
+        odom_stream="fastlio_odometry",
+        lidar_stream="fastlio_lidar",
+        camera_stream="color_image",
+        intrinsics_json="2026-06-01_05-32pm-PST__grassy_field/camera_intrinsics.json",
+    ),
+}
 
 
-def cell_dir(environment: Environment, column: Column) -> Path:
-    # Mirrors eval.py's out_dir formula: <recording>__<package>.PGO[.<suffix>].
-    return RESULTS_DIR / f"{environment.name}__{column.module_dir}.PGO.{column.name}"
+LOOP_CLOSURE_MODULES: dict[str, LoopClosureModule] = {
+    "gsc_pgo": LoopClosureModule(module_name="PGO", module_dir="gsc_pgo"),
+    "gsc_pgo_no_sc": LoopClosureModule(
+        module_name="PGO", module_dir="gsc_pgo", config={"use_scan_context": False}
+    ),
+    "gsc_pgo_sc_far": LoopClosureModule(
+        module_name="PGO",
+        module_dir="gsc_pgo",
+        config={"loop_candidate_max_distance_m": 0.0, "loop_score_thresh": 10000.0},
+    ),
+    # "ivan_pgo": LoopClosureModule(
+    #     module_name="PGO", module_dir="ivan_pgo", config={"publish_global_map": False}
+    # ),
+    # "ivan_pgo_transformer": LoopClosureModule(module_name="PGO", module_dir="ivan_pgo_transformer"),
+    # "unrefined_pgo": LoopClosureModule(module_name="PGO", module_dir="unrefined_pgo"),
+}
 
 
-def cell_is_fresh(environment: Environment, column: Column) -> bool:
-    summary_path = cell_dir(environment, column) / "summary.json"
+def cell_is_fresh(name: str, module_key: str, module: LoopClosureModule, db_path: Path) -> bool:
+    # eval.py's out_dir formula: <recording>__<package>.<class>[.<suffix>].
+    cell_dir = RESULTS_DIR / f"{name}__{module.module_dir}.{module.module_name}.{module_key}"
+    summary_path = cell_dir / "summary.json"
     if not summary_path.exists():
         return False
     try:
@@ -155,7 +179,7 @@ def cell_is_fresh(environment: Environment, column: Column) -> bool:
     except (json.JSONDecodeError, OSError):
         return False
     fingerprint = summary.get("fingerprint", {})
-    stat = environment.db_path.stat()
+    stat = db_path.stat()
     return (
         fingerprint.get("db_bytes") == stat.st_size
         and fingerprint.get("db_mtime") == int(stat.st_mtime)
@@ -163,35 +187,31 @@ def cell_is_fresh(environment: Environment, column: Column) -> bool:
     )
 
 
-def _kill_zombies() -> None:
-    """Clear leftover native processes / workers that can wedge the next cell."""
-    subprocess.run(
-        "lsof -ti tcp:7766 2>/dev/null | xargs kill -9 2>/dev/null;"
-        ' pkill -9 -f "bin/pgo|scene_lidar" 2>/dev/null',
-        shell=True,
-        check=False,
-    )
-
-
-def run_cell(environment: Environment, column: Column) -> bool:
+def run_cell(
+    name: str,
+    module_key: str,
+    module: LoopClosureModule,
+    environment: Environment,
+    dataset_dir: Path,
+) -> bool:
     command = [
         sys.executable,
         "-u",
         str(EVAL_PY),
         "--db-path",
-        str(environment.db_path),
+        str(dataset_dir / environment.db_path),
         "--odom-stream",
         environment.odom_stream,
         "--lidar-stream",
         environment.lidar_stream,
         "--module-path",
-        str(LOOP_CLOSURE_DIR / column.module_dir / "module.py"),
+        str(LOOP_CLOSURE_DIR / module.module_dir / "module.py"),
         "--module-name",
-        "PGO",
+        module.module_name,
         "--recording-name",
-        environment.name,
+        name,
         "--results-suffix",
-        column.name,
+        module_key,
         "--with-rrd",
         "false",
         "--lockstep",
@@ -200,34 +220,31 @@ def run_cell(environment: Environment, column: Column) -> bool:
     if environment.camera_stream is not None:
         command += ["--camera-stream", environment.camera_stream]
     if environment.intrinsics_json is not None:
-        command += ["--camera-intrinsics-json-path", str(environment.intrinsics_json)]
-    if column.overrides:
-        command += ["--pgo-config-json", json.dumps(column.overrides)]
-    print(f"\n=== {environment.name} x {column.name} ===", flush=True)
+        command += ["--camera-intrinsics-json-path", str(dataset_dir / environment.intrinsics_json)]
+    if module.config:
+        command += ["--pgo-config-json", json.dumps(module.config)]
+    print(f"\n=== {name} x {module_key} ===", flush=True)
     result = subprocess.run(command, check=False)
-    print(f"=== {environment.name} x {column.name} exit: {result.returncode} ===", flush=True)
+    print(f"=== {name} x {module_key} exit: {result.returncode} ===", flush=True)
     return result.returncode == 0
 
 
-def _fmt(value: float | None, places: int = 3, signed: bool = True) -> str:
-    if value is None:
-        return "—"
-    return f"{value:+.{places}f}" if signed else f"{value:.{places}f}"
-
-
-def render_table(environments: list[Environment]) -> Path:
+def render_table(environments: dict[str, Environment]) -> Path:
     cells: dict[tuple[str, str], dict[str, Any]] = {}
     for summary_path in RESULTS_DIR.glob("*/summary.json"):
-        recording, _, module_key = summary_path.parent.name.rpartition("__")
+        recording, _, column_key = summary_path.parent.name.rpartition("__")
         try:
             summary = json.loads(summary_path.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-        cells[(recording, module_key)] = summary.get("scores", {})
+        cells[(recording, column_key)] = summary.get("scores", {})
 
-    column_keys = [f"{column.module_dir}.PGO.{column.name}" for column in COLUMNS]
-    header = "| environment | " + " | ".join(column.name for column in COLUMNS) + " |"
-    sep = "|" + "---|" * (len(COLUMNS) + 1)
+    column_keys = [
+        f"{module.module_dir}.{module.module_name}.{key}"
+        for key, module in LOOP_CLOSURE_MODULES.items()
+    ]
+    header = "| environment | " + " | ".join(LOOP_CLOSURE_MODULES) + " |"
+    sep = "|" + "---|" * (len(LOOP_CLOSURE_MODULES) + 1)
     lines = [
         "# PGO benchmark — environments x implementations",
         "",
@@ -236,17 +253,26 @@ def render_table(environments: list[Environment]) -> Path:
         "ground-truth-free score) — then `tag:<april-tag improvement>` where a camera "
         "exists, and `cl<closures>`. Higher is better; `—` = not yet run / N/A.",
         "",
+        "How to read a cell, e.g. `+0.016 tag:-0.73 cl94`: `+0.016` = voxel "
+        "improvement (occupied 0.2 m voxels dropped 1.6% after re-anchoring onto the "
+        "corrected trajectory; positive = tighter map, negative = smeared worse than "
+        "raw odometry). `tag:-0.73` = april-tag improvement, the fractional drop in "
+        "per-visit tag-position spread (`+1.00` = revisits collapse to a point, "
+        "`0.00` = no change, negative = worse; here 73% worse). `cl94` = 94 loop "
+        "closures accepted.",
+        "",
         header,
         sep,
     ]
-    for environment in environments:
+    for name in environments:
         row_cells = []
         for column_key in column_keys:
-            scores = cells.get((environment.name, column_key))
+            scores = cells.get((name, column_key))
             if scores is None:
                 row_cells.append("—")
                 continue
-            voxel = _fmt(scores.get("voxel_improvement"))
+            voxel_value = scores.get("voxel_improvement")
+            voxel = "—" if voxel_value is None else f"{voxel_value:+.3f}"
             tag = scores.get("tag_improvement")
             closures = scores.get("closures")
             text = voxel
@@ -255,19 +281,19 @@ def render_table(environments: list[Environment]) -> Path:
             if closures is not None:
                 text += f" cl{closures}"
             row_cells.append(text)
-        lines.append(f"| {environment.name} | " + " | ".join(row_cells) + " |")
+        lines.append(f"| {name} | " + " | ".join(row_cells) + " |")
 
     # Per-column mean voxel improvement (over environments that have a number).
     lines += ["", "## Mean voxel improvement per column", ""]
-    lines.append("| " + " | ".join(column.name for column in COLUMNS) + " |")
-    lines.append("|" + "---|" * len(COLUMNS))
+    lines.append("| " + " | ".join(LOOP_CLOSURE_MODULES) + " |")
+    lines.append("|" + "---|" * len(LOOP_CLOSURE_MODULES))
     means = []
     for column_key in column_keys:
         values = [
-            cells[(environment.name, column_key)]["voxel_improvement"]
-            for environment in environments
-            if (environment.name, column_key) in cells
-            and cells[(environment.name, column_key)].get("voxel_improvement") is not None
+            cells[(name, column_key)]["voxel_improvement"]
+            for name in environments
+            if (name, column_key) in cells
+            and cells[(name, column_key)].get("voxel_improvement") is not None
         ]
         means.append(f"{sum(values) / len(values):+.3f}" if values else "—")
     lines.append("| " + " | ".join(means) + " |")
@@ -278,11 +304,42 @@ def render_table(environments: list[Environment]) -> Path:
     return TABLE_PATH
 
 
+EXAMPLE_USAGE = """\
+examples:
+  # run the whole table (every recording x every module/config), resuming cached cells
+  uv run python .../benchmark_table.py --dataset-dir ~/datasets/RECORDINGS_DIR
+
+  # only one recording row, only the stock gsc_pgo column
+  ... --dataset-dir ~/datasets/RECORDINGS_DIR --only-env huge_loop_realsense --only-col gsc_pgo
+
+  # recompute everything from scratch (ignore cached summaries)
+  ... --dataset-dir ~/datasets/RECORDINGS_DIR --force
+
+  # just re-render the markdown table from cached results, run nothing
+  ... --dataset-dir ~/datasets/RECORDINGS_DIR --table-only
+
+  # also run the hk_village recordings (always read from the repo LFS data dir)
+  ... --dataset-dir ~/datasets/RECORDINGS_DIR --with-hk-village
+"""
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--go2-root", type=Path, default=DEFAULT_GO2_ROOT)
-    parser.add_argument("--with-hk-village", action="store_true")
-    parser.add_argument("--data-dir", type=Path, default=LFS_DATA_DIR)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=EXAMPLE_USAGE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        required=True,
+        help="dir holding the go2 recordings (RECORDINGS paths are relative to this)",
+    )
+    parser.add_argument(
+        "--with-hk-village",
+        action="store_true",
+        help="also run the hk_village recordings (always read from the repo LFS data dir)",
+    )
     parser.add_argument("--only-env", help="comma-separated environment names")
     parser.add_argument("--only-col", help="comma-separated column names")
     parser.add_argument("--force", action="store_true", help="recompute fresh cells too")
@@ -292,43 +349,58 @@ def main() -> None:
     parser.add_argument("--table-only", action="store_true", help="render from cache, run nothing")
     args = parser.parse_args()
 
-    environments = discover_go2(args.go2_root.expanduser())
+    dataset_dir = args.dataset_dir.expanduser()
+    environments = {
+        name: environment
+        for name, environment in RECORDINGS.items()
+        if (dataset_dir / environment.db_path).exists()
+    }
     if args.with_hk_village:
-        environments += discover_hk_village(args.data_dir.expanduser())
+        # hk_village dbs live in the repo LFS data dir, never the recordings dataset dir.
+        # They publish world-frame lidar + PoseStamped odom, no camera, so they score on
+        # voxel agreement alone.
+        for db_path in sorted(LFS_DATA_DIR.glob("hk_village*.db")):
+            environments[db_path.stem] = Environment(
+                db_path=str(db_path), odom_stream="odom", lidar_stream="lidar"
+            )
     if args.only_env:
         wanted = {name.strip() for name in args.only_env.split(",")}
-        environments = [environment for environment in environments if environment.name in wanted]
+        environments = {name: env for name, env in environments.items() if name in wanted}
 
-    columns = COLUMNS
+    modules = LOOP_CLOSURE_MODULES
     if args.only_col:
         wanted = {name.strip() for name in args.only_col.split(",")}
-        columns = [column for column in COLUMNS if column.name in wanted]
+        modules = {key: module for key, module in LOOP_CLOSURE_MODULES.items() if key in wanted}
 
     if args.table_only:
         print(f"table -> {render_table(environments)}")
         return
 
-    total = len(environments) * len(columns)
-    print(f"benchmark: {len(environments)} environments x {len(columns)} columns = {total} cells")
+    total = len(environments) * len(modules)
+    print(f"benchmark: {len(environments)} environments x {len(modules)} columns = {total} cells")
     done = skipped = failed = 0
-    for environment in environments:
-        for column in columns:
-            if not args.force and cell_is_fresh(environment, column):
+    for name, environment in environments.items():
+        db_path = dataset_dir / environment.db_path
+        for module_key, module in modules.items():
+            if not args.force and cell_is_fresh(name, module_key, module, db_path):
                 skipped += 1
-                print(f"skip (fresh): {environment.name} x {column.name}", flush=True)
+                print(f"skip (fresh): {name} x {module_key}", flush=True)
                 continue
             # Retry transient macOS LCM startup-RPC timeouts; a fresh process
-            # almost always gets past them. Kill zombies between attempts.
+            # almost always gets past them. Kill leftover native procs between attempts.
             ok = False
             for attempt in range(1, args.attempts + 1):
-                ok = run_cell(environment, column)
+                ok = run_cell(name, module_key, module, environment, dataset_dir)
                 if ok:
                     break
-                _kill_zombies()
+                subprocess.run(
+                    "lsof -ti tcp:7766 2>/dev/null | xargs kill -9 2>/dev/null;"
+                    ' pkill -9 -f "bin/pgo|scene_lidar" 2>/dev/null',
+                    shell=True,
+                    check=False,
+                )
                 if attempt < args.attempts:
-                    print(
-                        f"retry {attempt + 1}/{args.attempts}: {environment.name} x {column.name}"
-                    )
+                    print(f"retry {attempt + 1}/{args.attempts}: {name} x {module_key}")
                     time.sleep(5)
             done += 1 if ok else 0
             failed += 0 if ok else 1
