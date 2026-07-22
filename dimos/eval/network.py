@@ -57,7 +57,7 @@ SAME_HOST: frozenset[str] = frozenset(
 
 
 def _transport_key(context_name: str) -> str:
-    """"lcm_pubsub_channel" -> "lcm"; "zenoh_peers_pubsub_channel" -> "zenoh_peers"."""
+    """ "lcm_pubsub_channel" -> "lcm"; "zenoh_peers_pubsub_channel" -> "zenoh_peers"."""
     return context_name.replace("_pubsub_channel", "")
 
 
@@ -132,7 +132,7 @@ def netem_available() -> tuple[bool, str]:
 
 
 @contextmanager
-def impaired_link(iface: str, profile: NetemProfile) -> "Iterator[None]":
+def impaired_link(iface: str, profile: NetemProfile) -> Iterator[None]:
     """Apply ``profile`` to ``iface`` for the duration of the block, then clear.
 
     A baseline profile is a no-op. tc qdisc replace is idempotent, so a leaked
@@ -193,7 +193,7 @@ class NetworkEvalResult:
         return json.dumps(self.to_dict(), indent=indent)
 
 
-def _verdict(result: "BenchmarkResult", max_loss_pct: float, max_latency_ms: float) -> bool:
+def _verdict(result: BenchmarkResult, max_loss_pct: float, max_latency_ms: float) -> bool:
     return result.loss_pct <= max_loss_pct and (result.receive_time * 1000) <= max_latency_ms
 
 
@@ -256,8 +256,13 @@ def run_network_eval(
                     topic, msg = case.msg_gen(msg_size)
                     with case.pubsub_context() as pubsub:
                         bench = measure_throughput(
-                            pubsub, topic, msg, name, msg_size,
-                            duration=duration, receive_timeout=receive_timeout,
+                            pubsub,
+                            topic,
+                            msg,
+                            name,
+                            msg_size,
+                            duration=duration,
+                            receive_timeout=receive_timeout,
                         )
                     result.samples.append(
                         NetworkSample(
@@ -345,16 +350,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true", help="List transports/profiles and exit.")
     parser.add_argument("--iface", default="lo", help="Interface to impair (default: lo).")
-    parser.add_argument("--transport", action="append", metavar="NAME",
-                        help="Restrict to this transport (repeatable); default: all.")
-    parser.add_argument("--profile", action="append", metavar="NAME",
-                        help="Restrict to this profile (repeatable); default: all.")
-    parser.add_argument("--baseline-only", action="store_true",
-                        help="Run only the 'perfect' profile (no root/netem needed).")
+    parser.add_argument(
+        "--transport",
+        action="append",
+        metavar="NAME",
+        help="Restrict to this transport (repeatable); default: all.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        metavar="NAME",
+        help="Restrict to this profile (repeatable); default: all.",
+    )
+    parser.add_argument(
+        "--baseline-only",
+        action="store_true",
+        help="Run only the 'perfect' profile (no root/netem needed).",
+    )
     parser.add_argument("--msg-size", type=int, default=4096, help="Payload bytes (default: 4096).")
-    parser.add_argument("--duration", type=float, default=1.0, help="Publish window s (default: 1).")
+    parser.add_argument(
+        "--duration", type=float, default=1.0, help="Publish window s (default: 1)."
+    )
     parser.add_argument("--max-loss", type=float, default=5.0, help="PASS loss%% budget (def: 5).")
-    parser.add_argument("--max-latency", type=float, default=250.0, help="PASS ms budget (def: 250).")
+    parser.add_argument(
+        "--max-latency", type=float, default=250.0, help="PASS ms budget (def: 250)."
+    )
     parser.add_argument("--output", "-o", type=Path, default=None, help="JSON artifact path.")
     parser.add_argument("--quiet", "-q", action="store_true", help="Skip the terminal report.")
     args = parser.parse_args(argv)

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runs headless and defaults to replay/sim so no robot is required.
-"""
+"""Runs headless and defaults to replay/sim so no robot is required."""
 
 from __future__ import annotations
 
@@ -45,8 +44,7 @@ _SIMULATORS = ("mujoco", "dimsim")
 
 
 def _config_overrides(run_mode: str, simulator: str) -> dict[str, object]:
-    """Build the global_config overrides for a run mode.
-    """
+    """Build the global_config overrides for a run mode."""
     if run_mode == "replay":
         return {"replay": True}
     if run_mode == "simulation":
@@ -63,8 +61,7 @@ def run_eval(
     warmup: float = 3.0,
     interval: float = 1.0,
 ) -> EvalResult:
-    """Evaluate ``blueprint`` on the current machine and return an EvalResult.
-    """
+    """Evaluate ``blueprint`` on the current machine and return an EvalResult."""
     if run_mode not in _RUN_MODES:
         raise ValueError(f"run_mode must be one of {list(_RUN_MODES)}, got {run_mode!r}")
     if run_mode == "simulation" and simulator not in _SIMULATORS:

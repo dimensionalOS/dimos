@@ -28,8 +28,7 @@ ResourceSample = tuple[ProcessStats, list[WorkerStats]]
 
 
 class InMemoryResourceLogger:
-    """A ResourceLogger that accumulates samples instead of publishing them.
-    """
+    """A ResourceLogger that accumulates samples instead of publishing them."""
 
     def __init__(self) -> None:
         self._samples: list[ResourceSample] = []
@@ -197,8 +196,9 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def aggregate_worker(worker_id: int, modules: list[str], dedicated: bool,
-                     stats: list[ProcessStats]) -> WorkerFootprint:
+def aggregate_worker(
+    worker_id: int, modules: list[str], dedicated: bool, stats: list[ProcessStats]
+) -> WorkerFootprint:
     """Collapse a process's samples into a single WorkerFootprint."""
     alive = [s for s in stats if s.alive] or stats
     cpu = [s.cpu_percent for s in alive]
@@ -222,7 +222,6 @@ def aggregate_worker(worker_id: int, modules: list[str], dedicated: bool,
 
 
 def aggregate_totals(samples: list[ResourceSample]) -> tuple[float, int, int]:
-    
     if not samples:
         return 0.0, 0, 0
     cpu_series: list[float] = []
