@@ -30,6 +30,9 @@ from dimos.hardware.manipulators.spec import (
     ManipulatorAdapter,
     ManipulatorInfo,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Unit conversion constants
 MM_TO_M = 0.001
@@ -72,7 +75,7 @@ class XArmAdapter(ManipulatorAdapter):
             self._arm.connect()
 
             if not self._arm.connected:
-                print(f"ERROR: XArm at {self._ip} not reachable (connected=False)")
+                logger.error("XArm at %s not reachable (connected=False)", self._ip)
                 return False
 
             # Initialize to servo mode for high-frequency control
@@ -82,7 +85,7 @@ class XArmAdapter(ManipulatorAdapter):
 
             return True
         except Exception as e:
-            print(f"ERROR: Failed to connect to XArm at {self._ip}: {e}")
+            logger.error("Failed to connect to XArm at %s: %s", self._ip, e)
             return False
 
     def disconnect(self) -> None:
@@ -240,11 +243,10 @@ class XArmAdapter(ManipulatorAdapter):
             return False
 
         self._prepare_for_position_motion()
-        if not self._move_to_initial_pose():
-            return False
+        homed = self._move_to_initial_pose()
         self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
-        return code == 0
+        return homed and code == 0
 
     def _move_to_initial_pose(self) -> bool:
         if not self._arm:
@@ -260,6 +262,16 @@ class XArmAdapter(ManipulatorAdapter):
             mvacc=_XARM_LIFECYCLE_ACCEL_DEG,
             wait=True,
         )
+        if code != 0:
+            logger.warning(
+                "xArm move-to-initial-pose failed: set_servo_angle code=%s "
+                "(state=%s mode=%s err=%s warn=%s)",
+                code,
+                self._arm.state,
+                self._arm.mode,
+                self._arm.error_code,
+                self._arm.warn_code,
+            )
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
