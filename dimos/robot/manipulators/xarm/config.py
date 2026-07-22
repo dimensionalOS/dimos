@@ -70,6 +70,33 @@ XARM_GRIPPER_PARAMS = {
 XARM7_SIM_HOME = [0.0, -0.25521, 0.0, 1.2448, 0.0, 1.50044, 0.0]
 
 
+# Camera at (0.45, 0, 0.52) looking straight down at the table, mirroring the
+# xarm7 sim home view (solved on data/xarm6/scene.xml with link_base at origin).
+XARM6_SIM_HOME = [0.0, -0.26112, -1.2627, 0.0, 1.52382, 0.0]
+
+
+def make_xarm6_sim_hardware(address: str | Path) -> HardwareComponent:
+    return make_xarm_hardware(
+        "arm",
+        6,
+        adapter_type="sim_mujoco",
+        address=address,
+        gripper=True,
+        home_joints=XARM6_SIM_HOME,
+    )
+
+
+def make_xarm6_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+    return {
+        "address": address,
+        "headless": False,
+        "dof": 6,
+        "camera_name": "wrist_camera",
+        "base_frame_id": "link6",
+        "reset_joint_positions": XARM6_SIM_HOME,
+    }
+
+
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         name="arm",
