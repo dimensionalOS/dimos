@@ -110,7 +110,8 @@ class ZenohService(Service):
 def _password_dictionary_file(user: str, password: str) -> str:
     directory = CACHE_DIR / "zenoh_auth"
     directory.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(f"{user}:{password}".encode()).hexdigest()[:16]
+    # hash only the user (not the password) for a stable, filesystem-safe name
+    digest = hashlib.sha256(user.encode()).hexdigest()[:16]
     path = directory / f"{digest}.txt"
     path.write_text(f"{user}:{password}\n")
     path.chmod(0o600)
