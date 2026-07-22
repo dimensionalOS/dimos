@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import time
 
 from pydantic import Field
@@ -99,7 +100,16 @@ class GO2Zenoh(StaticTfPublisher):
         )
         self.spawn(self._publish_camera_info())
 
-        time.sleep(1)  # don't ask idk
+        # Off the calling thread: start() has to return for the rest of the graph to come
+        # up, and the first verbs go nowhere until zenoh has matched our command publisher
+        # against the bridge's subscriber. Cancelled by stop() if we never get that far.
+        timer = threading.Timer(3.0, self._startup_pose)
+        timer.daemon = True
+        timer.start()
+        self.register_disposable(Disposable(timer.cancel))
+
+    def _startup_pose(self) -> None:
+        """Stand, and drop the head L1 — Point-LIO runs off the MID-360, not that one."""
         self.standup()
         self.set_lidar(False)
 
