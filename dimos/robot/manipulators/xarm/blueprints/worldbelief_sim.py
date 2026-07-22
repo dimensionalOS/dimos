@@ -63,6 +63,13 @@ xarm6_worldbelief_sim = autoconnect(
                 home_joints=XARM6_SIM_HOME,
             ),
         ],
+        # Sim stack runs on the RoboPlan (pinocchio) backend with its native
+        # RRT planner; Drake stays the default for hardware blueprints.
+        world_backend="roboplan",
+        planner_name="roboplan",
+        # Viser replaces the retired DrakeWorld meshcat; reachable over an SSH
+        # port-forward to 127.0.0.1:8095 (logged as "Visualization:" at startup).
+        visualization={"backend": "viser"},
     ),
     MujocoSimModule.blueprint(**make_xarm6_sim_module_kwargs(XARM6_SIM_PATH)),
     RerunBridgeModule.blueprint(
