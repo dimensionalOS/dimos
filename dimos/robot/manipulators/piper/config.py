@@ -42,6 +42,14 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
 }
 PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
+PIPER_HOME_JOINTS = [
+    0.793,
+    1.568186214614724,
+    -1.0290351975897356,
+    0.0008456548489068756,
+    0.9771515619106422,
+    -0.13286819850920156,
+]
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
@@ -56,6 +64,8 @@ def make_piper_hardware(
     adapter_type: str = "mock",
     address: str | None = None,
     gripper: bool = True,
+    gripper_open_position: float | None = None,
+    gripper_closed_position: float | None = None,
     auto_enable: bool = True,
     adapter_kwargs: dict[str, object] | None = None,
     home_joints: list[float] | None = None,
@@ -71,6 +81,8 @@ def make_piper_hardware(
         address=address,
         auto_enable=auto_enable,
         gripper_joints=[f"{hw_id}/gripper"] if gripper else [],
+        gripper_open_position=gripper_open_position,
+        gripper_closed_position=gripper_closed_position,
         adapter_kwargs=kwargs,
     )
 
@@ -79,7 +91,9 @@ def piper_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = True,
-    mock_without_address: bool = False,
+    gripper_open_position: float | None = None,
+    gripper_closed_position: float | None = None,
+    mock_without_address: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
     if global_config.simulation:
@@ -88,16 +102,26 @@ def piper_hardware(
             adapter_type="sim_mujoco",
             address=str(PIPER_SIM_PATH),
             gripper=gripper,
+            gripper_open_position=gripper_open_position,
+            gripper_closed_position=gripper_closed_position,
             home_joints=home_joints,
         )
     address = global_config.can_port or "can0"
     if mock_without_address and not global_config.can_port:
-        return make_piper_hardware(hw_id, gripper=gripper, home_joints=home_joints)
+        return make_piper_hardware(
+            hw_id,
+            gripper=gripper,
+            gripper_open_position=gripper_open_position,
+            gripper_closed_position=gripper_closed_position,
+            home_joints=home_joints,
+        )
     return make_piper_hardware(
         hw_id,
         adapter_type="piper",
         address=address,
         gripper=gripper,
+        gripper_open_position=gripper_open_position,
+        gripper_closed_position=gripper_closed_position,
         home_joints=home_joints,
     )
 
@@ -110,6 +134,7 @@ def make_piper_model_config(
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     dof = 6
+    model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         name=name,
         model_path=PIPER_MODEL_PATH,
@@ -127,5 +152,5 @@ def make_piper_model_config(
         ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
-        home_joints=home_joints or [0.0] * dof,
+        home_joints=model_home_joints,
     )

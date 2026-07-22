@@ -99,9 +99,10 @@
             "pages": [
               "capabilities/manipulation/index",
               "capabilities/manipulation/agentic",
+              "capabilities/manipulation/planning",
+              "capabilities/manipulation/learning",
               "capabilities/manipulation/adding_a_custom_arm",
-              "capabilities/manipulation/openarm_integration",
-              "capabilities/manipulation/a750"
+              "capabilities/manipulation/piper_integration"
             ]
           },
           {
@@ -154,6 +155,13 @@
             "group": "Humanoid",
             "pages": [
               "platforms/humanoid/g1/index"
+            ]
+          },
+          {
+            "group": "Arms",
+            "pages": [
+              "platforms/arms/a750",
+              "platforms/arms/openarm"
             ]
           }
         ]
@@ -418,11 +426,31 @@
     },
     {
       "source": "/docs/capabilities/manipulation/openarm_integration.md",
-      "destination": "/capabilities/manipulation/openarm_integration"
+      "destination": "/platforms/arms/openarm"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/piper_integration.md",
+      "destination": "/capabilities/manipulation/piper_integration"
     },
     {
       "source": "/docs/capabilities/manipulation/a750.md",
-      "destination": "/capabilities/manipulation/a750"
+      "destination": "/platforms/arms/a750"
+    },
+    {
+      "source": "/docs/platforms/arms/a750.md",
+      "destination": "/platforms/arms/a750"
+    },
+    {
+      "source": "/docs/platforms/arms/openarm.md",
+      "destination": "/platforms/arms/openarm"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/planning.md",
+      "destination": "/capabilities/manipulation/planning"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/learning.md",
+      "destination": "/capabilities/manipulation/learning"
     },
     {
       "source": "/docs/capabilities/memory/index.md",

@@ -32,7 +32,10 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
 )
-from dimos.robot.manipulators.piper.blueprints.teleop import keyboard_teleop_piper
+from dimos.robot.manipulators.piper.blueprints.teleop import (
+    coordinator_teleop_piper,
+    keyboard_teleop_piper,
+)
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     xarm6_planner_only,
@@ -50,6 +53,8 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModuleConfig
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.teleop.quest.blueprints import teleop_quest_piper
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -66,6 +71,49 @@ def _manipulation_config(blueprint: Blueprint) -> ManipulationModuleConfig:
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return _module_kwargs(blueprint, ControlCoordinator)["tasks"]
+
+
+def test_quest_piper_teleop_routes_to_declarative_teleop_task() -> None:
+    arm_kwargs = _module_kwargs(teleop_quest_piper, ArmTeleopModule)
+    assert arm_kwargs["task_names"] == {"left": "teleop_piper"}
+    assert "coordinator_cartesian_command" in teleop_quest_piper.remapping_map.values()
+
+
+def test_piper_teleop_blueprints_declare_viser_manipulation() -> None:
+    for blueprint in (keyboard_teleop_piper, coordinator_teleop_piper):
+        kwargs = _manipulation_kwargs(blueprint)
+        assert kwargs["robots"][0].coordinator_task_name == "traj_arm"
+        assert kwargs["visualization"] == {"backend": "viser"}
+
+
+def test_quest_piper_composes_planner_with_trajectory_coordinator() -> None:
+    assert _module_kwargs(coordinator_teleop_piper, ControlCoordinator)
+    assert _module_kwargs(coordinator_teleop_piper, ManipulationModule)
+    coordinator_planner = next(
+        atom for atom in coordinator_teleop_piper.blueprints if atom.module is ManipulationModule
+    )
+    quest_planners = [
+        atom for atom in teleop_quest_piper.blueprints if atom.module is ManipulationModule
+    ]
+    assert quest_planners == [coordinator_planner]
+
+
+def test_piper_teleop_declares_teleop_task() -> None:
+    tasks = _coordinator_tasks(coordinator_teleop_piper)
+    assert [(task.name, task.type) for task in tasks] == [
+        ("teleop_piper", "teleop_ik"),
+        ("traj_arm", "trajectory"),
+    ]
+
+
+def test_piper_keyboard_declares_high_priority_gripper_servo() -> None:
+    tasks = _coordinator_tasks(keyboard_teleop_piper)
+    servo = next(task for task in tasks if task.name == "servo_gripper")
+    trajectory = next(task for task in tasks if task.name == "traj_arm")
+    assert servo.type == "servo"
+    assert servo.joint_names == ["arm/gripper"]
+    assert servo.priority > next(task.priority for task in tasks if task.type == "eef_twist")
+    assert trajectory.type == "trajectory"
 
 
 def test_planner_helper_defaults_to_no_visualization() -> None:

@@ -110,8 +110,7 @@ class QuestTeleopModule(Module):
         self._control_loop_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
-        # Embedded web server — created lazily in _start_server() so subclasses
-        # with a different transport (e.g. hosted/broker) never build it.
+        # Embedded web server, initialized during the module start lifecycle.
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
 
@@ -169,6 +168,8 @@ class QuestTeleopModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
+        self._setup_routes()
         self._start_server()
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
@@ -248,8 +249,7 @@ class QuestTeleopModule(Module):
             return
 
         if self._web_server is None:
-            self._web_server = RobotWebInterface(port=self.config.server_port)
-            self._setup_routes()
+            return
 
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,

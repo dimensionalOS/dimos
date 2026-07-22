@@ -1,0 +1,871 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Galaxea A1Z adapter - implements ManipulatorAdapter protocol.
+
+SDK Units: angles=radians, velocity=rad/s, torque=Nm (SI throughout - no
+conversion needed).
+
+The a1z SDK runs its own 250 Hz control thread (MIT PD + gravity compensation)
+with built-in safety watchdogs (joint/velocity/temperature limits, stale
+feedback, loop-frequency). This adapter issues commands to that loop rather
+than driving CAN directly.
+
+Lifecycle mapping:
+- connect(): construct the robot (opens the CAN bus; motors stay unpowered)
+- activate() / write_enable(True): enable motors and start the control loop
+- write_stop(): latching soft e-stop (pins current position; commands rejected
+  until write_clear_errors())
+- deactivate() / write_enable(False): stop the control loop and DISABLE motors
+
+SAFETY: the A1 arm has no brakes. Disabling motors (deactivate, write_enable
+(False), disconnect) lets the arm fall freely. Lower or support the arm first.
+
+Zero-gravity (teaching) mode is chosen at construction time via the
+zero_gravity kwarg and cannot be switched at runtime; teach recording requires
+zero_gravity=True.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+import contextlib
+from pathlib import Path
+import platform
+import threading
+import time
+from typing import Any
+
+import numpy as np
+
+from dimos.hardware.manipulators.spec import (
+    ControlMode,
+    JointLimits,
+    ManipulatorInfo,
+)
+
+# Joint limits from a1z/robots/get_robot.py (_JOINT_LIMITS)
+_POSITION_LOWER = [-2.094, 0.0, -3.142, -1.484, -1.484, -2.007]
+_POSITION_UPPER = [2.094, 3.142, 0.0, 1.484, 1.484, 2.007]
+# Per-joint velocity caps from ArmRobot defaults (~70% of motor hardware max)
+_VELOCITY_MAX = [12.0, 12.0, 12.0, 7.0, 20.0, 20.0]
+
+# Max average speed for planned moves. move_joints uses minimum-jerk
+# interpolation with peak velocity 1.875x average and rejects speeds whose
+# peak exceeds the SDK's 4.0 rad/s streaming cap, so keep 1.875 * max <= 4.0.
+_PLANNED_SPEED_MAX_RAD_S = 2.0
+
+# Motor error codes 0x0 (disabled) and 0x1 (normal) are healthy; anything
+# else is a fault (matches ArmRobot._check_motor_errors).
+_HEALTHY_MOTOR_CODES = (0, 1)
+
+# G1Z gripper max opening used to convert the SDK's normalized position
+# (0.0=closed, 1.0=open) to meters. Measured on hardware: 10 cm jaw gap at
+# full open. Override via the gripper_max_opening_m constructor kwarg.
+_GRIPPER_MAX_OPENING_M = 0.1
+
+_STARTUP_FEEDBACK_TIMEOUT_S = 0.5
+_STARTUP_RAMP_DURATION_S = 1.0
+_STARTUP_SAMPLE_PERIOD_S = 0.02
+_STARTUP_MAX_VELOCITY_RAD_S = 0.5
+_STARTUP_SETTLED_VELOCITY_RAD_S = 0.1
+_STARTUP_SETTLING_TIMEOUT_S = 1.0
+_STARTUP_HOLD_SAMPLES = 5
+_STARTUP_SETTLED_SAMPLES = 5
+
+_SYS_CLASS_NET = Path("/sys/class/net")
+_A1Z_SOCKETCAN_DRIVER = "gs_usb"
+
+
+def _socketcan_channel_error(channel: str) -> str | None:
+    """Return why a channel is unsafe for A1Z SocketCAN, or None if ready."""
+    interface_path = _SYS_CLASS_NET / channel
+    try:
+        flags = int((interface_path / "flags").read_text(), 16)
+    except FileNotFoundError:
+        return (
+            f"SocketCAN interface {channel!r} does not exist. The HHS adapter must be "
+            "bound to the Linux gs_usb driver; pass its interface with --can-port."
+        )
+    except (OSError, ValueError) as exc:
+        return f"cannot read SocketCAN interface {channel!r}: {exc}"
+
+    try:
+        driver = (interface_path / "device" / "driver").resolve(strict=True).name
+    except OSError as exc:
+        return f"cannot verify the kernel driver for SocketCAN interface {channel!r}: {exc}"
+
+    if driver != _A1Z_SOCKETCAN_DRIVER:
+        return (
+            f"SocketCAN interface {channel!r} belongs to kernel driver {driver!r}, not "
+            f"the HHS adapter driver {_A1Z_SOCKETCAN_DRIVER!r}. Pass the HHS SocketCAN "
+            "interface with --can-port."
+        )
+    if not flags & 0x1:
+        return (
+            f"SocketCAN interface {channel!r} is DOWN. Configure it for 1 Mbit/s and "
+            "bring it UP before starting DimOS."
+        )
+    return None
+
+
+def _resolve_auto_transport(channel: str) -> str:
+    """Pick the CAN transport for transport="auto".
+
+    macOS uses the userspace bus because SocketCAN is unavailable there.
+    Every other platform uses native SocketCAN. There is deliberately no
+    Linux userspace fallback: connect() validates the selected kernel
+    interface and fails closed if it is missing, down, or not backed by the
+    HHS adapter's gs_usb driver.
+    """
+    del channel
+    if platform.system() == "Darwin":
+        return "gs_usb"
+    return "socketcan"
+
+
+@contextlib.contextmanager
+def _gs_usb_can_bus() -> Iterator[None]:
+    """Route the SDK's CAN bus construction through GsUsbMacBus.
+
+    get_a1z_robot() hardcodes bustype="socketcan" (Linux-only) when opening
+    the bus, so on macOS we swap can.interface.Bus for the userspace gs_usb
+    transport for the duration of the factory call. Everything else in the
+    vendor stack is transport-agnostic.
+    """
+    import can
+
+    from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import GsUsbMacBus
+
+    original_bus = can.interface.Bus
+
+    def _bus_factory(*args: Any, **kwargs: Any) -> GsUsbMacBus:
+        return GsUsbMacBus(bitrate=kwargs.get("bitrate", 1_000_000))
+
+    can.interface.Bus = _bus_factory  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        can.interface.Bus = original_bus  # type: ignore[assignment]
+
+
+class GalaxeaA1ZAdapter:
+    """Galaxea A1Z 6-DOF arm adapter.
+
+    Implements ManipulatorAdapter protocol via duck typing.
+    No inheritance required - just matching method signatures.
+
+    Supported control modes:
+    - POSITION: minimum-jerk planned move (SDK move_joints, runs in a
+      background thread so the call does not block)
+    - SERVO_POSITION: high-frequency joint position streaming
+      (SDK command_joint_pos)
+    """
+
+    def __init__(
+        self,
+        address: str = "can0",
+        dof: int = 6,
+        *,
+        gravity_comp_factor: float = 1.0,
+        zero_gravity: bool = False,
+        control_freq_hz: int = 250,
+        urdf_path: str | None = None,
+        gripper: bool = False,
+        gripper_free_drive: bool = False,
+        gripper_max_torque: float = 0.5,
+        gripper_max_opening_m: float = _GRIPPER_MAX_OPENING_M,
+        transport: str = "auto",
+        safe_start: bool = True,
+        **_: object,
+    ) -> None:
+        if transport not in ("auto", "socketcan", "gs_usb"):
+            raise ValueError(f"Unknown transport {transport!r}")
+        if dof != 6:
+            raise ValueError(f"GalaxeaA1ZAdapter only supports 6 DOF (got {dof})")
+        self._can_channel = address
+        self._dof = dof
+        self._gravity_comp_factor = gravity_comp_factor
+        self._zero_gravity = zero_gravity
+        self._control_freq_hz = control_freq_hz
+        self._urdf_path = urdf_path
+        self._gripper = gripper
+        self._gripper_free_drive = gripper_free_drive
+        self._gripper_max_torque = gripper_max_torque
+        self._gripper_max_opening_m = gripper_max_opening_m
+        if transport == "auto":
+            transport = _resolve_auto_transport(address)
+        if transport == "gs_usb" and platform.system() != "Darwin":
+            raise ValueError(
+                "transport='gs_usb' is macOS-only; Linux A1Z must use native SocketCAN"
+            )
+        self._transport = transport
+        # Dimensional addition on top of the vendor SDK (not Galaxea behavior):
+        # staged startup that prevents the enable-snap described in
+        # _safe_start(). Set safe_start=False for vendor-stock start().
+        self._safe_start_enabled = safe_start
+        self._robot: Any = None
+        self._connected: bool = False
+        self._control_mode: ControlMode = ControlMode.POSITION
+        self._move_thread: threading.Thread | None = None
+        self._move_lock = threading.Lock()
+        self._kinematics: Any = None
+
+    def connect(self) -> bool:
+        """Open the CAN bus and construct the robot. Motors stay unpowered."""
+        if self._transport == "socketcan":
+            channel_error = _socketcan_channel_error(self._can_channel)
+            if channel_error is not None:
+                print(f"ERROR: Galaxea A1Z SocketCAN configuration: {channel_error}")
+                return False
+
+        try:
+            from a1z.robots.get_robot import get_a1z_robot
+        except ImportError:
+            print(
+                "ERROR: a1z SDK not installed. Run "
+                "./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh"
+            )
+            return False
+
+        kwargs: dict[str, Any] = {
+            "can_channel": self._can_channel,
+            "gravity_comp_factor": self._gravity_comp_factor,
+            "zero_gravity_mode": self._zero_gravity,
+            "control_freq_hz": self._control_freq_hz,
+            "urdf_path": self._urdf_path,
+        }
+        if self._gripper:
+            # Only on the SDK's 'gripper' branch; main raises TypeError.
+            kwargs["with_gripper"] = True
+            kwargs["gripper_max_torque"] = self._gripper_max_torque
+
+        try:
+            if self._transport == "gs_usb":
+                with _gs_usb_can_bus():
+                    self._robot = get_a1z_robot(**kwargs)
+            else:
+                self._robot = get_a1z_robot(**kwargs)
+            self._connected = True
+            print(f"Galaxea A1Z connected via {self._transport} (channel {self._can_channel})")
+            return True
+        except TypeError as e:
+            print(
+                "ERROR: installed a1z SDK does not support the gripper - "
+                "run ./dimos/robot/manipulators/galaxea_a1z/scripts/setup_a1z.sh: "
+                f"{e}"
+            )
+            self._robot = None
+            return False
+        except Exception as e:
+            print(f"ERROR: Failed to connect to Galaxea A1Z on {self._can_channel}: {e}")
+            self._robot = None
+            return False
+
+    def disconnect(self) -> None:
+        """Stop the control loop, disable motors, and close the CAN bus.
+
+        SAFETY: the arm has no brakes and will fall when motors disable.
+        """
+        if self._robot:
+            try:
+                if self._robot.is_running:
+                    self._robot.stop()
+            except Exception:
+                pass
+            self._ensure_motors_disabled()
+            try:
+                # ArmRobot.stop() does not close the bus; shut it down so the
+                # CAN channel is reusable without recreating the process.
+                bus = getattr(self._robot, "_bus", None)
+                if bus is not None:
+                    bus.shutdown()
+            except Exception:
+                pass
+            finally:
+                self._robot = None
+                self._connected = False
+
+    def is_connected(self) -> bool:
+        """Check if connected (CAN bus open, robot constructed)."""
+        return self._connected and self._robot is not None
+
+    def activate(self) -> bool:
+        """Enable motors and start the SDK control loop."""
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        """Stop the control loop and disable motors.
+
+        SAFETY: the arm has no brakes and will fall when motors disable.
+        Lower the arm (e.g. move_joints to a rest pose) before calling.
+        """
+        return self.write_enable(False)
+
+    def get_info(self) -> ManipulatorInfo:
+        """Get manipulator info."""
+        return ManipulatorInfo(vendor="Galaxea", model="A1Z", dof=self._dof)
+
+    def get_dof(self) -> int:
+        """Get degrees of freedom."""
+        return self._dof
+
+    def get_limits(self) -> JointLimits:
+        """Get joint limits."""
+        return JointLimits(
+            position_lower=list(_POSITION_LOWER),
+            position_upper=list(_POSITION_UPPER),
+            velocity_max=list(_VELOCITY_MAX),
+        )
+
+    def set_control_mode(self, mode: ControlMode) -> bool:
+        """Set control mode. Only POSITION and SERVO_POSITION are supported.
+
+        Both map onto the same underlying MIT position+PD loop, so switching
+        needs no SDK call.
+        """
+        if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+            return False
+        self._control_mode = mode
+        return True
+
+    def get_control_mode(self) -> ControlMode:
+        """Get current control mode."""
+        return self._control_mode
+
+    def read_joint_positions(self) -> list[float]:
+        """Read current joint positions (radians)."""
+        return self._joint_state()["pos"].tolist()
+
+    def read_joint_velocities(self) -> list[float]:
+        """Read current joint velocities (rad/s)."""
+        return self._joint_state()["vel"].tolist()
+
+    def read_joint_efforts(self) -> list[float]:
+        """Read current joint efforts (Nm)."""
+        return self._joint_state()["eff"].tolist()
+
+    def read_state(self) -> dict[str, int]:
+        """Read robot state (0=idle, 1=running, 2=error/estopped)."""
+        if not self._robot:
+            return {"state": 0, "mode": 0, "error_code": 0}
+
+        error_code, _ = self.read_error()
+        if error_code != 0 or self._robot.is_estopped:
+            state = 2
+        elif self._robot.is_running:
+            state = 1
+        else:
+            state = 0
+
+        joint_state = self._joint_state()
+        return {
+            "state": state,
+            "mode": 0,
+            "error_code": error_code,
+            "temp_mos_max": int(max(joint_state["temp_mos"].tolist())),
+            "temp_rotor_max": int(max(joint_state["temp_rotor"].tolist())),
+        }
+
+    def read_error(self) -> tuple[int, str]:
+        """Read error code and message. (0, '') means no error."""
+        if not self._robot:
+            return 0, ""
+
+        codes = self._joint_state()["error_codes"].tolist()
+        for i, code in enumerate(codes):
+            if int(code) not in _HEALTHY_MOTOR_CODES:
+                return int(code), f"Motor fault on joint {i + 1}: code 0x{int(code):x}"
+        if self._robot.is_estopped:
+            return 1, "Soft e-stop latched (write_clear_errors to release)"
+        return 0, ""
+
+    def write_joint_positions(
+        self,
+        positions: list[float],
+        velocity: float = 1.0,
+    ) -> bool:
+        """Command joint positions (radians).
+
+        POSITION mode: minimum-jerk planned move in a background thread;
+        returns False if a planned move is already in progress.
+        SERVO_POSITION mode: single streamed position target.
+
+        Args:
+            positions: Target positions in radians
+            velocity: Speed as fraction of max planned speed (0-1)
+        """
+        if not self._robot or not self._robot.is_running or self._robot.is_estopped:
+            return False
+
+        target = np.asarray(positions, dtype=float)
+
+        if self._control_mode == ControlMode.SERVO_POSITION:
+            self._robot.command_joint_pos(target)
+            return True
+
+        # POSITION mode: reject overlapping planned moves
+        if not self._move_lock.acquire(blocking=False):
+            return False
+
+        speed = max(0.05, min(1.0, velocity)) * _PLANNED_SPEED_MAX_RAD_S
+
+        def _move() -> None:
+            try:
+                self._robot.move_joints(target, speed=speed)
+            except Exception as e:
+                print(f"Galaxea A1Z planned move failed: {e}")
+            finally:
+                self._move_lock.release()
+
+        self._move_thread = threading.Thread(target=_move, name="a1z_planned_move", daemon=True)
+        self._move_thread.start()
+        return True
+
+    def write_joint_velocities(self, velocities: list[float]) -> bool:
+        """Not supported - the a1z SDK has no velocity command API."""
+        return False
+
+    def write_stop(self) -> bool:
+        """Latching soft e-stop: pins current position, rejects commands.
+
+        Release with write_clear_errors() or write_enable(True).
+        """
+        if not self._robot:
+            return False
+        try:
+            self._robot.estop()
+            return True
+        except Exception:
+            return False
+
+    def write_enable(self, enable: bool) -> bool:
+        """Enable (start control loop) or disable (stop loop, motors off).
+
+        SAFETY: disabling powers off motors and the arm falls freely.
+        """
+        if not self._robot:
+            # Disabling with no robot is a no-op success (already torn down);
+            # enabling still requires a connection.
+            return not enable
+
+        try:
+            if enable:
+                if self._robot.is_running:
+                    if self._robot.is_estopped:
+                        self._robot.release()
+                elif self._zero_gravity:
+                    # The vendor's zero-gravity startup deliberately allows
+                    # motion while gravity compensation takes over.  The
+                    # position-hold safe start below requires the arm to
+                    # settle, so it is only valid for position-controlled
+                    # operation (planning/replay), not hand teaching.
+                    self._robot.start()
+                elif self._safe_start_enabled:
+                    self._safe_start()
+                else:
+                    # Vendor-stock startup; can snap to zero if a motor's
+                    # first feedback is late (see _safe_start docstring).
+                    self._robot.start()
+                if self._gripper_free_drive and not self.set_gripper_free_drive(True):
+                    self._robot.stop()
+                    self._ensure_motors_disabled()
+                    raise RuntimeError(
+                        "gripper free-drive requested, but the installed A1Z SDK does not "
+                        "support set_gripper_free_drive()"
+                    )
+                return True
+            else:
+                if self._gripper_free_drive:
+                    self.set_gripper_free_drive(False)
+                if self._robot.is_running:
+                    self._robot.stop()
+                self._ensure_motors_disabled()
+                return True
+        except Exception as e:
+            print(f"Galaxea A1Z enable={enable} failed: {e}")
+            return False
+
+    def read_enabled(self) -> bool:
+        """Check if the control loop is running and not e-stopped."""
+        return bool(self._robot and self._robot.is_running and not self._robot.is_estopped)
+
+    def write_clear_errors(self) -> bool:
+        """Release the soft e-stop latch.
+
+        Motor-level faults cannot be cleared here; use the SDK's
+        tools/motor_diag.py --clear-error with the arm in a safe pose.
+        """
+        if not self._robot:
+            return False
+        try:
+            if self._robot.is_estopped:
+                self._robot.release()
+            return True
+        except Exception:
+            return False
+
+    def read_cartesian_position(self) -> dict[str, float] | None:
+        """Read end-effector pose via forward kinematics on the bundled URDF.
+
+        Returns:
+            Dict with keys: x, y, z (meters), roll, pitch, yaw (radians)
+            None if not connected or pinocchio is unavailable
+        """
+        if not self._robot:
+            return None
+
+        kin = self._get_kinematics()
+        if kin is None:
+            return None
+
+        try:
+            q = np.asarray(self.read_joint_positions())
+            T = kin.fk(q)  # 4x4 homogeneous transform
+            R = T[:3, :3]
+            return {
+                "x": float(T[0, 3]),
+                "y": float(T[1, 3]),
+                "z": float(T[2, 3]),
+                "roll": float(np.arctan2(R[2, 1], R[2, 2])),
+                "pitch": float(np.arctan2(-R[2, 0], np.hypot(R[2, 1], R[2, 2]))),
+                "yaw": float(np.arctan2(R[1, 0], R[0, 0])),
+            }
+        except Exception:
+            return None
+
+    def write_cartesian_position(
+        self,
+        pose: dict[str, float],
+        velocity: float = 1.0,
+    ) -> bool:
+        """Not supported - cartesian targets go through the planning stack."""
+        return False
+
+    def read_gripper_position(self) -> float | None:
+        """Read gripper opening (meters). None if no gripper attached.
+
+        Prefers the SDK gripper's motor-feedback position, then falls back to
+        its commanded position for compatibility. Converts the normalized
+        value (0.0=closed, 1.0=open) to meters. Requires the adapter constructed
+        with gripper=True and the SDK's 'gripper' branch.
+        """
+        if not self._robot or not self._gripper:
+            return None
+
+        fraction: float | None = None
+        try:
+            gripper_state = self._robot.get_joint_state().get("gripper_pos")
+            if gripper_state is not None:
+                fraction = float(np.asarray(gripper_state).reshape(-1)[0])
+        except Exception:
+            pass
+        if fraction is None:
+            sdk_gripper = getattr(self._robot, "gripper", None)
+            feedback_reader = getattr(sdk_gripper, "get_feedback_norm", None)
+            if callable(feedback_reader):
+                try:
+                    fraction = feedback_reader()
+                except Exception:
+                    pass
+        if fraction is None:
+            try:
+                fraction = self._robot.get_gripper_pos()
+            except Exception:
+                return None
+        if fraction is None:
+            return None
+        return float(fraction) * self._gripper_max_opening_m
+
+    def write_gripper_position(self, position: float) -> bool:
+        """Command gripper opening (meters). False if no gripper attached."""
+        if not self._robot or not self._gripper or not self._robot.is_running:
+            return False
+        fraction = max(0.0, min(1.0, position / self._gripper_max_opening_m))
+        try:
+            self._robot.command_gripper(fraction)
+            return True
+        except Exception as e:
+            print(f"Galaxea A1Z gripper command failed: {e}")
+            return False
+
+    def read_force_torque(self) -> list[float] | None:
+        """Not supported - no F/T sensor (per-joint efforts via read_joint_efforts)."""
+        return None
+
+    # --- A1Z-specific extensions (beyond ManipulatorAdapter protocol) ---
+
+    def set_gripper_free_drive(self, enabled: bool) -> bool:
+        """Toggle gripper free-drive (zero-torque) mode for hand teaching.
+
+        Requires gripper=True and the SDK's 'gripper' branch.
+        """
+        robot = self._require_robot()
+        if not self._gripper or not hasattr(robot, "set_gripper_free_drive"):
+            return False
+        robot.set_gripper_free_drive(enabled)
+        return True
+
+    # --- internals ---
+
+    def _ensure_motors_disabled(self) -> None:
+        """Re-send disable frames to every motor, gripper included.
+
+        The SDK's shutdown sends the gripper's disable frame exactly once;
+        on a busy or degraded bus that frame can be lost, leaving the gripper
+        energized and unsupervised (observed twice on hardware). The SDK
+        double-sends arm-motor disables for this very reason but not the
+        gripper's, so we re-send all of them here.
+        """
+        robot = self._robot
+        if robot is None:
+            return
+        motors: list[Any] = []
+        chain = getattr(robot, "_motor_chain", None)
+        if chain is not None:
+            motors += list(getattr(chain, "_motor_a_list", []))
+            motors += list(getattr(chain, "_motor_b_list", []))
+        gripper = getattr(robot, "gripper", None)
+        if gripper is not None:
+            motors.append(gripper._motor)
+        for _ in range(2):
+            for motor in motors:
+                try:
+                    motor.disable()
+                except Exception:
+                    pass
+
+    def _safe_start(self) -> None:
+        """Start the SDK loop with measured-pose hold before model feedforward.
+
+        The SDK's start() reads feedback once after a fixed 50 ms wait and
+        position-holds whatever it read; if a motor's first report is late
+        (typical on USB transports), the hold target defaults to zero and
+        the arm snaps to neutral at full gain. Observed on hardware.
+
+        Start with both position gain and model feedforward at zero, wait for
+        every motor to report, and validate the measured state. Establish a
+        measured-pose PD hold while feedforward is still zero, verify that
+        hold, and only then ramp the configured gravity factor. This ordering
+        matters: kp=0 alone is not zero force because the SDK's gravity
+        feedforward remains active independently of position gain.
+
+        The A1Z has no brakes. It must be supported during activation and any
+        failed activation disables the motors after first removing commanded
+        gain and model feedforward.
+        """
+        robot = self._robot
+        dof = self._dof
+        default_kp = np.asarray(
+            getattr(robot, "_default_kp", np.array([30.0, 30.0, 30.0, 20.0, 5.0, 5.0])),
+            dtype=float,
+        )
+        default_kd = np.asarray(
+            getattr(robot, "_default_kd", np.array([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])),
+            dtype=float,
+        )
+
+        configured_gravity_factor = float(robot.gravity_comp_factor)
+        robot.gravity_comp_factor = 0.0
+
+        try:
+            robot.start(initial_kp=np.zeros(dof), initial_kd=default_kd * 0.5)
+
+            deadline = time.monotonic() + _STARTUP_FEEDBACK_TIMEOUT_S
+            while time.monotonic() < deadline and not self._all_motors_reported():
+                time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+            if not self._all_motors_reported():
+                raise RuntimeError(
+                    f"no feedback from all motors within {_STARTUP_FEEDBACK_TIMEOUT_S:.1f} s"
+                )
+
+            hold_pos, _ = self._validated_startup_state(
+                robot.get_joint_state(),
+                phase="initial feedback",
+                max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+            )
+
+            if not self._zero_gravity:
+                # The measured target has zero position error at this instant,
+                # so full holding gains add stiffness without requesting a
+                # position step. Establish this hold before applying any model
+                # torque. Teaching mode deliberately keeps kp at zero.
+                robot.command_joint_state(
+                    {
+                        "pos": hold_pos.copy(),
+                        "vel": np.zeros(dof),
+                        "kp": default_kp,
+                        "kd": default_kd,
+                    }
+                )
+                for sample in range(1, _STARTUP_HOLD_SAMPLES + 1):
+                    time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+                    self._validated_startup_state(
+                        robot.get_joint_state(),
+                        phase=f"position hold {sample}/{_STARTUP_HOLD_SAMPLES}",
+                        max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+                    )
+
+            ramp_steps = max(
+                1,
+                round(_STARTUP_RAMP_DURATION_S / _STARTUP_SAMPLE_PERIOD_S),
+            )
+            for step in range(1, ramp_steps + 1):
+                alpha = step / ramp_steps
+                robot.gravity_comp_factor = configured_gravity_factor * alpha
+                time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+                self._validated_startup_state(
+                    robot.get_joint_state(),
+                    phase=f"gravity ramp {step}/{ramp_steps}",
+                    max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+                )
+
+            self._wait_for_startup_settling()
+        except Exception:
+            self._quiesce_and_stop_after_failed_start()
+            raise
+
+    def _wait_for_startup_settling(self) -> None:
+        """Wait for consecutive stable samples after the gravity ramp.
+
+        Encoder-derived velocity occasionally contains an isolated sample just
+        above the settled threshold. Keep the hard startup velocity ceiling on
+        every sample, but only declare the arm settled after a consecutive
+        stable window. Sustained motion still fails within a bounded timeout.
+        """
+        max_samples = max(
+            _STARTUP_SETTLED_SAMPLES,
+            round(_STARTUP_SETTLING_TIMEOUT_S / _STARTUP_SAMPLE_PERIOD_S),
+        )
+        stable_samples = 0
+        last_pos = np.zeros(self._dof)
+        last_vel = np.zeros(self._dof)
+        for sample in range(1, max_samples + 1):
+            time.sleep(_STARTUP_SAMPLE_PERIOD_S)
+            last_pos, last_vel = self._validated_startup_state(
+                self._robot.get_joint_state(),
+                phase=f"settling {sample}/{max_samples}",
+                max_velocity=_STARTUP_MAX_VELOCITY_RAD_S,
+            )
+            if np.all(np.abs(last_vel) <= _STARTUP_SETTLED_VELOCITY_RAD_S):
+                stable_samples += 1
+                if stable_samples >= _STARTUP_SETTLED_SAMPLES:
+                    return
+            else:
+                stable_samples = 0
+
+        raise RuntimeError(
+            f"arm did not settle within {_STARTUP_SETTLING_TIMEOUT_S:.1f} s; "
+            f"required {_STARTUP_SETTLED_SAMPLES} consecutive samples at or below "
+            f"{_STARTUP_SETTLED_VELOCITY_RAD_S:.3f} rad/s; "
+            f"positions={np.round(last_pos, 3).tolist()}, "
+            f"velocities={np.round(last_vel, 3).tolist()}"
+        )
+
+    def _validated_startup_state(
+        self,
+        state: dict[str, Any],
+        *,
+        phase: str,
+        max_velocity: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Validate one startup sample and return position and velocity."""
+        if not self._robot or not self._robot.is_running:
+            raise RuntimeError(f"SDK control loop stopped during {phase}")
+        pos = np.asarray(state["pos"], dtype=float)
+        vel = np.asarray(state["vel"], dtype=float)
+        expected_shape = (self._dof,)
+        if pos.shape != expected_shape or vel.shape != expected_shape:
+            raise RuntimeError(
+                f"invalid state shape during {phase}: pos={pos.shape}, vel={vel.shape}"
+            )
+        if not np.all(np.isfinite(pos)) or not np.all(np.isfinite(vel)):
+            raise RuntimeError(
+                f"non-finite state during {phase}: "
+                f"pos={np.round(pos, 3).tolist()}, vel={np.round(vel, 3).tolist()}"
+            )
+
+        lower = np.asarray(_POSITION_LOWER) - 0.15
+        upper = np.asarray(_POSITION_UPPER) + 0.15
+        outside = (pos < lower) | (pos > upper)
+        if np.any(outside):
+            offenders = ", ".join(f"joint{i + 1}={pos[i]:.3f}" for i in np.flatnonzero(outside))
+            raise RuntimeError(
+                f"start pose outside joint limits during {phase}: {offenders}; "
+                f"positions={np.round(pos, 3).tolist()}"
+            )
+
+        too_fast = np.abs(vel) > max_velocity
+        if np.any(too_fast):
+            offenders = ", ".join(
+                f"joint{i + 1}={vel[i]:.3f} rad/s" for i in np.flatnonzero(too_fast)
+            )
+            raise RuntimeError(
+                f"arm moving during {phase}: {offenders} "
+                f"(limit {max_velocity:.3f} rad/s); "
+                f"positions={np.round(pos, 3).tolist()}, "
+                f"velocities={np.round(vel, 3).tolist()}"
+            )
+        return pos, vel
+
+    def _quiesce_and_stop_after_failed_start(self) -> None:
+        """Remove commanded force before disabling after activation failure."""
+        robot = self._robot
+        if robot is None:
+            return
+        robot.gravity_comp_factor = 0.0
+        try:
+            robot.estop()
+        except Exception:
+            pass
+        try:
+            robot.stop()
+        except Exception:
+            self._ensure_motors_disabled()
+
+    def _all_motors_reported(self) -> bool:
+        """True once every motor in the SDK chain has sent real feedback."""
+        chain = getattr(self._robot, "_motor_chain", None)
+        if chain is None:
+            return True  # can't verify on this SDK version; rely on limit checks
+        motors = list(getattr(chain, "_motor_a_list", [])) + list(
+            getattr(chain, "_motor_b_list", [])
+        )
+        if not motors:
+            return True
+        return all(m.last_feedback is not None for m in motors)
+
+    def _require_robot(self) -> Any:
+        if not self._robot:
+            raise RuntimeError("Not connected")
+        return self._robot
+
+    def _joint_state(self) -> dict[str, np.ndarray]:
+        return self._require_robot().get_joint_state()
+
+    def _get_kinematics(self) -> Any:
+        """Lazily build and cache the FK solver from the SDK's bundled URDF."""
+        if self._kinematics is not None:
+            return self._kinematics
+        try:
+            import a1z
+            from a1z.robots.kinematics import Kinematics
+
+            urdf = self._urdf_path or str(
+                Path(a1z.__file__).parent / "robot_models" / "a1z" / "A1Z_Flange.urdf"
+            )
+            self._kinematics = Kinematics(urdf)
+        except Exception:
+            return None
+        return self._kinematics
