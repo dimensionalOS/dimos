@@ -31,6 +31,7 @@ dropping down a level:
 """
 
 import math
+import os
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -41,6 +42,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_3d.evaluator.blueprints import (
+    _render_node_edges,
+    _render_nodes,
+    _render_surface_map,
+)
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
@@ -48,6 +54,11 @@ from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
+
+# Opt-in planner introspection: set DIMOS_PLANNER_VIZ=1 to have MLSPlannerNative publish
+# its surface map and search graph, and to render them (see _NAV_OVERRIDE). Costs a
+# rebuild of that geometry every viz tick, so it is off in normal operation.
+_PLANNER_VIZ = os.getenv("DIMOS_PLANNER_VIZ", "").lower() in ("1", "true", "yes", "on")
 
 # The lidar mount rotation on this rig (fixed-axis rpy, degrees), feeding both the static
 # tf GO2Zenoh publishes and the rotation that levels its odometry — they must agree or nav
@@ -105,7 +116,7 @@ def _rerun_blueprint() -> Any:
 
 
 def _convert_map(grid: PointCloud2) -> Any:
-    return grid.to_rerun(voxel_size=0.04)
+    return grid.to_rerun(voxel_size=0.025)
 
 
 def _convert_scan(grid: PointCloud2) -> Any:
@@ -135,9 +146,9 @@ _BRIDGE_OVERRIDE = {
 # drops whole messages, and dropping H.264 samples breaks decoding until the next
 # keyframe, so the camera has to be slowed at the source instead. (0 here would mean
 # unlimited, not off.)
-_BRIDGE_MAX_HZ = {
-    "world/lidar": 2.0,
-    "world/pointlio_map": 0.5,
+_BRIDGE_MAX_HZ: dict[str, float] = {
+    #    "world/lidar": 2.0,
+    #    "world/pointlio_map": 0.5,
 }
 
 _MAP_OVERRIDE = {"world/global_map": _render_global_map}
@@ -149,10 +160,13 @@ _MAP_MAX_HZ = {
 
 _NAV_OVERRIDE = {
     "world/path": _render_path,
-    # Planner debug layers, off — viz_publish_hz=0.0 means nothing arrives anyway.
-    "world/surface_map": None,
-    "world/nodes": None,
-    "world/node_edges": None,
+    # The planner's own view of the world: the traversable surface it extracted, the graph
+    # nodes it sampled on that surface, and the edges between them coloured green->red by
+    # traversability cost. Off unless DIMOS_PLANNER_VIZ is set — it is a lot of geometry,
+    # and with viz_publish_hz at 0.0 the planner does not even emit it.
+    "world/surface_map": _render_surface_map if _PLANNER_VIZ else None,
+    "world/nodes": _render_nodes if _PLANNER_VIZ else None,
+    "world/node_edges": _render_node_edges if _PLANNER_VIZ else None,
 }
 
 
@@ -219,7 +233,7 @@ go2_zenoh_nav = autoconnect(
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
         step_penalty_weight=4.0,
-        viz_publish_hz=0.0,
+        viz_publish_hz=2.0 if _PLANNER_VIZ else 0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
