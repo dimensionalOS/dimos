@@ -30,6 +30,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.jnav.msgs.DeformationNode import DeformationNode
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
@@ -177,7 +178,9 @@ class PGO(NativeModule):
     # pose node + a BetweenFactor(node, location) that GTSAM optimizes jointly.
     location_constraints: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
-    correction: Out[Transform]
+    # The Rust binary encodes this channel as a TFMessage (map->odom correction);
+    # the port type must match so the transport decodes it correctly.
+    correction: Out[TFMessage]
     pose_graph: Out[Graph3D]
     loop_closure_event: Out[GraphDelta3D]
     # Per-keyframe pose-graph nodes, published individually (un-batched) so a
@@ -205,8 +208,8 @@ class PGO(NativeModule):
         if self.config.debug:
             logger.info("PGO native module started (Rust iSAM2 port)")
 
-    def _on_correction_for_tf(self, correction: Transform) -> None:
-        self.tf.publish(correction)
+    def _on_correction_for_tf(self, correction: TFMessage) -> None:
+        self.tf.publish(*correction.transforms)
 
     @rpc
     def stop(self) -> None:
