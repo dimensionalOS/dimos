@@ -39,7 +39,7 @@ from typing import Any, Final, TypeAlias, TypeVar
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.pure.align import _FUTURE_TS_OUTLIER_S, AlignmentError, PortStats
 from dimos.pure.interpolators import interp_transform
-from dimos.pure.rows import TfOutSpec, TfSpec
+from dimos.pure.rows import Progress, TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -570,6 +570,11 @@ class TfContext:
         except StopIteration:
             self.stream = None
             return False
+        if isinstance(item, Progress):
+            # Interior-edge frontier marker: the producing member ticked without
+            # emitting a tf sample. Advance the frontier so holds stay bounded.
+            self._frontier = max(self._frontier, item.ts)
+            return True
         # TEMPORARY — Go2 firmware bug, the tf twin of the aligner ports' guard: a
         # corrupt stamp ~75 days in the future would latch the frontier (a running
         # max — advance_past and the tick hold stop pulling forever) AND evict the
@@ -665,6 +670,9 @@ def tf_out_tap(rows: Iterator[_R], module: Any, ctx: TfContext) -> Iterator[_R]:
     frames_out = ctx.frames_out
     try:
         for row in rows:
+            if isinstance(row, Progress):  # frontier marker: no fields to route
+                yield row
+                continue
             for name, declared in frames_out.items():
                 value = getattr(row, name)
                 if value is None:

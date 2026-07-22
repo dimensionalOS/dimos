@@ -38,13 +38,14 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
 )
 
 from typing_extensions import Self
 
-from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, TfSpec, TickSpec
+from dimos.pure.rows import FieldSpec, In, InterpolateSpec, LatestSpec, Progress, TfSpec, TickSpec
 from dimos.pure.typing import Stamped
 from dimos.utils.logging_config import setup_logger as _setup_logger
 
@@ -317,6 +318,9 @@ class _PortState:
     newest: Stamped | None = None
     newest_ts: float = float("-inf")
     last_ts: float = float("-inf")
+    # Progress-marker frontier — kept OFF last_ts so a marker never gates a real
+    # row (a finish tail legally reuses its last skipped tick's ts).
+    marker_ts: float = float("-inf")
     interp: InterpolatorFn | None = None
     stats: PortStats = dataclasses.field(default_factory=PortStats)
 
@@ -334,6 +338,7 @@ class Aligner(Generic[InT]):
         *,
         tf: TfContext | None = None,
         on_decision: DecisionHook | None = None,
+        progress: bool = False,
     ) -> None:
         """Validate wiring eagerly (spec §7); pulls nothing until iteration."""
         # §7 #1 — in_type must be a pm.In subclass; fields() is called once and a
@@ -417,6 +422,7 @@ class Aligner(Generic[InT]):
         assert tick_port is not None  # a tick field was found in §7 #2
         self._tick: _PortState = tick_port
         self._held_tick_ts: float | None = None
+        self._progress = progress
         self._on_decision: DecisionHook | None = on_decision
         self._ctx: TfContext | None = tf
         if tf is not None:
@@ -568,80 +574,108 @@ class Aligner(Generic[InT]):
         """Return self (one-shot iterator)."""
         return self
 
+    def _refill(self, p: _PortState) -> None:
+        """Pull kept items into ``p.head`` until it holds one, covers the pending tick,
+        has nothing queued (live), or exhausts (spec §5.2 step a)."""
+        tick = self._tick
+        while p.it is not None and p.head is None:
+            # A LATEST secondary whose frontier (row or marker) already covers the
+            # pending tick pulls nothing more: further pulls would drive its
+            # upstream cone for rows this tick cannot use (the offline twin of the
+            # pull_nowait rule). Interpolate ports keep pulling — they need the
+            # real right-bracket row, which a frontier marker is not.
+            if (
+                isinstance(p.spec, LatestSpec)
+                and tick.head is not None
+                and max(p.last_ts, p.marker_ts) >= tick.head_ts
+            ):
+                return
+            try:
+                # A live OPTIONAL secondary with nothing queued must not hold the
+                # tick: it has a default, so "nothing yet" is resolvable, and a
+                # subscribed-but-silent topic would otherwise park the session
+                # forever. The tick still blocks (that IS the pacing) and REQUIRED
+                # secondaries still hold (spec §5 — they cannot be defaulted).
+                # Plain iterators have no pull_nowait: offline over() is untouched.
+                pull_nowait = (
+                    getattr(p.it, "pull_nowait", None)
+                    if p is not tick and not p.spec.required
+                    else None
+                )
+                item = next(p.it) if pull_nowait is None else pull_nowait()
+                if item is NOTHING_PENDING:
+                    return
+            except StopIteration:
+                p.it = None
+                return
+            # Progress marker (graph interior edges): the producer fired a tick at
+            # item.ts but emitted nothing. Advance the frontier — no sample, no
+            # gates — and loop (the coverage check above decides whether to stop).
+            if isinstance(item, Progress):
+                if item.ts > p.marker_ts:
+                    p.marker_ts = item.ts
+                continue
+            # Control input (a click, a command): its ts is the producer's own
+            # wall clock and bears no relation to the data clock, so it is
+            # stamped with the current tick frontier and skips the measurement
+            # gates below. Untouched payload — only the merge key is ours.
+            if getattr(p.spec, "control", False):
+                p.head = item
+                p.head_ts = tick.last_ts  # -inf before the first tick: resolves at once
+                p.last_ts = p.head_ts
+                p.stats.accepted += 1
+                continue
+            ts = self._checked_ts(p, item)
+            # TEMPORARY — Go2 firmware bug: the Go2 lidar occasionally stamps a
+            # scan with a corrupt timestamp ~75 days in the future. Accepting it
+            # latches this port's frontier (last_ts) to the garbage value, so the
+            # monotonic gate below then drops every subsequent (correct) sample —
+            # the stream starves permanently. Drop any item jumping >1h past the
+            # frontier WITHOUT latching last_ts. Remove once recordings/firmware
+            # carry sane stamps.
+            if math.isfinite(p.last_ts) and ts > p.last_ts + _FUTURE_TS_OUTLIER_S:
+                _DBG.warning(
+                    "dropping sample with implausible future ts (Go2 firmware bug)",
+                    bundle=self._bundle,
+                    port=p.name,
+                    ts=ts,
+                    last_ts=p.last_ts,
+                    ahead_s=ts - p.last_ts,
+                )
+                # A dropped TICK sample is a lost trigger — a tick that never was;
+                # secondary sample drops stay PortStats only (spec §C4 anchor 5).
+                if p is tick and self._on_decision is not None:
+                    self._on_decision(ts, False, f"future-ts:{p.name}", {}, 0)
+                continue
+            if ts <= p.last_ts:
+                p.stats.dropped_nonmonotonic += 1
+                if p is tick and self._on_decision is not None:
+                    self._on_decision(ts, False, f"nonmonotonic:{p.name}", {}, 0)
+                continue
+            p.head = item
+            p.head_ts = ts
+            p.last_ts = ts
+            p.stats.accepted += 1
+            if p is tick:
+                self._held_tick_ts = ts
+
     def __next__(self) -> InT:
         """Run the pull loop (spec §5.2) to the next emitted row."""
         tick = self._tick
         while True:
-            # (a) refill: every live-iterator port with an empty head pulls one
-            #     kept item, in declaration order (the deterministic pull order).
-            for p in self._ports:
-                while p.it is not None and p.head is None:
-                    try:
-                        # A live OPTIONAL secondary with nothing queued must not hold the
-                        # tick: it has a default, so "nothing yet" is resolvable, and a
-                        # subscribed-but-silent topic would otherwise park the session
-                        # forever. The tick still blocks (that IS the pacing) and REQUIRED
-                        # secondaries still hold (spec §5 — they cannot be defaulted).
-                        # Plain iterators have no pull_nowait: offline over() is untouched.
-                        pull_nowait = (
-                            getattr(p.it, "pull_nowait", None)
-                            if p is not tick and not p.spec.required
-                            else None
-                        )
-                        item = next(p.it) if pull_nowait is None else pull_nowait()
-                        if item is NOTHING_PENDING:
-                            break
-                    except StopIteration:
-                        p.it = None
-                        break
-                    # Control input (a click, a command): its ts is the producer's own
-                    # wall clock and bears no relation to the data clock, so it is
-                    # stamped with the current tick frontier and skips the measurement
-                    # gates below. Untouched payload — only the merge key is ours.
-                    if getattr(p.spec, "control", False):
-                        p.head = item
-                        p.head_ts = tick.last_ts  # -inf before the first tick: resolves at once
-                        p.last_ts = p.head_ts
-                        p.stats.accepted += 1
-                        continue
-                    ts = self._checked_ts(p, item)
-                    # TEMPORARY — Go2 firmware bug: the Go2 lidar occasionally stamps a
-                    # scan with a corrupt timestamp ~75 days in the future. Accepting it
-                    # latches this port's frontier (last_ts) to the garbage value, so the
-                    # monotonic gate below then drops every subsequent (correct) sample —
-                    # the stream starves permanently. Drop any item jumping >1h past the
-                    # frontier WITHOUT latching last_ts. Remove once recordings/firmware
-                    # carry sane stamps.
-                    if math.isfinite(p.last_ts) and ts > p.last_ts + _FUTURE_TS_OUTLIER_S:
-                        _DBG.warning(
-                            "dropping sample with implausible future ts (Go2 firmware bug)",
-                            bundle=self._bundle,
-                            port=p.name,
-                            ts=ts,
-                            last_ts=p.last_ts,
-                            ahead_s=ts - p.last_ts,
-                        )
-                        # A dropped TICK sample is a lost trigger — a tick that never was;
-                        # secondary sample drops stay PortStats only (spec §C4 anchor 5).
-                        if p is tick and self._on_decision is not None:
-                            self._on_decision(ts, False, f"future-ts:{p.name}", {}, 0)
-                        continue
-                    if ts <= p.last_ts:
-                        p.stats.dropped_nonmonotonic += 1
-                        if p is tick and self._on_decision is not None:
-                            self._on_decision(ts, False, f"nonmonotonic:{p.name}", {}, 0)
-                        continue
-                    p.head = item
-                    p.head_ts = ts
-                    p.last_ts = ts
-                    p.stats.accepted += 1
-                    if p is tick:
-                        self._held_tick_ts = ts
+            # (a) refill: the tick port FIRST — its pending ts is the bound that
+            #     lets marker-carrying secondaries stop pulling once covered —
+            #     then secondaries in declaration order (the deterministic pull
+            #     order within the round).
+            self._refill(tick)
 
             # (b) terminate: an exhausted trigger ends alignment (secondaries are
             #     left with their pending heads — lazy, never drained).
             if tick.head is None and tick.it is None:
                 raise StopIteration
+
+            for p in self._secondaries:
+                self._refill(p)
 
             # (c) select the least event by (head_ts, declaration index).
             ready = [q for q in self._ports if q.head is not None]
@@ -659,10 +693,15 @@ class Aligner(Generic[InT]):
             assert tick.head is not None  # min selected it from ports-with-head
             if self._ctx is not None:
                 self._ctx.advance_past(tick.head_ts)  # ingest the tf frontier past T (§6.2)
+            dropped_ts = tick.head_ts
             row = self._fire(tick.head, tick.head_ts)
             tick.head = None
             self._held_tick_ts = None
             if row is None:
+                if self._progress:
+                    # Progress mode: a dropped tick still advanced this member's
+                    # output frontier — surface it so downstream pulls stay bounded.
+                    return cast("InT", Progress(dropped_ts))
                 continue
             return row
 
@@ -690,6 +729,7 @@ def align(
     *,
     tf: TfContext | None = None,
     on_decision: DecisionHook | None = None,
+    progress: bool = False,
 ) -> Aligner[InT]:
     """Resolve stamped streams into tick-stamped In rows (validates now, pulls lazily)."""
-    return Aligner(in_type, streams, tf=tf, on_decision=on_decision)
+    return Aligner(in_type, streams, tf=tf, on_decision=on_decision, progress=progress)

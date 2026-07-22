@@ -921,6 +921,105 @@ class TestTerminalDrive:
         assert FOLDY_FINALIZED == [1]
 
 
+# ── progress markers (spec §0.7): a sparse producer must not exhaust the cone ──
+
+
+NEVER_STEPS: list[int] = []
+
+
+class NeverB(pm.PureModule):
+    """A -> B that never emits — the planner-with-no-reachable-goal twin."""
+
+    class In(pm.In):
+        a: PayA = pm.tick()
+
+    class Out(pm.Out):
+        b: PayB
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out | None]:
+        NEVER_STEPS.append(1)
+        return s.replace(n=s.n + 1), None
+
+
+class _SparseFan(pg.PureGraph):
+    """CountUp -> b; NeverB -> silent (wired, never fires at runtime)."""
+
+    class In(pm.In):
+        a: PayA
+
+    class Out(pm.Out):
+        b: PayB
+        silent: PayB
+
+    def wire(self, i: "_SparseFan.In") -> "_SparseFan.Out":
+        c = CountUp()(a=i.a)
+        nv = NeverB()(a=i.a)
+        return _SparseFan.Out(b=c.b, silent=nv.b)
+
+
+SPARSE_SAW: list[tuple[float, float | None, int]] = []
+
+
+class SparseSink(pm.PureModule):
+    """Ticks on b; latest-samples silent; records upstream progress per tick."""
+
+    class In(pm.In):
+        b: PayB = pm.tick()
+        silent: PayB | None = pm.latest(default=None)
+
+    class Out(pm.Out):
+        n: int
+
+    class State(pm.State):
+        n: int = 0
+
+    def step(self, s: State, i: In) -> tuple[State, Out]:
+        SPARSE_SAW.append((i.ts, None if i.silent is None else i.silent.v, len(NEVER_STEPS)))
+        return s.replace(n=s.n + 1), SparseSink.Out(n=s.n + 1)
+
+
+class TestProgressMarkers:
+    def test_sparse_output_does_not_exhaust_cone_in_module_sink(self):
+        # The rerun-sink incident: a silent planner port used to drive the whole
+        # upstream cone to exhaustion on the sink's FIRST tick (burst-at-end).
+        NEVER_STEPS.clear()
+        SPARSE_SAW.clear()
+        frames = _SparseFan().over(a=_a_stream(20)).save(SparseSink())
+        assert frames == 20
+        assert all(silent is None for _, silent, _ in SPARSE_SAW)  # default resolved
+        # Markers bound the pull: at sink tick k, NeverB has ticked ~k times — not 20.
+        assert SPARSE_SAW[0][2] <= 2
+        assert SPARSE_SAW[9][2] <= 12
+
+    def test_save_to_store_stores_no_markers(self):
+        from dimos.memory2.store.memory import MemoryStore
+
+        store = MemoryStore()
+        _SparseFan().over(a=_a_stream(5)).save(store)
+        assert [o.data.v for o in store.stream("b")] == [0.0, 1.0, 2.0, 3.0, 4.0]
+        assert list(store.stream("silent")) == []  # frontier currency, never data
+
+    def test_markers_never_cross_rim_on_export(self):
+        class G(pg.PureGraph):
+            class In(pm.In):
+                a: PayA
+
+            class Out(pm.Out):
+                b: PayB
+
+            def wire(self, i: "G.In") -> "G.Out":
+                return G.Out(b=BatchB()(a=i.a).b)
+
+        with G().over(a=_a_stream(5)) as run:
+            outs = run.b.to_list()
+        # cadence emits (n=2, 4) + the finish tail — and ONLY payloads, no markers
+        assert all(isinstance(o, PayB) for o in outs)
+        assert len(outs) == 3
+
+
 # ── the edge-ts carry (spec §0.6): offline currency is the tick row's engine ts ──
 
 

@@ -373,19 +373,17 @@ each, O(#ports) total).
 ```
 __next__():
   loop:
-    # (a) refill: every port with a live iterator and an empty head pulls
-    #     one kept item (declaration order — the deterministic pull order):
-    for p in ports:                      # declaration order
-      while p.it is not None and p.head is None:
-        item = next(p.it)                # StopIteration → p.it = None
-        ts = _checked_ts(p, item)        # §4.2 errors raise from here
-        if ts <= p.last_ts: p.stats.dropped_nonmonotonic += 1; continue
-        p.head, p.head_ts, p.last_ts = item, ts, ts
-        p.stats.accepted += 1
+    # (a1) refill the tick port FIRST — its pending ts is the bound that
+    #      lets marker-carrying secondaries stop pulling once covered:
+    refill(tick)
 
     # (b) terminate: the trigger is done ⇒ alignment is done (secondaries
-    #     are NOT drained — lazy; their pending heads simply age out):
+    #     are NOT drained — lazy; nothing further is pulled):
     if tick.head is None and tick.it is None: raise StopIteration
+
+    # (a2) refill secondaries, declaration order (the deterministic pull
+    #      order within the round):
+    for p in secondaries: refill(p)
 
     # (c) select the least event by (head_ts, index) over ports with heads:
     p = min(ports with head, key=(head_ts, index))
@@ -395,19 +393,37 @@ __next__():
 
     # (e) tick event fires: T = tick.head_ts; k = tick.head.
     #     Merge-min guarantees every other port: head is None (exhausted /
-    #     no stream) or head_ts > T or (head_ts == T and index > tick.index).
+    #     no stream / marker-covered) or head_ts > T or (head_ts == T and
+    #     index > tick.index).
     resolve per §5.4 → emitted row | drop
     tick.head = None                     # consume the trigger either way
-    if dropped: continue
+    if dropped: continue                 # (progress mode: yield Progress(T))
     return row
+
+refill(p):
+  while p.it is not None and p.head is None:
+    if p is a latest port and tick.head is not None
+       and max(p.last_ts, p.marker_ts) >= tick.head_ts:
+      return                             # covered — pull nothing more
+    item = next(p.it)                    # StopIteration → p.it = None
+    if item is a Progress marker:        # interior graph edge (T13 §0.7)
+      p.marker_ts = max(p.marker_ts, item.ts)   # frontier advance, no sample —
+                                         # NEVER latches last_ts (a finish tail
+                                         # legally reuses its last tick's ts)
+      continue                           # interpolate/tick: keep pulling
+    ts = _checked_ts(p, item)            # §4.2 errors raise from here
+    if ts <= p.last_ts: p.stats.dropped_nonmonotonic += 1; continue
+    p.head, p.head_ts, p.last_ts = item, ts, ts
+    p.stats.accepted += 1
 ```
 
 Notes:
 
 - Refill-at-loop-top means nothing is pulled beyond what selecting the next
   event requires; after a row is returned, the next tick item is pulled by
-  the *next* `__next__` call. Step (b) before (c) means an exhausted tick
-  stream ends iteration without pulling secondaries further.
+  the *next* `__next__` call. Step (b) sits between the tick refill and the
+  secondary refill: an exhausted tick stream ends iteration without pulling
+  secondaries at all.
 - All state mutation happens inside `__next__` on the calling thread —
   thread-free by construction. `stats`/`held_tick_ts` reads from another
   thread see monotonic ints / a float-or-None (GIL-atomic attribute reads;

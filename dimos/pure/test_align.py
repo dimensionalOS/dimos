@@ -30,7 +30,16 @@ from dimos.pure.align import (
     interpolator_for,
     register_interpolator,
 )
-from dimos.pure.rows import In, InterpolateSpec, LatestSpec, TickSpec, interpolate, latest, tick
+from dimos.pure.rows import (
+    In,
+    InterpolateSpec,
+    LatestSpec,
+    Progress,
+    TickSpec,
+    interpolate,
+    latest,
+    tick,
+)
 
 # ── fixtures: stamped payloads ───────────────────────────────────────────────
 
@@ -225,8 +234,9 @@ def test_tick_only_bundle():
 def test_empty_tick_stream():
     a = align(LatestOpt, {"img": [], "pose": ss(0.5)})
     assert list(a) == []
-    # normative pseudocode (spec §5.2): refill pulls one pose item before termination
-    assert a.stats.ports["pose"].accepted == 1
+    # normative pseudocode (spec §5.2): tick refill exhausts first, so termination
+    # happens before any secondary is pulled — pose stays untouched.
+    assert a.stats.ports["pose"].accepted == 0
     assert a.stats.ticks_fired == 0
 
 
@@ -429,6 +439,54 @@ def test_lazy_tail():
     assert [r.ts for r in a] == [1.0]
     # tick exhaustion terminates without draining the secondary (§5.2 step b)
     assert ("pose", 5.0) in log and ("pose", 6.0) not in log
+
+
+# ── progress markers (§5.2 refill; interior-edge frontier currency) ─────────
+
+
+def test_marker_covers_latest_and_bounds_pull():
+    log: list[tuple[str, float]] = []
+    pose = _logged([Progress(5.0), S(6.0)], log, "pose")
+    rows = list(align(LatestOpt, {"img": ss(1.0, 2.0), "pose": pose}))
+    assert [r.pose for r in rows] == [None, None]  # frontier covered, no sample
+    # one marker covered BOTH ticks; the row behind it was never pulled
+    assert log == [("pose", 5.0)]
+
+
+def test_marker_frontier_with_committed_row():
+    rows = list(align(LatestOpt, {"img": ss(1.0, 2.0), "pose": [S(0.5), Progress(3.0)]}))
+    # resolution still uses the committed sample; the marker only stops the pull
+    assert [r.pose.ts for r in rows] == [0.5, 0.5]
+
+
+def test_marker_never_latches_last_ts():
+    # a finish tail legally reuses its last (skipped) tick's ts: the marker at 2.0
+    # must not turn the S(2.0) row behind it into a nonmonotonic drop
+    a = align(LatestOpt, {"img": ss(3.0), "pose": [Progress(2.0), S(2.0)]})
+    rows = list(a)
+    assert rows[0].pose == S(2.0)
+    assert a.stats.ports["pose"].dropped_nonmonotonic == 0
+
+
+def test_marker_on_tick_port_is_not_a_trigger():
+    rows = list(align(TickOnly, {"lidar": [Progress(0.5), S(1.0), Progress(1.5)]}))
+    assert [r.ts for r in rows] == [1.0]
+
+
+def test_marker_holds_required_latest():
+    # REQUIRED secondaries cannot be defaulted: a marker advances the frontier, so
+    # the tick resolves as a warmup DROP (frontier past T, no sample) — not a hold
+    a = align(LatestReq, {"img": ss(1.0, 2.0), "pose": [Progress(1.5), S(1.7)]})
+    rows = list(a)
+    assert [(r.ts, r.pose.ts) for r in rows] == [(2.0, 1.7)]
+    assert a.stats.ticks_dropped == 1
+
+
+def test_progress_mode_surfaces_dropped_tick():
+    a = align(LatestReq, {"img": ss(1.0, 2.0), "pose": ss(1.5)}, progress=True)
+    out = list(a)
+    assert isinstance(out[0], Progress) and out[0].ts == 1.0  # warmup drop, surfaced
+    assert out[1].ts == 2.0 and out[1].pose.ts == 1.5
 
 
 # ── wiring validation (§7, §9) ───────────────────────────────────────────────

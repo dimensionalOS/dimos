@@ -59,7 +59,7 @@ from dimos.pure.config import (
     _synthesize_config_model,
 )
 from dimos.pure.drivers import PureModuleRunError, RunHooks, run_over
-from dimos.pure.rows import UNSTAMPED, In as PmIn, Out as PmOut, TfSpec, TickSpec
+from dimos.pure.rows import UNSTAMPED, In as PmIn, Out as PmOut, Progress, TfSpec, TickSpec
 from dimos.pure.stepspec import (
     PureModuleDefinitionError,
     _find_owner,
@@ -1004,10 +1004,17 @@ def _payload_iter(value: Any) -> Iterator[Any]:
 def _project(rows: Iterator[Any], field: str) -> Iterator[Any]:
     """One consumer's view of a member's Out edge: its field's payloads, engine-ts stamped, None dropped."""
     for row in rows:
+        if isinstance(row, Progress):  # frontier marker: every consumer's view carries it
+            yield row
+            continue
         payload = getattr(row, field, None)
         if payload is not None:
             _carry_row_ts(row, payload)
             yield payload
+        else:
+            # A present row with an absent/None field is still a fired tick on this
+            # edge — surface the frontier so a sparse field stays pull-bounded.
+            yield Progress(row.ts)
 
 
 def _carry_row_ts(row: Any, payload: Any) -> None:
@@ -1110,6 +1117,7 @@ class _RunInstance:
                 tf=tfs.get(path),
                 hooks=RunHooks(),
                 debug=_member_debug_session(self._debug_config, path, module),
+                progress=True,  # interior edges carry frontier markers (bounded pulls)
             )
             self._members.append((path, gen))
             member_sinks = [
@@ -1123,8 +1131,10 @@ class _RunInstance:
         return exports[target_name]
 
     def export(self) -> Iterator[Any]:
-        """The (single) requested export's payload stream; iteration drives the cone."""
-        return self._export
+        """The (single) requested export's payload stream; iteration drives the cone.
+
+        Progress markers are interior currency — they never cross the rim."""
+        return (row for row in self._export if not isinstance(row, Progress))
 
     def close(self) -> None:
         """Close member drivers in reverse application order — idempotent (spec §6.4)."""
@@ -1211,6 +1221,7 @@ class _TerminalRun:
                 tf=tfs.get(path),
                 hooks=RunHooks(),
                 debug=_member_debug_session(self._debug_config, path, module),
+                progress=True,  # interior edges carry frontier markers (bounded pulls)
             )
             self._members.append((path, gen))
             member_sinks = [
@@ -1401,7 +1412,8 @@ class GraphRun(Generic[_TOut]):
                         payload = next(iters[name])
                     except StopIteration:
                         continue
-                    streams[name].append(payload, ts=getattr(payload, "ts", None))
+                    if not isinstance(payload, Progress):  # markers bound the pull, not data
+                        streams[name].append(payload, ts=getattr(payload, "ts", None))
                     still.append(name)
                 active = still
         finally:
@@ -1431,7 +1443,13 @@ class GraphRun(Generic[_TOut]):
         self._terminals.append(run)
         try:
             streams = {fld: run.record_iters[src] for fld, src in mapping.items()}
-            gen = run_over(sink, spec, streams, hooks=RunHooks())
+            gen = run_over(
+                sink,
+                spec,
+                streams,
+                hooks=RunHooks(),
+                debug=_member_debug_session(self._debug, "sink", sink),
+            )
             run._members.append(("<sink>", gen))  # closed with the run (sink last-created)
             return sum(1 for _ in gen)
         finally:

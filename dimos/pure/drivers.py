@@ -32,9 +32,9 @@ import enum
 import re
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Final, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
-from dimos.pure.rows import UNSTAMPED, TfOutSpec, TfSpec
+from dimos.pure.rows import UNSTAMPED, Progress, TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import AsyncStateless, Fold, Mealy, Stamped, Stateless, Streamable
 from dimos.utils.logging_config import setup_logger
@@ -183,9 +183,18 @@ def run_over(
     tf: Any | None = None,  # runtime-untyped like module; static type lives on over() (spec §8.3)
     hooks: RunHooks | None = None,
     debug: Any | None = None,  # T15: a built debugrec.DebugSession (runtime-untyped like module)
+    progress: bool = False,  # graph interior edges: yield Progress markers for non-emitting ticks
 ) -> Iterator[Any]:
-    """Validate eagerly, align via T5, dispatch on ``spec.kind`` (spec §4)."""
+    """Validate eagerly, align via T5, dispatch on ``spec.kind`` (spec §4).
+
+    ``progress`` (graph member runs only) interleaves ``Progress(ts)`` markers for
+    ticks that fired-or-dropped without an emission, so a downstream pull on a
+    sparse output is bounded by this member's tick attempts instead of running its
+    upstream cone to exhaustion. MEALY/STATELESS only: a fold owns its own pull
+    loop, and the async window would reorder markers ahead of pending emissions.
+    """
     hooks = RunHooks() if hooks is None else hooks
+    progress = progress and spec.kind in (StepKind.MEALY, StepKind.STATELESS)
     # ── eager (at the over() call): pure validation, zero acquisition (D1) ──
     _check_unknown_streams(module, spec, streams)
     max_inflight = DEFAULT_MAX_INFLIGHT
@@ -218,6 +227,7 @@ def run_over(
         {name: _coerce_stream(s) for name, s in streams.items()},
         tf=ctx,
         on_decision=on_decision,
+        progress=progress,
     )
     rows: Iterator[Any] = aligner
     if debug is not None:
@@ -230,14 +240,20 @@ def run_over(
     # ── dispatch: drivers self-finalize (§8.2); the tf tap wraps the out iterator ──
     if spec.kind is StepKind.MEALY:
         driver = drive_mealy(
-            module, rows, initial, skips=spec.skips, hooks=hooks, finish=spec.has_finish
+            module,
+            rows,
+            initial,
+            skips=spec.skips,
+            hooks=hooks,
+            finish=spec.has_finish,
+            progress=progress,
         )
     elif spec.kind is StepKind.ASYNC_STATELESS:
         driver = drive_async(module, rows, max_inflight=max_inflight, skips=spec.skips, hooks=hooks)
     elif spec.kind is StepKind.FOLD:
         driver = drive_fold(module, rows, hooks=hooks)
     else:
-        driver = drive_stateless(module, rows, skips=spec.skips, hooks=hooks)
+        driver = drive_stateless(module, rows, skips=spec.skips, hooks=hooks, progress=progress)
     if ctx is not None:
         if out_tf:
             from dimos.pure.tfbuffer import tf_out_tap  # lazy (spec §7.1)
@@ -396,9 +412,10 @@ def drive_stateless(
     *,
     skips: bool,
     hooks: RunHooks,
+    progress: bool = False,
 ) -> Iterator[_TOutRow]:
     """Drive a sync stateless step over rows, stamping emissions with tick ts (spec §5.1)."""
-    return _finalized(_stateless_rows(module, rows, skips, hooks), rows, hooks)
+    return _finalized(_stateless_rows(module, rows, skips, hooks, progress), rows, hooks)
 
 
 def _stateless_rows(
@@ -406,10 +423,14 @@ def _stateless_rows(
     rows: Iterator[_TInRow],
     skips: bool,
     hooks: RunHooks,
+    progress: bool,
 ) -> Iterator[_TOutRow]:
     n = 0
     on_step = hooks.on_step
     for row in rows:
+        if isinstance(row, Progress):  # aligner-dropped tick surfaced in progress mode
+            yield cast("_TOutRow", row)
+            continue
         hooks.ticks += 1
         n += 1
         t0 = time.perf_counter() if on_step is not None else 0.0  # monotonic; durations only (§3)
@@ -424,6 +445,8 @@ def _stateless_rows(
         if out is None:
             if skips:
                 hooks.skips += 1
+                if progress:  # a skipped tick still advances this member's frontier
+                    yield cast("_TOutRow", Progress(row.ts))
                 continue
             hooks.errors += 1
             raise PureModuleRunError(_none_no_skip_msg(module, row.ts), RunRule.STEP_NONE_NO_SKIP)
@@ -439,13 +462,16 @@ def drive_mealy(
     skips: bool,
     hooks: RunHooks,
     finish: bool = False,
+    progress: bool = False,
 ) -> Iterator[_TOutRow]:
     """Thread State from ``initial`` through a Mealy step, stamping emissions (spec §5.2).
 
     ``finish`` (set from ``StepSpec.has_finish``) calls the module's ``finish(state)``
     tail-flush ONCE on graceful stream exhaustion — never on early close or error.
     """
-    return _finalized(_mealy_rows(module, rows, initial, skips, hooks, finish), rows, hooks)
+    return _finalized(
+        _mealy_rows(module, rows, initial, skips, hooks, finish, progress), rows, hooks
+    )
 
 
 def _mealy_rows(
@@ -455,12 +481,16 @@ def _mealy_rows(
     skips: bool,
     hooks: RunHooks,
     finish: bool,
+    progress: bool,
 ) -> Iterator[_TOutRow]:
     state = initial  # ONE reference, rebound per tick — never copied or aliased
     n = 0
     last_ts = UNSTAMPED  # the newest consumed tick ts; stamps the finish tail (fold parity)
     on_step = hooks.on_step
     for row in rows:
+        if isinstance(row, Progress):  # aligner-dropped tick surfaced in progress mode
+            yield cast("_TOutRow", row)
+            continue
         hooks.ticks += 1
         n += 1
         last_ts = row.ts
@@ -476,6 +506,8 @@ def _mealy_rows(
         if out is None:
             if skips:
                 hooks.skips += 1
+                if progress:  # a skipped tick still advances this member's frontier
+                    yield cast("_TOutRow", Progress(row.ts))
                 continue
             hooks.errors += 1
             raise PureModuleRunError(_none_no_skip_msg(module, row.ts), RunRule.STEP_NONE_NO_SKIP)

@@ -44,6 +44,7 @@ from dimos.pure.drivers import (
     drive_stateless,
     run_over,
 )
+from dimos.pure.rows import Progress
 from dimos.pure.stepspec import StepKind, StepSpec
 
 # ── shared fixtures: real bundles, plain (non-PureModule) step carriers ──────
@@ -127,7 +128,7 @@ def _stub_align(monkeypatch, rows_ret):
     """Install a fake dimos.pure.align; returns the recorded (in_type, streams) calls."""
     calls: list[tuple[type, dict]] = []
 
-    def align(in_type, streams, *, tf=None, on_decision=None):
+    def align(in_type, streams, *, tf=None, on_decision=None, progress=False):
         calls.append((in_type, dict(streams)))
         return iter(rows_ret)
 
@@ -334,6 +335,44 @@ def test_mealy_finish_flag_off_never_calls_hook():
         drive_mealy(m, iter(_rows(1.0)), Accumulator.State(), skips=False, hooks=RunHooks())
     )
     assert m.finished == [] and len(outs) == 1  # finish=False (default): hook untouched
+
+
+# ── progress markers (graph interior edges) ─────────────────────────────────
+
+
+def test_stateless_progress_yields_marker_on_skip():
+    hooks = RunHooks()
+    outs = list(
+        drive_stateless(
+            EvenStep(), iter(_rows(1.0, 2.0, 3.0)), skips=True, hooks=hooks, progress=True
+        )
+    )
+    assert [type(o) for o in outs] == [Progress, Pong, Progress]
+    assert [o.ts for o in outs] == [1.0, 2.0, 3.0]
+    assert (hooks.ticks, hooks.emits, hooks.skips) == (3, 1, 2)  # markers are not emits
+
+
+def test_mealy_progress_yields_marker_on_skip():
+    outs = list(
+        drive_mealy(
+            EveryOther(),
+            iter(_rows(1.0, 2.0)),
+            EveryOther.State(),
+            skips=True,
+            hooks=RunHooks(),
+            progress=True,
+        )
+    )
+    assert [type(o) for o in outs] == [Progress, Pong]
+    assert outs[0].ts == 1.0 and outs[1].ts == 2.0
+
+
+def test_drivers_pass_aligner_markers_through():
+    # an aligner-dropped tick arrives as a marker: passed through, never stepped
+    rows: list = [Progress(0.5), *_rows(1.0)]
+    outs = list(drive_stateless(EchoStep(), iter(rows), skips=False, hooks=RunHooks()))
+    assert isinstance(outs[0], Progress) and outs[0].ts == 0.5
+    assert isinstance(outs[1], Pong) and outs[1].ts == 1.0
 
 
 # ── fold (spec §7) ───────────────────────────────────────────────────────────

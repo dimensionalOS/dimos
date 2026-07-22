@@ -52,6 +52,7 @@ __all__ = [
     "LatestSpec",
     "Out",
     "PlainSpec",
+    "Progress",
     "TfOutSpec",
     "TfSpec",
     "TickSpec",
@@ -69,6 +70,20 @@ _T = TypeVar("_T")
 
 UNSTAMPED: Final[float] = float("-inf")
 """Default ts of a freshly constructed Out row, before the engine stamps it."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Progress:
+    """Frontier marker on an internal edge: the producer advanced to ``ts``, emitted nothing.
+
+    Emitted between rows by graph member drivers (``run_over(progress=True)``) for
+    ticks that fired-or-dropped without an emission. Consumers (aligner refill, tf
+    pull, save drains) advance the port's frontier and move on — a sparse producer
+    can then be pulled without driving its upstream cone to exhaustion. Never
+    crosses the rim: user-facing exports and ``over()`` filter it out.
+    """
+
+    ts: float
 
 
 class BundleDefinitionError(TypeError):

@@ -39,6 +39,7 @@ import re
 import threading
 from typing import Any, Final, NamedTuple, TypeAlias, TypeVar, overload
 
+from dimos.pure.rows import Progress
 from dimos.pure.typing import AsyncStateless, Fold, Mealy, Stateless
 from dimos.utils.logging_config import setup_logger
 
@@ -600,6 +601,9 @@ class DebugSession:
     def tap_in_rows(self, rows: Iterator[Any]) -> Iterator[Any]:
         """Wrap the aligner's row iterator: push each post-alignment In row (thinned)."""
         for row in rows:
+            if isinstance(row, Progress):  # frontier marker, not a row — pass, don't record
+                yield row
+                continue
             if not self._disabled and self.debug.rows:
                 try:
                     keep = self._in_seen % self.debug.thin == 0
@@ -628,6 +632,9 @@ class DebugSession:
         not by out rows here — a slow-emitting module drains just the same."""
         try:
             for row in rows:
+                if isinstance(row, Progress):  # frontier marker, not a row — pass, don't record
+                    yield row
+                    continue
                 if not self._disabled and self.debug.rows:
                     try:
                         keep = self._out_seen % self.debug.thin == 0
