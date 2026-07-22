@@ -24,13 +24,18 @@ so a failure can be bisected by dropping down a level:
 - ``go2-zenoh-nav`` — the full stack: planner, goal relay and path follower.
 - ``go2-zenoh-htc`` — ``go2-zenoh-nav`` with the follower swapped for the
   ``DanLocalPlanner`` + ``DanHolonomicTC`` pair from ``unitree-go2-mls-htc``.
+- ``go2-zenoh-avoidance`` — ``go2-zenoh-htc`` with :class:`PathCorrector` in
+  place of ``DanLocalPlanner``: plans are pushed off obstacles and stamped
+  with a body yaw the TC then tracks.
 """
 
+import itertools
 import math
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -42,6 +47,7 @@ from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.obstacle_avoidance.path_correction import PathCorrector
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -117,6 +123,49 @@ def _render_path(msg: Any) -> Any:
     if len(msg.poses) == 0:
         return None
     return msg
+
+
+_GO2_HALF_SIZES = (0.35, 0.155, 0.2)
+
+
+def _sample_poses(poses: list[Any], spacing: float) -> list[Any]:
+    """Every ~*spacing* meters of arc length, keeping the original poses.
+
+    Unlike ``simple_resample_path`` this preserves each pose's stamped orientation
+    instead of re-deriving it from the travel direction.
+    """
+    kept = [poses[0]]
+    s = 0.0
+    for prev, pose in itertools.pairwise(poses):
+        s += math.hypot(pose.position.x - prev.position.x, pose.position.y - prev.position.y)
+        if s >= spacing:
+            kept.append(pose)
+            s = 0.0
+    if kept[-1] is not poses[-1]:
+        kept.append(poses[-1])
+    return kept
+
+
+def _render_corrected_path(msg: Any) -> Any:
+    """Corrected path as a chain of oriented go2-sized cubes.
+
+    Shows where the body will be — position AND stamped yaw — along the path, not
+    just the line. Orientations come verbatim from the corrector's waypoints.
+    """
+    if len(msg.poses) == 0:
+        return None
+    import rerun as rr
+
+    boxes = _sample_poses(msg.poses, 0.35)
+    return rr.Boxes3D(
+        centers=[(p.position.x, p.position.y, p.position.z + _GO2_HALF_SIZES[2]) for p in boxes],
+        half_sizes=[_GO2_HALF_SIZES] * len(boxes),
+        quaternions=[
+            rr.Quaternion(xyzw=[p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w])
+            for p in boxes
+        ],
+        colors=[(255, 60, 60)] * len(boxes),
+    )
 
 
 def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -211,3 +260,50 @@ go2_zenoh_htc = autoconnect(
     ),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
+
+# htc with PathCorrector in DanLocalPlanner's seat: it does the 0.1m resampling that
+# module did, then pushes waypoints off the costmap and stamps each with the body yaw
+# the corrected path wants. The replan gate isn't reproduced — goal cancels still reach
+# the TC through MovementManager's stop_movement.
+#
+#     MLSPlannerNative -> /planner_path
+#         -> PathCorrector (resample + repulsion + stop 20cm before collision)
+#         -> /path -> DanHolonomicTC
+go2_zenoh_avoidance = autoconnect(
+    go2_zenoh_raycaster,
+    # The corrected path draws as oriented go2-sized cubes instead of a line, so the
+    # stamped yaw is visible; the raw plan keeps the plain path renderer.
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config(
+            {
+                "world/pointlio_map": None,
+                "world/lidar": None,
+                "world/planner_path": _render_path,
+                "world/path": _render_corrected_path,
+            }
+        ),
+    ),
+    OdomBodyFrame.blueprint(mount_rotation=_mount_rotation()),
+    _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "body_odometry")]),
+    # Feeds the corrector off the raycaster's global map. Its own global_map input is
+    # what the planner declines to use, so nothing else competes for it here.
+    CostMapper.blueprint(),
+    # yaw_offset=π/2 turns this into a strafe test of the TC's yaw tracking.
+    PathCorrector.blueprint().remappings([(PathCorrector, "plan", "planner_path")]),
+    # track_path_yaw: drive the corrector's stamped orientations, not the tangent. Gains
+    # and tolerances are tightened over the defaults so the body matches the corrected
+    # poses in position AND yaw — at 0.3 m/s cruise there is clamp headroom for it.
+    DanHolonomicTC.blueprint(
+        run_profile="walk",
+        speed_m_s=0.5,
+        track_path_yaw=True,
+        k_position_per_s=4.0,
+        k_yaw_per_s=2.5,
+        goal_tolerance=0.1,
+        orientation_tolerance=0.15,
+        lookahead_m=0.25,
+    ).remappings([(DanHolonomicTC, "odom", "start_pose")]),
+    MovementManager.blueprint(),
+).global_config(transport="zenoh", n_workers=10, robot_model="unitree_go2")
