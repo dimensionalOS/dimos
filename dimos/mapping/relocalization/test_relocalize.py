@@ -481,15 +481,18 @@ def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
     errors: list[BaseException] = []
 
     def _writer() -> None:
-        tag_id = 1000
-        while not stop.is_set():
+        # Bounded on purpose: an unbounded writer grows _fixes without limit, so
+        # every propose() snapshot gets bigger and the test never finishes. A
+        # fixed budget still overlaps the reader and reproduces the race.
+        for tag_id in range(1000, 1200):
+            if stop.is_set():
+                return
             prior._fixes[tag_id] = (np.eye(4), 0.0)  # new key -> dict size changes
-            tag_id += 1
 
     writer = threading.Thread(target=_writer, name="detections_writer")
     writer.start()
     try:
-        for _ in range(2000):
+        for _ in range(200):
             try:
                 prior.propose(gm, lm)
             except RuntimeError as exc:  # "dictionary changed size during iteration"
