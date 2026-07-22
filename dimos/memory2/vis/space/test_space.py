@@ -14,6 +14,8 @@
 
 """Tests for Space builder and element types."""
 
+import re
+
 import numpy as np
 import pytest
 
@@ -293,15 +295,33 @@ class TestSVGRender:
         svg = s.to_svg()
         assert "<polyline" in svg
 
-    def test_box3d_renders_rect(self):
+    def test_box3d_renders_polygon(self):
         from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         s = Space()
         s.add(Box3D(center=GeoPose(5, 3, 0), size=Vector3(2, 1, 0), label="table"))
         svg = s.to_svg()
-        assert "<rect" in svg
+        assert "<polygon" in svg
         assert "table" in svg
+
+    def test_box3d_rotates_with_yaw(self):
+        import math
+
+        from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+        # 90° yaw swaps the box's world extent: 2m along x becomes 2m along y
+        pose = GeoPose((5, 3, 0), Quaternion.from_euler(Vector3(0, 0, math.pi / 2)))
+        s = Space()
+        s.add(Box3D(center=pose, size=Vector3(2, 1, 0)))
+        svg = s.to_svg()
+        match = re.search(r'<polygon points="([^"]+)"', svg)
+        assert match is not None
+        xs, ys = zip(*(map(float, p.split(",")) for p in match.group(1).split()), strict=False)
+        assert max(xs) - min(xs) == pytest.approx(1.0, abs=1e-6)
+        assert max(ys) - min(ys) == pytest.approx(2.0, abs=1e-6)
 
     def test_text_renders(self):
         s = Space()

@@ -133,11 +133,14 @@ class PathDistancer:
 
     _lookahead_dist: float = 0.5
     _path: NDArray[np.float64]
+    _pose_yaws: NDArray[np.float64]
     _cumulative_dists: NDArray[np.float64]
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, lookahead_m: float = 0.5) -> None:
         self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
+        self._pose_yaws = np.array([p.orientation.euler.z for p in path.poses])
         self._cumulative_dists = _make_cumulative_distance_array(self._path)
+        self._lookahead_dist = float(lookahead_m)
 
     @property
     def lookahead_distance_m(self) -> float:
@@ -176,6 +179,28 @@ class PathDistancer:
         idx = min(max(idx, 0), len(self._path) - 2)
         direction = self._path[idx + 1] - self._path[idx]
         return float(np.arctan2(direction[1], direction[0]))
+
+    def pose_yaw_at_progress(self, progress_m: float) -> float:
+        """Stamped pose yaw at an arc length (shortest-arc interpolated).
+
+        Unlike :meth:`yaw_at_progress` (path tangent), this reads the
+        orientation the path poses carry — the desired body yaw when the
+        path source stamps one (e.g. an obstacle-aware corrector).
+        """
+        if len(self._pose_yaws) == 0:
+            return 0.0
+        if len(self._path) < 2:
+            return float(self._pose_yaws[0])
+        s = float(np.clip(progress_m, 0.0, self.path_length_m))
+        idx = int(np.searchsorted(self._cumulative_dists, s))
+        idx = min(max(idx, 0), len(self._path) - 2)
+        prev_s = self._cumulative_dists[idx - 1] if idx > 0 else 0.0
+        segment_s = self._cumulative_dists[idx] - prev_s
+        alpha = 0.0 if segment_s <= 1e-12 else (s - prev_s) / segment_s
+        y0 = float(self._pose_yaws[idx])
+        y1 = float(self._pose_yaws[idx + 1])
+        delta = math.remainder(y1 - y0, math.tau)
+        return float(math.remainder(y0 + alpha * delta, math.tau))
 
     def project(self, pos: NDArray[np.float64]) -> PolylineProjection:
         return project_to_polyline(float(pos[0]), float(pos[1]), self._path)

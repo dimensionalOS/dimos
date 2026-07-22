@@ -123,6 +123,8 @@ class _HolonomicPathFollower:
     _orientation_tolerance: float
     _align_heading_before_move: bool
     _align_goal_yaw: bool
+    _track_path_yaw: bool
+    _lookahead_m: float
 
     def __init__(self, config: DanHolonomicTCConfig) -> None:
         self.cmd_vel = Subject()
@@ -138,6 +140,8 @@ class _HolonomicPathFollower:
         self._control_frequency = float(config.control_frequency)
         self._align_heading_before_move = bool(config.align_heading_before_move)
         self._align_goal_yaw = bool(config.align_goal_yaw)
+        self._track_path_yaw = bool(config.track_path_yaw)
+        self._lookahead_m = float(config.lookahead_m)
         self._run_profile = config.run_profile
         self._previous_odom_for_velocity = None
         self._path_speed_profile_s = None
@@ -181,7 +185,7 @@ class _HolonomicPathFollower:
         with self._lock:
             self._stop_planning_event = Event()
             self._path = path
-            self._path_distancer = PathDistancer(path)
+            self._path_distancer = PathDistancer(path, lookahead_m=self._lookahead_m)
             self._previous_odom_for_velocity = None
             self._rebuild_path_speed_profile(self._path_distancer)
             self._thread = Thread(
@@ -201,7 +205,7 @@ class _HolonomicPathFollower:
                 return False
 
             self._path = path
-            self._path_distancer = PathDistancer(path)
+            self._path_distancer = PathDistancer(path, lookahead_m=self._lookahead_m)
             self._rebuild_path_speed_profile(self._path_distancer)
 
         return True
@@ -470,9 +474,13 @@ class _HolonomicPathFollower:
         path_speed: float,
     ) -> TrajectoryReferenceSample:
         point = path_distancer.point_at_progress(progress_m)
-        # Body yaw tracks the path tangent; the holonomic law translates toward
-        # the reference while turning. No costmap yaw-lock in this stack.
-        path_yaw = path_distancer.yaw_at_progress(progress_m)
+        # Body yaw tracks the path tangent by default; with track_path_yaw the
+        # stamped per-pose orientations are the reference instead (holonomic
+        # base — heading decoupled from travel direction).
+        if self._track_path_yaw:
+            path_yaw = path_distancer.pose_yaw_at_progress(progress_m)
+        else:
+            path_yaw = path_distancer.yaw_at_progress(progress_m)
         feedforward = Twist(
             linear=Vector3(path_speed, 0.0, 0.0),
             angular=Vector3(0.0, 0.0, 0.0),
@@ -598,6 +606,13 @@ class DanHolonomicTCConfig(ModuleConfig):
     k_yaw_rate_per_s: float = 1.0
     align_heading_before_move: bool = False
     align_goal_yaw: bool = False
+    # Track the stamped per-pose yaw of the path instead of its tangent —
+    # for path sources that stamp a desired body orientation (e.g.
+    # PathCorrector). Default keeps the tangent-following behavior.
+    track_path_yaw: bool = False
+    # Reference lookahead along the path (m). Smaller keeps the carrot
+    # closer to the body for tighter pose matching.
+    lookahead_m: float = 0.5
 
 
 class DanHolonomicTC(Module):
