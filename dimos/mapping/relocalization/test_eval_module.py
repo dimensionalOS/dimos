@@ -24,6 +24,9 @@ no LCM bus, no replay, no DB. Four properties:
   * the accept key and the log join stay honest: a yaw-only fix is its own accept, a
     health line labels exactly one fix, and degenerate shared tags hold med_err out
     with a reason instead of reporting an arbitrary Umeyama transform.
+  * accepted_points_in_map (the live rerun overlay) puts one point per accepted fix
+    at the robot's position IN THE MAP FRAME, 1:1 with the deduped accepts, coloured
+    by the winning prior -- with `unknown` (a join failure) visibly its own colour.
   * the log parsers read what the PIPELINE ACTUALLY EMITS. Those tests never write a
     log line by hand -- they run the real module.py / priors.py call sites through
     the real dimos logger and parse the bytes it rendered, in BOTH renderings
@@ -50,8 +53,11 @@ from scipy.spatial.transform import Rotation
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.mapping.relocalization.eval_module import (
+    SOURCE_COLORS,
+    SOURCES,
     Fix,
     HealthLine,
+    accepted_points_in_map,
     aligned_err_t_m,
     compute_stats,
     count_rejects,
@@ -605,3 +611,103 @@ def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch
         assert by["ransac"].won == 1 and by["fiducial"].won == 1, rendering
         assert by["fiducial"].med_fit == 0.7, rendering
         assert stats.rejects == 0, rendering
+
+
+# --------------------------------------------------------------------------- #
+# accepted_points_in_map: the live rerun overlay. Colours are asserted as exact
+# literals, not recomputed from SOURCE_COLORS -- the overlay's whole job is that a
+# colour means one prior, so a palette edit must fail here and be deliberate.
+# --------------------------------------------------------------------------- #
+_EXPECTED_RGB: dict[str, tuple[int, int, int]] = {
+    "ransac": (43, 108, 176),  # #2b6cb0 blue
+    "fiducial": (221, 107, 32),  # #dd6b20 orange
+    "last_pose": (113, 128, 150),  # #718096 grey
+    "unknown": (155, 44, 44),  # #9b2c2c dim red
+}
+
+
+def test_overlay_colours_each_winning_prior_distinctly() -> None:
+    """One point per accept, coloured by the prior that won it, labelled with that
+    source and its fitness. Every source keeps its own colour and no two collide --
+    reading ransac wins from fiducial wins at a glance is the point of the overlay."""
+    odom = np.array([[float(i), 0.0, 0.0, 0.0] for i in range(len(SOURCES))])
+    fixes = [
+        Fix(ts=float(i), world_map_fix=np.eye(4), source=s, fitness=0.5)
+        for i, s in enumerate(SOURCES)
+    ]
+
+    points = accepted_points_in_map(fixes, odom)
+
+    assert points.colors_rgb == [_EXPECTED_RGB[s] for s in SOURCES]
+    assert len(set(points.colors_rgb)) == len(SOURCES), "two priors share a colour"
+    assert points.labels == [f"{s} fit=0.50" for s in SOURCES]
+
+
+def test_overlay_marks_an_unknown_source_visibly_not_as_a_second_grey() -> None:
+    """A fix no health line claims stays `unknown` -- a JOIN FAILURE, not a prior.
+    It draws in dim red, unmistakably not the last_pose grey it used to share a
+    colour family with, and its label states that no fitness was recovered."""
+    odom = np.array([[0.0, 0.0, 0.0, 0.0]])
+    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="unknown", fitness=float("nan"))]
+
+    points = accepted_points_in_map(fixes, odom)
+
+    red, green, blue = points.colors_rgb[0]
+    assert (red, green, blue) == _EXPECTED_RGB["unknown"]
+    assert red - max(green, blue) > 100, "unknown must read as RED, not another grey"
+    assert all(points.colors_rgb[0] != _EXPECTED_RGB[s] for s in SOURCES)
+    assert points.labels == ["unknown fit=-"]
+    # the palette an unlisted future source falls back to is that same dim red
+    assert SOURCE_COLORS["unknown"] == "#9b2c2c"
+
+
+def test_overlay_points_match_the_deduped_accepts_one_to_one_in_the_map_frame() -> None:
+    """The whole overlay path on constructed known truth: /tf republishes each accept
+    until the next, dedup recovers two accepts, and the overlay draws exactly two
+    points -- each at map_T_world @ robot_world for THAT accept's own fix, the same
+    frame the premap is drawn in. A point at the fix's own translation (the map
+    origin) instead would fail this."""
+    map_t_world_a = _rt(Rotation.from_euler("z", 90.0, degrees=True).as_matrix(),
+                        np.array([1.0, 0.0, 0.0]))
+    map_t_world_b = _rt(Rotation.from_euler("z", -30.0, degrees=True).as_matrix(),
+                        np.array([-2.0, 0.5, 0.0]))
+    # module.py publishes the INVERSE of relocalize()'s map_T_world on /tf
+    world_map_a = np.linalg.inv(map_t_world_a)
+    world_map_b = np.linalg.inv(map_t_world_b)
+
+    robot_a = np.array([2.0, 3.0, 0.5])
+    robot_b = np.array([4.0, -1.0, 0.5])
+    odom = np.array([
+        [0.0, *robot_a],
+        [1.0, 9.9, 9.9, 9.9],  # a sample far from either accept must not be picked
+        [2.0, *robot_b],
+    ])
+    tf_samples = [
+        (0.0, world_map_a), (0.5, world_map_a), (1.0, world_map_a),  # republished
+        (2.0, world_map_b), (2.5, world_map_b),
+    ]
+    health = [
+        HealthLine("ransac", 0.91, tuple(world_map_a[:3, 3])),
+        HealthLine("fiducial", 0.72, tuple(world_map_b[:3, 3])),
+    ]
+
+    accepts = dedup_tf_fixes(tf_samples)
+    points = accepted_points_in_map(label_fixes_from_log(accepts, health), odom)
+
+    assert len(accepts) == 2
+    assert len(points) == len(accepts), "overlay must be 1:1 with the deduped accepts"
+    expected = [
+        (map_t_world_a @ np.array([*robot_a, 1.0]))[:3],
+        (map_t_world_b @ np.array([*robot_b, 1.0]))[:3],
+    ]
+    np.testing.assert_allclose(points.positions_map_m, expected, atol=1e-9)
+    assert points.colors_rgb == [_EXPECTED_RGB["ransac"], _EXPECTED_RGB["fiducial"]]
+    assert points.labels == ["ransac fit=0.91", "fiducial fit=0.72"]
+
+
+def test_overlay_draws_nothing_without_odom() -> None:
+    """No odom captured -> no robot position to draw a fix at. The overlay stays
+    empty rather than falling back to the fix's translation, which is the map origin
+    and would put every accept in one blob."""
+    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9)]
+    assert len(accepted_points_in_map(fixes, np.empty((0, 4)))) == 0

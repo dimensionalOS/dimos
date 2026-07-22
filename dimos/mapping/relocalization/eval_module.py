@@ -31,6 +31,12 @@ the map_A<->map_B offset. ``resolve_heldout_alignment`` recovers the rigid
 ``med_err`` a real metre value. Without those shared references the error prints
 ``-`` with the reason, never a fabricated number (a house non-negotiable).
 
+WHERE EACH PRIOR WINS. Under ``--eval`` the Module also draws every accept into the
+run's rerun viewer as it lands -- ``world/eval/accepted``, one point per accepted fix
+at the robot's position in the premap's map frame, coloured by the winning prior
+(``accepted_points_in_map``). The spatial answer the table cannot give; a no-op when
+no viewer is up.
+
 The Module always runs "live" (no in-process truth -> med_err/success omitted); the
 offline driver runs "held_out" (columns shown, Umeyama-aligned or ``-``). Both
 render through the SAME ``format_report``/``plot_trajectory``/``write_report``, so
@@ -43,6 +49,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import socket
 import time
 from typing import Any
 
@@ -55,6 +62,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
+from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 
 logger = setup_logger()
 
@@ -64,17 +72,31 @@ TF_TOPIC = "/tf"  # RelocalizationModule republishes world->map here (LCMTF -> /
 ODOM_TOPIC = "/odom"  # recording-timestamped PoseStamped, preserved through replay
 
 SOURCES: tuple[str, ...] = ("ransac", "fiducial", "last_pose")
+# ONE palette for both renderers (trajectory PNG + the rerun overlay), so the two
+# can never disagree about which prior a colour means. unknown is a dim RED, not a
+# second grey: an unlabelled fix is a JOIN FAILURE, and it must read as one next to
+# last_pose rather than hide inside it.
 SOURCE_COLORS: dict[str, str] = {
-    "ransac": "#2b6cb0",
-    "fiducial": "#dd6b20",
-    "last_pose": "#718096",
-    "unknown": "#a0aec0",
+    "ransac": "#2b6cb0",  # blue
+    "fiducial": "#dd6b20",  # orange
+    "last_pose": "#718096",  # grey
+    "unknown": "#9b2c2c",  # dim red
 }
 SUCCESS_T_M = 1.0  # held-out translation gate (m); matches score_replay.SUCCESS_T_M
 _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same accept
 _TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
 _COLLINEAR_RATIO = 1e-2  # shared-tag 2nd/1st singular value below this -> collinear
 _TAG_SPREAD_MIN_M = 1e-6  # principal spread below this -> the shared tags coincide
+
+# The live rerun overlay (see accepted_points_in_map / RelocEval._log_accepted).
+# "world/" is the bridge's entity_prefix, so the overlay sits under the same
+# Spatial3DView origin as every other run entity.
+RERUN_ACCEPTED_ENTITY = "world/eval/accepted"
+# The premap is logged with frame_id "map" (module.py) and the bridge parents that
+# entity to tf#/map, so the overlay names the same frame to land on top of it.
+RERUN_ACCEPTED_PARENT_FRAME = "tf#/map"
+RERUN_ACCEPTED_RADIUS_M = 0.25  # premap voxels draw at ~0.025 m radius; 10x reads over them
+_RERUN_PROBE_TIMEOUT_S = 0.2  # the bridge's proxy is local -- it answers or it is not up
 
 
 # --------------------------------------------------------------------------- #
@@ -663,6 +685,66 @@ def plot_trajectory(
     return out_png
 
 
+def _rgb(hex_color: str) -> tuple[int, int, int]:
+    """'#rrggbb' -> (r, g, b) 0-255, the form rerun wants."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+@dataclass
+class AcceptedPoints:
+    """The rerun overlay for a run's accepted fixes: one coloured, labelled point
+    each, in the MAP frame. Pure data -- built without rerun, logged by the Module."""
+
+    positions_map_m: list[tuple[float, float, float]]
+    colors_rgb: list[tuple[int, int, int]]
+    labels: list[str]
+
+    def __len__(self) -> int:
+        return len(self.positions_map_m)
+
+
+def accepted_points_in_map(fixes: list[Fix], odom_txyz: np.ndarray) -> AcceptedPoints:
+    """One point per accepted fix, at the ROBOT's position when that fix landed,
+    expressed in the premap's map frame, coloured by the prior that won.
+
+    FRAME. A fix is ``world_T_map`` (module.py inverts relocalize()'s map_T_world and
+    publishes world->map on /tf), so ``map_T_world = inv(fix)`` carries a world-frame
+    (LIO/odom) point into the premap's frame. That is the frame the premap is drawn
+    in -- module.py stamps the loaded premap ``frame_id = "map"`` and the rerun bridge
+    parents that entity to ``tf#/map`` -- and it is the SAME mapping plot_trajectory
+    uses, so the PNG and the viewer cannot drift apart.
+
+    The robot's position at accept time is the odom sample nearest in the shared wall
+    clock (odom runs at ~10-50 Hz against a ~2 s accept cadence). The fix's own
+    translation is deliberately NOT used: that is the map ORIGIN in world, which
+    barely moves between accepts and would draw every prior's win in one blob.
+
+    Args:
+        fixes: accepted fixes, ``dedup_tf_fixes`` -> ``label_fixes_from_log``.
+        odom_txyz: (N, 4) [wall_ts, x, y, z] robot positions in the world frame.
+    Returns:
+        AcceptedPoints, 1:1 with ``fixes`` -- empty when no odom was captured (with
+        no robot position there is nowhere honest to draw a fix).
+    """
+    positions: list[tuple[float, float, float]] = []
+    colors: list[tuple[int, int, int]] = []
+    labels: list[str] = []
+    if odom_txyz.size == 0:
+        return AcceptedPoints(positions, colors, labels)
+    odom_ts = odom_txyz[:, 0]
+    for f in fixes:
+        if f.world_map_fix is None:
+            continue
+        i = int(np.argmin(np.abs(odom_ts - f.ts)))
+        p_map = np.linalg.inv(f.world_map_fix) @ np.array([*odom_txyz[i, 1:4], 1.0])
+        positions.append((float(p_map[0]), float(p_map[1]), float(p_map[2])))
+        colors.append(_rgb(SOURCE_COLORS.get(f.source, SOURCE_COLORS["unknown"])))
+        fit = "-" if np.isnan(f.fitness) else f"{f.fitness:.2f}"
+        labels.append(f"{f.source} fit={fit}")
+    return AcceptedPoints(positions, colors, labels)
+
+
 def write_report(
     stats: EvalStats,
     odom_xy: np.ndarray,
@@ -814,10 +896,12 @@ class EvalConfig(ModuleConfig):
 
 
 class RelocEval(Module):
-    """In-process collector: subscribes to the real ``/tf`` + ``/odom`` streams and,
-    at stop(), prints the per-source table + writes json + a top-down trajectory
-    PNG. Always "live" -- no in-process PGO truth, so med_err/success are the offline
-    driver's job. Best-effort: a finalize failure must not crash the run.
+    """In-process collector: subscribes to the real ``/tf`` + ``/odom`` streams,
+    draws each accept into rerun as it lands (``world/eval/accepted``, coloured by
+    the winning prior), and at stop() prints the per-source table + writes json + a
+    top-down trajectory PNG. Always "live" -- no in-process PGO truth, so
+    med_err/success are the offline driver's job. Best-effort: neither the overlay
+    nor a finalize failure may crash the run.
     """
 
     config: EvalConfig
@@ -827,11 +911,17 @@ class RelocEval(Module):
         # Callbacks fire on the LCM handle thread; list.append is atomic under the
         # GIL (no lock). Each sample carries the wall time it was seen -- the one
         # clock shared by odom and /tf, so no clock mapping is required.
-        self._odom: list[tuple[float, float, float]] = []  # (wall, x, y)
+        self._odom: list[tuple[float, float, float, float]] = []  # (wall, x, y, z)
         self._world_map: list[tuple[float, np.ndarray]] = []  # (wall, world_T_map 4x4)
         self._tf_t: LCMTransport[TFMessage] = LCMTransport(TF_TOPIC, TFMessage)
         self._odom_t: LCMTransport[PoseStamped] = LCMTransport(ODOM_TOPIC, PoseStamped)
         self._unsub: list[Any] = []
+        # Live-overlay state (all touched only from the /tf callback thread).
+        self._health: list[HealthLine] = []  # accepts tailed out of the run log so far
+        self._log_pos = 0  # byte offset that tail has consumed
+        self._n_drawn = 0  # accepts already in the overlay
+        self._rr_ready = False  # connected to the bridge's rerun recording
+        self._rr_enabled = True  # cleared after a failure, so it cannot spam
 
     @rpc
     def start(self) -> None:
@@ -841,13 +931,111 @@ class RelocEval(Module):
         logger.info("RelocEval collector started", tf_topic=TF_TOPIC, odom_topic=ODOM_TOPIC)
 
     def _on_odom(self, msg: PoseStamped) -> None:
-        self._odom.append((time.time(), float(msg.position.x), float(msg.position.y)))
+        # z is carried for the rerun overlay (a 3D point over the premap); the report
+        # and the top-down PNG use columns 0:3 only.
+        self._odom.append(
+            (time.time(), float(msg.position.x), float(msg.position.y), float(msg.position.z))
+        )
 
     def _on_tf(self, msg: TFMessage) -> None:
         wall = time.time()
+        got_fix = False
         for tf in msg.transforms:
             if tf.frame_id == FRAME_WORLD and tf.child_frame_id == FRAME_MAP:
                 self._world_map.append((wall, tf.to_matrix()))
+                got_fix = True
+        if got_fix and self._rr_enabled:
+            try:
+                self._log_accepted()
+            except Exception:
+                # Boundary: the overlay is an operator aid. A rerun or run-log
+                # failure must not take down the /tf callback, and must not repeat
+                # every republish interval -- one line, then stay quiet.
+                self._rr_enabled = False
+                logger.exception("RelocEval rerun overlay disabled after a failure")
+
+    def _tail_health_lines(self) -> list[HealthLine]:
+        """The accepts appended to the run log since the last read. Tailing by byte
+        offset keeps the /tf callback's work bounded -- a run log grows all session,
+        and re-reading it from the top on every accept would not. A trailing partial
+        line stays unconsumed, so the accept it belongs to is not lost."""
+        path = resolve_run_log(self.config.run_log_file)
+        if path is None:
+            return []
+        with path.open("rb") as fh:
+            fh.seek(self._log_pos)
+            chunk = fh.read()
+        cut = chunk.rfind(b"\n") + 1
+        self._log_pos += cut
+        return parse_health_lines(chunk[:cut].decode(errors="replace"))
+
+    def _rerun_ready(self) -> bool:
+        """True once this worker logs into the SAME rerun recording the bridge draws
+        the premap into; False -- a no-op overlay -- whenever no viewer is up
+        (``--viewer none``, headless, or a blueprint without RerunBridgeModule).
+
+        dimos starts every module worker through multiprocessing (forkserver,
+        core/coordination/python_worker.py) and rr.init derives its default recording
+        id from multiprocessing's authkey, so bridge worker and eval worker share ONE
+        recording and these points land beside the premap instead of in a second
+        recording the viewer would list separately.
+        https://rerun.io/docs/howto/logging/shared-recordings
+        """
+        if self._rr_ready:
+            return True
+        host = self.config.g.rerun_host or self.config.g.listen_host
+        if host in ("0.0.0.0", ""):
+            host = "127.0.0.1"  # a wildcard LISTEN address is not a connect address
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(_RERUN_PROBE_TIMEOUT_S)
+            if probe.connect_ex((host, RERUN_GRPC_PORT)) != 0:
+                return False  # retried on the next accept -- the bridge may still be starting
+
+        import rerun as rr
+
+        from dimos.visualization.rerun.init import rerun_init
+
+        rerun_init()  # same app id + turbo annotation context the bridge registers
+        rr.connect_grpc(url=f"rerun+http://{host}:{RERUN_GRPC_PORT}/proxy")
+        # Parent the overlay to the premap's frame once -- static, because unlike the
+        # bridge's per-message attachment this entity never changes frame.
+        rr.log(
+            RERUN_ACCEPTED_ENTITY,
+            rr.Transform3D(parent_frame=RERUN_ACCEPTED_PARENT_FRAME),
+            static=True,
+        )
+        self._rr_ready = True
+        logger.info("RelocEval rerun overlay connected", entity=RERUN_ACCEPTED_ENTITY, host=host)
+        return True
+
+    def _log_accepted(self) -> None:
+        """Redraw ``world/eval/accepted`` when a NEW accept lands: every accepted fix
+        so far, one point each, coloured by the prior that won it. The full set is
+        re-logged (not appended) so a fix that was still ``unknown`` when its /tf
+        arrived gets its colour the moment its log line shows up."""
+        tf_fixes = dedup_tf_fixes(self._world_map)
+        if len(tf_fixes) <= self._n_drawn:
+            return  # a republish of the accept already drawn
+        self._n_drawn = len(tf_fixes)
+        self._health.extend(self._tail_health_lines())
+        odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 4), dtype=float)
+        points = accepted_points_in_map(label_fixes_from_log(tf_fixes, self._health), odom)
+        if not len(points) or not self._rerun_ready():
+            return
+
+        import rerun as rr
+
+        rr.log(
+            RERUN_ACCEPTED_ENTITY,
+            rr.Points3D(
+                positions=points.positions_map_m,
+                colors=points.colors_rgb,
+                # rerun shows labels below its own instance-count threshold and on
+                # hover above it -- exactly the right behaviour for a growing set.
+                labels=points.labels,
+                radii=RERUN_ACCEPTED_RADIUS_M,
+            ),
+        )
 
     @rpc
     def stop(self) -> None:
@@ -877,7 +1065,7 @@ class RelocEval(Module):
             n_rejects = count_rejects(log_text)
         fixes = label_fixes_from_log(tf_fixes, health)
 
-        odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 3), dtype=float)
+        odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 4), dtype=float)
         odom_ts = odom[:, 0] if odom.size else np.empty((0,), dtype=float)
         markers_xy: dict[int, tuple[float, float]] = {}
         if self.config.marker_map_file:
@@ -893,6 +1081,7 @@ class RelocEval(Module):
         stats = compute_stats(
             fixes, odom_ts, census, n_rejects, mode="live", held_out_note=note
         )
-        # odom_xy for the plot uses (ts, x, y): reuse the wall ts as the sample key.
-        write_report(stats, odom, fixes, markers_xy, Path(self.config.out_dir), self.config.tag,
-                     title="RelocEval live capture")
+        # odom_xy for the plot uses (ts, x, y): reuse the wall ts as the sample key,
+        # and drop the z the rerun overlay needs (the plot is top-down).
+        write_report(stats, odom[:, :3], fixes, markers_xy, Path(self.config.out_dir),
+                     self.config.tag, title="RelocEval live capture")
