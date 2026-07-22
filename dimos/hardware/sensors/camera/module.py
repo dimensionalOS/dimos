@@ -81,6 +81,10 @@ class CameraModule(Module, perception.Camera):
             stream.subscribe(on_image),
         )
 
+        # Publish the transform immediately, not only on the 1 Hz timer;
+        # otherwise every image in the first second is recorded before the
+        # camera frame exists in tf and gets stored without a pose.
+        self.publish_metadata()
         self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )

@@ -4,7 +4,7 @@ End-to-end: teleoperate an arm, record episodes to a session DB, then convert
 that DB into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
-teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
+teleop / hand-teach ─▶ CollectionRecorder ─▶ session.db ─▶ dimos dataprep ─▶ dataset
 ```
 
 ---
@@ -119,3 +119,67 @@ working example. The fields that matter:
   true commanded actions you'd record `joint_command` and map `action` to it.
 - **Old vs new sessions** — recordings made before the `coordinator_joint_state`
   rename use the old stream name; point a matching config at them, or re-record.
+
+---
+
+## 4. Train and execute a policy
+
+Install the optional LeRobot integration. DimOS pins LeRobot 0.4.4 because it
+is the newest release compatible with the repository's Transformers 4.53
+stack; both the trainer and live module use LeRobot's upstream policy and
+processor APIs.
+
+```bash
+uv sync --extra lerobot
+```
+
+Train ACT directly from a local DataPrep output directory:
+
+```bash
+uv run lerobot-train \
+  --dataset.repo_id=galaxea_a1z \
+  --dataset.root=./a1z_lerobot_dataset \
+  --policy.type=act \
+  --policy.device=cuda \
+  --policy.push_to_hub=false \
+  --output_dir=outputs/a1z_act \
+  --job_name=a1z_act \
+  --wandb.enable=false
+```
+
+The deployable checkpoint is written under
+`outputs/a1z_act/checkpoints/last/pretrained_model`. ACT is the currently
+tested A1Z path, but the runtime loads policies through LeRobot's policy
+factory rather than hard-coding ACT. Another LeRobot policy type can be used
+when its saved configuration has the same single RGB image input, seven-value
+state input, and seven-value action output.
+
+`LeRobotPolicyModule` owns a named catalog of checkpoints. It loads each
+checkpoint on first use and caches it, so one running robot stack can execute
+several trained behaviors without restarting. The generic
+`execute_learned_policy(policy_name, duration)` skill is useful for testing.
+For an agent-facing robot, expose each behavior as a normal, descriptive
+DimOS skill instead:
+
+```python
+from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.learning.lerobot_policy import LeRobotPolicyModule
+
+
+class HackathonPolicies(LeRobotPolicyModule):
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
+    def pick_up_cup(self) -> str:
+        """Pick up the wooden cup from the table."""
+        return self.start_configured_policy("pick_up_cup", tool_name="pick_up_cup")
+
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
+    def place_cup(self) -> str:
+        """Place the held wooden cup on the table."""
+        return self.start_configured_policy("place_cup", tool_name="place_cup")
+```
+
+These wrappers are deliberately ordinary `@skill` methods. Their names,
+docstrings, movement-capability locking, background progress, and stop events
+therefore pass through the existing DimOS agent and MCP machinery unchanged.
+The shared parent module only selects and executes checkpoints.

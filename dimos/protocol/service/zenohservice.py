@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from typing import Any
 
@@ -27,15 +28,19 @@ zenoh.init_log_from_env_or("warn")
 
 logger = setup_logger()
 
+LOOPBACK_INTERFACE = "lo0" if sys.platform == "darwin" else "lo"
+LOCALHOST_LISTEN_ENDPOINT = "tcp/127.0.0.1:0"
+
 
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
     connect: list[str] = []
     listen: list[str] = []
+    local_only: bool = True
 
     @property
     def session_key(self) -> str:
-        return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
+        return f"{self.mode}|{self.local_only}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
 
 
 class ZenohSessionPool:
@@ -50,12 +55,19 @@ class ZenohSessionPool:
             if key not in self._sessions:
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
+                if config.local_only:
+                    zconfig.insert_json5(
+                        "scouting/multicast/interface", json.dumps(LOOPBACK_INTERFACE)
+                    )
+                listen = config.listen or ([LOCALHOST_LISTEN_ENDPOINT] if config.local_only else [])
                 if config.connect:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
-                if config.listen:
-                    zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
+                if listen:
+                    zconfig.insert_json5("listen/endpoints", json.dumps(listen))
                 self._sessions[key] = zenoh.open(zconfig)
-                logger.debug(f"Zenoh session opened in {config.mode} mode")
+                logger.debug(
+                    f"Zenoh session opened in {config.mode} mode (local_only={config.local_only})"
+                )
             return self._sessions[key]
 
     def close_all(self) -> None:

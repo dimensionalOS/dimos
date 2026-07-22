@@ -318,6 +318,8 @@ class Recorder(MemoryModule):
     config: RecorderConfig
 
     _pose_setters: dict[str, Any] = {}
+    _closing: bool = False
+    _poseless_counts: dict[str, int] = {}
 
     @rpc
     def start(self) -> None:
@@ -380,18 +382,38 @@ class Recorder(MemoryModule):
         """
 
         async def on_msg(msg: Any) -> None:
+            if self._closing:
+                return
             ts = self._resolve_ts(name, msg)
             pose = await self._resolve_pose(name, msg, ts)
             if not pose:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+                # Warn on the first poseless message per stream, then every
+                # 100th - a missing tf otherwise floods the console at frame
+                # rate (e.g. during the pre-first-tf startup window).
+                count = self._poseless_counts.get(name, 0) + 1
+                self._poseless_counts[name] = count
+                if count == 1 or count % 100 == 0:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose "
+                        "(%d poseless message(s) so far; repeats logged every 100th)",
+                        name,
+                        ts,
+                        getattr(msg, "ts", None),
+                        count,
+                    )
+            if self._closing:
+                return
             stream.append(msg, ts=ts, pose=pose)
 
         self.process_observable(input_topic.pure_observable(), on_msg)
+
+    @rpc
+    def stop(self) -> None:
+        # Drop in-flight recording callbacks before the store closes; without
+        # this, a message dispatched just before shutdown races the SQLite
+        # close and surfaces as "Cannot operate on a closed database".
+        self._closing = True
+        super().stop()
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
