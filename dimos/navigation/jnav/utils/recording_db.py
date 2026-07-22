@@ -32,6 +32,8 @@ import numpy as np
 
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.jnav.utils.trajectory_metrics import PoseLookup, trajectory_lookup
 
 # max |Δt| pairing a query time to an odom sample
@@ -87,14 +89,14 @@ def iterate_stream(
         yield (float(observation.ts), observation.data)
 
 
-def payload_pose(payload: Any) -> Pose:
+def payload_pose(payload: Odometry | PoseStamped) -> Pose:
     """Normalize a recorded odometry payload to a ``Pose``.
 
-    Handles both shapes found in recordings: ``Odometry`` (``.pose``) and
+    Handles both shapes found in recordings: ``Odometry`` (nested pose) and
     ``PoseStamped`` (flat position + ``.orientation``)."""
-    if hasattr(payload, "pose"):  # Odometry
-        return payload.pose  # type: ignore[no-any-return]
-    return Pose(  # PoseStamped
+    if isinstance(payload, Odometry):
+        return payload.pose.pose
+    return Pose(
         payload.x,
         payload.y,
         payload.z,

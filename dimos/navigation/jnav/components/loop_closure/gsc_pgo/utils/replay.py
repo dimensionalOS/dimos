@@ -24,11 +24,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import suppress
 import json
 from pathlib import Path
 import tempfile
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 
@@ -47,9 +48,9 @@ from dimos.navigation.jnav.utils.recording_db import (
     REPLAY_DRAIN_MARGIN_S,
     REPLAY_PUBLISH_HZ,
     iterate_stream,
+    payload_pose,
     stream_count,
 )
-from dimos.navigation.jnav.utils.recording_tf import payload_pose
 from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose, has_drift
 
 # Run cap scales with the workload: a per-scan budget (well above any sane
@@ -61,8 +62,14 @@ LOCKSTEP_DRAIN_S = 10.0
 _PROGRESS_EVERY_N_SCANS = 200
 
 
+class ReplayStats(TypedDict):
+    timeouts: int
+    scans_sent: int
+    skipped_scan_ts: list[float]
+
+
 class GraphCaptureConfig(ModuleConfig):
-    output_path: str = ""
+    output_path: Path = Path("graph-capture.json")
 
 
 class GraphCapture(Module):
@@ -101,20 +108,20 @@ class GraphCapture(Module):
 
     async def main(self) -> AsyncGenerator[None, None]:
         yield
-        Path(self.config.output_path).write_text(
+        self.config.output_path.write_text(
             json.dumps({"graph": self._graph, "closures": self._closures})
         )
 
 
 class LockstepReplayConfig(ModuleConfig):
-    db: str = ""
+    db: Path = Path("mem2.db")
     lidar_stream: str = "lidar"
     odometry_stream: str = "odom"
     lidar_stride: int = 1
     odometry_stride: int = 2
     odom_publish_hz: float = 500.0
     ack_timeout_s: float = 30.0
-    done_path: str = ""
+    done_path: Path = Path("replay-done.json")
     # Artificial odometry drift: a constant-velocity world offset added to both
     # odom poses and lidar clouds at time t (offset = drift_per_sec * (t - t0)).
     # Consistent per-instant, so the trajectory warps over time — exactly the
@@ -147,23 +154,19 @@ class LockstepReplay(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._ack_count = 0
-        self._ack_event: asyncio.Event | None = None
+        self._ack_event = asyncio.Event()
 
     async def handle_corrected_odometry(self, msg: Odometry) -> None:
-        self._ack_count += 1
-        if self._ack_event is not None:
-            self._ack_event.set()
+        self._ack_event.set()
 
     def _load(self) -> list[tuple[float, str, Any]]:
-        db_path = Path(self.config.db)
         merged: list[tuple[float, str, Any]] = []
         for timestamp, pose in iterate_stream(
-            db_path, self.config.odometry_stream, stride=self.config.odometry_stride
+            self.config.db, self.config.odometry_stream, stride=self.config.odometry_stride
         ):
             merged.append((timestamp, "odom", pose))
         for timestamp, cloud in iterate_stream(
-            db_path, self.config.lidar_stream, stride=self.config.lidar_stride
+            self.config.db, self.config.lidar_stream, stride=self.config.lidar_stride
         ):
             merged.append((timestamp, "lidar", cloud))
         merged.sort(key=lambda item: item[0])
@@ -174,6 +177,8 @@ class LockstepReplay(Module):
         self._task = asyncio.create_task(self._replay(messages))
         yield
         self._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._task
 
     async def _replay(self, messages: list[tuple[float, str, Any]]) -> None:
         odom_period = 1.0 / self.config.odom_publish_hz
@@ -214,37 +219,30 @@ class LockstepReplay(Module):
                 await asyncio.sleep(odom_period)
                 continue
 
-            acks_before = self._ack_count
-            self._ack_event = asyncio.Event()
             points = payload.points_f32()
             if apply_drift:
                 points = points + (drift * (timestamp - t0)).astype(np.float32)
             self.lidar.publish(PointCloud2.from_numpy(points, frame_id="map", timestamp=timestamp))
             scans_sent += 1
-            deadline = time.monotonic() + self.config.ack_timeout_s
-            while self._ack_count == acks_before:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    timeouts += 1
-                    skipped_scan_ts.append(timestamp)
-                    break
-                try:
-                    await asyncio.wait_for(self._ack_event.wait(), timeout=remaining)
-                except TimeoutError:
-                    continue
+            try:
+                await asyncio.wait_for(self._ack_event.wait(), timeout=self.config.ack_timeout_s)
+            except TimeoutError:
+                timeouts += 1
+                skipped_scan_ts.append(timestamp)
+            else:
                 self._ack_event.clear()
             if scans_sent % _PROGRESS_EVERY_N_SCANS == 0:
                 # Periodic progress so a capped run still reports coverage.
-                Path(self.config.done_path + ".progress").write_text(
+                Path(str(self.config.done_path) + ".progress").write_text(
                     json.dumps(self._stats(timeouts, scans_sent, skipped_scan_ts))
                 )
 
-        Path(self.config.done_path).write_text(
+        self.config.done_path.write_text(
             json.dumps(self._stats(timeouts, scans_sent, skipped_scan_ts))
         )
 
     @staticmethod
-    def _stats(timeouts: int, scans_sent: int, skipped_scan_ts: list[float]) -> dict[str, Any]:
+    def _stats(timeouts: int, scans_sent: int, skipped_scan_ts: list[float]) -> ReplayStats:
         return {
             "timeouts": timeouts,
             "scans_sent": scans_sent,
@@ -253,7 +251,7 @@ class LockstepReplay(Module):
 
 
 class RateReplayConfig(ModuleConfig):
-    db: str = ""
+    db: Path = Path("mem2.db")
     lidar_stream: str = "lidar"
     odometry_stream: str = "odom"
     lidar_stride: int = 1
@@ -279,14 +277,13 @@ class RateReplay(Module):
         self.done = False
 
     def _load(self) -> list[tuple[float, str, Any]]:
-        db_path = Path(self.config.db)
         merged: list[tuple[float, str, Any]] = []
         for timestamp, pose in iterate_stream(
-            db_path, self.config.odometry_stream, stride=self.config.odometry_stride
+            self.config.db, self.config.odometry_stream, stride=self.config.odometry_stride
         ):
             merged.append((timestamp, "odom", pose))
         for timestamp, cloud in iterate_stream(
-            db_path, self.config.lidar_stream, stride=self.config.lidar_stride
+            self.config.db, self.config.lidar_stream, stride=self.config.lidar_stride
         ):
             merged.append((timestamp, "lidar", cloud))
         merged.sort(key=lambda item: item[0])
@@ -297,6 +294,8 @@ class RateReplay(Module):
         self._task = asyncio.create_task(self._replay(messages))
         yield
         self._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._task
 
     async def _replay(self, messages: list[tuple[float, str, Any]]) -> None:
         period = 1.0 / self.config.publish_hz
@@ -351,18 +350,18 @@ def run_module_graph(
 
     if lockstep:
         replay_blueprint = LockstepReplay.blueprint(
-            db=str(db_path),
+            db=db_path,
             lidar_stream=lidar_stream,
             odometry_stream=odom_stream,
             lidar_stride=lidar_stride,
             odometry_stride=odometry_stride,
-            done_path=str(done_path),
+            done_path=done_path,
             drift_per_sec=drift_per_sec,
             drift_t0=drift_t0,
         )
     else:
         replay_blueprint = RateReplay.blueprint(
-            db=str(db_path),
+            db=db_path,
             lidar_stream=lidar_stream,
             odometry_stream=odom_stream,
             lidar_stride=lidar_stride,
@@ -373,7 +372,7 @@ def run_module_graph(
     blueprint = autoconnect(
         replay_blueprint,
         module_class.blueprint(**config_overrides),  # type: ignore[attr-defined]
-        GraphCapture.blueprint(output_path=str(output_path)),
+        GraphCapture.blueprint(output_path=output_path),
     )
     coordinator = ModuleCoordinator.build(blueprint)
     mode = "lockstep" if lockstep else f"fixed-rate {REPLAY_PUBLISH_HZ}Hz"

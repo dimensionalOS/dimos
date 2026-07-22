@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Untyped analysis script: gtsam/open3d lack type stubs.
-# mypy: ignore-errors
 """AprilTag-loop-closed + ICP-refined ground-truth post-processing for a recording.
 
 Two-stage solve turns drifty odometry into a ground-truth trajectory:
@@ -734,6 +732,8 @@ def main():
     raw_detections = read_raw_tag_stream(store, args.tags) if tags_available else []
     detections = filter_glimpses(raw_detections, exclude_tags=ignore_tags)
     odom_rows = rdb.odometry_rows(db_path, odom_stream)
+    if not len(odom_rows):
+        sys.exit(f"odom stream {odom_stream!r} is empty in {db_path}")
     _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows)
     best_factors = best_factor_per_keyframe_marker(detections, keyframe_times)
     if raw_detections:

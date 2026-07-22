@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Untyped analysis script: gtsam/open3d/cv2 lack type stubs.
-# mypy: ignore-errors
 """Combined comparison rrd: raw lidar cloud + EVERY *_corrected*_lidar version present in the db,
 each as its own colored entity, plus AprilTag landmarks + trajectories. Re-run after adding a new
 corrected method and it picks the new stream up automatically.
@@ -144,8 +142,14 @@ def build(
     recording_dir = db_path.parent
     out_path = recording_dir / out_name
     store = rdb.store(db_path)
-    intrinsics = json.loads((recording_dir / "camera_intrinsics.json").read_text())
-    base_to_optical = pose3_from_xyzquat(np.array(intrinsics["optical_in_base"], float))
+    intrinsics_path = recording_dir / "camera_intrinsics.json"
+    base_to_optical = (
+        pose3_from_xyzquat(
+            np.array(json.loads(intrinsics_path.read_text())["optical_in_base"], float)
+        )
+        if intrinsics_path.exists()
+        else None
+    )
 
     def accumulate(stream_name):
         scans = []
@@ -155,6 +159,8 @@ def build(
             points = np.asarray(observation.data.points_f32())
             if len(points):
                 scans.append(points[::3])
+        if not scans:
+            sys.exit(f"stream {stream_name!r} has no points in {db_path}")
         all_points = np.concatenate(scans, 0)
         _, unique_indices = np.unique(
             np.floor(all_points / VOXEL).astype(np.int64), axis=0, return_index=True
@@ -238,7 +244,9 @@ def build(
         for stream_name in streams
         if "_corrected" in stream_name and "odom" in stream_name
     )
-    if corrected_odoms:
+    if corrected_odoms and base_to_optical is None:
+        print(f"no {intrinsics_path.name} — skipping tag landmarks")
+    elif corrected_odoms:
         landmark_positions, landmark_rotations, marker_ids = landmarks(corrected_odoms[0])
         for center, rotation, marker_id in zip(
             landmark_positions, landmark_rotations, marker_ids, strict=True

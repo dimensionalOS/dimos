@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Untyped analysis script: scipy lacks type stubs here.
-# mypy: ignore-errors
 """Convert world-registered (fast|point)lio lidar scans back into the sensor frame, in place.
 
 Each scan is un-registered by the most recent sample of the sibling ``*_odometry``

@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory2.tf import StreamTF
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -65,21 +64,6 @@ def default_odom_edge(store: Any, odom_stream: str) -> str:
     if not child_frame:
         return ""
     return f"{observation.data.frame_id}:{child_frame}"
-
-
-def payload_pose(payload: Any) -> Pose:
-    """Pose from an odom payload — ``Odometry`` (has ``.pose``) or flat ``PoseStamped``."""
-    if hasattr(payload, "pose"):
-        return payload.pose  # type: ignore[no-any-return]
-    return Pose(
-        payload.x,
-        payload.y,
-        payload.z,
-        payload.orientation.x,
-        payload.orientation.y,
-        payload.orientation.z,
-        payload.orientation.w,
-    )
 
 
 def _quat_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:

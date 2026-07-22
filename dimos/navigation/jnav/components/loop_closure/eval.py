@@ -55,7 +55,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 import json
 from pathlib import Path
 import time
@@ -82,10 +82,10 @@ from dimos.navigation.jnav.utils.recording_db import (
     ODOM_MATCH_TOLERANCE_S,
     iterate_stream,
     list_streams,
+    payload_pose,
     store,
     stream_count,
 )
-from dimos.navigation.jnav.utils.recording_tf import payload_pose
 from dimos.navigation.jnav.utils.trajectory_metrics import (
     drifted_lookup,
     graph_lookup,
@@ -202,7 +202,12 @@ def evaluate(
     # world offset added at each time; the raw-baseline scoring must apply the
     # SAME offset so it compares against what the module actually saw.
     drift_per_sec = drift_per_sec or [0.0, 0.0, 0.0]
-    drift_t0 = next(iterate_stream(db_path, odom_stream))[0] if has_drift(drift_per_sec) else 0.0
+    drift_t0 = 0.0
+    if has_drift(drift_per_sec):
+        first_odom = next(iterate_stream(db_path, odom_stream), None)
+        if first_odom is None:
+            raise SystemExit(f"{db_path}: {odom_stream!r} is empty — cannot anchor drift start")
+        drift_t0 = first_odom[0]
 
     # April-tag agreement needs a camera + intrinsics; voxel agreement does not.
     # Datasets without either (kitti-360, bare lidar recordings) still score on
@@ -215,14 +220,14 @@ def evaluate(
         camera = camera_stream
         intrinsics_config = load_intrinsics_json(intrinsics_json)
         db_store = store(db_path)
-        stored_stream: Any = (
+        stored_stream: Iterable[Any] = (
             db_store.stream(APRIL_TAGS_STREAM)
             if APRIL_TAGS_STREAM in db_store.list_streams()
             else []
         )
         stored = ((int(obs.tags["marker_id"]), float(obs.ts)) for obs in stored_stream)
 
-        def detect() -> Iterable[tuple[int, float]]:
+        def detect() -> Iterator[tuple[int, float]]:
             detections = detect_apriltags(
                 db_store,
                 intrinsics_config["intrinsics"],

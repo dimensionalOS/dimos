@@ -46,12 +46,12 @@ SIDECAR_NAME = "camera_intrinsics.json"
 # native modules' big global_map clouds overflow LCM and congest the
 # corrected_odometry ack channel the lockstep replay waits on (rate 0 = off
 # for the native binaries; publish_global_map=False for the python ivan).
-MODULES: list[tuple[str, dict[str, Any]]] = [
+MODULES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("gsc_pgo", {"use_scan_context": True, "global_map_publish_rate": 0.0}),
     ("ivan_pgo", {"publish_global_map": False}),
     ("ivan_pgo_transformer", {}),
     ("unrefined_pgo", {"global_map_publish_rate": 0.0}),
-]
+)
 
 
 def _fmt_spread(s: dict[str, Any]) -> str:
@@ -61,7 +61,7 @@ def _fmt_spread(s: dict[str, Any]) -> str:
     return f"{raw:.2f} -> {corrected:.2f}"
 
 
-TABLE_COLUMNS = [
+TABLE_COLUMNS = (
     ("tag spread (m)", _fmt_spread),
     (
         "tag improvement",
@@ -82,7 +82,7 @@ TABLE_COLUMNS = [
     ("closures", lambda s: str(s["closures"])),
     ("keyframes", lambda s: str(s["keyframes"])),
     ("runtime (s)", lambda s: str(s["runtime_s"])),
-]
+)
 
 
 def run_one(
@@ -122,15 +122,15 @@ def run_one(
         lockstep,
     ]
     if intrinsics_json is not None:
-        command += ["--camera-intrinsics-json-path", str(intrinsics_json)]
+        command += ("--camera-intrinsics-json-path", str(intrinsics_json))
     if drift_per_sec:
-        command += ["--drift-per-sec", drift_per_sec]
+        command += ("--drift-per-sec", drift_per_sec)
     if ignore_tags:
-        command += ["--ignore-tags", ignore_tags]
+        command += ("--ignore-tags", ignore_tags)
     if results_suffix:
-        command += ["--results-suffix", results_suffix]
+        command += ("--results-suffix", results_suffix)
     if overrides:
-        command += ["--pgo-config-json", json.dumps(overrides)]
+        command += ("--pgo-config-json", json.dumps(overrides))
     print(f"\n=== {module_dir} ===", flush=True)
     result = subprocess.run(command, check=False)
     print(f"=== {module_dir} exit: {result.returncode} ===", flush=True)
@@ -331,7 +331,7 @@ def main() -> None:
     selected = MODULES
     if args.only:
         wanted = {name.strip() for name in args.only.split(",")}
-        selected = [(name, overrides) for name, overrides in MODULES if name in wanted]
+        selected = tuple((name, overrides) for name, overrides in MODULES if name in wanted)
         missing = wanted - {name for name, _ in selected}
         if missing:
             raise SystemExit(
