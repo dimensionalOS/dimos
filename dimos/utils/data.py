@@ -14,6 +14,7 @@
 
 from datetime import datetime
 from functools import cache
+import json
 import os
 from pathlib import Path
 import platform
@@ -23,8 +24,12 @@ import sys
 import tarfile
 import tempfile
 import time
+from uuid import uuid4
+
+from pydantic import BaseModel, ValidationError
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.utils._git_lfs import get_committed_file_sha256
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -256,6 +261,48 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     return file_path
 
 
+class LFSArchiveMetadata(BaseModel):
+    archive_sha256: str
+
+
+METADATA_FILENAME = ".archive_metadata.json"
+
+
+def _get_archive_metadata_path(extracted_path: Path) -> Path:
+    """Return the metadata path for an extracted file or directory."""
+    if extracted_path.is_dir():
+        return extracted_path / METADATA_FILENAME
+
+    return extracted_path.parent / (f".{extracted_path.name}.archive_metadata.json")
+
+
+def _write_archive_metadata(extracted_path: Path, metadata: LFSArchiveMetadata) -> None:
+    """Write archive metadata alongside the extracted data."""
+
+    metadata_path = _get_archive_metadata_path(extracted_path)
+
+    # Write the metadata as UTF-8 encoded JSON.
+    metadata_path.write_text(
+        metadata.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+
+def _read_archive_metadata(extracted_path: Path) -> LFSArchiveMetadata | None:
+    """Read the archive SHA256 checksum from the metadata JSON file in the extracted directory."""
+
+    metadata_path = _get_archive_metadata_path(extracted_path)
+
+    try:
+        return LFSArchiveMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
+    except (
+        ValidationError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        return None
+
+
 def get_data(name: str | Path) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
@@ -288,25 +335,77 @@ def get_data(name: str | Path) -> Path:
         # Nested path - downloads "dataset" archive, returns path to nested file
         frame = get_data("dataset/frames/001.png")
     """
+
     data_dir = get_data_dir()
     file_path = data_dir / name
-
-    # already pulled and decompressed, return it directly
-    if file_path.exists():
-        return file_path
 
     # extract archive root (first path component) and nested path
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    # Path to the first-level extracted file or directory.
+    extracted_path = data_dir / archive_name
 
-    # return full path including nested components
-    if nested_path:
-        return archive_path / nested_path
-    return archive_path
+    # Path to the corresponding Git LFS archive.
+    archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
+
+    # If the requested path already exists, compare the archive and extracted
+    # root SHA-256 to determine whether the extraction is stale.
+    if file_path.exists():
+        if not archive_file.exists():
+            return file_path
+
+        # read sha256 from pointer file
+        archive_sha256 = get_committed_file_sha256(archive_file, get_project_root())
+
+        # read sha256 from extracted_path if reading fail return None and decompress again.
+        metadata = _read_archive_metadata(extracted_path)
+
+        # compare sha256 to decide which one is newer
+        archive_is_newer = metadata is None or archive_sha256 != metadata.archive_sha256
+
+        if not archive_is_newer:
+            return file_path
+
+        if extracted_path.is_file():
+            suffixes = "".join(extracted_path.suffixes)
+            base_name = extracted_path.name[: -len(suffixes)] if suffixes else extracted_path.name
+            backup_name = f"{base_name}._backup_{uuid4().hex}{suffixes}"
+            backup_path = extracted_path.with_name(backup_name)
+        else:
+            backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
+
+        # notify user
+        logger.warning(
+            "Replacing stale extracted data at %s. A backup will be created at %s.",
+            extracted_path,
+            backup_path,
+        )
+        extracted_path.rename(backup_path)
+
+    # get sha256 from file
+    archive_sha256 = get_committed_file_sha256(archive_file, get_project_root())
+
+    # we assume archive file must work well if not throw an exception
+    pull_path = _pull_lfs_archive(archive_name)
+
+    # decompress archive files to produce extract directory
+    archive_path = _decompress_archive(pull_path)
+
+    metadata = LFSArchiveMetadata(
+        archive_sha256=archive_sha256,
+    )
+
+    # write current archive_file sha256 to extract directory
+    _write_archive_metadata(archive_path, metadata)
+
+    result_path = archive_path / nested_path if nested_path else archive_path
+
+    if not result_path.exists():
+        raise FileNotFoundError(f"Requested test data does not exist: {result_path}")
+
+    return result_path
 
 
 class LfsPath(type(Path())):  # type: ignore[misc]

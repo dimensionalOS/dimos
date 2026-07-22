@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gzip
 import hashlib
+import io
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 
 import pytest
 
 from dimos.utils import data
-from dimos.utils.data import LfsPath, backup_file
+from dimos.utils.data import LfsPath, backup_file, get_data
 
 
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
@@ -365,17 +368,18 @@ def test_lfs_path_operations() -> None:
     assert filename in fspath_result
 
 
+@pytest.mark.self_hosted
 def test_lfs_path_division_operator() -> None:
     """Test path division operator with LfsPath."""
     # Use a directory for testing
-    lfs_path = LfsPath("three_paths.png")
+    lfs_path = LfsPath("a750_description")
 
     # Test truediv - this should trigger download and return resolved path
-    result = lfs_path / "subpath"
+    result = lfs_path / "urdf/a750_rev1_no_gripper.urdf"
     assert isinstance(result, Path)
 
     # The result should be the resolved path with subpath appended
-    assert "three_paths.png" in str(result)
+    assert "a750_rev1_no_gripper.urdf" in str(result)
 
 
 def test_lfs_path_multiple_instances() -> None:
@@ -415,3 +419,176 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+ARCHIVE_NAME = "a750_description"
+NESTED_PATH = Path("urdf/a750_rev1_no_gripper.urdf")
+
+
+@pytest.fixture
+def temp_data_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    """Create an isolated data environment for get_data tests."""
+
+    data_dir = tmp_path / "data"
+    lfs_dir = data_dir / ".lfs"
+
+    lfs_dir.mkdir(parents=True)
+    real_archive = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
+    temp_archive = lfs_dir / real_archive.name
+
+    tar_stream = io.BytesIO()
+    with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+        file_content = b"this is a dummy test dataset"
+        tarinfo = tarfile.TarInfo(name="a750_description/urdf/a750_rev1_no_gripper.urdf")
+        tarinfo.size = len(file_content)
+        tar.addfile(tarinfo, io.BytesIO(file_content))
+
+    tar_stream.seek(0)
+    with gzip.open(temp_archive, "wb") as f_out:
+        f_out.write(tar_stream.read())
+
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "_get_lfs_dir", lambda: lfs_dir)
+    monkeypatch.setattr(
+        data,
+        "_pull_lfs_archive",
+        lambda archive_name: lfs_dir / f"{archive_name}.tar.gz",
+    )
+    monkeypatch.setattr(data, "get_committed_file_sha256", lambda path, repo_root: "a" * 64)
+
+    return data_dir, temp_archive
+
+
+def test_get_data_without_extracted_path(temp_data_environment: tuple[Path, Path]) -> None:
+    """Test get_data when the extracted path does not exist."""
+
+    data_dir, _ = temp_data_environment
+    extracted_path = data_dir / ARCHIVE_NAME
+
+    assert not extracted_path.exists()
+
+    result = get_data(ARCHIVE_NAME)
+
+    assert isinstance(result, Path)
+    assert result == extracted_path
+    assert result.exists()
+
+
+def test_get_data_with_existing_extracted_path(temp_data_environment: tuple[Path, Path]) -> None:
+    """Test get_data when the extracted path already exists."""
+
+    data_dir, archive_file = temp_data_environment
+
+    extracted_path = data_dir / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    result = get_data(ARCHIVE_NAME)
+    assert result == extracted_path
+    assert result.exists()
+
+    assert data._read_archive_metadata(extracted_path) is not None
+
+
+def test_get_data_with_updated_archive(
+    temp_data_environment: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test get_data when the archive is newer."""
+
+    data_dir, archive_file = temp_data_environment
+    extracted_path = data_dir / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    with gzip.open(archive_file, "rb") as f:
+        old_data = f.read()
+
+    with gzip.open(archive_file, "wb") as f:
+        f.write(old_data + b"\x00")
+
+    new_sha256 = "b" * 64
+    monkeypatch.setattr(data, "get_committed_file_sha256", lambda path, repo_root: new_sha256)
+    result = get_data(ARCHIVE_NAME)
+
+    assert result == extracted_path
+    assert result.exists()
+
+    metadata = data._read_archive_metadata(extracted_path)
+    assert metadata is not None
+    assert metadata.archive_sha256 == new_sha256
+
+
+def test_get_data_with_missing_archive(temp_data_environment: tuple[Path, Path]) -> None:
+    """Return existing extracted data when the archive is missing."""
+
+    data_dir, archive_file = temp_data_environment
+
+    extracted_path = data_dir / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    archive_file.unlink()
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+    assert result == extracted_path
+
+
+def test_get_data_with_nested_path(temp_data_environment: tuple[Path, Path]) -> None:
+    """Test get_data with a nested path inside the extracted archive."""
+
+    data_dir, _ = temp_data_environment
+
+    nested_name = Path(ARCHIVE_NAME) / NESTED_PATH
+    expected_path = data_dir / nested_name
+
+    result = get_data(nested_name)
+
+    assert isinstance(result, Path)
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_file()
+
+
+def test_get_data_with_single_file_archive(temp_data_environment: tuple[Path, Path]) -> None:
+    """Test get_data with a single-file archive (no directory)."""
+    data_dir, _ = temp_data_environment
+    archive_file = data_dir / ".lfs" / "cafe.jpg.tar.gz"
+
+    tar_stream = io.BytesIO()
+    with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+        file_content = b"this is a single file test"
+        tarinfo = tarfile.TarInfo(name="cafe.jpg")
+        tarinfo.size = len(file_content)
+        tar.addfile(tarinfo, io.BytesIO(file_content))
+
+    tar_stream.seek(0)
+    with gzip.open(archive_file, "wb") as f_out:
+        f_out.write(tar_stream.read())
+
+    expected_path = data_dir / "cafe.jpg"
+    assert not expected_path.exists()
+
+    result = get_data("cafe.jpg")
+
+    assert isinstance(result, Path)
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_file()
+    assert result.read_bytes() == b"this is a single file test"
+
+    metadata_path = data_dir / ".cafe.jpg.archive_metadata.json"
+    assert metadata_path.exists()
+
+    result2 = get_data("cafe.jpg")
+    assert result2 == expected_path
+    assert result2.exists()
+    metadata = data._read_archive_metadata(expected_path)
+    assert metadata is not None
+    assert metadata.archive_sha256 == "a" * 64
