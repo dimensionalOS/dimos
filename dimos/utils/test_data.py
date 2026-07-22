@@ -457,6 +457,7 @@ def temp_data_environment(
         "_pull_lfs_archive",
         lambda archive_name: lfs_dir / f"{archive_name}.tar.gz",
     )
+    monkeypatch.setattr(data, "get_committed_file_sha256", lambda path, repo_root: "a" * 64)
 
     return data_dir, temp_archive
 
@@ -493,7 +494,9 @@ def test_get_data_with_existing_extracted_path(temp_data_environment: tuple[Path
     assert data._read_archive_metadata(extracted_path) is not None
 
 
-def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path]) -> None:
+def test_get_data_with_updated_archive(
+    temp_data_environment: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test get_data when the archive is newer."""
 
     data_dir, archive_file = temp_data_environment
@@ -502,18 +505,14 @@ def test_get_data_with_updated_archive(temp_data_environment: tuple[Path, Path])
     result = get_data(ARCHIVE_NAME)
     assert result.exists()
 
-    old_sha256 = data._calculate_sha256(archive_file)
-
     with gzip.open(archive_file, "rb") as f:
         old_data = f.read()
 
     with gzip.open(archive_file, "wb") as f:
         f.write(old_data + b"\x00")
 
-    new_sha256 = data._calculate_sha256(archive_file)
-
-    assert old_sha256 != new_sha256
-
+    new_sha256 = "b" * 64
+    monkeypatch.setattr(data, "get_committed_file_sha256", lambda path, repo_root: new_sha256)
     result = get_data(ARCHIVE_NAME)
 
     assert result == extracted_path
@@ -592,4 +591,4 @@ def test_get_data_with_single_file_archive(temp_data_environment: tuple[Path, Pa
     assert result2.exists()
     metadata = data._read_archive_metadata(expected_path)
     assert metadata is not None
-    assert metadata.archive_sha256 == data._calculate_sha256(archive_file)
+    assert metadata.archive_sha256 == "a" * 64

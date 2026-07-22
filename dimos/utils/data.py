@@ -14,7 +14,6 @@
 
 from datetime import datetime
 from functools import cache
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,6 +29,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.utils._git_lfs import get_committed_file_sha256
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -276,22 +276,8 @@ def _get_archive_metadata_path(extracted_path: Path) -> Path:
     return extracted_path.parent / (f".{extracted_path.name}.archive_metadata.json")
 
 
-# read sha256 from pointer file
-def _read_lfs_pointer_sha256(path: Path) -> str | None:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    for line in text.splitlines():
-        if line.startswith("oid sha256:"):
-            return line.removeprefix("oid sha256:")
-
-    return None
-
-
 def _write_archive_metadata(extracted_path: Path, metadata: LFSArchiveMetadata) -> None:
-    """Write the archive MD5 checksum to a metadata JSON file in the extracted directory."""
+    """Write archive metadata alongside the extracted data."""
 
     metadata_path = _get_archive_metadata_path(extracted_path)
 
@@ -315,23 +301,6 @@ def _read_archive_metadata(extracted_path: Path) -> LFSArchiveMetadata | None:
         OSError,
     ):
         return None
-
-
-def _calculate_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-
-    with file_path.open("rb") as file:
-        for chunk in iter(lambda: file.read(chunk_size), b""):
-            digest.update(chunk)
-
-    return digest.hexdigest()
-
-
-def _get_archive_sha256(path: Path) -> str:
-    pointer_sha256 = _read_lfs_pointer_sha256(path)
-    if pointer_sha256 is not None:
-        return pointer_sha256
-    return _calculate_sha256(path)
 
 
 def get_data(name: str | Path) -> Path:
@@ -382,13 +351,13 @@ def get_data(name: str | Path) -> Path:
     archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
 
     # If the requested path already exists, compare the archive and extracted
-    # root md5 to determine whether the extraction is stale.
+    # root SHA-256 to determine whether the extraction is stale.
     if file_path.exists():
         if not archive_file.exists():
             return file_path
 
         # read sha256 from pointer file
-        archive_sha256 = _get_archive_sha256(archive_file)
+        archive_sha256 = get_committed_file_sha256(archive_file, get_project_root())
 
         # read sha256 from extracted_path if reading fail return None and decompress again.
         metadata = _read_archive_metadata(extracted_path)
@@ -416,7 +385,7 @@ def get_data(name: str | Path) -> Path:
         extracted_path.rename(backup_path)
 
     # get sha256 from file
-    archive_sha256 = _get_archive_sha256(archive_file)
+    archive_sha256 = get_committed_file_sha256(archive_file, get_project_root())
 
     # we assume archive file must work well if not throw an exception
     pull_path = _pull_lfs_archive(archive_name)
