@@ -20,7 +20,8 @@ import time
 from typing import IO
 
 from dimos.core.global_config import GlobalConfig
-from dimos.simulation.dimsim.deno_utils import ensure_deno, ensure_playwright_chromium
+from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
+from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
