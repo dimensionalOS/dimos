@@ -27,15 +27,14 @@ from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
-# temp: silence benign multi-homed duplicate-link "close (reason INVALID)" spam
-zenoh.init_log_from_env_or("warn,zenoh_transport::unicast::establishment=off")
+zenoh.init_log_from_env_or("warn")
 
 logger = setup_logger()
 
 
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
-    user: str = "dimos"
+    user: str = Field(default_factory=lambda: global_config.zenoh_username)
     password: str = Field(default_factory=lambda: global_config.zenoh_password)
     connect: list[str] = []
     listen: list[str] = []

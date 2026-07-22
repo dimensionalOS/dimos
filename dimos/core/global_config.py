@@ -84,8 +84,16 @@ class GlobalConfig(BaseSettings):
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
-    zenoh_password: str = Field(
+    dimos_domain: str = Field(
         default=MACHINE_ID,
+        validation_alias=AliasChoices("DIMOS_DOMAIN", "dimos_domain"),
+    )
+    zenoh_username: str = Field(
+        default="dimos",
+        validation_alias=AliasChoices("DIMOS_ZENOH_USERNAME", "zenoh_username"),
+    )
+    zenoh_password: str = Field(
+        default_factory=lambda data: data["dimos_domain"],
         validation_alias=AliasChoices("DIMOS_ZENOH_PASSWORD", "zenoh_password"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
