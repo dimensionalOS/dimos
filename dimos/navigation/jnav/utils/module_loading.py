@@ -46,7 +46,8 @@ def filter_config_for_module(module_class: type, config: dict[str, Any]) -> dict
     try:
         config_class = get_type_hints(module_class)["config"]
         known = set(config_class.model_fields)
-    except Exception:
+    except (KeyError, NameError, AttributeError):
+        # no `config` annotation, unresolvable hints, or a non-pydantic config
         return config
     dropped = sorted(set(config) - known)
     if dropped:

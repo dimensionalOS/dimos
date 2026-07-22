@@ -139,6 +139,37 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
 
+  gsc-pgo-rust-marker:
+    # Check whether the marker cache for this rust-dir hash already exists.
+    # Used to skip gsc-pgo-rust without using the cachix environment.
+    if: |
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      cache-hit: ${{ steps.marker.outputs.cache-hit }}
+      key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - name: Checkout files used for cache key
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
+          sparse-checkout-cone-mode: false
+      - name: Compute cache key
+        # Recomputing the key in gsc-pgo-rust after build breaks the key.
+        # Save here so it can be reused verbatim.
+        id: cache-key
+        run: echo "key=gsc-pgo-rust-${{ hashFiles('dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Look up marker cache
+        id: marker
+        uses: actions/cache/restore@v6
+        with:
+          path: /tmp/gsc-pgo-rust-marker
+          key: ${{ steps.cache-key.outputs.key }}
+          lookup-only: true
+
   gsc-pgo-rust:
     # The gsc_pgo PGO crate links C++ gtsam through an FFI shim, so it can't build
     # on the plain-ubuntu `rust` job. Its flake dev shell supplies gtsam + eigen +
@@ -148,7 +179,10 @@ jobs:
     # this job has write access to CACHIX_AUTH_TOKEN, so the `if:` guard below is
     # the only thing keeping forks out — DO NOT REMOVE.
     if: |
-      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.gsc-pgo-rust-marker.outputs.cache-hit != 'true'
+    needs: gsc-pgo-rust-marker
     timeout-minutes: 300
     environment: cachix
     runs-on: ubuntu-latest
@@ -188,6 +222,13 @@ jobs:
             cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
             cargo test --workspace --all-features --locked
           '
+      - name: Write marker file
+        run: install -D /dev/null /tmp/gsc-pgo-rust-marker/ok
+      - name: Save marker cache
+        uses: actions/cache/save@v6
+        with:
+          path: /tmp/gsc-pgo-rust-marker
+          key: ${{ needs.gsc-pgo-rust-marker.outputs.key }}
 
   md-babel:
     timeout-minutes: 15
