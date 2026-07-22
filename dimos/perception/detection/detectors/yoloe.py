@@ -76,6 +76,9 @@ class Yoloe2DDetector(Detector):
 
         if prompt_mode == YoloePromptMode.PROMPT:
             self.set_prompts(text=["nothing"])
+        else:
+            self._text_prompts = ()
+            self._visual_prompts = None
         self.exclude_class_ids = set(exclude_class_ids) if exclude_class_ids else set()
 
         if self.max_area_ratio is not None and not (0.0 < self.max_area_ratio <= 1.0):
