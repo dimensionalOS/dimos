@@ -201,6 +201,7 @@ def _dataset_view(root: str, case_ids: list[str]) -> rrb.Spatial3DView:
 
 def write_rrd(report: Report, suites: list[Suite], cfg: EvalConfig, out: Path) -> None:
     rr.init("nav3d_eval", recording_id="nav3d_eval")
+    out.parent.mkdir(parents=True, exist_ok=True)
     rr.save(str(out))
 
     suites_by_dataset = {suite.dataset: suite for suite in suites}

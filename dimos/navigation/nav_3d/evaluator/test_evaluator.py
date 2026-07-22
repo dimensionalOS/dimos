@@ -265,7 +265,6 @@ def test_meta_straight_line_cheat_scores_zero() -> None:
     assert out.planned and out.reached and out.supported
     assert not out.valid
     assert out.spl == 0.0
-    assert out.collisions
     assert out.min_clearance is not None and out.min_clearance < 0
 
 

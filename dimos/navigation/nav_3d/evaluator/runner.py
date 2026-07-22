@@ -63,8 +63,6 @@ class PlanOutcome:
     valid: bool
     # Every sample stands on final-map occupancy. Fabricated bridges fail.
     supported: bool
-    # No segment rises steeper than the robot can climb.
-    kinematic: bool
     # For an ordinary case: all of the above. For an expect_fail case: the
     # planner correctly refused the infeasible goal.
     success: bool
@@ -75,7 +73,6 @@ class PlanOutcome:
     # no path was planned.
     min_clearance: float | None
     waypoints: list[list[float]]
-    collisions: list[list[float]]
     # Indices of the colliding samples along the densified path, so a viewer
     # can redraw the exact body boxes the gate rejected.
     collision_indices: list[int]
@@ -99,7 +96,6 @@ class CaseResult:
     goal: tuple[float, float, float]
     tags: list[str]
     l_ref: float
-    plan_ts: float
     online_voxels: int
     map_update_ms: float
     expect_fail: bool
@@ -140,8 +136,6 @@ class TagStats:
     n_online: int
     inc_score: float
     fin_score: float
-    inc_success: int
-    fin_success: int
 
 
 @dataclass
@@ -203,14 +197,12 @@ def _run_plan(
         reached=reached,
         valid=gate.valid,
         supported=support.valid,
-        kinematic=kinematics.valid,
         success=success,
         length=length,
         plan_ms=plan_ms,
         spl=metrics.spl(success, l_ref, length),
         min_clearance=gate.min_clearance_m,
         waypoints=waypoints.tolist(),
-        collisions=gate.collision_points[:MAX_COLLISIONS_KEPT].tolist(),
         collision_indices=gate.collision_indices[:MAX_COLLISIONS_KEPT].tolist(),
         unsupported=support.unsupported_points[:MAX_COLLISIONS_KEPT].tolist(),
         steep=kinematics.violation_points[:MAX_COLLISIONS_KEPT].tolist(),
@@ -224,14 +216,12 @@ def _no_plan(plan_ms: float) -> PlanOutcome:
         reached=False,
         valid=False,
         supported=True,
-        kinematic=True,
         success=False,
         length=0.0,
         plan_ms=plan_ms,
         spl=0.0,
         min_clearance=None,
         waypoints=[],
-        collisions=[],
         collision_indices=[],
         unsupported=[],
         steep=[],
@@ -363,7 +353,6 @@ def run_suite(
         results[ci] = _result(
             case,
             ref,
-            plan_ts=float("inf"),
             online_voxels=len(final.occupied),
             map_update_ms=0.0,
             expect_fail=case.expect_fail,
@@ -413,7 +402,6 @@ def run_suite(
             results[ci] = _result(
                 case,
                 ref,
-                plan_ts=float(checkpoints.times[k]),
                 online_voxels=len(keys),
                 map_update_ms=map_update_ms,
                 expect_fail=False,
@@ -529,8 +517,6 @@ def evaluate(
             n_online=len(oc),
             inc_score=mean([c.online.spl for c in oc]),
             fin_score=mean([c.final.spl for c in tc]),
-            inc_success=sum(c.online.success for c in oc),
-            fin_success=sum(c.final.success for c in tc),
         )
 
     return Report(

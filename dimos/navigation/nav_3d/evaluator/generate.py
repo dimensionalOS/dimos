@@ -99,6 +99,8 @@ def snap_to_surface(
     Horizontal distance dominates so drift in z between passes does not pull
     the snap onto another floor.
     """
+    if len(surface) == 0:
+        return None
     hd = np.linalg.norm(surface[:, :2] - point[:2], axis=1)
     zd = np.abs(surface[:, 2] - point[2])
     score = hd + np.where(zd < 1.0, zd * 0.5, np.inf)

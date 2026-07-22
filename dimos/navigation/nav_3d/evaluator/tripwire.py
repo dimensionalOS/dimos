@@ -36,7 +36,6 @@ class Flip:
 
     key: str
     test: str
-    passed: bool
 
 
 @dataclass
@@ -79,7 +78,7 @@ def diff(old_report: dict[str, object], new_report: dict[str, object]) -> Report
             for test in TESTS:
                 was, now = old_cases[case_id][test], tests[test]
                 if was != now:
-                    (fixed if now else broke).append(Flip(key, test, now))
+                    (fixed if now else broke).append(Flip(key, test))
     removed = [
         f"{dataset}/{case_id}"
         for dataset, cases in old.items()
