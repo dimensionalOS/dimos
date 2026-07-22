@@ -40,17 +40,23 @@ if TYPE_CHECKING:
     from dimos.navigation.nav_3d.evaluator.cases import Case
     from dimos.navigation.nav_3d.evaluator.curation import CaseStore
 
-# Selection cone half-angle around the click ray. Wide enough to hit a voxel
-# point from across a room, narrow enough to stay on the intended surface.
-PICK_CONE_RAD = 0.008
 START_COLOR = (0, 255, 255)
 GOAL_COLOR = (255, 140, 0)
 PAIR_COLOR = (255, 255, 0)
 HIGHLIGHT_LINE_COLOR = (255, 255, 255)
-MARKER_RADIUS = 0.09
-HIGHLIGHT_MARKER_RADIUS = 0.16
+MARKER_RADIUS = 0.14
+HIGHLIGHT_MARKER_RADIUS = 0.22
+# Pick markers float this far above their point so the voxel cube they sit on
+# does not hide them.
+MARKER_LIFT = 0.12
 LINE_WIDTH = 2.5
 HIGHLIGHT_LINE_WIDTH = 6.0
+# A pair being picked but not yet saved wears distinct colors and a thicker line
+# so it stands out from the cases already in the manifest, until it is saved.
+NEW_START_COLOR = (0, 255, 128)
+NEW_GOAL_COLOR = (255, 0, 200)
+NEW_PAIR_COLOR = (0, 255, 128)
+NEW_LINE_WIDTH = 5.0
 SUGGESTED_TAGS = ("stairs", "flat", "up", "down", "long", "doorway")
 
 INSTRUCTIONS = """**shift+click** picks START then GOAL, repeated per case.
@@ -124,9 +130,14 @@ def pick_along_ray(
     points: NDArray[np.float32],
     origin: NDArray[np.float64],
     direction: NDArray[np.float64],
-    cone_rad: float = PICK_CONE_RAD,
+    radius: float,
 ) -> NDArray[np.float32] | None:
-    """Nearest cloud point inside a small cone around the click ray."""
+    """Nearest cloud point inside a tube of the given radius around the click ray.
+
+    A physical perpendicular radius, not an angular cone: an angular cone widens
+    with distance, so it would pick a voxel far down the ray over the near one
+    the click landed on. With a fixed tube the nearest voxel along the ray wins.
+    """
     rel = points.astype(np.float64) - origin
     t = rel @ direction
     ahead = t > 0.05
@@ -134,9 +145,8 @@ def pick_along_ray(
         return None
     t = t[ahead]
     perp = np.linalg.norm(rel[ahead] - t[:, None] * direction, axis=1)
-    angle = perp / t
-    for widen in (1.0, 4.0):
-        hit = angle < cone_rad * widen
+    for r in (radius, 3.0 * radius):
+        hit = perp < r
         if hit.any():
             idx = np.flatnonzero(ahead)[hit]
             return np.asarray(points[idx[np.argmin(t[hit])]])
@@ -216,6 +226,19 @@ class _PairEntry:
                 marker.line_width = HIGHLIGHT_LINE_WIDTH if on else LINE_WIDTH
                 marker.colors = np.array(HIGHLIGHT_LINE_COLOR if on else PAIR_COLOR, dtype=np.uint8)
 
+    def _mark_saved(self) -> None:
+        """Repaint the pick markers to the standard saved look, so only pairs
+        not yet in the manifest wear the distinct new-pick colors and line."""
+        sphere_colors = [START_COLOR, GOAL_COLOR]
+        for marker in self.markers:
+            if hasattr(marker, "radius"):
+                color = _marker_color(sphere_colors.pop(0))
+                if hasattr(marker, "color"):
+                    marker.color = color
+            elif hasattr(marker, "line_width"):
+                marker.line_width = LINE_WIDTH
+                marker.colors = np.array(PAIR_COLOR, dtype=np.uint8)
+
     def _label(self) -> str:
         return self.saved_id or f"pair {self._n}"
 
@@ -257,15 +280,8 @@ class _PairEntry:
                 )
             self.negative_box = server.gui.add_checkbox("negative (must refuse)", self._negative)
             self.message = server.gui.add_markdown(self._status)
-            self.show_button = server.gui.add_button("show in scene")
             self.button = server.gui.add_button("save / update")
             self.delete_button = server.gui.add_button("delete")
-
-            @self.show_button.on_click
-            def _(_event: object) -> None:
-                with self._hooks.lock:
-                    self._hooks.announce(self._label())
-                    self._hooks.highlight(self)
 
             @self.button.on_click
             def _(_event: object) -> None:
@@ -332,6 +348,7 @@ class _PairEntry:
             return False
         msg = f"saved {case.id} [{', '.join(case.tags)}]"
         print(msg)
+        self._mark_saved()
         # Viser cannot collapse a live panel, so replace it with the
         # collapsed button form, synced from the authoritative save.
         self.saved_id = case.id
@@ -446,19 +463,24 @@ def pick_cases(
         marker_seq += 1
         return server.scene.add_icosphere(
             f"/picks/m{marker_seq}",
-            radius=0.09,
+            radius=MARKER_RADIUS,
             color=_marker_color(color),
-            position=(float(point[0]), float(point[1]), float(point[2]) + 0.05),
+            position=(float(point[0]), float(point[1]), float(point[2]) + MARKER_LIFT),
         )
 
-    def pair_line(start: NDArray[np.float32], goal: NDArray[np.float32]) -> viser.SceneNodeHandle:
+    def pair_line(
+        start: NDArray[np.float32],
+        goal: NDArray[np.float32],
+        color: tuple[int, int, int] = PAIR_COLOR,
+        width: float = LINE_WIDTH,
+    ) -> viser.SceneNodeHandle:
         nonlocal marker_seq
         marker_seq += 1
         return server.scene.add_line_segments(
             f"/picks/m{marker_seq}",
             np.stack([start, goal])[None],
-            colors=PAIR_COLOR,
-            line_width=2.5,
+            colors=color,
+            line_width=width,
         )
 
     def pair_markers(
@@ -480,16 +502,20 @@ def pick_cases(
     def _(event: viser.SceneClickEvent) -> None:
         nonlocal pair_count
         point = pick_along_ray(
-            map_points, np.asarray(event.ray_origin), np.asarray(event.ray_direction)
+            map_points, np.asarray(event.ray_origin), np.asarray(event.ray_direction), voxel_size
         )
         if point is None:
             return
         with lock:
             if not pending:
-                pending.append((sphere(point, START_COLOR), point))
+                pending.append((sphere(point, NEW_START_COLOR), point))
                 return
             start_marker, start = pending.pop()
-            markers = [start_marker, sphere(point, GOAL_COLOR), pair_line(start, point)]
+            markers = [
+                start_marker,
+                sphere(point, NEW_GOAL_COLOR),
+                pair_line(start, point, NEW_PAIR_COLOR, NEW_LINE_WIDTH),
+            ]
             pair_count += 1
             pairs.append(_PairEntry(server, pair_count, start, point, hooks, markers))
 
