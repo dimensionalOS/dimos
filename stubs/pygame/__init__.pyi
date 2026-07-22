@@ -59,6 +59,8 @@ K_LCTRL: int
 K_LSHIFT: int
 K_RCTRL: int
 K_RSHIFT: int
+K_LEFTBRACKET: int
+K_RIGHTBRACKET: int
 
 # --- submodules --------------------------------------------------------
 
