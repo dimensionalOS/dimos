@@ -204,6 +204,12 @@ class RawROS(PubSub[RawROSTopic, Any]):
         publisher = self._get_or_create_publisher(topic)
         publisher.publish(message)
 
+    def now_stamp(self) -> Any:
+        """Current ROS time as a builtin_interfaces/Time stamp, or None if stopped."""
+        if self._node is None:
+            return None
+        return self._node.get_clock().now().to_msg()
+
     def subscribe(
         self, topic: RawROSTopic, callback: Callable[[Any, RawROSTopic], None]
     ) -> Callable[[], None]:

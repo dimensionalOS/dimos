@@ -1,0 +1,33 @@
+# dimos runtime for a Galaxea R1 Lite. DIMOS_IMAGE and DIMOS_UID come from .env.
+
+x-dimos-common: &dimos-common
+  image: ${DIMOS_IMAGE:?set in /opt/dimos/.env}
+  network_mode: host
+  ipc: host
+  restart: "no"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  dimos:
+    <<: *dimos-common
+    env_file: .env
+    user: "${DIMOS_UID:-1000}:${DIMOS_GID:-1000}"
+    stop_grace_period: 30s
+    command: ["run", "r1lite-coordinator"]
+    # TCP connect, not HTTP: the / route 503s without the built web app.
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 7779), timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  viewer:
+    <<: *dimos-common
+    entrypoint: ["rerun"]
+    command: ["--serve-web", "--port", "9878", "--memory-limit", "2GB"]

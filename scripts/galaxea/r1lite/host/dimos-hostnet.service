@@ -1,0 +1,12 @@
+[Unit]
+Description=DimOS host network prerequisites (lo multicast + 224.0.0.0/4 route)
+Before=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ip link set lo multicast on
+ExecStart=/usr/sbin/ip route replace 224.0.0.0/4 dev lo
+
+[Install]
+WantedBy=multi-user.target

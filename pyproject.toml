@@ -139,6 +139,28 @@ dependencies = [
     # remove this once rerun is optional in core
     "rerun-sdk==0.32.0",
     "dimos-viewer==0.32.0a1",
+    # Declared because core code imports them directly, at module scope:
+    #   dimos/web/websocket_vis/websocket_vis_module.py -> socketio
+    #   dimos/visualization/rerun/websocket_server.py   -> websockets
+    # dimos/visualization/vis_module.py imports BOTH unconditionally, and every
+    # viewer setting (including "none") composes WebsocketVisModule. So without
+    # these, a core-only `pip install dimos` cannot run ANY blueprint that uses
+    # vis_module -- go2-basic, drone-basic, the G1 nav set, r1lite. It is
+    # invisible in a dev checkout because python-socketio was declared only in
+    # the `lint` group and default-groups = ["tests"] pulls it in anyway.
+    # Caught by deploying a core-only runtime image to a robot:
+    #   ModuleNotFoundError: No module named 'socketio'
+    # websockets currently arrives transitively; declare it too rather than
+    # rely on someone else's dependency tree for something we import outright.
+    # starlette/uvicorn are the same story: websocket_vis_module builds a
+    # Starlette app and runs it on uvicorn.Server at module scope. uvicorn was
+    # declared only in the `web` extra and starlette only ever arrived via
+    # fastapi. Plain uvicorn is enough -- the module uses uvicorn.Config/Server,
+    # not the [standard] extra.
+    "python-socketio>=5.16.1",
+    "websockets>=13",
+    "starlette>=0.40",
+    "uvicorn>=0.34.0",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -272,7 +294,12 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
-    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # a750-control ships cp312-only wheels, so it cannot install on the
+    # Python 3.10 floor this project declares (ROS 2 Humble needs cp310).
+    # Without this marker `uv sync --all-extras` hard-fails on 3.10 for
+    # every robot, not just the A750. Drop the marker if upstream ever
+    # publishes cp310 wheels.
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version >= '3.12'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -290,13 +317,18 @@ manipulation = [
 ]
 
 cpu = [
-    # CPU inference backends
-    "onnxruntime",
+    # CPU inference backends.
+    # Upper bound: onnxruntime 1.24+ dropped cp310 wheels, which breaks the
+    # Python 3.10 floor this project still declares (ROS 2 Humble needs it).
+    # Lift when Humble/3.10 is no longer supported.
+    "onnxruntime<1.24",
 ]
 
 cuda = [
     "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
-    "onnxruntime-gpu>=1.17.1; platform_machine == 'x86_64'", # Only versions supporting both cuda11 and cuda12
+    # Upper bound: onnxruntime-gpu 1.24+ dropped cp310 wheels (see `cpu` above).
+    # Lower bound covers both cuda11 and cuda12.
+    "onnxruntime-gpu>=1.17.1,<1.24; platform_machine == 'x86_64'",
 ]
 
 sim = [
@@ -309,7 +341,12 @@ sim = [
 mapping = [
     # PGO for reloc premap + cmu_nav experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
-    "gtsam-extended>=4.3a1.post1",
+    # 4.3a1.post1's only cp310 wheel is macosx_14_0_arm64 — on linux it
+    # publishes cp311/cp312 only. Without this marker the whole `mapping`
+    # extra is uninstallable on the Python 3.10 floor this project declares,
+    # and it is not opt-out: `unitree` depends on `dimos[base,mapping]`, so
+    # --no-extra mapping cannot avoid it. Lift when cp310 linux wheels ship.
+    "gtsam-extended>=4.3a1.post1; python_version >= '3.11'",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
