@@ -86,8 +86,6 @@ teleop_hosted_go2_transport = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            # robot_type auto-selects the operator view (BrokerConfig excludes it
-            # from identity, so pinning it here doesn't fork the shared provider).
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.GO2
             ),  # → stats + command
@@ -135,8 +133,6 @@ teleop_hosted_go2_multicam = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            # robot_type auto-selects the operator view (BrokerConfig excludes it
-            # from identity, so pinning it here doesn't fork the shared provider).
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.GO2
             ),  # → stats + command
@@ -198,8 +194,6 @@ teleop_hosted_xarm6 = (
     .transports(
         {
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-            # robot_type auto-selects the operator view (BrokerConfig excludes it
-            # from identity, so pinning it here doesn't fork the shared provider).
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.ARM
             ),
@@ -232,8 +226,6 @@ teleop_hosted_xarm7 = (
     .transports(
         {
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-            # robot_type auto-selects the operator view (BrokerConfig excludes it
-            # from identity, so pinning it here doesn't fork the shared provider).
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.ARM
             ),
