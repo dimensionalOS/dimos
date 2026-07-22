@@ -1452,6 +1452,11 @@ class ManipulationModule(Module):
 
         Opens the gripper and moves to the predefined home position.
 
+        Note: After a robot FAULT, end-effector convergence may be asymptotic
+        rather than step-wise. This skill returns success when the trajectory
+        execution completes, but the robot may still be settling into the exact
+        home position for several seconds afterward.
+
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
