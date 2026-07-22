@@ -20,6 +20,7 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
+use crate::bridge::BridgeState;
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
 use crate::nodes::{place_nodes, place_nodes_region};
 use crate::planner;
@@ -63,6 +64,21 @@ pub struct Config {
     /// Soft cost added per meter of vertical climb.
     #[validate(range(min = 0.0))]
     pub step_penalty_weight: f32,
+    /// Max unobserved gap one optimistic bridge hop may span. 0 disables
+    /// bridging entirely.
+    #[validate(range(min = 0.0))]
+    pub bridge_max_hop_m: f32,
+    /// Max rise per unit of horizontal run for a bridge, with one step of
+    /// slack. Applied per hop and to a whole chain of hops.
+    #[validate(range(min = 0.0))]
+    pub bridge_max_grade: f32,
+    /// Cost multiplier per meter of bridged gap relative to mapped surface.
+    #[validate(range(min = 1.0))]
+    pub bridge_cost_weight: f32,
+    /// Fractional cost margin a rival bridge must win by before the planner
+    /// abandons the bridge it currently holds.
+    #[validate(range(min = 0.0))]
+    pub bridge_switch_margin: f32,
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
@@ -164,6 +180,8 @@ pub struct Planner {
     last_result: Option<((f32, f32, f32), bool)>,
     // Optimistic bridge of the last plan when it was best-effort.
     last_bridge: Option<planner::Bridge>,
+    // Bridge hysteresis, stall tracking, and demoted endpoints.
+    bridge_state: BridgeState,
 }
 
 impl Planner {
@@ -468,7 +486,15 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(&self.graph, start, goal, config).map(|p| p.waypoints)
+        planner::plan(
+            &self.graph,
+            &self.by_col,
+            start,
+            goal,
+            config,
+            &self.bridge_state,
+        )
+        .map(|p| p.waypoints)
     }
 
     /// Plan to the goal, or follow the cached path as far as it is still safe.
@@ -480,9 +506,33 @@ impl Planner {
         config: &Config,
     ) -> Vec<(f32, f32, f32)> {
         if !self.graph.nodes.is_empty() {
-            if let Some(path) = planner::plan(&self.graph, start, goal, config) {
+            let path = planner::plan(
+                &self.graph,
+                &self.by_col,
+                start,
+                goal,
+                config,
+                &self.bridge_state,
+            );
+            if let Some(path) = path {
+                match path.bridge {
+                    Some(b) => self.bridge_state.note_bridge(b, start),
+                    None => self.bridge_state.note_no_bridge(),
+                }
                 if self.last_result != Some((goal, true)) {
-                    tracing::info!(?goal, waypoints = path.waypoints.len(), "full path to goal");
+                    match path.bridge {
+                        Some((_, aim)) => tracing::info!(
+                            ?goal,
+                            ?aim,
+                            waypoints = path.waypoints.len(),
+                            "best-effort path to a bridge toward the goal"
+                        ),
+                        None => tracing::info!(
+                            ?goal,
+                            waypoints = path.waypoints.len(),
+                            "full path to goal"
+                        ),
+                    }
                 }
                 self.last_result = Some((goal, true));
                 self.last_path = Some((goal, path.cells));
@@ -490,6 +540,7 @@ impl Planner {
                 return path.waypoints;
             }
         }
+        self.bridge_state.note_no_bridge();
         self.last_bridge = None;
         if self.last_result != Some((goal, false)) {
             tracing::warn!(
@@ -541,6 +592,39 @@ impl Planner {
                 (self.graph.cells.coord(id), d)
             })
             .collect()
+    }
+
+    /// Debug: whether two poses' cells connect over any surface edge and
+    /// over passable edges. Remove before merge.
+    pub fn debug_connectivity(
+        &self,
+        a: (f32, f32, f32),
+        b: (f32, f32, f32),
+        config: &Config,
+    ) -> Option<(bool, bool)> {
+        let snap = |p| {
+            planner::snap_pose_to_cell(&self.graph.surface_lookup, p, config.voxel_size, 1.0)
+                .and_then(|c| self.graph.cells.id(c))
+        };
+        let (sa, sb) = (snap(a)?, snap(b)?);
+        let reach = |passable_only: bool| {
+            let mut seen = vec![false; self.graph.cells.slot_capacity()];
+            let mut queue = vec![sa];
+            seen[sa as usize] = true;
+            while let Some(u) = queue.pop() {
+                if u == sb {
+                    return true;
+                }
+                for e in self.graph.cells.neighbors(u) {
+                    if (!passable_only || e.cost.is_finite()) && !seen[e.dest as usize] {
+                        seen[e.dest as usize] = true;
+                        queue.push(e.dest);
+                    }
+                }
+            }
+            false
+        };
+        Some((reach(false), reach(true)))
     }
 
     pub fn voxel_count(&self) -> usize {
@@ -604,6 +688,10 @@ mod region_tests {
             wall_buffer_weight: 1.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 0.0,
+            bridge_max_hop_m: 1.0,
+            bridge_max_grade: 0.85,
+            bridge_cost_weight: 4.0,
+            bridge_switch_margin: 0.25,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
         }

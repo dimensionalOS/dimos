@@ -42,6 +42,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     wall_buffer_weight: float = 100.0
     step_threshold_m: float = 0.16
     step_penalty_weight: float = 4.0
+    bridge_max_hop_m: float = 1.0
+    bridge_max_grade: float = 0.85
+    bridge_cost_weight: float = 10.0
+    bridge_switch_margin: float = 0.25
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
 

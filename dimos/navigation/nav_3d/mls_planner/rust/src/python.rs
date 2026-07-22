@@ -84,6 +84,10 @@ impl MLSPlanner {
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
+        bridge_max_hop_m = 1.0,
+        bridge_max_grade = 0.85,
+        bridge_cost_weight = 10.0,
+        bridge_switch_margin = 0.25,
     ))]
     fn new(
         voxel_size: f32,
@@ -96,6 +100,10 @@ impl MLSPlanner {
         wall_buffer_weight: f32,
         step_threshold_m: f32,
         step_penalty_weight: f32,
+        bridge_max_hop_m: f32,
+        bridge_max_grade: f32,
+        bridge_cost_weight: f32,
+        bridge_switch_margin: f32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -109,6 +117,10 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             step_penalty_weight,
+            bridge_max_hop_m,
+            bridge_max_grade,
+            bridge_cost_weight,
+            bridge_switch_margin,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
@@ -268,6 +280,12 @@ impl MLSPlanner {
     /// reached the goal.
     fn frontier_bridge(&self) -> Option<Bridge> {
         self.planner.frontier_bridge()
+    }
+
+    /// Debug: whether two poses' cells connect over any surface edge and
+    /// over passable (finite-cost) edges. Remove before merge.
+    fn debug_connectivity(&self, a: (f32, f32, f32), b: (f32, f32, f32)) -> Option<(bool, bool)> {
+        self.planner.debug_connectivity(a, b, &self.config)
     }
 
     fn voxel_count(&self) -> usize {

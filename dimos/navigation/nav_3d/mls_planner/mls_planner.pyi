@@ -31,6 +31,10 @@ class MLSPlanner:
         wall_buffer_weight: float = 100.0,
         step_threshold_m: float = 0.16,
         step_penalty_weight: float = 4.0,
+        bridge_max_hop_m: float = 1.0,
+        bridge_max_grade: float = 0.85,
+        bridge_cost_weight: float = 10.0,
+        bridge_switch_margin: float = 0.25,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""
@@ -77,6 +81,22 @@ class MLSPlanner:
         goal: tuple[float, float, float],
     ) -> NDArray[np.float32] | None:
         """Plan a path between start and goal. Returns (W, 3) float32, or None if unreachable."""
+        ...
+
+    def plan_or_truncate(
+        self,
+        start: tuple[float, float, float],
+        goal: tuple[float, float, float],
+    ) -> NDArray[np.float32]:
+        """Plan with the replan policy: a full or best-effort path, else the safe
+        prefix of the cached path. Returns (W, 3) float32, empty to stop."""
+        ...
+
+    def frontier_bridge(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+        """Optimistic bridge of the last plan_or_truncate: (route_end, aim), or
+        None when the last plan reached the goal."""
         ...
 
     def voxel_count(self) -> int:

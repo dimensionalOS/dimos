@@ -60,7 +60,7 @@ def _render_goal_pose(msg: PoseStamped) -> Archetype:
 
 
 def _render_global_map(msg: PointCloud2) -> Archetype:
-    return msg.to_rerun(voxel_size=0.03, colors=[128, 128, 128])
+    return msg.to_rerun(voxel_size=0.015, colors=[128, 128, 128])
 
 
 def _render_surface_map(msg: PointCloud2) -> Archetype:
@@ -73,7 +73,7 @@ def _render_nodes(msg: PointCloud2) -> Archetype:
         return rr.Points3D([])
     pts = pts.copy()
     pts[:, 2] += _GRAPH_Z_LIFT
-    return rr.Points3D(positions=pts, colors=[[75, 156, 211]], radii=[0.15])
+    return rr.Points3D(positions=pts, colors=[[75, 156, 211]], radii=[0.075])
 
 
 def _render_node_edges(msg: LineSegments3D) -> Archetype:

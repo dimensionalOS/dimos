@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod adjacency;
+mod bridge;
 mod dijkstra;
 pub mod edges;
 pub mod mls_planner;

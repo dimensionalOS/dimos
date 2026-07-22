@@ -18,10 +18,12 @@ use std::collections::{BinaryHeap, VecDeque};
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
+use crate::bridge::{self, BridgeState};
 use crate::dijkstra::walk_preds;
 use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
+use crate::surfaces::ColumnIz;
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Robot-rooted candidate search radius, in multiples of node spacing.
@@ -35,6 +37,21 @@ const MAX_SNAP_ATTEMPTS: usize = 64;
 
 /// On a blocked path, stop this far short of the last traversable point.
 const BEST_EFFORT_DISTANCE_M: f32 = 1.0;
+
+/// Reselection attempts when a bridge target turns out unplannable.
+const BRIDGE_PLAN_RETRIES: usize = 3;
+
+/// A cached path farther than this from the robot is stale, not resumable.
+/// Guards against projecting onto a path on another floor, straight through
+/// the slab between them.
+const CACHED_PATH_MAX_DEVIATION_M: f32 = 1.0;
+
+/// Snap candidates within this ground distance of the robot count as under
+/// its footprint and seed its reachable component. The robot may stand on a
+/// sub-clearance tread whose own edges are all impassable, so a single-cell
+/// seed would strand the bridge search at its feet, while the full snap
+/// radius would leak into pockets it cannot actually reach.
+const FOOTPRINT_RADIUS_M: f32 = 0.4;
 
 /// Optimistic bridge endpoints: the best-effort route's end and the goal
 /// component's closest approach point, world frame.
@@ -134,72 +151,51 @@ fn nearest_cell(
     best.map(|(_, id)| id)
 }
 
-/// Reachable cells: a CellId-indexed membership mask and the list of ids.
-struct Reachable {
-    mask: Vec<bool>,
-    list: Vec<CellId>,
+/// Resolve an unseen goal to the nearest standable cell, so replans converge
+/// on it as the map grows. Zero-clearance fringe crumbs lose to passable
+/// floor, else a barely-mapped goal region drags planning onto junk.
+fn nearest_goal_cell(plg: &PlannerGraph, pose: (f32, f32, f32), config: &Config) -> Option<CellId> {
+    let passable = plg.cells.ids().filter(|&id| {
+        plg.wall_state
+            .dist
+            .get(id as usize)
+            .copied()
+            .unwrap_or(f32::INFINITY)
+            >= config.wall_clearance_m
+    });
+    nearest_cell(&plg.cells, passable, pose, config.voxel_size)
+        .or_else(|| nearest_cell(&plg.cells, plg.cells.ids(), pose, config.voxel_size))
 }
 
-/// Flood the sources' connected component over passable edges.
-fn reachable_set(cells: &SurfaceCells, sources: &[CellId]) -> Reachable {
+/// CellId-indexed mask of the cells reachable from the sources over passable
+/// edges.
+fn reachable_set(cells: &SurfaceCells, sources: &[CellId]) -> Vec<bool> {
     let mut mask = vec![false; cells.slot_capacity()];
-    let mut list: Vec<CellId> = Vec::new();
+    let mut queue: Vec<CellId> = Vec::new();
     for &s in sources {
         if !mask[s as usize] {
             mask[s as usize] = true;
-            list.push(s);
+            queue.push(s);
         }
     }
     let mut head = 0;
-    while head < list.len() {
-        let u = list[head];
+    while head < queue.len() {
+        let u = queue[head];
         head += 1;
         for edge in cells.neighbors(u) {
             if edge.cost.is_finite() && !mask[edge.dest as usize] {
                 mask[edge.dest as usize] = true;
-                list.push(edge.dest);
+                queue.push(edge.dest);
             }
         }
     }
-    Reachable { mask, list }
-}
-
-/// Position of the goal-component node nearest the reachable component's
-/// nodes, where the two components make their closest approach.
-fn frontier_goal_pos(
-    plg: &PlannerGraph,
-    goal_cell: CellId,
-    reachable: &Reachable,
-) -> Option<(f32, f32, f32)> {
-    let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-    let (goal_node, _) = goal_node_of(plg, goal_cell, &node_cells)?;
-    let (cost_to_go, _) = node_dijkstra(plg, goal_node);
-    let goal_nodes: Vec<(f32, f32, f32)> = plg
-        .nodes
-        .iter()
-        .filter(|n| cost_to_go.contains_key(&n.cell_id))
-        .map(|n| n.pos)
-        .collect();
-    let mut best: Option<(f32, (f32, f32, f32))> = None;
-    for s in plg
-        .nodes
-        .iter()
-        .filter(|n| reachable.mask[n.cell_id as usize])
-    {
-        for &g in &goal_nodes {
-            let d2 = (s.pos.0 - g.0).powi(2) + (s.pos.1 - g.1).powi(2) + (s.pos.2 - g.2).powi(2);
-            if best.is_none_or(|(bd, _)| d2 < bd) {
-                best = Some((d2, g));
-            }
-        }
-    }
-    best.map(|(_, pos)| pos)
+    mask
 }
 
 /// Node owning the cell's Voronoi region, with the cell path to it. The
 /// penalized Voronoi cannot own sub-clearance cells, so those fall back to
 /// the nearest node by hops.
-fn goal_node_of(
+pub(crate) fn goal_node_of(
     plg: &PlannerGraph,
     goal_cell: CellId,
     node_cells: &AHashSet<NodeId>,
@@ -214,16 +210,19 @@ fn goal_node_of(
     nearest_node(&plg.cells, goal_cell, node_cells)
 }
 
-/// Plan path from start pose to goal pose using the node graph. A goal off
-/// the mapped surface or on a disconnected component plans best-effort to
-/// the nearest cell the start can reach.
+/// Plan path from start pose to goal pose using the node graph. A goal on a
+/// disconnected component plans best-effort to the near side of the best
+/// optimistic bridge toward it.
 /// Returns the waypoints and the string-pulled cell path, or none if the
-/// start can't be snapped to surface or no start candidate connects.
+/// start can't be snapped, no start candidate connects, or no admissible
+/// bridge exists toward a disconnected goal.
 pub fn plan(
     plg: &PlannerGraph,
+    by_col: &ColumnIz,
     start_pose: (f32, f32, f32),
     goal_pose: (f32, f32, f32),
     config: &Config,
+    bridge_state: &BridgeState,
 ) -> Option<PlannedPath> {
     let voxel_size = config.voxel_size;
     let z_tolerance_m = config.robot_height;
@@ -241,66 +240,138 @@ pub fn plan(
     if snapped_goal.is_none() {
         tracing::warn!(?goal_pose, "goal is not on a known surface");
     }
-    // An unseen goal plans to the nearest mapped cell, so replans converge on
-    // it as the map grows.
-    let Some(goal_cell) =
-        snapped_goal.or_else(|| nearest_cell(&plg.cells, plg.cells.ids(), goal_pose, voxel_size))
-    else {
-        tracing::debug!(?goal_pose, "plan failed: map has no surface cells");
-        return None;
-    };
-    let goal_pose = if snapped_goal.is_some() {
-        goal_pose
-    } else {
-        let (ix, iy, iz) = plg.cells.coord(goal_cell);
-        surface_point_xyz(ix, iy, iz, voxel_size)
-    };
-
     let start_cells: Vec<CellId> = start_candidates
         .iter()
         .take(MAX_SNAP_ATTEMPTS)
         .filter_map(|&candidate| plg.cells.id(candidate))
         .collect();
-
-    if let Some((waypoints, cells)) =
-        plan_to_cell(plg, start_pose, goal_pose, goal_cell, &start_cells, config)
-    {
-        return Some(PlannedPath {
-            waypoints,
-            cells,
-            bridge: None,
-        });
-    }
-    // A disconnected goal plans best-effort toward the disconnect: the point
-    // where the two components make their closest approach. Mapping fills in
-    // there as the robot arrives, so replans converge on the goal. Without a
-    // node on each side there is no approach point, so aim at the goal.
-    let reachable = reachable_set(&plg.cells, &start_cells);
-    let aim = frontier_goal_pos(plg, goal_cell, &reachable).unwrap_or(goal_pose);
-    let target_cell = nearest_cell(&plg.cells, reachable.list.iter().copied(), aim, voxel_size)?;
-    if target_cell == goal_cell {
+    if start_cells.is_empty() {
         return None;
     }
-    let (ix, iy, iz) = plg.cells.coord(target_cell);
-    let target_pose = surface_point_xyz(ix, iy, iz, voxel_size);
-    tracing::debug!(
-        ?goal_pose,
-        ?target_pose,
-        "goal unreachable; planning toward the disconnect"
-    );
-    let (waypoints, cells) = plan_to_cell(
-        plg,
-        start_pose,
-        target_pose,
-        target_cell,
-        &start_cells,
-        config,
-    )?;
-    Some(PlannedPath {
-        waypoints,
-        cells,
-        bridge: Some((target_pose, aim)),
-    })
+
+    // The snapped cell first. When neither a full plan nor a bridge reaches
+    // it, retry against the nearest standable cell: a goal snapped onto a
+    // degraded fringe crumb must not stall planning while solid floor sits
+    // just as close. The proxy attempt reports best-effort so replans keep
+    // converging on the true goal.
+    let alt_goal = nearest_goal_cell(plg, goal_pose, config);
+    let mut goal_cells: Vec<CellId> = Vec::new();
+    goal_cells.extend(snapped_goal);
+    goal_cells.extend(alt_goal.filter(|&a| Some(a) != snapped_goal));
+    if goal_cells.is_empty() {
+        tracing::debug!(?goal_pose, "plan failed: map has no surface cells");
+        return None;
+    }
+
+    let mut reachable: Option<Vec<bool>> = None;
+    for (attempt, &goal_cell) in goal_cells.iter().enumerate() {
+        let proxy = !(attempt == 0 && snapped_goal.is_some());
+        let attempt_pose = if proxy {
+            let (ix, iy, iz) = plg.cells.coord(goal_cell);
+            surface_point_xyz(ix, iy, iz, voxel_size)
+        } else {
+            goal_pose
+        };
+        if let Some((waypoints, cells)) = plan_to_cell(
+            plg,
+            start_pose,
+            attempt_pose,
+            goal_cell,
+            &start_cells,
+            config,
+        ) {
+            // A path to a proxy goal is not done: carry a bridge from its
+            // end to the true goal so the caller treats it as best-effort.
+            let bridge = proxy.then(|| (*waypoints.last().expect("non-empty path"), goal_pose));
+            return Some(PlannedPath {
+                waypoints,
+                cells,
+                bridge,
+            });
+        }
+        // A disconnected goal plans best-effort to the near side of the best
+        // optimistic bridge: a short, feasible hop across unobserved space
+        // that mapping should fill in as the robot arrives. A selection
+        // whose near side turns out unplannable is banned and the runner-up
+        // tried, so one bad target never silently drops the whole replan.
+        // No admissible bridge means no optimism is justified, so the caller
+        // holds instead of wandering.
+        let reachable = reachable.get_or_insert_with(|| {
+            let footprint: Vec<CellId> = start_candidates
+                .iter()
+                .filter(|&&(ix, iy, _)| {
+                    let x = (ix as f32 + 0.5) * voxel_size;
+                    let y = (iy as f32 + 0.5) * voxel_size;
+                    (x - start_pose.0).hypot(y - start_pose.1) <= FOOTPRINT_RADIUS_M
+                })
+                .filter_map(|&c| plg.cells.id(c))
+                .collect();
+            if footprint.is_empty() {
+                reachable_set(&plg.cells, &start_cells[..1])
+            } else {
+                reachable_set(&plg.cells, &footprint)
+            }
+        });
+        // Start the bridge search from standable footing under the robot,
+        // not necessarily its nearest cell.
+        let bridge_start = start_cells
+            .iter()
+            .copied()
+            .find(|&id| {
+                reachable[id as usize]
+                    && plg
+                        .wall_state
+                        .dist
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or(f32::INFINITY)
+                        >= config.wall_clearance_m
+            })
+            .unwrap_or(start_cells[0]);
+        let mut banned_aims: Vec<(f32, f32, f32)> = Vec::new();
+        for _ in 0..BRIDGE_PLAN_RETRIES {
+            let Some(selection) = bridge::select_bridge(
+                plg,
+                by_col,
+                reachable,
+                bridge_start,
+                start_pose,
+                goal_cell,
+                attempt_pose,
+                bridge_state,
+                &banned_aims,
+                config,
+            ) else {
+                break;
+            };
+            let (ix, iy, iz) = plg.cells.coord(selection.near);
+            let target_pose = surface_point_xyz(ix, iy, iz, voxel_size);
+            tracing::debug!(
+                ?attempt_pose,
+                ?target_pose,
+                aim = ?selection.aim,
+                "goal unreachable; planning to the bridge toward it"
+            );
+            let planned = plan_to_cell(
+                plg,
+                start_pose,
+                target_pose,
+                selection.near,
+                &start_cells,
+                config,
+            );
+            let Some((waypoints, cells)) = planned else {
+                banned_aims.push(selection.aim);
+                continue;
+            };
+            return Some(PlannedPath {
+                waypoints,
+                cells,
+                bridge: Some((target_pose, selection.aim)),
+            });
+        }
+    }
+    None
 }
 
 /// Plan from the start snap candidates to a resolved goal cell, or none when
@@ -414,8 +485,11 @@ pub fn truncate_to_safe(
     };
 
     // The cached path's head is the stale original start. Resume from where the
-    // robot sits on it so the follower is pulled forward, never back to it.
-    let resume = resume_segment(cached, start_pose, voxel_size);
+    // robot sits on it so the follower is pulled forward, never back to it. A
+    // robot no longer near the path at all has left it; nothing to resume.
+    let Some(resume) = resume_segment(cached, start_pose, voxel_size) else {
+        return Vec::new();
+    };
 
     // Walk each chord ahead at surface resolution. On a blockage, keep up to the
     // last traversable cell so the path ends at the obstacle, not the prior anchor.
@@ -560,10 +634,11 @@ fn last_safe_on_chord(
     (last_safe, false)
 }
 
-/// Index of the cached segment the robot is on, by nearest-point projection in
-/// the ground plane. The route ahead resumes at the following cell.
-fn resume_segment(cached: &[VoxelKey], start: (f32, f32, f32), voxel_size: f32) -> usize {
-    let p = (start.0, start.1);
+/// Index of the cached segment the robot is on, by nearest-point projection
+/// in 3D, or none when the robot has strayed too far from the whole path.
+/// Distance must count z: an xy projection would resume a path on another
+/// floor directly below the robot.
+fn resume_segment(cached: &[VoxelKey], start: (f32, f32, f32), voxel_size: f32) -> Option<usize> {
     let mut best = 0usize;
     let mut best_d2 = f32::INFINITY;
     for i in 0..cached.len() - 1 {
@@ -574,27 +649,27 @@ fn resume_segment(cached: &[VoxelKey], start: (f32, f32, f32), voxel_size: f32) 
             cached[i + 1].2,
             voxel_size,
         );
-        let d2 = point_segment_dist2((a.0, a.1), (b.0, b.1), p);
+        let d2 = point_segment_dist2(a, b, start);
         if d2 < best_d2 {
             best_d2 = d2;
             best = i;
         }
     }
-    best
+    (best_d2 <= CACHED_PATH_MAX_DEVIATION_M * CACHED_PATH_MAX_DEVIATION_M).then_some(best)
 }
 
-/// Squared distance from point p to segment a-b in the plane.
-fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
-    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
-    let denom = abx * abx + aby * aby;
+/// Squared distance from point p to segment a-b.
+fn point_segment_dist2(a: (f32, f32, f32), b: (f32, f32, f32), p: (f32, f32, f32)) -> f32 {
+    let (abx, aby, abz) = (b.0 - a.0, b.1 - a.1, b.2 - a.2);
+    let denom = abx * abx + aby * aby + abz * abz;
     let t = if denom == 0.0 {
         0.0
     } else {
-        (((p.0 - a.0) * abx + (p.1 - a.1) * aby) / denom).clamp(0.0, 1.0)
+        (((p.0 - a.0) * abx + (p.1 - a.1) * aby + (p.2 - a.2) * abz) / denom).clamp(0.0, 1.0)
     };
-    let (cx, cy) = (a.0 + t * abx, a.1 + t * aby);
-    let (dx, dy) = (p.0 - cx, p.1 - cy);
-    dx * dx + dy * dy
+    let (cx, cy, cz) = (a.0 + t * abx, a.1 + t * aby, a.2 + t * abz);
+    let (dx, dy, dz) = (p.0 - cx, p.1 - cy, p.2 - cz);
+    dx * dx + dy * dy + dz * dz
 }
 
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
@@ -759,7 +834,7 @@ fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId
 /// Cost-to-go to source for every reachable node, with a predecessor pointing
 /// one hop toward it. Nodes are keyed by their CellId. Unreachable nodes are
 /// simply absent from the maps.
-fn node_dijkstra(
+pub(crate) fn node_dijkstra(
     plg: &PlannerGraph,
     source: NodeId,
 ) -> (AHashMap<NodeId, f32>, AHashMap<NodeId, NodeId>) {
@@ -1075,37 +1150,7 @@ mod tests {
         (0..n).map(|x| (x, 0, 0)).collect()
     }
 
-    fn plan_simple(
-        plg: &PlannerGraph,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-    ) -> Option<Vec<(f32, f32, f32)>> {
-        let config = Config {
-            world_frame: "world".into(),
-            voxel_size: VOXEL,
-            robot_height: Z_TOL,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.2,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 4.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 4.0,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 2.0,
-        };
-        plan(plg, start, goal, &config).map(|p| p.waypoints)
-    }
-
-    fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {
-        let mut plg = PlannerGraph::new();
-        build_surface_lookup(cells, &mut plg.surface_lookup);
-        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
-        plg
-    }
-
-    fn truncate_config() -> Config {
+    fn test_config() -> Config {
         Config {
             world_frame: "world".into(),
             voxel_size: VOXEL,
@@ -1118,9 +1163,48 @@ mod tests {
             wall_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
+            bridge_max_hop_m: 1.0,
+            bridge_max_grade: 0.85,
+            bridge_cost_weight: 4.0,
+            bridge_switch_margin: 0.25,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
         }
+    }
+
+    fn plan_with(
+        plg: &PlannerGraph,
+        by_col: &ColumnIz,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+    ) -> Option<PlannedPath> {
+        plan(
+            plg,
+            by_col,
+            start,
+            goal,
+            &test_config(),
+            &BridgeState::default(),
+        )
+    }
+
+    fn plan_simple(
+        plg: &PlannerGraph,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+    ) -> Option<Vec<(f32, f32, f32)>> {
+        plan_with(plg, &ColumnIz::default(), start, goal).map(|p| p.waypoints)
+    }
+
+    fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {
+        let mut plg = PlannerGraph::new();
+        build_surface_lookup(cells, &mut plg.surface_lookup);
+        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        plg
+    }
+
+    fn truncate_config() -> Config {
+        test_config()
     }
 
     #[test]
@@ -1193,6 +1277,19 @@ mod tests {
     }
 
     #[test]
+    fn truncate_refuses_a_path_on_another_floor() {
+        let cfg = truncate_config();
+        // Cached ground-floor route, robot now one floor above it. Resuming
+        // would send the follower straight down through the slab.
+        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
+        let robot = (2.0, 0.05, 2.6);
+        assert!(
+            truncate_to_safe(&surface_graph(&cached), &cached, robot, &cfg).is_empty(),
+            "a cached path on another floor is stale, not resumable"
+        );
+    }
+
+    #[test]
     fn truncate_stops_inside_standoff_or_at_blockage() {
         let cfg = truncate_config();
         let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
@@ -1214,40 +1311,266 @@ mod tests {
         );
     }
 
+    /// Wide strips so interior cells exist and the islands are not all
+    /// boundary crumbs.
+    fn slab(x0: i32, x1: i32, y0: i32, y1: i32, z: i32) -> Vec<VoxelKey> {
+        let mut cells = Vec::new();
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                cells.push((x, y, z));
+            }
+        }
+        cells
+    }
+
     #[test]
-    fn plan_is_best_effort_when_goal_is_disconnected() {
-        // The gap must exceed SNAP_SEARCH_RADIUS_M so no start candidate
-        // can relocate onto the goal island. The path must end at the start
-        // island's cell nearest the goal.
-        let mut cells: Vec<VoxelKey> = (0..5).map(|x| (x, 0, 0)).collect();
-        cells.extend((30..35).map(|x| (x, 0, 0)));
-        let plg = graph_with_nodes(&cells, &[(2, 0, 0), (32, 0, 0)]);
-        let wp = plan_simple(&plg, (0.25, 0.0, 0.1), (3.25, 0.0, 0.1)).unwrap();
-        let edge = surface_point_xyz(4, 0, 0, VOXEL);
-        let end = wp.last().unwrap();
+    fn plan_bridges_a_short_gap_to_a_disconnected_goal() {
+        // Start slab and a goal island past a 0.7 m gap, farther from the
+        // start pose than SNAP_SEARCH_RADIUS_M so snapping cannot cross. The
+        // path must end at the start slab's lip and carry a bridge aimed at
+        // the island's near edge.
+        let mut cells = slab(0, 30, 0, 4, 0);
+        cells.extend(slab(38, 46, 0, 4, 0));
+        let plg = graph_with_nodes(&cells, &[(5, 2, 0), (42, 2, 0)]);
+        let path = plan_with(
+            &plg,
+            &ColumnIz::default(),
+            (0.25, 0.25, 0.1),
+            (4.25, 0.25, 0.1),
+        )
+        .unwrap();
+        let end = path.waypoints.last().unwrap();
         assert!(
-            (end.0 - edge.0).abs() < 1e-5 && (end.1 - edge.1).abs() < 1e-5,
-            "path must end at the start island's edge: {end:?}"
+            (end.0 - 3.05).abs() < 2.0 * VOXEL,
+            "path must end at the start slab's lip: {end:?}"
+        );
+        let (near, aim) = path.bridge.expect("best-effort plan carries a bridge");
+        assert!((near.0 - 3.05).abs() < 2.0 * VOXEL, "bridge near: {near:?}");
+        assert!((aim.0 - 3.85).abs() < 2.0 * VOXEL, "bridge aim: {aim:?}");
+        let gap = ((aim.0 - near.0).powi(2) + (aim.1 - near.1).powi(2)).sqrt();
+        assert!(gap < 1.0, "bridge must be a short hop: {gap}");
+    }
+
+    #[test]
+    fn plan_bridges_toward_the_gap_not_under_the_goal() {
+        // Start strip at y=0. The goal component is a far row at y=30 plus an
+        // arm at x=25 reaching down to y=8: a 0.6 m gap, farther from the
+        // start pose than the snap radius. The direct line to the goal spans
+        // 2.8 m of nothing, so the only admissible bridge is the arm tip and
+        // the path must head for x=25 instead of under the goal.
+        let mut cells = slab(0, 30, 0, 2, 0);
+        cells.extend(slab(0, 30, 30, 32, 0));
+        cells.extend(slab(24, 26, 8, 30, 0));
+        let plg = graph_with_nodes(&cells, &[(5, 1, 0), (25, 1, 0), (2, 31, 0), (25, 9, 0)]);
+        let path = plan_with(
+            &plg,
+            &ColumnIz::default(),
+            (0.55, 0.05, 0.1),
+            (0.25, 3.15, 0.1),
+        )
+        .unwrap();
+        let end = path.waypoints.last().unwrap();
+        assert!(
+            (end.0 - 2.55).abs() < 2.0 * VOXEL && end.1 < 0.35,
+            "path must end on the strip under the arm tip: {end:?}"
+        );
+        let (_, aim) = path.bridge.expect("best-effort plan carries a bridge");
+        assert!(
+            (aim.0 - 2.55).abs() < 2.0 * VOXEL && (aim.1 - 0.85).abs() < 2.0 * VOXEL,
+            "bridge must aim at the arm tip: {aim:?}"
         );
     }
 
     #[test]
-    fn plan_aims_at_the_disconnect_not_under_the_goal() {
-        // Start strip at y=0. The goal component is a far row at y=30 plus an
-        // arm at x=5 reaching down to y=17, past SNAP_SEARCH_RADIUS_M of the
-        // start so no candidate bridges the gap. The closest approach is the
-        // arm tip, so the best-effort path must head for x=5, not x=2 under
-        // the goal.
-        let mut cells: Vec<VoxelKey> = (0..=10).map(|x| (x, 0, 0)).collect();
-        cells.extend((0..=10).map(|x| (x, 30, 0)));
-        cells.extend((17..30).map(|y| (5, y, 0)));
-        let plg = graph_with_nodes(&cells, &[(5, 0, 0), (2, 30, 0), (5, 17, 0)]);
-        let wp = plan_simple(&plg, (0.95, 0.0, 0.1), (0.25, 3.05, 0.1)).unwrap();
-        let gap = surface_point_xyz(5, 0, 0, VOXEL);
-        let end = wp.last().unwrap();
+    fn plan_refuses_a_gap_beyond_the_hop_cap() {
+        // 2.5 m of nothing between the components: no admissible bridge, so
+        // the plan reports no path instead of marching at the void.
+        let mut cells = slab(0, 5, 0, 4, 0);
+        cells.extend(slab(30, 35, 0, 4, 0));
+        let plg = graph_with_nodes(&cells, &[(2, 2, 0), (32, 2, 0)]);
+        assert!(plan_simple(&plg, (0.25, 0.25, 0.1), (3.25, 0.25, 0.1)).is_none());
+    }
+
+    #[test]
+    fn plan_refuses_a_vertical_bridge_through_a_slab() {
+        // The goal floor sits 0.8 m directly above the start floor. Every
+        // candidate hop is nearly vertical and fails the grade gate.
+        let mut cells = slab(0, 10, 0, 6, 0);
+        cells.extend(slab(0, 10, 0, 6, 8));
+        let plg = graph_with_nodes(&cells, &[(5, 3, 0), (5, 3, 8)]);
+        assert!(plan_simple(&plg, (0.25, 0.35, 0.1), (0.85, 0.35, 0.95)).is_none());
+    }
+
+    #[test]
+    fn plan_chains_across_sparse_treads() {
+        // Sparse stair fragments climb from the floor lip toward the goal
+        // platform: hops of 0.4-0.5 m each, rising 0.3 m. The chain scores the
+        // route and the bridge is its first hop, aimed at the first tread.
+        let mut cells = slab(0, 20, 0, 4, 0);
+        cells.extend(slab(25, 27, 1, 3, 3));
+        cells.extend(slab(32, 34, 1, 3, 6));
+        cells.extend(slab(39, 41, 1, 3, 9));
+        cells.extend(slab(46, 60, 0, 4, 12));
+        let plg = graph_with_nodes(
+            &cells,
+            &[(5, 2, 0), (26, 2, 3), (33, 2, 6), (40, 2, 9), (53, 2, 12)],
+        );
+        let path = plan_with(
+            &plg,
+            &ColumnIz::default(),
+            (0.25, 0.25, 0.1),
+            (5.5, 0.25, 1.3),
+        )
+        .unwrap();
+        let (near, aim) = path.bridge.expect("best-effort plan carries a bridge");
         assert!(
-            (end.0 - gap.0).abs() < 1e-5 && (end.1 - gap.1).abs() < 1e-5,
-            "path must end at the closest approach to the goal component: {end:?}"
+            (near.0 - 2.05).abs() < 2.0 * VOXEL,
+            "bridge starts at the floor lip: {near:?}"
+        );
+        assert!(
+            (aim.0 - 2.55).abs() < 2.0 * VOXEL && (aim.2 - 0.4).abs() < 1.5 * VOXEL,
+            "bridge aims at the first tread: {aim:?}"
+        );
+    }
+
+    #[test]
+    fn plan_refuses_a_ladder_of_crumbs_up_a_wall() {
+        // Fragments big enough to pass the landing-size gate, stacked so each
+        // hop sneaks under the per-hop grade but the chain sums to a wall.
+        let mut cells = slab(0, 10, 0, 4, 0);
+        cells.extend(slab(12, 13, 1, 2, 4));
+        cells.extend(slab(15, 16, 1, 2, 8));
+        cells.extend(slab(18, 19, 1, 2, 12));
+        cells.extend(slab(21, 31, 0, 4, 16));
+        let plg = graph_with_nodes(
+            &cells,
+            &[(5, 2, 0), (12, 1, 4), (15, 1, 8), (18, 1, 12), (26, 2, 16)],
+        );
+        assert!(
+            plan_simple(&plg, (0.25, 0.25, 0.1), (2.65, 0.25, 1.7)).is_none(),
+            "a chain as steep as a wall must be refused"
+        );
+    }
+
+    #[test]
+    fn plan_bridges_across_a_sub_clearance_pinch() {
+        // Two passable slabs joined by a measured 1-wide strip whose edges
+        // the wall penalty made impassable: one adjacency component with no
+        // passable route. The bridge must run along the strip, ending at its
+        // near side and aiming at the far side, not give up.
+        let mut cells = slab(0, 15, 0, 4, 0);
+        cells.extend(slab(16, 24, 2, 2, 0));
+        cells.extend(slab(25, 40, 0, 4, 0));
+        let mut plg = graph_with_nodes(&cells, &[(5, 2, 0), (33, 2, 0)]);
+        let pinch_ids: AHashSet<CellId> = plg
+            .cells
+            .ids()
+            .filter(|&id| (16..=24).contains(&plg.cells.coord(id).0))
+            .collect();
+        let all: Vec<CellId> = plg.cells.ids().collect();
+        for id in all {
+            let src_in = pinch_ids.contains(&id);
+            for e in plg.cells.edges_mut(id) {
+                if src_in || pinch_ids.contains(&e.dest) {
+                    e.cost = f32::INFINITY;
+                }
+            }
+        }
+        build_node_edges(
+            &plg.cells,
+            &plg.nodes,
+            &mut plg.cell_state,
+            &mut plg.node_edges,
+            &mut plg.node_adj,
+        );
+
+        let path = plan_with(
+            &plg,
+            &ColumnIz::default(),
+            (0.25, 0.25, 0.1),
+            (3.75, 0.25, 0.1),
+        )
+        .unwrap();
+        let (near, aim) = path.bridge.expect("pinch plan carries a bridge");
+        assert!(
+            (near.0 - 1.55).abs() < 2.0 * VOXEL,
+            "bridge starts at the pinch's near side: {near:?}"
+        );
+        assert!(
+            (aim.0 - 2.55).abs() < 2.0 * VOXEL,
+            "bridge aims at the pinch's far side: {aim:?}"
+        );
+        let end = path.waypoints.last().unwrap();
+        assert!(
+            (end.0 - near.0).abs() < 1e-4,
+            "path ends at the bridge near side: {end:?}"
+        );
+    }
+
+    #[test]
+    fn ribbon_aim_is_capped_on_a_long_pinch() {
+        // A 3.5 m sub-clearance strip: the aim must sit at the ~2 m lookahead
+        // into the ribbon, not at its far end, so the bridge claim stays
+        // local to what the robot is about to attempt.
+        let mut cells = slab(0, 15, 0, 4, 0);
+        cells.extend(slab(16, 50, 2, 2, 0));
+        cells.extend(slab(51, 70, 0, 4, 0));
+        let mut plg = graph_with_nodes(&cells, &[(5, 2, 0), (60, 2, 0)]);
+        let pinch_ids: AHashSet<CellId> = plg
+            .cells
+            .ids()
+            .filter(|&id| (16..=50).contains(&plg.cells.coord(id).0))
+            .collect();
+        let all: Vec<CellId> = plg.cells.ids().collect();
+        for id in all {
+            let src_in = pinch_ids.contains(&id);
+            for e in plg.cells.edges_mut(id) {
+                if src_in || pinch_ids.contains(&e.dest) {
+                    e.cost = f32::INFINITY;
+                }
+            }
+        }
+        build_node_edges(
+            &plg.cells,
+            &plg.nodes,
+            &mut plg.cell_state,
+            &mut plg.node_edges,
+            &mut plg.node_adj,
+        );
+
+        let path = plan_with(
+            &plg,
+            &ColumnIz::default(),
+            (0.25, 0.25, 0.1),
+            (6.55, 0.25, 0.1),
+        )
+        .unwrap();
+        let (near, aim) = path.bridge.expect("long pinch carries a bridge");
+        assert!(
+            (near.0 - 1.55).abs() < 2.0 * VOXEL,
+            "bridge starts at the pinch's near side: {near:?}"
+        );
+        let reach = aim.0 - near.0;
+        assert!(
+            (1.8..=2.4).contains(&reach),
+            "aim must sit at the ~2 m lookahead, not the far end: reach={reach}, aim={aim:?}"
+        );
+    }
+
+    #[test]
+    fn plan_refuses_a_bridge_through_a_wall() {
+        // Two slabs 0.7 m apart with an occupied wall column between them.
+        // The chord has no body clearance, so the pair is inadmissible.
+        let mut cells = slab(0, 30, 0, 4, 0);
+        cells.extend(slab(38, 46, 0, 4, 0));
+        let plg = graph_with_nodes(&cells, &[(5, 2, 0), (42, 2, 0)]);
+        let mut by_col = ColumnIz::default();
+        for y in -2..7 {
+            by_col.insert((34, y), (0..20).collect());
+        }
+        assert!(
+            plan_with(&plg, &by_col, (0.25, 0.25, 0.1), (4.25, 0.25, 0.1)).is_none(),
+            "a bridge through an occupied wall must be refused"
         );
     }
 
