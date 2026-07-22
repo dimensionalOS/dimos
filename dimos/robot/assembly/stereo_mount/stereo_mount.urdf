@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  stereo_mount: ZED-M stereo camera + Livox Mid-360 on one rigid mount.
+
+  Frame convention: x forward, y left, z up (ROS). base_link is the mount plate.
+  - The ZED faces mostly forward, pitched UP 10 deg  (rpy pitch = -0.17453293).
+  - The Mid-360 sits behind it, pitched DOWN 30 deg  (rpy pitch = +0.52359878).
+  All offsets are placeholder-but-sane values meant for hand fine-tuning; the
+  bounding boxes are the real ZED-M / Mid-360 datasheet dimensions.
+
+  ZED-M body: 124.5 x 30.5 x 26.5 mm (width x height x depth), stereo baseline 63 mm.
+  Mid-360 body: 65 x 65 x 60 mm; point-cloud origin ~47 mm above the base, i.e.
+  17 mm above the box center.
+-->
+<robot name="stereo_mount">
+
+  <link name="base_link"/>
+
+  <!-- ═══ ZED-M (front, pitched up 10 deg) ═══ -->
+
+  <joint name="base_to_zed" type="fixed">
+    <parent link="base_link"/>
+    <child link="zed_link"/>
+    <origin xyz="0.06 0 0.02" rpy="0 -0.17453293 0"/>
+  </joint>
+
+  <!-- zed_link = center of the ZED main body box -->
+  <link name="zed_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0265 0.1245 0.0305"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0265 0.1245 0.0305"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Thin box spanning both lens apertures, flush with the body's front face -->
+  <joint name="zed_to_lenses" type="fixed">
+    <parent link="zed_link"/>
+    <child link="zed_lenses_link"/>
+    <origin xyz="0.01725 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="zed_lenses_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.008 0.1245 0.024"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.008 0.1245 0.024"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Eye frames: 63 mm baseline, symmetric about the body center -->
+  <joint name="zed_to_left_eye" type="fixed">
+    <parent link="zed_link"/>
+    <child link="zed_left_frame"/>
+    <origin xyz="0 0.0315 0" rpy="0 0 0"/>
+  </joint>
+  <link name="zed_left_frame"/>
+
+  <joint name="zed_left_to_optical" type="fixed">
+    <parent link="zed_left_frame"/>
+    <child link="zed_left_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+  <link name="zed_left_optical_frame"/>
+
+  <joint name="zed_to_right_eye" type="fixed">
+    <parent link="zed_link"/>
+    <child link="zed_right_frame"/>
+    <origin xyz="0 -0.0315 0" rpy="0 0 0"/>
+  </joint>
+  <link name="zed_right_frame"/>
+
+  <joint name="zed_right_to_optical" type="fixed">
+    <parent link="zed_right_frame"/>
+    <child link="zed_right_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+  <link name="zed_right_optical_frame"/>
+
+  <!-- ═══ Mid-360 (behind and above the ZED, pitched down 30 deg) ═══ -->
+
+  <joint name="base_to_mid360" type="fixed">
+    <parent link="base_link"/>
+    <child link="mid360_link"/>
+    <origin xyz="-0.017268 0 0.071831" rpy="0 0.52359878 0"/>
+  </joint>
+
+  <!-- mid360_link = center of the Mid-360 body box -->
+  <link name="mid360_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.065 0.065 0.060"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.065 0.065 0.060"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Point-cloud origin O: on the central axis, 17 mm above the box center.
+       Point-LIO's odometry attaches here (world -> lidar_link) and its clouds
+       are stamped with this frame, tying the moving world edge into the rig. -->
+  <joint name="mid360_to_lidar" type="fixed">
+    <parent link="mid360_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 0.017" rpy="0 0 0"/>
+  </joint>
+  <link name="lidar_link"/>
+
+</robot>
