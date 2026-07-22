@@ -16,7 +16,7 @@ import os
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool, String
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -52,6 +52,18 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     path_smoothing_backtracking_factor: float = Field(default=0.5, gt=0.0, lt=1.0)
     path_smoothing_max_backtracking_steps: int = Field(default=3, ge=0)
     path_resample_spacing_m: float = Field(default=0.1, gt=0.0)
+    obstacle_lookahead_min_distance_m: float = Field(default=3.0, gt=0.0)
+    obstacle_lookahead_time_s: float = Field(default=0.0, ge=0.0)
+    obstacle_lookahead_max_distance_m: float = Field(default=3.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def validate_obstacle_lookahead(self) -> "ReplanningAStarPlannerConfig":
+        if self.obstacle_lookahead_max_distance_m < self.obstacle_lookahead_min_distance_m:
+            raise ValueError(
+                "obstacle_lookahead_max_distance_m must be greater than or equal to "
+                "obstacle_lookahead_min_distance_m"
+            )
+        return self
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -109,6 +121,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
                 self.config.path_smoothing_max_backtracking_steps
             ),
             path_resample_spacing_m=self.config.path_resample_spacing_m,
+            obstacle_lookahead_min_distance_m=self.config.obstacle_lookahead_min_distance_m,
+            obstacle_lookahead_time_s=self.config.obstacle_lookahead_time_s,
+            obstacle_lookahead_max_distance_m=self.config.obstacle_lookahead_max_distance_m,
         )
 
     @rpc
