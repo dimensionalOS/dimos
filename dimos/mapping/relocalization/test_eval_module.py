@@ -14,7 +14,7 @@
 
 """Tests for eval_module.py's PURE analysis -- the code the offline held-out driver
 and the in-process RelocEval Module SHARE, exercised with
-no LCM bus, no replay, no DB. Three properties:
+no LCM bus, no replay, no DB. Four properties:
 
   * umeyama_alignment recovers a KNOWN rigid map_B_T_map_A (and scale) from
     constructed corresponding point sets to ~1e-9, always a proper rotation.
@@ -24,26 +24,55 @@ no LCM bus, no replay, no DB. Three properties:
   * the accept key and the log join stay honest: a yaw-only fix is its own accept, a
     health line labels exactly one fix, and degenerate shared tags hold med_err out
     with a reason instead of reporting an arbitrary Umeyama transform.
+  * the log parsers read what the PIPELINE ACTUALLY EMITS. Those tests never write a
+    log line by hand -- they run the real module.py / priors.py call sites through
+    the real dimos logger and parse the bytes it rendered, in BOTH renderings
+    (console + main.jsonl). A hand-written fixture is exactly how the parsers rotted
+    into silently returning [] once the emitters moved to structlog kwargs.
 
 Deterministic: numpy default_rng + fixed scipy Rotations; no wall-clock, no random.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+import io
+import logging
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.mapping.relocalization.eval_module import (
     Fix,
     HealthLine,
     aligned_err_t_m,
     compute_stats,
+    count_rejects,
     dedup_tf_fixes,
     format_report,
     label_fixes_from_log,
+    parse_census,
+    parse_health_lines,
     resolve_heldout_alignment,
     stats_to_dict,
     umeyama_alignment,
+)
+import dimos.mapping.relocalization.module as module_mod
+from dimos.mapping.relocalization.module import Config, RelocalizationModule
+import dimos.mapping.relocalization.priors as priors_mod
+from dimos.mapping.relocalization.priors import (
+    Candidate,
+    LastPosePrior,
+    LastPosePriorConfig,
+    RansacPriorConfig,
+    relocalize_with_priors,
 )
 
 
@@ -202,8 +231,8 @@ def test_label_nearby_fixes_keep_distinct_sources() -> None:
     fix_a = _rt(np.eye(3), t_a)
     fix_b = _rt(np.eye(3), t_b)
     health = [
-        HealthLine(source="ransac", fitness=0.9, published_t=tuple(t_a)),
-        HealthLine(source="fiducial", fitness=0.7, published_t=tuple(t_b)),
+        HealthLine(source="ransac", fitness=0.9, published_t_m=tuple(t_a)),
+        HealthLine(source="fiducial", fitness=0.7, published_t_m=tuple(t_b)),
     ]
     fixes = label_fixes_from_log([(0.0, fix_a), (0.1, fix_b)], health)
     assert [f.source for f in fixes] == ["ransac", "fiducial"]
@@ -215,8 +244,8 @@ def test_label_second_nearby_fix_never_reuses_a_claimed_line() -> None:
     to the fix that owns it, and the other stays ``unknown``. Reusing it would stamp
     a second accept with a source and fitness that are not its own."""
     health = [
-        HealthLine(source="ransac", fitness=0.9, published_t=(0.0, 0.0, 0.0)),
-        HealthLine(source="fiducial", fitness=0.7, published_t=(5.0, 0.0, 0.0)),  # far away
+        HealthLine(source="ransac", fitness=0.9, published_t_m=(0.0, 0.0, 0.0)),
+        HealthLine(source="fiducial", fitness=0.7, published_t_m=(5.0, 0.0, 0.0)),  # far away
     ]
     tf_fixes = [
         (0.0, _rt(np.eye(3), np.array([0.000, 0.0, 0.0]))),
@@ -232,8 +261,8 @@ def test_label_equal_distance_tie_is_stable() -> None:
     later equally-close line never overwrites it."""
     fix = _rt(np.eye(3), np.array([0.010, 0.0, 0.0]))  # 1 cm from each
     health = [
-        HealthLine(source="ransac", fitness=0.9, published_t=(0.0, 0.0, 0.0)),
-        HealthLine(source="fiducial", fitness=0.7, published_t=(0.020, 0.0, 0.0)),
+        HealthLine(source="ransac", fitness=0.9, published_t_m=(0.0, 0.0, 0.0)),
+        HealthLine(source="fiducial", fitness=0.7, published_t_m=(0.020, 0.0, 0.0)),
     ]
     fixes = label_fixes_from_log([(0.0, fix)], health)
     assert fixes[0].source == "ransac" and fixes[0].fitness == 0.9
@@ -356,3 +385,223 @@ def test_format_report_held_out_shows_columns_live_hides_them() -> None:
     live_txt = format_report(live, title="demo")
     assert "med_err" not in live_txt and "success" not in live_txt
     assert "%traj" in live_txt and "ransac" in live_txt
+
+
+# --------------------------------------------------------------------------- #
+# Log parsers vs the REAL emitters: every line below is rendered by the real
+# dimos logger from the real module.py / priors.py call sites -- never typed out
+# here. The previous parsers matched a format the pipeline had stopped emitting
+# ("relocalize:", "published_t="), so they returned [] on every real run and every
+# fix fell back to source="unknown"; only real bytes can catch that again.
+# --------------------------------------------------------------------------- #
+@dataclass
+class _RunLog:
+    """The two files a dimos run leaves behind, in memory: the console capture a
+    harness tees to `.replay_run.log`, and the run's `main.jsonl`."""
+
+    console_buf: io.StringIO = field(default_factory=io.StringIO)
+    jsonl_buf: io.StringIO = field(default_factory=io.StringIO)
+
+    @property
+    def console(self) -> str:
+        return self.console_buf.getvalue()
+
+    @property
+    def jsonl(self) -> str:
+        return self.jsonl_buf.getvalue()
+
+    def both(self) -> list[tuple[str, str]]:
+        """[(rendering name, text)] -- one parser must read both."""
+        return [("console", self.console), ("jsonl", self.jsonl)]
+
+
+@contextmanager
+def _capture_run_log(*modules: ModuleType) -> Iterator[_RunLog]:
+    """Everything ``modules`` log, in BOTH renderings, from the REAL logger.
+
+    setup_logger gives each dimos module a console StreamHandler and a main.jsonl
+    RotatingFileHandler (logging_config.py); this swaps ONLY their streams for
+    in-memory buffers, so the structlog processors, the formatters and the call
+    sites stay exactly what production runs. One shared buffer per rendering, since
+    a real run has one stdout and one main.jsonl for all modules."""
+    log = _RunLog()
+    swapped: list[tuple[logging.StreamHandler[Any], Any]] = []
+    try:
+        for mod in modules:
+            # setup_logger names the stdlib logger by the caller's path relative to
+            # the project root (logging_config.py); mirror that to find it.
+            name = str(Path(str(mod.__file__)).relative_to(DIMOS_PROJECT_ROOT))
+            handlers = logging.getLogger(name).handlers
+            assert handlers, f"{name} has no handlers -- setup_logger wiring changed"
+            for handler in handlers:
+                assert isinstance(handler, logging.StreamHandler), (
+                    f"{name} handler {handler!r} is not stream-backed; "
+                    "the capture below cannot see it -- setup_logger wiring changed"
+                )
+                buf = log.jsonl_buf if isinstance(handler, logging.FileHandler) else log.console_buf
+                swapped.append((handler, handler.setStream(buf)))
+        yield log
+    finally:
+        for handler, stream in swapped:
+            handler.setStream(stream)
+
+
+def _bare_module(config: Config) -> RelocalizationModule:
+    """A RelocalizationModule shell with just the attributes _try_relocalize reads
+    -- no coordinator, no start() wiring (same shell test_relocalize.py uses)."""
+    m = object.__new__(RelocalizationModule)
+    m.config = config
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._last_skip_log = 0.0
+    m._last_pose_prior = LastPosePrior()
+    m._fiducial_prior = None
+    return m
+
+
+class _StubCloud:
+    """Minimal PointCloud2 stand-in: __len__ (the n_pts log field) and a
+    `.pointcloud` sentinel handed to the monkeypatched relocalize()."""
+
+    def __init__(self, n: int) -> None:
+        self._n = n
+        self.pointcloud = object()
+
+    def __len__(self) -> int:
+        return self._n
+
+
+class _StubPrior:
+    """Proposes ``n`` candidates under one source name. The census counts proposals,
+    so only the count and the name are load-bearing."""
+
+    def __init__(self, name: str, n: int) -> None:
+        self.name = name
+        self._n = n
+
+    def propose(self, global_map: object, local_map: object) -> list[Candidate]:
+        return [Candidate(T=np.eye(4), source=self.name) for _ in range(self._n)]
+
+
+def _multi_source_module() -> RelocalizationModule:
+    """ransac + last_pose -> the judge path, which tags the accept with source=."""
+    return _bare_module(
+        Config(priors=[RansacPriorConfig(), LastPosePriorConfig()], fitness_threshold=0.45)
+    )
+
+
+def test_parse_health_lines_reads_a_real_accept_in_both_renderings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real accept the module emits (event `relocalize accepted`, kwargs
+    source/fitness/published_t_m) parses to one HealthLine carrying that source,
+    that fitness, and the published world_T_map translation -- from the console
+    capture AND from main.jsonl."""
+    map_t_world = _rt(Rotation.from_euler("z", 25.0, degrees=True).as_matrix(),
+                      np.array([1.5, -0.8, 0.05]))
+    published_t_m = np.linalg.inv(map_t_world)[:3, 3]  # what the module publishes
+    m = _multi_source_module()
+    monkeypatch.setattr(
+        module_mod, "_relocalize_with_priors", lambda *a, **k: (map_t_world, 0.873, "last_pose")
+    )
+
+    with _capture_run_log(module_mod) as log:
+        assert m._try_relocalize(_StubCloud(55828)) is not None  # type: ignore[arg-type]
+
+    for rendering, text in log.both():
+        health = parse_health_lines(text)
+        assert len(health) == 1, f"{rendering}: parsed {health} from {text!r}"
+        assert health[0].source == "last_pose", rendering
+        assert health[0].fitness == 0.873, rendering
+        # the log rounds the translation to 3 dp; that is the join key's precision
+        np.testing.assert_allclose(health[0].published_t_m, published_t_m, atol=5e-4)
+
+
+def test_parse_health_lines_defaults_to_ransac_on_the_single_source_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ransac-only pool accepts through plain relocalize(), whose log carries NO
+    source= (module.py tags a winner only when the judge ran). Both renderings must
+    still yield a labelled fix -- ransac, not unknown."""
+    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    monkeypatch.setattr(
+        module_mod, "_relocalize", lambda *a, **k: (_rt(np.eye(3), np.array([2.0, 1.0, 0.0])), 0.95)
+    )
+
+    with _capture_run_log(module_mod) as log:
+        assert m._try_relocalize(_StubCloud(1234)) is not None  # type: ignore[arg-type]
+
+    for rendering, text in log.both():
+        health = parse_health_lines(text)
+        assert len(health) == 1, f"{rendering}: parsed {health} from {text!r}"
+        assert health[0].source == "ransac", rendering
+        assert health[0].fitness == 0.95, rendering
+
+
+def test_count_rejects_counts_real_rejects_and_never_scores_them_as_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two sub-threshold fixes emit two real `relocalize rejected` warnings: rejects
+    count 2 in both renderings, and parse_health_lines stays empty -- a reject has no
+    published_t_m and must never enter the per-source table."""
+    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (np.eye(4), 0.30))
+
+    with _capture_run_log(module_mod) as log:
+        assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+
+    for rendering, text in log.both():
+        assert count_rejects(text) == 2, f"{rendering}: {text!r}"
+        assert parse_health_lines(text) == [], rendering
+
+
+def test_parse_census_reads_the_real_counts_dict_in_both_renderings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """priors.py logs the proposal census as a dict kwarg (`counts={'ransac': 2,
+    ...}` on the console, a JSON object in main.jsonl). One cycle -> one dict with
+    each proposer's count; the fiducial entry is what drives 'proposed but lost'."""
+    monkeypatch.setattr(priors_mod, "refine_candidates", lambda *a, **k: (np.eye(4), 0.9, 0))
+
+    with _capture_run_log(priors_mod) as log:
+        relocalize_with_priors(
+            None, None, [_StubPrior("ransac", 2), _StubPrior("fiducial", 1)]  # type: ignore[arg-type]
+        )
+
+    for rendering, text in log.both():
+        census = parse_census(text)
+        assert census == [{"ransac": 2, "fiducial": 1}], f"{rendering}: {text!r}"
+
+
+def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole supplement path on real bytes: two accepts from DIFFERENT priors,
+    joined to the TFs the module published, give a per-source table with zero
+    `unknown` -- the failure the dead parsers produced on every run."""
+    first = _rt(Rotation.from_euler("z", 10.0, degrees=True).as_matrix(), np.array([1.0, 0.0, 0.0]))
+    second = _rt(Rotation.from_euler("z", 40.0, degrees=True).as_matrix(), np.array([4.0, 2.0, 0.0]))
+    m = _multi_source_module()
+
+    with _capture_run_log(module_mod, priors_mod) as log:
+        monkeypatch.setattr(
+            module_mod, "_relocalize_with_priors", lambda *a, **k: (first, 0.9, "ransac")
+        )
+        tf_a = m._try_relocalize(_StubCloud(1000))  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            module_mod, "_relocalize_with_priors", lambda *a, **k: (second, 0.7, "fiducial")
+        )
+        tf_b = m._try_relocalize(_StubCloud(1000))  # type: ignore[arg-type]
+    assert tf_a is not None and tf_b is not None
+
+    for rendering, text in log.both():
+        # /tf republishes each accept until the next one; dedup recovers the two.
+        tf_samples = [(0.0, tf_a.to_matrix()), (0.5, tf_a.to_matrix()), (1.0, tf_b.to_matrix())]
+        fixes = label_fixes_from_log(dedup_tf_fixes(tf_samples), parse_health_lines(text))
+        assert [f.source for f in fixes] == ["ransac", "fiducial"], f"{rendering}: {text!r}"
+        stats = compute_stats(
+            fixes, np.array([0.25, 1.25]), parse_census(text), count_rejects(text),
+            mode="live", held_out_note="n",
+        )
+        by = {r.source: r for r in stats.rows}
+        assert by["ransac"].won == 1 and by["fiducial"].won == 1, rendering
+        assert by["fiducial"].med_fit == 0.7, rendering
+        assert stats.rejects == 0, rendering

@@ -167,6 +167,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 | `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
+| `{name}.markers.yaml` | `marker_id → map_T_tag` marker map | no shipped command — see [The marker map](#the-marker-map) | `RelocalizationModule` fiducial prior (`marker_map_file`) |
 
 ## Configuration reference
 
@@ -200,7 +201,7 @@ Every entry also carries `enabled` plus the inert fusion fields (`tier`, `weight
 | `unitree-go2-relocalization-lidar-fiducial` | `ransac` + `fiducial` |
 | `unitree-go2-relocalization-fiducial` | `fiducial` only |
 
-The `fiducial` type needs a surveyed `marker_map_file` (`.json` of `map_T_tag` per id) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings fuse into one `world→map` candidate (medoid seed + Huber IRLS), age-gated, competing on wall fitness; it never publishes a pose on its own.
+The `fiducial` type needs a `marker_map_file` (`map_T_tag` per id, JSON or YAML — see [The marker map](#the-marker-map) for how one is produced today) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings fuse into one `world→map` candidate (medoid seed + Huber IRLS), age-gated, competing on wall fitness; it never publishes a pose on its own.
 
 One constant is not overridable via CLI:
 
@@ -213,6 +214,25 @@ To accept all candidates for visualization only (not for production nav):
 ```bash
 -o relocalizationmodule.fitness_threshold=0.0
 ```
+
+### The marker map
+
+`marker_map_file` is `marker_id → map_T_tag`, JSON or YAML, read by `load_marker_map` in [`fiducial_relocalization.py`](/dimos/perception/fiducial/fiducial_relocalization.py):
+
+```yaml
+markers:
+  3:
+    translation: [1.243, -0.518, 0.902]  # meters, map frame
+    rotation: [0.0, 0.0, 0.707, 0.707]   # qx qy qz qw, map_T_tag
+```
+
+**There is no operator-facing survey command yet.** Nothing shipped in DimOS writes this file. `dimos map global --markers` detects tags and overlays them in the `.rrd` for visual QA ([`map.py`](/dimos/mapping/utils/cli/map.py)); it writes no marker map.
+
+The marker *poses* do come from shipped code: `corrected_marker_transforms` in [`loop_closure/eval.py`](/dimos/mapping/loop_closure/eval.py). It runs sharpest-frame `QualityWindow` → `SpeedLimit` → `DetectMarkers(smoothing_window=…)`, keeps each track's final smoothed pose, and lifts it through `PoseGraph.correct`. That is the same drift-corrected frame `dimos map global --pgo --export` builds the premap in, so its output is `map_T_tag` against that premap.
+
+The only code that serializes it to a file is a pytest fixture: `marker_map_file` in [`test_unitree_go2_fiducial_relocalization_replay.py`](/dimos/robot/unitree/go2/blueprints/smart/test_unitree_go2_fiducial_relocalization_replay.py). It picks the medoid track per marker id and writes `{DB_NAME}.markers.yaml` into the test cache. It is a test fixture, not a product surface. Until a survey command ships, a marker map comes from calling `corrected_marker_transforms` yourself and writing the schema above, or from an out-of-tree harness.
+
+Marker poses on this path are fused by the windowed mean inside `DetectMarkers` (`_average_marker_pose`, [`marker_transformer.py`](/dimos/perception/fiducial/marker_transformer.py)): mean translation plus a sign-aligned linear quaternion mean, no outlier rejection. The robust batch fusion — per-visit time clustering, Huber IRLS translation, Markley quaternion eigen-mean — is `aggregate_visits` in [`apriltag_aggregation.py`](/dimos/perception/fiducial/apriltag_aggregation.py). It is implemented and tested, and nothing on the marker-map path calls it. Its streaming sibling `TagAggregator` is what the live `fiducial` prior runs ([`priors.py`](/dimos/mapping/relocalization/priors.py)). Putting the batch fuser on the marker-map path is a follow-up.
 
 ## Troubleshooting
 

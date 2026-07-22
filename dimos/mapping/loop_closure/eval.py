@@ -41,11 +41,23 @@ from dimos.memory2.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.fiducial.marker_detection_stream_module import (
+    MarkerDetectionStreamModuleConfig,
+)
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.utils.data import get_data
 
 DEFAULT_DATASETS = [f"hk_village{i}" for i in range(1, 7)]
+
+# The survey runs the same IPPE mirror-flip gate as the live detector: a
+# surveyed map_T_marker taken from a mirror-ambiguous view is a confidently
+# wrong pose (tens of degrees off) that every later fiducial fix inherits,
+# and DetectMarkers' own default is 1.0 = gate off. Read off the live config
+# rather than restated, so the survey and the runtime detector cannot drift.
+DEFAULT_AMBIGUITY_RATIO_MIN: float = MarkerDetectionStreamModuleConfig.model_fields[
+    "ambiguity_ratio_min"
+].default
 
 
 def _pairwise_sum(pts: list[tuple[float, float, float]]) -> float:
@@ -68,6 +80,7 @@ def corrected_marker_transforms(
     marker_max_rot_rate: float,
     marker_quality_window: float,
     marker_smoothing: float,
+    ambiguity_ratio_min: float = DEFAULT_AMBIGUITY_RATIO_MIN,
 ) -> dict[int, list[Transform]]:
     """Final smoothed marker pose per detection track, PGO-corrected, by marker id.
 
@@ -76,12 +89,19 @@ def corrected_marker_transforms(
     smoothed pose is lifted through ``graph.correct`` into the drift-corrected
     frame — the frame ``dimos map global --pgo`` builds its map in, so these
     transforms serve directly as map_T_marker entries against that map.
+
+    ``ambiguity_ratio_min`` is the IPPE mirror-flip gate (runner-up/best
+    reprojection error; 1.0 = off) and defaults to the live detector's value,
+    so a mirror-ambiguous glimpse cannot bake a flipped map_T_marker into the
+    map. Pass 1.0 to reproduce ungated surveys — TOTAL_SPREAD is not comparable
+    across the two settings, since gating drops views rather than moving them.
     """
     color_image = store.stream("color_image", Image)
     xf = DetectMarkers(
         camera_info=camera_info,
         marker_length_m=marker_size,
         smoothing_window=marker_smoothing,
+        ambiguity_ratio_min=ambiguity_ratio_min,
     )
     pipeline: Stream[Image] = color_image.transform(
         QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
@@ -122,6 +142,7 @@ def _eval_recording(
     marker_max_rot_rate: float,
     marker_quality_window: float,
     marker_smoothing: float,
+    ambiguity_ratio_min: float,
 ) -> tuple[float, float]:
     """Returns (pgo_time_s, spread_m) for one recording."""
     db_path = get_data(f"{name}.db")
@@ -144,6 +165,7 @@ def _eval_recording(
             marker_max_rot_rate=marker_max_rot_rate,
             marker_quality_window=marker_quality_window,
             marker_smoothing=marker_smoothing,
+            ambiguity_ratio_min=ambiguity_ratio_min,
         )
         spread = sum(
             _pairwise_sum([(t.translation.x, t.translation.y, t.translation.z) for t in tfs])
@@ -161,6 +183,13 @@ def main(
     marker_max_rot_rate: float = typer.Option(50.0, "--marker-max-rot-rate"),
     marker_quality_window: float = typer.Option(0.1, "--marker-quality-window"),
     marker_smoothing: float = typer.Option(7.5, "--marker-smoothing"),
+    ambiguity_ratio_min: float = typer.Option(
+        DEFAULT_AMBIGUITY_RATIO_MIN,
+        "--ambiguity-ratio-min",
+        min=1.0,
+        help="IPPE mirror-flip gate: drop a view whose flipped pose reprojects "
+        "within this factor of the best. 1.0 = off.",
+    ),
 ) -> None:
     names = datasets or DEFAULT_DATASETS
 
@@ -178,6 +207,7 @@ def main(
             marker_max_rot_rate=marker_max_rot_rate,
             marker_quality_window=marker_quality_window,
             marker_smoothing=marker_smoothing,
+            ambiguity_ratio_min=ambiguity_ratio_min,
         )
     wall = time.perf_counter() - wall_start
 

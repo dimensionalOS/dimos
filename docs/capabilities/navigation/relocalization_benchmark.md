@@ -11,7 +11,8 @@ Read [Premap & Relocalization](/docs/capabilities/navigation/relocalization.md) 
 
 To measure relocalization, the premap and the replay must be **two different runs of the same space**:
 
-- **Premap** comes from run **A** (`dimos map global A --export`, plus A's marker survey).
+- **Premap** comes from run **A** (`dimos map global A --export`).
+- **Marker map** also comes from run **A**, in A's PGO-corrected frame. There is no survey command yet; see [The marker map](/docs/capabilities/navigation/relocalization.md#the-marker-map) for the code path that produces one today.
 - **Replay** is run **B**, a separate drive of the same room.
 
 The robot then has to relocalize on geometry it recorded on a different pass. That is the whole test: **the replay of B succeeding against A's map is the relocalization working.** Replaying the recording the premap was built from measures memorization, not relocalization, and always looks perfect.
@@ -41,11 +42,15 @@ uv run --project . \
 ```
 
 > The `*-lidar-fiducial` preset enables the fiducial prior, so the old
-> `-o …use_fiducial_prior=true` is gone. The marker survey is now a `fiducial`
-> prior field (`marker_map_file`) inside `relocalizationmodule.priors`, and a flat
-> `-o` cannot index a list, so the per-site survey is baked into a site preset (a
-> blueprint constructing `FiducialPriorConfig(marker_map_file=…)`). Restoring a
-> one-flag CLI path for the survey is a tracked follow-up.
+> `-o …use_fiducial_prior=true` is gone. The marker map lives on the `fiducial`
+> entry inside `relocalizationmodule.priors`, and a dotted `-o` cannot index a
+> list, so `Config` carries a sibling `marker_map_file` that wins over the entry's
+> own: `-o relocalizationmodule.marker_map_file=<path>` (see `_start_fiducial_prior`
+> in [`module.py`](/dimos/mapping/relocalization/module.py)). A blueprint can also
+> bake it in with `FiducialPriorConfig(marker_map_file=…)`.
+>
+> Producing that file is the gap: no shipped command writes a marker map. See
+> [The marker map](/docs/capabilities/navigation/relocalization.md#the-marker-map).
 
 The LCM bus is exclusive: run one replay at a time. Check `pgrep -af 'dimos --replay'` before launching.
 
@@ -79,7 +84,7 @@ Every relocalization cycle, each prior may propose candidates and the shared fit
 
 ### The trajectory plot
 
-`--eval` writes `<B>.trajectory.png`: the robot path in the `map` frame, each segment colored by the source that won that stretch, with the surveyed markers as stars. It shows at a glance where each source carried localization and whether the fiducial prior ever won near a tag.
+`--eval` writes `<B>.trajectory.png`: the robot path in the `map` frame, each segment colored by the source that won that stretch, with the marker-map tags as stars. It shows at a glance where each source carried localization and whether the fiducial prior ever won near a tag.
 
 ## Metrics, and why they are split
 
@@ -105,7 +110,9 @@ The eval is deterministic, so a sweep is reproducible: same recording, same conf
 
 ## Fiducial caveats
 
-A marker helps only if its surveyed pose is accurate. Three things break that:
+A marker helps only if its pose in the marker map is accurate. Four things break that:
+
+- **The marker map is fused by a simple windowed mean.** The path that produces it (`corrected_marker_transforms` → `DetectMarkers(smoothing_window=…)`) averages translation and takes a sign-aligned linear quaternion mean over the window. It has no outlier rejection, so one bad glimpse pulls the stored pose. The robust batch fuser — visit clustering, Huber IRLS, Markley quaternion eigen-mean — exists as `aggregate_visits` in [`apriltag_aggregation.py`](/dimos/perception/fiducial/apriltag_aggregation.py) and is tested, but nothing calls it on the survey path. Only its streaming sibling `TagAggregator` runs, inside the live prior. Wiring the batch fuser into marker-map production is a follow-up.
 
 - **Mirror flip (IPPE planar ambiguity).** A planar tag has two pose solutions that both reproject well; the wrong one is a near-mirror of the right one and can be tens of degrees off. See Collins & Bartoli (2014) and Schweighofer & Pinz. The `ambiguity_ratio_min` gate rejects a glimpse whose flipped solution reprojects nearly as well as the best one.
 - **The gate needs pixels.** The gate runs only where the marker corners reach the prior (the offline harness). The live `Detection3DArray` wire drops `corners_px`, so on the robot the medoid seed plus Huber fusion carry flip rejection instead, which is weaker for a tag seen from one angle.
@@ -113,7 +120,7 @@ A marker helps only if its surveyed pose is accurate. Three things break that:
 
 ## Worked example: sf_office survey1 → survey2
 
-Premap and marker survey from `sf_office_go2_20260718_survey1`; replay of `sf_office_go2_20260720_survey2`, a separate drive of the same office.
+Premap and marker map from `sf_office_go2_20260718_survey1`; replay of `sf_office_go2_20260720_survey2`, a separate drive of the same office.
 
 ```bash
 uv run --project . \
@@ -122,11 +129,13 @@ uv run --project . \
   -o relocalizationmodule.map_file=sf_office_go2_20260718_survey1.pc2.lcm
 ```
 
-The survey (`sf_office_go2_20260718_survey1.json`) is supplied through the fiducial
-prior's `marker_map_file` (baked into the site preset — see the note above). Result:
-**survey2 relocalized against survey1's map.** Over 28 relocalization cycles the fiducial prior proposed in 24, and won 0. Lidar RANSAC won every cycle. The plumbing works end to end; the prior loses the wall-fitness judge because the survey marker poses still carry mirror-flip and calibration error, so `med_err` for a real marker benefit is pending the marker-pose fix (DIM-1308) and the held-out accuracy alignment.
+The marker map (`sf_office_go2_20260718_survey1.json`) is supplied through
+`marker_map_file` — see the note above. It was derived from survey1 with
+`corrected_marker_transforms`, the same path the replay-gate fixture uses, not by an
+operator survey command; none exists. Result:
+**survey2 relocalized against survey1's map.** Over 28 relocalization cycles the fiducial prior proposed in 24, and won 0. Lidar RANSAC won every cycle. The plumbing works end to end; the prior loses the wall-fitness judge because the marker-map poses still carry mirror-flip and calibration error, so `med_err` for a real marker benefit is pending the marker-pose fix (DIM-1308) and the held-out accuracy alignment.
 
-![survey2 relocalized against survey1's map, trajectory colored by winning source with surveyed markers](assets/survey2_heldout_trajectory.png)
+![survey2 relocalized against survey1's map, trajectory colored by winning source with marker-map tags](assets/survey2_heldout_trajectory.png)
 
 The plot is entirely one color: every segment won by `ransac`, no fiducial-won stretch near any tag. `--eval` wrote it to `out/eval/survey2_heldout.trajectory.png`.
 

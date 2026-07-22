@@ -78,85 +78,130 @@ _TAG_SPREAD_MIN_M = 1e-6  # principal spread below this -> the shared tags coinc
 
 
 # --------------------------------------------------------------------------- #
-# Log parsing (supplement) -- one key-based parser for BOTH the console
-# .replay_run.log and the structured main.jsonl. Key-based (not positional) so it
-# survives `source=` moving to the front of the health line.
+# Log parsing (supplement) -- ONE key-based parser for BOTH renderings the same
+# structlog call produces: main.jsonl's JSON object (what resolve_run_log picks by
+# default) and the console line a tee'd `.replay_run.log` holds. Both carry the
+# module's kwarg NAMES, so a record reads the same either way and downstream code
+# never learns which file it came from. What the emitters actually write:
+#
+#   module.py:_try_relocalize accept
+#     jsonl   {"source": "fiducial", "fitness": 0.87, "published_t_m": [1.234, -0.5,
+#              0.02], ..., "event": "relocalize accepted", "level": "info", ...}
+#     console `08:34:01.794 [inf][...module.py] relocalize accepted fitness=0.87
+#              n_pts=55828 published_t_m=[1.234, -0.5, 0.02] ... source=fiducial ...`
+#   module.py reject          -> event "relocalize rejected"
+#   priors.py census          -> event "relocalize candidates", counts a dict;
+#                                console renders it as a python repr,
+#                                `counts={'ransac': 34, 'fiducial': 2}`
 # --------------------------------------------------------------------------- #
-_TOD_RE = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d+)")  # console time-of-day prefix
-_KEY_RE: dict[str, re.Pattern[str]] = {
-    "fitness": re.compile(r"fitness=([0-9.]+)"),
-    "time_cost_s": re.compile(r"time_cost=([0-9.]+)s"),
-    "n_pts": re.compile(r"n_pts=(\d+)"),
-    "source": re.compile(r"source=(\S+)"),
-    "published_t": re.compile(r"published_t=\[([^\]]+)\]"),
+_EVENT_ACCEPT = "relocalize accepted"
+_EVENT_REJECT = "relocalize rejected"
+_EVENT_CENSUS = "relocalize candidates"
+
+# dimos colorizes the console only when stdout is a tty (logging_config.py), so a
+# log captured through a pty carries SGR codes BETWEEN key and `=`. Strip first.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# Console kwargs render as `key=value` with the value verbatim -- `[1.0, 2.0]` and
+# `{'ransac': 34}` contain spaces, so each field gets its own key-anchored regex;
+# splitting the line on whitespace would tear those values apart.
+_CONSOLE_RE: dict[str, re.Pattern[str]] = {
+    "source": re.compile(r"\bsource=(\S+)"),
+    "fitness": re.compile(r"\bfitness=([-\d.eE+]+)"),
+    "published_t_m": re.compile(r"\bpublished_t_m=\[([^\]]+)\]"),
+    "counts": re.compile(r"\bcounts=\{([^}]*)\}"),
 }
-_COUNT_RE = re.compile(r"\b(ransac|fiducial|last_pose)=(\d+)")
+_COUNT_RE = re.compile(r"'(\w+)':\s*(\d+)")  # one entry of counts={...}'s dict repr
 
 
 @dataclass
 class HealthLine:
-    """One accepted relocalize, parsed from a ``relocalize:`` health log line."""
+    """One accepted relocalize, parsed from a ``relocalize accepted`` log record."""
 
     source: str
     fitness: float
-    published_t: tuple[float, float, float]  # world_T_map translation (the TF join key)
-
-
-def _line_event(line: str) -> str:
-    """The message text of a log line, from either format: the ``event`` field of
-    a main.jsonl JSON object, else the raw console line."""
-    stripped = line.strip()
-    if stripped.startswith("{"):
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            return line
-        event = obj.get("event")
-        return event if isinstance(event, str) else line
-    return line
+    published_t_m: tuple[float, float, float]  # world_T_map translation (TF join key)
 
 
 def _floats(csv: str) -> list[float]:
     return [float(x) for x in csv.split(",")]
 
 
+def _console_fields(text: str) -> dict[str, Any]:
+    """The kwargs a console line carries, typed like their main.jsonl twins."""
+    fields: dict[str, Any] = {}
+    src = _CONSOLE_RE["source"].search(text)
+    if src is not None:
+        fields["source"] = src.group(1)
+    fit = _CONSOLE_RE["fitness"].search(text)
+    if fit is not None:
+        fields["fitness"] = float(fit.group(1))
+    pub = _CONSOLE_RE["published_t_m"].search(text)
+    if pub is not None:
+        fields["published_t_m"] = _floats(pub.group(1))
+    counts = _CONSOLE_RE["counts"].search(text)
+    if counts is not None:
+        fields["counts"] = {k: int(n) for k, n in _COUNT_RE.findall(counts.group(1))}
+    return fields
+
+
+def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
+    """``(event, kwargs)`` for one relocalize log line in EITHER rendering, or None
+    when the line is neither (another module's log, a banner, a blank)."""
+    text = _ANSI_RE.sub("", line).strip()
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        event = obj.get("event")
+        return (event, obj) if isinstance(event, str) else None
+    for event in (_EVENT_ACCEPT, _EVENT_REJECT, _EVENT_CENSUS):
+        if event in text:
+            return event, _console_fields(text)
+    return None
+
+
 def parse_health_lines(log_text: str) -> list[HealthLine]:
-    """Every accepted fix (source + fitness + published translation). Gated on
-    ``published_t=``, which only accept lines carry -- never rejects/census."""
+    """Every accepted fix (source + fitness + published translation). ``source`` is
+    absent on the single-source RANSAC path -- module.py tags a winner only when the
+    multi-prior judge ran -- so it defaults to ransac there."""
     out: list[HealthLine] = []
     for raw in log_text.splitlines():
-        event = _line_event(raw)
-        if "relocalize:" not in event or "published_t=" not in event:
+        record = _parse_line(raw)
+        if record is None or record[0] != _EVENT_ACCEPT:
             continue
-        src = _KEY_RE["source"].search(event)
-        fit = _KEY_RE["fitness"].search(event)
-        pub = _KEY_RE["published_t"].search(event)
-        if pub is None or fit is None:
+        fields = record[1]
+        pub = fields.get("published_t_m")
+        fit = fields.get("fitness")
+        if fit is None or not isinstance(pub, list) or len(pub) != 3:
             continue
-        px, py, pz = _floats(pub.group(1))
         out.append(
             HealthLine(
-                source=src.group(1) if src else "ransac",
-                fitness=float(fit.group(1)),
-                published_t=(px, py, pz),
+                source=str(fields.get("source", "ransac")),
+                fitness=float(fit),
+                published_t_m=(float(pub[0]), float(pub[1]), float(pub[2])),
             )
         )
     return out
 
 
 def parse_census(log_text: str) -> list[dict[str, int]]:
-    """One dict of proposal counts per ``relocalize candidates:`` cycle."""
+    """One dict of proposal counts per ``relocalize candidates`` cycle. Every source
+    name is kept, not just SOURCES -- a new prior must show up in the census."""
     out: list[dict[str, int]] = []
     for raw in log_text.splitlines():
-        event = _line_event(raw)
-        if "relocalize candidates:" not in event:
+        record = _parse_line(raw)
+        if record is None or record[0] != _EVENT_CENSUS:
             continue
-        out.append({name: int(n) for name, n in _COUNT_RE.findall(event)})
+        counts = record[1].get("counts")
+        if isinstance(counts, dict):
+            out.append({str(k): int(n) for k, n in counts.items()})
     return out
 
 
 def count_rejects(log_text: str) -> int:
-    return sum("relocalize rejected:" in _line_event(raw) for raw in log_text.splitlines())
+    records = (_parse_line(raw) for raw in log_text.splitlines())
+    return sum(1 for r in records if r is not None and r[0] == _EVENT_REJECT)
 
 
 def resolve_run_log(run_log_file: str | None) -> Path | None:
@@ -384,7 +429,7 @@ def label_fixes_from_log(
         for i, h in enumerate(health):
             if i in used:
                 continue
-            d = float(np.linalg.norm(np.asarray(h.published_t) - t))
+            d = float(np.linalg.norm(np.asarray(h.published_t_m) - t))
             if d <= best_d and (best_i is None or d < best_d):  # strict: first wins ties
                 best_i, best_d = i, d
         if best_i is not None:
