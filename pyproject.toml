@@ -280,6 +280,7 @@ manipulation = [
 
     # Visualization (Optional)
     "viser[urdf]>=1.0.29",
+    "yourdfpy>=0.0.60",
     "xacro",
 
     # Other

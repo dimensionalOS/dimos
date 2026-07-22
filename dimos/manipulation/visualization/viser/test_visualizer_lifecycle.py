@@ -25,11 +25,13 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import (
     runtime as runtime_module,
+    scene as scene_module,
     visualizer as visualizer_module,
 )
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime
+from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -41,6 +43,16 @@ class FakeDependency:
 
 class FakeViserUrdf:
     pass
+
+
+class FakeSceneUrdf:
+    def __init__(self, _server: FakeServer, _path: Path | None = None, **_kwargs: object) -> None:
+        self.show_visual = True
+        self.show_collision = False
+        self.cfg: list[float] | None = None
+
+    def update_cfg(self, cfg: list[float]) -> None:
+        self.cfg = list(cfg)
 
 
 class FakeServer:
@@ -446,3 +458,39 @@ def test_visualizer_publish_preview_and_close_paths(
         ("scene", "close"),
         ("runtime", "close"),
     ]
+
+
+@pytest.mark.parametrize("mode", ["collision", "both"])
+def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
+    mode: RobotDisplayMode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene = ViserManipulationScene(FakeServer(), FakeSceneUrdf, preview_fps=10.0)
+    scene.prepared_urdf_path = lambda _config: Path("prepared.urdf")
+    monkeypatch.setattr(
+        scene_module.URDF,
+        "load",
+        lambda *args, **kwargs: SimpleNamespace(
+            actuated_joint_names=("joint1",),
+            collision_scene=SimpleNamespace(),
+        ),
+    )
+    config = fake_robot_config("arm")
+    config.joint_names = ["joint1"]
+
+    scene.register_robot("robot-1", config)
+    scene.robot_display_mode = mode
+    old_current = scene._urdfs["robot-1:current"]
+    scene._urdfs.pop("robot-1:current")
+
+    scene.register_robot("robot-1", config)
+    current = scene._urdfs["robot-1:current"]
+    scene.update_current_robot("robot-1", JointState({"name": ["joint1"], "position": [0.75]}))
+
+    assert current is not old_current
+    assert scene.robot_display_mode == mode
+    assert (current.show_visual, current.show_collision) == (
+        mode == "both",
+        True,
+    )
+    assert current.cfg == [0.75]
