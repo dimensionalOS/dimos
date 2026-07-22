@@ -139,6 +139,12 @@ class GO2Zenoh(StaticTfPublisher):
     def jump(self) -> None:
         self.send_command("jump")
 
+    @rpc
+    def set_lidar(self, enabled: bool) -> None:
+        """The head L1 on/off (what obstacle avoidance runs on). Not the MID-360:
+        `odometry`, `lidar` and `pointlio_map` keep flowing either way."""
+        self.send_command("lidar on" if enabled else "lidar off")
+
     def transforms(self) -> list[Transform]:
         """The mount tree, rooted at mid360_link because Point-LIO owns that frame.
 
