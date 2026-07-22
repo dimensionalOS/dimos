@@ -1652,7 +1652,7 @@ all = [
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
-    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "yourdfpy" },
 ]
 apriltag = [
     { name = "reportlab" },
@@ -1721,6 +1721,7 @@ manipulation = [
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
+    { name = "yourdfpy" },
 ]
 mapping = [
     { name = "gtsam-extended" },
@@ -2122,6 +2123,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
+    { name = "yourdfpy", marker = "extra == 'manipulation'", specifier = ">=0.0.60" },
 ]
 provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 

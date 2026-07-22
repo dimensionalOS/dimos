@@ -29,6 +29,9 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
 )
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+)
 from dimos.robot.manipulators.piper.blueprints.teleop import keyboard_teleop_piper
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
@@ -39,7 +42,13 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     keyboard_teleop_xarm6,
     keyboard_teleop_xarm7,
 )
-from dimos.robot.manipulators.xarm.config import make_xarm7_model_config, make_xarm_hardware
+from dimos.robot.manipulators.xarm.config import (
+    make_xarm7_model_config,
+    make_xarm7_sim_module_kwargs,
+    make_xarm7_sim_robot_config,
+    make_xarm_hardware,
+)
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModuleConfig
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
@@ -85,6 +94,17 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
         assert isinstance(config.visualization, NoManipulationVisualizationConfig)
 
 
+def test_xarm_perception_sim_uses_aligned_camera_frame() -> None:
+    sim_robot = make_xarm7_sim_robot_config()
+    sim_config = MujocoSimModuleConfig(
+        **make_xarm7_sim_module_kwargs("test-xarm7-scene.xml"),
+    )
+
+    assert sim_robot.xacro_args["attach_rpy"] == "0 0.0 0"
+    assert sim_config.base_frame_id == "link7"
+    assert sim_config.reset_joint_positions == sim_robot.home_joints
+
+
 def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:
     hardware = make_xarm_hardware("arm", 6, adapter_type="mock")
 
@@ -104,6 +124,7 @@ def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:
         pytest.param(keyboard_teleop_piper, id="piper"),
         pytest.param(keyboard_teleop_openarm_mock, id="openarm-mock"),
         pytest.param(keyboard_teleop_openarm, id="openarm"),
+        pytest.param(keyboard_teleop_openyam, id="openyam"),
         pytest.param(keyboard_teleop_a750, id="a750"),
         pytest.param(keyboard_teleop_a1z, id="a1z"),
     ],

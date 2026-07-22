@@ -55,6 +55,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-hosted-go2",
         "teleop-hosted-go2-multicam",
         "teleop-hosted-go2-transport",
+        "teleop-hosted-module-xarm7",
+        "teleop-hosted-xarm6",
         "teleop-hosted-xarm7",
         "teleop-quest-dual",
         "teleop-quest-go2",

@@ -15,3 +15,12 @@
 TASK_FACTORIES = {
     "g1_dual_arm_ik": "dimos.control.tasks.g1_dual_arm_ik_task.g1_dual_arm_ik_task:create_task",
 }
+
+# Broadcast, not by_task_name: the quest module addresses hands as
+# "dual_arm_ik/left|right" and the handler routes on the suffix itself.
+TASK_CONSUMES = {
+    "g1_dual_arm_ik": {
+        "coordinator_cartesian_command": ("on_cartesian_command", "broadcast"),
+        "teleop_buttons": ("on_teleop_buttons", "broadcast"),
+    },
+}

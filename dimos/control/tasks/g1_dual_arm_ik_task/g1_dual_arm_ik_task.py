@@ -358,6 +358,10 @@ class G1DualArmIKTask(BaseControlTask):
             self._last_target_time = t_now
         return True
 
+    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
+        """Uniform stream handler; ``on_buttons`` predates the (msg, t_now) contract."""
+        return self.on_buttons(msg)
+
     def on_buttons(self, msg: Buttons) -> bool:
         """Both index triggers held → engage arm tracking."""
         threshold = self._config.engage_threshold
