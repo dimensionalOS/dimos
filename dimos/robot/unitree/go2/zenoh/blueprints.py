@@ -47,6 +47,7 @@ from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.obstacle_avoidance.body_slice import BodySlicer
 from dimos.navigation.obstacle_avoidance.path_correction import PathCorrector
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
@@ -56,7 +57,6 @@ voxel_size = 0.08
 # cost-coloured edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
 
-# Feeds both the static tf GO2Zenoh publishes and the rotation that levels its odometry —
 # they must agree or nav steers off-heading. Verified against Point-LIO's own attitude.
 MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
 
@@ -185,6 +185,31 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
     }
 
 
+# class Go2MemoryConfig(RecorderConfig):
+#     db_path: str | Path = "recording_go2.db"
+
+
+# class Go2Memory(Recorder):
+#     color_image: In[Image]
+#     lidar: In[PointCloud2]
+#     odom: In[PoseStamped]
+#     config: Go2MemoryConfig
+
+#     _last_odom_pose: Pose | None = None
+
+#     @pose_setter_for("odom")
+#     async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
+#         self._last_odom_pose = msg
+#         return self._last_odom_pose
+
+#     @pose_setter_for("lidar")
+#     async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
+#         # Yes, it doesn't make sense to register lidar at the odom pose because the
+#         # go2 lidar is in the world frame, but map.py (for now) needs this.
+#         # TODO: fix map.py to use a transform frame
+#         return getattr(self, "_last_odom_pose", None)
+
+
 # Streams + teleop only. cmd_vel still reaches the robot through MovementManager, so this
 # is the layer to drive from when something upstream is suspect.
 go2_zenoh_basic = autoconnect(
@@ -269,6 +294,12 @@ go2_zenoh_htc = autoconnect(
 #     MLSPlannerNative -> /planner_path
 #         -> PathCorrector (resample + repulsion + stop 20cm before collision)
 #         -> /path -> DanHolonomicTC
+#
+# The costmap it corrects against comes off the body-tilted slab rather than the whole
+# map:
+#
+#     RayTracingVoxelMap -> /local_map -> BodySlicer -> /sliced_map
+#         -> CostMapper -> /global_costmap -> PathCorrector
 go2_zenoh_avoidance = autoconnect(
     go2_zenoh_raycaster,
     # The corrected path draws as oriented go2-sized cubes instead of a line, so the
@@ -281,15 +312,20 @@ go2_zenoh_avoidance = autoconnect(
                 "world/lidar": None,
                 "world/planner_path": _render_path,
                 "world/path": _render_corrected_path,
+                "world/sliced_map": _render_map,
             }
         ),
     ),
     OdomBodyFrame.blueprint(mount_rotation=_mount_rotation()),
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
     GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "body_odometry")]),
-    # Feeds the corrector off the raycaster's global map. Its own global_map input is
-    # what the planner declines to use, so nothing else competes for it here.
-    CostMapper.blueprint(),
+    # Cuts local_map down to the slab the body sweeps through, tilted with the body, so
+    # a ramp the robot is climbing stays under the cut instead of reading as a wall.
+    BodySlicer.blueprint(log_every=50),
+    # The stock costmapper, fed the slab instead of the raw map — that pairing is the
+    # "3D" costmap the corrector wants. The planner declines global_map, so nothing else
+    # competes for the topic we're remapping away from.
+    CostMapper.blueprint().remappings([(CostMapper, "global_map", "sliced_map")]),
     # yaw_offset=π/2 turns this into a strafe test of the TC's yaw tracking.
     PathCorrector.blueprint().remappings([(PathCorrector, "plan", "planner_path")]),
     # track_path_yaw: drive the corrector's stamped orientations, not the tangent. Gains
@@ -306,4 +342,4 @@ go2_zenoh_avoidance = autoconnect(
         lookahead_m=0.25,
     ).remappings([(DanHolonomicTC, "odom", "start_pose")]),
     MovementManager.blueprint(),
-).global_config(transport="zenoh", n_workers=10, robot_model="unitree_go2")
+).global_config(transport="zenoh", n_workers=11, robot_model="unitree_go2")

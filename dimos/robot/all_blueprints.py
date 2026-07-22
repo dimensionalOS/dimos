@@ -166,6 +166,7 @@ all_modules = {
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "basic-path-follower": "dimos.navigation.basic_path_follower.module.BasicPathFollower",
+    "body-slicer": "dimos.navigation.obstacle_avoidance.body_slice.BodySlicer",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
