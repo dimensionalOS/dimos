@@ -96,7 +96,7 @@ def _quat_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
 
 
 def world_register(
-    observation: Observation,
+    observation: Observation[Any],
     store_tf: StreamTF | None,
     world_frame: str,
     fallback_frame: str,

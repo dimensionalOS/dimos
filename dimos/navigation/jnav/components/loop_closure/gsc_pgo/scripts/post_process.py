@@ -58,7 +58,6 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial import cKDTree
 
-from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -86,15 +85,15 @@ from dimos.navigation.jnav.utils.trajectory_metrics import (
     thin_pairs_by_path_section,
 )
 
-# --- keyframe selection ---
+# keyframe selection
 KEYFRAME_TRANSLATION_M = 0.5
 KEYFRAME_ROTATION_DEG = 10.0
 
-# --- tag revisit report ---
+# tag revisit report
 VISIT_GAP_S = 30.0
 MIN_VISITS_FOR_LOOP = 2
 
-# --- factor graph ---
+# factor graph
 LM_MAX_ITERATIONS = 200
 ODOM_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
 GRAVITY_ANCHOR_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6, 1e-8, 1e-8, 1e-8]))
@@ -104,7 +103,7 @@ GRAVITY_ANCHOR_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6,
 REF_DISTANCE_M = 0.4
 REF_REPROJ_PX = 1.0
 
-# --- ICP loop closures ---
+# ICP loop closures
 ICP_RADIUS_M = 4.0  # tag-corrected positions must be within this to be a revisit candidate
 ICP_MIN_DT_S = 25.0  # ...and at least this far apart in time (a real revisit, not adjacency)
 ICP_MAX_CORR_M = 0.6  # ICP correspondence distance
@@ -118,7 +117,7 @@ ICP_NOISE = noiseModel.Robust.Create(
     noiseModel.Diagonal.Variances(np.array([4e-4, 4e-4, 4e-4, 2.5e-3, 2.5e-3, 2.5e-3])),
 )
 
-# --- aggregated .pc2.lcm ---
+# aggregated .pc2.lcm
 LCM_CHUNK_SCANS = 1000  # collapse buffered scans this often to bound memory
 LCM_OUTLIER_NN = 20  # statistical outlier removal: neighbor count
 LCM_OUTLIER_STD = 2.0  # ...and std-ratio threshold (lower = more aggressive)
@@ -604,6 +603,9 @@ def raycast_accumulate(
     """Raycast ``in_stream`` into one ``<in_stream>_accumulated`` cloud, carving free space
     along every ray so dynamic objects and registration ghosts get cleared, not smeared."""
     out_stream = f"{in_stream}_accumulated"
+    # imported here: needs the dimos_voxel_ray_tracing native ext, absent on plain CI runners
+    from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+
     mapper = VoxelRayMapper(voxel_size=voxel, max_range=max_range)
     scan_count = 0
     last_ts = 0.0
