@@ -101,6 +101,15 @@ def _rerun_blueprint() -> Any:
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
+                # Point-LIO's own world map duplicates what the ray tracer builds, and it
+                # is the heaviest cloud on the graph. Hidden rather than dropped, so it
+                # stays in the entity tree and can be ticked back on in the viewer.
+                overrides={
+                    "world/pointlio_map": rrb.EntityBehavior(visible=False),
+                    "world/local_map": rrb.EntityBehavior(visible=False),
+                    "world/lidar": rrb.EntityBehavior(visible=False),
+                    "world/nodes": rrb.EntityBehavior(visible=False),
+                },
             ),
             column_shares=[1, 2],
         ),

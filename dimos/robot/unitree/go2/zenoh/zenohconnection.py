@@ -98,11 +98,6 @@ class GO2Zenoh(StaticTfPublisher):
             Disposable(self.odometry.transport.subscribe(self._publish_tf, self.odometry))
         )
         self.spawn(self._publish_camera_info())
-        self.standup()
-
-    @rpc
-    def stop(self) -> None:
-        self.liedown()
 
     @rpc
     def send_command(self, verb: str) -> None:
