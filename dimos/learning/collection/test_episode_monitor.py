@@ -32,7 +32,6 @@ import pytest
 import pytest_mock
 
 from dimos.learning.collection.episode_monitor import (
-    EpisodeAction,
     EpisodeCommand,
     EpisodeMonitorModule,
     EpisodeStatus,
@@ -183,6 +182,15 @@ def test_reset_counters_resets_task_label(
     assert _events(m)[-1].task_label is None
 
 
+def test_episode_command_is_single_runtime_enum() -> None:
+    assert {command.value for command in EpisodeCommand} == {
+        "start",
+        "save",
+        "discard",
+        "toggle",
+    }
+
+
 # ── set_episode RPC (runtime / agent-driven trigger) ──────────────────────────
 
 
@@ -198,7 +206,7 @@ def test_set_episode_start_sets_label(
     assert "kitchen run" in msg
 
 
-def test_set_episode_save_carries_then_resets_label(
+def test_set_episode_save_carries_label_into_next_take(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
     m = make_monitor()
@@ -208,11 +216,10 @@ def test_set_episode_save_carries_then_resets_label(
     assert ev.last_event == "save"
     assert ev.state == "idle"
     assert ev.episodes_saved == 1
-    # the terminating event still carries the take's label ...
     assert ev.task_label == "kitchen run"
-    # ... but the next unlabeled take falls back to the config default (None).
+    # Collection sessions normally repeat the same task across many takes.
     m.set_episode("start")
-    assert _events(m)[-1].task_label is None
+    assert _events(m)[-1].task_label == "kitchen run"
 
 
 def test_set_episode_discard(
@@ -231,7 +238,7 @@ def test_set_episode_invalid_event_is_noop(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
     m = make_monitor()
-    msg = m.set_episode(cast("EpisodeAction", "bogus"))
+    msg = m.set_episode(cast("EpisodeCommand", "bogus"))
     assert "error" in msg.lower()
     assert _events(m) == []  # no transition emitted
 
@@ -239,7 +246,7 @@ def test_set_episode_invalid_event_is_noop(
 @pytest.mark.parametrize("event", ["save", "discard"])
 def test_set_episode_termination_while_idle_is_noop(
     make_monitor: Callable[..., EpisodeMonitorModule],
-    event: EpisodeAction,
+    event: EpisodeCommand,
 ) -> None:
     m = make_monitor()
 
@@ -285,6 +292,17 @@ def test_recording_skills_drive_episode_state(
     assert "demo" in m.start_recording("demo")
     assert "saved" in m.stop_recording().lower()
     assert [event.last_event for event in _events(m)] == ["start", "save"]
+
+
+def test_start_recording_reuses_previous_task_label(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.start_recording("demo")
+    m.stop_recording()
+
+    assert "demo" in m.start_recording()
+    assert _events(m)[-1].task_label == "demo"
 
 
 def test_discard_recording_skill_discards_episode(

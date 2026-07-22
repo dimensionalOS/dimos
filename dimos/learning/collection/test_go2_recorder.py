@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos.learning.collection.go2_recorder import Go2CollectionRecorder
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_record import (
@@ -30,3 +31,12 @@ def test_cmd_vel_action_stream_has_producer_and_recorder() -> None:
 
     assert (MovementManager, "out") in cmd_vel_refs
     assert (Go2CollectionRecorder, "in") in cmd_vel_refs
+
+
+async def test_odom_pose_setter_uses_latest_odometry() -> None:
+    recorder = object.__new__(Go2CollectionRecorder)
+    recorder._last_odom_pose = None
+    odom = PoseStamped()
+
+    assert await recorder._odom_pose(odom) is odom
+    assert recorder._last_odom_pose is odom
