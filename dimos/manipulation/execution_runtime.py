@@ -1,590 +1,92 @@
 # Copyright 2025-2026 Dimensional Inc.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""Owner-thread manipulation execution runtime.
+"""Small, fail-closed owner-thread execution runtime.
 
-Coordinator calls are effects.  They never mutate runtime state; they only
-post correlated events back to the owner.
+The owner is the only thread which changes :class:`RuntimeContext`.  Gateway
+calls are submitted to a fixed executor and return as owner events; in
+particular, an RPC can never hold the owner while it is in flight.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field, replace
-from enum import Enum
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 import queue
 import threading
 import time
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, TypeVar, cast
 import uuid
 
-from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.execution_auxiliary import AuxiliaryCallBook, AuxiliaryTicket
+from dimos.manipulation.execution_clock import InvalidMonotonicClock, ValidatedMonotonicClock
+from dimos.manipulation.execution_effects import (
+    AuxiliaryDone,
+    EffectDone,
+    ExecutionEffectRunner,
+    StopDone,
+)
+from dimos.manipulation.execution_gateway import (
+    ControlCoordinatorGateway as ControlCoordinatorGateway,
+)
+from dimos.manipulation.execution_models import (
+    ActionMethod as ActionMethod,
+    ActionRecord as ActionRecord,
+    CommandResult as CommandResult,
+    CoordinatorGateway as CoordinatorGateway,
+    ExecutionHandle as ExecutionHandle,
+    ExecutionResult as ExecutionResult,
+    LifecycleState as LifecycleState,
+    Operation as Operation,
+    OperationHandle as OperationHandle,
+    Outcome as Outcome,
+    PlanInput as PlanInput,
+    ResetHandle as ResetHandle,
+    ResetResult as ResetResult,
+    RuntimeContext as RuntimeContext,
+    RuntimeSnapshot as RuntimeSnapshot,
+    ShutdownResult as ShutdownResult,
+    ShutdownState as ShutdownState,
+    TaskActivity as TaskActivity,
+    TaskRecord as TaskRecord,
+)
+from dimos.manipulation.execution_policy import (
+    reconcile_cancel_completion,
+    reconcile_execute_completion,
+    reconcile_reset_completion,
+    reconcile_status_completion,
+)
+from dimos.manipulation.execution_topology import (
+    ExecutionPlan as ExecutionPlan,
+    ExecutionTopology as ExecutionTopology,
+    PreparedPlan as PreparedPlan,
+    TaskEntry as TaskEntry,
+    materialize_prepared_plan as materialize_prepared_plan,
+    prepare_execution_plan as prepare_execution_plan,
+    prepare_generated_plan as prepare_generated_plan,
+    prepare_plan as prepare_plan,
+)
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
-
-
-class LifecycleState(str, Enum):
-    IDLE = "IDLE"
-    PLANNING = "PLANNING"
-    READY = "READY"
-    DISPATCHING = "DISPATCHING"
-    RUNNING = "RUNNING"
-    CANCELLING = "CANCELLING"
-    FAULT = "FAULT"
-
-
-class TaskActivity(str, Enum):
-    NOT_STARTED = "not_started"
-    EXECUTE_UNRESOLVED = "execute_unresolved"
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    INACTIVE = "inactive"
-    REMOTE_FAULT = "remote_fault"
-    UNKNOWN = "unknown"
-
-
-class ActionMethod(str, Enum):
-    EXECUTE = "execute"
-    CANCEL = "cancel"
-    STATUS = "get_state"
-    RESET = "reset"
-    GRIPPER_SET = "set_gripper_position"
-    GRIPPER_GET = "get_gripper_position"
-
-
-class Outcome(str, Enum):
-    ACCEPTED = "accepted"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    INACTIVE = "inactive"
-    REJECTED = "rejected"
-    FAILED = "failed"
-    UNKNOWN = "unknown"
-
-
-class ShutdownState(str, Enum):
-    OPEN = "open"
-    CLOSING = "closing"
-    CLOSED = "closed"
-
-
-class _GatewayGateState(str, Enum):
-    OPEN = "open"
-    CANCEL_ONLY = "cancel_only"
-    SEALED = "sealed"
-    STOPPED = "stopped"
-
-
-@dataclass(frozen=True)
-class ExecutionTopology:
-    """Canonical group -> robot -> coordinator-task routing."""
-
-    routes: tuple[tuple[str, str, str], ...]
-    robot_configs: tuple[RobotModelConfig, ...] = ()
-    inverse_joint_mappings: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
-
-    @classmethod
-    def from_robot_configs(
-        cls,
-        robot_configs: Iterable[RobotModelConfig],
-        group_routes: Mapping[str, tuple[str, str]] | Iterable[tuple[str, str, str]] | None = None,
-        group_resolver: Callable[[str], tuple[str, str]] | None = None,
-    ) -> ExecutionTopology:
-        """Build canonical routes while retaining the supplied config references."""
-        configs = tuple(robot_configs)
-        by_robot: dict[str, RobotModelConfig] = {}
-        for config in configs:
-            if config.name in by_robot:
-                raise ValueError(f"duplicate robot config: {config.name}")
-            by_robot[config.name] = config
-        explicit: dict[str, tuple[str, str]] = {}
-        if isinstance(group_routes, Mapping):
-            for group, route in group_routes.items():
-                if not isinstance(group, str) or not isinstance(route, tuple) or len(route) != 2:
-                    raise ValueError("invalid group route mapping")
-                explicit[group] = (str(route[0]), str(route[1]))
-        elif group_routes is not None:
-            for group, robot, task in group_routes:
-                if group in explicit:
-                    raise ValueError(f"duplicate group route: {group}")
-                explicit[group] = (robot, task)
-        routes: list[tuple[str, str, str]] = []
-        inverse: list[tuple[str, tuple[tuple[str, str], ...]]] = []
-        for config in configs:
-            local_names = set(config.joint_names)
-            local_to_coordinator: dict[str, str] = {}
-            for coordinator_name, local_name in config.joint_name_mapping.items():
-                if local_name not in local_names:
-                    raise ValueError(
-                        f"mapped local joint is not configured: {config.name}/{local_name}"
-                    )
-                previous = local_to_coordinator.get(local_name)
-                if previous is not None and previous != coordinator_name:
-                    raise ValueError(
-                        f"duplicate local joint mapping for {config.name}/{local_name}"
-                    )
-                local_to_coordinator[local_name] = coordinator_name
-            coordinator_names: set[str] = set()
-            for local_name in config.joint_names:
-                coordinator_name = local_to_coordinator.get(local_name, local_name)
-                if coordinator_name in coordinator_names:
-                    raise ValueError(
-                        f"duplicate coordinator joint mapping for {config.name}/{coordinator_name}"
-                    )
-                coordinator_names.add(coordinator_name)
-            inverse.append(
-                (
-                    config.name,
-                    tuple(
-                        (local, local_to_coordinator.get(local, local))
-                        for local in config.joint_names
-                    ),
-                )
-            )
-            for definition in config.planning_groups:
-                if not set(definition.joint_names).issubset(local_names):
-                    raise ValueError(
-                        f"planning group joints are not configured: {config.name}/{definition.name}"
-                    )
-                group_id = f"{config.name}/{definition.name}"
-                if group_resolver is not None:
-                    route_robot, route_task = group_resolver(group_id)
-                else:
-                    if not config.coordinator_task_name and group_id not in explicit:
-                        continue
-                    route_robot, route_task = explicit.get(
-                        group_id, (config.name, config.coordinator_task_name or "")
-                    )
-                if route_robot != config.name or route_task != config.coordinator_task_name:
-                    raise ValueError(f"route/config mismatch for {group_id}")
-                routes.append((group_id, route_robot, route_task))
-        if explicit and set(explicit) != {group for group, _, _ in routes}:
-            raise ValueError("route set does not match configured planning groups")
-        return cls(tuple(routes), configs, tuple(inverse))
-
-    from_configs = from_robot_configs
-    from_robot_model_configs = from_robot_configs
-
-    def config_for_robot(self, robot_name: str) -> RobotModelConfig:
-        for config in self.robot_configs:
-            if config.name == robot_name:
-                return config
-        raise KeyError(f"unknown robot: {robot_name}")
-
-    def coordinator_joint_name(self, robot_name: str, local_name: str) -> str:
-        for name, mappings in self.inverse_joint_mappings:
-            if name == robot_name:
-                for local, coordinator in mappings:
-                    if local == local_name:
-                        return coordinator
-                break
-        return local_name
-
-    def route_for_group(self, group_id: str) -> tuple[str, str]:
-        routes = {group: (robot, task) for group, robot, task in self.routes}
-        try:
-            return routes[group_id]
-        except KeyError as exc:
-            raise ValueError(f"missing route for planning group {group_id}") from exc
-
-    def affected_robots(self, group_ids: Iterable[str]) -> tuple[str, ...]:
-        robots: list[str] = []
-        for group_id in group_ids:
-            robot_name, _task_name = self.route_for_group(group_id)
-            if robot_name in robots:
-                raise ValueError(f"multiple selected groups resolve to robot {robot_name}")
-            robots.append(robot_name)
-        return tuple(robots)
-
-    @property
-    def groups(self) -> tuple[str, ...]:
-        return tuple(group for group, _, _ in self.routes)
-
-
-@dataclass(frozen=True)
-class TaskEntry:
-    planning_group: str
-    task_name: str
-    request: Any
-    robot_name: str | None = None
-
-
-@dataclass(frozen=True)
-class ExecutionPlan:
-    generated_plan: Any
-    entries: tuple[TaskEntry, ...]
-
-
-@dataclass(frozen=True)
-class PreparedPlan:
-    generated_plan: GeneratedPlan
-    entries: tuple[TaskEntry, ...]
-    topology: ExecutionTopology | None = None
-    _canonical: bool = field(default=False, repr=False, compare=False)
-
-
-def prepare_generated_plan(
-    generated_plan: GeneratedPlan, topology: ExecutionTopology
-) -> PreparedPlan:
-    """Purely bind a generated multi-robot plan to canonical coordinator tasks."""
-    if not isinstance(generated_plan, GeneratedPlan):
-        raise TypeError("expected GeneratedPlan")
-    group_ids = tuple(generated_plan.group_ids)
-    if not group_ids or len(set(group_ids)) != len(group_ids):
-        raise ValueError("generated plan must contain unique planning groups")
-    route_by_group = {group: (robot, task) for group, robot, task in topology.routes}
-    if len(route_by_group) != len(topology.routes):
-        raise ValueError("topology contains duplicate group routes")
-    selected_routes: list[tuple[str, str, str, RobotModelConfig, tuple[str, ...]]] = []
-    affected: set[str] = set()
-    for group_id in group_ids:
-        route = route_by_group.get(group_id)
-        if route is None:
-            robot_name = group_id.split("/", 1)[0]
-            try:
-                if not topology.config_for_robot(robot_name).coordinator_task_name:
-                    raise ValueError(f"no coordinator task for selected robot {robot_name}")
-            except KeyError:
-                pass
-            raise ValueError(f"missing route for planning group {group_id}")
-        robot_name, task_name = route
-        if not task_name:
-            raise ValueError(f"missing coordinator task for {group_id}")
-        if robot_name in affected:
-            raise ValueError(f"multiple selected groups resolve to robot {robot_name}")
-        config = topology.config_for_robot(robot_name)
-        prefix, _, definition_name = group_id.partition("/")
-        if prefix != robot_name or not definition_name:
-            raise ValueError(f"invalid canonical planning group {group_id}")
-        definitions = [
-            definition
-            for definition in config.planning_groups
-            if definition.name == definition_name
-        ]
-        if len(definitions) != 1:
-            raise ValueError(f"missing config group for {group_id}")
-        expected_local = tuple(definitions[0].joint_names)
-        if len(set(expected_local)) != len(expected_local):
-            raise ValueError(f"duplicate intended joints for {group_id}")
-        affected.add(robot_name)
-        selected_routes.append((group_id, robot_name, task_name, config, expected_local))
-    expected_by_robot = {robot: set(expected) for _, robot, _, _, expected in selected_routes}
-
-    trajectory = generated_plan.trajectory
-    names = tuple(trajectory.joint_names)
-    if not names:
-        raise ValueError("generated trajectory has no joint names")
-    if len(set(names)) != len(names):
-        raise ValueError("duplicate global trajectory joint assignment")
-    columns: dict[str, dict[str, int]] = {robot: {} for robot in affected}
-    known_robots = {config.name for config in topology.robot_configs}
-    for index, global_name in enumerate(names):
-        if global_name.count("/") != 1:
-            raise ValueError(f"malformed global joint name: {global_name}")
-        robot_name, local_name = global_name.split("/", 1)
-        if not robot_name or not local_name or robot_name not in known_robots:
-            raise ValueError(f"unknown global joint assignment: {global_name}")
-        if robot_name in columns:
-            if local_name not in expected_by_robot[robot_name]:
-                raise ValueError(f"additional joint column for selected robot: {global_name}")
-            if local_name in columns[robot_name]:
-                raise ValueError(f"duplicate robot joint assignment: {global_name}")
-            columns[robot_name][local_name] = index
-    points = tuple(trajectory.points)
-    for point in points:
-        if len(point.positions) != len(names):
-            raise ValueError("trajectory point dimension does not match joint names")
-        if point.velocities and len(point.velocities) != len(names):
-            raise ValueError("trajectory velocity dimension does not match joint names")
-
-    entries: list[TaskEntry] = []
-    for group_id, robot_name, task_name, _config, expected_local in selected_routes:
-        robot_columns = columns[robot_name]
-        missing = [local for local in expected_local if local not in robot_columns]
-        if missing:
-            raise ValueError(f"missing robot joints for {robot_name}: {missing}")
-        intended = set(expected_local)
-        local_order = tuple(local for local in robot_columns if local in intended)
-        coordinator_names = tuple(
-            topology.coordinator_joint_name(robot_name, local) for local in local_order
-        )
-        if len(set(coordinator_names)) != len(coordinator_names):
-            raise ValueError(f"duplicate coordinator joint names for {robot_name}")
-        local_trajectory = JointTrajectory(
-            joint_names=list(coordinator_names),
-            points=[
-                TrajectoryPoint(
-                    time_from_start=point.time_from_start,
-                    positions=[point.positions[robot_columns[local]] for local in local_order],
-                    velocities=(
-                        [point.velocities[robot_columns[local]] for local in local_order]
-                        if point.velocities
-                        else None
-                    ),
-                )
-                for point in points
-            ],
-        )
-        entries.append(TaskEntry(group_id, task_name, {"trajectory": local_trajectory}, robot_name))
-    return PreparedPlan(generated_plan, tuple(entries), topology, True)
-
-
-prepare_plan = prepare_generated_plan
-prepare_execution_plan = prepare_generated_plan
-materialize_prepared_plan = prepare_generated_plan
-
-PlanInput = ExecutionPlan | PreparedPlan
-
-
-@dataclass(frozen=True)
-class OperationHandle:
-    plan_id: str
-    operation_id: str
-    attempt_id: str
-
-
-ExecutionHandle = OperationHandle
-
-
-@dataclass(frozen=True)
-class ActionRecord:
-    action_id: str
-    method: ActionMethod
-    started: float
-    deadline: float
-    deadline_reported: bool = False
-    reset_id: str | None = None
-
-
-@dataclass(frozen=True)
-class TaskRecord:
-    task_id: str
-    task_name: str
-    entry: TaskEntry
-    activity: TaskActivity
-    action: ActionRecord | None = None
-    cancel_required: bool = False
-    reset_required: bool = False
-
-
-@dataclass(frozen=True)
-class Operation:
-    handle: OperationHandle
-    plan: PlanInput
-    tasks: tuple[TaskRecord, ...]
-    next_index: int = 0
-    cancel_requested: bool = False
-    cleanup_required: bool = False
-    uncertain: bool = False
-    rejected: bool = False
-    failed: bool = False
-    diagnostic: str = ""
-
-
-@dataclass(frozen=True)
-class ExecutionResult:
-    handle: OperationHandle
-    outcome: Outcome
-    diagnostic: str = ""
-
-
-@dataclass(frozen=True)
-class ResetHandle:
-    reset_id: str
-
-
-@dataclass(frozen=True)
-class ResetResult:
-    handle: ResetHandle
-    success: bool
-    diagnostic: str = ""
-
-
-@dataclass(frozen=True)
-class ShutdownResult:
-    success: bool
-    diagnostic: str = ""
-
-
-@dataclass(frozen=True)
-class RuntimeContext:
-    state: LifecycleState = LifecycleState.IDLE
-    ready_plan: PlanInput | None = None
-    ready_plan_id: str | None = None
-    planning_token: str | None = None
-    active: Operation | None = None
-    fault: str | None = None
-    diagnostic: str | None = None
-    shutdown: ShutdownState = ShutdownState.OPEN
-    reset_handle: ResetHandle | None = None
-    reset_result: ResetResult | None = None
-    retired_plan_ids: frozenset[str] = frozenset()
-    dispatch_results: tuple[tuple[OperationHandle, ExecutionResult], ...] = ()
-    terminal_results: tuple[tuple[OperationHandle, ExecutionResult], ...] = ()
-    reset_results: tuple[tuple[ResetHandle, ResetResult], ...] = ()
-    reset_proven_inactive: frozenset[str] = frozenset()
-    reset_completed_tasks: frozenset[str] = frozenset()
-    reset_deadline: float | None = None
-    shutdown_result: ShutdownResult | None = None
-    shutdown_deadline: float | None = None
-    revision: int = 0
-
-
-@dataclass(frozen=True)
-class RuntimeSnapshot:
-    state: LifecycleState
-    ready_plan: PlanInput | None
-    ready_plan_id: str | None
-    planning_token: str | None
-    operation: Operation | None
-    fault: str | None
-    diagnostic: str | None
-    shutdown: ShutdownState
-    shutdown_result: ShutdownResult | None
-    revision: int
-
 
 T = TypeVar("T")
 
 
-@dataclass(frozen=True)
-class CommandResult(Generic[T]):
-    accepted: bool
-    value: T | None = None
-    diagnostic: str = ""
-    snapshot: RuntimeSnapshot | None = None
-
-
-class CoordinatorGateway(Protocol):
-    def execute(self, task_name: str, request: Any) -> Outcome: ...
-    def cancel(self, task_name: str) -> Outcome: ...
-    def status(self, task_name: str) -> Outcome: ...
-    def reset(self, task_name: str) -> Outcome: ...
-    def set_gripper_position(self, hardware_id: str, position: float) -> Outcome: ...
-    def get_gripper_position(self, hardware_id: str) -> float | None: ...
-    def stop(self) -> None: ...
-
-
-class ControlCoordinatorGateway:
-    """Adapter for ControlCoordinator.task_invoke(task, method, kwargs)."""
-
-    def __init__(self, client: Any) -> None:
-        self._client = client
-
-    def _invoke(self, task: str, method: str, kwargs: dict[str, Any]) -> Any:
-        return self._client.task_invoke(task, method, kwargs)
-
-    def execute(self, task_name: str, request: Any) -> Outcome:
-        try:
-            value = self._invoke(
-                task_name,
-                "execute",
-                request if isinstance(request, dict) else {"trajectory": request},
-            )
-            return (
-                Outcome.ACCEPTED
-                if value is True
-                else Outcome.REJECTED
-                if value is False
-                else Outcome.UNKNOWN
-            )
-        except Exception:
-            return Outcome.UNKNOWN
-
-    def cancel(self, task_name: str) -> Outcome:
-        try:
-            value = self._invoke(task_name, "cancel", {})
-            return (
-                Outcome.CANCELLED
-                if value is True
-                else Outcome.INACTIVE
-                if value is False
-                else Outcome.UNKNOWN
-            )
-        except Exception:
-            return Outcome.UNKNOWN
-
-    def status(self, task_name: str) -> Outcome:
-        try:
-            value = self._invoke(task_name, "get_state", {})
-            value = getattr(value, "state", value)
-            state = TrajectoryState(value)
-        except (TypeError, ValueError, KeyError):
-            return Outcome.UNKNOWN
-        except Exception:
-            return Outcome.UNKNOWN
-        return {
-            TrajectoryState.IDLE: Outcome.INACTIVE,
-            TrajectoryState.EXECUTING: Outcome.RUNNING,
-            TrajectoryState.COMPLETED: Outcome.COMPLETED,
-            TrajectoryState.ABORTED: Outcome.CANCELLED,
-            TrajectoryState.FAULT: Outcome.FAILED,
-        }[state]
-
-    def reset(self, task_name: str) -> Outcome:
-        try:
-            value = self._invoke(task_name, "reset", {})
-            return (
-                Outcome.INACTIVE
-                if value is True
-                else Outcome.RUNNING
-                if value is False
-                else Outcome.UNKNOWN
-            )
-        except Exception:
-            return Outcome.UNKNOWN
-
-    def set_gripper_position(self, hardware_id: str, position: float) -> Outcome:
-        try:
-            value = self._client.set_gripper_position(hardware_id, position)
-            return (
-                Outcome.ACCEPTED
-                if value is True
-                else Outcome.REJECTED
-                if value is False
-                else Outcome.UNKNOWN
-            )
-        except Exception:
-            return Outcome.UNKNOWN
-
-    def get_gripper_position(self, hardware_id: str) -> float | None:
-        try:
-            value = self._client.get_gripper_position(hardware_id)
-            return float(value) if isinstance(value, (int, float)) else None
-        except Exception:
-            return None
-
-    def stop(self) -> None:
-        stop = getattr(self._client, "stop_rpc_client", None)
-        if callable(stop):
-            stop()
-
-
-@dataclass(frozen=True)
-class _Event:
-    kind: str
-    operation_id: str | None = None
-    attempt_id: str | None = None
-    task_id: str | None = None
-    action_id: str | None = None
-    method: ActionMethod | None = None
-    outcome: Outcome | None = None
-    diagnostic: str = ""
-    payload: Any = None
-    reset_id: str | None = None
-
-
-@dataclass
 class _Call:
-    function: Callable[[], Any]
-    answer: queue.Queue[Any] = field(default_factory=lambda: queue.Queue(1))
+    def __init__(self, fn: Callable[[], Any]) -> None:
+        self.fn = fn
+        self.answer: queue.Queue[Any] = queue.Queue(1)
+
+
+@dataclass(frozen=True)
+class _PendingAction:
+    handle: OperationHandle
+    task_name: str
+    task: TaskRecord
+    method: ActionMethod
+    deadline: float
 
 
 class ExecutionRuntime:
-    """All context commits and effect launches happen on one owner thread."""
+    """Serialized plan executor with a sticky, fail-closed fault state."""
 
     def __init__(
         self,
@@ -593,163 +95,40 @@ class ExecutionRuntime:
         topology: ExecutionTopology | None = None,
         plan_validator: Callable[[PlanInput], bool] | None = None,
         action_timeout: float = 1.0,
+        physical_operation_timeout: float = 60.0,
         poll_interval: float = 0.1,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._gateway = gateway_factory()
         self._topology = topology
-        self._validate_plan = plan_validator or self._valid_plan
-        self._timeout = action_timeout
-        self._poll_interval = poll_interval
+        self._validator = plan_validator
+        self._action_timeout = max(0.0, action_timeout)
+        self._physical_timeout = max(0.0, physical_operation_timeout)
+        self._poll_interval = max(0.001, poll_interval)
+        self._clock = ValidatedMonotonicClock(monotonic_clock)
         self._context = RuntimeContext()
-        self._effects: list[tuple[Operation, TaskRecord, ActionMethod]] = []
-        self._context_lock = threading.Lock()
-        self._events: queue.Queue[_Call | None] = queue.Queue()
+        self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
+        self._events: queue.Queue[_Call | EffectDone | StopDone | AuxiliaryDone | None] = (
+            queue.Queue()
+        )
+        self._effects = ExecutionEffectRunner()
         self._closed = False
-        self._stop = threading.Event()
-        self._condition = threading.Condition(self._context_lock)
-        self._owner = threading.Thread(
-            target=self._loop, daemon=True, name="manipulation-execution-owner"
-        )
-        self._owner.start()
-        self._poller = threading.Thread(
-            target=self._poll_loop, daemon=True, name="manipulation-execution-poller"
-        )
-        self._poller.start()
+        self._gate = "open"
+        self._pending: dict[str, _PendingAction] = {}
+        self._fault_terminal_results: dict[OperationHandle, str] = {}
+        self._next_poll: float | None = None
         self._shutdown_lock = threading.Lock()
-        self._auxiliary_lock = threading.Lock()
-        self._auxiliary: dict[threading.Thread, threading.Event] = {}
-        self._closing_requested = False
-        self._gateway_condition = threading.Condition()
-        self._gateway_gate = _GatewayGateState.OPEN
-        self._gateway_close_started = False
-        self._gateway_close_done = False
-        self._gateway_close_error: str | None = None
-        self._rpc_inflight = 0
-        self._admitted_actions: set[str] = set()
-        self._started_actions: set[str] = set()
+        self._shutdown_initiated = False
+        self._shutdown_stop_started = False
+        self._shutdown_stop_finished = False
+        self._shutdown_drain_started = False
+        self._clock_invalid = False
+        self._auxiliary = AuxiliaryCallBook()
+        self._owner = threading.Thread(target=self._run, daemon=True, name="execution-owner")
+        self._owner.start()
 
-    def _start_auxiliary(
-        self,
-        target: Callable[..., None],
-        *args: Any,
-        name: str,
-    ) -> None:
-        """Start a tracked effect thread with cooperative cancellation."""
-        cancel = threading.Event()
-
-        def run() -> None:
-            try:
-                target(cancel, *args)
-            finally:
-                with self._auxiliary_lock:
-                    self._auxiliary.pop(threading.current_thread(), None)
-
-        thread = threading.Thread(target=run, name=name, daemon=True)
-        with self._auxiliary_lock:
-            self._auxiliary[thread] = cancel
-            thread.start()
-
-    def _stop_auxiliary(self, deadline: float) -> bool:
-        """Cancel and join tracked effects until the caller's deadline."""
-        with self._auxiliary_lock:
-            pending = tuple(self._auxiliary.items())
-            for _thread, cancel in pending:
-                cancel.set()
-        for thread, _cancel in pending:
-            thread.join(max(0.0, deadline - time.monotonic()))
-        with self._auxiliary_lock:
-            return not self._auxiliary
-
-    def _valid_plan(self, plan: PlanInput) -> bool:
-        if not isinstance(plan, (ExecutionPlan, PreparedPlan)) or not plan.entries:
-            return False
-        if isinstance(plan, ExecutionPlan) and isinstance(plan.generated_plan, GeneratedPlan):
-            return False
-        groups = tuple(getattr(plan.generated_plan, "group_ids", ()))
-        represented = tuple(entry.planning_group for entry in plan.entries)
-        if len(set(represented)) != len(represented) or len(
-            set(entry.task_name for entry in plan.entries)
-        ) != len(plan.entries):
-            return False
-        if isinstance(plan, PreparedPlan) and (
-            not plan._canonical
-            or not isinstance(plan.generated_plan, GeneratedPlan)
-            or plan.topology is None
-        ):
-            return False
-        if isinstance(plan, PreparedPlan) and groups != represented:
-            return False
-        if not isinstance(plan, PreparedPlan) and groups and set(groups) != set(represented):
-            return False
-        topology = plan.topology if isinstance(plan, PreparedPlan) else self._topology
-        if topology is not None:
-            routes = {group: (robot, task) for group, robot, task in topology.routes}
-            selected_groups = groups or represented
-            if len(routes) != len(topology.routes) or any(
-                group not in routes for group in selected_groups
-            ):
-                return False
-            selected = tuple(routes[group] for group in selected_groups)
-            if tuple(entry.planning_group for entry in plan.entries) != selected_groups:
-                return False
-            if any(
-                (
-                    route[1] != entry.task_name
-                    or (entry.robot_name is not None and route[0] != entry.robot_name)
-                )
-                for entry, route in zip(plan.entries, selected, strict=True)
-            ):
-                return False
-        return True
-
-    def snapshot(self) -> RuntimeSnapshot:
-        with self._context_lock:
-            c = self._context
-            return RuntimeSnapshot(
-                c.state,
-                c.ready_plan,
-                c.ready_plan_id,
-                c.planning_token,
-                c.active,
-                c.fault,
-                c.diagnostic,
-                c.shutdown,
-                c.shutdown_result,
-                c.revision,
-            )
-
-    def _loop(self) -> None:
-        while True:
-            call = self._events.get()
-            if call is None:
-                return
-            try:
-                value = call.function()
-                self._process_effects()
-                call.answer.put(value)
-            except BaseException as exc:
-                call.answer.put(exc)
-
-    def _submit(self, fn: Callable[[], T], *, allow_closing: bool = False) -> T:
-        with self._context_lock:
-            reject = self._closed or (
-                not allow_closing
-                and (self._closing_requested or self._context.shutdown != ShutdownState.OPEN)
-            )
-            if reject:
-                diagnostic = "runtime is closed" if self._closed else "runtime is closing"
-                return cast(
-                    "T",
-                    CommandResult(False, diagnostic=diagnostic, snapshot=self._snapshot_unlocked()),
-                )
-            call = _Call(fn)
-            self._events.put(call)
-        result = call.answer.get()
-        if isinstance(result, BaseException):
-            raise result
-        return cast("T", result)
-
-    def _snapshot_unlocked(self) -> RuntimeSnapshot:
+    def _snapshot(self) -> RuntimeSnapshot:
         c = self._context
         return RuntimeSnapshot(
             c.state,
@@ -764,1086 +143,1190 @@ class ExecutionRuntime:
             c.revision,
         )
 
-    def _commit(self, context: RuntimeContext) -> RuntimeContext:
-        with self._condition:
-            self._context = replace(context, revision=context.revision + 1)
-            self._condition.notify_all()
-        return self._context
+    def snapshot(self) -> RuntimeSnapshot:
+        with self._lock:
+            return self._snapshot()
 
-    def _record_dispatch_result_if_absent(self, result: ExecutionResult) -> None:
-        """Record the first dispatch outcome; later cleanup never replaces it."""
-        if dict(self._context.dispatch_results).get(result.handle) is None:
+    def _commit(self, **kwargs: Any) -> None:
+        with self._lock:
+            self._context = replace(self._context, **kwargs, revision=self._context.revision + 1)
+            self._condition.notify_all()
+
+    def _submit(self, fn: Callable[[], T], *, closing: bool = False) -> T:
+        with self._lock:
+            if self._closed or (
+                self._shutdown_drain_started
+                or (self._shutdown_initiated and not self._owner.is_alive())
+                or (
+                    not closing
+                    and (self._context.shutdown != ShutdownState.OPEN or self._gate != "open")
+                )
+            ):
+                return cast(
+                    "T",
+                    CommandResult(
+                        False, diagnostic="runtime is closing", snapshot=self._snapshot()
+                    ),
+                )
+            call = _Call(fn)
+            self._events.put(call)
+        result = call.answer.get()
+        if isinstance(result, BaseException):
+            raise result
+        return cast("T", result)
+
+    def _run(self) -> None:
+        while True:
+            timeout = self._wait_timeout()
+            try:
+                event = self._events.get(timeout=timeout)
+            except queue.Empty:
+                with self._lock:
+                    self._timers()
+                continue
+            if event is None:
+                return
+            try:
+                with self._lock:
+                    if isinstance(event, _Call):
+                        self._timers()
+                        event.answer.put(event.fn())
+                    elif isinstance(event, EffectDone):
+                        self._done(event)
+                    elif isinstance(event, AuxiliaryDone):
+                        self._aux_done(event)
+                    else:
+                        self._stop_done(event)
+                        self._timers()
+            except BaseException as exc:
+                if isinstance(event, _Call):
+                    event.answer.put(exc)
+
+    def _wait_timeout(self) -> float:
+        if self._clock_invalid:
+            return 3600.0
+        deadlines = [
+            action.deadline
+            for action in self._pending.values()
+            if action.task.action is None or not action.task.action.deadline_reported
+        ]
+        deadlines.extend(self._auxiliary.deadlines())
+        if self._next_poll is not None:
+            deadlines.append(self._next_poll)
+        if self._context.reset_deadline is not None:
+            deadlines.append(self._context.reset_deadline)
+        if self._context.shutdown_deadline is not None:
+            deadlines.append(self._context.shutdown_deadline)
+        if self._context.physical_operation_deadline is not None:
+            deadlines.append(self._context.physical_operation_deadline)
+        if not deadlines:
+            return 3600.0
+        now = self._clock_now()
+        if now is None:
+            return 3600.0
+        return max(0.0, min(deadlines) - now)
+
+    def _clock_failure_owner(self, diagnostic: str) -> None:
+        self._gate = "sealed"
+        self._shutdown_initiated = True
+        op = self._context.active
+        if op is not None:
+            potentially_active = {
+                TaskActivity.EXECUTE_UNRESOLVED,
+                TaskActivity.ACTIVE,
+                TaskActivity.UNKNOWN,
+                TaskActivity.REMOTE_FAULT,
+            }
+            op = replace(
+                op,
+                tasks=tuple(
+                    replace(
+                        task,
+                        cancel_required=task.cancel_required or task.activity in potentially_active,
+                        reset_required=(task.reset_required or task.activity in potentially_active),
+                    )
+                    for task in op.tasks
+                ),
+                uncertain=True,
+                diagnostic=diagnostic,
+            )
+        self._commit(
+            state=LifecycleState.FAULT
+            if self._context.state == LifecycleState.FAULT
+            else LifecycleState.CANCELLING,
+            shutdown=ShutdownState.CLOSING,
+            shutdown_result=self._context.shutdown_result or ShutdownResult(False, diagnostic),
+            active=op,
+            diagnostic=diagnostic,
+        )
+        if op is not None:
+            self._schedule_cancels(op, emergency=True)
+        self._shutdown_progress()
+
+    def _clock_now(self) -> float | None:
+        if self._clock_invalid:
+            return None
+        try:
+            return self._clock.now()
+        except InvalidMonotonicClock:
+            self._clock_invalid = True
+            if threading.current_thread() is self._owner:
+                self._clock_failure_owner("invalid monotonic clock")
+            else:
+                with self._lock:
+                    if not self._shutdown_drain_started and self._owner.is_alive():
+                        self._events.put(
+                            _Call(lambda: self._clock_failure_owner("invalid monotonic clock"))
+                        )
+            return None
+
+    def _timers(self) -> None:
+        now = self._clock_now()
+        if now is None:
+            return
+        for action_id, item in tuple(self._pending.items()):
+            if item.deadline <= now:
+                handle, task_name, task, method = (
+                    item.handle,
+                    item.task_name,
+                    item.task,
+                    item.method,
+                )
+                op = self._context.active
+                report = False
+                if op is not None and op.handle == handle:
+                    current = next((t for t in op.tasks if t.task_id == task.task_id), None)
+                    if (
+                        current is not None
+                        and current.action is not None
+                        and not current.action.deadline_reported
+                    ):
+                        report = True
+                        action = replace(current.action, deadline_reported=True)
+                        tasks = tuple(
+                            replace(
+                                t,
+                                action=action,
+                                activity=TaskActivity.UNKNOWN,
+                                cancel_required=True,
+                            )
+                            if t.task_id == task.task_id
+                            else t
+                            for t in op.tasks
+                        )
+                        self._commit(active=replace(op, tasks=tasks, uncertain=True))
+                        self._pending[action_id] = replace(
+                            item,
+                            task=replace(task, action=action),
+                        )
+                if report:
+                    self._fault(
+                        f"coordinator {method.value} deadline for {task_name}",
+                        handle,
+                        task,
+                    )
+        if self._auxiliary.expire(now, "coordinator auxiliary action deadline exceeded"):
+            self._condition.notify_all()
+        physical_deadline = self._context.physical_operation_deadline
+        if (
+            physical_deadline is not None
+            and now >= physical_deadline
+            and self._context.active is not None
+            and self._context.state == LifecycleState.RUNNING
+        ):
+            self._commit(physical_operation_deadline=None)
+            self._begin_cancellation("physical operation deadline exceeded")
+        if self._next_poll is not None and now >= self._next_poll:
+            self._next_poll = now + self._poll_interval
+            self._poll_active()
+        if self._context.reset_deadline is not None and now >= self._context.reset_deadline:
+            if self._context.reset_handle and self._context.reset_handle not in dict(
+                self._context.reset_results
+            ):
+                self._finish_reset(False, "reset deadline exceeded")
+        if self._context.shutdown_deadline is not None and now >= self._context.shutdown_deadline:
+            if self._context.shutdown_result is None:
+                self._finish_shutdown(False, "shutdown safety deadline exceeded")
+
+    def _valid_plan(self, plan: PlanInput) -> bool:
+        if not isinstance(plan, (ExecutionPlan, PreparedPlan)) or not plan.entries:
+            return False
+        if isinstance(plan, ExecutionPlan) and isinstance(plan.generated_plan, GeneratedPlan):
+            return False
+        if isinstance(plan, PreparedPlan) and (not plan._canonical or plan.topology is None):
+            return False
+        groups = tuple(getattr(plan.generated_plan, "group_ids", ()))
+        names = tuple(e.planning_group for e in plan.entries)
+        if len(set(names)) != len(names) or len({e.task_name for e in plan.entries}) != len(names):
+            return False
+        if groups and groups != names:
+            return False
+        topology = plan.topology if isinstance(plan, PreparedPlan) else self._topology
+        if topology is not None:
+            routes = {g: (r, t) for g, r, t in topology.routes}
+            for entry in plan.entries:
+                route = routes.get(entry.planning_group)
+                if (
+                    route is None
+                    or route[1] != entry.task_name
+                    or (entry.robot_name and route[0] != entry.robot_name)
+                ):
+                    return False
+        return True
+
+    def _valid(self, plan: PlanInput) -> bool:
+        try:
+            return bool(self._validator(plan) if self._validator else self._valid_plan(plan))
+        except Exception:
+            return False
+
+    def _start_action(
+        self,
+        op: Operation,
+        task: TaskRecord,
+        method: ActionMethod,
+        *,
+        emergency: bool = False,
+    ) -> None:
+        if task.action is not None or (self._gate == "sealed" and not emergency):
+            return
+        if self._gate != "open" and not (
+            method == ActionMethod.CANCEL
+            and task.cancel_required
+            and task.activity != TaskActivity.NOT_STARTED
+            and (emergency or self._gate == "cancel_only")
+        ):
+            return
+        if method not in (ActionMethod.STATUS, ActionMethod.RESET) and task.activity in (
+            TaskActivity.INACTIVE,
+            TaskActivity.COMPLETED,
+            TaskActivity.CANCELLED,
+        ):
+            return
+        now = self._clock_now()
+        if now is None and method != ActionMethod.CANCEL:
+            return
+        action = ActionRecord(
+            str(uuid.uuid4()),
+            method,
+            now or 0.0,
+            float("inf") if now is None else now + self._action_timeout,
+        )
+        tasks = tuple(
+            replace(
+                t,
+                action=action,
+                activity=TaskActivity.EXECUTE_UNRESOLVED
+                if method == ActionMethod.EXECUTE
+                else t.activity,
+            )
+            if t.task_id == task.task_id
+            else t
+            for t in op.tasks
+        )
+        op = replace(op, tasks=tasks)
+        self._commit(active=op)
+        self._pending[action.action_id] = _PendingAction(
+            handle=op.handle,
+            task_name=task.task_name,
+            task=next(t for t in tasks if t.task_id == task.task_id),
+            method=method,
+            deadline=action.deadline,
+        )
+        fn: Callable[[], Any]
+        if method == ActionMethod.EXECUTE:
+            fn = lambda: self._gateway.execute(task.task_name, task.entry.request)  # noqa: E731
+        elif method == ActionMethod.CANCEL:
+            fn = lambda: self._gateway.cancel(task.task_name)  # noqa: E731
+        elif method == ActionMethod.STATUS:
+            fn = lambda: self._gateway.status(task.task_name)  # noqa: E731
+        else:
+            fn = lambda: self._gateway.reset(task.task_name)  # noqa: E731
+        self._effects.submit_action(action.action_id, fn, self._events.put)
+
+    @dataclass(frozen=True)
+    class _RetiredAction:
+        operation: Operation
+        index: int
+        task: TaskRecord
+        method: ActionMethod
+
+    def _retire_action(self, done: EffectDone) -> _RetiredAction | None:
+        item = self._pending.get(done.action_id)
+        active = self._context.active
+        if item is None or active is None:
+            return None
+        if active.handle != item.handle:
+            return None
+        index = next(
+            (i for i, t in enumerate(active.tasks) if t.task_id == item.task.task_id), None
+        )
+        if index is None:
+            return None
+        current_task = active.tasks[index]
+        if current_task.action is None or current_task.action.action_id != done.action_id:
+            # The registered operation/task identity is sufficient to consume this
+            # physical completion, but it must not retire a newer action.
+            self._pending.pop(done.action_id, None)
+            return None
+        self._pending.pop(done.action_id, None)
+        task = replace(active.tasks[index], action=None)
+        operation = replace(active, tasks=(*active.tasks[:index], task, *active.tasks[index + 1 :]))
+        self._commit(active=operation)
+        return self._RetiredAction(operation, index, task, item.method)
+
+    def _done(self, done: EffectDone) -> None:
+        retired = self._retire_action(done)
+        if retired is None:
+            return
+        op, index, task, method = (
+            retired.operation,
+            retired.index,
+            retired.task,
+            retired.method,
+        )
+        outcome = done.outcome if isinstance(done.outcome, Outcome) else Outcome.UNKNOWN
+        if self._context.reset_handle is not None and method in (
+            ActionMethod.STATUS,
+            ActionMethod.CANCEL,
+            ActionMethod.RESET,
+        ):
+            self._done_reset(op, index, task, method, outcome)
+            return
+        if method == ActionMethod.EXECUTE:
+            self._done_execute(op, index, task, outcome)
+            return
+        if method == ActionMethod.CANCEL:
+            self._done_cancel(op, index, task, outcome)
+            return
+        if method == ActionMethod.STATUS:
+            self._done_status(op, index, task, outcome)
+            return
+
+    def _aux_done(self, done: AuxiliaryDone) -> None:
+        self._auxiliary.complete(done)
+        self._condition.notify_all()
+        self._shutdown_progress()
+
+    def _reset_next(self, op: Operation) -> None:
+        reset = self._context.reset_handle
+        if reset is None or reset in dict(self._context.reset_results):
+            return
+        if self._gate == "sealed":
+            self._finish_reset(False, "reset unavailable while runtime is closing")
+            self._shutdown_progress()
+            return
+        proven = self._context.reset_proven_inactive
+        completed = self._context.reset_completed_tasks
+        for task in op.tasks:
+            if task.action is not None or task.activity == TaskActivity.NOT_STARTED:
+                continue
+            if task.task_id in completed:
+                continue
+            if task.task_id in proven:
+                if task.reset_required:
+                    self._start_action(op, task, ActionMethod.RESET)
+                    return
+                self._commit(reset_completed_tasks=frozenset((*completed, task.task_id)))
+                completed = self._context.reset_completed_tasks
+                continue
+            self._start_action(op, task, ActionMethod.STATUS)
+            return
+        if all(t.task_id in completed or t.activity == TaskActivity.NOT_STARTED for t in op.tasks):
+            self._finish_reset(True)
+
+    def _done_reset(
+        self,
+        op: Operation,
+        index: int,
+        task: TaskRecord,
+        method: ActionMethod,
+        outcome: Outcome,
+    ) -> None:
+        current = op.tasks[index]
+        decision = reconcile_reset_completion(
+            method=method,
+            outcome=outcome,
+            activity=current.activity,
+            gate_sealed=self._gate == "sealed",
+            clock_failed=self._clock_invalid,
+        )
+        current = replace(
+            current,
+            activity=decision.activity or current.activity,
+            cancel_required=(
+                current.cancel_required
+                if decision.cancel_required is None
+                else decision.cancel_required
+            ),
+            reset_required=(
+                current.reset_required
+                if decision.reset_required is None
+                else decision.reset_required
+            ),
+        )
+        self._commit(active=replace(op, tasks=(*op.tasks[:index], current, *op.tasks[index + 1 :])))
+        if decision.prove_inactive:
             self._commit(
-                replace(
-                    self._context,
-                    dispatch_results=(*self._context.dispatch_results, (result.handle, result))[
-                        -16:
-                    ],
+                reset_proven_inactive=frozenset(
+                    (*self._context.reset_proven_inactive, current.task_id)
                 )
             )
+        if decision.complete_reset:
+            self._commit(
+                reset_completed_tasks=frozenset(
+                    (*self._context.reset_completed_tasks, current.task_id)
+                )
+            )
+        diagnostic = decision.diagnostic or (
+            f"task={current.task_name} action={method.value} outcome={outcome.value}"
+        )
+        if decision.reset_success is not None:
+            self._finish_reset(decision.reset_success, diagnostic)
+        if decision.request_cancel:
+            self._schedule_cancels(
+                self._context.active or op,
+                emergency=decision.emergency_cancel,
+            )
+        if decision.advance_reset:
+            self._reset_next(self._context.active or op)
+        self._shutdown_progress()
 
-    def _reset_pending(self) -> bool:
-        handle = self._context.reset_handle
-        return (
-            self._context.state == LifecycleState.FAULT
-            and handle is not None
-            and handle not in dict(self._context.reset_results)
+    def _record_dispatch(self, op: Operation, outcome: Outcome, diagnostic: str = "") -> None:
+        if dict(self._context.dispatch_results).get(op.handle) is None:
+            self._commit(
+                dispatch_results=(
+                    *self._context.dispatch_results,
+                    (op.handle, ExecutionResult(op.handle, outcome, diagnostic)),
+                )[-16:]
+            )
+
+    def _begin_cancellation(self, diagnostic: str = "") -> None:
+        op = self._context.active
+        if op is None:
+            return
+        tasks = tuple(
+            replace(
+                t,
+                cancel_required=(
+                    t.cancel_required
+                    or t.activity
+                    in (
+                        TaskActivity.EXECUTE_UNRESOLVED,
+                        TaskActivity.ACTIVE,
+                        TaskActivity.UNKNOWN,
+                        TaskActivity.REMOTE_FAULT,
+                    )
+                ),
+            )
+            for t in op.tasks
+        )
+        op = replace(
+            op,
+            tasks=tasks,
+            cancel_requested=True,
+            failed=op.failed or diagnostic == "physical operation deadline exceeded",
+            diagnostic=diagnostic or op.diagnostic,
+        )
+        self._commit(state=LifecycleState.CANCELLING, active=op)
+        self._schedule_cancels(op)
+
+    def _done_execute(self, op: Operation, index: int, task: TaskRecord, outcome: Outcome) -> None:
+        if self._context.shutdown == ShutdownState.CLOSING:
+            op = replace(op, cancel_requested=True)
+        decision = reconcile_execute_completion(outcome)
+        if decision.fault:
+            diagnostic = f"task={task.task_name} action=execute outcome={outcome.value}"
+            self._record_dispatch(op, Outcome.UNKNOWN, diagnostic)
+            self._fault(
+                diagnostic,
+                op.handle,
+                replace(task, action=None),
+            )
+            return
+        if decision.rejected:
+            tasks = tuple(
+                replace(
+                    t,
+                    action=None,
+                    activity=TaskActivity.INACTIVE if i >= index else t.activity,
+                    cancel_required=(t.cancel_required or i < index) if i < index else False,
+                )
+                for i, t in enumerate(op.tasks)
+            )
+            op = replace(op, tasks=tasks, rejected=True, cancel_requested=True)
+            diagnostic = f"task={task.task_name} action=execute outcome={outcome.value}"
+            op = replace(op, diagnostic=diagnostic)
+            if self._context.state == LifecycleState.FAULT or op.uncertain:
+                self._commit(active=op)
+            else:
+                self._commit(state=LifecycleState.CANCELLING, active=op)
+            self._record_dispatch(op, Outcome.REJECTED, diagnostic)
+            self._schedule_cancels(op)
+            self._finish_if_terminal(op)
+            return
+        activity = TaskActivity.ACTIVE
+        tasks = tuple(
+            replace(
+                t,
+                action=None,
+                activity=activity,
+                cancel_required=(
+                    t.cancel_required
+                    or op.cancel_requested
+                    or self._context.state == LifecycleState.FAULT
+                ),
+            )
+            if t.task_id == task.task_id
+            else t
+            for t in op.tasks
+        )
+        op = replace(op, tasks=tasks)
+        self._commit(active=op)
+        if op.cancel_requested or self._context.state in (
+            LifecycleState.CANCELLING,
+            LifecycleState.FAULT,
+        ):
+            self._record_dispatch(op, Outcome.CANCELLED)
+            self._schedule_cancels(op)
+            self._shutdown_progress()
+            return
+        if index != op.next_index:
+            self._fault("out-of-order execute completion", op.handle, task)
+            return
+        if index + 1 < len(op.tasks):
+            op = replace(op, next_index=index + 1)
+            self._commit(active=op)
+            self._start_action(op, op.tasks[index + 1], ActionMethod.EXECUTE)
+        else:
+            self._record_dispatch(op, Outcome.ACCEPTED)
+            now = self._clock_now()
+            if now is None:
+                return
+            self._commit(
+                state=LifecycleState.RUNNING,
+                physical_operation_deadline=now + self._physical_timeout,
+            )
+            self._next_poll = now + self._poll_interval
+
+    def _done_cancel(self, op: Operation, index: int, task: TaskRecord, outcome: Outcome) -> None:
+        decision = reconcile_cancel_completion(outcome)
+        if decision.fault and outcome in (Outcome.UNKNOWN, Outcome.FAILED):
+            diagnostic = decision.diagnostic or "cancellation failed"
+            self._fault(
+                diagnostic,
+                op.handle,
+                replace(task, action=None),
+                schedule_cancels=False,
+                mark_peers=False,
+            )
+            current = self._context.active
+            if current is not None and current.handle == op.handle:
+                self._commit(
+                    active=replace(
+                        current,
+                        tasks=tuple(
+                            replace(
+                                item,
+                                action=None,
+                                cancel_required=False,
+                                reset_required=True,
+                            )
+                            if item.task_id == task.task_id
+                            else item
+                            for item in current.tasks
+                        ),
+                    )
+                )
+                current = self._context.active
+                if current is not None:
+                    if self._context.shutdown == ShutdownState.CLOSING:
+                        self._finish_shutdown(False, diagnostic)
+                    self._schedule_cancels(current)
+                    self._shutdown_progress()
+            return
+        if decision.fault:
+            diagnostic = f"malformed cancel outcome for {task.task_name}"
+            self._fault(
+                diagnostic,
+                op.handle,
+                replace(task, action=None),
+                schedule_cancels=False,
+                mark_peers=False,
+            )
+            current = self._context.active
+            if current is not None and current.handle == op.handle:
+                current = replace(
+                    current,
+                    tasks=tuple(
+                        replace(item, action=None, cancel_required=False)
+                        if item.task_id == task.task_id
+                        else item
+                        for item in current.tasks
+                    ),
+                )
+                self._commit(active=current)
+                if self._context.shutdown == ShutdownState.CLOSING:
+                    self._finish_shutdown(False, diagnostic)
+                self._schedule_cancels(current)
+                self._shutdown_progress()
+            return
+        tasks = tuple(
+            replace(t, action=None, activity=TaskActivity.CANCELLED, cancel_required=False)
+            if t.task_id == task.task_id
+            else t
+            for t in op.tasks
+        )
+        op = replace(op, tasks=tasks)
+        self._commit(active=op)
+        self._schedule_cancels(op)
+        self._finish_if_terminal(op)
+        self._shutdown_progress()
+
+    def _done_status(self, op: Operation, index: int, task: TaskRecord, outcome: Outcome) -> None:
+        decision = reconcile_status_completion(outcome)
+        if decision.fault:
+            self._fault(
+                f"status is unsafe: task={task.task_name} action=get_state outcome={outcome.value}",
+                op.handle,
+                replace(task, action=None),
+            )
+            return
+        activity = cast("TaskActivity", decision.activity)
+        tasks = tuple(
+            replace(
+                t,
+                action=None,
+                activity=activity,
+                cancel_required=False
+                if t.task_id == task.task_id
+                and activity
+                in (TaskActivity.INACTIVE, TaskActivity.CANCELLED, TaskActivity.COMPLETED)
+                else t.cancel_required,
+            )
+            if t.task_id == task.task_id
+            else t
+            for t in op.tasks
+        )
+        op = replace(op, tasks=tasks)
+        if activity in (TaskActivity.INACTIVE, TaskActivity.CANCELLED):
+            op = replace(
+                op,
+                cancel_requested=True,
+                failed=True,
+                diagnostic=(
+                    f"task={task.task_name} outcome={outcome.value}"
+                    if activity in (TaskActivity.INACTIVE, TaskActivity.CANCELLED)
+                    else op.diagnostic
+                ),
+                tasks=tuple(
+                    replace(
+                        t,
+                        cancel_required=(
+                            False
+                            if t.task_id == task.task_id
+                            else t.cancel_required
+                            or t.activity
+                            in (
+                                TaskActivity.EXECUTE_UNRESOLVED,
+                                TaskActivity.ACTIVE,
+                                TaskActivity.UNKNOWN,
+                                TaskActivity.REMOTE_FAULT,
+                            )
+                        ),
+                    )
+                    for t in op.tasks
+                ),
+            )
+            self._commit(state=LifecycleState.CANCELLING, active=op)
+            self._schedule_cancels(op)
+            self._finish_if_terminal(op)
+            return
+        self._commit(active=op)
+        self._finish_if_terminal(op)
+        if self._context.state in (LifecycleState.CANCELLING, LifecycleState.FAULT):
+            self._schedule_cancels(op)
+
+    def _poll_active(self) -> None:
+        op = self._context.active
+        if op is not None and self._context.state == LifecycleState.RUNNING:
+            task = next(
+                (t for t in op.tasks if t.activity == TaskActivity.ACTIVE and t.action is None),
+                None,
+            )
+            if task:
+                self._start_action(op, task, ActionMethod.STATUS)
+
+    def _schedule_cancels(self, op: Operation, *, emergency: bool = False) -> None:
+        for task in op.tasks:
+            current = self._context.active
+            if current is None or current.handle != op.handle:
+                return
+            task = next(t for t in current.tasks if t.task_id == task.task_id)
+            if task.action is None and task.cancel_required:
+                self._start_action(
+                    current, task, ActionMethod.CANCEL, emergency=emergency or self._clock_invalid
+                )
+
+    def _finish_if_terminal(self, op: Operation) -> None:
+        if any(t.action is not None for t in op.tasks):
+            return
+        if self._context.state == LifecycleState.CANCELLING:
+            if all(
+                t.activity
+                in (
+                    TaskActivity.NOT_STARTED,
+                    TaskActivity.CANCELLED,
+                    TaskActivity.INACTIVE,
+                    TaskActivity.COMPLETED,
+                )
+                and not t.cancel_required
+                for t in op.tasks
+            ):
+                if self._context.shutdown == ShutdownState.CLOSING:
+                    self._shutdown_progress()
+                else:
+                    self._terminal(
+                        Outcome.REJECTED
+                        if op.rejected and not op.failed
+                        else Outcome.FAILED
+                        if op.failed
+                        else Outcome.CANCELLED
+                    )
+        elif all(t.activity == TaskActivity.COMPLETED for t in op.tasks):
+            self._terminal(Outcome.COMPLETED)
+
+    def _terminal(self, outcome: Outcome) -> None:
+        op = self._context.active
+        if op is None:
+            return
+        result = ExecutionResult(op.handle, outcome, op.diagnostic)
+        self._commit(
+            state=LifecycleState.IDLE,
+            active=None,
+            diagnostic=op.diagnostic,
+            terminal_results=(*self._context.terminal_results, (op.handle, result))[-16:],
         )
 
-    def _finish_reset(self, success: bool, diagnostic: str = "") -> None:
-        handle = self._context.reset_handle
-        if handle is None or handle in dict(self._context.reset_results):
-            return
-        result = ResetResult(handle, success, diagnostic)
-        reset_results = (*self._context.reset_results, (handle, result))[-16:]
-        self._commit(
-            replace(
-                self._context,
-                state=LifecycleState.IDLE if success else LifecycleState.FAULT,
-                active=None if success else self._context.active,
-                fault=None if success else self._context.fault,
-                diagnostic=None if success else diagnostic,
-                reset_results=reset_results,
-                # A failed attempt is retained in reset_results for its
-                # caller, but must not remain the active reconciliation gate:
-                # a later reset command must be able to start a fresh attempt.
-                reset_handle=None,
-                reset_proven_inactive=frozenset(),
-                reset_completed_tasks=frozenset(),
-                reset_deadline=None,
+    def _fault(
+        self,
+        diagnostic: str,
+        handle: OperationHandle | None = None,
+        task: TaskRecord | None = None,
+        *,
+        schedule_cancels: bool = True,
+        mark_peers: bool = True,
+    ) -> None:
+        op = self._context.active
+        if op is not None:
+            tasks = tuple(
+                replace(
+                    t,
+                    action=None if task is not None and task.action is None else t.action,
+                    activity=TaskActivity.UNKNOWN,
+                    cancel_required=(
+                        t.cancel_required
+                        or t.activity
+                        in (
+                            TaskActivity.EXECUTE_UNRESOLVED,
+                            TaskActivity.ACTIVE,
+                            TaskActivity.UNKNOWN,
+                            TaskActivity.REMOTE_FAULT,
+                        )
+                    ),
+                    reset_required=(
+                        t.reset_required
+                        or t.activity
+                        in (
+                            TaskActivity.EXECUTE_UNRESOLVED,
+                            TaskActivity.ACTIVE,
+                            TaskActivity.UNKNOWN,
+                            TaskActivity.REMOTE_FAULT,
+                        )
+                    ),
+                )
+                if (
+                    mark_peers
+                    and t.activity
+                    in (
+                        TaskActivity.EXECUTE_UNRESOLVED,
+                        TaskActivity.ACTIVE,
+                        TaskActivity.UNKNOWN,
+                        TaskActivity.REMOTE_FAULT,
+                    )
+                )
+                or (task is not None and t.task_id == task.task_id)
+                else t
+                for t in op.tasks
             )
+            op = replace(op, tasks=tasks, uncertain=True, diagnostic=diagnostic)
+        self._commit(
+            state=LifecycleState.FAULT,
+            fault=self._context.fault or diagnostic,
+            diagnostic=diagnostic,
+            active=op,
+        )
+        fault_handle = handle or (op.handle if op is not None else None)
+        if fault_handle is not None:
+            self._fault_terminal_results[fault_handle] = diagnostic
+            if len(self._fault_terminal_results) > 8:
+                oldest = next(iter(self._fault_terminal_results))
+                del self._fault_terminal_results[oldest]
+        if handle and not dict(self._context.dispatch_results).get(handle):
+            self._commit(
+                dispatch_results=(
+                    *self._context.dispatch_results,
+                    (handle, ExecutionResult(handle, Outcome.UNKNOWN, diagnostic)),
+                )[-16:]
+            )
+        if op and schedule_cancels:
+            self._schedule_cancels(op)
+
+    def _stop_done(self, done: StopDone) -> None:
+        self._shutdown_stop_finished = True
+        if self._context.shutdown_result is not None:
+            self._shutdown_drain_owner()
+            return
+        if not done.success:
+            self._finish_shutdown(
+                False,
+                f"gateway close failed: {done.diagnostic or 'stop failed'}",
+            )
+            self._shutdown_drain_owner()
+            return
+        deadline = self._context.shutdown_deadline
+        now = self._clock_now()
+        if now is None:
+            return
+        if deadline is None or now >= deadline:
+            self._finish_shutdown(False, "shutdown safety deadline exceeded")
+            self._shutdown_drain_owner()
+            return
+        self._commit(
+            state=LifecycleState.IDLE,
+            shutdown=ShutdownState.CLOSED,
+            shutdown_result=ShutdownResult(True, done.diagnostic),
+            shutdown_deadline=None,
+        )
+        self._shutdown_drain_owner()
+
+    def _has_unsettled_shutdown_work(self) -> bool:
+        active = self._context.active
+        return bool(
+            self._pending
+            or self._auxiliary.has_unsettled()
+            or (
+                active is not None
+                and any(t.action is not None or t.cancel_required for t in active.tasks)
+            )
+        )
+
+    def _shutdown_progress(self) -> None:
+        if self._context.shutdown != ShutdownState.CLOSING:
+            return
+        if self._has_unsettled_shutdown_work():
+            return
+        if self._shutdown_stop_started:
+            return
+        self._shutdown_stop_started = True
+        self._gate = "sealed"
+        self._effects.submit_stop(self._gateway.stop, self._events.put)
+
+    def _shutdown_drain_owner(self) -> None:
+        if self._shutdown_drain_started:
+            return
+        if self._has_unsettled_shutdown_work():
+            return
+        self._shutdown_drain_started = True
+        self._effects.shutdown()
+        self._events.put(None)
+
+    def _finish_reset(self, success: bool, diagnostic: str = "") -> None:
+        h = self._context.reset_handle
+        if h is None or h in dict(self._context.reset_results):
+            return
+        result = ResetResult(h, success, diagnostic)
+        self._commit(
+            state=LifecycleState.IDLE if success else LifecycleState.FAULT,
+            reset_results=(*self._context.reset_results, (h, result))[-16:],
+            reset_handle=None if success else h,
+            reset_deadline=None,
+            fault=None if success else self._context.fault or diagnostic,
+            active=None if success else self._context.active,
+            physical_operation_deadline=None
+            if success
+            else self._context.physical_operation_deadline,
+            ready_plan=None if success else self._context.ready_plan,
+            ready_plan_id=None if success else self._context.ready_plan_id,
+            diagnostic=diagnostic,
         )
 
     def _finish_shutdown(self, success: bool, diagnostic: str = "") -> None:
-        if self._context.shutdown_result is not None:
-            return
-        self._commit(replace(self._context, shutdown_result=ShutdownResult(success, diagnostic)))
-
-    def _maybe_finish_shutdown(self) -> None:
-        if (
-            self._context.shutdown != ShutdownState.CLOSING
-            or self._context.shutdown_result is not None
-        ):
-            return
-        operation = self._context.active
-        if operation is None:
-            self._finish_shutdown(True)
-            return
-        if any(task.action is not None for task in operation.tasks):
-            return
-        if any(task.activity == TaskActivity.REMOTE_FAULT for task in operation.tasks):
-            self._finish_shutdown(False, "shutdown safety unresolved: remote fault")
-            return
-        pending = next(
-            (
-                task
-                for task in operation.tasks
-                if task.activity
-                in (
-                    TaskActivity.NOT_STARTED,
-                    TaskActivity.EXECUTE_UNRESOLVED,
-                    TaskActivity.ACTIVE,
-                    TaskActivity.UNKNOWN,
-                )
-            ),
-            None,
-        )
-        if pending is not None:
-            self._schedule_action(operation, pending, ActionMethod.CANCEL)
-            return
-        if all(
-            task.activity in (TaskActivity.INACTIVE, TaskActivity.CANCELLED, TaskActivity.COMPLETED)
-            for task in operation.tasks
-        ):
-            self._finish_shutdown(True)
-
-    def _reconcile_reset(self, op: Operation | None, event: _Event | None = None) -> None:
-        if not self._reset_pending():
-            return
-        op = op or self._context.active
-        if op is None:
-            self._finish_reset(False, "fault has no operation to reconcile")
-            return
-        if (
-            self._context.reset_deadline is not None
-            and time.monotonic() >= self._context.reset_deadline
-        ):
-            self._finish_reset(False, "fault reset deadline exceeded")
-            return
-        if any(task.action is not None for task in op.tasks):
-            return
-
-        proven = self._context.reset_proven_inactive
-        if event is not None and event.method == ActionMethod.STATUS:
-            if event.outcome in (Outcome.INACTIVE, Outcome.CANCELLED, Outcome.COMPLETED):
-                proven = proven | {event.task_id} if event.task_id is not None else proven
-            elif event.outcome in (Outcome.RUNNING, Outcome.ACCEPTED):
-                task = next(task for task in op.tasks if task.task_id == event.task_id)
-                self._schedule_action(self._context.active or op, task, ActionMethod.CANCEL)
-                return
-            else:
-                self._finish_reset(False, "status reconciliation is unsafe")
-                return
-        elif event is not None and event.method == ActionMethod.RESET:
-            if event.outcome != Outcome.INACTIVE:
-                self._finish_reset(False, "remote reset failed")
-                return
-            if event.task_id is not None:
-                self._commit(
-                    replace(
-                        self._context,
-                        reset_completed_tasks=self._context.reset_completed_tasks | {event.task_id},
-                    )
-                )
-        elif event is not None and event.outcome in (Outcome.UNKNOWN, Outcome.FAILED):
-            self._finish_reset(False, "fault reconciliation is unsafe")
-            return
-
-        if proven != self._context.reset_proven_inactive:
-            self._commit(replace(self._context, reset_proven_inactive=proven))
-
-        current = self._context.active or op
-        unproven = next(
-            (
-                task
-                for task in current.tasks
-                if task.task_id not in self._context.reset_proven_inactive
-            ),
-            None,
-        )
-        if unproven is not None:
-            method = (
-                ActionMethod.CANCEL
-                if unproven.activity
-                in (
-                    TaskActivity.NOT_STARTED,
-                    TaskActivity.EXECUTE_UNRESOLVED,
-                    TaskActivity.ACTIVE,
-                    TaskActivity.UNKNOWN,
-                )
-                else ActionMethod.STATUS
-            )
-            self._schedule_action(current, unproven, method)
-            return
-
-        pending_reset = next(
-            (
-                task
-                for task in current.tasks
-                if task.reset_required and task.task_id not in self._context.reset_completed_tasks
-            ),
-            None,
-        )
-        if pending_reset is not None:
-            self._schedule_action(current, pending_reset, ActionMethod.RESET)
-            return
-        self._finish_reset(True)
-
-    def _reduce(self, event: _Event) -> Any:
-        """Pure transition function plus immutable context commit."""
-        c = self._context
-        if c.shutdown == ShutdownState.CLOSED:
-            return False
-        if c.shutdown == ShutdownState.CLOSING and event.kind not in (
-            "action_deadline",
-            "action_finished",
-            "effect_rejected",
-            "shutdown",
-            "shutdown_deadline",
-        ):
-            return False
-        if event.kind == "start_planning" and c.state in (
-            LifecycleState.IDLE,
-            LifecycleState.READY,
-        ):
-            token = str(uuid.uuid4())
+        if self._context.shutdown_result is None:
             self._commit(
-                replace(
-                    c,
-                    state=LifecycleState.PLANNING,
-                    planning_token=token,
-                    ready_plan=None,
-                    ready_plan_id=None,
-                    diagnostic=None,
-                )
+                shutdown_result=ShutdownResult(success, diagnostic),
+                shutdown_deadline=None if not success else self._context.shutdown_deadline,
             )
-            return token
-        if event.kind == "cancel_planning" and c.state == LifecycleState.PLANNING:
-            self._commit(replace(c, state=LifecycleState.IDLE, planning_token=None))
-            return True
-        if (
-            event.kind == "plan_ready"
-            and c.state == LifecycleState.PLANNING
-            and event.payload is not None
-        ):
-            plan_id = str(uuid.uuid4())
-            self._commit(
-                replace(
-                    c,
-                    state=LifecycleState.READY,
-                    ready_plan=event.payload,
-                    ready_plan_id=plan_id,
-                    planning_token=None,
-                    diagnostic=None,
-                )
-            )
-            return plan_id
-        if event.kind == "planning_failed" and c.state == LifecycleState.PLANNING:
-            self._commit(
-                replace(
-                    c,
-                    state=LifecycleState.IDLE,
-                    planning_token=None,
-                    ready_plan=None,
-                    ready_plan_id=None,
-                    diagnostic=event.diagnostic or "planning failed",
-                )
-            )
-            return True
-        if event.kind == "clear_ready_plan" and c.state == LifecycleState.READY:
-            self._commit(replace(c, state=LifecycleState.IDLE, ready_plan=None, ready_plan_id=None))
-            return True
-        if event.kind == "dispatch_start" and c.state in (
-            LifecycleState.IDLE,
-            LifecycleState.READY,
-        ):
-            handle, plan = event.payload
-            self._commit(
-                replace(
-                    c,
-                    state=LifecycleState.DISPATCHING,
-                    ready_plan=None,
-                    ready_plan_id=None,
-                    active=Operation(
-                        handle,
-                        plan,
-                        tuple(
-                            TaskRecord(str(uuid.uuid4()), e.task_name, e, TaskActivity.NOT_STARTED)
-                            for e in plan.entries
-                        ),
-                    ),
-                    fault=None,
-                    diagnostic=None,
-                    reset_handle=None,
-                    reset_proven_inactive=frozenset(),
-                    reset_completed_tasks=frozenset(),
-                    reset_deadline=None,
-                    shutdown_result=None,
-                    shutdown_deadline=None,
-                )
-            )
-            return True
-        if event.kind == "reset_deadline":
-            reset_handle = self._context.reset_handle
-            if (
-                self._reset_pending()
-                and reset_handle is not None
-                and event.payload == reset_handle.reset_id
-            ):
-                self._finish_reset(False, "fault reset deadline exceeded")
-                return True
-            return False
-        if event.kind == "shutdown_deadline":
-            if (
-                c.shutdown == ShutdownState.CLOSING
-                and c.shutdown_result is None
-                and event.payload == c.shutdown_deadline
-            ):
-                self._finish_shutdown(False, "shutdown safety deadline exceeded")
-                return True
-            return False
-        op = c.active
-        if event.kind == "effect_rejected":
-            if (
-                op is None
-                or event.operation_id != op.handle.operation_id
-                or event.attempt_id != op.handle.attempt_id
-            ):
-                return False
-            task_index = next(
-                (i for i, task in enumerate(op.tasks) if task.task_id == event.task_id), None
-            )
-            if task_index is None:
-                return False
-            task = op.tasks[task_index]
-            if (
-                task.action is None
-                or task.action.action_id != event.action_id
-                or task.action.method != event.method
-            ):
-                return False
-            if event.reset_id is not None:
-                current_reset_id = c.reset_handle.reset_id if c.reset_handle is not None else None
-                if event.reset_id != current_reset_id:
-                    tasks = list(op.tasks)
-                    tasks[task_index] = replace(task, action=None)
-                    self._commit(replace(c, active=replace(op, tasks=tuple(tasks))))
-                    if self._reset_pending():
-                        self._reconcile_reset(self._context.active)
-                    return True
-            activity = (
-                TaskActivity.INACTIVE if event.method == ActionMethod.EXECUTE else task.activity
-            )
-            tasks = list(op.tasks)
-            tasks[task_index] = replace(task, action=None, activity=activity)
-            self._commit(replace(c, active=replace(op, tasks=tuple(tasks))))
-            if c.shutdown == ShutdownState.CLOSING and c.shutdown_result is None:
-                self._finish_shutdown(False, "shutdown dropped an unresolved coordinator effect")
-            return True
-        if event.kind in ("action_deadline", "action_finished"):
-            if (
-                op is None
-                or event.operation_id != op.handle.operation_id
-                or event.attempt_id != op.handle.attempt_id
-                or event.task_id not in {t.task_id for t in op.tasks}
-            ):
-                return False
-            task_index = next(i for i, task in enumerate(op.tasks) if task.task_id == event.task_id)
-            task = op.tasks[task_index]
-            if (
-                task.action is None
-                or task.action.action_id != event.action_id
-                or task.action.method != event.method
-            ):
-                return False
-            if event.reset_id is not None:
-                current_reset_id = c.reset_handle.reset_id if c.reset_handle is not None else None
-                if event.reset_id != current_reset_id:
-                    if event.kind == "action_deadline":
-                        return False
-                    tasks = list(op.tasks)
-                    tasks[task_index] = replace(task, action=None)
-                    refreshed = replace(op, tasks=tuple(tasks))
-                    self._commit(replace(c, active=refreshed))
-                    self._reconcile_reset(refreshed)
-                    return True
-            event_detail = f"task={task.task_name} action={event.action_id} outcome={event.outcome.value if event.outcome is not None else 'unknown'}"
-            if event.kind == "action_deadline":
-                if task.action.deadline_reported:
-                    return False
-                if not self._action_was_started(task.action.action_id):
-                    return self._reduce(replace(event, kind="effect_rejected"))
-                action = replace(task.action, deadline_reported=True)
-                tasks = list(op.tasks)
-                tasks[task_index] = replace(
-                    task, action=action, activity=TaskActivity.UNKNOWN, cancel_required=True
-                )
-                with self._gateway_condition:
-                    self._started_actions.discard(task.action.action_id)
-                fault_op = replace(op, tasks=tuple(tasks), uncertain=True)
-                result = ExecutionResult(op.handle, Outcome.UNKNOWN, "coordinator action deadline")
-                self._commit(
-                    replace(
-                        c,
-                        state=LifecycleState.FAULT,
-                        fault="coordinator action deadline",
-                        diagnostic="coordinator action deadline",
-                        active=fault_op,
-                    )
-                )
-                if c.shutdown == ShutdownState.CLOSING:
-                    self._finish_shutdown(False, "shutdown safety unresolved: action deadline")
-                    return True
-                if self._reset_pending():
-                    self._finish_reset(False, "fault reconciliation action deadline")
-                    return True
-                self._record_dispatch_result_if_absent(result)
-                self._schedule_actions(fault_op, fault_op.tasks, ActionMethod.CANCEL)
-                return True
-            tasks = list(op.tasks)
-            with self._gateway_condition:
-                self._started_actions.discard(task.action.action_id)
-            if event.outcome in (Outcome.ACCEPTED, Outcome.RUNNING):
-                activity = TaskActivity.ACTIVE
-            elif event.outcome == Outcome.COMPLETED:
-                activity = TaskActivity.COMPLETED
-            elif event.outcome == Outcome.CANCELLED:
-                activity = (
-                    TaskActivity.CANCELLED
-                    if event.method == ActionMethod.CANCEL or c.state == LifecycleState.CANCELLING
-                    else TaskActivity.UNKNOWN
-                )
-            elif event.outcome == Outcome.INACTIVE:
-                activity = TaskActivity.INACTIVE
-            elif event.outcome == Outcome.FAILED:
-                activity = TaskActivity.REMOTE_FAULT
-            elif event.outcome == Outcome.REJECTED and event.method == ActionMethod.EXECUTE:
-                activity = TaskActivity.INACTIVE
-            else:
-                activity = TaskActivity.UNKNOWN
-            tasks[task_index] = replace(
-                task,
-                activity=activity,
-                action=None,
-                cancel_required=task.cancel_required
-                or (c.state in (LifecycleState.CANCELLING, LifecycleState.FAULT)),
-                reset_required=task.reset_required or event.outcome == Outcome.FAILED,
-            )
-            next_op = replace(op, tasks=tuple(tasks))
-            self._commit(replace(c, active=next_op))
-            if c.shutdown == ShutdownState.CLOSING:
-                if self._context.shutdown_result is None:
-                    self._maybe_finish_shutdown()
-                return True
-            if self._reset_pending():
-                self._reconcile_reset(next_op, event)
-                return True
-            if c.state == LifecycleState.FAULT:
-                if event.method != ActionMethod.CANCEL:
-                    self._schedule_actions(next_op, next_op.tasks, ActionMethod.CANCEL)
-                return True
-            if event.method == ActionMethod.STATUS and event.outcome in (
-                Outcome.UNKNOWN,
-                Outcome.FAILED,
-            ):
-                fault_op = replace(next_op, uncertain=True)
-                diagnostic = f"status is unsafe: {event_detail}"
-                result = ExecutionResult(op.handle, Outcome.UNKNOWN, diagnostic)
-                self._commit(
-                    replace(
-                        self._context,
-                        state=LifecycleState.FAULT,
-                        fault=diagnostic,
-                        diagnostic=diagnostic,
-                        active=fault_op,
-                    )
-                )
-                self._record_dispatch_result_if_absent(result)
-                self._schedule_actions(fault_op, fault_op.tasks, ActionMethod.CANCEL)
-                return True
-            if event.method == ActionMethod.CANCEL and event.outcome in (
-                Outcome.UNKNOWN,
-                Outcome.FAILED,
-            ):
-                fault_op = replace(next_op, uncertain=True)
-                diagnostic = (
-                    "cancellation is uncertain"
-                    if event.outcome == Outcome.UNKNOWN
-                    else "cancellation failed"
-                )
-                result = ExecutionResult(op.handle, Outcome.UNKNOWN, diagnostic)
-                self._commit(
-                    replace(
-                        self._context,
-                        state=LifecycleState.FAULT,
-                        fault=diagnostic,
-                        diagnostic=diagnostic,
-                        active=fault_op,
-                    )
-                )
-                self._record_dispatch_result_if_absent(result)
-                if event.outcome == Outcome.FAILED:
-                    self._schedule_actions(fault_op, fault_op.tasks, ActionMethod.CANCEL)
-                return True
-            if (
-                c.state == LifecycleState.CANCELLING
-                and event.method == ActionMethod.STATUS
-                and event.outcome == Outcome.RUNNING
-            ):
-                self._schedule_actions(next_op, (tasks[task_index],), ActionMethod.CANCEL)
-                return True
-            if (
-                event.method == ActionMethod.STATUS
-                and event.outcome in (Outcome.INACTIVE, Outcome.CANCELLED)
-                and c.state == LifecycleState.RUNNING
-            ):
-                diagnostic = f"status reported terminal failure: {event_detail}"
-                failed_op = replace(
-                    next_op,
-                    cancel_requested=True,
-                    cleanup_required=True,
-                    rejected=False,
-                    failed=True,
-                    diagnostic=diagnostic,
-                )
-                self._commit(
-                    replace(
-                        self._context,
-                        state=LifecycleState.CANCELLING,
-                        active=failed_op,
-                        diagnostic=diagnostic,
-                    )
-                )
-                self._schedule_actions(failed_op, failed_op.tasks, ActionMethod.CANCEL)
-                return True
-            if event.method == ActionMethod.EXECUTE and event.outcome in (
-                Outcome.REJECTED,
-                Outcome.UNKNOWN,
-                Outcome.FAILED,
-            ):
-                if event.outcome == Outcome.REJECTED:
-                    skipped = tuple(
-                        replace(item, activity=TaskActivity.INACTIVE)
-                        if item.activity == TaskActivity.NOT_STARTED
-                        else item
-                        for item in next_op.tasks
-                    )
-                    next_op = replace(next_op, tasks=skipped)
-                    self._commit(replace(self._context, active=next_op))
-                if event.outcome != Outcome.REJECTED:
-                    fault_op = replace(next_op, uncertain=True)
-                    diagnostic = f"execute outcome is uncertain: {event_detail}"
-                    result = ExecutionResult(op.handle, Outcome.UNKNOWN, diagnostic)
-                    self._commit(
-                        replace(
-                            self._context,
-                            state=LifecycleState.FAULT,
-                            fault=diagnostic,
-                            diagnostic=diagnostic,
-                            active=fault_op,
-                        )
-                    )
-                    self._record_dispatch_result_if_absent(result)
-                    self._schedule_actions(fault_op, fault_op.tasks, ActionMethod.CANCEL)
-                elif any(
-                    t.activity in (TaskActivity.ACTIVE, TaskActivity.UNKNOWN) for t in next_op.tasks
-                ):
-                    diagnostic = f"execute rejected: {event_detail}"
-                    rejected_op = replace(
-                        next_op,
-                        cancel_requested=True,
-                        rejected=True,
-                        cleanup_required=True,
-                        diagnostic=diagnostic,
-                    )
-                    rejection_result = ExecutionResult(op.handle, Outcome.REJECTED, diagnostic)
-                    self._commit(
-                        replace(
-                            self._context,
-                            state=LifecycleState.CANCELLING,
-                            active=rejected_op,
-                            diagnostic=diagnostic,
-                        )
-                    )
-                    self._record_dispatch_result_if_absent(rejection_result)
-                    self._schedule_actions(rejected_op, rejected_op.tasks, ActionMethod.CANCEL)
-                else:
-                    diagnostic = f"execute rejected: {event_detail}"
-                    result = ExecutionResult(next_op.handle, Outcome.REJECTED, diagnostic)
-                    self._commit(
-                        replace(
-                            self._context,
-                            state=LifecycleState.IDLE,
-                            active=None,
-                            diagnostic=diagnostic,
-                            terminal_results=(
-                                *self._context.terminal_results,
-                                (next_op.handle, result),
-                            )[-16:],
-                        )
-                    )
-                    self._record_dispatch_result_if_absent(result)
-                return True
-            self._advance(next_op, event)
-            return True
-        if (
-            (
-                event.kind == "cancel"
-                or (
-                    event.kind == "cancel_if_current"
-                    and op is not None
-                    and event.payload == op.handle
-                )
-            )
-            and op is not None
-            and c.state in (LifecycleState.DISPATCHING, LifecycleState.RUNNING)
-        ):
-            cancel_tasks: tuple[TaskRecord, ...] = tuple(
-                replace(task, activity=TaskActivity.INACTIVE, cancel_required=True)
-                if task.activity == TaskActivity.NOT_STARTED
-                else replace(task, cancel_required=True)
-                if task.activity == TaskActivity.EXECUTE_UNRESOLVED
-                else task
-                for task in op.tasks
-            )
-            next_op = replace(op, tasks=cancel_tasks, cancel_requested=True)
-            self._commit(replace(c, state=LifecycleState.CANCELLING, active=next_op))
-            if c.state == LifecycleState.DISPATCHING and not dict(c.dispatch_results).get(
-                op.handle
-            ):
-                result = ExecutionResult(
-                    op.handle, Outcome.CANCELLED, "cancelled before dispatch completed"
-                )
-                self._record_dispatch_result_if_absent(result)
-            self._schedule_actions(next_op, cancel_tasks, ActionMethod.CANCEL)
-            return True
-        if event.kind == "poll_tick" and op is not None and c.state == LifecycleState.RUNNING:
-            candidate = next(
-                (
-                    item
-                    for item in op.tasks
-                    if item.activity == TaskActivity.ACTIVE and item.action is None
-                ),
-                None,
-            )
-            if candidate is not None:
-                self._schedule_actions(op, (candidate,), ActionMethod.STATUS)
-            return True
-        if event.kind == "fault":
-            diagnostic = event.diagnostic or "remote uncertainty"
-            self._commit(
-                replace(
-                    c,
-                    state=LifecycleState.FAULT,
-                    fault=diagnostic,
-                    diagnostic=diagnostic,
-                    active=replace(op, uncertain=True) if op else None,
-                )
-            )
-            return True
-        if event.kind == "shutdown":
-            if self._reset_pending():
-                self._finish_reset(False, "shutdown interrupted fault reset")
-                c = self._context
-                op = c.active
-            if op is not None:
-                shutdown_tasks: tuple[TaskRecord, ...] = tuple(
-                    replace(task, activity=TaskActivity.INACTIVE, cancel_required=True)
-                    if task.activity == TaskActivity.NOT_STARTED
-                    else replace(task, cancel_required=True)
-                    for task in op.tasks
-                )
-                op = replace(op, tasks=shutdown_tasks, cancel_requested=True, cleanup_required=True)
-            self._commit(
-                replace(
-                    c,
-                    shutdown=ShutdownState.CLOSING,
-                    state=LifecycleState.CANCELLING if op else LifecycleState.IDLE,
-                    planning_token=None,
-                    ready_plan=None,
-                    ready_plan_id=None,
-                    active=op,
-                    shutdown_deadline=event.payload,
-                )
-            )
-            if op is None:
-                self._finish_shutdown(True)
-            else:
-                self._schedule_actions(op, op.tasks, ActionMethod.CANCEL)
-                self._maybe_finish_shutdown()
-            return True
-        return False
-
-    def _advance(self, op: Operation, event: _Event) -> None:
-        # This is called only by the owner after a correlated result.
-        cancelling = op.cancel_requested or self._context.state in (
-            LifecycleState.CANCELLING,
-            LifecycleState.FAULT,
-        )
-        if cancelling:
-            self._schedule_actions(op, op.tasks, ActionMethod.CANCEL)
-        if (
-            not cancelling
-            and event.method == ActionMethod.EXECUTE
-            and event.outcome == Outcome.ACCEPTED
-        ):
-            if op.next_index + 1 < len(op.tasks):
-                self._commit(
-                    replace(self._context, active=replace(op, next_index=op.next_index + 1))
-                )
-                self._schedule_execute(self._context.active)
-                return
-            if all(task.activity == TaskActivity.ACTIVE for task in op.tasks):
-                result = ExecutionResult(op.handle, Outcome.ACCEPTED)
-                self._commit(replace(self._context, state=LifecycleState.RUNNING))
-                self._record_dispatch_result_if_absent(result)
-                return
-        terminal = all(
-            task.action is None
-            and task.activity
-            in (TaskActivity.COMPLETED, TaskActivity.CANCELLED, TaskActivity.INACTIVE)
-            for task in op.tasks
-        )
-        completed = all(
-            task.activity == TaskActivity.COMPLETED and task.action is None for task in op.tasks
-        )
-        if terminal and (op.cancel_requested or completed):
-            if self._context.state == LifecycleState.FAULT:
-                return
-            outcome = (
-                Outcome.REJECTED
-                if op.rejected
-                else Outcome.FAILED
-                if op.failed
-                else Outcome.CANCELLED
-                if op.cancel_requested
-                else Outcome.COMPLETED
-            )
-            result = ExecutionResult(op.handle, outcome, op.diagnostic)
-            self._commit(
-                replace(
-                    self._context,
-                    state=LifecycleState.IDLE,
-                    active=None,
-                    diagnostic=op.diagnostic or self._context.diagnostic,
-                    terminal_results=(*self._context.terminal_results, (op.handle, result))[-16:],
-                )
-            )
-
-    def _schedule_execute(self, op: Operation | None) -> None:
-        if op is None or op.next_index >= len(op.tasks):
-            return
-        task = op.tasks[op.next_index]
-        if task.action is not None:
-            return
-        self._schedule_action(op, task, ActionMethod.EXECUTE)
-
-    def _schedule_action(self, op: Operation, task: TaskRecord, method: ActionMethod) -> None:
-        self._schedule_actions(op, (task,), method)
-
-    def _schedule_actions(self, op: Operation, requested: Any, method: ActionMethod) -> None:
-        """Allocate and commit a whole cleanup batch against one operation."""
-        if (
-            self._gateway_gate in (_GatewayGateState.SEALED, _GatewayGateState.STOPPED)
-            or self._context.shutdown == ShutdownState.CLOSED
-            or (self._context.shutdown == ShutdownState.CLOSING and method != ActionMethod.CANCEL)
-        ):
-            return
-        candidates = tuple(
-            task
-            for task in requested
-            if task.action is None
-            and (
-                method in (ActionMethod.STATUS, ActionMethod.RESET)
-                or task.activity
-                not in (
-                    TaskActivity.INACTIVE,
-                    TaskActivity.COMPLETED,
-                    TaskActivity.CANCELLED,
-                    TaskActivity.REMOTE_FAULT,
-                )
-            )
-        )
-        if not candidates:
-            return
-        now = time.monotonic()
-        reset_id = (
-            self._context.reset_handle.reset_id
-            if self._reset_pending() and self._context.reset_handle is not None
-            else None
-        )
-        actions = {
-            task.task_id: ActionRecord(
-                str(uuid.uuid4()), method, now, now + self._timeout, reset_id=reset_id
-            )
-            for task in candidates
-        }
-        task_map = {task.task_id: task for task in op.tasks}
-        for task in candidates:
-            task_map[task.task_id] = replace(
-                task,
-                action=actions[task.task_id],
-                activity=TaskActivity.EXECUTE_UNRESOLVED
-                if method == ActionMethod.EXECUTE
-                else task.activity,
-            )
-        updated = replace(op, tasks=tuple(task_map[task.task_id] for task in op.tasks))
-        self._commit(replace(self._context, active=updated))
-        self._effects.extend((updated, task_map[task.task_id], method) for task in candidates)
-
-    def _process_effects(self) -> None:
-        effects, self._effects = self._effects, []
-        if self._gateway_gate in (_GatewayGateState.SEALED, _GatewayGateState.STOPPED):
-            if (
-                self._context.shutdown == ShutdownState.CLOSING
-                and self._context.shutdown_result is None
-                and effects
-            ):
-                self._finish_shutdown(False, "shutdown gateway closed before pending effects")
-            return
-        for op, task, method in effects:
-            admitted = self._run_action(op, task, method)
-            if (
-                not admitted
-                and self._context.shutdown == ShutdownState.CLOSING
-                and self._context.shutdown_result is None
-            ):
-                self._finish_shutdown(False, "shutdown dropped an unresolved coordinator effect")
-
-    def _invoke_gateway_action(
-        self, action_id: str, task_name: str, method: ActionMethod, request: Any
-    ) -> tuple[bool, Any]:
-        """Lease a gateway call immediately before invoking it; no context lock crosses I/O."""
-        with self._gateway_condition:
-            allowed = self._gateway_gate == _GatewayGateState.OPEN or (
-                self._gateway_gate == _GatewayGateState.CANCEL_ONLY
-                and method == ActionMethod.CANCEL
-            )
-            if not allowed:
-                return False, None
-            self._rpc_inflight += 1
-            self._admitted_actions.add(action_id)
-            self._started_actions.add(action_id)
-        try:
-            outcome: Any = Outcome.UNKNOWN
-            try:
-                if method == ActionMethod.EXECUTE:
-                    outcome = self._gateway.execute(task_name, request)
-                elif method == ActionMethod.CANCEL:
-                    outcome = self._gateway.cancel(task_name)
-                elif method == ActionMethod.STATUS:
-                    outcome = self._gateway.status(task_name)
-                elif method == ActionMethod.RESET:
-                    outcome = self._gateway.reset(task_name)
-                elif method == ActionMethod.GRIPPER_SET:
-                    outcome = self._gateway.set_gripper_position(task_name, float(request))
-                else:
-                    outcome = self._gateway.get_gripper_position(task_name)
-            except Exception:
-                outcome = Outcome.UNKNOWN
-            return True, outcome
-        finally:
-            with self._gateway_condition:
-                self._rpc_inflight -= 1
-                self._admitted_actions.discard(action_id)
-                self._gateway_condition.notify_all()
-
-    def _action_was_admitted(self, action_id: str) -> bool:
-        with self._gateway_condition:
-            return action_id in self._admitted_actions
-
-    def _action_was_started(self, action_id: str) -> bool:
-        with self._gateway_condition:
-            return action_id in self._started_actions
-
-    def _run_action(self, op: Operation, task: TaskRecord, method: ActionMethod) -> bool:
-        action = task.action
-        if action is None:
-            return False
-        request = task.entry.request
-
-        def call(_cancel: threading.Event) -> None:
-            admitted, outcome = self._invoke_gateway_action(
-                action.action_id, task.task_name, method, request
-            )
-            if admitted:
-                self._events.put(
-                    _Call(
-                        lambda: self._reduce(
-                            _Event(
-                                "action_finished",
-                                op.handle.operation_id,
-                                op.handle.attempt_id,
-                                task.task_id,
-                                action.action_id,
-                                method,
-                                outcome,
-                                reset_id=action.reset_id,
-                            )
-                        )
-                    )
-                )
-            else:
-                self._events.put(
-                    _Call(
-                        lambda: self._reduce(
-                            _Event(
-                                "effect_rejected",
-                                op.handle.operation_id,
-                                op.handle.attempt_id,
-                                task.task_id,
-                                action.action_id,
-                                method,
-                                reset_id=action.reset_id,
-                            )
-                        )
-                    )
-                )
-
-        def deadline(cancel: threading.Event) -> None:
-            if cancel.wait(max(0.0, action.deadline - time.monotonic())):
-                return
-            self._events.put(
-                _Call(
-                    lambda: self._reduce(
-                        _Event(
-                            "action_deadline",
-                            op.handle.operation_id,
-                            op.handle.attempt_id,
-                            task.task_id,
-                            action.action_id,
-                            method,
-                            reset_id=action.reset_id,
-                        )
-                    )
-                )
-            )
-
-        self._start_auxiliary(call, name=f"action-{action.action_id}")
-        self._start_auxiliary(deadline, name=f"deadline-{action.action_id}")
-        return True
 
     def start_planning(self) -> str | None:
-        return cast("str | None", self._submit(lambda: self._reduce(_Event("start_planning"))))
+        def fn() -> str | None:
+            if self._context.state not in (LifecycleState.IDLE, LifecycleState.READY):
+                return None
+            token = str(uuid.uuid4())
+            self._commit(
+                state=LifecycleState.PLANNING,
+                planning_token=token,
+                ready_plan=None,
+                ready_plan_id=None,
+                diagnostic=None,
+            )
+            return token
+
+        return self._submit(fn)
 
     def complete_planning(self, token: str, plan: PlanInput) -> CommandResult[str]:
         def fn() -> CommandResult[str]:
-            if self._context.planning_token != token:
+            if token != self._context.planning_token:
                 return CommandResult(
-                    False, diagnostic="planning token mismatch", snapshot=self.snapshot()
+                    False, diagnostic="planning token mismatch", snapshot=self._snapshot()
                 )
-            if not self._validate_plan(plan):
-                self._reduce(_Event("planning_failed", diagnostic="invalid prepared plan"))
+            if not self._valid(plan):
+                self._commit(
+                    state=LifecycleState.IDLE,
+                    planning_token=None,
+                    diagnostic="invalid prepared plan",
+                )
                 return CommandResult(
-                    False, diagnostic="invalid prepared plan", snapshot=self.snapshot()
+                    False, diagnostic="invalid prepared plan", snapshot=self._snapshot()
                 )
-            plan_id = self._reduce(_Event("plan_ready", payload=plan))
-            return CommandResult(True, plan_id, snapshot=self.snapshot())
+            pid = str(uuid.uuid4())
+            self._commit(
+                state=LifecycleState.READY, ready_plan=plan, ready_plan_id=pid, planning_token=None
+            )
+            return CommandResult(True, pid, snapshot=self._snapshot())
 
         return self._submit(fn)
 
     def fail_planning(self, token: str, diagnostic: str) -> CommandResult[None]:
-        return self._submit(
-            lambda: CommandResult(
-                self._context.planning_token == token,
-                diagnostic=diagnostic
-                if self._context.planning_token == token
-                else "planning token mismatch",
-                snapshot=self.snapshot(),
+        def fn() -> CommandResult[None]:
+            ok = token == self._context.planning_token
+            if ok:
+                self._commit(state=LifecycleState.IDLE, planning_token=None, diagnostic=diagnostic)
+            return CommandResult(
+                ok,
+                diagnostic=diagnostic if ok else "planning token mismatch",
+                snapshot=self._snapshot(),
             )
-            if self._context.planning_token != token
-            else (
-                self._reduce(_Event("planning_failed", diagnostic=diagnostic))
-                and CommandResult(True, diagnostic=diagnostic, snapshot=self.snapshot())
-            )
-        )
+
+        return self._submit(fn)
 
     def cancel_planning(self) -> CommandResult[None]:
-        return self._submit(
-            lambda: CommandResult(
-                bool(self._reduce(_Event("cancel_planning"))), snapshot=self.snapshot()
-            )
-        )
+        return self._submit(lambda: self._planning_command(LifecycleState.PLANNING, "cancelled"))
+
+    def _planning_command(self, state: LifecycleState, diagnostic: str) -> CommandResult[None]:
+        ok = self._context.state == state
+        if ok:
+            self._commit(state=LifecycleState.IDLE, planning_token=None, diagnostic=diagnostic)
+        return CommandResult(ok, snapshot=self._snapshot())
 
     def clear_ready_plan(self) -> CommandResult[None]:
-        return self._submit(
-            lambda: CommandResult(
-                bool(self._reduce(_Event("clear_ready_plan"))), snapshot=self.snapshot()
+        def fn() -> CommandResult[None]:
+            if self._context.state != LifecycleState.READY:
+                return CommandResult(False, snapshot=self._snapshot())
+            self._commit(
+                state=LifecycleState.IDLE,
+                ready_plan=None,
+                ready_plan_id=None,
+                diagnostic="",
             )
-        )
-
-    def execute_explicit(self, prepared_plan: PlanInput) -> CommandResult[OperationHandle]:
-        def fn() -> CommandResult[OperationHandle]:
-            if self._context.state in (
-                LifecycleState.DISPATCHING,
-                LifecycleState.RUNNING,
-                LifecycleState.CANCELLING,
-            ) and self._validate_plan(prepared_plan):
-                handle = OperationHandle(str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
-                result = ExecutionResult(handle, Outcome.REJECTED, "execution already active")
-                self._commit(
-                    replace(
-                        self._context,
-                        diagnostic="execution already active",
-                        terminal_results=(*self._context.terminal_results, (handle, result))[-16:],
-                    )
-                )
-                return CommandResult(
-                    False,
-                    handle,
-                    diagnostic="execution already active",
-                    snapshot=self.snapshot(),
-                )
-            if self._context.state not in (
-                LifecycleState.IDLE,
-                LifecycleState.READY,
-            ) or not self._validate_plan(prepared_plan):
-                self._commit(
-                    replace(self._context, diagnostic="execution unavailable or invalid plan")
-                )
-                return CommandResult(
-                    False,
-                    diagnostic="execution unavailable or invalid plan",
-                    snapshot=self.snapshot(),
-                )
-            handle = OperationHandle(str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
-            if self._reduce(_Event("dispatch_start", payload=(handle, prepared_plan))):
-                self._schedule_execute(self._context.active)
-                return CommandResult(True, handle, snapshot=self.snapshot())
-            return CommandResult(False, diagnostic="dispatch rejected", snapshot=self.snapshot())
+            return CommandResult(True, snapshot=self._snapshot())
 
         return self._submit(fn)
 
-    def execute_ready(self) -> CommandResult[OperationHandle]:
-        def fn() -> CommandResult[OperationHandle]:
-            if self._context.ready_plan is None or self._context.ready_plan_id is None:
-                return CommandResult(False, diagnostic="no ready plan", snapshot=self.snapshot())
-            plan = self._context.ready_plan
-            return self._execute_owner(plan, self._context.ready_plan_id)
-
-        return self._submit(fn)
-
-    def _execute_owner(
+    def _execute(
         self, plan: PlanInput, plan_id: str | None = None
     ) -> CommandResult[OperationHandle]:
-        handle = OperationHandle(plan_id or str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
-        if self._reduce(_Event("dispatch_start", payload=(handle, plan))):
-            self._schedule_execute(self._context.active)
-            return CommandResult(True, handle, snapshot=self.snapshot())
-        return CommandResult(False, diagnostic="dispatch rejected", snapshot=self.snapshot())
+        if self._context.state not in (
+            LifecycleState.IDLE,
+            LifecycleState.READY,
+        ) or not self._valid(plan):
+            return CommandResult(
+                False, diagnostic="execution unavailable or invalid plan", snapshot=self._snapshot()
+            )
+        h = OperationHandle(plan_id or str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
+        op = Operation(
+            h,
+            plan,
+            tuple(
+                TaskRecord(str(uuid.uuid4()), e.task_name, e, TaskActivity.NOT_STARTED)
+                for e in plan.entries
+            ),
+        )
+        self._commit(
+            state=LifecycleState.DISPATCHING,
+            ready_plan=None,
+            ready_plan_id=None,
+            active=op,
+            diagnostic=None,
+        )
+        self._start_action(op, op.tasks[0], ActionMethod.EXECUTE)
+        return CommandResult(True, h, snapshot=self._snapshot())
+
+    def execute_explicit(self, prepared_plan: PlanInput) -> CommandResult[OperationHandle]:
+        return self._submit(lambda: self._execute(prepared_plan))
+
+    def execute_ready(self) -> CommandResult[OperationHandle]:
+        return self._submit(
+            lambda: self._execute(self._context.ready_plan, self._context.ready_plan_id)
+            if self._context.ready_plan is not None
+            else CommandResult(False, diagnostic="no ready plan", snapshot=self._snapshot())
+        )
 
     def cancel(self) -> CommandResult[None]:
-        return self._submit(
-            lambda: CommandResult(bool(self._reduce(_Event("cancel"))), snapshot=self.snapshot())
-        )
+        return self._submit(self._cancel_owner, closing=True)
+
+    def _cancel_owner(self) -> CommandResult[None]:
+        op = self._context.active
+        if op is None or self._context.state not in (
+            LifecycleState.DISPATCHING,
+            LifecycleState.RUNNING,
+        ):
+            return CommandResult(False, snapshot=self._snapshot())
+        self._begin_cancellation()
+        return CommandResult(True, snapshot=self._snapshot())
 
     def cancel_if_current(self, handle: OperationHandle) -> CommandResult[None]:
-        """Cancel only if ``handle`` is the current operation at the owner event."""
-
-        def fn() -> CommandResult[None]:
-            accepted = bool(self._reduce(_Event("cancel_if_current", payload=handle)))
-            current = self._context.active
-            diagnostic = (
-                ""
-                if accepted
-                else "operation is no longer current"
-                if current is None or current.handle != handle
-                else f"cancellation rejected in state {self._context.state.name}"
-            )
-            return CommandResult(
-                accepted,
-                diagnostic=diagnostic,
-                snapshot=self.snapshot(),
-            )
-
-        return self._submit(fn)
-
-    def poll(self) -> CommandResult[None]:
         return self._submit(
-            lambda: CommandResult(bool(self._reduce(_Event("poll_tick"))), snapshot=self.snapshot())
+            lambda: self._cancel_owner()
+            if self._context.active and self._context.active.handle == handle
+            else CommandResult(
+                False, diagnostic="operation is no longer current", snapshot=self._snapshot()
+            ),
+            closing=True,
         )
 
-    def set_gripper_position(self, hardware_id: str, position: float) -> CommandResult[Outcome]:
-        def fn() -> CommandResult[Outcome]:
-            admitted, outcome = self._invoke_gateway_action(
-                str(uuid.uuid4()), hardware_id, ActionMethod.GRIPPER_SET, position
+    def poll(self) -> CommandResult[None]:
+        def fn() -> CommandResult[None]:
+            self._poll_active()
+            return CommandResult(
+                self._context.state == LifecycleState.RUNNING,
+                snapshot=self._snapshot(),
             )
-            if not admitted:
-                return CommandResult(
-                    False, diagnostic="gateway is closing", snapshot=self.snapshot()
-                )
-            return CommandResult(True, outcome, snapshot=self.snapshot())
 
         return self._submit(fn)
+
+    def set_gripper_position(self, hardware_id: str, position: float) -> CommandResult[Outcome]:
+        result = self._submit(lambda: self._gripper(True, hardware_id, position))
+        if isinstance(result, CommandResult):
+            return cast("CommandResult[Outcome]", result)
+        return cast("CommandResult[Outcome]", self._wait_aux(result))
 
     def get_gripper_position(self, hardware_id: str) -> CommandResult[float]:
-        def fn() -> CommandResult[float]:
-            admitted, position = self._invoke_gateway_action(
-                str(uuid.uuid4()), hardware_id, ActionMethod.GRIPPER_GET, None
-            )
-            if not admitted:
-                return CommandResult(
-                    False, diagnostic="gateway is closing", snapshot=self.snapshot()
-                )
-            if not isinstance(position, (int, float)):
-                return CommandResult(
-                    False,
-                    diagnostic="gateway returned no gripper position",
-                    snapshot=self.snapshot(),
-                )
-            return CommandResult(True, float(position), snapshot=self.snapshot())
+        result = self._submit(lambda: self._gripper(False, hardware_id, None))
+        if isinstance(result, CommandResult):
+            return cast("CommandResult[float]", result)
+        return cast("CommandResult[float]", self._wait_aux(result))
 
-        return self._submit(fn)
+    def _gripper(
+        self, setter: bool, hardware: str, position: float | None
+    ) -> AuxiliaryTicket | CommandResult[Any]:
+        if self._gate != "open":
+            return CommandResult(False, diagnostic="gateway is closing", snapshot=self._snapshot())
+        if setter and position is None:
+            return CommandResult(
+                False, diagnostic="position is required", snapshot=self._snapshot()
+            )
+        now = self._clock_now()
+        if now is None:
+            return CommandResult(
+                False, diagnostic="invalid monotonic clock", snapshot=self._snapshot()
+            )
+        action_id = str(uuid.uuid4())
+        ticket = self._auxiliary.register(action_id, now + self._action_timeout, setter)
+        if setter:
+            assert position is not None
+            fn: Callable[[], Any] = lambda: self._gateway.set_gripper_position(hardware, position)  # noqa: E731
+        else:
+            fn = lambda: self._gateway.get_gripper_position(hardware)  # noqa: E731
+        self._effects.submit_auxiliary(action_id, fn, self._events.put)
+        return ticket
+
+    def _wait_aux(self, ticket: AuxiliaryTicket) -> CommandResult[Any]:
+        start = self._clock_now()
+        if start is None:
+            return CommandResult(
+                False, diagnostic="invalid monotonic clock", snapshot=self._snapshot()
+            )
+        end = start + self._action_timeout
+        with self._condition:
+            while True:
+                result = self._auxiliary.take_result(ticket.action_id)
+                if result is not None:
+                    accepted, value, diagnostic = result
+                    if ticket.setter:
+                        return CommandResult(
+                            accepted and isinstance(value, Outcome),
+                            value if isinstance(value, Outcome) else None,
+                            diagnostic=diagnostic,
+                            snapshot=self._snapshot(),
+                        )
+                    valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+                    return CommandResult(
+                        accepted and valid,
+                        float(value) if valid else None,
+                        diagnostic=diagnostic,
+                        snapshot=self._snapshot(),
+                    )
+                now = self._clock_now()
+                if now is None:
+                    return CommandResult(
+                        False, diagnostic="invalid monotonic clock", snapshot=self._snapshot()
+                    )
+                if now >= end:
+                    return CommandResult(
+                        False,
+                        diagnostic="coordinator auxiliary action timeout",
+                        snapshot=self._snapshot(),
+                    )
+                self._condition.wait(max(0.0, end - now))
+
+    def _wait(self, handle: Any, kind: str, timeout: float) -> CommandResult[Any]:
+        end = time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while time.monotonic() < end:
+                values = (
+                    self._context.dispatch_results
+                    if kind == "dispatch"
+                    else self._context.terminal_results
+                    if kind == "terminal"
+                    else self._context.reset_results
+                )
+                found = dict(values).get(handle)
+                if kind == "terminal":
+                    fault_diagnostic = self._fault_terminal_results.get(handle)
+                    if fault_diagnostic is not None:
+                        return CommandResult(
+                            False,
+                            diagnostic=fault_diagnostic,
+                            snapshot=self._snapshot(),
+                        )
+                if found is not None:
+                    return CommandResult(True, found, snapshot=self._snapshot())
+                if kind == "terminal":
+                    active = self._context.active
+                    if (
+                        active is not None
+                        and active.handle == handle
+                        and self._context.state == LifecycleState.FAULT
+                    ):
+                        return CommandResult(
+                            False,
+                            diagnostic=self._context.diagnostic or "runtime fault",
+                            snapshot=self._snapshot(),
+                        )
+                remaining = end - time.monotonic()
+                self._condition.wait(min(0.1, max(0.0, remaining)))
+        return CommandResult(False, diagnostic="timeout", snapshot=self._snapshot())
 
     def wait_for_dispatch(
         self, handle: OperationHandle, timeout: float = 1.0
@@ -1855,230 +1338,137 @@ class ExecutionRuntime:
     ) -> CommandResult[ExecutionResult]:
         return self._wait(handle, "terminal", timeout)
 
-    def _wait(
-        self, handle: OperationHandle, result_kind: str, timeout: float
-    ) -> CommandResult[ExecutionResult]:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            with self._condition:
-                results = (
-                    self._context.dispatch_results
-                    if result_kind == "dispatch"
-                    else self._context.terminal_results
-                )
-                found = dict(results).get(handle)
-                if found is None:
-                    self._condition.wait(min(0.01, deadline - time.monotonic()))
-            if found is not None:
-                return CommandResult(True, found, snapshot=self.snapshot())
-        return CommandResult(False, diagnostic="timeout", snapshot=self.snapshot())
-
-    def _poll_loop(self) -> None:
-        while not self._stop.wait(self._poll_interval):
-            self._events.put(_Call(lambda: self._reduce(_Event("poll_tick"))))
-
     def reset(self) -> CommandResult[ResetHandle]:
         def fn() -> CommandResult[ResetHandle]:
+            if self._gate != "open":
+                return CommandResult(
+                    False,
+                    diagnostic="reset unavailable while runtime is closing",
+                    snapshot=self._snapshot(),
+                )
+            existing = self._context.reset_handle
+            if existing is not None:
+                prior = dict(self._context.reset_results).get(existing)
+                if prior is not None:
+                    return CommandResult(
+                        False,
+                        existing,
+                        diagnostic=prior.diagnostic,
+                        snapshot=self._snapshot(),
+                    )
+                return CommandResult(True, existing, snapshot=self._snapshot())
             if self._context.state != LifecycleState.FAULT:
                 return CommandResult(
-                    False, diagnostic="reset requires FAULT", snapshot=self.snapshot()
+                    False, diagnostic="reset requires FAULT", snapshot=self._snapshot()
                 )
-            handle = self._context.reset_handle or ResetHandle(str(uuid.uuid4()))
-            if self._context.reset_handle is not None:
-                return CommandResult(True, self._context.reset_handle, snapshot=self.snapshot())
-            deadline = time.monotonic() + max(self._timeout, 0.05)
+            if self._pending:
+                return CommandResult(
+                    False,
+                    diagnostic="reset blocked by unresolved coordinator RPC",
+                    snapshot=self._snapshot(),
+                )
+            now = self._clock_now()
+            if now is None:
+                return CommandResult(
+                    False, diagnostic="invalid monotonic clock", snapshot=self._snapshot()
+                )
+            h = ResetHandle(str(uuid.uuid4()))
             self._commit(
-                replace(
-                    self._context,
-                    reset_handle=handle,
-                    reset_deadline=deadline,
-                    reset_proven_inactive=frozenset(),
-                    reset_completed_tasks=frozenset(),
-                )
+                reset_handle=h,
+                reset_deadline=now + self._action_timeout,
+                reset_proven_inactive=frozenset(),
+                reset_completed_tasks=frozenset(),
             )
-            self._reconcile_reset(self._context.active)
-            self._start_auxiliary(
-                self._reset_deadline, handle, deadline, name=f"reset-deadline-{handle.reset_id}"
-            )
-            return CommandResult(True, handle, snapshot=self.snapshot())
+            op = self._context.active
+            if op:
+                self._reset_next(op)
+            else:
+                self._finish_reset(True)
+            return CommandResult(True, h, snapshot=self._snapshot())
 
-        return self._submit(fn)
-
-    def _reset_deadline(
-        self, cancel: threading.Event, handle: ResetHandle, deadline: float
-    ) -> None:
-        if cancel.wait(max(0.0, deadline - time.monotonic())):
-            return
-        self._events.put(
-            _Call(
-                lambda: self._reduce(
-                    _Event(
-                        "reset_deadline",
-                        payload=handle.reset_id,
-                        reset_id=handle.reset_id,
-                    )
-                )
-            )
-        )
+        return self._submit(fn, closing=True)
 
     def wait_for_reset(
         self, handle: ResetHandle, timeout: float = 1.0
     ) -> CommandResult[ResetResult]:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            with self._condition:
-                result = dict(self._context.reset_results).get(handle)
-                if result is None:
-                    self._condition.wait(min(0.01, deadline - time.monotonic()))
-            if result is not None:
-                return CommandResult(True, result, snapshot=self.snapshot())
-        return CommandResult(False, diagnostic="timeout", snapshot=self.snapshot())
-
-    def _seal_gateway(self) -> None:
-        with self._gateway_condition:
-            if self._gateway_gate in (_GatewayGateState.SEALED, _GatewayGateState.STOPPED):
-                return
-            self._gateway_gate = _GatewayGateState.SEALED
-            self._gateway_condition.notify_all()
-        self._start_auxiliary(self._close_gateway, name="gateway-close")
-
-    def _close_gateway(self, _cancel: threading.Event) -> None:
-        with self._gateway_condition:
-            while self._rpc_inflight:
-                self._gateway_condition.wait()
-            if self._gateway_close_started:
-                return
-            self._gateway_close_started = True
-        try:
-            self._gateway.stop()
-        except BaseException as exc:
-            with self._gateway_condition:
-                self._gateway_close_error = f"gateway close failed: {exc}"
-                self._gateway_condition.notify_all()
-            return
-        else:
-            with self._gateway_condition:
-                self._gateway_gate = _GatewayGateState.STOPPED
-                self._gateway_close_done = True
-                self._gateway_condition.notify_all()
-
-    def _wait_gateway_closed(self, deadline: float) -> bool:
-        with self._gateway_condition:
-            while (
-                not self._gateway_close_done
-                and self._gateway_close_error is None
-                and time.monotonic() < deadline
-            ):
-                self._gateway_condition.wait(min(0.01, deadline - time.monotonic()))
-            return self._gateway_close_done and self._gateway_close_error is None
+        return self._wait(handle, "reset", timeout)
 
     def shutdown(self, timeout: float = 1.0) -> CommandResult[ShutdownResult]:
         with self._shutdown_lock:
-            if self._closed:
-                result = self._context.shutdown_result or ShutdownResult(
-                    False, "runtime is closed without a shutdown result"
-                )
-                return CommandResult(result.success, result, snapshot=self.snapshot())
-            if not self._owner.is_alive() and self._context.shutdown == ShutdownState.CLOSING:
-                result = self._context.shutdown_result or ShutdownResult(
-                    False, "shutdown result unavailable"
-                )
-                if not result.success:
-                    return CommandResult(False, result, snapshot=self.snapshot())
-                self._commit(
-                    replace(self._context, shutdown=ShutdownState.CLOSED, shutdown_result=result)
-                )
-                self._closed = True
-                return CommandResult(result.success, result, snapshot=self.snapshot())
-            deadline = time.monotonic() + max(0.0, timeout)
+            with self._lock:
+                if self._context.shutdown_result is not None:
+                    return CommandResult(
+                        self._context.shutdown_result.success,
+                        self._context.shutdown_result,
+                        snapshot=self._snapshot(),
+                    )
+                if self._shutdown_initiated:
+                    return CommandResult(
+                        False,
+                        diagnostic="shutdown already initiated",
+                        snapshot=self._snapshot(),
+                    )
+                self._shutdown_initiated = True
+                self._gate = "cancel_only"
+        return self._shutdown_wait(timeout)
+
+    def _shutdown_wait(self, timeout: float) -> CommandResult[ShutdownResult]:
+        start = self._clock_now()
+        if start is None:
+            end = time.monotonic() + 1.0
             with self._condition:
-                with self._gateway_condition:
-                    self._closing_requested = True
-                    self._context = replace(
-                        self._context,
-                        shutdown=ShutdownState.CLOSING,
-                        shutdown_deadline=deadline,
-                        revision=self._context.revision + 1,
-                    )
-                    if self._gateway_gate == _GatewayGateState.OPEN:
-                        self._gateway_gate = _GatewayGateState.CANCEL_ONLY
-                    self._gateway_condition.notify_all()
-                self._condition.notify_all()
-
-            self._stop.set()
-            call = _Call(lambda: self._reduce(_Event("shutdown", payload=deadline)))
-            self._events.put(call)
-            remaining = max(0.0, deadline - time.monotonic())
-            try:
-                call.answer.get(timeout=remaining)
-            except queue.Empty:
-                pass
-
+                while self._context.shutdown_result is None and time.monotonic() < end:
+                    self._condition.wait(0.01)
+                result = self._context.shutdown_result
+            if result is None:
+                return CommandResult(
+                    False, diagnostic="invalid monotonic clock", snapshot=self.snapshot()
+                )
+            return CommandResult(False, result, snapshot=self.snapshot())
+        deadline = start + max(0.0, timeout)
+        self._submit(lambda: self._shutdown_owner(deadline), closing=True)
+        while True:
             with self._condition:
-                while self._context.shutdown_result is None and time.monotonic() < deadline:
-                    self._condition.wait(min(0.01, deadline - time.monotonic()))
-
-            if self._context.shutdown_result is None:
-                deadline_call = _Call(
-                    lambda: self._reduce(_Event("shutdown_deadline", payload=deadline))
-                )
-                self._events.put(deadline_call)
-                remaining = max(0.0, deadline - time.monotonic())
-                if remaining:
-                    try:
-                        deadline_call.answer.get(timeout=remaining)
-                    except queue.Empty:
-                        pass
-            if self._context.shutdown_result is None:
-                self._commit(
-                    replace(
-                        self._context,
-                        shutdown_result=ShutdownResult(False, "shutdown safety deadline exceeded"),
-                    )
-                )
-
-            self._seal_gateway()
-            close_done = self._wait_gateway_closed(deadline)
-            if not close_done and (
-                self._context.shutdown_result is None or self._context.shutdown_result.success
-            ):
-                with self._gateway_condition:
-                    close_diagnostic = (
-                        self._gateway_close_error
-                        or "gateway close unresolved before shutdown deadline"
-                    )
-                self._commit(
-                    replace(self._context, shutdown_result=ShutdownResult(False, close_diagnostic))
-                )
-            auxiliary_drained = self._stop_auxiliary(deadline)
-            if not auxiliary_drained and (
-                self._context.shutdown_result is None or self._context.shutdown_result.success
-            ):
-                self._commit(
-                    replace(
-                        self._context,
-                        shutdown_result=ShutdownResult(
-                            False, "auxiliary runtime thread unresolved before shutdown deadline"
-                        ),
-                    )
-                )
-            self._events.put(None)
-            remaining = max(0.0, deadline - time.monotonic())
-            self._owner.join(remaining)
-            owner_stopped = not self._owner.is_alive()
-            result = self._context.shutdown_result or ShutdownResult(
-                False, "shutdown result unavailable"
+                if self._context.shutdown_result is not None:
+                    break
+            now = self._clock_now()
+            if now is None or now >= deadline:
+                break
+            with self._condition:
+                self._condition.wait(min(0.1, max(0.0, deadline - now)))
+        if self._context.shutdown_result is None:
+            self._submit(
+                lambda: self._finish_shutdown(False, "shutdown safety deadline exceeded"),
+                closing=True,
             )
-            if not owner_stopped:
-                result = ShutdownResult(False, "owner thread did not stop before shutdown deadline")
-                self._commit(replace(self._context, shutdown_result=result))
-                return CommandResult(False, result, snapshot=self.snapshot())
-            if not result.success:
-                return CommandResult(False, result, snapshot=self.snapshot())
-            self._commit(
-                replace(self._context, shutdown=ShutdownState.CLOSED, shutdown_result=result)
+        result = self._context.shutdown_result
+        if result is None:
+            return CommandResult(
+                False,
+                diagnostic="shutdown safety deadline exceeded",
+                snapshot=self.snapshot(),
             )
-            self._closed = True
-            return CommandResult(result.success and owner_stopped, result, snapshot=self.snapshot())
+        if not result.success:
+            return CommandResult(False, result, snapshot=self.snapshot())
+        self._owner.join()
+        if self._owner.is_alive():
+            return CommandResult(
+                False,
+                diagnostic="owner thread did not stop",
+                snapshot=self.snapshot(),
+            )
+        self._closed = True
+        return CommandResult(True, result, snapshot=self.snapshot())
 
     close = shutdown
+
+    def _shutdown_owner(self, deadline: float) -> CommandResult[None]:
+        self._commit(
+            shutdown=ShutdownState.CLOSING,
+            shutdown_deadline=deadline,
+            state=LifecycleState.CANCELLING if self._context.active else LifecycleState.IDLE,
+        )
+        if self._context.active:
+            self._begin_cancellation("shutdown cancellation requested")
+        self._shutdown_progress()
+        return CommandResult(True, snapshot=self._snapshot())

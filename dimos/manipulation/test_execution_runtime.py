@@ -1,13 +1,14 @@
-"""Focused owner/reconciliation tests."""
+"""Black-box owner, reconciliation, deadline, and shutdown coverage."""
 
 from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
-import time
 from typing import Any
 
 import pytest
 
+from dimos.manipulation.execution_effects import EffectDone
+from dimos.manipulation.execution_models import ActionRecord, Operation, TaskRecord
 from dimos.manipulation.execution_runtime import (
     ActionMethod,
     ControlCoordinatorGateway,
@@ -15,16 +16,13 @@ from dimos.manipulation.execution_runtime import (
     ExecutionRuntime,
     ExecutionTopology,
     LifecycleState,
+    OperationHandle,
     Outcome,
     PreparedPlan,
-    ResetHandle,
-    ResetResult,
     ShutdownState,
     TaskActivity,
     TaskEntry,
-    _Call,
-    _Event,
-    _GatewayGateState,
+    _PendingAction,
     prepare_generated_plan,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -81,10 +79,12 @@ class BlockingGateway:
         self.entered = {task: threading.Event() for task in executes}
         self.execute_entered = {task: threading.Event() for task in executes}
         self.cancel_entered = {task: threading.Event() for task in executes}
+        self.status_entered = threading.Event()
         self.release = {task: threading.Event() for task in executes}
         self._lock = threading.Lock()
         self.stop_calls = 0
         self.calls_at_stop = 0
+        self.stop_entered = threading.Event()
 
     def _call(self, task: str, method: ActionMethod, outcome: Outcome) -> Outcome:
         with self._lock:
@@ -105,6 +105,9 @@ class BlockingGateway:
         return self._call(task_name, ActionMethod.CANCEL, self.cancels[task_name])
 
     def status(self, task_name: str) -> Outcome:
+        with self._lock:
+            self.calls.append((task_name, ActionMethod.STATUS))
+        self.status_entered.set()
         return Outcome.UNKNOWN
 
     def reset(self, task_name: str) -> Outcome:
@@ -119,6 +122,7 @@ class BlockingGateway:
         return 0.25
 
     def stop(self) -> None:
+        self.stop_entered.set()
         with self._lock:
             self.stop_calls += 1
             self.calls_at_stop = len(self.calls)
@@ -150,13 +154,6 @@ def plan(*names: str) -> ExecutionPlan:
     )
 
 
-def wait_until(fn: Any, timeout: float = 1.0) -> None:
-    end = time.monotonic() + timeout
-    while time.monotonic() < end and not fn():
-        time.sleep(0.01)
-    assert fn()
-
-
 def task_is(runtime: ExecutionRuntime, index: int, activity: TaskActivity) -> bool:
     operation = runtime.snapshot().operation
     return operation is not None and operation.tasks[index].activity == activity
@@ -182,53 +179,16 @@ def test_aggregate_dispatch_pre_registers_and_waits_for_each_acceptance() -> Non
     runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
     try:
         result = runtime.execute_explicit(plan("a", "b"))
-        assert result.accepted
-
-        def dispatch_processed() -> bool:
-            snapshot = runtime.snapshot()
-            return (
-                len([call for call in rpc.calls if call[1] == "execute"]) == 2
-                and snapshot.state == LifecycleState.RUNNING
-                and snapshot.operation is not None
-                and all(task.activity == TaskActivity.ACTIVE for task in snapshot.operation.tasks)
-            )
-
-        wait_until(dispatch_processed)
-        assert runtime.snapshot().state == LifecycleState.RUNNING
+        assert result.accepted and result.value is not None
+        dispatch = runtime.wait_for_dispatch(result.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert len([call for call in rpc.calls if call[1] == "execute"]) == 2
         operation = runtime.snapshot().operation
         assert operation is not None
         assert len(operation.tasks) == 2
+        assert runtime.snapshot().state == LifecycleState.RUNNING
+        assert all(task.activity == TaskActivity.ACTIVE for task in operation.tasks)
     finally:
-        runtime.shutdown()
-
-
-def test_concurrent_execute_admission_is_serial_and_snapshot_coherent() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    barrier = threading.Barrier(3)
-    results: list[Any] = []
-
-    def submit() -> None:
-        barrier.wait()
-        results.append(runtime.execute_explicit(plan("a")))
-
-    threads = [threading.Thread(target=submit) for _ in range(2)]
-    try:
-        for thread in threads:
-            thread.start()
-        barrier.wait()
-        for thread in threads:
-            thread.join(1)
-        assert len(results) == 2
-        assert sum(result.accepted for result in results) == 1
-        rejected = next(result for result in results if not result.accepted)
-        assert rejected.value is not None
-        retained = dict(runtime._context.terminal_results)[rejected.value]
-        assert retained.outcome == Outcome.REJECTED
-        assert runtime.snapshot().operation is not None
-        assert runtime.snapshot().state in (LifecycleState.DISPATCHING, LifecycleState.RUNNING)
-    finally:
-        runtime.cancel()
         runtime.shutdown()
 
 
@@ -246,7 +206,6 @@ def test_ready_replacement_failure_and_consumed_identity() -> None:
         ).accepted
         assert runtime.snapshot().state == LifecycleState.IDLE
         assert runtime.snapshot().ready_plan is None
-
         token = runtime.start_planning()
         assert token is not None
         assert runtime.complete_planning(token, plan("a")).accepted
@@ -261,51 +220,19 @@ def test_ready_replacement_failure_and_consumed_identity() -> None:
         runtime.shutdown()
 
 
-def test_active_attempt_admission_rejects_plan_and_execute_but_accepts_cancel() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        planning = runtime.start_planning()
-        assert planning is not None
-        assert not runtime.execute_explicit(plan("a")).accepted
-        assert runtime.cancel_planning().accepted
-
-        started = runtime.execute_explicit(plan("a"))
-        assert started.accepted
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        assert not runtime.start_planning()
-        rejected = runtime.execute_explicit(plan("a"))
-        assert not rejected.accepted and rejected.value is not None
-        assert dict(runtime._context.terminal_results)[rejected.value].outcome == Outcome.REJECTED
-        assert runtime.cancel().accepted
-        assert not runtime.reset().accepted
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_rejection_compensates_prior_acceptance_and_unknown_is_fault() -> None:
-    rpc = FakeRPC({("a", "execute"): True, ("b", "execute"): False, ("a", "cancel"): True}, [])
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a", "b"))
-        wait_until(lambda: any(call[1] == "cancel" for call in rpc.calls))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        assert dict(runtime._context.terminal_results).popitem()[1].outcome == Outcome.REJECTED
-    finally:
-        runtime.shutdown()
-
-
 def test_cancel_during_execute_handles_late_acceptance() -> None:
-    entered, release = threading.Event(), threading.Event()
+    entered, release = (threading.Event(), threading.Event())
     rpc = FakeRPC({("a", "execute"): True, ("a", "cancel"): True}, [], entered, release)
     runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
     try:
-        runtime.execute_explicit(plan("a"))
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
         assert entered.wait(1)
         assert runtime.cancel().accepted
         release.set()
-        wait_until(lambda: any(call[1] == "cancel" for call in rpc.calls))
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert terminal.accepted and terminal.value is not None
+        assert any(call[1] == "cancel" for call in rpc.calls)
     finally:
         release.set()
         runtime.shutdown()
@@ -333,415 +260,34 @@ def test_planning_tokens_and_explicit_execution_are_atomic() -> None:
         runtime.shutdown()
 
 
-def test_wait_for_reset_snapshot_is_constructed_outside_context_lock() -> None:
-    runtime = ExecutionRuntime(lambda: BlockingGateway({"a": Outcome.ACCEPTED}), poll_interval=10)
-    reset_handle = ResetHandle("reset-attempt")
-    try:
-        reset_result = ResetResult(reset_handle, True)
-        runtime._commit(replace(runtime._context, reset_results=((reset_handle, reset_result),)))
-        result = runtime.wait_for_reset(reset_handle, timeout=1)
-        assert result.accepted and result.value == reset_result
-    finally:
-        runtime.shutdown()
-
-
 def test_deadline_preserves_unresolved_action_and_stop_rpc_is_deferred() -> None:
-    entered, release = threading.Event(), threading.Event()
+    clock = AdjustableClock()
+    entered, release = (threading.Event(), threading.Event())
     rpc = FakeRPC({("a", "execute"): True}, [], entered, release)
     runtime = ExecutionRuntime(
-        lambda: ControlCoordinatorGateway(rpc), action_timeout=0.01, poll_interval=10
+        lambda: ControlCoordinatorGateway(rpc),
+        monotonic_clock=clock,
+        action_timeout=1,
+        poll_interval=100,
     )
     runtime.execute_explicit(plan("a"))
     assert entered.wait(1)
-    wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
+    clock.set(2)
+    assert not runtime.poll().accepted
+    assert runtime.snapshot().state == LifecycleState.FAULT
     assert runtime.snapshot().operation is not None
     release.set()
     runtime.shutdown()
-    assert any(call[1] == "stop" for call in rpc.calls)
-
-
-def test_running_inactive_reconciles_peers_before_failed_terminal() -> None:
-    rpc = FakeRPC(
-        {
-            ("a", "execute"): True,
-            ("b", "execute"): True,
-            ("a", "get_state"): TrajectoryState.IDLE,
-            ("b", "get_state"): TrajectoryState.EXECUTING,
-            ("b", "cancel"): False,
-        },
-        [],
-    )
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a", "b"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime.poll()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        result = dict(runtime._context.terminal_results).popitem()[1]
-        assert result.outcome == Outcome.FAILED
-        assert any(task == "b" and method == "cancel" for task, method, _ in rpc.calls)
-    finally:
-        runtime.shutdown()
-
-
-def test_status_unknown_faults_and_cleans_active_peers_without_completion() -> None:
-    rpc = FakeRPC(
-        {
-            ("a", "execute"): True,
-            ("b", "execute"): True,
-            ("a", "get_state"): None,
-            ("b", "cancel"): True,
-        },
-        [],
-    )
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a", "b"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime.poll()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        assert not runtime._context.terminal_results
-        wait_until(lambda: any(task == "b" and method == "cancel" for task, method, _ in rpc.calls))
-    finally:
-        runtime.shutdown()
-
-
-def test_dispatch_result_is_stored_once_for_acceptance_and_rejection() -> None:
-    rpc = FakeRPC({("a", "execute"): True, ("b", "execute"): True}, [])
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.ACCEPTED
-    finally:
-        runtime.shutdown()
-
-
-def test_blocked_first_execute_preregisters_batch_and_delays_second() -> None:
-    entered, release = threading.Event(), threading.Event()
-    rpc = FakeRPC({("a", "execute"): True, ("b", "execute"): True}, [], entered, release)
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        assert entered.wait(1)
-        operation = runtime.snapshot().operation
-        assert operation is not None and len(operation.tasks) == 2
-        assert all(task.action is not None for task in operation.tasks[:1])
-        assert not any(task == "b" and method == "execute" for task, method, _ in rpc.calls)
-        assert runtime.snapshot().state == LifecycleState.DISPATCHING
-        release.set()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        assert len([item for item in runtime._context.dispatch_results if item[0] == handle]) == 1
-    finally:
-        release.set()
-        runtime.shutdown()
-
-
-def test_three_task_rejection_skips_unstarted_task_and_rejects_terminally() -> None:
-    rpc = FakeRPC({("a", "execute"): True, ("b", "execute"): False, ("a", "cancel"): True}, [])
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b", "c")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        assert not any(task == "c" and method == "execute" for task, method, _ in rpc.calls)
-        assert len([item for item in runtime._context.dispatch_results if item[0] == handle]) == 1
-        assert dict(runtime._context.terminal_results)[handle].outcome == Outcome.REJECTED
-    finally:
-        runtime.shutdown()
-
-
-def test_cancel_unresolved_dispatch_skips_remaining_tasks() -> None:
-    entered, release = threading.Event(), threading.Event()
-    rpc = FakeRPC({("a", "execute"): True, ("a", "cancel"): True}, [], entered, release)
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b", "c")).value
-        assert handle is not None
-        assert entered.wait(1)
-        runtime.cancel()
-        release.set()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        assert not any(method == "execute" and task in ("b", "c") for task, method, _ in rpc.calls)
-        assert len([item for item in runtime._context.dispatch_results if item[0] == handle]) == 1
-        assert dict(runtime._context.terminal_results)[handle].outcome == Outcome.CANCELLED
-    finally:
-        release.set()
-        runtime.shutdown()
-
-
-def test_deadline_late_accept_and_reject_keep_fault_and_one_dispatch_result() -> None:
-    for late, expected_calls in ((True, 1), (False, 0)):
-        entered, release = threading.Event(), threading.Event()
-        rpc = FakeRPC(
-            {("a", "execute"): True if late else False, ("a", "cancel"): True}, [], entered, release
-        )
-        runtime = ExecutionRuntime(
-            lambda rpc=rpc: ControlCoordinatorGateway(rpc), action_timeout=0.01, poll_interval=10
-        )
-        try:
-            handle = runtime.execute_explicit(plan("a")).value
-            assert entered.wait(1)
-            wait_until(lambda runtime=runtime: runtime.snapshot().state == LifecycleState.FAULT)
-            release.set()
-            if late:
-                wait_until(lambda rpc=rpc: any(method == "cancel" for _, method, _ in rpc.calls))
-            time.sleep(0.03)
-            assert runtime.snapshot().state == LifecycleState.FAULT
-            assert (
-                len([item for item in runtime._context.dispatch_results if item[0] == handle]) == 1
-            )
-            assert len([call for call in rpc.calls if call[1] == "cancel"]) == expected_calls
-        finally:
-            release.set()
-            runtime.shutdown()
-
-
-def test_remote_fault_marks_task_and_cancels_active_peer_without_success() -> None:
-    rpc = FakeRPC(
-        {
-            ("a", "execute"): True,
-            ("b", "execute"): True,
-            ("a", "get_state"): TrajectoryState.FAULT,
-            ("b", "cancel"): True,
-        },
-        [],
-    )
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a", "b"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime.poll()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        assert operation.tasks[0].activity.name == "REMOTE_FAULT"
-        wait_until(lambda: any(task == "b" and method == "cancel" for task, method, _ in rpc.calls))
-        assert not runtime._context.terminal_results
-    finally:
-        runtime.shutdown()
-
-    rpc = FakeRPC({("a", "execute"): False}, [])
-    runtime = ExecutionRuntime(lambda: ControlCoordinatorGateway(rpc), poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a")).value
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.REJECTED
-    finally:
-        runtime.shutdown()
-
-
-def test_cleanup_allocates_distinct_cancel_actions_for_all_active_tasks() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED, "c": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b", "c")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        assert runtime.cancel().accepted
-        for task in ("a", "b", "c"):
-            assert gateway.entered[task].wait(1)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        actions = {task.task_name: task.action for task in operation.tasks}
-        assert all(actions[name] is not None for name in ("a", "b", "c"))
-        assert len({actions[name].action_id for name in ("a", "b", "c")}) == 3  # type: ignore[union-attr]
-        for task in ("a", "b", "c"):
-            gateway.release[task].set()
-            wait_until(lambda task=task: gateway.count(task, ActionMethod.CANCEL) == 1)
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        assert dict(runtime._context.terminal_results)[handle].outcome == Outcome.CANCELLED
-        assert all(gateway.count(task, ActionMethod.CANCEL) == 1 for task in ("a", "b", "c"))
-    finally:
-        runtime.shutdown()
-
-
-def test_execute_unknown_faults_and_cleans_only_dispatched_execution() -> None:
-    gateway = BlockingGateway({"a": Outcome.UNKNOWN, "b": Outcome.ACCEPTED, "c": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b", "c")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None and operation.uncertain
-        assert gateway.entered["a"].wait(1)
-        assert not any(
-            task in ("b", "c") and method == ActionMethod.EXECUTE for task, method in gateway.calls
-        )
-        for event in gateway.release.values():
-            event.set()
-        wait_until(
-            lambda: all(gateway.count(task, ActionMethod.CANCEL) == 1 for task in ("a", "b", "c"))
-        )
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.UNKNOWN
-    finally:
-        runtime.shutdown()
-
-
-def test_cancelled_unresolved_dispatch_retains_cancelled_result_after_late_rejection() -> None:
-    gateway = BlockingGateway({"a": Outcome.REJECTED}, {"a": Outcome.CANCELLED}, block_execute=True)
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        assert handle is not None and gateway.execute_entered["a"].wait(1)
-        assert runtime.cancel().accepted
-        gateway.release["a"].set()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.IDLE)
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.CANCELLED
-        assert gateway.count("a", ActionMethod.CANCEL) == 0
-        assert not any(
-            task == "b" and method == ActionMethod.EXECUTE for task, method in gateway.calls
-        )
-    finally:
-        runtime.shutdown()
-
-
-def test_deadline_duplicate_and_late_result_keep_one_original_dispatch_record() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.01, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a")).value
-        assert handle is not None
-        assert gateway.execute_entered["a"].wait(1)
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None and operation.tasks[0].action is not None
-        task = operation.tasks[0]
-        action = task.action
-        assert action is not None
-        runtime._submit(
-            lambda: runtime._reduce(
-                _Event(
-                    "action_deadline",
-                    handle.operation_id,
-                    handle.attempt_id,
-                    task.task_id,
-                    action.action_id,
-                    action.method,
-                )
-            )
-        )
-        gateway.release["a"].set()
-        assert gateway.cancel_entered["a"].wait(1)
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.UNKNOWN
-        gateway.release["a"].set()
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_partial_rejection_after_three_accepts_retains_rejected_dispatch_once() -> None:
-    gateway = BlockingGateway(
-        {"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED, "c": Outcome.ACCEPTED, "d": Outcome.REJECTED}
-    )
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b", "c", "d")).value
-        assert handle is not None
-        wait_until(lambda: gateway.count("d", ActionMethod.EXECUTE) == 1)
-
-        def rejected_dispatch_processed() -> bool:
-            records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-            return len(records) == 1 and records[0][1].outcome == Outcome.REJECTED
-
-        wait_until(rejected_dispatch_processed)
-        records = [item for item in runtime._context.dispatch_results if item[0] == handle]
-        assert len(records) == 1 and records[0][1].outcome == Outcome.REJECTED
-        for event in gateway.release.values():
-            event.set()
-    finally:
-        for event in gateway.release.values():
-            event.set()
-        runtime.shutdown()
-
-
-def test_late_response_updates_knowledge_without_accepting_stale_action() -> None:
-    for outcome, expected_activity in (
-        (Outcome.ACCEPTED, TaskActivity.CANCELLED),
-        (Outcome.REJECTED, TaskActivity.INACTIVE),
-    ):
-        gateway = BlockingGateway({"a": outcome}, block_execute=True)
-        runtime = ExecutionRuntime(
-            lambda gateway=gateway: gateway, action_timeout=0.01, poll_interval=10
-        )
-        try:
-            handle = runtime.execute_explicit(plan("a")).value
-            assert handle is not None and gateway.execute_entered["a"].wait(1)
-            wait_until(lambda runtime=runtime: runtime.snapshot().state == LifecycleState.FAULT)
-            gateway.release["a"].set()
-            if outcome == Outcome.ACCEPTED:
-                wait_until(lambda gateway=gateway: gateway.count("a", ActionMethod.CANCEL) == 1)
-                gateway.release["a"].set()
-            wait_until(
-                lambda runtime=runtime, expected_activity=expected_activity: task_is(
-                    runtime, 0, expected_activity
-                )
-            )
-            operation = runtime.snapshot().operation
-            assert operation is not None
-            assert operation.tasks[0].action is None
-            task_id = operation.tasks[0].task_id
-            operation_id, attempt_id = handle.operation_id, handle.attempt_id
-            stale = runtime._submit(
-                lambda runtime=runtime,
-                operation_id=operation_id,
-                attempt_id=attempt_id,
-                task_id=task_id: runtime._reduce(
-                    _Event(
-                        "action_finished",
-                        operation_id,
-                        attempt_id,
-                        task_id,
-                        "wrong",
-                        ActionMethod.CANCEL,
-                        Outcome.CANCELLED,
-                    )
-                )
-            )
-            assert stale is False
-        finally:
-            gateway.release["a"].set()
-            runtime.shutdown()
-
-
-def test_remote_fault_requires_reset_and_cancels_peer_without_success() -> None:
-    gateway = BlockingGateway(
-        {"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED},
-        {"a": Outcome.CANCELLED, "b": Outcome.CANCELLED},
-    )
-    gateway.status = lambda task: Outcome.FAILED if task == "a" else Outcome.RUNNING  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime.poll()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None and operation.tasks[0].activity == TaskActivity.REMOTE_FAULT
-        assert operation.tasks[0].reset_required
-        assert gateway.cancel_entered["b"].wait(1)
-        gateway.release["b"].set()
-        wait_until(lambda: task_is(runtime, 1, TaskActivity.CANCELLED))
-        operation = runtime.snapshot().operation
-        assert operation is not None and all(task.action is None for task in operation.tasks)
-        assert runtime.snapshot().state == LifecycleState.FAULT
-        assert not runtime._context.terminal_results
-    finally:
-        for event in gateway.release.values():
-            event.set()
-        runtime.shutdown()
+    threading.Event().wait(0.1)
+    assert ("", "stop", {}) in rpc.calls
 
 
 def test_waiters_use_only_the_requested_result_map() -> None:
     gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.REJECTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
+    clock = AdjustableClock()
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, action_timeout=100, poll_interval=10
+    )
     try:
         handle = runtime.execute_explicit(plan("a", "b")).value
         assert handle is not None
@@ -750,502 +296,20 @@ def test_waiters_use_only_the_requested_result_map() -> None:
         assert (
             dispatch.accepted
             and dispatch.value is not None
-            and dispatch.value.outcome == Outcome.REJECTED
+            and (dispatch.value.outcome == Outcome.REJECTED)
         )
-        terminal = runtime.wait_for_terminal(handle, timeout=0.01)
+        terminal = assert_public_wait_times_out(
+            lambda: runtime.wait_for_terminal(handle, timeout=1)
+        )
         assert not terminal.accepted and terminal.diagnostic == "timeout"
         gateway.release["a"].set()
         terminal = runtime.wait_for_terminal(handle, timeout=1)
         assert (
             terminal.accepted
             and terminal.value is not None
-            and terminal.value.outcome == Outcome.REJECTED
+            and (terminal.value.outcome == Outcome.REJECTED)
         )
     finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_execute_failure_latches_remote_fault_and_cleans_peer() -> None:
-    gateway = BlockingGateway({"a": Outcome.FAILED, "b": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        assert operation.tasks[0].activity == TaskActivity.REMOTE_FAULT
-        assert operation.tasks[0].reset_required
-        assert gateway.cancel_entered["b"].wait(1)
-        assert not any(
-            task == "b" and method == ActionMethod.EXECUTE for task, method in gateway.calls
-        )
-        gateway.release["b"].set()
-        assert not runtime._context.terminal_results
-    finally:
-        gateway.release["b"].set()
-        runtime.shutdown()
-
-
-def test_cancel_failure_latches_remote_fault_and_cleans_peer() -> None:
-    gateway = BlockingGateway(
-        {"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED},
-        {"a": Outcome.FAILED, "b": Outcome.CANCELLED},
-    )
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        handle = runtime.execute_explicit(plan("a", "b")).value
-        assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        assert runtime.cancel().accepted
-        assert gateway.cancel_entered["a"].wait(1)
-        assert gateway.cancel_entered["b"].wait(1)
-        gateway.release["a"].set()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        assert operation.tasks[0].activity == TaskActivity.REMOTE_FAULT
-        assert operation.tasks[0].reset_required
-        gateway.release["b"].set()
-        wait_until(lambda: task_is(runtime, 1, TaskActivity.CANCELLED))
-        operation = runtime.snapshot().operation
-        assert operation is not None and all(task.action is None for task in operation.tasks)
-        assert not runtime._context.terminal_results
-    finally:
-        for event in gateway.release.values():
-            event.set()
-        runtime.shutdown()
-
-
-def test_result_retention_is_bounded_and_handles_remain_correlated() -> None:
-    gateway = BlockingGateway({"a": Outcome.REJECTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    handles = []
-    try:
-        for _ in range(20):
-            result = runtime.execute_explicit(plan("a"))
-            assert result.accepted and result.value is not None
-            handle = result.value
-            handles.append(handle)
-            dispatch = runtime.wait_for_dispatch(handle, timeout=1)
-            terminal = runtime.wait_for_terminal(handle, timeout=1)
-            assert dispatch.accepted and dispatch.value is not None
-            assert terminal.accepted and terminal.value is not None
-            assert dispatch.value.handle == handle
-            assert terminal.value.handle == handle
-            assert dispatch.value.outcome == Outcome.REJECTED
-            assert terminal.value.outcome == Outcome.REJECTED
-        assert len(runtime._context.dispatch_results) == 16
-        assert len(runtime._context.terminal_results) == 16
-        assert all(handle in dict(runtime._context.dispatch_results) for handle in handles[-16:])
-        assert all(handle in dict(runtime._context.terminal_results) for handle in handles[-16:])
-        assert handles[0] not in dict(runtime._context.dispatch_results)
-        assert handles[0] not in dict(runtime._context.terminal_results)
-    finally:
-        runtime.shutdown()
-
-
-def test_unknown_fault_reset_fails_and_leaves_fault_latched() -> None:
-    gateway = BlockingGateway({"a": Outcome.UNKNOWN})
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.1, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        assert gateway.cancel_entered["a"].wait(1)
-        gateway.release["a"].set()
-        handle_result = runtime.reset()
-        assert handle_result.accepted and handle_result.value is not None
-        reset = runtime.wait_for_reset(handle_result.value, timeout=1)
-        assert reset.accepted and reset.value is not None and not reset.value.success
-        assert runtime.snapshot().state == LifecycleState.FAULT
-        time.sleep(0.05)
-        assert runtime.snapshot().state == LifecycleState.FAULT
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_remote_fault_reset_proves_inactive_and_resets_remote_task() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED})
-    status_calls: dict[str, int] = {"a": 0, "b": 0}
-
-    def status(task: str) -> Outcome:
-        status_calls[task] += 1
-        return Outcome.FAILED if task == "a" and status_calls[task] == 1 else Outcome.INACTIVE
-
-    gateway.status = status  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.2, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a", "b"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime.poll()
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        gateway.release["b"].set()
-        wait_until(lambda: gateway.count("b", ActionMethod.CANCEL) == 1)
-        reset_handle = runtime.reset().value
-        assert reset_handle is not None
-        reset = runtime.wait_for_reset(reset_handle, timeout=1)
-        assert reset.accepted and reset.value is not None and reset.value.success
-        assert runtime.snapshot().state == LifecycleState.IDLE
-        assert gateway.count("a", ActionMethod.RESET) == 1
-        assert runtime._context.reset_handle is None
-        assert not runtime._context.reset_proven_inactive
-        assert not runtime._context.reset_completed_tasks
-        assert dict(runtime._context.reset_results)[reset_handle] == reset.value
-    finally:
-        for event in gateway.release.values():
-            event.set()
-        runtime.shutdown()
-
-
-def test_remote_reset_failure_keeps_fault_latched() -> None:
-    for reset_outcome in (Outcome.RUNNING, Outcome.UNKNOWN):
-        gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-        gateway.status = lambda task: Outcome.INACTIVE  # type: ignore[method-assign]
-        gateway.reset = lambda task, outcome=reset_outcome: outcome  # type: ignore[method-assign]
-        runtime = ExecutionRuntime(
-            lambda gateway=gateway: gateway, action_timeout=0.2, poll_interval=10
-        )
-        try:
-            runtime.execute_explicit(plan("a"))
-            wait_until(lambda runtime=runtime: runtime.snapshot().state == LifecycleState.RUNNING)
-            runtime._submit(
-                lambda runtime=runtime: runtime._reduce(_Event("fault", diagnostic="remote fault"))
-            )
-            reset_handle = runtime.reset().value
-            assert reset_handle is not None
-            reset = runtime.wait_for_reset(reset_handle, timeout=1)
-            assert reset.accepted and reset.value is not None and not reset.value.success
-            assert runtime.snapshot().state == LifecycleState.FAULT
-        finally:
-            runtime.shutdown()
-
-
-def test_pending_late_execute_action_makes_reset_fail_permanently() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.01, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        assert gateway.execute_entered["a"].wait(1)
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        reset_handle = runtime.reset().value
-        assert reset_handle is not None
-        reset = runtime.wait_for_reset(reset_handle, timeout=1)
-        assert reset.accepted and reset.value is not None and not reset.value.success
-        gateway.release["a"].set()
-        time.sleep(0.05)
-        assert runtime.snapshot().state == LifecycleState.FAULT
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_failed_reset_can_start_a_new_reconciliation_attempt() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    status_calls = 0
-
-    def status(_task: str) -> Outcome:
-        nonlocal status_calls
-        status_calls += 1
-        return Outcome.UNKNOWN if status_calls == 1 else Outcome.INACTIVE
-
-    gateway.status = status  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.2, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime._submit(lambda: runtime._reduce(_Event("fault", diagnostic="remote fault")))
-        gateway.release["a"].set()
-
-        first = runtime.reset()
-        assert first.accepted and first.value is not None
-        first_result = runtime.wait_for_reset(first.value, timeout=1)
-        assert first_result.accepted and first_result.value is not None
-        assert not first_result.value.success
-        assert runtime.snapshot().state == LifecycleState.FAULT
-
-        second = runtime.reset()
-        assert second.accepted and second.value is not None
-        assert second.value != first.value
-        second_result = runtime.wait_for_reset(second.value, timeout=1)
-        assert second_result.accepted and second_result.value is not None
-        assert second_result.value.success
-        assert runtime.snapshot().state == LifecycleState.IDLE
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown()
-
-
-def test_stale_reset_completion_cannot_clear_fault_for_retry() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    first_reset_entered = threading.Event()
-    release_first_reset = threading.Event()
-    second_reset_entered = threading.Event()
-    release_second_reset = threading.Event()
-    reset_calls = 0
-
-    def status(_task: str) -> Outcome:
-        return Outcome.INACTIVE
-
-    def reset_remote(_task: str) -> Outcome:
-        nonlocal reset_calls
-        reset_calls += 1
-        if reset_calls == 1:
-            first_reset_entered.set()
-            assert release_first_reset.wait(2)
-        elif reset_calls == 2:
-            second_reset_entered.set()
-            assert release_second_reset.wait(2)
-        return Outcome.INACTIVE
-
-    gateway.status = status  # type: ignore[method-assign]
-    gateway.reset = reset_remote  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.05, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        task = operation.tasks[0]
-        faulted = replace(
-            operation,
-            tasks=(replace(task, activity=TaskActivity.INACTIVE, reset_required=True),),
-        )
-        runtime._submit(
-            lambda: runtime._commit(
-                replace(
-                    runtime._context,
-                    state=LifecycleState.FAULT,
-                    fault="remote fault",
-                    diagnostic="remote fault",
-                    active=faulted,
-                )
-            )
-        )
-
-        first = runtime.reset()
-        assert first.accepted and first.value is not None
-        assert first_reset_entered.wait(1)
-        first_result = runtime.wait_for_reset(first.value, timeout=1)
-        assert first_result.accepted and first_result.value is not None
-        assert not first_result.value.success
-
-        second = runtime.reset()
-        assert second.accepted and second.value is not None and second.value != first.value
-        release_first_reset.set()
-        wait_until(lambda: reset_calls == 2)
-        assert second_reset_entered.wait(1)
-        assert runtime.snapshot().state == LifecycleState.FAULT
-        assert runtime._context.reset_handle == second.value
-
-        release_second_reset.set()
-        second_result = runtime.wait_for_reset(second.value, timeout=1)
-        assert second_result.accepted and second_result.value is not None
-        assert second_result.value.success
-        assert runtime.snapshot().state == LifecycleState.IDLE
-    finally:
-        release_first_reset.set()
-        release_second_reset.set()
-        runtime.shutdown()
-
-
-def test_stale_reset_cancel_cannot_affect_retry_reconciliation() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    first_cancel_entered = threading.Event()
-    release_first_cancel = threading.Event()
-    second_cancel_entered = threading.Event()
-    release_second_cancel = threading.Event()
-    cancel_calls = 0
-
-    def cancel(_task: str) -> Outcome:
-        nonlocal cancel_calls
-        cancel_calls += 1
-        if cancel_calls == 1:
-            first_cancel_entered.set()
-            assert release_first_cancel.wait(2)
-            return Outcome.UNKNOWN
-        second_cancel_entered.set()
-        assert release_second_cancel.wait(2)
-        return Outcome.CANCELLED
-
-    gateway.cancel = cancel  # type: ignore[method-assign]
-    gateway.status = lambda _task: Outcome.INACTIVE  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.05, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        runtime._submit(lambda: runtime._reduce(_Event("fault", diagnostic="remote fault")))
-
-        first = runtime.reset()
-        assert first.accepted and first.value is not None
-        assert first_cancel_entered.wait(1)
-        first_result = runtime.wait_for_reset(first.value, timeout=1)
-        assert first_result.accepted and first_result.value is not None
-        assert not first_result.value.success
-
-        second = runtime.reset()
-        assert second.accepted and second.value is not None and second.value != first.value
-        release_first_cancel.set()
-        wait_until(lambda: cancel_calls == 2)
-        assert second_cancel_entered.wait(1)
-        assert runtime.snapshot().state == LifecycleState.FAULT
-        assert runtime._context.reset_handle == second.value
-
-        release_second_cancel.set()
-        second_result = runtime.wait_for_reset(second.value, timeout=1)
-        assert second_result.accepted and second_result.value is not None
-        assert second_result.value.success
-        assert runtime.snapshot().state == LifecycleState.IDLE
-    finally:
-        release_first_cancel.set()
-        release_second_cancel.set()
-        runtime.shutdown()
-
-
-def test_reset_completion_after_failure_is_retired_before_retry_starts() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    entered = threading.Event()
-    release = threading.Event()
-    reset_calls = 0
-
-    def reset_remote(_task: str) -> Outcome:
-        nonlocal reset_calls
-        reset_calls += 1
-        if reset_calls == 1:
-            entered.set()
-            assert release.wait(2)
-        return Outcome.INACTIVE
-
-    gateway.reset = reset_remote  # type: ignore[method-assign]
-    gateway.status = lambda _task: Outcome.INACTIVE  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.05, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        task = operation.tasks[0]
-        faulted = replace(
-            operation,
-            tasks=(replace(task, activity=TaskActivity.INACTIVE, reset_required=True),),
-        )
-        runtime._submit(
-            lambda: runtime._commit(
-                replace(runtime._context, state=LifecycleState.FAULT, active=faulted)
-            )
-        )
-        first = runtime.reset()
-        assert first.accepted and first.value is not None and entered.wait(1)
-        first_result = runtime.wait_for_reset(first.value, timeout=1)
-        assert first_result.accepted and first_result.value is not None
-        assert not first_result.value.success
-        release.set()
-        wait_until(
-            lambda: runtime._context.active is not None
-            and runtime._context.active.tasks[0].action is None
-        )
-        assert runtime.snapshot().state == LifecycleState.FAULT
-
-        second = runtime.reset()
-        assert second.accepted and second.value is not None and second.value != first.value
-        wait_until(lambda: reset_calls == 2)
-        second_result = runtime.wait_for_reset(second.value, timeout=1)
-        assert second_result.accepted and second_result.value is not None
-        assert second_result.value.success
-    finally:
-        release.set()
-        runtime.shutdown()
-
-
-def test_stale_reset_deadline_does_not_retire_inflight_action() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    entered = threading.Event()
-    release = threading.Event()
-    second_entered = threading.Event()
-    cancel_calls = 0
-
-    def cancel(_task: str) -> Outcome:
-        nonlocal cancel_calls
-        cancel_calls += 1
-        if cancel_calls == 2:
-            second_entered.set()
-        entered.set()
-        assert release.wait(2)
-        return Outcome.CANCELLED
-
-    gateway.cancel = cancel  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.05, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        operation = runtime.snapshot().operation
-        assert operation is not None
-        task = operation.tasks[0]
-        faulted = replace(operation, tasks=(replace(task, activity=TaskActivity.ACTIVE),))
-        runtime._submit(
-            lambda: runtime._commit(
-                replace(runtime._context, state=LifecycleState.FAULT, active=faulted)
-            )
-        )
-        first = runtime.reset()
-        assert first.accepted and first.value is not None and entered.wait(1)
-        old_action = runtime._context.active.tasks[0].action
-        assert old_action is not None and old_action.reset_id == first.value.reset_id
-        first_result = runtime.wait_for_reset(first.value, timeout=1)
-        assert first_result.accepted and first_result.value is not None
-        assert not first_result.value.success
-
-        second = runtime.reset()
-        assert second.accepted and second.value is not None
-        runtime._submit(
-            lambda: runtime._reduce(
-                _Event(
-                    "action_deadline",
-                    runtime._context.active.handle.operation_id,
-                    runtime._context.active.handle.attempt_id,
-                    task.task_id,
-                    old_action.action_id,
-                    ActionMethod.CANCEL,
-                    reset_id=first.value.reset_id,
-                )
-            )
-        )
-        assert runtime._context.active.tasks[0].action is old_action
-        assert runtime._context.reset_handle == second.value
-        assert cancel_calls == 1
-        assert not second_entered.is_set()
-        release.set()
-    finally:
-        release.set()
-        runtime.shutdown()
-
-
-def test_repeated_reset_calls_share_one_serialized_result() -> None:
-    gateway = BlockingGateway({"a": Outcome.UNKNOWN})
-    entered, release = threading.Event(), threading.Event()
-
-    def status(task: str) -> Outcome:
-        entered.set()
-        assert release.wait(2)
-        return Outcome.UNKNOWN
-
-    gateway.status = status  # type: ignore[method-assign]
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=0.2, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.FAULT)
-        gateway.release["a"].set()
-        first = runtime.reset()
-        assert first.accepted and first.value is not None and entered.wait(1)
-        second = runtime.reset()
-        assert second.accepted and second.value == first.value
-        release.set()
-        result = runtime.wait_for_reset(first.value, timeout=1)
-        assert result.accepted and result.value is not None and not result.value.success
-        assert len(runtime._context.reset_results) == 1
-    finally:
-        release.set()
         gateway.release["a"].set()
         runtime.shutdown()
 
@@ -1274,7 +338,7 @@ def test_gateway_stop_failure_never_reports_closed_success() -> None:
     runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
     result = runtime.shutdown(timeout=1)
     assert not result.accepted
-    assert result.value is not None and not result.value.success
+    assert result.value is not None and (not result.value.success)
     assert "gateway close failed: close exploded" in result.value.diagnostic
     assert result.snapshot is not None
     assert result.snapshot.shutdown == ShutdownState.CLOSING
@@ -1284,37 +348,84 @@ def test_gateway_stop_failure_never_reports_closed_success() -> None:
     assert gateway.stop_calls == 1
 
 
+def test_invalid_later_clock_sample_does_not_fault_or_kill_owner() -> None:
+    samples = iter((0.0, 0.0, 0.0, float("nan")))
+    invalid_seen = threading.Event()
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
+
+    def clock() -> float:
+        value = next(samples, 0.0)
+        if value != value:
+            invalid_seen.set()
+        return value
+
+    runtime = ExecutionRuntime(lambda: gateway, monotonic_clock=clock)
+    try:
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
+        assert runtime.snapshot().state != LifecycleState.FAULT
+        assert runtime.snapshot().state == LifecycleState.CANCELLING
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        polled = runtime.poll()
+        assert not polled.accepted
+        assert invalid_seen.wait(1)
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        gateway.release["a"].set()
+        assert gateway.stop_entered.wait(1)
+        assert polled.snapshot is not None
+        assert polled.snapshot.state != LifecycleState.FAULT
+    finally:
+        gateway.release["a"].set()
+        runtime.shutdown()
+
+
+def test_failed_shutdown_drain_rejects_public_commands_after_owner_stops() -> None:
+    gateway = BlockingGateway({})
+
+    def fail_stop() -> None:
+        gateway.stop_calls += 1
+        raise RuntimeError("close exploded")
+
+    gateway.stop = fail_stop  # type: ignore[method-assign]
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
+    result = runtime.shutdown(timeout=1)
+    assert not result.accepted
+    assert result.value is not None and not result.value.success
+    assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+    runtime._owner.join(1)
+    assert not runtime._owner.is_alive()
+
+    assert not runtime.cancel().accepted
+    assert not runtime.cancel_if_current(OperationHandle("plan", "operation", "attempt")).accepted
+    reset = runtime.reset()
+    assert not reset.accepted
+    assert reset.diagnostic == "runtime is closing"
+    assert runtime.shutdown(timeout=1).value == result.value
+
+
+def test_invalid_shutdown_clock_handoff_does_not_deadlock_caller() -> None:
+    samples = iter((0.0, float("nan")))
+    gateway = BlockingGateway({})
+    runtime = ExecutionRuntime(lambda: gateway, monotonic_clock=lambda: next(samples))
+    result = runtime.shutdown(timeout=1)
+    assert not result.accepted
+    assert result.value is not None
+    assert result.value.diagnostic == "invalid monotonic clock"
+    assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+
+
 def test_shutdown_interrupts_early_action_deadline_thread() -> None:
     gateway = BlockingGateway({"a": Outcome.ACCEPTED})
     runtime = ExecutionRuntime(lambda: gateway, action_timeout=10.0, poll_interval=10)
     try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
         gateway.release["a"].set()
         assert runtime.shutdown(timeout=1).accepted
-        assert runtime._auxiliary == {}
     finally:
         gateway.release["a"].set()
-        if runtime.snapshot().shutdown != ShutdownState.CLOSED:
-            runtime.shutdown(timeout=1)
-
-
-def test_shutdown_interrupts_reset_deadline_thread() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, action_timeout=10.0, poll_interval=10)
-    handle = ResetHandle("reset-deadline-test")
-    try:
-        runtime._start_auxiliary(
-            runtime._reset_deadline,
-            handle,
-            time.monotonic() + 10.0,
-            name="reset-deadline-test",
-        )
-        wait_until(lambda: len(runtime._auxiliary) == 1)
-        result = runtime.shutdown(timeout=1)
-        assert result.accepted
-        assert runtime._auxiliary == {}
-    finally:
         if runtime.snapshot().shutdown != ShutdownState.CLOSED:
             runtime.shutdown(timeout=1)
 
@@ -1326,14 +437,12 @@ def test_cancel_if_current_cannot_cancel_replacement_operation() -> None:
     try:
         original = runtime.execute_explicit(plan("a"))
         assert original.accepted and original.value is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
+        assert runtime.wait_for_dispatch(original.value, timeout=1).accepted
         runtime.poll()
         assert runtime.wait_for_terminal(original.value, timeout=1).accepted
-
         replacement = runtime.execute_explicit(plan("a"))
         assert replacement.accepted and replacement.value is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-
+        assert runtime.wait_for_dispatch(replacement.value, timeout=1).accepted
         stale_cancel = runtime.cancel_if_current(original.value)
         assert not stale_cancel.accepted
         assert stale_cancel.diagnostic == "operation is no longer current"
@@ -1347,32 +456,6 @@ def test_cancel_if_current_cannot_cancel_replacement_operation() -> None:
             runtime.shutdown(timeout=1)
 
 
-def test_shutdown_during_pending_cancel_reconciles_and_closes_once() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        assert runtime.cancel().accepted
-        assert gateway.cancel_entered["a"].wait(1)
-        result_holder: list[Any] = []
-        thread = threading.Thread(target=lambda: result_holder.append(runtime.shutdown(timeout=1)))
-        thread.start()
-        wait_until(lambda: runtime.snapshot().shutdown == ShutdownState.CLOSING)
-        assert not runtime.execute_explicit(plan("a")).accepted
-        assert not getattr(runtime.start_planning(), "accepted", False)
-        gateway.release["a"].set()
-        thread.join(2)
-        assert (
-            len(result_holder) == 1 and result_holder[0].accepted and result_holder[0].value.success
-        )
-        assert gateway.stop_calls == 1
-    finally:
-        gateway.release["a"].set()
-        if runtime.snapshot().shutdown != ShutdownState.CLOSED:
-            runtime.shutdown()
-
-
 def test_shutdown_late_execute_acceptance_is_compensated_before_close() -> None:
     gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
     runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
@@ -1382,7 +465,6 @@ def test_shutdown_late_execute_acceptance_is_compensated_before_close() -> None:
         result_holder: list[Any] = []
         thread = threading.Thread(target=lambda: result_holder.append(runtime.shutdown(timeout=1)))
         thread.start()
-        wait_until(lambda: runtime.snapshot().shutdown == ShutdownState.CLOSING)
         gateway.release["a"].set()
         thread.join(2)
         assert (
@@ -1390,122 +472,6 @@ def test_shutdown_late_execute_acceptance_is_compensated_before_close() -> None:
         )
         assert gateway.count("a", ActionMethod.CANCEL) == 1
         assert runtime.snapshot().shutdown == ShutdownState.CLOSED
-    finally:
-        gateway.release["a"].set()
-        if runtime.snapshot().shutdown != ShutdownState.CLOSED:
-            runtime.shutdown()
-
-
-def test_zero_timeout_does_not_publish_closed_while_owner_is_alive() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    entered, release = threading.Event(), threading.Event()
-    runtime._events.put(_Call(lambda: (entered.set(), release.wait(1))))
-    try:
-        assert entered.wait(1)
-        result = runtime.shutdown(timeout=0)
-        assert not result.accepted and result.value is not None and not result.value.success
-        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
-        assert runtime._owner.is_alive()
-        assert not any(
-            method in (ActionMethod.EXECUTE, ActionMethod.CANCEL) for _, method in gateway.calls
-        )
-    finally:
-        release.set()
-        gateway.release["a"].set()
-        if runtime.snapshot().shutdown != ShutdownState.CLOSED:
-            runtime.shutdown(timeout=1)
-
-
-def test_zero_timeout_active_shutdown_never_starts_rpc_after_gateway_stop() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
-        result = runtime.shutdown(timeout=0)
-        assert not result.accepted and result.value is not None and not result.value.success
-        time.sleep(0.05)
-        assert gateway.stop_calls == 1
-        assert len(gateway.calls) == gateway.calls_at_stop
-        assert gateway.count("a", ActionMethod.CANCEL) == 0
-    finally:
-        if runtime.snapshot().shutdown != ShutdownState.CLOSED:
-            runtime.shutdown(timeout=1)
-
-
-def test_gateway_lease_precedes_closure_and_closer_waits_for_inflight_call() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    result_holder: list[tuple[bool, Outcome | None]] = []
-    try:
-        thread = threading.Thread(
-            target=lambda: result_holder.append(
-                runtime._invoke_gateway_action("action", "a", ActionMethod.EXECUTE, {"x": 1})
-            )
-        )
-        thread.start()
-        assert gateway.execute_entered["a"].wait(1)
-        runtime._seal_gateway()
-        assert gateway.stop_calls == 0
-        gateway.release["a"].set()
-        thread.join(1)
-        wait_until(lambda: gateway.stop_calls == 1)
-        assert result_holder == [(True, Outcome.ACCEPTED)]
-        assert gateway.calls_at_stop == len(gateway.calls)
-    finally:
-        gateway.release["a"].set()
-        runtime.shutdown(timeout=1)
-
-
-def test_sealed_gateway_rejects_prepared_action_without_inflight_or_rpc() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        runtime._seal_gateway()
-        admitted, outcome = runtime._invoke_gateway_action(
-            "action", "a", ActionMethod.EXECUTE, {"x": 1}
-        )
-        assert not admitted and outcome is None
-        assert gateway.calls == []
-        assert runtime._rpc_inflight == 0
-    finally:
-        runtime.shutdown(timeout=1)
-
-
-def test_shutdown_transition_publishes_closing_and_cancel_only_atomically() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    runtime._gateway_condition.acquire()
-    result_holder: list[Any] = []
-    thread = threading.Thread(target=lambda: result_holder.append(runtime.shutdown(timeout=1)))
-    thread.start()
-    try:
-        time.sleep(0.02)
-        assert thread.is_alive()
-        assert runtime._context.shutdown == ShutdownState.OPEN
-        assert runtime._gateway_gate == _GatewayGateState.OPEN
-    finally:
-        runtime._gateway_condition.release()
-        thread.join(2)
-        assert len(result_holder) == 1 and result_holder[0].accepted
-        assert runtime.snapshot().shutdown == ShutdownState.CLOSED
-
-
-def test_shutdown_timeout_reports_unresolved_action_and_never_schedules_late_effects() -> None:
-    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
-    runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
-    try:
-        runtime.execute_explicit(plan("a"))
-        assert gateway.execute_entered["a"].wait(1)
-        result = runtime.shutdown(timeout=0.05)
-        assert not result.accepted and result.value is not None and not result.value.success
-        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
-        cancel_count = gateway.count("a", ActionMethod.CANCEL)
-        gateway.release["a"].set()
-        time.sleep(0.05)
-        assert gateway.count("a", ActionMethod.CANCEL) == cancel_count
-        assert gateway.stop_calls == 1
     finally:
         gateway.release["a"].set()
         if runtime.snapshot().shutdown != ShutdownState.CLOSED:
@@ -1555,7 +521,6 @@ def test_prepare_generated_plan_uses_ordered_groups_and_ignores_extraneous_robot
     generated = _generated(
         ["extra/x0", "right/r0", "left/l1", "left/l0"], ("left/arm", "right/arm"), 4
     )
-
     prepared = prepare_generated_plan(generated, topology)
     assert prepared.generated_plan is generated
     assert [entry.robot_name for entry in prepared.entries] == ["left", "right"]
@@ -1585,7 +550,7 @@ def test_prepared_plan_is_real_type_and_partial_generated_entries_are_not_execut
     generated = _generated(["arm/j0"], ("arm/manipulator",), 1)
     prepared = prepare_generated_plan(generated, topology)
     assert isinstance(prepared, PreparedPlan)
-    assert prepared is not generated
+    assert id(prepared) != id(generated)
     partial = PreparedPlan(generated, (), topology)
     runtime = ExecutionRuntime(lambda: BlockingGateway({"arm": Outcome.ACCEPTED}), poll_interval=10)
     try:
@@ -1720,14 +685,14 @@ def test_rejected_execute_retains_contextual_diagnostic_in_snapshot_and_result()
 
 def test_status_terminal_failure_retains_contextual_diagnostic_in_terminal_result() -> None:
     gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED})
-    gateway.status = lambda task: Outcome.INACTIVE if task == "a" else Outcome.RUNNING  # type: ignore[method-assign]
+    gateway.status = lambda task_name: Outcome.INACTIVE if task_name == "a" else Outcome.RUNNING  # type: ignore[assignment,method-assign]
     gateway.release["a"].set()
     gateway.release["b"].set()
     runtime = ExecutionRuntime(lambda: gateway, poll_interval=10)
     try:
         handle = runtime.execute_explicit(plan("a", "b")).value
         assert handle is not None
-        wait_until(lambda: runtime.snapshot().state == LifecycleState.RUNNING)
+        assert runtime.wait_for_dispatch(handle, timeout=1).accepted
         runtime.poll()
         result = runtime.wait_for_terminal(handle, timeout=1)
         assert result.accepted and result.value is not None
@@ -1782,7 +747,7 @@ def test_auxiliary_calls_reject_after_closing_and_inflight_auxiliary_drains_befo
     shutdown_results: list[Any] = []
     closer = threading.Thread(target=lambda: shutdown_results.append(runtime.shutdown(timeout=1)))
     closer.start()
-    wait_until(lambda: runtime.snapshot().shutdown == ShutdownState.CLOSING)
+    assert closer.is_alive()
     gateway.aux_release.set()
     caller.join(2)
     closer.join(2)
@@ -1792,6 +757,54 @@ def test_auxiliary_calls_reject_after_closing_and_inflight_auxiliary_drains_befo
     assert gateway.stop_calls == 1
     assert not runtime.set_gripper_position("gripper", 0.1).accepted
     assert not runtime.get_gripper_position("gripper").accepted
+
+
+def test_auxiliary_deadline_waits_for_late_callback_before_shutdown_stop() -> None:
+    clock = AdjustableClock()
+    gateway = BlockingAuxGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        action_timeout=1,
+        poll_interval=100,
+    )
+    gripper_results: list[Any] = []
+    shutdown_results: list[Any] = []
+    gripper: threading.Thread | None = None
+    closer: threading.Thread | None = None
+    shutdown_started = False
+    try:
+        gripper = threading.Thread(
+            target=lambda: gripper_results.append(runtime.set_gripper_position("gripper", 0.5))
+        )
+        gripper.start()
+        assert gateway.aux_entered.wait(1)
+        clock.set(2)
+        assert not runtime.poll().accepted
+        gripper.join(1)
+        assert gripper_results and not gripper_results[0].accepted
+
+        closer = threading.Thread(target=lambda: shutdown_results.append(runtime.shutdown(1)))
+        shutdown_started = True
+        closer.start()
+        clock.set(3)
+        closer.join(1)
+        assert shutdown_results and not shutdown_results[0].accepted
+        assert not gateway.stop_entered.is_set()
+
+        gateway.aux_release.set()
+        assert gateway.stop_entered.wait(1)
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        shutdown_result = runtime.snapshot().shutdown_result
+        assert shutdown_result is not None and not shutdown_result.success
+    finally:
+        gateway.aux_release.set()
+        if gripper is not None:
+            gripper.join(2)
+        if closer is not None:
+            closer.join(2)
+        if not shutdown_started:
+            runtime.shutdown(timeout=1)
 
 
 def test_gateway_factory_is_the_internal_runtime_injection_seam() -> None:
@@ -1807,5 +820,1191 @@ def test_gateway_factory_is_the_internal_runtime_injection_seam() -> None:
         assert factories == [True]
         assert runtime.get_gripper_position("gripper").accepted
         assert not hasattr(runtime, "client")
+    finally:
+        runtime.shutdown()
+
+
+class AdjustableClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+        self.lock = threading.Lock()
+        self._barrier_thread: int | None = None
+        self._barrier_pending = False
+        self.sample_entered = threading.Event()
+        self.sample_release = threading.Event()
+
+    def __call__(self) -> float:
+        with self.lock:
+            value = self.value
+            barrier = self._barrier_pending and self._barrier_thread == threading.get_ident()
+            self._barrier_pending = False if barrier else self._barrier_pending
+        if barrier:
+            self.sample_entered.set()
+            assert self.sample_release.wait(1)
+        return value
+
+    def arm_current_thread_sample_barrier(self) -> None:
+        with self.lock:
+            self._barrier_thread = threading.get_ident()
+            self._barrier_pending = True
+            self.sample_entered.clear()
+            self.sample_release.clear()
+
+    def set(self, value: float) -> None:
+        with self.lock:
+            self.value = value
+
+
+def assert_public_wait_times_out(wait_call: Any) -> Any:
+    result: list[Any] = []
+    ready = threading.Event()
+
+    def observe() -> None:
+        ready.set()
+        result.append(wait_call())
+
+    waiter = threading.Thread(target=observe)
+    waiter.start()
+    assert ready.wait(1)
+    waiter.join(2)
+    assert not waiter.is_alive() and len(result) == 1
+    return result[0]
+
+
+class ScriptedGateway:
+    def __init__(self, statuses: dict[str, Outcome] | None = None) -> None:
+        self.statuses = statuses or {}
+        self.calls: list[tuple[str, ActionMethod]] = []
+        self.lock = threading.Lock()
+        self.execute_entered = threading.Event()
+        self.execute_release = threading.Event()
+        self.block_execute = False
+        self.cancel_entered = threading.Event()
+        self.cancel_returned = threading.Event()
+        self.cancel_entered_by_task: dict[str, threading.Event] = {}
+        self.cancel_returned_by_task: dict[str, threading.Event] = {}
+        self.cancel_release = threading.Event()
+        self.block_cancel = False
+        self.status_entered = threading.Event()
+        self.status_release = threading.Event()
+        self.block_status = False
+        self.cancel_outcome = Outcome.CANCELLED
+        self.reset_outcome = Outcome.INACTIVE
+        self.reset_entered = threading.Event()
+        self.reset_release = threading.Event()
+        self.block_reset = False
+        self.stop_calls = 0
+
+    def _record(self, task: str, method: ActionMethod) -> None:
+        with self.lock:
+            self.calls.append((task, method))
+
+    def execute(self, task_name: str, request: Any) -> Outcome:
+        self._record(task_name, ActionMethod.EXECUTE)
+        self.execute_entered.set()
+        if self.block_execute:
+            assert self.execute_release.wait(1)
+        return Outcome.ACCEPTED
+
+    def cancel(self, task_name: str) -> Outcome:
+        self._record(task_name, ActionMethod.CANCEL)
+        self.cancel_entered.set()
+        self.cancel_entered_by_task.setdefault(task_name, threading.Event()).set()
+        if self.block_cancel:
+            assert self.cancel_release.wait(1)
+        self.cancel_returned.set()
+        self.cancel_returned_by_task.setdefault(task_name, threading.Event()).set()
+        return self.cancel_outcome
+
+    def status(self, task_name: str) -> Outcome:
+        self._record(task_name, ActionMethod.STATUS)
+        self.status_entered.set()
+        if self.block_status:
+            assert self.status_release.wait(1)
+        return self.statuses.get(task_name, Outcome.RUNNING)
+
+    def reset(self, task_name: str) -> Outcome:
+        self._record(task_name, ActionMethod.RESET)
+        self.reset_entered.set()
+        if self.block_reset:
+            assert self.reset_release.wait(1)
+        return self.reset_outcome
+
+    def set_gripper_position(self, hardware_id: str, position: float) -> Outcome:
+        return Outcome.ACCEPTED
+
+    def get_gripper_position(self, hardware_id: str) -> float:
+        return 0.0
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        self.execute_release.set()
+        self.cancel_release.set()
+        self.status_release.set()
+
+    def count(self, task: str, method: ActionMethod) -> int:
+        with self.lock:
+            return self.calls.count((task, method))
+
+
+class SequencedStatusGateway(ScriptedGateway):
+    def __init__(self, statuses: list[Outcome]) -> None:
+        super().__init__({"a": Outcome.ACCEPTED})
+        self.status_sequence = statuses
+
+    def status(self, task_name: str) -> Outcome:
+        self._record(task_name, ActionMethod.STATUS)
+        self.status_entered.set()
+        return self.status_sequence.pop(0)
+
+
+def scripted_plan(*names: str) -> ExecutionPlan:
+    return ExecutionPlan(
+        "generated", tuple(TaskEntry(name, name, {"trajectory": name}) for name in names)
+    )
+
+
+def start_scripted(runtime: ExecutionRuntime, gateway: ScriptedGateway, task: str = "a") -> Any:
+    started = runtime.execute_explicit(scripted_plan(task))
+    assert started.accepted and started.value is not None
+    assert gateway.execute_entered.wait(1)
+    dispatched = runtime.wait_for_dispatch(started.value, timeout=1)
+    assert dispatched.accepted and dispatched.value is not None
+    assert runtime.snapshot().state == LifecycleState.RUNNING
+    return started.value
+
+
+def close_scripted(runtime: ExecutionRuntime, gateway: ScriptedGateway) -> None:
+    gateway.stop()
+    if runtime.snapshot().shutdown != ShutdownState.CLOSED:
+        runtime.shutdown(timeout=1)
+
+
+@pytest.mark.parametrize("active_status", [Outcome.RUNNING, Outcome.ACCEPTED])
+def test_reset_reconciles_active_status_then_inactive_and_succeeds(
+    active_status: Outcome,
+) -> None:
+    clock = AdjustableClock()
+    gateway = SequencedStatusGateway([active_status, Outcome.INACTIVE])
+    gateway.cancel_outcome = Outcome.UNKNOWN
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        start_scripted(runtime, gateway)
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned.wait(1)
+        runtime.poll()
+        assert runtime.snapshot().state == LifecycleState.FAULT
+
+        gateway.cancel_outcome = Outcome.CANCELLED
+        gateway.status_entered.clear()
+        gateway.cancel_returned.clear()
+        gateway.reset_entered.clear()
+        reset = runtime.reset()
+        assert reset.accepted and reset.value is not None
+        assert gateway.status_entered.wait(1)
+        assert gateway.count("a", ActionMethod.STATUS) == 1
+        gateway.status_entered.clear()
+        assert gateway.cancel_returned.wait(1)
+        assert gateway.count("a", ActionMethod.CANCEL) == 2
+        assert gateway.status_entered.wait(1)
+        assert gateway.count("a", ActionMethod.STATUS) == 2
+        assert gateway.reset_entered.wait(1)
+        assert gateway.count("a", ActionMethod.RESET) == 1
+        result = runtime.wait_for_reset(reset.value, timeout=1)
+        assert result.accepted and result.value is not None and result.value.success
+        assert result.snapshot is not None and result.snapshot.state == LifecycleState.IDLE
+        assert [method for _, method in gateway.calls] == [
+            ActionMethod.EXECUTE,
+            ActionMethod.CANCEL,
+            ActionMethod.STATUS,
+            ActionMethod.CANCEL,
+            ActionMethod.STATUS,
+            ActionMethod.RESET,
+        ]
+    finally:
+        gateway.cancel_release.set()
+        gateway.reset_release.set()
+        close_scripted(runtime, gateway)
+
+
+def test_queued_poll_uses_injected_clock_and_cancels_due_operation_once() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        physical_operation_timeout=60,
+        action_timeout=1000,
+        poll_interval=100,
+    )
+    try:
+        start_scripted(runtime, gateway)
+        clock.set(60)
+        poll_result: list[Any] = []
+        queued = threading.Thread(target=lambda: poll_result.append(runtime.poll()))
+        queued.start()
+        queued.join(1)
+        assert not queued.is_alive()
+        assert len(poll_result) == 1
+        assert poll_result[0].snapshot is not None
+        assert gateway.count("a", ActionMethod.STATUS) == 0
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+    finally:
+        runtime.shutdown(timeout=0)
+
+
+def test_stale_a_deadline_at_sixty_cannot_cancel_b_started_at_thirty() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway({"a": Outcome.COMPLETED, "b": Outcome.RUNNING})
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        a = start_scripted(runtime, gateway)
+        runtime.poll()
+        assert runtime.wait_for_terminal(a, timeout=1).accepted
+        clock.set(30)
+        b = start_scripted(runtime, gateway, "b")
+        gateway.status_entered.clear()
+        clock.set(61)
+        runtime.poll()
+        assert gateway.status_entered.wait(1)
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert snapshot.operation.handle == b
+        assert gateway.count("b", ActionMethod.STATUS) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 0
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_cancel_clearance_survives_old_deadline_with_replacement_running() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        a = start_scripted(runtime, gateway)
+        assert runtime.cancel().accepted
+        assert gateway.cancel_entered.wait(1)
+        assert gateway.cancel_returned.wait(1)
+        runtime.poll()
+        assert runtime.wait_for_terminal(a, timeout=1).accepted
+        clock.set(30)
+        start_scripted(runtime, gateway, "b")
+        clock.set(61)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 0
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_reset_rejects_while_fault_cleanup_rpc_is_unresolved() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway({"a": Outcome.FAILED})
+    gateway.block_cancel = True
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        start_scripted(runtime, gateway)
+        runtime.poll()
+        assert gateway.cancel_entered.wait(1)
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        wait = threading.Event()
+        for _ in range(100):
+            if runtime.snapshot().state == LifecycleState.FAULT:
+                break
+            wait.wait(0.01)
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        reset = runtime.reset()
+        assert not reset.accepted
+        assert reset.value is None
+        assert reset.diagnostic == "reset blocked by unresolved coordinator RPC"
+        assert runtime.snapshot().fault is not None
+    finally:
+        gateway.cancel_release.set()
+        runtime.shutdown(timeout=0)
+
+
+def test_shutdown_clearance_blocks_cancel_and_returns_truthful_deadline_result() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    gateway.block_cancel = True
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        physical_operation_timeout=60,
+        action_timeout=100,
+        poll_interval=100,
+    )
+    result: list[Any] = []
+    try:
+        start_scripted(runtime, gateway)
+        thread = threading.Thread(target=lambda: result.append(runtime.shutdown(timeout=100)))
+        thread.start()
+        assert gateway.cancel_entered.wait(1)
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        clock.set(61)
+        gateway.cancel_release.set()
+        thread.join(1)
+        assert len(result) == 1 and result[0].value is not None
+        assert result[0].value.success
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+    finally:
+        gateway.cancel_release.set()
+        close_scripted(runtime, gateway)
+
+
+def test_reset_completes_before_terminal_waiter_observes_retained_diagnostic() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    gateway.cancel_outcome = Outcome.UNKNOWN
+    gateway.statuses["a"] = Outcome.INACTIVE
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        handle = start_scripted(runtime, gateway)
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned.wait(1)
+        runtime.poll()
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        gateway.cancel_outcome = Outcome.CANCELLED
+        reset = runtime.reset()
+        assert reset.accepted and reset.value is not None
+        reset_result = runtime.wait_for_reset(reset.value, timeout=1)
+        assert reset_result.accepted and reset_result.value is not None
+        assert reset_result.value.success
+        waited = runtime.wait_for_terminal(handle, timeout=float("inf"))
+        assert not waited.accepted
+        assert waited.diagnostic == "cancellation is uncertain"
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_safe_physical_expiry_returns_failed_terminal_result_and_stable_diagnostic() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        handle = start_scripted(runtime, gateway)
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned.wait(1)
+        result = runtime.wait_for_terminal(handle, timeout=1)
+        assert result.accepted and result.value is not None
+        assert result.value.outcome == Outcome.FAILED
+        assert result.value.diagnostic == "physical operation deadline exceeded"
+        assert runtime.wait_for_terminal(handle, timeout=1).value == result.value
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_final_sequential_execute_acceptance_arms_physical_deadline() -> None:
+    clock = AdjustableClock()
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED}, block_execute=True)
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        physical_operation_timeout=60,
+        action_timeout=1000,
+        poll_interval=100,
+    )
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and started.value is not None
+        assert gateway.execute_entered["a"].wait(1)
+        clock.set(59)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        gateway.release["a"].set()
+        assert gateway.execute_entered["b"].wait(1)
+        clock.set(60)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        gateway.release["b"].set()
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        clock.set(120)
+        runtime.poll()
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.cancel_entered["b"].wait(1)
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def test_blocked_sequential_dispatch_does_not_expire_before_final_acceptance() -> None:
+    clock = AdjustableClock()
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED}, block_execute=True)
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        physical_operation_timeout=60,
+        action_timeout=1000,
+        poll_interval=100,
+    )
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and gateway.execute_entered["a"].wait(1)
+        clock.set(600)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        gateway.release["a"].set()
+        assert gateway.execute_entered["b"].wait(1)
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        gateway.release["b"].set()
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted  # type: ignore[arg-type]
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        assert gateway.count("b", ActionMethod.CANCEL) == 0
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def test_finite_terminal_wait_is_observer_only_before_physical_expiry() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        handle = start_scripted(runtime, gateway)
+        clock.set(59)
+        observed: list[Any] = []
+        ready = threading.Event()
+
+        def observe() -> None:
+            ready.set()
+            observed.append(runtime.wait_for_terminal(handle, timeout=1))
+
+        waiter = threading.Thread(target=observe)
+        waiter.start()
+        assert ready.wait(1)
+        clock.set(60)
+        waiter.join(2)
+        assert not waiter.is_alive() and len(observed) == 1
+        waited = observed[0]
+        assert not waited.accepted and waited.diagnostic == "timeout"
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned.wait(1)
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_infinite_terminal_wait_returns_after_public_cancellation() -> None:
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    observed: list[Any] = []
+    ready = threading.Event()
+    try:
+        handle = start_scripted(runtime, gateway)
+
+        def observe() -> None:
+            ready.set()
+            observed.append(runtime.wait_for_terminal(handle, timeout=float("inf")))
+
+        waiter = threading.Thread(target=observe)
+        waiter.start()
+        assert ready.wait(1)
+        assert runtime.cancel().accepted
+        waiter.join(1)
+        assert len(observed) == 1
+        assert observed[0].accepted
+        assert observed[0].value is not None
+        assert observed[0].value.outcome == Outcome.CANCELLED
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_authoritative_completion_before_physical_expiry_wins() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway({"a": Outcome.COMPLETED})
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        handle = start_scripted(runtime, gateway)
+        clock.set(59)
+        runtime.poll()
+        result = runtime.wait_for_terminal(handle, timeout=1)
+        assert result.accepted and result.value is not None
+        assert result.value.outcome == Outcome.COMPLETED
+        clock.set(60)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 0
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_multitask_physical_expiry_cancels_each_task_and_reconciles_terminally() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        started = runtime.execute_explicit(scripted_plan("a", "b"))
+        assert started.accepted and started.value is not None
+        gateway.cancel_entered_by_task["a"] = threading.Event()
+        gateway.cancel_entered_by_task["b"] = threading.Event()
+        gateway.cancel_returned_by_task["a"] = threading.Event()
+        gateway.cancel_returned_by_task["b"] = threading.Event()
+        assert gateway.execute_entered.wait(1)
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned_by_task["a"].wait(1)
+        assert gateway.cancel_returned_by_task["b"].wait(1)
+        runtime.poll()
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 1
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert terminal.accepted and terminal.value is not None
+        assert terminal.value.outcome == Outcome.FAILED
+    finally:
+        close_scripted(runtime, gateway)
+
+
+@pytest.mark.parametrize("cancel_outcome", [Outcome.UNKNOWN, Outcome.FAILED])
+def test_physical_expiry_uncertain_cancellation_is_correlated_to_fault(
+    cancel_outcome: Outcome,
+) -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    gateway.cancel_outcome = cancel_outcome
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, physical_operation_timeout=60, poll_interval=100
+    )
+    try:
+        handle = start_scripted(runtime, gateway)
+        clock.set(60)
+        runtime.poll()
+        assert gateway.cancel_returned.wait(1)
+        observed = runtime.wait_for_terminal(handle, timeout=1)
+        assert not observed.accepted
+        assert observed.diagnostic in {"cancellation is uncertain", "cancellation failed"}
+        assert observed.snapshot is not None
+        assert observed.snapshot.state == LifecycleState.FAULT
+    finally:
+        close_scripted(runtime, gateway)
+
+
+def test_shutdown_unknown_cancels_each_task_once_and_drains() -> None:
+    gateway = BlockingGateway(
+        {"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED},
+        {"a": Outcome.UNKNOWN, "b": Outcome.UNKNOWN},
+    )
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    result: list[Any] = []
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and started.value is not None
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        closer = threading.Thread(target=lambda: result.append(runtime.shutdown(timeout=1)))
+        closer.start()
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.cancel_entered["b"].wait(1)
+        gateway.release["a"].set()
+        gateway.release["b"].set()
+        closer.join(2)
+        assert result and not result[0].accepted
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 1
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        assert runtime.snapshot().shutdown_result is not None
+        assert not runtime.snapshot().shutdown_result.success
+    finally:
+        for release in gateway.release.values():
+            release.set()
+
+
+def test_shutdown_latches_cancel_only_before_physical_expiry_and_admits_one_cancel() -> None:
+    clock = AdjustableClock()
+    gateway = ScriptedGateway()
+    gateway.block_cancel = True
+    runtime = ExecutionRuntime(
+        lambda: gateway,
+        monotonic_clock=clock,
+        physical_operation_timeout=60,
+        action_timeout=100,
+        poll_interval=100,
+    )
+    result: list[Any] = []
+    try:
+        start_scripted(runtime, gateway)
+        thread = threading.Thread(target=lambda: result.append(runtime.shutdown(timeout=100)))
+        thread.start()
+        assert gateway.cancel_entered.wait(1)
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        assert not runtime.poll().accepted
+        clock.set(61)
+        gateway.cancel_release.set()
+        thread.join(1)
+        assert result and result[0].value is not None and result[0].value.success
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+    finally:
+        gateway.cancel_release.set()
+        close_scripted(runtime, gateway)
+
+
+def test_unresolved_shutdown_deadline_has_no_late_effects() -> None:
+    clock = AdjustableClock()
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, block_execute=True)
+    runtime = ExecutionRuntime(lambda: gateway, monotonic_clock=clock, poll_interval=100)
+    shutdown_started = False
+    try:
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and gateway.execute_entered["a"].wait(1)
+        shutdown_started = True
+        result = runtime.shutdown(timeout=0)
+        assert not result.accepted
+        assert result.value is not None and not result.value.success
+        assert runtime.snapshot().shutdown == ShutdownState.CLOSING
+        cancel_count = gateway.count("a", ActionMethod.CANCEL)
+        gateway.release["a"].set()
+        assert gateway.stop_entered.wait(1)
+        assert gateway.count("a", ActionMethod.CANCEL) == cancel_count + 1
+    finally:
+        gateway.release["a"].set()
+        if not shutdown_started:
+            runtime.shutdown(timeout=0)
+
+
+@pytest.mark.parametrize(
+    ("execute_outcome", "expected_cancel"),
+    [(Outcome.ACCEPTED, 1), (Outcome.REJECTED, 0)],
+)
+def test_late_action_deadline_completion_is_correlated(
+    execute_outcome: Outcome, expected_cancel: int
+) -> None:
+    clock = AdjustableClock()
+    gateway = BlockingGateway({"a": execute_outcome}, block_execute=True)
+    runtime = ExecutionRuntime(
+        lambda: gateway, monotonic_clock=clock, action_timeout=1, poll_interval=100
+    )
+    try:
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
+        assert gateway.execute_entered["a"].wait(1)
+        clock.set(2)
+        runtime.poll()
+        gateway.release["a"].set()
+        dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert dispatch.value.outcome == Outcome.UNKNOWN
+        if expected_cancel:
+            assert gateway.cancel_entered["a"].wait(1)
+            gateway.release["a"].set()
+        assert gateway.count("a", ActionMethod.CANCEL) == expected_cancel
+    finally:
+        gateway.release["a"].set()
+        runtime.shutdown()
+
+
+def test_unknown_partial_dispatch_compensates_only_admitted_effects() -> None:
+    gateway = BlockingGateway(
+        {"a": Outcome.ACCEPTED, "b": Outcome.UNKNOWN, "c": Outcome.ACCEPTED},
+        {"a": Outcome.CANCELLED, "b": Outcome.CANCELLED},
+    )
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a", "b", "c"))
+        assert started.accepted and started.value is not None
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.cancel_entered["b"].wait(1)
+        assert not any(
+            task == "c" and method == ActionMethod.EXECUTE for task, method in gateway.calls
+        )
+        for release in gateway.release.values():
+            release.set()
+        dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert dispatch.value.outcome == Outcome.UNKNOWN
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 1
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def _install_pending_action(
+    runtime: ExecutionRuntime,
+    *,
+    active_handle: OperationHandle,
+    pending_handle: OperationHandle,
+    task_id: str = "task",
+    active_task_id: str = "task",
+    current_action_id: str = "new-action",
+    pending_action_id: str = "old-action",
+) -> tuple[ActionRecord, ActionRecord]:
+    old_action = ActionRecord(pending_action_id, ActionMethod.EXECUTE, 1.0, 1e9)
+    new_action = ActionRecord(current_action_id, ActionMethod.STATUS, 2.0, 1e9 + 1)
+    task = TaskRecord(
+        active_task_id,
+        "task",
+        plan("task").entries[0],
+        TaskActivity.ACTIVE,
+        new_action,
+    )
+    operation = Operation(active_handle, plan("task"), (task,))
+    runtime._commit(state=LifecycleState.RUNNING, active=operation)
+    runtime._pending[pending_action_id] = _PendingAction(
+        pending_handle,
+        "task",
+        replace(task, task_id=task_id, action=old_action),
+        ActionMethod.EXECUTE,
+        1e9,
+    )
+    runtime._pending[current_action_id] = _PendingAction(
+        active_handle,
+        "task",
+        task,
+        ActionMethod.STATUS,
+        1e9 + 1,
+    )
+    return old_action, new_action
+
+
+def test_owner_completion_retires_old_pending_but_preserves_new_action() -> None:
+    runtime = ExecutionRuntime(
+        lambda: BlockingGateway({"task": Outcome.RUNNING}), poll_interval=100
+    )
+    try:
+        handle = OperationHandle("plan", "operation", "attempt")
+        _, newer = _install_pending_action(runtime, active_handle=handle, pending_handle=handle)
+        before = runtime.snapshot()
+        runtime._events.put(EffectDone("old-action", Outcome.ACCEPTED))
+        runtime._submit(lambda: None)
+        after = runtime.snapshot()
+        assert "old-action" not in runtime._pending
+        assert "new-action" in runtime._pending
+        assert after == before
+        assert after.operation is not None
+        assert after.operation.tasks[0].action == newer
+    finally:
+        runtime._pending.clear()
+        runtime._commit(active=None, state=LifecycleState.IDLE)
+        runtime.shutdown()
+
+
+@pytest.mark.parametrize("kind", ["unknown", "handle", "task"])
+def test_owner_uncorrelatable_completion_preserves_pending_and_snapshot(kind: str) -> None:
+    runtime = ExecutionRuntime(
+        lambda: BlockingGateway({"task": Outcome.RUNNING}), poll_interval=100
+    )
+    try:
+        handle = OperationHandle("plan", "operation", "attempt")
+        pending_handle = (
+            OperationHandle("other", "operation", "attempt") if kind == "handle" else handle
+        )
+        _install_pending_action(
+            runtime,
+            active_handle=handle,
+            pending_handle=pending_handle,
+            task_id="missing" if kind == "task" else "task",
+        )
+        before = runtime.snapshot()
+        action_id = "unknown-action" if kind == "unknown" else "old-action"
+        runtime._events.put(EffectDone(action_id, Outcome.ACCEPTED))
+        runtime._submit(lambda: None)
+        assert runtime.snapshot() == before
+        assert set(runtime._pending) == {"old-action", "new-action"}
+    finally:
+        runtime._pending.clear()
+        runtime._commit(active=None, state=LifecycleState.IDLE)
+        runtime.shutdown()
+
+
+def test_concurrent_explicit_admission_accepts_one_and_correlates_rejection() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    start = threading.Barrier(3)
+    results: list[Any] = []
+
+    def submit() -> None:
+        start.wait()
+        results.append(runtime.execute_explicit(plan("a")))
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        start.wait()
+        for thread in threads:
+            thread.join(1)
+        assert len(results) == 2
+        assert sum(result.accepted for result in results) == 1
+        accepted = next(result for result in results if result.accepted)
+        assert accepted.value is not None
+        rejected = next(result for result in results if not result.accepted)
+        assert rejected.value is None
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert snapshot.operation.handle == accepted.value
+        gateway.release["a"].set()
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+    finally:
+        gateway.release["a"].set()
+        runtime.cancel()
+        runtime.shutdown()
+
+
+def test_concurrent_ready_execution_consumes_ready_plan_once() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    start = threading.Barrier(3)
+    results: list[Any] = []
+    token = runtime.start_planning()
+    assert token is not None
+    completed = runtime.complete_planning(token, plan("a"))
+    assert completed.accepted and completed.value is not None
+    plan_id = completed.value
+
+    def execute_ready() -> None:
+        start.wait()
+        results.append(runtime.execute_ready())
+
+    threads = [threading.Thread(target=execute_ready) for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        start.wait()
+        for thread in threads:
+            thread.join(1)
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(results) == 2
+        assert sum(result.accepted for result in results) == 1
+        assert runtime.snapshot().ready_plan is None
+        accepted = next(result for result in results if result.accepted)
+        rejected = next(result for result in results if not result.accepted)
+        assert accepted.value is not None
+        assert accepted.value.plan_id == plan_id
+        assert not rejected.accepted
+        assert rejected.value is None
+        assert rejected.diagnostic == "no ready plan"
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+    finally:
+        gateway.release["a"].set()
+        runtime.cancel()
+        runtime.shutdown()
+
+
+def test_active_operation_rejects_planning_and_explicit_execution_but_accepts_cancel() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED})
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
+        assert gateway.execute_entered["a"].wait(1)
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        original = runtime.snapshot()
+        assert original.state == LifecycleState.RUNNING
+        assert not runtime.start_planning()
+        rejected = runtime.execute_explicit(plan("a"))
+        assert not rejected.accepted
+        assert rejected.value is None
+        assert runtime.snapshot().operation == original.operation
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+        assert runtime.snapshot().operation == original.operation
+        assert runtime.cancel().accepted
+        gateway.release["a"].set()
+    finally:
+        gateway.release["a"].set()
+        runtime.shutdown()
+
+
+def test_sequential_rejection_skips_remaining_task_and_compensates_prior_acceptance() -> None:
+    gateway = BlockingGateway(
+        {"a": Outcome.ACCEPTED, "b": Outcome.REJECTED, "c": Outcome.ACCEPTED},
+        {"a": Outcome.CANCELLED},
+    )
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a", "b", "c"))
+        assert started.accepted and started.value is not None
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.calls[:3] == [
+            ("a", ActionMethod.EXECUTE),
+            ("b", ActionMethod.EXECUTE),
+            ("a", ActionMethod.CANCEL),
+        ]
+        assert not any(
+            task == "c" and method == ActionMethod.EXECUTE for task, method in gateway.calls
+        )
+        gateway.release["a"].set()
+        dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert terminal.accepted and terminal.value is not None
+        assert dispatch.value.outcome == Outcome.REJECTED
+        assert terminal.value.outcome == Outcome.REJECTED
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.EXECUTE) == 1
+        assert gateway.count("c", ActionMethod.EXECUTE) == 0
+        assert gateway.count("c", ActionMethod.CANCEL) == 0
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def test_cancel_during_unresolved_dispatch_retains_cancelled_result_after_late_acceptance() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED}, block_execute=True)
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and started.value is not None
+        assert gateway.execute_entered["a"].wait(1)
+        assert runtime.cancel().accepted
+        gateway.release["a"].set()
+        dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert terminal.accepted and terminal.value is not None
+        assert dispatch.value.outcome == Outcome.CANCELLED
+        assert terminal.value.outcome == Outcome.CANCELLED
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+        assert gateway.calls[:2] == [
+            ("a", ActionMethod.EXECUTE),
+            ("a", ActionMethod.CANCEL),
+        ]
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.EXECUTE) == 0
+        assert gateway.count("b", ActionMethod.CANCEL) == 0
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def test_unknown_execute_enters_fault_and_compensates_without_terminal_success() -> None:
+    gateway = BlockingGateway(
+        {"a": Outcome.UNKNOWN, "b": Outcome.REJECTED},
+        {"a": Outcome.UNKNOWN, "b": Outcome.FAILED},
+    )
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and started.value is not None
+        assert gateway.cancel_entered["a"].wait(1)
+        snapshot = runtime.snapshot()
+        assert snapshot.state == LifecycleState.FAULT
+        assert snapshot.operation is not None and snapshot.operation.uncertain
+        assert gateway.count("a", ActionMethod.EXECUTE) == 1
+        assert gateway.count("b", ActionMethod.EXECUTE) == 0
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 0
+        gateway.release["a"].set()
+        dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+        assert dispatch.accepted and dispatch.value is not None
+        assert dispatch.value.outcome == Outcome.UNKNOWN
+        assert dispatch.value.diagnostic
+        assert "task=a" in dispatch.value.diagnostic
+        assert "outcome=unknown" in dispatch.value.diagnostic
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert not terminal.accepted
+        assert terminal.diagnostic == dispatch.value.diagnostic
+    finally:
+        gateway.release["a"].set()
+        runtime.shutdown()
+
+
+def test_unknown_status_enters_fault_without_successful_terminal_result() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED, "b": Outcome.ACCEPTED})
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a", "b"))
+        assert started.accepted and started.value is not None
+        handle = started.value
+        assert gateway.execute_entered["a"].wait(1)
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        runtime.poll()
+        assert gateway.status_entered.wait(1)
+        assert gateway.cancel_entered["a"].wait(1)
+        assert gateway.cancel_entered["b"].wait(1)
+        gateway.release["a"].set()
+        gateway.release["b"].set()
+        terminal = runtime.wait_for_terminal(handle, timeout=1)
+        assert not terminal.accepted
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert terminal.diagnostic == runtime.snapshot().diagnostic
+        assert terminal.diagnostic
+        assert "task=a" in terminal.diagnostic
+        assert "outcome=unknown" in terminal.diagnostic
+        assert "status is unsafe" in terminal.diagnostic
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        assert gateway.count("a", ActionMethod.STATUS) == 1
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+        assert gateway.count("b", ActionMethod.CANCEL) == 1
+    finally:
+        for release in gateway.release.values():
+            release.set()
+        runtime.shutdown()
+
+
+def test_failed_cancel_latches_fault_and_preserves_reset_required_operation() -> None:
+    gateway = BlockingGateway({"a": Outcome.ACCEPTED}, {"a": Outcome.FAILED})
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        started = runtime.execute_explicit(plan("a"))
+        assert started.accepted and started.value is not None
+        assert gateway.execute_entered["a"].wait(1)
+        assert runtime.wait_for_dispatch(started.value, timeout=1).accepted
+        assert runtime.cancel().accepted
+        assert gateway.cancel_entered["a"].wait(1)
+        gateway.release["a"].set()
+        terminal = runtime.wait_for_terminal(started.value, timeout=1)
+        assert not terminal.accepted
+        assert terminal.diagnostic == "cancellation failed"
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert snapshot.operation.tasks[0].reset_required
+        assert snapshot.diagnostic == "cancellation failed"
+        assert gateway.count("a", ActionMethod.CANCEL) == 1
+    finally:
+        gateway.release["a"].set()
+        runtime.shutdown()
+
+
+def test_reset_calls_share_one_public_handle_until_first_result_is_ready() -> None:
+    gateway = ScriptedGateway({"a": Outcome.FAILED})
+    gateway.block_reset = True
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        start_scripted(runtime, gateway)
+        runtime.poll()
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert not runtime.wait_for_terminal(snapshot.operation.handle, timeout=1).accepted
+        gateway.statuses["a"] = Outcome.INACTIVE
+        assert gateway.cancel_returned.wait(1)
+        runtime.poll()
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        first = runtime.reset()
+        assert first.accepted and first.value is not None
+        assert gateway.reset_entered.wait(1)
+        second = runtime.reset()
+        assert second.accepted and second.value == first.value
+        gateway.reset_release.set()
+        result = runtime.wait_for_reset(first.value, timeout=1)
+        assert result.accepted and result.value is not None and result.value.success
+        assert runtime.snapshot().state == LifecycleState.IDLE
+        assert gateway.count("a", ActionMethod.RESET) == 1
+    finally:
+        gateway.reset_release.set()
+        close_scripted(runtime, gateway)
+
+
+def test_unsafe_reset_remains_faulted_without_an_in_process_retry() -> None:
+    gateway = ScriptedGateway()
+    gateway.block_cancel = True
+    status_calls = 0
+
+    def status(task_name: str) -> Outcome:
+        nonlocal status_calls
+        status_calls += 1
+        return Outcome.FAILED if status_calls == 1 else Outcome.UNKNOWN
+
+    gateway.status = status  # type: ignore[assignment,method-assign]
+    runtime = ExecutionRuntime(lambda: gateway, poll_interval=100)
+    try:
+        start_scripted(runtime, gateway)
+        runtime.poll()
+        snapshot = runtime.snapshot()
+        assert snapshot.operation is not None
+        assert not runtime.wait_for_terminal(snapshot.operation.handle, timeout=1).accepted
+        assert gateway.cancel_entered.wait(1)
+        reset = runtime.reset()
+        assert not reset.accepted and reset.value is None
+        assert reset.diagnostic == "reset blocked by unresolved coordinator RPC"
+        assert runtime.snapshot().state == LifecycleState.FAULT
+        assert runtime.snapshot().diagnostic
+        assert gateway.count("a", ActionMethod.RESET) == 0
+    finally:
+        gateway.cancel_release.set()
+        close_scripted(runtime, gateway)
+
+
+def test_public_results_retain_current_and_recent_handles_and_age_out_old_handles() -> None:
+    gateway = BlockingGateway({"a": Outcome.REJECTED})
+    clock = AdjustableClock()
+    runtime = ExecutionRuntime(lambda: gateway, monotonic_clock=clock, poll_interval=100)
+    handles: list[Any] = []
+    try:
+        for _ in range(20):
+            started = runtime.execute_explicit(plan("a"))
+            assert started.accepted and started.value is not None
+            handles.append(started.value)
+            dispatch = runtime.wait_for_dispatch(started.value, timeout=1)
+            terminal = runtime.wait_for_terminal(started.value, timeout=1)
+            assert dispatch.accepted and dispatch.value is not None
+            assert terminal.accepted and terminal.value is not None
+            assert dispatch.value.handle == started.value
+            assert terminal.value.handle == started.value
+        for handle in handles[-2:]:
+            dispatch = runtime.wait_for_dispatch(handle, timeout=1)
+            terminal = runtime.wait_for_terminal(handle, timeout=1)
+            assert dispatch.accepted and terminal.accepted
+            assert dispatch.value is not None and dispatch.value.outcome == Outcome.REJECTED
+            assert terminal.value is not None and terminal.value.outcome == Outcome.REJECTED
+            assert dispatch.value.handle == handle
+            assert terminal.value.handle == handle
+        aged_out = handles[0]
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_dispatch(aged_out, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_terminal(aged_out, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
+        wrong = replace(handles[-1], attempt_id="missing-attempt")
+        unknown = replace(handles[-1], operation_id="missing-operation")
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_dispatch(wrong, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_terminal(wrong, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_dispatch(unknown, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
+        assert (
+            assert_public_wait_times_out(
+                lambda: runtime.wait_for_terminal(unknown, timeout=1)
+            ).diagnostic
+            == "timeout"
+        )
     finally:
         runtime.shutdown()

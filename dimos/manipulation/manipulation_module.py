@@ -47,6 +47,7 @@ from dimos.manipulation.execution_runtime import (
     OperationHandle,
     Outcome,
     PreparedPlan,
+    RuntimeSnapshot,
     ShutdownState,
     prepare_generated_plan,
 )
@@ -128,6 +129,7 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
+    physical_operation_timeout: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     world_backend: WorldBackend = "drake"
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
@@ -285,6 +287,7 @@ class ManipulationModule(Module):
             gateway_factory,
             topology=self._execution_topology,
             action_timeout=self.config.planning_timeout,
+            physical_operation_timeout=self.config.physical_operation_timeout,
         )
 
         # Add floor obstacle to prevent trajectories below the table surface
@@ -445,21 +448,27 @@ class ManipulationModule(Module):
     @rpc
     def get_state(self) -> str:
         """Get current manipulation state name."""
-        if self._execution_runtime is None:
+        snapshot = self._execution_snapshot()
+        if snapshot is None:
             return LifecycleState.IDLE.name
-        return self._execution_runtime.snapshot().state.name
+        return snapshot.state.name
+
+    def _execution_snapshot(self) -> RuntimeSnapshot | None:
+        """Read the runtime-owned execution projection exactly once."""
+        runtime = self._execution_runtime
+        return runtime.snapshot() if runtime is not None else None
 
     @rpc
     def get_execution_snapshot(self) -> ManipulationExecutionSnapshot:
         """Return one atomic runtime execution snapshot for observers."""
-        if self._execution_runtime is None:
+        snapshot = self._execution_snapshot()
+        if snapshot is None:
             return ManipulationExecutionSnapshot(
                 state=LifecycleState.IDLE.name,
                 diagnostic="",
                 ready_plan_id=None,
                 has_ready_plan=False,
             )
-        snapshot = self._execution_runtime.snapshot()
         return ManipulationExecutionSnapshot(
             state=snapshot.state.name,
             diagnostic=snapshot.diagnostic or "",
@@ -474,9 +483,9 @@ class ManipulationModule(Module):
         Returns:
             Error message or empty string
         """
-        if self._execution_runtime is None:
+        snapshot = self._execution_snapshot()
+        if snapshot is None:
             return ""
-        snapshot = self._execution_runtime.snapshot()
         return snapshot.diagnostic or ""
 
     @rpc
@@ -530,11 +539,8 @@ class ManipulationModule(Module):
         reset_result = self._execution_runtime.reset()
         if not reset_result.accepted or reset_result.value is None:
             return SkillResult.fail("INVALID_STATE", reset_result.diagnostic)
-        # Runtime owns the reset deadline (action timeout); wait slightly past
-        # it so the deadline event has a chance to publish its result.
-        runtime_timeout = float(getattr(self._execution_runtime, "_timeout", 0.05))
         reconciled = self._execution_runtime.wait_for_reset(
-            reset_result.value, timeout=max(runtime_timeout, 0.05) + 0.1
+            reset_result.value, timeout=float("inf")
         )
         if not reconciled.accepted or reconciled.value is None or not reconciled.value.success:
             return SkillResult.fail("RESET_FAILED", reconciled.diagnostic or "Reset failed")
@@ -1111,9 +1117,10 @@ class ManipulationModule(Module):
         Returns:
             True if a path is planned and ready
         """
-        if self._execution_runtime is None:
+        snapshot = self._execution_snapshot()
+        if snapshot is None:
             return False
-        ready = self._execution_runtime.snapshot().ready_plan
+        ready = snapshot.ready_plan
         return isinstance(ready, PreparedPlan) and bool(ready.generated_plan.path)
 
     @rpc
@@ -1371,21 +1378,15 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def execute(self) -> bool:
-        """Execute the current runtime-owned prepared plan."""
-        handle = self._submit_execution(None)
+    def execute(self, plan: GeneratedPlan | None = None) -> bool:
+        """Execute a complete plan, or the runtime-owned READY plan when omitted."""
+        handle = self._submit_execution(plan)
         if handle is None or self._execution_runtime is None:
             return False
-        dispatch = self._execution_runtime.wait_for_dispatch(
-            handle, timeout=self._dispatch_wait_timeout()
-        )
-        if not dispatch.accepted:
-            return self._handle_dispatch_timeout(handle, dispatch.diagnostic) == "completed"
-        return bool(
-            dispatch.accepted
-            and dispatch.value is not None
-            and dispatch.value.outcome == Outcome.ACCEPTED
-        )
+        dispatch = self._execution_runtime.wait_for_dispatch(handle, timeout=float("inf"))
+        if not dispatch.accepted or dispatch.value is None:
+            return False
+        return bool(dispatch.value.outcome == Outcome.ACCEPTED)
 
     @rpc
     def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
@@ -1393,16 +1394,10 @@ class ManipulationModule(Module):
         handle = self._submit_execution(plan)
         if handle is None or self._execution_runtime is None:
             return False
-        dispatch = self._execution_runtime.wait_for_dispatch(
-            handle, timeout=self._dispatch_wait_timeout()
-        )
-        if not dispatch.accepted:
-            return self._handle_dispatch_timeout(handle, dispatch.diagnostic) == "completed"
-        return bool(
-            dispatch.accepted
-            and dispatch.value is not None
-            and dispatch.value.outcome == Outcome.ACCEPTED
-        )
+        dispatch = self._execution_runtime.wait_for_dispatch(handle, timeout=float("inf"))
+        if not dispatch.accepted or dispatch.value is None:
+            return False
+        return bool(dispatch.value.outcome == Outcome.ACCEPTED)
 
     def _submit_execution(self, plan: GeneratedPlan | None) -> OperationHandle | None:
         """Submit one explicit or exactly-ready generated plan to the runtime."""
@@ -1410,189 +1405,23 @@ class ManipulationModule(Module):
         topology = self._execution_topology
         if runtime is None or topology is None:
             return None
-        ready = runtime.snapshot().ready_plan
-        if plan is None or (isinstance(ready, PreparedPlan) and ready.generated_plan is plan):
+        if plan is None:
             result = runtime.execute_ready()
         else:
-            previous = ready.generated_plan if isinstance(ready, PreparedPlan) else None
             try:
                 prepared = prepare_generated_plan(plan, topology)
             except Exception as exc:
                 logger.warning("Failed to prepare execution: %s", exc)
                 return None
             result = runtime.execute_explicit(prepared)
-            if result.accepted and previous is not None:
-                self._dismiss_preview(previous.group_ids)
         return result.value if result.accepted else None
-
-    def _dispatch_wait_timeout(self) -> float:
-        """Return the runtime dispatch deadline plus a publication margin."""
-        runtime = self._execution_runtime
-        configured = self.config.planning_timeout
-        action_timeout = float(getattr(runtime, "_timeout", configured)) if runtime else configured
-        return max(action_timeout, 0.05) + 0.1
-
-    def _handle_dispatch_timeout(self, handle: OperationHandle, diagnostic: str) -> str:
-        """Cancel the timed-out operation and verify its terminal safety state."""
-        runtime = self._execution_runtime
-        if runtime is None:
-            logger.error("Execution dispatch timed out; runtime is unavailable")
-            return "unresolved"
-
-        # A timeout can race with result publication. Reconcile the original
-        # handle before inspecting the active operation, so a replacement can
-        # never be cancelled on behalf of this request.
-        retained_dispatch = runtime.wait_for_dispatch(handle, timeout=0.01)
-        retained_terminal = runtime.wait_for_terminal(handle, timeout=0.01)
-        terminal_result = (
-            retained_terminal.value
-            if retained_terminal.accepted and retained_terminal.value is not None
-            else None
-        )
-        if terminal_result is not None:
-            if terminal_result.outcome == Outcome.CANCELLED:
-                logger.warning("Execution dispatch timed out; operation was safely cancelled")
-                return "cancelled"
-            if terminal_result.outcome == Outcome.COMPLETED:
-                logger.info("Execution dispatch timed out; operation completed")
-                return "completed"
-            if terminal_result.outcome == Outcome.REJECTED:
-                logger.error("Execution dispatch timed out; execution was rejected")
-                return "rejected"
-            if terminal_result.outcome == Outcome.FAILED:
-                logger.error("Execution dispatch timed out; execution failed")
-                return "failed"
-            logger.error(
-                "Execution dispatch timed out; remote safety is unresolved (%s)",
-                terminal_result.outcome.value,
-            )
-            return "unresolved"
-        if (
-            retained_dispatch.accepted
-            and retained_dispatch.value is not None
-            and retained_dispatch.value.outcome != Outcome.ACCEPTED
-        ):
-            if retained_dispatch.value.outcome == Outcome.CANCELLED:
-                logger.warning("Execution dispatch timed out; operation was safely cancelled")
-                return "cancelled"
-            if retained_dispatch.value.outcome == Outcome.COMPLETED:
-                logger.info("Execution dispatch timed out; operation completed")
-                return "completed"
-            if retained_dispatch.value.outcome == Outcome.REJECTED:
-                logger.error("Execution dispatch timed out; execution was rejected")
-                return "rejected"
-            if retained_dispatch.value.outcome == Outcome.FAILED:
-                logger.error("Execution dispatch timed out; execution failed")
-                return "failed"
-            logger.error(
-                "Execution dispatch timed out; remote safety is unresolved (%s)",
-                retained_dispatch.value.outcome.value,
-            )
-            return "unresolved"
-
-        cancellation = runtime.cancel_if_current(handle)
-        if not cancellation.accepted:
-            concurrent_terminal = runtime.wait_for_terminal(handle, timeout=0.01)
-            if concurrent_terminal.accepted and concurrent_terminal.value is not None:
-                outcome = concurrent_terminal.value.outcome
-                if outcome == Outcome.CANCELLED:
-                    logger.warning("Execution dispatch timed out; operation was safely cancelled")
-                    return "cancelled"
-                if outcome == Outcome.COMPLETED:
-                    logger.info("Execution dispatch timed out; operation completed")
-                    return "completed"
-                if outcome == Outcome.REJECTED:
-                    logger.error("Execution dispatch timed out; execution was rejected")
-                    return "rejected"
-                if outcome == Outcome.FAILED:
-                    logger.error("Execution dispatch timed out; execution failed")
-                    return "failed"
-                logger.error(
-                    "Execution dispatch timed out; remote safety is unresolved (%s)",
-                    outcome.value,
-                )
-                return "unresolved"
-            active = runtime.snapshot().operation
-            if active is None or active.handle != handle:
-                message = (
-                    "Execution dispatch timed out; original operation is unresolved and "
-                    "active operation handle changed"
-                    if active is not None
-                    else "Execution dispatch timed out; original operation is unresolved and no active operation remains"
-                )
-                logger.error("%s (%s)", message, diagnostic or "timeout")
-                return "unresolved"
-            message = (
-                cancellation.diagnostic or "Execution dispatch timed out; cancellation was rejected"
-            )
-            logger.error("%s", message)
-            return "cancel_rejected"
-
-        terminal = runtime.wait_for_terminal(handle, timeout=self._dispatch_wait_timeout())
-        if terminal.accepted and terminal.value is not None:
-            if terminal.value.outcome == Outcome.CANCELLED:
-                logger.warning("Execution dispatch timed out; operation was safely cancelled")
-                return "cancelled"
-            if terminal.value.outcome == Outcome.COMPLETED:
-                logger.info("Execution dispatch timed out; operation completed")
-                return "completed"
-            if terminal.value.outcome == Outcome.REJECTED:
-                logger.error("Execution dispatch timed out; execution was rejected")
-                return "rejected"
-            if terminal.value.outcome == Outcome.FAILED:
-                logger.error("Execution dispatch timed out; execution failed")
-                return "failed"
-            logger.error(
-                "Execution dispatch timed out; remote safety is unresolved (%s)",
-                terminal.value.outcome.value,
-            )
-            return "unresolved"
-        else:
-            message = (
-                "Execution dispatch timed out; cancellation was accepted but operation "
-                "remains unresolved"
-            )
-        logger.error(
-            "%s%s",
-            message,
-            f" ({terminal.diagnostic})" if terminal.diagnostic else "",
-        )
-        return "unresolved"
-
-    def _terminal_after_cancel_rejection(
-        self, handle: OperationHandle, diagnostic: str
-    ) -> SkillResult[ManipulationSkillError] | None:
-        """Reconcile a cancellation race using only the original handle."""
-        runtime = self._execution_runtime
-        if runtime is None:
-            return None
-        terminal = runtime.wait_for_terminal(handle, timeout=0.01)
-        if not terminal.accepted or terminal.value is None:
-            return None
-        result = terminal.value
-        if result.outcome == Outcome.COMPLETED:
-            return SkillResult.ok("Execution completed while cancellation was requested")
-        if result.outcome == Outcome.CANCELLED:
-            return SkillResult.fail(
-                "EXECUTION_CANCELLED", result.diagnostic or "Trajectory cancelled"
-            )
-        if result.outcome == Outcome.REJECTED:
-            return SkillResult.fail(
-                "EXECUTION_REJECTED", result.diagnostic or "Trajectory rejected"
-            )
-        if result.outcome == Outcome.FAILED:
-            return SkillResult.fail("EXECUTION_FAILED", result.diagnostic or "Trajectory failed")
-        return SkillResult.fail(
-            "EXECUTION_CANCEL_UNRESOLVED",
-            result.diagnostic or diagnostic or "Remote execution safety is unresolved",
-        )
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
         """Return a snapshot-only runtime status, optionally scoped to a robot."""
-        if self._execution_runtime is None:
+        snapshot = self._execution_snapshot()
+        if snapshot is None:
             return None
-        snapshot = self._execution_runtime.snapshot()
         operation = snapshot.operation
         tasks: list[dict[str, Any]] = []
         if operation is not None:
@@ -1789,40 +1618,11 @@ class ManipulationModule(Module):
         if handle is None:
             return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
 
-        dispatch = self._execution_runtime.wait_for_dispatch(
-            handle, timeout=self._dispatch_wait_timeout()
-        )
-        if not dispatch.accepted:
-            safety = self._handle_dispatch_timeout(handle, dispatch.diagnostic)
-            if safety == "cancel_rejected":
-                return SkillResult.fail(
-                    "EXECUTION_CANCEL_REJECTED",
-                    dispatch.diagnostic
-                    or "Execution dispatch timed out; cancellation was rejected",
-                )
-            if safety == "cancelled":
-                return SkillResult.fail(
-                    "EXECUTION_CANCELLED",
-                    "Execution dispatch timed out; operation was safely cancelled",
-                )
-            if safety == "completed":
-                return SkillResult.ok("Execution dispatch timed out; operation completed")
-            if safety == "failed":
-                return SkillResult.fail(
-                    "EXECUTION_FAILED",
-                    "Execution dispatch timed out; operation resolved with failure",
-                )
-            if safety == "rejected":
-                return SkillResult.fail(
-                    "EXECUTION_REJECTED", "Execution dispatch timed out; execution was rejected"
-                )
+        dispatch = self._execution_runtime.wait_for_dispatch(handle, timeout=float("inf"))
+        if not dispatch.accepted or dispatch.value is None:
             return SkillResult.fail(
-                "EXECUTION_CANCEL_UNRESOLVED",
-                "Execution dispatch timed out; cancellation was accepted but operation is unresolved",
-            )
-        if dispatch.value is None:
-            return SkillResult.fail(
-                "EXECUTION_DISPATCH_FAILED", "Execution dispatch returned no result"
+                "EXECUTION_DISPATCH_FAILED",
+                dispatch.diagnostic or "Execution dispatch failed",
             )
         if dispatch.value.outcome == Outcome.REJECTED:
             return SkillResult.fail(
@@ -1831,59 +1631,29 @@ class ManipulationModule(Module):
         if dispatch.value.outcome != Outcome.ACCEPTED:
             return SkillResult.fail(
                 "EXECUTION_DISPATCH_FAILED",
-                dispatch.value.diagnostic
-                or f"Unexpected dispatch outcome: {dispatch.value.outcome.value}",
+                dispatch.value.diagnostic or "Unexpected dispatch outcome",
             )
-
-        duration = plan.trajectory.duration if plan is not None else 0.0
-        execution_timeout = max(float(duration) + 1.0, 0.5)
-        terminal = self._execution_runtime.wait_for_terminal(handle, timeout=execution_timeout)
-        if not terminal.accepted:
-            cancellation = self._execution_runtime.cancel_if_current(handle)
-            if not cancellation.accepted:
-                reconciled = self._terminal_after_cancel_rejection(handle, cancellation.diagnostic)
-                if reconciled is not None:
-                    return reconciled
-                return SkillResult.fail(
-                    "EXECUTION_CANCEL_REJECTED",
-                    cancellation.diagnostic or "Execution timed out and cancellation was rejected",
-                )
+        terminal = self._execution_runtime.wait_for_terminal(handle, timeout=float("inf"))
+        if not terminal.accepted or terminal.value is None:
             return SkillResult.fail(
-                "EXECUTION_CANCEL_UNRESOLVED",
-                "Execution timed out; cancellation was accepted but motion is unresolved",
+                "EXECUTION_FAILED", terminal.diagnostic or "Execution terminal result unavailable"
             )
-        if terminal.value is None:
-            cancellation = self._execution_runtime.cancel_if_current(handle)
-            if not cancellation.accepted:
-                reconciled = self._terminal_after_cancel_rejection(handle, cancellation.diagnostic)
-                if reconciled is not None:
-                    return reconciled
-            return SkillResult.fail("EXECUTION_FAILED", "Execution returned no result")
-        outcome = terminal.value.outcome
-        if outcome == Outcome.REJECTED:
+        result = terminal.value
+        if result.outcome == Outcome.COMPLETED:
+            return SkillResult.ok()
+        if result.outcome == Outcome.CANCELLED:
             return SkillResult.fail(
-                "EXECUTION_REJECTED", terminal.value.diagnostic or "Trajectory rejected"
+                "EXECUTION_CANCELLED", result.diagnostic or "Trajectory cancelled"
             )
-        if outcome == Outcome.FAILED:
+        if result.outcome == Outcome.FAILED:
+            return SkillResult.fail("EXECUTION_FAILED", result.diagnostic or "Trajectory failed")
+        if result.outcome == Outcome.REJECTED:
             return SkillResult.fail(
-                "EXECUTION_FAILED", terminal.value.diagnostic or "Trajectory failed"
+                "EXECUTION_REJECTED", result.diagnostic or "Trajectory rejected"
             )
-        if outcome == Outcome.CANCELLED:
-            return SkillResult.fail(
-                "EXECUTION_CANCELLED", terminal.value.diagnostic or "Trajectory cancelled"
-            )
-        if outcome != Outcome.COMPLETED:
-            cancellation = self._execution_runtime.cancel_if_current(handle)
-            if not cancellation.accepted:
-                reconciled = self._terminal_after_cancel_rejection(handle, cancellation.diagnostic)
-                if reconciled is not None:
-                    return reconciled
-            return SkillResult.fail(
-                "EXECUTION_CANCEL_UNRESOLVED",
-                f"Remote execution safety is unresolved: {outcome.value}",
-            )
-
-        return SkillResult.ok()
+        return SkillResult.fail(
+            "EXECUTION_FAILED", result.diagnostic or "Execution terminal result was unresolved"
+        )
 
     @skill
     def get_robot_state(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:

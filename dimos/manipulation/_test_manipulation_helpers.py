@@ -16,9 +16,14 @@
 
 from unittest.mock import MagicMock
 
-from dimos.manipulation.execution_runtime import ExecutionRuntime, Outcome
+from dimos.manipulation.execution_runtime import (
+    ExecutionRuntime,
+    Outcome,
+    prepare_generated_plan,
+)
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 
 _TEST_RUNTIMES: list[ExecutionRuntime] = []
 
@@ -26,8 +31,17 @@ _TEST_RUNTIMES: list[ExecutionRuntime] = []
 class FakeCoordinatorGateway:
     """Deterministic coordinator gateway used by module-side tests."""
 
-    def __init__(self, execute_outcome: Outcome = Outcome.ACCEPTED) -> None:
+    def __init__(
+        self,
+        execute_outcome: Outcome = Outcome.ACCEPTED,
+        status_outcome: Outcome = Outcome.INACTIVE,
+        status_outcomes: list[Outcome] | None = None,
+        cancel_outcome: Outcome = Outcome.CANCELLED,
+    ) -> None:
         self.execute_outcome = execute_outcome
+        self.status_outcome = status_outcome
+        self.status_outcomes = status_outcomes or []
+        self.cancel_outcome = cancel_outcome
         self.execute_calls: list[tuple[str, object]] = []
         self.cancel_calls: list[str] = []
         self.stopped = False
@@ -38,11 +52,13 @@ class FakeCoordinatorGateway:
 
     def cancel(self, task_name: str) -> Outcome:
         self.cancel_calls.append(task_name)
-        return Outcome.CANCELLED
+        return self.cancel_outcome
 
     def status(self, task_name: str) -> Outcome:
         del task_name
-        return Outcome.INACTIVE
+        if self.status_outcomes:
+            return self.status_outcomes.pop(0)
+        return self.status_outcome
 
     def reset(self, task_name: str) -> Outcome:
         del task_name
@@ -71,7 +87,7 @@ class ManipulationModuleHarness(ManipulationModule):
         self._execution_runtime = None
         self._execution_topology = None
         self._init_joints = {}
-        self.config = MagicMock(planning_timeout=10.0)
+        self.config = MagicMock(planning_timeout=10.0, physical_operation_timeout=60.0)
 
 
 def make_module() -> ManipulationModule:
@@ -93,10 +109,22 @@ def install_runtime(
         lambda: gateway,
         topology=module._execution_topology,
         action_timeout=module.config.planning_timeout,
+        physical_operation_timeout=module.config.physical_operation_timeout,
         poll_interval=0.01,
     )
     _TEST_RUNTIMES.append(module._execution_runtime)
     return gateway
+
+
+def install_ready_plan(module: ManipulationModule, plan: GeneratedPlan) -> None:
+    """Publish a prepared plan through the production runtime API."""
+    assert module._execution_runtime is not None
+    assert module._execution_topology is not None
+    token = module._execution_runtime.start_planning()
+    assert isinstance(token, str)
+    prepared = prepare_generated_plan(plan, module._execution_topology)
+    result = module._execution_runtime.complete_planning(token, prepared)
+    assert result.accepted
 
 
 def close_test_runtimes() -> None:

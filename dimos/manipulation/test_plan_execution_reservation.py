@@ -9,18 +9,26 @@ from inspect import signature
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.manipulation._test_manipulation_helpers import (
     FakeCoordinatorGateway,
     close_test_runtimes,
+    install_ready_plan,
     install_runtime,
     make_module,
 )
-from dimos.manipulation.execution_runtime import LifecycleState, Outcome, prepare_generated_plan
+from dimos.manipulation.execution_runtime import (
+    ExecutionRuntime,
+    LifecycleState,
+    Outcome,
+    prepare_generated_plan,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationExecutionSnapshot,
     ManipulationModule,
+    ManipulationModuleConfig,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -32,6 +40,112 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+
+
+def test_physical_operation_timeout_config_defaults_to_sixty_and_rejects_invalid_values() -> None:
+    assert ManipulationModuleConfig().physical_operation_timeout == 60.0
+    for value in (0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            ManipulationModuleConfig(physical_operation_timeout=value)
+
+
+def test_module_runtime_factory_receives_distinct_action_and_physical_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = ManipulationModule(
+        robots=[_config()],
+        planning_timeout=3.0,
+        physical_operation_timeout=17.0,
+        visualization={"backend": "none"},
+    )
+    module.coordinator_joint_state = None
+    captured: dict[str, float] = {}
+    runtimes: list[ExecutionRuntime] = []
+
+    class WorldMonitor:
+        visualization = None
+
+        def add_robot(self, config: RobotModelConfig) -> str:
+            del config
+            return "robot-id"
+
+        def finalize(self) -> None: ...
+
+        def start_state_monitor(self, robot_id: str) -> None:
+            del robot_id
+
+        def set_visualization(self, visualization: object) -> None:
+            del visualization
+
+        def initialize_visualization(self, operator: object) -> None:
+            del operator
+
+        def stop_all_monitors(self) -> None: ...
+
+    world_monitor = WorldMonitor()
+    specs = type(
+        "PlanningSpecs",
+        (),
+        {"world_monitor": world_monitor, "planner": object(), "kinematics": object()},
+    )()
+
+    def runtime_factory(_gateway_factory, **kwargs):
+        captured.update(kwargs)
+        runtime = ExecutionRuntime(lambda: FakeCoordinatorGateway(), **kwargs)
+        runtimes.append(runtime)
+        return runtime
+
+    monkeypatch.setattr("dimos.manipulation.manipulation_module.create_world", lambda **_: object())
+    monkeypatch.setattr(
+        "dimos.manipulation.manipulation_module.create_planning_specs",
+        lambda **_: specs,
+    )
+    monkeypatch.setattr(
+        "dimos.manipulation.manipulation_module.create_manipulation_visualization",
+        lambda *_, **__: None,
+    )
+    monkeypatch.setattr(ManipulationModule, "_runtime_factory", staticmethod(runtime_factory))
+
+    try:
+        module.start()
+        assert captured["action_timeout"] == 3.0
+        assert captured["physical_operation_timeout"] == 17.0
+    finally:
+        module.stop()
+
+
+def test_public_move_to_joints_reports_timeout_fault_without_extra_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = FakeCoordinatorGateway(
+        status_outcome=Outcome.RUNNING,
+        status_outcomes=[Outcome.RUNNING],
+        cancel_outcome=Outcome.UNKNOWN,
+    )
+    module, _ = _module(physical_operation_timeout=0.02, gateway=gateway)
+    plan = _plan()
+
+    def plan_to_joints(_goal, _robot_name=None) -> bool:
+        install_ready_plan(module, plan)
+        return True
+
+    monkeypatch.setattr(module, "plan_to_joints", plan_to_joints)
+    monkeypatch.setattr(module, "preview_path", lambda *args, **kwargs: True)
+
+    result = module.move_to_joints("1.0")
+
+    assert not result.is_success()
+    assert result.error_code == "EXECUTION_FAILED"
+    assert "uncertain" in result.message.lower()
+    assert module.get_state() == LifecycleState.FAULT.name
+    assert module.get_error() == result.message
+    snapshot = module.get_execution_snapshot()
+    assert snapshot.state == LifecycleState.FAULT.name
+    assert snapshot.diagnostic == result.message
+    assert gateway.cancel_calls == ["traj_arm"]
+
+    module.get_state()
+    assert gateway.cancel_calls == ["traj_arm"]
 
 
 def _config(task_name: str | None = "traj_arm") -> RobotModelConfig:
@@ -71,14 +185,16 @@ def _plan(group_id: str = "arm/manipulator") -> GeneratedPlan:
 
 def _module(
     task_name: str | None = "traj_arm",
+    physical_operation_timeout: float = 60.0,
+    gateway: FakeCoordinatorGateway | None = None,
 ) -> tuple[ManipulationModule, FakeCoordinatorGateway]:
     module = make_module()
+    module.config.physical_operation_timeout = physical_operation_timeout
     config = _config(task_name)
     module._robots = {"arm": ("robot_id", config, object())}
     module._world_monitor = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([config])
-    gateway = install_runtime(module, [config])
-    return module, gateway
+    return module, install_runtime(module, [config], gateway)
 
 
 @pytest.fixture(autouse=True)

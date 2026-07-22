@@ -958,6 +958,8 @@ class ViserPanelGui:
             or request.group_ids != self.state.selected_group_ids
         ):
             return
+        if self.state.manipulation_state == "FAULT":
+            return
         collision_free = result.collision_free
         success = result.success
         self.state.feasibility.status = self._feasibility_status(result, success, collision_free)
@@ -1319,6 +1321,8 @@ class ViserPanelGui:
             and not self._operation_is_current(operation_id, selection_epoch)
         ):
             return
+        if self.state.manipulation_state == "FAULT":
+            return
         self.state.action_status = ActionStatus.IDLE
         if clear_error:
             self.state.error = ""
@@ -1335,6 +1339,8 @@ class ViserPanelGui:
         if self._closed:
             return
         self.refresh()
+        if self.state.manipulation_state == "FAULT":
+            return
         # This is a panel-local validation message, not a runtime diagnostic.
         self.state.error = message
         self._update_status_text()

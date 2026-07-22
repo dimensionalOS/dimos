@@ -171,10 +171,6 @@ class PanelState:
             "DISPATCHING",
             "RUNNING",
             "CANCELLING",
-        } or self.action_status in {
-            ActionStatus.RUNNING,
-            ActionStatus.PREVIEWING,
-            ActionStatus.EXECUTING,
         }
 
     def can_execute(self, action_status: ActionStatus | None = None) -> bool:

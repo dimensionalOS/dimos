@@ -33,6 +33,7 @@ from dimos.manipulation.visualization.viser.state import (
     OperationWorker,
     PanelRuntime,
     PlanStatus,
+    TargetEvaluationRequest,
     TargetEvaluationWorker,
     TargetStatus,
 )
@@ -524,3 +525,38 @@ def test_gui_projects_all_runtime_states_and_fault_reset_preserves_local_failure
 
     assert gui.state.action_status == ActionStatus.FAILED
     assert gui.state.local_action_failure is True
+
+
+def test_late_local_callbacks_cannot_clear_runtime_fault() -> None:
+    gui = make_gui()
+    gui.state.manipulation_state = "FAULT"
+    gui.state.action_status = ActionStatus.FAILED
+    gui.state.runtime_failure = True
+    gui.state.error = "runtime fault"
+    gui.state.selected_group_ids = ("arm/manipulator",)
+
+    gui._finish_operation("preview=True")
+    gui._apply_target_evaluation_result(
+        TargetEvaluationRequest(0, "joints", group_ids=("arm/manipulator",)),
+        TargetEvaluationResult(True, "FEASIBLE", "ok", True),
+    )
+
+    assert gui.state.manipulation_state == "FAULT"
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.error == "runtime fault"
+    assert gui.state.can_cancel() is False
+
+
+def test_stale_execute_validation_cannot_replace_runtime_fault_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gui = make_gui()
+    gui._apply_operator_status(OperatorStatus("FAULT", diagnostic="hardware fault"))
+    monkeypatch.setattr(gui, "refresh", lambda: None)
+
+    gui._submit_execute()
+
+    assert gui.state.manipulation_state == "FAULT"
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.error == "hardware fault"
+    assert gui.state.can_execute() is False

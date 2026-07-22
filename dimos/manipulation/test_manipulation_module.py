@@ -22,9 +22,13 @@ They require Drake to be installed and will be skipped otherwise.
 from __future__ import annotations
 
 import importlib.util
+import threading
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from dimos.manipulation import manipulation_module as module_impl
 from dimos.manipulation._test_manipulation_helpers import FakeCoordinatorGateway
 from dimos.manipulation.execution_runtime import (
     ExecutionRuntime,
@@ -133,6 +137,157 @@ def module(xarm7_config):
     mod.start()
     yield mod
     mod.stop()
+
+
+def test_execute_explicit_plan_cannot_dispatch_replaced_ready_plan(monkeypatch) -> None:
+    """A READY replacement between observation and submission cannot switch plans."""
+
+    plan_a = object()
+    plan_b = object()
+    prepared_a = object()
+    ready_b = PreparedPlan(generated_plan=plan_b, entries=())  # type: ignore[arg-type]
+    ready_a = PreparedPlan(generated_plan=plan_a, entries=())  # type: ignore[arg-type]
+    dispatched: list[object] = []
+    ready_dispatches: list[object] = []
+
+    class FakeRuntime:
+        def snapshot(self):
+            # Model the replacement at precisely the old snapshot/command seam.
+            self.current_ready = ready_b
+            return SimpleNamespace(ready_plan=ready_a)
+
+        def execute_ready(self):
+            ready_dispatches.append(self.current_ready.generated_plan)
+            return SimpleNamespace(accepted=True, value=object())
+
+        def execute_explicit(self, prepared):
+            dispatched.append(prepared)
+            return SimpleNamespace(accepted=True, value=object())
+
+    runtime = FakeRuntime()
+    module = object.__new__(ManipulationModule)
+    module._execution_runtime = runtime
+    module._execution_topology = object()
+    monkeypatch.setattr(module_impl, "prepare_generated_plan", lambda plan, topology: prepared_a)
+
+    assert module._submit_execution(plan_a) is not None
+    assert dispatched == [prepared_a]
+    assert ready_dispatches == []
+
+
+def test_execute_waits_for_its_correlated_dispatch_result() -> None:
+    released = threading.Event()
+    entered = threading.Event()
+    expected_handle = object()
+    waits: list[object] = []
+
+    class FakeRuntime:
+        def execute_ready(self):
+            return SimpleNamespace(accepted=True, value=expected_handle)
+
+        def wait_for_dispatch(self, handle, *, timeout):
+            waits.append(handle)
+            entered.set()
+            assert released.wait(1)
+            return SimpleNamespace(
+                accepted=True,
+                value=SimpleNamespace(outcome=Outcome.ACCEPTED),
+            )
+
+    module = object.__new__(ManipulationModule)
+    module._execution_runtime = FakeRuntime()
+    module._execution_topology = object()
+    result: list[bool] = []
+    caller = threading.Thread(target=lambda: result.append(module.execute()))
+    caller.start()
+    assert entered.wait(1)
+    assert result == []
+    released.set()
+    caller.join(1)
+    assert result == [True]
+    assert waits == [expected_handle]
+
+
+def test_preview_waits_for_terminal_before_reporting_completion(monkeypatch) -> None:
+    released = threading.Event()
+    entered = threading.Event()
+    expected_handle = object()
+    preview_calls: list[tuple[object, object]] = []
+
+    class FakeRuntime:
+        def execute_explicit(self, prepared):
+            return SimpleNamespace(accepted=True, value=expected_handle)
+
+        def wait_for_dispatch(self, handle, *, timeout):
+            return SimpleNamespace(
+                accepted=True,
+                value=SimpleNamespace(outcome=Outcome.ACCEPTED),
+            )
+
+        def wait_for_terminal(self, handle, *, timeout):
+            entered.set()
+            assert released.wait(1)
+            return SimpleNamespace(
+                accepted=True,
+                value=SimpleNamespace(outcome=Outcome.COMPLETED, diagnostic=""),
+            )
+
+    plan = object()
+    ready = PreparedPlan(generated_plan=plan, entries=())  # type: ignore[arg-type]
+    runtime = FakeRuntime()
+    module = object.__new__(ManipulationModule)
+    module._execution_runtime = runtime
+    module._execution_topology = object()
+    module.preview_path = lambda duration=None, robot_name=None, target_fps=30: (
+        preview_calls.append((duration, robot_name)) or True
+    )
+    monkeypatch.setattr(module_impl, "prepare_generated_plan", lambda value, topology: value)
+
+    # The preview helper obtains the READY generated plan only to bind it through
+    # the runtime's explicit-plan path; terminal publication is the completion gate.
+    runtime.snapshot = lambda: SimpleNamespace(ready_plan=ready)
+    result: list[Any] = []
+    caller = threading.Thread(target=lambda: result.append(module._preview_execute_wait()))
+    caller.start()
+    assert entered.wait(1)
+    assert result == []
+    assert preview_calls == [(0.5, None)]
+    released.set()
+    caller.join(1)
+    assert len(result) == 1 and result[0].is_success()
+
+
+def test_execution_projection_helpers_use_runtime_snapshot_only() -> None:
+    snapshot = SimpleNamespace(
+        state=LifecycleState.READY,
+        diagnostic="runtime diagnostic",
+        ready_plan_id="ready-1",
+        ready_plan=PreparedPlan(generated_plan=SimpleNamespace(path=[]), entries=()),
+        operation=None,
+    )
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.snapshot_calls = 0
+
+        def snapshot(self):
+            self.snapshot_calls += 1
+            return snapshot
+
+    runtime = FakeRuntime()
+    module = object.__new__(ManipulationModule)
+    module._execution_runtime = runtime
+    module._execution_topology = None
+
+    assert module.get_state() == LifecycleState.READY.name
+    assert module.get_error() == "runtime diagnostic"
+    assert module.has_planned_path() is False
+    projection = module.get_execution_snapshot()
+    assert projection.ready_plan_id == "ready-1"
+    assert projection.has_ready_plan is True
+    assert runtime.snapshot_calls == 4
+    assert not hasattr(module, "_execution_state")
+    assert not hasattr(module, "_execution_error")
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -292,9 +447,6 @@ class TestCoordinatorIntegration:
         assert result is False
         assert module.get_state() == LifecycleState.IDLE.name
         assert "rejected" in module.get_error().lower()
-        terminal_results = dict(module._execution_runtime._context.terminal_results)
-        assert terminal_results
-        assert next(reversed(terminal_results.values())).outcome == Outcome.REJECTED
 
     def test_state_transitions_during_execution(self, module, joint_state_zeros):
         """Test state transitions during plan and execute."""
