@@ -71,12 +71,17 @@ class FakeMesh:
 
 
 class FakeJointGroupInfo:
-    def __init__(self, joint_names: list[str]) -> None:
+    def __init__(self, joint_names: list[str], v_indices: list[int] | None = None) -> None:
         self.joint_names = joint_names
+        self.v_indices = list(range(len(joint_names))) if v_indices is None else v_indices
 
 
 class FakeScene:
     joint_group_joint_names: ClassVar[list[str]] = ["joint1", "joint2"]
+    group_v_indices: ClassVar[list[int] | None] = None
+    known_frames: ClassVar[dict[str, int]] = {"universe": 0, "world": 1, "base": 2, "link1": 3}
+    # Full-scene Jacobian columns; when wider than the group, get_jacobian must slice.
+    jacobian_cols: ClassVar[int] = 2
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
 
@@ -99,7 +104,12 @@ class FakeScene:
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
-        return FakeJointGroupInfo(self.joint_group_joint_names)
+        return FakeJointGroupInfo(self.joint_group_joint_names, self.group_v_indices)
+
+    def getFrameId(self, frame_name: str) -> int:
+        if frame_name not in self.known_frames:
+            raise RuntimeError(f"Frame name '{frame_name}' not found in frame_map_.")
+        return self.known_frames[frame_name]
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
         return q
@@ -163,7 +173,8 @@ class FakeScene:
     def computeFrameJacobian(
         self, q: np.ndarray, frame_name: str, local: bool = True
     ) -> np.ndarray:
-        return np.ones((6, 2))
+        # Distinct per-column values so a slice is observable in tests.
+        return np.arange(6 * self.jacobian_cols, dtype=np.float64).reshape(6, self.jacobian_cols)
 
 
 class FakeRRTOptions:
@@ -352,6 +363,19 @@ def test_context_cloning_and_joint_state_round_trip(
     assert live_round_trip.position == [0.1, 0.2]
 
 
+def test_finalize_seeds_live_context_from_home_joints(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    """Parity with DrakeWorld: home_joints populate the live context at finalize."""
+    robot_config.home_joints = [0.3, -0.4]
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    # Before finalize the live context is zeros.
+    world.finalize()
+
+    live = world.get_joint_state(world.get_live_context(), robot_id)
+    assert live.position == [0.3, -0.4]
+
+
 def test_joint_name_mapping_is_applied_to_input_states(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -451,6 +475,59 @@ def test_fk_jacobian_and_explicit_min_distance_unsupported(
     assert world.get_jacobian(ctx, robot_id).shape == (6, 2)
     with pytest.raises(NotImplementedError, match="get_min_distance"):
         world.get_min_distance(ctx, robot_id)
+
+
+def test_obstacles_attach_to_a_valid_world_frame(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    """The empty string is not a valid RoboPlan geometry frame; resolve to 'world'."""
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    assert world._geometry_frame == "world"
+
+    captured: dict[str, str] = {}
+    original = world._scene.addBoxGeometry
+
+    def _spy(obstacle_id, parent_frame, box, matrix, color):  # type: ignore[no-untyped-def]
+        captured["parent_frame"] = parent_frame
+        return original(obstacle_id, parent_frame, box, matrix, color)
+
+    world._scene.addBoxGeometry = _spy  # type: ignore[method-assign]
+    world.add_obstacle(
+        Obstacle(
+            name="box",
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+            dimensions=(0.1, 0.2, 0.3),
+        )
+    )
+    assert captured["parent_frame"] == "world"
+
+
+def test_geometry_frame_falls_back_to_universe_when_world_absent(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(FakeScene, "known_frames", {"universe": 0, "base": 2, "link1": 3})
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    assert world._geometry_frame == "universe"
+
+
+def test_jacobian_slices_full_scene_columns_to_planning_group(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gripper joint widens the scene Jacobian; only group columns are returned."""
+    # Full scene Jacobian has 3 columns (2 arm joints + 1 gripper); group owns 0,1.
+    monkeypatch.setattr(FakeScene, "jacobian_cols", 3)
+    monkeypatch.setattr(FakeScene, "group_v_indices", [0, 1])
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    ctx = world.get_live_context()
+
+    jac = world.get_jacobian(ctx, robot_id)
+    assert jac.shape == (6, 2)
+    full = np.arange(6 * 3, dtype=np.float64).reshape(6, 3)
+    np.testing.assert_allclose(jac, full[:, [0, 1]])
 
 
 def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotModelConfig) -> None:
