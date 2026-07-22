@@ -344,6 +344,7 @@ class MujocoSimModule(
         self._publish_thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
+        self._latest_frame_ts: float | None = None
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -874,6 +875,7 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
+            loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -890,6 +892,7 @@ class MujocoSimModule(
                 continue
             last_timestamp = frame.timestamp
             ts = frame.timestamp
+            self._latest_frame_ts = ts
 
             if self.config.enable_color:
                 color_img = Image(
@@ -919,7 +922,7 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.time() - ts
+            elapsed = time.monotonic() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -928,7 +931,7 @@ class MujocoSimModule(
         base = self._camera_info_base
         if base is None:
             return
-        ts = time.time()
+        ts = self._latest_frame_ts or time.time()
         info = CameraInfo(
             height=base.height,
             width=base.width,
