@@ -165,23 +165,25 @@ def _render_polyline(el: Polyline, b: Bounds) -> str:
 def _render_box3d(el: Box3D, b: Bounds) -> str:
     cx, cy = el.center.x, el.center.y
     hw, hh = el.size.x / 2, el.size.y / 2
-    # Top-left in world → SVG
-    x = cx - hw
-    y = _y(cy + hh)
-    w = el.size.x
-    h = el.size.y
-    b.include(x, y)
-    b.include(x + w, y + h)
+    yaw = el.center.yaw
+    cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+    corners = []
+    for dx, dy in ((hw, hh), (hw, -hh), (-hw, -hh), (-hw, hh)):
+        px = cx + dx * cos_yaw - dy * sin_yaw
+        py = _y(cy + dx * sin_yaw + dy * cos_yaw)  # sin negated via Y-flip
+        b.include(px, py)
+        corners.append(f"{px:.4f},{py:.4f}")
     stroke, alpha = _style(el)
     parts = [
-        f'<rect x="{x:.4f}" y="{y:.4f}" width="{w:.4f}" height="{h:.4f}" '
+        f'<polygon points="{" ".join(corners)}" '
         f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" '
-        f'stroke-width="{min(w, h) * 0.04:.4f}"/>'
+        f'stroke-width="{min(el.size.x, el.size.y) * 0.04:.4f}"/>'
     ]
     if el.label:
+        h = el.size.y
         font_size = max(h * 0.3, 0.2)
         parts.append(
-            f'<text x="{x:.4f}" y="{y - h * 0.05:.4f}" '
+            f'<text x="{cx - hw:.4f}" y="{_y(cy + hh) - h * 0.05:.4f}" '
             f'font-size="{font_size:.4f}" fill="{stroke}" opacity="{alpha:.3f}">{_esc(el.label)}</text>'
         )
     return "\n".join(parts)
