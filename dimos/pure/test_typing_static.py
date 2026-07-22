@@ -41,6 +41,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -49,6 +50,12 @@ REPO_ROOT = HERE.parents[1]
 FIXTURES_DIR = HERE / "test_typing_fixtures"
 FIXTURES_REL = "dimos/pure/test_typing_fixtures"
 CASES = sorted(p.name for p in FIXTURES_DIR.glob("case_*.py"))
+
+# Dedicated incremental cache, isolated from the gate's `.mypy_cache` (no races
+# with it): fixtures now import the real production graph (config/module/graph/
+# rim), so the cold batched run is ~35 s, not the spec's <1 s from when they
+# imported typing.py alone — a warm cache brings the harness back to ~3 s.
+_CACHE_DIR = str(Path(tempfile.gettempdir()) / "dimos-pure-typing-fixtures.mypy_cache")
 
 _DIAG_RE = re.compile(
     r"^(?P<path>[^:]+):(?P<line>\d+): (?P<sev>error|note): (?P<msg>.*?)(?:  \[(?P<code>[\w-]+)\])?$"
@@ -66,7 +73,7 @@ def _run_mypy(paths):
         "--config-file",
         "pyproject.toml",
         "--cache-dir",
-        os.devnull,
+        _CACHE_DIR,
         "--no-error-summary",
         "--no-color-output",
         *paths,
