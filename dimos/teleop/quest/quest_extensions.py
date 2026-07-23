@@ -19,9 +19,11 @@ Available subclasses:
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
+    - R1LiteQuestTeleopModule: bimanual arms + grippers + chassis for the R1 Lite
 """
 
 import asyncio
+import time
 from typing import Any
 
 from fastapi import WebSocket
@@ -34,6 +36,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.utils.logging_config import setup_logger
@@ -283,3 +287,121 @@ class Go2TeleopModule(QuestTeleopModule):
         except Exception:
             logger.exception("Failed to publish stop Twist")
         super().stop()
+
+
+class R1LiteQuestTeleopConfig(VideoArmTeleopConfig):
+    """Configuration for R1LiteQuestTeleopModule."""
+
+    linear_speed: float = 0.2  # m/s at full stick deflection
+    angular_speed: float = 0.4  # rad/s at full stick deflection
+    deadzone: float = 0.1
+    joy_timeout: float = 0.5  # seconds without Joy before a controller stops driving
+    gripper_open: float = 100.0
+    gripper_closed: float = 0.0
+
+
+class R1LiteQuestTeleopModule(VideoArmTeleopModule):
+    """Quest teleop for the Galaxea R1 Lite: arms, grippers and chassis from one headset.
+
+    Arms: inherited per-hand press-and-hold engage (X/A) with task name routing
+    to the per-arm TeleopIKTasks. Grippers: each trigger maps to that side's
+    0-100 gripper command, streamed every control tick while the hand is
+    engaged (the robot's gripper controller acts only on a continuous stream).
+    Chassis: left stick drives forward/strafe, right stick X yaws, any
+    thumbstick press commands zero. Twist and gripper commands publish from the
+    50 Hz control loop, not per Joy message, so the chassis dead-man stays fed.
+    A controller whose Joy stream went stale contributes zero velocity; its
+    gripper holds by not publishing.
+
+    Inputs:
+        - color_image: In[Image] (inherited; wire to the head camera)
+
+    Outputs:
+        - left_controller_output / right_controller_output: PoseStamped (inherited)
+        - buttons: Buttons (inherited)
+        - cmd_vel: Twist chassis velocity
+        - gripper_left_command / gripper_right_command: JointState, position[0] in 0-100
+    """
+
+    config: R1LiteQuestTeleopConfig
+
+    cmd_vel: Out[Twist]
+    gripper_left_command: Out[JointState]
+    gripper_right_command: Out[JointState]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._joy_rx_ts: dict[Hand, float] = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        # Send one zero Twist so the base halts if teleop dies mid-motion.
+        try:
+            self.cmd_vel.publish(Twist.zero())
+        except Exception:
+            logger.exception("Failed to publish stop Twist")
+        super().stop()
+
+    def _on_joy_bytes(self, data: bytes) -> None:
+        msg = Joy.lcm_decode(data)
+        hand = Hand.LEFT if msg.frame_id == "left" else Hand.RIGHT
+        try:
+            controller = QuestControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
+        except ValueError:
+            logger.warning(
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, "
+                f"buttons={len(msg.buttons or [])}"
+            )
+            return
+        with self._lock:
+            self._controllers[hand] = controller
+            # Local receive time, not msg.ts: headset and robot clocks are not synced.
+            self._joy_rx_ts[hand] = time.monotonic()
+
+    def _deadzone(self, v: float) -> float:
+        return 0.0 if abs(v) < self.config.deadzone else v
+
+    def _fresh(self, hand: Hand, now: float) -> bool:
+        return (now - self._joy_rx_ts[hand]) < self.config.joy_timeout
+
+    def _chassis_twist(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+        now: float,
+    ) -> Twist:
+        twist = Twist()
+        twist.linear = Vector3(0.0, 0.0, 0.0)
+        twist.angular = Vector3(0.0, 0.0, 0.0)
+        left_ok = left is not None and self._fresh(Hand.LEFT, now)
+        right_ok = right is not None and self._fresh(Hand.RIGHT, now)
+        if (left_ok and left.thumbstick_press) or (right_ok and right.thumbstick_press):
+            return twist
+        if left_ok:
+            twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
+            twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed
+        if right_ok:
+            twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
+        return twist
+
+    def _gripper_command(self, trigger: float) -> JointState:
+        clamped = max(0.0, min(1.0, trigger))
+        span = self.config.gripper_closed - self.config.gripper_open
+        return JointState(position=[self.config.gripper_open + span * clamped])
+
+    def _publish_button_state(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        super()._publish_button_state(left, right)
+        now = time.monotonic()
+        self.cmd_vel.publish(self._chassis_twist(left, right, now))
+        if left is not None and self._is_engaged[Hand.LEFT] and self._fresh(Hand.LEFT, now):
+            self.gripper_left_command.publish(self._gripper_command(left.trigger))
+        if right is not None and self._is_engaged[Hand.RIGHT] and self._fresh(Hand.RIGHT, now):
+            self.gripper_right_command.publish(self._gripper_command(right.trigger))

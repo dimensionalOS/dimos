@@ -24,6 +24,7 @@ through TransportTwistAdapter. Chassis software control needs RC mode 5.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
@@ -101,88 +102,104 @@ _rerun_config = {
 }
 
 
-_r1lite_base = (
-    autoconnect(
-        R1LiteConnection.blueprint(),
-        ControlCoordinator.blueprint(
-            hardware=[
-                HardwareComponent(
-                    hardware_id="r1lite",
-                    hardware_type=HardwareType.WHOLE_BODY,
-                    joints=R1LITE_UPPER_BODY_JOINTS,
-                    adapter_type="transport_lcm",
-                ),
-                HardwareComponent(
-                    hardware_id="chassis",
-                    hardware_type=HardwareType.BASE,
-                    joints=_chassis_joints,
-                    adapter_type="transport_lcm",
-                ),
-            ],
-            tasks=[
-                TaskConfig(
-                    name="servo_r1lite",
-                    type="servo",
-                    joint_names=R1LITE_UPPER_BODY_JOINTS,
-                    priority=10,
-                ),
-                TaskConfig(
-                    name="vel_chassis",
-                    type="velocity",
-                    joint_names=_chassis_joints,
-                    priority=10,
-                ),
-            ],
+def r1lite_standard_tasks() -> list[TaskConfig]:
+    """Servo holder for the upper body plus the chassis velocity task."""
+    return [
+        TaskConfig(
+            name="servo_r1lite",
+            type="servo",
+            joint_names=R1LITE_UPPER_BODY_JOINTS,
+            priority=10,
         ),
+        TaskConfig(
+            name="vel_chassis",
+            type="velocity",
+            joint_names=_chassis_joints,
+            priority=10,
+        ),
+    ]
+
+
+def r1lite_control_base(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
+    """R1LiteConnection wired to the ControlCoordinator over transport_lcm.
+
+    extra_tasks are appended to the standard servo and chassis velocity tasks;
+    the quest teleop blueprint uses this to add its per-arm IK tasks.
+    """
+    return (
+        autoconnect(
+            R1LiteConnection.blueprint(),
+            ControlCoordinator.blueprint(
+                hardware=[
+                    HardwareComponent(
+                        hardware_id="r1lite",
+                        hardware_type=HardwareType.WHOLE_BODY,
+                        joints=R1LITE_UPPER_BODY_JOINTS,
+                        adapter_type="transport_lcm",
+                    ),
+                    HardwareComponent(
+                        hardware_id="chassis",
+                        hardware_type=HardwareType.BASE,
+                        joints=_chassis_joints,
+                        adapter_type="transport_lcm",
+                    ),
+                ],
+                tasks=[*r1lite_standard_tasks(), *extra_tasks],
+            ),
+        )
+        # Rename so the chassis adapter owns the canonical cmd_vel/odom names.
+        .remappings(
+            [
+                (R1LiteConnection, "cmd_vel", "chassis_cmd_vel"),
+                (R1LiteConnection, "odom", "chassis_odom"),
+            ]
+        )
+        .transports(
+            {
+                ("motor_states", JointState): LCMTransport("/r1lite/motor_states", JointState),
+                ("imu_chassis", Imu): LCMTransport("/r1lite/imu", Imu),
+                ("imu_torso", Imu): LCMTransport("/r1lite/imu_torso", Imu),
+                ("motor_command", MotorCommandArray): LCMTransport(
+                    "/r1lite/motor_command", MotorCommandArray
+                ),
+                ("chassis_cmd_vel", Twist): LCMTransport("/chassis/cmd_vel", Twist),
+                ("chassis_odom", PoseStamped): LCMTransport("/chassis/odom", PoseStamped),
+                ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+                ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+                ("gripper_left_command", JointState): LCMTransport(
+                    "/r1lite/gripper_left_command", JointState
+                ),
+                ("gripper_right_command", JointState): LCMTransport(
+                    "/r1lite/gripper_right_command", JointState
+                ),
+                ("gripper_left_state", JointState): LCMTransport(
+                    "/r1lite/gripper_left_state", JointState
+                ),
+                ("gripper_right_state", JointState): LCMTransport(
+                    "/r1lite/gripper_right_state", JointState
+                ),
+                ("head_left_color", Image): LCMTransport("/r1lite/head_left_color", Image),
+                ("head_right_color", Image): LCMTransport("/r1lite/head_right_color", Image),
+                ("wrist_left_color", Image): LCMTransport("/r1lite/wrist_left_color", Image),
+                ("wrist_left_depth", Image): LCMTransport("/r1lite/wrist_left_depth", Image),
+                ("wrist_right_color", Image): LCMTransport("/r1lite/wrist_right_color", Image),
+                ("wrist_right_depth", Image): LCMTransport("/r1lite/wrist_right_depth", Image),
+                ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+                ("joint_command", JointState): LCMTransport("/r1lite/joint_command", JointState),
+            }
+        )
     )
-    # Rename so the chassis adapter owns the canonical cmd_vel/odom names.
-    .remappings(
-        [
-            (R1LiteConnection, "cmd_vel", "chassis_cmd_vel"),
-            (R1LiteConnection, "odom", "chassis_odom"),
-        ]
+
+
+def r1lite_vis() -> Any:
+    """Viewer module with the R1 Lite rerun layout and camera rate caps."""
+    return vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config,
     )
-    .transports(
-        {
-            ("motor_states", JointState): LCMTransport("/r1lite/motor_states", JointState),
-            ("imu_chassis", Imu): LCMTransport("/r1lite/imu", Imu),
-            ("imu_torso", Imu): LCMTransport("/r1lite/imu_torso", Imu),
-            ("motor_command", MotorCommandArray): LCMTransport(
-                "/r1lite/motor_command", MotorCommandArray
-            ),
-            ("chassis_cmd_vel", Twist): LCMTransport("/chassis/cmd_vel", Twist),
-            ("chassis_odom", PoseStamped): LCMTransport("/chassis/odom", PoseStamped),
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            ("gripper_left_command", JointState): LCMTransport(
-                "/r1lite/gripper_left_command", JointState
-            ),
-            ("gripper_right_command", JointState): LCMTransport(
-                "/r1lite/gripper_right_command", JointState
-            ),
-            ("gripper_left_state", JointState): LCMTransport(
-                "/r1lite/gripper_left_state", JointState
-            ),
-            ("gripper_right_state", JointState): LCMTransport(
-                "/r1lite/gripper_right_state", JointState
-            ),
-            ("head_left_color", Image): LCMTransport("/r1lite/head_left_color", Image),
-            ("head_right_color", Image): LCMTransport("/r1lite/head_right_color", Image),
-            ("wrist_left_color", Image): LCMTransport("/r1lite/wrist_left_color", Image),
-            ("wrist_left_depth", Image): LCMTransport("/r1lite/wrist_left_depth", Image),
-            ("wrist_right_color", Image): LCMTransport("/r1lite/wrist_right_color", Image),
-            ("wrist_right_depth", Image): LCMTransport("/r1lite/wrist_right_depth", Image),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-            ("joint_command", JointState): LCMTransport("/r1lite/joint_command", JointState),
-        }
-    )
-)
 
 
 r1lite_coordinator = autoconnect(
-    _r1lite_base,
-    vis_module(
-        viewer_backend=global_config.viewer,
-        rerun_config=_rerun_config,
-    ),
+    r1lite_control_base(),
+    r1lite_vis(),
 )
