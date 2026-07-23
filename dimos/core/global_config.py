@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import platform
 import re
 from typing import Literal, TypeAlias
 
@@ -37,8 +36,6 @@ def _get_all_numbers(s: str) -> list[float]:
 
 
 def _default_transport() -> TransportBackend:
-    if platform.system() == "Darwin":
-        return "zenoh"
     return "lcm"
 
 
