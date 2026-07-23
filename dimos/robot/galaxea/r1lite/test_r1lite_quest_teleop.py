@@ -356,15 +356,14 @@ def test_teleop_tracks_from_folded_home() -> None:
     hard_reject = np.deg2rad(30.0)
     step = np.deg2rad(0.5)
     q = q0
-    for tick in range(400):
+    ticks = 0
+    while np.linalg.norm(ik.forward_kinematics(q).translation - target.translation) >= 0.001:
+        ticks += 1
+        assert ticks <= 400, "folded-start target not reached in 400 ticks"
         q_sol, _, _ = ik.solve(target, q)
         assert np.max(np.abs(q_sol - q)) < hard_reject
         q = q + np.clip(q_sol - q, -step, step)
-        if np.linalg.norm(ik.forward_kinematics(q).translation - target.translation) < 0.001:
-            break
-    else:
-        raise AssertionError("folded-start target not reached in 400 ticks")
-    assert tick < 100
+    assert ticks < 100
 
 
 def test_create_task_plumbs_step_limits() -> None:
