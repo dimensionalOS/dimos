@@ -38,9 +38,13 @@ per-run gate on ``/benchmark/gate``. The follower self-calibrates from the
 vendored pose-domain artifact on the first path (per-axis P gains from the
 plant fit, feedforward gain inversion, measured envelope caps).
 
-Run (one of two processes; the benchmark is the other)::
+Run the controller standalone to drive paths from any source on ``/path``::
 
     dimos run unitree-go2-holonomic-controller
+
+To pace runs with the built-in battery instead, run
+``unitree-go2-holonomic-benchmark``, which composes this controller with the
+Benchmarker in one process.
 """
 
 from __future__ import annotations

@@ -42,9 +42,12 @@ on the first path (feedforward so commanded == achieved, curvature speed
 regulation, measured yaw-rate clamp) and runs forward-only (the Go2 lidar faces
 forward; no strafe/reverse off the path).
 
-Run (one of two processes; the benchmark is the other)::
+Run the controller standalone to drive paths from any source on ``/path``::
 
     dimos run unitree-go2-rpp-controller
+
+To pace runs with the built-in battery instead, run ``unitree-go2-rpp-benchmark``,
+which composes this controller with the Benchmarker in one process.
 """
 
 from __future__ import annotations

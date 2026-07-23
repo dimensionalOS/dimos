@@ -32,10 +32,11 @@ writes the run (reference path + executed trace + metadata) to disk as one flat
 JSON. It does NOT score inline — scoring is a separate offline step (see
 :mod:`dimos.control.benchmarking.score`).
 
-Launch as a SEPARATE process from the controller::
+The Benchmarker is controller-agnostic (it talks only over the transport), but
+it runs in the SAME process as the controller: the benchmark blueprint composes
+both, since two ``dimos run`` processes can't share an LCM bus. One launchable::
 
-    dimos run unitree-go2-rpp-benchmark         # the benchmark
-    dimos run unitree-go2-rpp-controller        # the controller (other terminal)
+    dimos run unitree-go2-rpp-benchmark    # controller + Benchmarker, one process
 """
 
 from __future__ import annotations
