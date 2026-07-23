@@ -60,6 +60,10 @@ class PinocchioIKConfig:
         damp: Damping factor for singularity handling (higher = more stable)
         dt: Integration step size
         max_velocity: Max joint velocity per iteration (rad/s), clamps near singularities
+        orientation_weight: Weight of the rotational error relative to the
+            translational error. Below 1.0 the solver sacrifices orientation
+            rather than position when both cannot be met (position-priority
+            tracking for teleop). 1.0 keeps the classic equal weighting.
     """
 
     max_iter: int = 100
@@ -67,6 +71,7 @@ class PinocchioIKConfig:
     damp: float = 1e-2
     dt: float = 1.0
     max_velocity: float = 10.0
+    orientation_weight: float = 1.0
 
 
 class PinocchioIK:
@@ -113,12 +118,14 @@ class PinocchioIK:
         cls,
         model_path: str | Path,
         ee_joint_id: int,
+        config: PinocchioIKConfig | None = None,
     ) -> PinocchioIK:
         """Create solver by loading a URDF or MJCF file.
 
         Args:
             model_path: Path to URDF (.urdf) or MJCF (.xml) file
             ee_joint_id: End-effector joint ID in the kinematic chain
+            config: Solver configuration (uses defaults if None)
 
         Returns:
             Configured PinocchioIK instance
@@ -136,7 +143,7 @@ class PinocchioIK:
             model = pinocchio.buildModelFromUrdf(str(path))
 
         data = model.createData()
-        return cls(model, data, ee_joint_id)
+        return cls(model, data, ee_joint_id, config)
 
     @property
     def model(self) -> pinocchio.Model:
@@ -172,18 +179,22 @@ class PinocchioIK:
         cfg = config or self._config
         q = q_init.copy()
         final_err = float("inf")
+        # log6 error vector is [linear, angular]; scale the angular part so
+        # position wins when both objectives cannot be met simultaneously.
+        weights = np.ones(6)
+        weights[3:] = cfg.orientation_weight
 
         for _ in range(cfg.max_iter):
             pinocchio.forwardKinematics(self._model, self._data, q)
             iMd = self._data.oMi[self._ee_joint_id].actInv(target_pose)
 
-            err = pinocchio.log(iMd).vector
+            err = pinocchio.log(iMd).vector * weights
             final_err = float(norm(err))
             if final_err < cfg.eps:
                 return q, True, final_err
 
             J = pinocchio.computeJointJacobian(self._model, self._data, q, self._ee_joint_id)
-            J = -np.dot(pinocchio.Jlog6(iMd.inverse()), J)
+            J = -np.dot(pinocchio.Jlog6(iMd.inverse()), J) * weights[:, None]
             v = -J.T.dot(solve(J.dot(J.T) + cfg.damp * np.eye(6), err))
 
             # Clamp velocity to prevent explosion near singularities

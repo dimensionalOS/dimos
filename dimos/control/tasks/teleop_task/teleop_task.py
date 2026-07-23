@@ -40,6 +40,7 @@ from dimos.control.task import (
 )
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
+    PinocchioIKConfig,
     check_joint_delta,
     pose_to_se3,
 )
@@ -91,6 +92,7 @@ class TeleopIKTaskConfig:
     max_target_offset_m: float | None = None  # chase-window radius around the current EE
     max_target_rot_deg: float | None = None  # chase-window rotation about the current EE
     joint_limit_margin_deg: float = 0.0  # keep commands this far inside the URDF limits
+    orientation_weight: float = 1.0  # below 1.0, position wins over orientation in the solve
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -149,7 +151,11 @@ class TeleopIKTask(BaseControlTask):
         self._num_joints = len(config.joint_names)
 
         # Create IK solver from model
-        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id)
+        self._ik = PinocchioIK.from_model_path(
+            config.model_path,
+            config.ee_joint_id,
+            PinocchioIKConfig(orientation_weight=config.orientation_weight),
+        )
 
         # Validate DOF matches joint names
         if self._ik.nq != self._num_joints:
@@ -431,6 +437,7 @@ class TeleopIKTaskParams(BaseConfig):
     max_target_offset_m: float | None = None
     max_target_rot_deg: float | None = None
     joint_limit_margin_deg: float = 0.0
+    orientation_weight: float = 1.0
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -451,6 +458,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             max_target_offset_m=params.max_target_offset_m,
             max_target_rot_deg=params.max_target_rot_deg,
             joint_limit_margin_deg=params.joint_limit_margin_deg,
+            orientation_weight=params.orientation_weight,
             hand=params.hand,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
