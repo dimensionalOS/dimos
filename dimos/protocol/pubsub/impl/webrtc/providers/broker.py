@@ -68,6 +68,7 @@ class BrokerConfig(ProviderConfig):
     api_key: str | None = None
     robot_id: str | None = None
     robot_name: str = "robot"
+    robot_type: str | None = None
     stun_url: str = "stun:stun.cloudflare.com:3478"
     heartbeat_hz: float = 1.0
     ordered: bool = False
@@ -77,6 +78,23 @@ class BrokerConfig(ProviderConfig):
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
+
+    # robot_type is session metadata, not part of the connection — exclude it
+    # from equality/hash so pinning it on one transport spec (while the blueprint's
+    # other broker specs leave it unset) still resolves to ONE shared provider
+    # instead of forking a second PeerConnection.
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, BrokerConfig):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
+
+    def _identity(self) -> tuple[tuple[str, Any], ...]:
+        # model_dump (declared fields only) not __dict__, so no pydantic internals
+        # can leak into the singleton key.
+        return tuple((k, v) for k, v in self.model_dump().items() if k != "robot_type")
 
 
 class BrokerProvider(AsyncProviderBase):
@@ -223,6 +241,8 @@ class BrokerProvider(AsyncProviderBase):
                     # robot_id is optional — broker derives it from the API key.
                     **({"robot_id": self._robot_id} if self._robot_id else {}),
                     "robot_name": self._robot_name,
+                    # Pinned on a broker spec in the blueprint; omitted when unset
+                    **({"robot_type": self._config.robot_type} if self._config.robot_type else {}),
                     "sdp_offer": self._pc.localDescription.sdp,
                 },
             )

@@ -16,10 +16,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 from queue import Empty
+from threading import RLock
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
+from langchain_openai import ChatOpenAI
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -210,8 +212,8 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
         captured["params"] = params
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    mcp_client._mcp_request = fake_request
-    mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
+    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
+        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
 
     assert captured["method"] == "tools/call"
     params = captured["params"]
@@ -222,3 +224,49 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
     assert isinstance(meta, dict)
     token = meta["progressToken"]
     assert isinstance(token, str) and len(token) > 0
+
+
+@pytest.fixture
+def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
+    """Prepare a client for testing agent model initialization."""
+    mcp_client.config.model_fixture = None
+    mcp_client.config.system_prompt = "System prompt"
+    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
+    mcp_client._lock = RLock()
+    mcp_client._thread = MagicMock()
+    mcp_client._thread.is_alive.return_value = True
+    return mcp_client
+
+
+def test_on_system_modules_uses_responses_api_model(
+    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production agents use the Responses API required for Luna tool calls."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    configured_mcp_client.config.model = "gpt-5.6-luna"
+
+    with patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent:
+        configured_mcp_client.on_system_modules([])
+
+    model = create_agent.call_args.kwargs["model"]
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "gpt-5.6-luna"
+    assert model.use_responses_api is True
+    assert model.reasoning == {"effort": "medium", "summary": "auto"}
+
+
+@pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
+def test_on_system_modules_resolves_non_reasoning_models(
+    configured_mcp_client: McpClient, model_name: str
+) -> None:
+    """Models without Responses reasoning support use provider resolution."""
+    configured_mcp_client.config.model = model_name
+    resolved_model = MagicMock()
+
+    with (
+        patch("dimos.agents.mcp.mcp_client.create_agent"),
+        patch("dimos.agents.mcp.mcp_client.init_chat_model", return_value=resolved_model) as init,
+    ):
+        configured_mcp_client.on_system_modules([])
+
+    init.assert_called_once_with(model=model_name)
