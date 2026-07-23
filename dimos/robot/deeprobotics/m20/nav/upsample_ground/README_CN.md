@@ -275,7 +275,9 @@
 | `replacement_confidence_ratio` | `1.5` | 替换旧单元所需的置信度优势 |
 | `obstacle_min_height_m` | `0.08` | 高于拟合地面的最小障碍物高度 |
 | `max_future_sync_delta_s` | `0.05` | 辅助队列队首晚于 global map 时允许的最大时间差 |
-| `sync_queue_size` | 根据消息频率标定 | 三个时间戳有序队列的容量上限 |
+| `current_frame_queue_size` | `20` | 当前帧点云时间戳有序队列的容量上限 |
+| `global_map_queue_size` | `20` | global map 时间戳有序队列的容量上限 |
+| `odometry_queue_size` | `200` | 里程计时间戳有序队列的容量上限 |
 | `ground_stale_after_s` | `0.0` | 可选合成地面过期时间，零表示禁用 |
 | `max_ground_cells` | `1_000_000` | 内存安全上限 |
 | `publish_ground_patch` | `true` | 诊断输出开关 |
@@ -440,17 +442,19 @@ Rerun 应使用独立颜色显示 `ground_patch`，并允许独立切换真实 g
 
 | 文件 | 职责 |
 |---|---|
-| `upsample_ground/__init__.py` | 对外导出公共接口 |
-| `upsample_ground/module.py` | DimOS 模块、流、同步、生命周期和配置 |
-| `upsample_ground/estimator.py` | 候选筛选、直方图种子、平面拟合和支撑掩码 |
-| `upsample_ground/ground_store.py` | 按 XY 键索引的持久化地面状态与置信度更新 |
-| `upsample_ground/fusion.py` | 非覆盖式真实/合成冲突处理和三维体素并集 |
-| `upsample_ground/test_estimator.py` | 地面估计器单元测试 |
-| `upsample_ground/test_ground_store.py` | 去重和重复经过测试 |
-| `upsample_ground/test_fusion.py` | 数据权威和障碍物冲突测试 |
-| `upsample_ground/test_module.py` | 流同步和集成测试 |
+| `upsample_ground/module.py` | DimOS `NativeModule` 流声明、原生进程生命周期和同步配置 |
+| `upsample_ground/cpp/main.cpp` | LCM 订阅、同步状态机驱动和增强地图发布 |
+| `upsample_ground/cpp/timestamp_synchronizer.hpp` | 基于 STL 有序队列的三输入时间同步 |
+| `upsample_ground/cpp/ground_estimator.hpp/.cpp` | 使用 PCL 和 Eigen 实现候选筛选、平面拟合及支撑掩码 |
+| `upsample_ground/cpp/ground_store.hpp/.cpp` | 按世界 XY 键索引的持久化合成地面状态 |
+| `upsample_ground/cpp/fusion.hpp/.cpp` | 真实点优先的冲突处理、边界裁剪和三维体素并集 |
+| `upsample_ground/cpp/test_timestamp_synchronizer.cpp` | 队列排序、最近样本选择、等待和回退测试 |
+| `upsample_ground/cpp/test_ground_estimator.cpp` | 地面估计器测试 |
+| `upsample_ground/cpp/test_ground_store.cpp` | 去重和重复经过测试 |
+| `upsample_ground/cpp/test_fusion.cpp` | 数据权威和障碍物冲突测试 |
+| `upsample_ground/test_module.py` | Python NativeModule 接口和配置校验测试 |
 
-使用 NumPy 进行数组筛选和键生成。首个单层实现使用 Python 字典即可，并且可以显式保存置信度元数据。[`voxels.py`](/dimos/mapping/voxels.py) 中的列清除行为可以作为参考，但真实与合成融合地图不能使用 column carving，因为它可能删除真实障碍物。
+同步、状态管理和融合使用 C++17 STL；点云筛选、降采样和几何处理优先使用 PCL，平面参数和线性代数使用 Eigen，不重复实现已有算法。[`voxels.py`](/dimos/mapping/voxels.py) 中的列清除行为可以作为参考，但真实与合成融合地图不能使用 column carving，因为它可能删除真实障碍物。
 
 ## 18. 交付阶段
 
