@@ -16,9 +16,8 @@
 """Pluggable relocalization priors -- candidate PROPOSERS feeding the shared
 fine-ICP judge in relocalize.py (``refine_candidates``). No prior is trusted:
 a candidate is accepted by surviving the wall-only fine-fitness rerank, never by
-its source's own reported confidence. Three priors live here: ``RansacPrior``
-(wrapping relocalize.py's existing multi-scale FPFH+RANSAC search),
-``LastPosePrior`` (the last accepted answer, carried forward) and
+its source's own reported confidence. Two priors live here: ``RansacPrior``
+(wrapping relocalize.py's existing multi-scale FPFH+RANSAC search) and
 ``FiducialPrior`` (the detector's aggregated tag poses composed into one world->map
 candidate per tag). The same invariant binds any future prior: it
 goes through the judge on wall fitness, never bypasses it.
@@ -44,7 +43,6 @@ from pydantic import Field
 
 from dimos.mapping.relocalization.relocalize import (
     GRAVITY_TILT_MAX_DEG,
-    JudgeReport,
     generate_ransac_candidates,
     refine_candidates,
 )
@@ -76,11 +74,10 @@ class PriorConfigBase(BaseConfig):
     enabled: bool = True
     # Per-prior accept gate: min wall fitness (dimensionless, 0-1) THIS prior's
     # fix must clear to be accepted. On the base -- like ``enabled`` -- because every
-    # prior is judged on its own bar (each fire pools one source). 0.45 is the old
-    # single module gate, kept here as the fallback for a prior that states no bar of
-    # its own (last_pose, which only re-proposes an already accepted fix). ransac and
-    # fiducial DO override it below, each stating its own bar where it is configured.
-    fitness_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+    # prior is judged on its own bar (each fire pools one source). Both shipped priors
+    # (ransac, fiducial) override it below with the same 0.60; the base default matches
+    # so a prior that states no bar of its own inherits that same conservative floor.
+    fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class RansacPriorConfig(PriorConfigBase):
@@ -108,13 +105,6 @@ class RansacPriorConfig(PriorConfigBase):
     min_local_points: int = Field(default=50_000, ge=0)
 
 
-class LastPosePriorConfig(PriorConfigBase):
-    """Last accepted fix carried forward as one seed (``LastPosePrior``). No params
-    -- the seed is captured at runtime, not configured."""
-
-    type: Literal["last_pose"] = "last_pose"
-
-
 class FiducialPriorConfig(PriorConfigBase):
     """Marker sightings Huber-aggregated into one world->map candidate per tag
     (``FiducialPrior``). Owns the whole fiducial parameter surface."""
@@ -137,7 +127,7 @@ class FiducialPriorConfig(PriorConfigBase):
 
 # Discriminated on ``type`` (kinematics/config.py:54 is the exemplar).
 PriorConfig = Annotated[
-    RansacPriorConfig | LastPosePriorConfig | FiducialPriorConfig,
+    RansacPriorConfig | FiducialPriorConfig,
     Field(discriminator="type"),
 ]
 
@@ -219,48 +209,6 @@ class RansacPrior:
 
     def on_fired(self, now_s: float) -> None:
         self._last_fired_s = now_s
-
-
-class LastPosePrior:
-    """Carries the last accepted relocalization forward as one seed candidate --
-    cheap continuous tracking competing alongside (not replacing) fresh RANSAC.
-
-    Frame convention (relocalize()'s own, NOT the published TF):
-    ``relocalize()``/``refine_candidates()`` return T with
-    ``global_map_points = T @ local_map_points``. In the live pipeline ``local_map``
-    is VoxelGridMapper's world-frame cloud and ``global_map`` the premap in the
-    ``map`` frame, so this seed is ``map_T_world``. module.py inverts to
-    ``world_T_map`` only when publishing the TF -- ``update()`` callers must pass
-    the PRE-inversion T, never the published TF.
-
-    Trigger: none. This is a SEED, not a source -- re-judging the pose it just
-    published announces nothing new, so it never asks for a fire of its own and
-    instead rides along with whichever prior did fire (module.py::_fire_pool).
-    It costs one candidate and never a search.
-    """
-
-    name = "last_pose"
-
-    def __init__(self) -> None:
-        self._last_map_T_world: np.ndarray | None = None
-
-    def update(self, map_T_world: np.ndarray) -> None:
-        self._last_map_T_world = map_T_world
-
-    def propose(
-        self,
-        global_map: o3d.geometry.PointCloud,
-        local_map: o3d.geometry.PointCloud,
-    ) -> list[Candidate]:
-        if self._last_map_T_world is None:
-            return []
-        return [Candidate(T=self._last_map_T_world, source=self.name)]
-
-    def is_due(self, now_s: float) -> bool:
-        return False
-
-    def on_fired(self, now_s: float) -> None:
-        """Nothing to ack: this prior never asks for a fire."""
 
 
 class FiducialPrior:
@@ -348,7 +296,6 @@ def relocalize_with_priors(
     priors: list[RelocPrior],
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
     verbose_eval_logging: bool = False,
-    report: JudgeReport | None = None,
 ) -> tuple[np.ndarray, float, str]:
     """Gather candidates from the priors this fire runs, judge them through the
     shared fine-ICP tail (``refine_candidates``), report which candidate won.
@@ -358,10 +305,9 @@ def relocalize_with_priors(
     candidate that doesn't fit the walls loses even with nothing to lose to.
     ``gravity_tilt_max_deg`` threads to the judge's gravity gate, defaulting to the
     module constant so behavior is unchanged unless overridden.
-    ``verbose_eval_logging`` turns the per-cycle proposal census and the judge's
-    finalist table back on (``--eval``); off, this path logs nothing per cycle and
-    module.py's single accept line carries the evidence.
-    ``report`` collects the finalists' post-ICP fitness for that line's margin.
+    ``verbose_eval_logging`` turns the per-cycle proposal census on (``--eval``);
+    off, this path logs nothing per cycle and module.py's single accept line carries
+    the evidence.
 
     Returns ``(T, fitness, winning_source)``. Raises ``ValueError`` if every prior
     proposed zero candidates.
@@ -384,16 +330,10 @@ def relocalize_with_priors(
         counts = {s: sources.count(s) for s in sorted(set(sources))}
         logger.info("relocalize candidates", counts=counts)
 
-    # sources= makes the judge's gravity gate per-source — a lone upright
-    # seed must never orphan another source's all-tilted pool (the
-    # gravity-gate walkover; see refine_candidates).
     T, fitness, winning_index = refine_candidates(
         global_map,
         local_map,
         all_transforms,
-        sources=sources,
         gravity_tilt_max_deg=gravity_tilt_max_deg,
-        verbose_eval_logging=verbose_eval_logging,
-        report=report,
     )
     return T, fitness, sources[winning_index]

@@ -179,7 +179,7 @@ def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
     a close, sharp one dominates. The inner clamps (0.2 m, 0.5 px) stop a
     suspiciously-perfect read claiming near-zero variance, and the 0.25 floor caps
     how confident any tag may get. Ported unchanged from jnav's PGO tag factors
-    (post_process.py::tag_noise, Jeff Hykin) so one convention exists.
+    (post_process.py::tag_noise) so one convention exists.
     A ``None`` input reads as the reference, i.e. that term is neutral.
     """
     distance_m = REF_DISTANCE_M if distance_m is None else distance_m

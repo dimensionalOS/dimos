@@ -28,15 +28,13 @@ from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.priors import (
     FiducialPrior,
     FiducialPriorConfig,
-    LastPosePrior,
-    LastPosePriorConfig,
     PriorConfig,
     RansacPrior,
     RansacPriorConfig,
     RelocPrior,
     relocalize_with_priors as _relocalize_with_priors,
 )
-from dimos.mapping.relocalization.relocalize import JudgeReport, relocalize as _relocalize
+from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -150,7 +148,6 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
-        self._last_pose_prior = LastPosePrior()
         # Prior objects are built ONCE, not per frame: each holds its own trigger
         # state (RANSAC's interval timer, the fiducial's burst edge), which a fresh
         # instance would reset every frame into firing forever. No ransac entry ->
@@ -161,10 +158,10 @@ class RelocalizationModule(Module):
         )
         self._ransac_prior = RansacPrior(interval_s=ransac_entry.interval_s)
         # Per-source accept gate {Candidate.source: min wall fitness}. Each fire pools
-        # ONE source (per-prior triggers, no last_pose in any shipped preset), so
-        # gating the winner by its own source's bar IS per-source gating -- the judge
-        # needs no change. The key is the entry's `type` discriminator, which equals
-        # the source its prior proposes (RansacPrior.name == "ransac", ...).
+        # ONE source (per-prior triggers), so gating the winner by its own source's bar
+        # IS per-source gating -- the judge needs no change. The key is the entry's
+        # `type` discriminator, which equals the source its prior proposes
+        # (RansacPrior.name == "ransac", ...).
         self._accept_threshold: dict[str, float] = {
             p.type: p.fitness_threshold for p in self.config.priors
         }
@@ -174,8 +171,6 @@ class RelocalizationModule(Module):
         # Built in start() once the marker map is loaded (needs map_T_marker).
         self._fiducial_prior: FiducialPrior | None = None
         # Previous ACCEPTED fix (map_T_world) and when, for the gross-jump guard.
-        # LastPosePrior holds the same T but only while that entry is enabled, and it
-        # keeps no timestamp -- the guard has to work on the lidar-only preset too.
         # None until the first accept, which is what leaves acquisition unguarded.
         self._last_fix_map_T_world: np.ndarray | None = None
         self._last_fix_ts_s = 0.0
@@ -331,11 +326,9 @@ class RelocalizationModule(Module):
             return
         now_s = self._now_fn()
         if self._fiducial_prior.is_due(now_s):
-            self._fire(self._fiducial_prior, local_map, self._enabled_prior_objects(), now_s)
+            self._fire(self._fiducial_prior, local_map, now_s)
 
-    def _fire(
-        self, prior: RelocPrior, local_map: PointCloud2, enabled: list[RelocPrior], now_s: float
-    ) -> None:
+    def _fire(self, prior: RelocPrior, local_map: PointCloud2, now_s: float) -> None:
         """Ack the trigger that asked and run its ONE relocalization. Two paths reach
         here, on two threads, neither waiting on the other::
 
@@ -350,7 +343,7 @@ class RelocalizationModule(Module):
         cloud arrived, which (b) leaves unacked having nothing to judge against.
         """
         prior.on_fired(now_s)
-        self._publish_tf(self._try_relocalize(local_map, self._fire_pool(prior, enabled)))
+        self._publish_tf(self._try_relocalize(local_map, [prior]))
 
     @staticmethod
     def _marker_id_from_detection(detection: Detection3D) -> int | None:
@@ -377,21 +370,9 @@ class RelocalizationModule(Module):
                 continue
             if isinstance(prior_config, RansacPriorConfig):
                 objects.append(self._ransac_prior)
-            elif isinstance(prior_config, LastPosePriorConfig):
-                objects.append(self._last_pose_prior)
             elif isinstance(prior_config, FiducialPriorConfig) and self._fiducial_prior is not None:
                 objects.append(self._fiducial_prior)
         return objects
-
-    def _fire_pool(self, fired: RelocPrior, enabled: list[RelocPrior]) -> list[RelocPrior]:
-        """The pool ONE fire judges: the prior that triggered it, plus the last-pose
-        seed when that entry is enabled. LastPosePrior owns no trigger -- it never
-        fires alone -- so leaving it out entirely would silently disable a
-        configured prior. It contributes one carried-forward candidate and never a
-        search, so it cannot make a tag fire pay RANSAC's cost."""
-        if self._last_pose_prior in enabled:
-            return [fired, self._last_pose_prior]
-        return [fired]
 
     def _on_local_map(self, msg: PointCloud2) -> None:
         """One INDEPENDENT relocalization per prior asking for one.
@@ -423,7 +404,7 @@ class RelocalizationModule(Module):
             if isinstance(prior, RansacPrior) and not has_enough_points:
                 self._maybe_log_skip(msg)  # RANSAC starved: log, do not ack, retry next dense frame
                 continue
-            self._fire(prior, msg, enabled, now_s)
+            self._fire(prior, msg, now_s)
 
     def _try_relocalize(self, msg: PointCloud2, priors: list[RelocPrior]) -> Transform | None:
         if self._premap is None:
@@ -434,10 +415,6 @@ class RelocalizationModule(Module):
             return None  # every prior disabled (or fiducial-only with no marker map yet)
         t0 = time.monotonic()
         winning_source: str | None = None
-        # Filled by the judge; stays empty on the plain relocalize() path, and
-        # margin stays None whenever one source owns the fire (nothing to beat).
-        report = JudgeReport()
-        last_pose_active = any(prior is self._last_pose_prior for prior in priors)
         # Plain relocalize() is reserved for the lidar-only MODULE -- RANSAC the whole
         # enabled pool -- where the SOLVE is the pre-prior path bit-for-bit and the
         # accept line carries no source= because no other source won it. Judged by
@@ -451,7 +428,6 @@ class RelocalizationModule(Module):
                     self._premap.pointcloud,
                     msg.pointcloud,
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
-                    verbose_eval_logging=self.config.verbose_eval_logging,
                 )
             else:
                 T, fitness, winning_source = _relocalize_with_priors(
@@ -460,7 +436,6 @@ class RelocalizationModule(Module):
                     priors,
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
                     verbose_eval_logging=self.config.verbose_eval_logging,
-                    report=report,
                 )
         except Exception:
             logger.exception("relocalize() failed")
@@ -481,9 +456,7 @@ class RelocalizationModule(Module):
         # The winner is gated on ITS OWN source's bar. Each fire pools one source, so
         # this single-winner gate IS per-source. winning_source is None only on the
         # plain (ransac-only) path -> resolve to the ransac entry, the only prior that
-        # path can have proposed. (A future per-CANDIDATE accept, for a multi-source
-        # pool, would read report.finalists here; deferred -- every shipped preset
-        # pools one source.)
+        # path can have proposed.
         gate_source = winning_source if winning_source is not None else RansacPrior.name
         threshold = self._accept_threshold[gate_source]
         if fitness < threshold:
@@ -535,12 +508,6 @@ class RelocalizationModule(Module):
         self._last_fix_map_T_world = T
         self._last_fix_ts_s = now_s
 
-        if last_pose_active:
-            # Seed next call's LastPosePrior with THIS T in relocalize()'s own
-            # convention (map_T_world) -- pre-inversion, never the published TF
-            # below. See LastPosePrior's docstring in priors.py.
-            self._last_pose_prior.update(T)
-
         # relocalize() returns map_T_world (scan_in_map = T @ scan_raw). We publish
         # the world->map TF, so invert to world_T_map here.
         T_inv = np.linalg.inv(T)
@@ -563,17 +530,10 @@ class RelocalizationModule(Module):
                 published_t_m=T_inv[:3, 3].round(3).tolist(),
             )
         else:
-            # margin = the winner's post-ICP wall fitness minus the best OTHER
-            # source's -- "did the tag help?" in one number, which is what the
-            # finalist table was being read for. Omitted, never faked as 0.0, when
-            # no rival source reached the finalists (nothing to subtract).
-            margin = report.margin
-            margin_kw: dict[str, float] = {} if margin is None else {"margin": round(margin, 3)}
             logger.info(
                 "relocalize accepted",
                 **source_kw,
                 fitness=round(fitness, 3),
-                **margin_kw,
                 time_cost_s=round(dt, 1),
             )
         return new_tf

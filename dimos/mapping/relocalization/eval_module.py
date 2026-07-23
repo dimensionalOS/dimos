@@ -27,7 +27,7 @@ That supplement needs the module's VERBOSE trace
 (``relocalizationmodule.verbose_eval_logging=true``), which is what carries
 ``published_t_m`` -- the translation this collector joins a log line to its /tf fix
 by -- and the per-cycle census. An operating run logs one QUIET accept line instead
-(source/fitness/margin/time_cost_s, no position); the parsers read it too, but such
+(source/fitness/time_cost_s, no position); the parsers read it too, but such
 a line cannot be joined to a fix, so its source degrades to ``unknown``.
 
 HELD-OUT ACCURACY. Premap + marker map come from run A; run B is a DIFFERENT
@@ -87,15 +87,14 @@ FRAME_MAP = "map"
 TF_TOPIC = "/tf"  # RelocalizationModule republishes world->map here (LCMTF -> /tf)
 ODOM_TOPIC = "/odom"  # recording-timestamped PoseStamped, preserved through replay
 
-SOURCES: tuple[str, ...] = ("ransac", "fiducial", "last_pose")
+SOURCES: tuple[str, ...] = ("ransac", "fiducial")
 # ONE palette for both renderers (trajectory PNG + the rerun overlay), so the two
 # can never disagree about which prior a colour means. unknown is a dim RED, not a
-# second grey: an unlabelled fix is a JOIN FAILURE, and it must read as one next to
-# last_pose rather than hide inside it.
+# muted grey: an unlabelled fix is a JOIN FAILURE, and it must read as one rather
+# than hide next to a real source.
 SOURCE_COLORS: dict[str, str] = {
     "ransac": "#2b6cb0",  # blue
     "fiducial": "#dd6b20",  # orange
-    "last_pose": "#718096",  # grey
     "unknown": "#9b2c2c",  # dim red
 }
 SUCCESS_T_M = 1.0  # held-out translation gate (m); matches score_replay.SUCCESS_T_M
@@ -132,8 +131,7 @@ _RERUN_PROBE_TIMEOUT_S = 0.2  # the bridge's proxy is local -- it answers or it 
 #     console `08:34:01.794 [inf][...module.py] relocalize accepted fitness=0.87
 #              n_pts=55828 published_t_m=[1.234, -0.5, 0.02] ... source=fiducial ...`
 #   module.py:_try_relocalize accept, QUIET (the operating default)
-#     console `... relocalize accepted fitness=0.873 margin=0.178 source=fiducial
-#              time_cost_s=1.4`
+#     console `... relocalize accepted fitness=0.873 source=fiducial time_cost_s=1.4`
 #   module.py reject          -> event "relocalize rejected"
 #   priors.py census          -> event "relocalize candidates", counts a dict;
 #                                console renders it as a python repr,
@@ -172,7 +170,6 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _CONSOLE_RE: dict[str, re.Pattern[str]] = {
     "source": re.compile(r"\bsource=([A-Za-z_]\w*)"),
     "fitness": re.compile(r"\bfitness=([-\d.eE+]+)"),
-    "margin": re.compile(r"\bmargin=([-\d.eE+]+)"),  # quiet accepts only
     "published_t_m": re.compile(r"\bpublished_t(?:_m)?=\[([^\]]+)\]"),
     "counts": re.compile(r"\bcounts=\{([^}]*)\}"),
 }
@@ -186,14 +183,11 @@ class HealthLine:
 
     ``published_t_m`` is the VERBOSE trace's field and the key every fix is joined by,
     so a QUIET line parses to a positionless HealthLine: its fitness and winning prior
-    are still real, there is simply nowhere to attach them (see label_fixes_from_log).
-    ``margin`` is the mirror case -- quiet-only, because verbose carries the whole
-    finalist table instead."""
+    are still real, there is simply nowhere to attach them (see label_fixes_from_log)."""
 
     source: str
     fitness: float
     published_t_m: tuple[float, float, float] | None  # world_T_map translation (join key)
-    margin: float | None = None  # winner's fitness - best other source's; None = no rival
 
 
 def _floats(csv: str) -> list[float]:
@@ -209,9 +203,6 @@ def _console_fields(text: str) -> dict[str, Any]:
     fit = _CONSOLE_RE["fitness"].search(text)
     if fit is not None:
         fields["fitness"] = float(fit.group(1))
-    margin = _CONSOLE_RE["margin"].search(text)
-    if margin is not None:
-        fields["margin"] = float(margin.group(1))
     pub = _CONSOLE_RE["published_t_m"].search(text)
     if pub is not None:
         fields["published_t_m"] = _floats(pub.group(1))
@@ -291,7 +282,6 @@ def parse_health_lines(log_text: str) -> list[HealthLine]:
         if fit is None:
             continue
         pub = fields.get("published_t_m")
-        margin = fields.get("margin")
         out.append(
             HealthLine(
                 source=str(fields.get("source", "ransac")),
@@ -301,7 +291,6 @@ def parse_health_lines(log_text: str) -> list[HealthLine]:
                     if isinstance(pub, list) and len(pub) == 3
                     else None
                 ),
-                margin=None if margin is None else float(margin),
             )
         )
     return out
@@ -512,7 +501,6 @@ class Fix:
     fitness: float
     err_t_m: float | None = None
     success: bool | None = None
-    margin: float | None = None  # cross-source fitness margin, when the log carried one
 
 
 @dataclass
@@ -658,7 +646,6 @@ def label_fixes_from_log(
                 world_map_fix=mat,
                 source=matched.source if matched else "unknown",
                 fitness=matched.fitness if matched else float("nan"),
-                margin=matched.margin if matched else None,
             )
         )
     return fixes
@@ -1299,14 +1286,12 @@ def _fixes_from_replay_json(fixes_json: list[dict[str, Any]]) -> list[Fix]:
     out: list[Fix] = []
     for f in fixes_json:
         mat = f.get("world_map_fix")
-        margin = f.get("margin")  # absent in replay.json written before the judge reported one
         out.append(
             Fix(
                 ts=float(f["ts"]),
                 world_map_fix=np.asarray(mat, dtype=float) if mat is not None else None,
                 source=str(f.get("source", "unknown")),
                 fitness=float(f.get("fitness", float("nan"))),
-                margin=None if margin is None else float(margin),
             )
         )
     return out

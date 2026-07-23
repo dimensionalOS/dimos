@@ -22,8 +22,8 @@ per source image) and :class:`AggregateTagBursts` (the per-glimpse quality gates
 one robust aggregated pose per tag visit). :class:`MarkerTfModule` handles live TF
 publication.
 
-The gate + aggregation core AggregateTagBursts drives originates in Jeff Hykin's
-jnav apriltag aggregation, dimos PR #2587.
+The gate + aggregation core AggregateTagBursts drives originates in the jnav
+apriltag aggregation, dimos PR #2587.
 
 Frames with no upstream ``.pose`` are skipped (debug log): without a camera-in-
 world pose we can't honor the always-world-frame output contract.
