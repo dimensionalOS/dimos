@@ -41,7 +41,7 @@ from sensor_msgs.msg import JointState
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r1lite_config import ARM_DOF, CMD_ARM, FEEDBACK_ARM
 
-SPEED = 0.3  # rad/s; the tracker ignored slower streams, 0.5 is the proven envelope
+SPEED = 0.5  # rad/s; the exact value test_04 proved on this tracker, slower was ignored
 STREAM_HZ = 50.0
 DISCOVERY_WAIT = 5.0
 FEEDBACK_WAIT = 5.0
