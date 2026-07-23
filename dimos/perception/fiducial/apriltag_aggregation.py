@@ -25,9 +25,27 @@ drift does not enter). Only :func:`view_quality` reads a camera-relative pose --
 the caller passes ``distance``/``view_angle`` scalars in, keeping the aggregation pose
 and the geometry-gate pose distinct.
 
-Entry point:
- - :class:`TagAggregator` -- streaming: sliding window per marker, aggregated on
-   demand once ``min_observations`` are in-window. Live prior.
+Two aggregators, ONE fusion math -- both reduce a marker's sightings through
+:func:`robust_cluster_pose`. They differ only in WHICH sightings get grouped,
+because time means different things offline and online:
+
+    OFFLINE (survey premap)                    ONLINE (live reloc)
+    map global --markers-out                   DetectMarkers stream
+      -> _aggregate_marker_map (map.py)          -> TagAggregator.robust_estimate
+      group ALL sightings of a marker_id         sliding window: only the last
+      across the whole recording                 ``time_window_s`` of sightings,
+      (one static PGO-corrected frame)           emitted at ``min_observations``
+                    |                                       |
+                    +------------------+  +-----------------+
+                                       v  v
+                       robust_cluster_pose(obs) -> one map_T_marker per id
+                       Huber-IRLS translation + Markley quaternion mean
+
+Offline the recording is PGO-corrected and complete: every sighting, minutes
+apart, lives in one static frame -- windowing would only discard good data, so
+group them all. Online the LIO frame drifts under you, so a 60 s-old sighting is
+in a frame that has since moved -- the window MUST forget. Same math, different
+scope, and the scope is the reason both exist.
 
 :func:`cluster_by_time` groups same-marker sightings into visits by time gap -- the
 offline benefit harness reuses it to batch a whole recording rather than re-implement
