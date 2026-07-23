@@ -290,6 +290,14 @@ class FiducialPrior:
         return [Candidate(T=fix_T, source=self.name) for fix_T in pending.values()]
 
 
+class EmptyProposalError(ValueError):
+    """No prior proposed any candidate this fire. Expected as a benign race artifact:
+    when the cloud thread and the detections thread both see the fiducial trigger due
+    before either drains _pending, the loser reaches here with an empty pool while the
+    winner already judged the fix. ``_try_relocalize`` treats it as a no-op, not a
+    crash."""
+
+
 def relocalize_with_priors(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
@@ -309,8 +317,8 @@ def relocalize_with_priors(
     off, this path logs nothing per cycle and module.py's single accept line carries
     the evidence.
 
-    Returns ``(T, fitness, winning_source)``. Raises ``ValueError`` if every prior
-    proposed zero candidates.
+    Returns ``(T, fitness, winning_source)``. Raises ``EmptyProposalError`` if every
+    prior proposed zero candidates (a benign double-fire race, not a crash).
     """
     all_transforms: list[np.ndarray] = []
     sources: list[str] = []
@@ -320,7 +328,7 @@ def relocalize_with_priors(
             sources.append(candidate.source)
 
     if not all_transforms:
-        raise ValueError("relocalize_with_priors: no prior proposed any candidate")
+        raise EmptyProposalError("relocalize_with_priors: no prior proposed any candidate")
 
     # Proposal census: which prior offered candidates this fire. A fiducial source
     # absent here means no tag reached min_observations -- distinct from proposing

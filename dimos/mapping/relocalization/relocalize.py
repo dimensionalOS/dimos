@@ -48,6 +48,16 @@ class InsufficientWallEvidenceError(ValueError):
     loudly rather than degrade; ``_try_relocalize`` catches, logs, and skips."""
 
 
+class NoUprightCandidateError(ValueError):
+    """Every candidate's z-axis tilts past ``gravity_tilt_max_deg``. Floors/ceilings
+    are rotationally symmetric, so a tilted candidate can still score well on walls
+    yet be a mis-solve -- there is no valid winner to return. Refuse rather than admit
+    a gravity-violating pose; ``_try_relocalize`` catches this and skips (no fix
+    published). A single-candidate prior fire (a fiducial pool of one) whose lone
+    candidate is tilted lands here, the case the old all-tilted fallback wrongly let
+    through."""
+
+
 def _preprocess(
     pcd: o3d.geometry.PointCloud, voxel_size: float
 ) -> tuple[o3d.geometry.PointCloud, Any]:
@@ -204,11 +214,19 @@ def refine_candidates(
     )
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
-    # Gravity filter; fall back to all if everything is tilted (degenerate clouds).
-    # Every shipped fire pools ONE source, so a global gate IS the per-source gate.
+    # Gravity filter. An all-tilted pool is REFUSED, never resurrected: a tilted
+    # winner is a rotationally-symmetric-floor mis-solve, not a valid pose, so
+    # admitting one (the old ``else indexed`` fallback) let a lone tilted candidate
+    # sail through the gate. Every shipped fire pools ONE source, so this global gate
+    # IS the per-source gate.
     indexed = list(enumerate(candidates))
     upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= gravity_tilt_max_deg]
-    pool = upright if upright else indexed
+    if not upright:
+        raise NoUprightCandidateError(
+            f"no candidate within the gravity gate: {len(indexed)} candidate(s), "
+            f"all tilt > {gravity_tilt_max_deg} deg -- refusing"
+        )
+    pool = upright
 
     # WALL-ONLY clouds for scoring + polish; the FULL clouds drive the final
     # refinement, preserving the gravity anchor and inlier density in the output.

@@ -26,6 +26,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.priors import (
+    EmptyProposalError,
     FiducialPrior,
     FiducialPriorConfig,
     PriorConfig,
@@ -34,7 +35,11 @@ from dimos.mapping.relocalization.priors import (
     RelocPrior,
     relocalize_with_priors as _relocalize_with_priors,
 )
-from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
+from dimos.mapping.relocalization.relocalize import (
+    InsufficientWallEvidenceError,
+    NoUprightCandidateError,
+    relocalize as _relocalize,
+)
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -286,6 +291,16 @@ class RelocalizationModule(Module):
             )
             self._last_skip_log = now
 
+    def _maybe_log_wall_skip(self, n_pts: int) -> None:
+        """Throttled warning that the judge refused a fire for too little wall evidence
+        (a sparse submap at acquisition). Shares the RANSAC-skip throttle timer: both
+        are 'no fix this fire because the cloud was too sparse', and one 5 s window
+        covering both keeps a starved feed from spamming."""
+        now = time.monotonic()
+        if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
+            logger.warning("relocalize skipped: insufficient wall evidence", n_pts=n_pts)
+            self._last_skip_log = now
+
     def _publish_tf(self, tf: Transform | None) -> None:
         if tf is None:
             return
@@ -437,6 +452,27 @@ class RelocalizationModule(Module):
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
                     verbose_eval_logging=self.config.verbose_eval_logging,
                 )
+        except EmptyProposalError:
+            # Double-fire race: the other thread drained the pending tag fix first, so
+            # this cycle judges an empty pool. The winner already published it -- nothing
+            # is lost, so this is a benign no-op, not a crash to log.exception.
+            logger.debug("relocalize: no candidates this cycle")
+            return None
+        except InsufficientWallEvidenceError:
+            # The judge could not evaluate the pool (too few wall points -- a sparse
+            # acquisition cloud, which a tag burst is deliberately allowed to fire on).
+            # The unjudged fix is dropped on purpose: a pose scored against <100 walls
+            # isn't trustworthy, and the tag is re-seen as the robot moves into
+            # structure. This is EXPECTED, so warn (throttled), not the ERROR traceback
+            # logger.exception prints.
+            self._maybe_log_wall_skip(len(msg))
+            return None
+        except NoUprightCandidateError:
+            # Every candidate tilted past the gravity gate: a real rejection, so the fix
+            # is consumed (re-judging a tilted pose only re-rejects it). Expected on a
+            # bad pose -> warn rather than log.exception.
+            logger.warning("relocalize rejected: all candidates tilted past gravity gate")
+            return None
         except Exception:
             logger.exception("relocalize() failed")
             return None

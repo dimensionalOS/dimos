@@ -44,6 +44,7 @@ from dimos.mapping.relocalization.priors import (
 import dimos.mapping.relocalization.relocalize as relocalize_mod
 from dimos.mapping.relocalization.relocalize import (
     InsufficientWallEvidenceError,
+    NoUprightCandidateError,
     refine_candidates,
     relocalize,
 )
@@ -275,6 +276,35 @@ def test_gravity_gate_rejects_a_tilted_candidate() -> None:
     np.testing.assert_allclose(T[:3, 3], T_true[:3, 3], atol=1.0)
 
 
+def test_gravity_gate_rejects_a_lone_tilted_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invariant 8b: a POOL OF ONE tilted past the gate is REFUSED, never admitted by
+    an all-tilted fallback. A prior fire pools a single source, so the old
+    `pool = upright if upright else indexed` resurrected the lone tilted candidate and
+    the gate never fired. Now refine_candidates raises NoUprightCandidateError, and the
+    module surfaces that as a plain reject (no accept), not an ERROR traceback."""
+    gm, lm, T_true = _rect_room_scene(seed=42, yaw_deg=-25.0, t=(0.8, 1.2, 0.0))
+    tilted = _tilt_x(T_true, 15.0)
+    assert relocalize_mod._gravity_tilt_deg(tilted) > relocalize_mod.GRAVITY_TILT_MAX_DEG
+
+    with pytest.raises(NoUprightCandidateError, match="gravity gate"):
+        refine_candidates(gm, lm, [tilted])
+
+    # The module turns the raise into a quiet reject: no fix published, a warning (not
+    # logger.exception -- the recorder raises on that), nothing admitted.
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+
+    def _raise_tilted(*a: object, **k: object) -> tuple[np.ndarray, float]:
+        raise NoUprightCandidateError("no candidate within the gravity gate: all tilt > 10 deg")
+
+    monkeypatch.setattr(module_mod, "_relocalize", _raise_tilted)
+    tf = m._try_relocalize(cast("PointCloud2", _StubCloud(1234)), m._enabled_prior_objects())
+    assert tf is None
+    assert rec.warnings[0][0] == "relocalize rejected: all candidates tilted past gravity gate"
+
+
 def test_min_wall_evidence_raises_below_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invariant 9: too few wall points refuses LOUDLY rather than scoring on floors
     (rotation-blind). At the production floor a walled room solves; raise the floor
@@ -341,6 +371,9 @@ class _ModuleLogRecorder:
 
     def warning(self, event: str, *args: object, **kwargs: object) -> None:
         self.warnings.append((event, kwargs))
+
+    def debug(self, event: str, *args: object, **kwargs: object) -> None:
+        pass  # benign no-op traces (e.g. the double-fire empty pool) -- not asserted on
 
     def exception(self, msg: str, *args: object, **kwargs: object) -> None:
         raise AssertionError(f"unexpected logger.exception: {msg}")
@@ -513,3 +546,51 @@ def test_ransac_starved_below_floor_keeps_trigger_then_fires_when_dense(
 
     m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))  # dense: the un-acked trigger fires
     assert fires == ["ransac"]
+
+
+def test_sparse_cloud_abort_warns_not_crashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BLOCKER (logging half): a fiducial burst fired against a cloud too sparse for
+    the judge raises InsufficientWallEvidenceError -- EXPECTED on a sparse acquisition
+    cloud (a tag burst fires below the RANSAC point floor), not a bug. _try_relocalize
+    catches it narrowly and emits a throttled WARNING, never the full ERROR traceback
+    logger.exception was printing every fire. Dropping the unjudged fix is intended
+    (a pose scored on <100 walls isn't trustworthy; the tag is re-seen with more
+    structure), so this pins the LOG LEVEL, not fix survival."""
+    m = _bare_module(Config(priors=[FiducialPriorConfig(fitness_threshold=0.35)]))
+    m._fiducial_prior = FiducialPrior({7: np.eye(4)})
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    rec = _ModuleLogRecorder()  # .exception raises AssertionError -> proves no ERROR path
+    monkeypatch.setattr(module_mod, "logger", rec)
+    m._fiducial_prior.observe(7, np.eye(4))
+
+    def _abort(
+        g: object, lm: object, priors: list[RelocPrior], **k: object
+    ) -> tuple[np.ndarray, float, str]:
+        for p in priors:  # drain the pending fix, as the real relocalize_with_priors does
+            p.propose(o3d.geometry.PointCloud(), o3d.geometry.PointCloud())
+        raise InsufficientWallEvidenceError("submap walls=3 < 100")
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _abort)
+
+    tf = m._try_relocalize(cast("PointCloud2", _StubCloud(1000)), m._enabled_prior_objects())
+
+    assert tf is None  # no fix -- and the recorder would have raised on logger.exception
+    assert rec.warnings[0][0] == "relocalize skipped: insufficient wall evidence"
+
+
+def test_double_fire_zero_candidate_pool_is_a_quiet_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SHOULD-FIX: when both threads see the fiducial trigger due and one drains the
+    pending fix first, the loser judges an empty pool. That is a benign race -- the
+    winner already published the fix -- so it returns None quietly (a debug trace),
+    never the crash-formatted ERROR the old ValueError -> logger.exception produced.
+    Exercises the REAL relocalize_with_priors, which raises EmptyProposalError on an
+    empty pool."""
+    m = _bare_module(Config(priors=[FiducialPriorConfig()]))
+    m._fiducial_prior = FiducialPrior({7: np.eye(4)})  # nothing observed -> empty pool
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    rec = _ModuleLogRecorder()  # .exception raises -> proves no crash path is taken
+    monkeypatch.setattr(module_mod, "logger", rec)
+
+    tf = m._try_relocalize(cast("PointCloud2", _StubCloud(60_000)), m._enabled_prior_objects())
+
+    assert tf is None and not rec.warnings  # quiet: no reject/skip warning, no exception

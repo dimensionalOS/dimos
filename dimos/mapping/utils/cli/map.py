@@ -548,6 +548,9 @@ def main(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.perception.fiducial.marker_detection_stream_module import (
+        MarkerDetectionStreamModuleConfig,
+    )
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
     from dimos.visualization.rerun.init import rerun_init
@@ -748,6 +751,14 @@ def main(
             camera_info=cam_info,
             marker_length_m=marker_size,
             smoothing_window=marker_smoothing,
+            # The survey PRODUCES the map_T_tag every fiducial fix inherits, so an
+            # ungated mirror-ambiguous survey pose is confidently wrong (tens of deg,
+            # see loop_closure/eval.py). Gate it with the SAME IPPE ambiguity floor the
+            # live detector runs -- read off its config so the two cannot drift, since
+            # DetectMarkers' own default is 1.0 = gate off.
+            ambiguity_ratio_min=MarkerDetectionStreamModuleConfig.model_fields[
+                "ambiguity_ratio_min"
+            ].default,
         )
         # Keep the sharpest frame per --marker-quality-window window, then
         # drop frames where the robot was moving (linear + rotational) faster

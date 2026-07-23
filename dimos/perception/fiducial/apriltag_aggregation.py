@@ -25,11 +25,13 @@ drift does not enter). Only :func:`view_quality` reads a camera-relative pose --
 the caller passes ``distance``/``view_angle`` scalars in, keeping the aggregation pose
 and the geometry-gate pose distinct.
 
-Two entry points:
- - :func:`aggregate_visits` -- batch: gate + cluster a whole recording into one
-   estimate per (marker, visit). Offline benefit harness.
+Entry point:
  - :class:`TagAggregator` -- streaming: sliding window per marker, aggregated on
    demand once ``min_observations`` are in-window. Live prior.
+
+:func:`cluster_by_time` groups same-marker sightings into visits by time gap -- the
+offline benefit harness reuses it to batch a whole recording rather than re-implement
+the grouping.
 
 No up-front sharpness gate: the detector's ``QualityWindow`` already drops
 blurry frames before these post-detection observations arrive.
@@ -53,7 +55,6 @@ DEFAULT_MAX_DISTANCE_M = 1.0  # camera->tag range past which perspective is too 
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # line-of-sight vs tag normal; grazing views mis-solve
 DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
 DEFAULT_MIN_TAG_PX = 24.0  # tag side length in pixels (sqrt of quad area)
-DEFAULT_CLUSTER_GAP_S = 5.0  # sightings farther apart in time are separate visits
 # streaming: span back from the newest glimpse, not a between-sightings gap
 DEFAULT_TIME_WINDOW_S = 5.0
 DEFAULT_MIN_OBSERVATIONS = 3  # clusters thinner than this are unreliable
@@ -79,7 +80,6 @@ class AggregationConfig:
     max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG
     max_reproj_px: float = DEFAULT_MAX_REPROJ_PX
     min_tag_px: float = DEFAULT_MIN_TAG_PX
-    cluster_gap_s: float = DEFAULT_CLUSTER_GAP_S
     min_observations: int = DEFAULT_MIN_OBSERVATIONS
     rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD
     huber_delta_m: float = DEFAULT_HUBER_DELTA_M
@@ -341,44 +341,6 @@ def _median_present(values: list[float | None]) -> float | None:
     signal of an otherwise clean cluster."""
     present = [v for v in values if v is not None]
     return float(np.median(present)) if present else None
-
-
-def aggregate_visits(
-    observations: list[TagObservation], config: AggregationConfig
-) -> tuple[list[TagEstimate], dict[str, int]]:
-    """Batch: gate every glimpse, time-cluster into visits, drop thin clusters,
-    and Huber-refine each surviving cluster to one estimate.
-
-    Returns the per-visit estimates (ts-sorted) and a per-reason rejection
-    tally (reproj/small/far/oblique/thin counts) so a caller can log WHY glimpses were cut.
-    """
-    rejected: dict[str, int] = defaultdict(int)
-    kept: list[TagObservation] = []
-    for obs in observations:
-        reason = gate_reason(obs, config)
-        if reason is not None:
-            rejected[reason] += 1
-        else:
-            kept.append(obs)
-
-    estimates: list[TagEstimate] = []
-    for cluster in cluster_by_time(kept, config.cluster_gap_s):
-        if len(cluster) < config.min_observations:
-            rejected["thin"] += len(cluster)
-            continue
-        pose = robust_cluster_pose(cluster, config.rotation_weight_m_per_rad, config.huber_delta_m)
-        estimates.append(
-            TagEstimate(
-                marker_id=cluster[0].marker_id,
-                pose=pose,
-                n_observations=len(cluster),
-                ts=max(o.ts for o in cluster),
-                distance_m=_median_present([o.distance_m for o in cluster]),
-                reproj_px=_median_present([o.reproj_px for o in cluster]),
-            )
-        )
-    estimates.sort(key=lambda e: e.ts)
-    return estimates, dict(rejected)
 
 
 class TagAggregator:
