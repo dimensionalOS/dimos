@@ -30,6 +30,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+can-motor-control = false
 dimos-viewer = false
 dimos-lcm = false
 lcm-dimos-fork = false
@@ -571,15 +572,15 @@ wheels = [
 
 [[package]]
 name = "can-motor-control"
-version = "0.0.3"
+version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux')" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.11' and sys_platform == 'linux')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/3f/67a96cab4bc354d473ba8046fdfb8b49eb2c51c48b718aa4edbe1b04609d/can_motor_control-0.0.3.tar.gz", hash = "sha256:d56ce2ee322f634a52527bec9585026919eeaa8a3ab24569effbcc934110a2a1", size = 125413, upload-time = "2026-07-02T22:21:59.667Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/f5/857df85f5d612be90ab852a74a604d865708aea6279d9277de13f2f56782/can_motor_control-0.0.4.tar.gz", hash = "sha256:615c16eab5e1fb010623765431e2fd24b743bfa9bea66e94b3f390db4b4f6ab1", size = 128133, upload-time = "2026-07-23T16:43:08.702Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/36/578b803a68c2286bad22bc28dd8882a0d63ad95c07293dee88bd4c68278c/can_motor_control-0.0.3-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:6610d298a969060c48067be1c04aff4878a854a3f67e771d2352390a66c8fd23", size = 528026, upload-time = "2026-07-02T22:21:58.112Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/8e/dc4652bccc1b0e4b39c87c73cb189beddd5a3a91fb95d4c4431a17e7b339/can_motor_control-0.0.4-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:ad63ead5a82bd9d71c68ed74b21c8b0b068ed35504eb472f5a93b5acf2277b50", size = 527595, upload-time = "2026-07-23T16:43:07.302Z" },
 ]
 
 [[package]]
@@ -2025,7 +2026,7 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
-    { name = "can-motor-control", marker = "sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.3" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },

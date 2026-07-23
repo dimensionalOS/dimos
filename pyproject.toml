@@ -274,7 +274,7 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
-    "can-motor-control>=0.0.3; sys_platform == 'linux'",
+    "can-motor-control>=0.0.4; sys_platform == 'linux'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -473,7 +473,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, can-motor-control = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
