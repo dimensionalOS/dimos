@@ -40,7 +40,7 @@ from dimos.memory2.vis.color import Color
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.config import camera_info_static
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
@@ -64,7 +64,7 @@ def main(
     ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-    cam_info = _camera_info_static()
+    cam_info = camera_info_static()
 
     rr.init("dimos markers", recording_id=db_path.stem)
     rr.save(str(out))

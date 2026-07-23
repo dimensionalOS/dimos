@@ -22,11 +22,10 @@ from typing import TYPE_CHECKING, Any
 from dimos.memory2.type.observation import Observation
 from dimos.memory2.vis.color import Color
 from dimos.memory2.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.go2.config import Go2Config
 
 if TYPE_CHECKING:
     from dimos.memory2.vis.space.space import Space
@@ -37,20 +36,6 @@ def _rgba(el: Any) -> tuple[int, int, int, int]:
     c = Color.coerce(getattr(el, "color", "#000000"))
     opacity = float(getattr(el, "opacity", 1.0))
     return c.with_alpha(c.a * opacity).rgba_u8()
-
-
-# base_link → camera_optical extrinsics (applied at render time for image observations)
-_BASE_TO_OPTICAL = Transform(
-    translation=Vector3(0.3, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-) + Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-    frame_id="camera_link",
-    child_frame_id="camera_optical",
-)
 
 
 def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
@@ -243,8 +228,12 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             continue
         img = _as_image(data)
         if img is not None:
-            # Apply base→optical extrinsics for camera frustum rendering
-            world_T_optical = Transform.from_pose("world", ps) + _BASE_TO_OPTICAL
+            # TODO: fix there should be a standard way to set camera frames
+            base_to_optical = (
+                Go2Config.static_transforms["camera_link"]
+                + Go2Config.static_transforms["camera_optical"]
+            )
+            world_T_optical = Transform.from_pose("world", ps) + base_to_optical
             rr.log(path, world_T_optical.to_pose().to_rerun(), static=True)
             h, w = img.shape[:2]
             focal = max(w, h)

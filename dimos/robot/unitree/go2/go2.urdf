@@ -19,4 +19,26 @@
       <inertia ixx="0.320125" ixy="0" ixz="0" iyy="0.812500" iyz="0" izz="0.732625"/>
     </inertial>
   </link>
+
+  <!-- Front-facing RGB camera mount, ROS link convention (x=forward, y=left, z=up). -->
+  <link name="camera_link"/>
+  <joint name="base_link_to_camera_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.3 0.0 0.0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Optical frame: x=right, y=down, z=forward. rpy = (-pi/2, 0, -pi/2). -->
+  <link name="camera_optical"/>
+  <joint name="camera_link_to_camera_optical" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0 -1.5707963267948966"/>
+  </joint>
+  <link name="lidar_link"/>
+  <joint name="base_link_to_lidar_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+  </joint>
 </robot>
