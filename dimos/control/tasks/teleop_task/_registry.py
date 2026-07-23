@@ -15,3 +15,10 @@
 TASK_FACTORIES = {
     "teleop_ik": "dimos.control.tasks.teleop_task.teleop_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "teleop_ik": {
+        "coordinator_cartesian_command": ("on_cartesian_command", "by_task_name"),
+        "teleop_buttons": ("on_teleop_buttons", "broadcast"),
+    },
+}
