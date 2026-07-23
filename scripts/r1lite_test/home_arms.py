@@ -41,7 +41,7 @@ from sensor_msgs.msg import JointState
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r1lite_config import ARM_DOF, CMD_ARM, FEEDBACK_ARM
 
-SPEED = 0.25  # rad/s along the slowest-joint profile, deliberately gentle
+SPEED = 0.12  # rad/s along the slowest-joint profile, deliberately stately
 STREAM_HZ = 50.0
 DISCOVERY_WAIT = 5.0
 FEEDBACK_WAIT = 5.0
