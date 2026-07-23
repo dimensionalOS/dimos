@@ -62,6 +62,12 @@ R1LITE_RIGHT_ARM_JOINTS = R1LITE_UPPER_BODY_JOINTS[10:16]
 _TASK_NAMES = {"left": "teleop_left_arm", "right": "teleop_right_arm"}
 _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while engaged
 
+# The arms start folded, where small cartesian targets need more than the
+# default 5 degree gate of joint motion, so solutions are rejected forever and
+# the arm wedges. Accept locally sane solutions (30 degree hard reject) and
+# execute them as bounded 0.5 degree steps per 100 Hz tick (50 deg/s cap).
+_ARM_IK_LIMITS = {"max_joint_delta_deg": 30.0, "max_step_deg_per_tick": 0.5}
+
 
 def _teleop_tasks() -> list[TaskConfig]:
     # Inline TaskConfig: joint_names must be the 6-joint arm slice, and the IK
@@ -72,7 +78,12 @@ def _teleop_tasks() -> list[TaskConfig]:
             type="teleop_ik",
             joint_names=R1LITE_LEFT_ARM_JOINTS,
             priority=_TELEOP_PRIORITY,
-            params={"model_path": R1LITE_LEFT_ARM_MODEL, "ee_joint_id": _ARM_DOF, "hand": "left"},
+            params={
+                "model_path": R1LITE_LEFT_ARM_MODEL,
+                "ee_joint_id": _ARM_DOF,
+                "hand": "left",
+                **_ARM_IK_LIMITS,
+            },
         ),
         TaskConfig(
             name=_TASK_NAMES["right"],
@@ -83,6 +94,7 @@ def _teleop_tasks() -> list[TaskConfig]:
                 "model_path": R1LITE_RIGHT_ARM_MODEL,
                 "ee_joint_id": _ARM_DOF,
                 "hand": "right",
+                **_ARM_IK_LIMITS,
             },
         ),
     ]

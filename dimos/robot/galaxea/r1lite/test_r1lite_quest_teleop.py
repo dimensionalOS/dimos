@@ -327,6 +327,68 @@ def test_production_coordinator_tasks_unchanged() -> None:
     ]
 
 
+def test_ik_tasks_configure_bounded_stepping() -> None:
+    for blueprint in (r1lite_quest_teleop, r1lite_quest_teleop_sim):
+        tasks = {t.name: t for t in _coordinator_tasks(blueprint)}
+        for name in ("teleop_left_arm", "teleop_right_arm"):
+            assert tasks[name].params["max_joint_delta_deg"] == 30.0
+            assert tasks[name].params["max_step_deg_per_tick"] == 0.5
+
+
+def test_teleop_tracks_from_folded_home() -> None:
+    # Regression for the first hardware session: the arms home folded, where a
+    # 3 cm cartesian target needs more than 5 degrees of joint motion, so the
+    # default gate rejected every solution and the arm wedged permanently.
+    # With the r1lite limits the same target must be reached in bounded steps.
+    import numpy as np
+    import pinocchio
+
+    from dimos.manipulation.planning.kinematics.pinocchio_ik import PinocchioIK
+
+    ik = PinocchioIK.from_model_path(R1LITE_LEFT_ARM_MODEL, ee_joint_id=6)
+    q0 = np.zeros(6)
+    ee0 = ik.forward_kinematics(q0)
+    target = pinocchio.SE3(ee0.rotation, ee0.translation + np.array([0.0, 0.0, 0.03]))
+
+    q_sol, _, _ = ik.solve(target, q0)
+    assert np.rad2deg(np.max(np.abs(q_sol - q0))) > 5.0  # the wedge, documented
+
+    hard_reject = np.deg2rad(30.0)
+    step = np.deg2rad(0.5)
+    q = q0
+    for tick in range(400):
+        q_sol, _, _ = ik.solve(target, q)
+        assert np.max(np.abs(q_sol - q)) < hard_reject
+        q = q + np.clip(q_sol - q, -step, step)
+        if np.linalg.norm(ik.forward_kinematics(q).translation - target.translation) < 0.001:
+            break
+    else:
+        raise AssertionError("folded-start target not reached in 400 ticks")
+    assert tick < 100
+
+
+def test_create_task_plumbs_step_limits() -> None:
+    from dimos.control.coordinator import TaskConfig
+    from dimos.control.tasks.teleop_task.teleop_task import create_task
+
+    cfg = TaskConfig(
+        name="teleop_left_arm",
+        type="teleop_ik",
+        joint_names=R1LITE_LEFT_ARM_JOINTS,
+        priority=20,
+        params={
+            "model_path": R1LITE_LEFT_ARM_MODEL,
+            "ee_joint_id": 6,
+            "hand": "left",
+            "max_joint_delta_deg": 30.0,
+            "max_step_deg_per_tick": 0.5,
+        },
+    )
+    task = create_task(cfg, hardware=None)
+    assert task._config.max_joint_delta_deg == 30.0
+    assert task._config.max_step_deg_per_tick == 0.5
+
+
 def test_web_server_binds_all_interfaces(monkeypatch: Any) -> None:
     # A loopback bind serves nothing off the robot; the headset is another
     # machine. Guard the listen_host wiring end to end without starting uvicorn.

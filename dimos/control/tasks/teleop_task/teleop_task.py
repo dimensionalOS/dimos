@@ -67,6 +67,14 @@ class TeleopIKTaskConfig:
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
+        max_step_deg_per_tick: If set, accepted solutions execute as a bounded
+            step from the current joints instead of all at once, so a solution
+            within max_joint_delta_deg but larger than one tick's worth of safe
+            motion becomes a smooth catch-up instead of a jump. Without it a
+            solution over max_joint_delta_deg is rejected outright and the arm
+            can wedge: once behind by more than the gate, every retry needs the
+            same too-large delta (observed from a folded start pose, where 3 cm
+            of cartesian motion needs more than 5 degrees of joint motion).
         hand: "left" or "right" — which controller's primary button to listen to
         gripper_joint: Optional joint name for the gripper (e.g. "arm/gripper").
         gripper_open_pos: Gripper position (adapter units) at trigger value 0.0 (no press).
@@ -79,6 +87,7 @@ class TeleopIKTaskConfig:
     priority: int = 10
     timeout: float = 0.5
     max_joint_delta_deg: float = 5.0  # ~500°/s at 100Hz
+    max_step_deg_per_tick: float | None = None
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -252,11 +261,18 @@ class TeleopIKTask(BaseControlTask):
             )
         # Safety: reject if any joint would jump too far in one tick
         if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
+            worst = float(np.max(np.abs(q_solution - q_current)))
             logger.warning(
-                f"TeleopIKTask {self._name}: joint delta exceeds "
+                f"TeleopIKTask {self._name}: joint delta {np.rad2deg(worst):.1f}° exceeds "
                 f"{self._config.max_joint_delta_deg}°, rejecting solution"
             )
             return None
+
+        # Bounded catch-up: execute at most one tick's worth of motion toward
+        # the accepted solution rather than the whole displacement at once.
+        if self._config.max_step_deg_per_tick is not None:
+            step = np.deg2rad(self._config.max_step_deg_per_tick)
+            q_solution = q_current + np.clip(q_solution - q_current, -step, step)
 
         joint_names = list(self._joint_names_list)
         positions = q_solution.flatten().tolist()
@@ -357,6 +373,8 @@ class TeleopIKTask(BaseControlTask):
 class TeleopIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6
+    max_joint_delta_deg: float = 5.0
+    max_step_deg_per_tick: float | None = None
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -372,6 +390,8 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             model_path=params.model_path,
             ee_joint_id=params.ee_joint_id,
             priority=cfg.priority,
+            max_joint_delta_deg=params.max_joint_delta_deg,
+            max_step_deg_per_tick=params.max_step_deg_per_tick,
             hand=params.hand,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
