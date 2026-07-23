@@ -161,6 +161,13 @@ dependencies = [
     "websockets>=13",
     "starlette>=0.40",
     "uvicorn>=0.34.0",
+    # python-multipart is the same story again: dimos/web/dimos_interface/api/
+    # server.py registers a Form(...) route unconditionally, and FastAPI raises
+    # at startup without it. It was declared only in the `misc` extra, so any
+    # blueprint composing RobotWebInterface (quest teleop, dimos-interface web
+    # app) failed on a core-only install:
+    #   RuntimeError: Form data requires "python-multipart" to be installed.
+    "python-multipart>=0.0.27",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -193,9 +200,6 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
-    # Core requirements
-    "python-multipart>=0.0.27",
-
     # Developer Specific
     "ipykernel",
 
