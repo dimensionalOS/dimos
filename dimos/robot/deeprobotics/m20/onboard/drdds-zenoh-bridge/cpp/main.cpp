@@ -95,8 +95,8 @@ static std::string chan_to_key(const std::string& chan) {
     return k.substr(i);
 }
 
-// Get or declare the cached publisher for a key, with per-key QoS matching
-// dimos's DEFAULT_ZENOH_QOS (see protocol/pubsub/impl/zenohqos.py):
+// Get or declare the cached publisher for a key, matching DimOS's default
+// topic QoS policy in core/transport_factory.py:
 //   - high-rate clouds/images -> DROP congestion control, so a momentarily-slow
 //     link (e.g. WiFi) drops stale frames instead of building a reliable
 //     in-order backlog that makes every subscriber lag behind realtime.

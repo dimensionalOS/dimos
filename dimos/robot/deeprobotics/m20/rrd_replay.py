@@ -79,7 +79,8 @@ def _timestamp(batch: Any, row: int) -> float:
 
 def _fixed_size_vectors(batch: Any, column: str, row: int, width: int) -> np.ndarray:
     vectors = batch.column(column)[row].values
-    return vectors.values.to_numpy(zero_copy_only=False).reshape(-1, width)
+    values = np.asarray(vectors.values.to_numpy(zero_copy_only=False))
+    return values.reshape(-1, width)
 
 
 def _pointcloud_from_batch(batch: Any, row: int) -> PointCloud2:
@@ -140,15 +141,15 @@ def iter_rrd_events(path: str | Path) -> Iterator[ReplayEvent]:
         columns = set(batch.schema.names)
         if chunk.entity_path == _POINTS_ENTITY and _POINTS_COLUMN in columns:
             for row in range(batch.num_rows):
-                message = _pointcloud_from_batch(batch, row)
-                yield ReplayEvent(message.ts, "points", message)
+                pointcloud = _pointcloud_from_batch(batch, row)
+                yield ReplayEvent(pointcloud.ts, "points", pointcloud)
         elif chunk.entity_path == _ODOMETRY_ENTITY and {
             _TRANSLATION_COLUMN,
             _QUATERNION_COLUMN,
         }.issubset(columns):
             for row in range(batch.num_rows):
-                message = _odometry_from_batch(batch, row)
-                yield ReplayEvent(message.ts, "odometry", message)
+                odometry = _odometry_from_batch(batch, row)
+                yield ReplayEvent(odometry.ts, "odometry", odometry)
         elif chunk.entity_path in {_FRONT_IMAGE_ENTITY, _REAR_IMAGE_ENTITY} and {
             _IMAGE_BUFFER_COLUMN,
             _IMAGE_FORMAT_COLUMN,
@@ -157,8 +158,8 @@ def iter_rrd_events(path: str | Path) -> Iterator[ReplayEvent]:
             frame_id = FRONT_CAMERA_OPTICAL_FRAME if is_front else REAR_CAMERA_OPTICAL_FRAME
             kind: Literal["front_image", "rear_image"] = "front_image" if is_front else "rear_image"
             for row in range(batch.num_rows):
-                message = _image_from_batch(batch, row, frame_id)
-                yield ReplayEvent(message.ts, kind, message)
+                image = _image_from_batch(batch, row, frame_id)
+                yield ReplayEvent(image.ts, kind, image)
 
 
 class M20RrdReplay(Module):
