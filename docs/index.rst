@@ -186,7 +186,8 @@ Blueprints are instructions for how to construct and wire modules. Each
 :func:`~dimos.core.coordination.blueprints.autoconnect` composes several into a single
 :class:`~dimos.core.coordination.blueprints.Blueprint`. Blueprints can be composed, remapped,
 or have transports overridden with
-:meth:`~dimos.core.coordination.blueprints.Blueprint.transports` when ``autoconnect()`` cannot
+:meth:`~dimos.core.coordination.blueprints.Blueprint.transports` when
+:func:`~dimos.core.coordination.blueprints.autoconnect` cannot
 resolve conflicting names or message types on its own.
 
 The example below connects the image stream from a :brand:`Unitree` Go2 to an
