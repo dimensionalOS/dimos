@@ -96,3 +96,21 @@ private:
 // Generates the JSON (de)serialization Config::parse<T>() uses. Every listed
 // field is required. Add a void validate() const method for range checks.
 #define DIMOS_NATIVE_CONFIG(Type, ...) NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Type, __VA_ARGS__)
+
+// List form of DIMOS_NATIVE_CONFIG for structs past nlohmann's 64-field macro
+// limit. FIELDS is an X-macro applying F(name) to every field:
+//
+//   #define MY_CONFIG_FIELDS(F) F(host_ip) F(frequency) ...
+//   DIMOS_NATIVE_CONFIG_LIST(MyConfig, MY_CONFIG_FIELDS)
+//
+// Same contract: every listed field is required, unknown fields are rejected.
+#define DIMOS_NATIVE_CONFIG_FIELD_GET(name) j.at(#name).get_to(c.name);
+#define DIMOS_NATIVE_CONFIG_FIELD_PUT(name) j[#name] = c.name;
+#define DIMOS_NATIVE_CONFIG_LIST(Type, FIELDS)                \
+    inline void from_json(const nlohmann::json& j, Type& c) { \
+        FIELDS(DIMOS_NATIVE_CONFIG_FIELD_GET)                 \
+    }                                                         \
+    inline void to_json(nlohmann::json& j, const Type& c) {   \
+        j = nlohmann::json::object();                         \
+        FIELDS(DIMOS_NATIVE_CONFIG_FIELD_PUT)                 \
+    }

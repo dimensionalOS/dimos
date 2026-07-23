@@ -26,6 +26,15 @@ struct RangedCfg {
     }
 };
 DIMOS_NATIVE_CONFIG(RangedCfg, value, name)
+
+struct ListCfg {
+    std::int64_t value;
+    std::string name;
+};
+#define LIST_CFG_FIELDS(F) \
+    F(value)               \
+    F(name)
+DIMOS_NATIVE_CONFIG_LIST(ListCfg, LIST_CFG_FIELDS)
 }  // namespace
 
 TEST_CASE("enforce_all_consumed passes when nothing was sent") {
@@ -76,4 +85,21 @@ TEST_CASE("parse rejects an unknown field (one-to-one)") {
 TEST_CASE("parse runs the config's validate()") {
     Config cfg(json{{"value", 999}, {"name", "x"}});
     CHECK_THROWS_AS(cfg.parse<RangedCfg>(), std::runtime_error);
+}
+
+TEST_CASE("a list-form config parses like the plain form") {
+    Config cfg(json{{"value", 5}, {"name", "lidar"}});
+    ListCfg c = cfg.parse<ListCfg>();
+    CHECK(c.value == 5);
+    CHECK(c.name == "lidar");
+}
+
+TEST_CASE("a list-form config rejects a missing field") {
+    Config cfg(json{{"value", 5}});
+    CHECK_THROWS_AS(cfg.parse<ListCfg>(), std::runtime_error);
+}
+
+TEST_CASE("a list-form config rejects an unknown field (one-to-one)") {
+    Config cfg(json{{"value", 5}, {"name", "x"}, {"extra", true}});
+    CHECK_THROWS_AS(cfg.parse<ListCfg>(), std::runtime_error);
 }
