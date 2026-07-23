@@ -170,21 +170,80 @@ class ViserManipulationScene:
                     dimensions = tuple(float(value) for value in obstacle.dimensions[:3])
                     if len(dimensions) != 3:
                         raise ValueError("box dimensions must contain width, height, and depth")
-                    handles.append(scene.add_box(path, dimensions=dimensions, color=color, opacity=opacity, position=position, wxyz=wxyz, visible=self._obstacles_visible))
+                    handles.append(
+                        scene.add_box(
+                            path,
+                            dimensions=dimensions,
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
                 elif obstacle.obstacle_type == ObstacleType.SPHERE:
-                    handles.append(scene.add_icosphere(path, radius=float(obstacle.dimensions[0]), color=color, opacity=opacity, position=position, wxyz=wxyz, visible=self._obstacles_visible))
+                    handles.append(
+                        scene.add_icosphere(
+                            path,
+                            radius=float(obstacle.dimensions[0]),
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
                 elif obstacle.obstacle_type == ObstacleType.CYLINDER:
-                    handles.append(scene.add_cylinder(path, radius=float(obstacle.dimensions[0]), height=float(obstacle.dimensions[1]), color=color, opacity=opacity, position=position, wxyz=wxyz, visible=self._obstacles_visible))
+                    handles.append(
+                        scene.add_cylinder(
+                            path,
+                            radius=float(obstacle.dimensions[0]),
+                            height=float(obstacle.dimensions[1]),
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
                 elif obstacle.obstacle_type == ObstacleType.MESH:
-                    handles.append(self._add_mesh(scene, path, obstacle, color, opacity, position, wxyz, self._obstacles_visible))
+                    handles.append(
+                        self._add_mesh(
+                            scene,
+                            path,
+                            obstacle,
+                            color,
+                            opacity,
+                            position,
+                            wxyz,
+                            self._obstacles_visible,
+                        )
+                    )
                 else:
                     raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
             except Exception as error:
-                logger.warning("Could not render obstacle %s; using proxy", obstacle_id, exc_info=True)
-                handles.extend((
-                    scene.add_box(f"{path}/mesh-failure-proxy", dimensions=(0.25, 0.25, 0.25), color=OBSTACLE_PROXY_COLOR, opacity=0.9, position=position, wxyz=wxyz, visible=self._obstacles_visible),
-                    scene.add_label(f"{path}/mesh-failure-label", f"MESH RENDER FAILED: {error}", position=position, visible=self._obstacles_visible),
-                ))
+                logger.warning(
+                    "Could not render obstacle %s; using proxy", obstacle_id, exc_info=True
+                )
+                handles.extend(
+                    (
+                        scene.add_box(
+                            f"{path}/mesh-failure-proxy",
+                            dimensions=(0.25, 0.25, 0.25),
+                            color=OBSTACLE_PROXY_COLOR,
+                            opacity=0.9,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        ),
+                        scene.add_label(
+                            f"{path}/mesh-failure-label",
+                            f"MESH RENDER FAILED: {error}",
+                            position=position,
+                            visible=self._obstacles_visible,
+                        ),
+                    )
+                )
             self._obstacle_handles[obstacle_id] = handles
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
@@ -211,19 +270,47 @@ class ViserManipulationScene:
             self._obstacle_gui_handles.clear()
 
     @staticmethod
-    def _obstacle_pose(obstacle: Obstacle) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    def _obstacle_pose(
+        obstacle: Obstacle,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
         pose = obstacle.pose
-        return ((float(pose.position.x), float(pose.position.y), float(pose.position.z)), (float(pose.orientation.w), float(pose.orientation.x), float(pose.orientation.y), float(pose.orientation.z)))
+        return (
+            (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        )
 
     @staticmethod
     def _obstacle_appearance(obstacle: Obstacle) -> tuple[tuple[int, int, int], float]:
         color = obstacle.color
-        if color == OBSTACLE_DEFAULT_RGBA or len(color) != 4 or not all(math.isfinite(float(v)) for v in color) or not all(0.0 <= float(v) <= 1.0 for v in color):
+        if (
+            color == OBSTACLE_DEFAULT_RGBA
+            or len(color) != 4
+            or not all(math.isfinite(float(v)) for v in color)
+            or not all(0.0 <= float(v) <= 1.0 for v in color)
+        ):
             return OBSTACLE_FALLBACK_COLOR, OBSTACLE_FALLBACK_OPACITY
-        return (round(float(color[0]) * 255), round(float(color[1]) * 255), round(float(color[2]) * 255)), float(color[3])
+        return (
+            round(float(color[0]) * 255),
+            round(float(color[1]) * 255),
+            round(float(color[2]) * 255),
+        ), float(color[3])
 
     @staticmethod
-    def _add_mesh(scene: Any, path: str, obstacle: Obstacle, color: tuple[int, int, int], opacity: float, position: tuple[float, float, float], wxyz: tuple[float, float, float, float], visible: bool) -> MeshHandle:
+    def _add_mesh(
+        scene: Any,
+        path: str,
+        obstacle: Obstacle,
+        color: tuple[int, int, int],
+        opacity: float,
+        position: tuple[float, float, float],
+        wxyz: tuple[float, float, float, float],
+        visible: bool,
+    ) -> MeshHandle:
         if not obstacle.mesh_path:
             raise ValueError("mesh path is missing")
         mesh = trimesh.load_mesh(obstacle.mesh_path, process=False)
@@ -233,7 +320,19 @@ class ViserManipulationScene:
         faces = np.asarray(mesh.faces, dtype=np.int32)
         if len(vertices) == 0 or len(faces) == 0:
             raise ValueError("mesh contains no renderable triangles")
-        return cast("MeshHandle", scene.add_mesh_simple(path, vertices, faces, color=color, opacity=opacity, position=position, wxyz=wxyz, visible=visible))
+        return cast(
+            "MeshHandle",
+            scene.add_mesh_simple(
+                path,
+                vertices,
+                faces,
+                color=color,
+                opacity=opacity,
+                position=position,
+                wxyz=wxyz,
+                visible=visible,
+            ),
+        )
 
     @property
     def robot_display_mode(self) -> RobotDisplayMode:
