@@ -189,7 +189,7 @@ memory2, and `dimos.core` are imported lazily inside the functions that need
 them (`over()`, `blueprint()`), exactly like `EngineSurface.over()`'s
 sanctioned lazy edges. `blueprint()` is the graph's one
 `dimos.core` edge and rides the already-sanctioned T8 bridge (`legacy.py`).
-Nothing in `dimos/pure/__init__.py` changes: graph names are imported from
+Nothing in `dimos/pure/pm.py` changes: graph names are imported from
 `dimos.pure.graph` (the charter sketch's own spelling) — see Q7.
 
 ---

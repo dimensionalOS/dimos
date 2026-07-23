@@ -73,19 +73,6 @@ iterator, so offline ``over()`` alignment is untouched and stays deterministic."
 if TYPE_CHECKING:
     from dimos.pure.tfbuffer import TfContext
 
-__all__ = [
-    "NOTHING_PENDING",
-    "AlignRule",
-    "AlignStats",
-    "Aligner",
-    "AlignmentError",
-    "Interpolatable",
-    "PortStats",
-    "Stamped",
-    "align",
-    "interpolator_for",
-    "register_interpolator",
-]
 
 _TV = TypeVar("_TV")
 

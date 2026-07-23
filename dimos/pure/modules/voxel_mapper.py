@@ -65,13 +65,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from dimos import pure as pm
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.pure import pm
 from dimos.utils.logging_config import setup_logger
-
-__all__ = ["VoxelMapper", "VoxelMapper2"]
 
 logger = setup_logger()
 

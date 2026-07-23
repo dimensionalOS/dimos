@@ -16,7 +16,7 @@
 # T11). Compose pure modules into stacks that are THEMSELVES module-shaped —
 # the pure counterpart of the blueprint system: what blueprints do with runtime
 # wiring, a graph does with one pure function over typed ports. Written against
-# the real `from dimos import pure as pm` surface and the landed nav modules;
+# the real `from dimos.pure import pm` surface and the landed nav modules;
 # `dimos.pure.graph` (PureGraph / Port / feedback) is the thing being designed.
 #
 #  1. APPLICATION is the one operator. A configured module — or graph, they
@@ -109,12 +109,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.pure import pm
 from dimos.pure.graph import Port, PureGraph, feedback
 from dimos.pure.modules.costmapper import PureCostMapper
 from dimos.pure.modules.odom_tf import OdomTf

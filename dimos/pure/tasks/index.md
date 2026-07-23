@@ -74,7 +74,7 @@ inherit the fix instead of a fork.
 - **Package + import convention**: the package is `dimos/pure` — readable,
   greppable paths; shortness lives in the ALIAS, not the path (the numpy/np
   pattern). Canonical import, used in every doc and example:
-  `from dimos import pure as pm` — full surface via `pm.*` (`pm.In`, `pm.Out`,
+  `from dimos.pure import pm` — full surface via `pm.*` (`pm.In`, `pm.Out`,
   `pm.PureModule`, `pm.tick`, ...; bare `from dimos.pure import tick` is fine
   for heavy-use specifiers). The sketches import this package for real now.
   The class stays `PureModule`, not `pm.Module`: it must coexist with legacy

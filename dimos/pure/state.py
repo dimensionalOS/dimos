@@ -27,8 +27,6 @@ from typing_extensions import Self, dataclass_transform
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
-__all__ = ["State"]
-
 
 @dataclass_transform(kw_only_default=True, frozen_default=True)
 class State:

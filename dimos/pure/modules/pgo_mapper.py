@@ -46,14 +46,12 @@ planner composing it onto the robot's odom pose.
 
 from __future__ import annotations
 
-from dimos import pure as pm
 from dimos.mapping.loop_closure.pgo import PGOConfig, PoseGraph, _PGOState, _transform_to_pose3
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.GraphNodes3D import GraphNode, GraphNodes3D
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.pure import pm
 from dimos.pure.modules.voxel_mapper import VoxelMapper2
-
-__all__ = ["PGOVoxelMapper"]
 
 
 class PGOVoxelMapper(VoxelMapper2):

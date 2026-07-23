@@ -23,7 +23,7 @@ from dataclasses import MISSING
 
 import pytest
 
-from dimos import pure as pm
+from dimos.pure import pm
 from dimos.pure.rows import (
     BundleDefinitionError,
     TfOutSpec,
@@ -168,7 +168,7 @@ class TestBuildResolution:
     def test_frames_on_non_tf_port_raises(self) -> None:
         m = Conn()
         with pytest.raises(NotImplementedError, match=r"not a tf\(\)/tf_out\(\) port"):
-            _ = m.o.pose.frames
+            m.o.pose.frames  # noqa: B018  — the access itself is the assertion
 
     def test_template_unknown_names_module_field_template(self) -> None:
         class Bad(pm.PureModule):

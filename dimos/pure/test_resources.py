@@ -28,7 +28,7 @@ from typing import NamedTuple
 
 import pytest
 
-from dimos import pure as pm
+from dimos.pure import pm
 from dimos.pure.resources import (
     IN_HANDLER,
     Resource,
@@ -226,7 +226,7 @@ def test_lazy_factory_error_no_cache_retry() -> None:
 
     m = M()
     with pytest.raises(ValueError, match="factory boom"):  # RAW, not wrapped (§5.1)
-        _ = m.res
+        m.res  # noqa: B018  — the access itself is the assertion
     value = m.res  # retry succeeds and caches
     assert m.res is value
     assert len(attempts) == 2
@@ -252,7 +252,7 @@ def test_lazy_cycle_detection() -> None:
             return M.Out(y=i.x.v)
 
     with pytest.raises(ResourceError) as ei:
-        _ = M().a
+        M().a  # noqa: B018  — the access itself is the assertion
     assert ei.value.resource_rule is ResourceRule.CYCLE
     assert "[resource-cycle]" in str(ei.value)
 
@@ -646,7 +646,7 @@ def test_lazy_async_factory() -> None:
     assert m.client is value and calls == ["create"]
 
     async def touch_in_loop() -> None:
-        _ = M().client
+        M().client  # noqa: B018  — the access itself is the assertion
 
     with pytest.raises(ResourceError) as ei:
         asyncio.run(touch_in_loop())
@@ -839,7 +839,7 @@ def test_handler_flag() -> None:
     token = IN_HANDLER.set(True)
     try:
         with pytest.raises(ResourceError) as ei:
-            _ = m.res
+            m.res  # noqa: B018  — the access itself is the assertion
         assert ei.value.resource_rule is ResourceRule.IN_HANDLER
         assert isinstance(M.res, Resource)  # class access stays flag-exempt
     finally:

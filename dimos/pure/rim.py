@@ -50,28 +50,6 @@ from dimos.pure.stepspec import StepKind, StepSpec
 from dimos.pure.typing import InPort, InPorts, OutPort, OutPorts, Stamped
 from dimos.utils.logging_config import setup_logger
 
-__all__ = [
-    "DEFAULT_CAPACITY",
-    "STOP_JOIN_TIMEOUT",
-    "PortIngress",
-    "Publishable",
-    "RimError",
-    "RimInPort",
-    "RimInPorts",
-    "RimOutPort",
-    "RimOutPorts",
-    "RimRule",
-    "RimStats",
-    "Subscribable",
-    "attach_tf_buffer",
-    "ports_of",
-    "start_module",
-    "stats",
-    "stop_module",
-    "transformer",
-    "warmup_module",
-]
-
 _TF_STREAM_SPEC: Final = TfSpec(name="tf")
 """Synthetic marker spec for the m.i.tf stream port (not a bundle field; spec §9.1)."""
 

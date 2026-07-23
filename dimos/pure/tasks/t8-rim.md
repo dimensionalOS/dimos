@@ -42,7 +42,7 @@ Layering invariants (mypy-visible, test-pinned):
   `dimos.protocol`, no `dimos.memory2` (interop is structural, §10).
 - `legacy.py` imports: `dimos.core.{module,stream,core}` +
   `dimos.pure.{module,stepspec,rows}` + `dimos.pure.rim`. It is a LEAF: it is
-  never imported by `dimos/pure/__init__.py` (importing it would drag
+  never imported by `dimos/pure/pm.py` (importing it would drag
   `dimos.core` into every `import dimos.pure` — forbidden). Users spell
   `from dimos.pure.legacy import legacy_blueprint` at deploy sites only.
 - **Zero unsanctioned engine edits.** The only files outside T8's four that
@@ -969,7 +969,7 @@ sufficient).
 
 ## 16. Exports
 
-`dimos/pure/__init__.py` (owned by T2/T12; listed here per house rule) adds,
+`dimos/pure/pm.py` (owned by T2/T12; listed here per house rule) adds,
 at T8a: `stats` (as `rim_stats`? no — D10: export the NAMES `RimStats`,
 `RimError`, `RimRule` and the function `rim` module stays the spelling:
 users write `from dimos.pure.rim import stats`). Final: `pm` gains

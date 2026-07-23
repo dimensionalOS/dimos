@@ -27,7 +27,6 @@ keyframe map) and exports its keyframes/loop-closures debug viz — a subclass, 
 a flag, because every graph output must be a wired port.
 """
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.GraphNodes3D import GraphNodes3D
@@ -35,6 +34,7 @@ from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.pure import pm
 from dimos.pure.graph import PureGraph
 from dimos.pure.modules.costmapper import PureCostMapper
 from dimos.pure.modules.odom_tf import OdomTf

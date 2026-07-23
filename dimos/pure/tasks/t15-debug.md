@@ -223,7 +223,7 @@ implementer applies them exactly as written.
 `debug.py` shadows nothing today, but the *name* `debug` is the feature's API
 spelling — the `over(debug=)` kwarg, the `DIMOS_PURE_DEBUG` grammar, and (if
 Q3 lands that way) a `pm.Debug` export — and the pm surface re-exports names,
-never submodules (house rule, `dimos/pure/__init__.py` docstring). A
+never submodules (house rule, `dimos/pure/pm.py` docstring). A
 `dimos.pure.debug` submodule would bind the module object onto the package at
 first import and make `from dimos.pure import debug` return a module where
 every sibling name is a class/function. Same shape as tfbuffer-not-tf

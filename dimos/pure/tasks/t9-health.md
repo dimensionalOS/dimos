@@ -476,7 +476,7 @@ operationally-inert knob.
 
 ## H9. pm surface + index
 
-`dimos/pure/__init__.py` (T15 also edited this file — merge, don't clobber):
+`dimos/pure/pm.py` (T15 also edited this file — merge, don't clobber):
 add `Health` to the export block (`from dimos.pure.health import Health`)
 and to the `test_pm_surface` pin. ONLY `Health` — it is what users declare
 (`pm.latest(control=True)` health-monitor inputs) and what autoconnect

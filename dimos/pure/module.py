@@ -49,8 +49,6 @@ _TState = TypeVar("_TState")
 # __init_subclass__; __pure_step__'s presence certifies that ALL definition-time
 # machinery (config included) passed. stepspec never imports module.py.
 
-__all__ = ["PureModule"]
-
 
 @dataclass_transform(kw_only_default=True, frozen_default=True)
 class PureModule(EngineSurface):

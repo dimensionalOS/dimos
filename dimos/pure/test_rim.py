@@ -33,8 +33,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from dimos import pure as pm
-from dimos.pure import rim
+from dimos.pure import pm, rim
 from dimos.pure.resources import ResourceError
 from dimos.pure.rim import RimError, RimRule
 
@@ -326,9 +325,9 @@ class TestPorts:
     def test_unknown_port_name(self) -> None:
         m = Echo()
         with pytest.raises(AttributeError, match=r"ping.*\[rim-unknown-port\]"):
-            _ = m.i.pingg
+            m.i.pingg  # noqa: B018  — the access itself is the assertion
         with pytest.raises(AttributeError, match=r"\[rim-unknown-port\]"):
-            _ = m.o.nope
+            m.o.nope  # noqa: B018  — the access itself is the assertion
         # getattr with default still works (AttributeError subclass contract)
         assert getattr(m.i, "pingg", None) is None
 
@@ -376,7 +375,7 @@ class TestPorts:
     def test_frames_raises_until_t11(self) -> None:
         m = Echo()
         with pytest.raises(Exception):
-            _ = m.o.pong.frames
+            m.o.pong.frames  # noqa: B018  — the access itself is the assertion
 
 
 # ── marshal, ordering, backpressure ──────────────────────────────────────────

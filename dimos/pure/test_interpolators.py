@@ -20,13 +20,12 @@ import math
 
 import pytest
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.pure import interpolators
+from dimos.pure import interpolators, pm
 from dimos.pure.align import interpolator_for
 
 

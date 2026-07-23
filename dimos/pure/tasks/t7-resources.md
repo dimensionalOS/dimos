@@ -110,7 +110,7 @@ class VoxelGridMapper(PureModule):
 
 ### 2.3 `pm` export (integrator line)
 
-`resource` — the decorator — is added to `dimos/pure/__init__.py` imports
+`resource` — the decorator — is added to `dimos/pure/pm.py` imports
 and `__all__`. Nothing else: `Resource`, the error types, `ResourceRule`,
 `RunResources`, `attach_resources`, and `IN_HANDLER` stay module-qualified
 (`from dimos.pure.resources import ...`) — engine/introspection surface,
@@ -885,7 +885,7 @@ are never config fields.  Static-typing fixture — never imported at runtime.""
 
 from __future__ import annotations
 
-from dimos import pure as pm
+from dimos.pure import pm
 from dimos.pure import PureModule, contract, resource, tick
 from dimos.pure.resources import Resource
 

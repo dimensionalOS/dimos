@@ -137,7 +137,7 @@ function-local* import of `dimos.pure.rows` for the specifier guard in
 
 ### 2.3 Exports for the `pm` surface
 
-`dimos/pure/__init__.py` is owned by the surface integrator, not T2. When it
+`dimos/pure/pm.py` is owned by the surface integrator, not T2. When it
 is assembled, T2 contributes: `PureModule`, `PureModuleConfig`,
 `ConfigFieldError`, `FrozenModuleError`. (`RESERVED_CONFIG_FIELDS` stays
 importable from `dimos.pure.config` but does not need to ride `pm.*`.)

@@ -26,7 +26,7 @@ from typing import NamedTuple
 
 import pytest
 
-from dimos import pure as pm
+from dimos.pure import pm
 
 
 @dataclasses.dataclass(frozen=True)

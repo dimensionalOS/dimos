@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-from dimos import pure as pm
+from dimos.pure import pm
 
 
 class Point(pm.State):

@@ -33,7 +33,6 @@ from typing import Any, get_type_hints
 import pytest
 from reactivex.disposable import Disposable
 
-from dimos import pure as pm
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
 from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
@@ -52,7 +51,7 @@ from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.pure import graph as pg, rim
+from dimos.pure import graph as pg, pm, rim
 from dimos.pure.legacy import legacy_actor, legacy_blueprint
 from dimos.pure.stepspec import PureModuleDefinitionError
 

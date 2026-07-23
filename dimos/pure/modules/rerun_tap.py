@@ -36,12 +36,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from dimos import pure as pm
+from dimos.pure import pm
 
 if TYPE_CHECKING:
     import rerun as rr
-
-__all__ = ["RerunRenderable", "RerunTap", "open_sink", "render_fields"]
 
 
 @runtime_checkable

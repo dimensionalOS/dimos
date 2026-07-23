@@ -22,11 +22,9 @@ any odom source whose pose is already in ``frame_id`` (go2 LIO, sim, ...).
 
 from __future__ import annotations
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
-
-__all__ = ["OdomTf"]
+from dimos.pure import pm
 
 
 class OdomTf(pm.PureModule):

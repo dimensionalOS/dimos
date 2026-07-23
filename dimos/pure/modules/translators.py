@@ -22,11 +22,9 @@ weakening the matcher — the seam is one module, not a covariance rule.
 
 from __future__ import annotations
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-
-__all__ = ["TwistUnstamp"]
+from dimos.pure import pm
 
 
 class TwistUnstamp(pm.PureModule):

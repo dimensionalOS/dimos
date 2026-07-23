@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.mapping.costmapper import Config as LegacyConfig, CostMapper as LegacyCostMapper
+from dimos.mapping.costmapper import CostMapper as LegacyCostMapper
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.pure.modules.costmapper import PureCostMapper as CostMapper
 
@@ -35,9 +35,11 @@ def _cloud(shift: float, ts: float) -> PointCloud2:
 
 def _legacy_grid(cloud: PointCloud2, **cfg: object) -> object:
     """Legacy CostMapper._calculate_costmap on one cloud, no engine/streams."""
-    m = LegacyCostMapper.__new__(LegacyCostMapper)
-    m.config = LegacyConfig(**cfg)  # type: ignore[arg-type]
-    return m._calculate_costmap(cloud)
+    m = LegacyCostMapper(**cfg)  # type: ignore[arg-type]  # flat config kwargs
+    try:
+        return m._calculate_costmap(cloud)
+    finally:
+        m.dispose()  # the ctor spins up transport threads — don't leak them
 
 
 # ── config ───────────────────────────────────────────────────────────────────

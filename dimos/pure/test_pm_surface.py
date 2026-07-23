@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Smoke test for the assembled ``pm`` surface (dimos/pure/__init__.py).
+"""Smoke test for the assembled ``pm`` surface (dimos/pure/pm.py).
 
 The sketch-floor Tagger defines cleanly via ``pm.*``, classifies STATELESS
 with a correct StepSpec, constructs rows, and step runs — zero engine imports.
@@ -21,14 +21,20 @@ with a correct StepSpec, constructs rows, and step runs — zero engine imports.
 import subprocess
 import sys
 
-from dimos import pure as pm
+from dimos.pure import pm
 
 UNSTAMPED = pm.UNSTAMPED
 
 
+def _surface() -> set[str]:
+    """Public names bound on pm — every one is an `X as X` re-export."""
+    return {n for n in vars(pm) if not n.startswith("_")}
+
+
 def test_pm_surface_exports():
-    # The exact surface: T1 rows.__all__ + T2 §2.3 + T3 §1 + T4 §6, names only.
-    assert set(pm.__all__) == {
+    # The exact surface: T1 rows + T2 §2.3 + T3 §1 + T4 §6, names only. pm has
+    # no __all__ (house rule), so the surface IS its public module namespace.
+    assert _surface() == {
         # T1 — rows
         "UNSTAMPED",
         "BundleDefinitionError",
@@ -92,7 +98,7 @@ def test_pm_surface_exports():
         # T9 — health (the ONE global row users declare + autoconnect keys on)
         "Health",
     }
-    for name in pm.__all__:
+    for name in _surface():
         assert not isinstance(getattr(pm, name), type(sys)), f"{name} is a module"
     assert pm.In.__module__ == "dimos.pure.rows"
     assert pm.PureModule.__module__ == "dimos.pure.module"

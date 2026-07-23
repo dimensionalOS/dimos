@@ -50,6 +50,19 @@ REPO_ROOT = HERE.parents[1]
 FIXTURES_DIR = HERE / "test_typing_fixtures"
 FIXTURES_REL = "dimos/pure/test_typing_fixtures"
 CASES = sorted(p.name for p in FIXTURES_DIR.glob("case_*.py"))
+# The T4 surface (t4-typing.md §6), spelled out here now that __all__ is gone.
+T4_SURFACE = (
+    "AsyncStateless",
+    "EngineSurface",
+    "Fold",
+    "InPort",
+    "InPorts",
+    "Mealy",
+    "OutPort",
+    "OutPorts",
+    "Stamped",
+    "Stateless",
+)
 
 # Dedicated incremental cache, isolated from the gate's `.mypy_cache` (no races
 # with it): fixtures now import the real production graph (config/module/graph/
@@ -193,7 +206,7 @@ def test_runtime_surface():
     """The typing module imports at runtime; stubs raise, protocols subscript."""
     import dimos.pure.typing as pure_typing
 
-    for name in pure_typing.__all__:
+    for name in T4_SURFACE:
         assert hasattr(pure_typing, name)
     assert pure_typing.Stateless[int, str] is not None  # structural aliases work
     surface = pure_typing.EngineSurface()
@@ -202,6 +215,6 @@ def test_runtime_surface():
     with pytest.raises(TypeError, match="not-classified"):
         surface.over()
     with pytest.raises(NotImplementedError):
-        _ = surface.i
+        surface.i  # noqa: B018  — the access itself is the assertion
     with pytest.raises(NotImplementedError):
-        _ = surface.o
+        surface.o  # noqa: B018  — the access itself is the assertion

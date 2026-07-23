@@ -18,8 +18,10 @@ are never config fields.  Static-typing fixture — never imported at runtime.""
 
 from __future__ import annotations
 
-from dimos import pure as pm
-from dimos.pure import PureModule, contract, resource, tick
+from dimos.pure import pm
+from dimos.pure.module import PureModule
+from dimos.pure.resources import resource
+from dimos.pure.rows import contract, tick
 
 
 class Grid:

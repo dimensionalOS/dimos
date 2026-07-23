@@ -23,9 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from dimos import pure as pm
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.pure import debugrec, drivers
+from dimos.pure import debugrec, drivers, pm
 
 # ── fixture modules (landed machinery only) ──────────────────────────────────
 

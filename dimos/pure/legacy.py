@@ -22,7 +22,7 @@ process (``dedicated_worker``), plus the conventionally-named ``health`` topic
 rim (``build``→``warmup``, ``start``→bind+start, ``stop``→drain+stop).
 
 This file is the ONE sanctioned ``dimos.pure`` → ``dimos.core`` edge (spec
-§1): a leaf, never imported by ``dimos/pure/__init__.py``; it sunsets with the
+§1): a leaf, never imported by ``dimos/pure/pm.py``; it sunsets with the
 legacy system. Nothing in ``dimos.core`` or the engine imports it back.
 """
 
@@ -48,12 +48,6 @@ from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
-
-__all__ = [
-    "TF_IN_STREAM",
-    "legacy_actor",
-    "legacy_blueprint",
-]
 
 
 _HEALTH_PAYLOAD: type = Health

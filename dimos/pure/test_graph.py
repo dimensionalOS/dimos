@@ -27,8 +27,7 @@ from itertools import tee
 
 import pytest
 
-from dimos import pure as pm
-from dimos.pure import graph as pg
+from dimos.pure import graph as pg, pm
 
 # ── toy payloads / modules (definable under the landed engine) ───────────────
 
@@ -372,7 +371,7 @@ class TestCallDispatchLive:
         assert bp.blueprints[0].kwargs == {}
 
     def test_phase_c_stubs_are_loud(self):
-        g = object.__new__(pg.PureGraph)  # no subclass is definable pre-impl
+        g = _Fan()
         with pytest.raises(pm.PureModuleRunError, match=r"\[graph-impl-pending\]"):
             pg.PureGraph.bind(g, transport=None)
         with pytest.raises(pm.PureModuleRunError, match=r"\[graph-impl-pending\]"):
@@ -1347,7 +1346,7 @@ class TestGraphBlueprint:
 
     def test_navstack_lowering_matches_the_worked_table(self):
         # Spec §7.3 asserted against the produced Blueprint (no coordinator). The
-        # landed NavStack additionally exports `map`, so voxel_mapper/global_map is
+        # landed NavStack additionally exports `map`, so voxel_mapper2/global_map is
         # exposed rather than path-qualified — the one divergence from the charter
         # table row; the cost->plan name-crossing edge appears exactly as promised.
         from .modules.nav_stack import NavStack
@@ -1355,14 +1354,14 @@ class TestGraphBlueprint:
         bp = NavStack.blueprint(voxel_size=0.1)
         assert {atom.name for atom in bp.blueprints} == {
             "nav_stack/odom_tf",
-            "nav_stack/voxel_mapper",
+            "nav_stack/voxel_mapper2",
             "nav_stack/pure_cost_mapper",
             "nav_stack/planner",
         }
         remap = dict(bp.remapping_map)
 
         # Rim In ports stay exposed (bare) — the name-crossing scan->lidar included.
-        assert remap[("nav_stack/voxel_mapper", "scan")] == "lidar"
+        assert remap[("nav_stack/voxel_mapper2", "scan")] == "lidar"
         assert remap[("nav_stack/odom_tf", "odom")] == "odom"
         assert remap[("nav_stack/planner", "goal_point")] == "goal_point"
 
@@ -1371,14 +1370,14 @@ class TestGraphBlueprint:
         assert remap[("nav_stack/pure_cost_mapper", "global_costmap")] == "costmap"
         assert remap[("nav_stack/planner", "costmap")] == "costmap"
 
-        # Exports stay exposed; voxel_mapper.global_map is exported AND consumed by
+        # Exports stay exposed; voxel_mapper2.global_map is exported AND consumed by
         # the cost mapper — one topic, `map`.
         assert remap[("nav_stack/planner", "path")] == "path"
-        assert remap[("nav_stack/voxel_mapper", "global_map")] == "map"
+        assert remap[("nav_stack/voxel_mapper2", "global_map")] == "map"
         assert remap[("nav_stack/pure_cost_mapper", "global_map")] == "map"
 
         # An unexported interior Out stream is namespaced, never bare (health merges).
-        assert remap[("nav_stack/voxel_mapper", "health")] == "nav_stack/health"
+        assert remap[("nav_stack/voxel_mapper2", "health")] == "nav_stack/health"
         assert remap[("nav_stack/planner", "health")] == "nav_stack/health"
 
     def test_combined_with_go2_matches_by_name_and_type(self):
@@ -1477,7 +1476,7 @@ class TestGroundingGo2Replay:
             assert {
                 "go2connection",
                 "nav_stack/odom_tf",
-                "nav_stack/voxel_mapper",
+                "nav_stack/voxel_mapper2",
                 "nav_stack/pure_cost_mapper",
                 "nav_stack/planner",
             } <= set(mc._deployed_modules)

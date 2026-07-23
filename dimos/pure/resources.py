@@ -37,17 +37,6 @@ from dimos.pure.drivers import PureModuleRunError, RunHooks
 from dimos.pure.stepspec import PureModuleDefinitionError
 from dimos.utils.logging_config import setup_logger
 
-__all__ = [
-    "IN_HANDLER",
-    "Resource",
-    "ResourceDefinitionError",
-    "ResourceError",
-    "ResourceRule",
-    "RunResources",
-    "attach_resources",
-    "resource",
-]
-
 _T = TypeVar("_T")
 
 _LOG: Final = setup_logger()  # reachable in forkserver workers (bare getLogger is swallowed)

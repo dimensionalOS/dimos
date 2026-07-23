@@ -34,13 +34,6 @@ import typing_extensions
 from dimos.protocol.service.spec import BaseConfig
 from dimos.pure.stepspec import PureModuleDefinitionError
 
-__all__ = [
-    "RESERVED_CONFIG_FIELDS",
-    "ConfigFieldError",
-    "FrozenModuleError",
-    "PureModuleConfig",
-]
-
 # Names owned by PureModule machinery (present and future tasks); a config
 # field with one of these names raises ConfigFieldError at class definition.
 RESERVED_CONFIG_FIELDS: Final[frozenset[str]] = frozenset(

@@ -40,7 +40,6 @@ from dataclasses import asdict
 
 import numpy as np
 
-from dimos import pure as pm
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
@@ -48,8 +47,7 @@ from dimos.mapping.pointclouds.occupancy import (
 )
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-__all__ = ["PureCostMapper"]
+from dimos.pure import pm
 
 
 class PureCostMapper(pm.PureModule):

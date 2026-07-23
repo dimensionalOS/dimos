@@ -43,21 +43,6 @@ from dimos.pure.rows import Progress, TfOutSpec, TfSpec
 from dimos.pure.stepspec import StepSpec
 from dimos.utils.logging_config import setup_logger
 
-__all__ = [
-    "DEFAULT_TF_HORIZON",
-    "STATIC_OWNER",
-    "EdgeKey",
-    "TfBuffer",
-    "TfContext",
-    "TfEdgeStats",
-    "TfError",
-    "TfRule",
-    "TfSource",
-    "TfStats",
-    "attach",
-    "tf_out_tap",
-]
-
 DEFAULT_TF_HORIZON: Final[float] = 10.0
 """Per-edge retention window in data-time seconds (tf.py ``buffer_size`` parity)."""
 

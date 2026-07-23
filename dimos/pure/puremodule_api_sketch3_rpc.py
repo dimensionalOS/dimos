@@ -88,15 +88,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from dimos import pure as pm
-from dimos.pure import (
+from dimos.pure import (  # Flow/injected/rpc are the un-built RPC wave — no source module yet
     Flow,
-    PureModule,
     injected,
-    latest,
+    pm,
     rpc,
-    tick,
 )
+from dimos.pure.module import PureModule
+from dimos.pure.rows import latest, tick
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

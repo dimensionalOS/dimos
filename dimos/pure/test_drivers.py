@@ -31,8 +31,7 @@ from typing import NamedTuple
 
 import pytest
 
-from dimos import pure as pm
-from dimos.pure import contract, tick
+from dimos.pure import pm
 from dimos.pure.drivers import (
     PureModuleRunError,
     RunHooks,
@@ -44,7 +43,7 @@ from dimos.pure.drivers import (
     drive_stateless,
     run_over,
 )
-from dimos.pure.rows import Progress
+from dimos.pure.rows import Progress, contract, tick
 from dimos.pure.stepspec import StepKind, StepSpec
 
 # ── shared fixtures: real bundles, plain (non-PureModule) step carriers ──────

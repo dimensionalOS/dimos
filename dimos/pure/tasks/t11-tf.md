@@ -64,7 +64,7 @@ zero cost (pinned: `test_tf_free_module_pays_nothing`).
   `attach`, the `TfError` catalog. A LEAF engine module like
   `interpolators.py`: it imports `Transform` (which pulls numpy via
   `Vector3`/`Quaternion`), so it is **never** imported by
-  `dimos/pure/__init__.py` (the pinned zero-engine-import test bans numpy at
+  `dimos/pure/pm.py` (the pinned zero-engine-import test bans numpy at
   surface import) nor by `align.py` at module scope — the aligner, `run_over`
   and the rim import it lazily, only when a bundle declares tf fields (the
   sanctioned lazy-edge pattern, T4 §5.5 / T6 §4).
@@ -925,7 +925,7 @@ buffer (mirror T5 §10) if cheap.
 
 - [ ] `uv run mypy dimos/pure/` clean (strict) — holds for the skeleton
       now; must still hold with bodies + align/drivers/rim/typing wiring.
-- [x] `dimos/pure/__init__.py` imports pull no numpy/msgs (pinned
+- [x] `dimos/pure/pm.py` imports pull no numpy/msgs (pinned
       zero-engine test) — tfbuffer stays off the surface.
 - [x] Build-time behavior landed + live-tested (specifiers, templates,
       frames, module-scope checks).

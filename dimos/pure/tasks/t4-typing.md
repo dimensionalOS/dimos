@@ -339,7 +339,7 @@ the declared members). `frames` raises on non-tf ports until T11 defines it.
 - **Users** import `Stateless` (structural shape aliases —
   `CostMapperLike = Stateless[CostMapper.In, CostMapper.Out]`), occasionally
   the other protocols for helper signatures, and the port types for rim
-  helper annotations. `pm.Stateless` comes from `dimos/pure/__init__.py`
+  helper annotations. `pm.Stateless` comes from `dimos/pure/pm.py`
   re-exporting *names* (T2/T12 own `__init__.py`; rule: re-export the names
   in `__all__`, never the submodule, and never `import *`).
 - **Internal** (importable, not exported): `EngineSurface` is consumed by
@@ -597,7 +597,7 @@ No other settled decision was deviated from.
 - [ ] T8 implements accessor `__get__`/views per §5.5 (adds runtime port
       tests; static cases unchanged).
 - [ ] T2 makes `PureModule` inherit `EngineSurface` (§3) and re-exports §6
-      names from `dimos/pure/__init__.py`.
+      names from `dimos/pure/pm.py`.
 
 ## 13. Open questions (non-blocking)
 

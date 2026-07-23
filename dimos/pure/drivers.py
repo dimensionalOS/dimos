@@ -42,18 +42,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
-__all__ = [
-    "DEFAULT_MAX_INFLIGHT",
-    "PureModuleRunError",
-    "RunHooks",
-    "RunRule",
-    "StepError",
-    "drive_async",
-    "drive_fold",
-    "drive_mealy",
-    "drive_stateless",
-    "run_over",
-]
 
 DEFAULT_MAX_INFLIGHT: Final[int] = 1
 """Async in-flight window for modules declaring no ``max_inflight`` field (spec §6.1)."""

@@ -43,40 +43,6 @@ from dimos.pure.rows import Progress
 from dimos.pure.typing import AsyncStateless, Fold, Mealy, Stateless
 from dimos.utils.logging_config import setup_logger
 
-__all__ = [
-    "DEBUG_ENV_VAR",
-    "DEBUG_SCHEMA_VERSION",
-    "DEFAULT_DB_NAME",
-    "DEFAULT_RING_CAPACITY",
-    "OVER_DRAIN_EVERY",
-    "Debug",
-    "DebugConfig",
-    "DebugError",
-    "DebugEvent",
-    "DebugEventKind",
-    "DebugRecRule",
-    "DebugRing",
-    "DebugRun",
-    "DebugSession",
-    "DebugWriter",
-    "DecisionHook",
-    "ModuleConfigRecord",
-    "ModuleDebug",
-    "RowRecord",
-    "StateRecord",
-    "StreamMeta",
-    "TickDecision",
-    "coerce_debug",
-    "debug_from_env",
-    "default_path",
-    "latest",
-    "load",
-    "parse_debug",
-    "resolve_debug",
-    "session_for",
-    "silent_run_warning",
-]
-
 _LOG: Final = setup_logger()  # reachable in forkserver workers (bare getLogger is swallowed)
 
 _T = TypeVar("_T")
