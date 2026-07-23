@@ -54,6 +54,8 @@ AXIS_RADIUS_RATIO = 25
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
 SENSOR_FRAME = "mid360_link"
+# Static mount edges settle within the first handful of tf messages.
+TF_WARMUP_SAMPLES = 20
 
 # The travelled trail. Blue, but light enough to read against the map's turbo
 # lows, and clear of PATH_PALETTE so it never reads as a planned path.
@@ -142,7 +144,7 @@ def _base_from_sensor(store: SqliteStore) -> Transform | None:
     try:
         for i, obs in enumerate(store.stream("tf", TFMessage).order_by("ts")):
             buffer.receive_transform(*obs.data.transforms)
-            if i >= 20:
+            if i >= TF_WARMUP_SAMPLES:
                 break
     except Exception as e:
         print(f"no usable tf stream in the recording ({e}); skipping the base_link triad")

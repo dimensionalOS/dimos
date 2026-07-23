@@ -27,6 +27,8 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -61,14 +63,10 @@ def tf_channel(g: GlobalConfig = global_config) -> str:
     native modules are handed this channel directly. Backends format the type
     suffix differently, so match the active one.
     """
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-
     name = transport_topic("/tf", g)
     if g.transport == "zenoh":
         return ZenohTopic(name, TFMessage).key_expr
-    from dimos.protocol.pubsub.impl.lcmpubsub import Topic
-
-    return str(Topic(name, TFMessage))
+    return str(LCMTopic(name, TFMessage))
 
 
 # High-rate sensor streams: drop stale frames under congestion, never stall the

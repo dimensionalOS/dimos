@@ -41,8 +41,7 @@ fn now_secs() -> f64 {
 
 /// A rigid transform from `parent` to `child` at a point in time.
 ///
-/// The isometry maps a point expressed in `child` coordinates into `parent`
-/// coordinates: `p_parent = transform.isometry() * p_child`.
+/// It maps a point expressed in `child` coordinates into `parent` coordinates.
 #[derive(Clone, Debug)]
 pub struct Transform {
     pub parent: String,
@@ -64,11 +63,6 @@ impl Transform {
             ts,
             iso,
         }
-    }
-
-    /// The transform as an isometry.
-    pub fn isometry(&self) -> Isometry3<f64> {
-        self.iso
     }
 
     /// Translation component (`parent`-frame position of the `child` origin).
@@ -109,14 +103,14 @@ struct Sample {
 // One edge's time-sorted history, capped to a fixed-duration window.
 struct TBuffer {
     buffer_size: f64,
-    samples: Vec<Sample>,
+    samples: VecDeque<Sample>,
 }
 
 impl TBuffer {
     fn new(buffer_size: f64) -> Self {
         Self {
             buffer_size,
-            samples: Vec::new(),
+            samples: VecDeque::new(),
         }
     }
 
@@ -128,13 +122,13 @@ impl TBuffer {
 
     fn prune(&mut self, min_ts: f64) {
         let drop_to = self.samples.partition_point(|s| s.ts < min_ts);
-        if drop_to > 0 {
-            self.samples.drain(0..drop_to);
+        for _ in 0..drop_to {
+            self.samples.pop_front();
         }
     }
 
     fn last(&self) -> Option<&Sample> {
-        self.samples.last()
+        self.samples.back()
     }
 
     // Nearest sample in time. On a tie, prefer the later sample. Returns None
