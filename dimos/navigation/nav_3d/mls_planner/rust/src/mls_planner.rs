@@ -115,6 +115,14 @@ impl Config {
     }
 }
 
+/// What a replan cycle produced, for transition-gated logging.
+#[derive(Clone, Copy, PartialEq)]
+enum ReplanOutcome {
+    Full,
+    Bridge,
+    NoPath,
+}
+
 /// Cylindrical region the planner re-derives from a local map slice.
 pub struct RegionBounds {
     pub origin_x: f32,
@@ -175,9 +183,9 @@ pub struct Planner {
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
-    // Last goal and whether a full plan reached it, so replan outcomes log
-    // on transitions instead of every cycle.
-    last_result: Option<((f32, f32, f32), bool)>,
+    // Last goal and replan outcome, so outcomes log on transitions instead
+    // of every cycle.
+    last_result: Option<((f32, f32, f32), ReplanOutcome)>,
     // Optimistic bridge of the last plan when it was best-effort.
     last_bridge: Option<planner::Bridge>,
     // Bridge hysteresis, stall tracking, and demoted endpoints.
@@ -477,6 +485,10 @@ impl Planner {
         );
     }
 
+    /// Plan a full path to the goal. Best-effort bridge paths do not count:
+    /// this is the stateless query the evaluator gates on, so it answers
+    /// "does a complete route exist", and only plan_or_truncate applies the
+    /// optimistic replan policy.
     pub fn plan(
         &self,
         start: (f32, f32, f32),
@@ -494,7 +506,7 @@ impl Planner {
             config,
             &self.bridge_state,
         )
-        .map(|p| p.waypoints)
+        .and_then(|p| p.bridge.is_none().then_some(p.waypoints))
     }
 
     /// Plan to the goal, or follow the cached path as far as it is still safe.
@@ -519,7 +531,11 @@ impl Planner {
                     Some(b) => self.bridge_state.note_bridge(b, start),
                     None => self.bridge_state.note_no_bridge(),
                 }
-                if self.last_result != Some((goal, true)) {
+                let outcome = match path.bridge {
+                    Some(_) => ReplanOutcome::Bridge,
+                    None => ReplanOutcome::Full,
+                };
+                if self.last_result != Some((goal, outcome)) {
                     match path.bridge {
                         Some((_, aim)) => tracing::info!(
                             ?goal,
@@ -534,7 +550,7 @@ impl Planner {
                         ),
                     }
                 }
-                self.last_result = Some((goal, true));
+                self.last_result = Some((goal, outcome));
                 self.last_path = Some((goal, path.cells));
                 self.last_bridge = path.bridge;
                 return path.waypoints;
@@ -542,24 +558,22 @@ impl Planner {
         }
         self.bridge_state.note_no_bridge();
         self.last_bridge = None;
-        if self.last_result != Some((goal, false)) {
+        if self.last_result != Some((goal, ReplanOutcome::NoPath)) {
             tracing::warn!(
                 ?goal,
-                "no full path to goal, following any cached path while safe"
+                "no path and no admissible bridge, following any cached path while safe"
             );
         }
-        self.last_result = Some((goal, false));
-        let safe = match &self.last_path {
+        self.last_result = Some((goal, ReplanOutcome::NoPath));
+        // The cache stays across empty truncations: a one-frame blockage or
+        // odometry jump must not turn into a permanent stop. The next full or
+        // best-effort plan replaces it.
+        match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
                 planner::truncate_to_safe(&self.graph, cells, start, config)
             }
-            _ => return Vec::new(),
-        };
-        if safe.is_empty() {
-            tracing::warn!(?goal, "cached path exhausted, stopping");
-            self.last_path = None;
+            _ => Vec::new(),
         }
-        safe
     }
 
     /// Optimistic bridge of the last plan_or_truncate call: from the
@@ -592,39 +606,6 @@ impl Planner {
                 (self.graph.cells.coord(id), d)
             })
             .collect()
-    }
-
-    /// Debug: whether two poses' cells connect over any surface edge and
-    /// over passable edges. Remove before merge.
-    pub fn debug_connectivity(
-        &self,
-        a: (f32, f32, f32),
-        b: (f32, f32, f32),
-        config: &Config,
-    ) -> Option<(bool, bool)> {
-        let snap = |p| {
-            planner::snap_pose_to_cell(&self.graph.surface_lookup, p, config.voxel_size, 1.0)
-                .and_then(|c| self.graph.cells.id(c))
-        };
-        let (sa, sb) = (snap(a)?, snap(b)?);
-        let reach = |passable_only: bool| {
-            let mut seen = vec![false; self.graph.cells.slot_capacity()];
-            let mut queue = vec![sa];
-            seen[sa as usize] = true;
-            while let Some(u) = queue.pop() {
-                if u == sb {
-                    return true;
-                }
-                for e in self.graph.cells.neighbors(u) {
-                    if (!passable_only || e.cost.is_finite()) && !seen[e.dest as usize] {
-                        seen[e.dest as usize] = true;
-                        queue.push(e.dest);
-                    }
-                }
-            }
-            false
-        };
-        Some((reach(false), reach(true)))
     }
 
     pub fn voxel_count(&self) -> usize {

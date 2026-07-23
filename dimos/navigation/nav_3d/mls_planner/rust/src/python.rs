@@ -282,12 +282,6 @@ impl MLSPlanner {
         self.planner.frontier_bridge()
     }
 
-    /// Debug: whether two poses' cells connect over any surface edge and
-    /// over passable (finite-cost) edges. Remove before merge.
-    fn debug_connectivity(&self, a: (f32, f32, f32), b: (f32, f32, f32)) -> Option<(bool, bool)> {
-        self.planner.debug_connectivity(a, b, &self.config)
-    }
-
     fn voxel_count(&self) -> usize {
         self.planner.voxel_count()
     }

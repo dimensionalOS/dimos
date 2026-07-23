@@ -23,18 +23,17 @@
 //! the start component to the goal component, so long unknown stretches lose
 //! to chains of short hops across observed fragments.
 
-use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{CellId, NO_CELL};
-use crate::dijkstra::walk_preds;
+use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::{NodeId, PlannerGraph};
 use crate::mls_planner::Config;
 use crate::planner::{goal_node_of, node_dijkstra, Bridge};
 use crate::surfaces::ColumnIz;
-use crate::voxel::{surface_point_xyz, VoxelKey};
+use crate::voxel::VoxelKey;
 
 type Xyz = (f32, f32, f32);
 
@@ -154,119 +153,173 @@ struct Hop {
     cost: f32,
 }
 
-/// Pick the optimistic bridge, or none when no gated chain of hops connects
-/// the start component to the goal component.
-#[allow(clippy::too_many_arguments)]
-pub fn select_bridge(
-    plg: &PlannerGraph,
-    by_col: &ColumnIz,
-    reachable_mask: &[bool],
+/// Per-replan bridge selector. The component labels and terminal costs are
+/// invariant across reselection retries, so they are built once and reused
+/// while only the banned-aim set changes between select calls.
+pub struct Selector<'a> {
+    plg: &'a PlannerGraph,
+    by_col: &'a ColumnIz,
+    reachable_mask: &'a [bool],
     start_cell: CellId,
     start_pose: Xyz,
     goal_cell: CellId,
     goal_pose: Xyz,
-    state: &BridgeState,
-    banned_aims: &[Xyz],
-    config: &Config,
-) -> Option<Selection> {
-    if config.bridge_max_hop_m <= 0.0 {
-        return None;
-    }
-    let t0 = std::time::Instant::now();
-    let (label, sizes) = label_components(plg);
-    let start_label = label[start_cell as usize];
-    let goal_label = label[goal_cell as usize];
-    // Same adjacency component: the route exists as measured surface but is
-    // passably broken, typically a sparse stretch under the wall clearance.
-    // Approach widens such surface, so bridge along it instead of over voids.
-    if start_label == goal_label {
-        return select_ribbon_bridge(plg, start_cell, goal_cell, state, banned_aims, config);
-    }
+    config: &'a Config,
+    label: Vec<u32>,
+    sizes: Vec<u32>,
+    start_label: u32,
+    goal_label: u32,
+    start_ctg: Option<AHashMap<NodeId, f32>>,
+    goal_ctg: Option<AHashMap<NodeId, f32>>,
+}
 
-    let t1 = std::time::Instant::now();
-    let hops = collect_hops(
-        plg,
-        by_col,
-        &label,
-        &sizes,
-        start_label,
-        goal_label,
-        state,
-        banned_aims,
-        config,
-    );
-    if hops.is_empty() {
-        return None;
-    }
+impl<'a> Selector<'a> {
+    /// Build the retry-invariant context, or none when bridging is disabled.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        plg: &'a PlannerGraph,
+        by_col: &'a ColumnIz,
+        reachable_mask: &'a [bool],
+        start_cell: CellId,
+        start_pose: Xyz,
+        goal_cell: CellId,
+        goal_pose: Xyz,
+        config: &'a Config,
+    ) -> Option<Self> {
+        if config.bridge_max_hop_m <= 0.0 {
+            return None;
+        }
+        let t0 = std::time::Instant::now();
+        let (label, sizes) = label_components(plg);
+        let start_label = label[start_cell as usize];
+        let goal_label = label[goal_cell as usize];
 
-    let t2 = std::time::Instant::now();
-    // Surface-aware terminal costs via the node graph and the Voronoi fields.
-    let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-    let goal_ctg = goal_node_of(plg, goal_cell, &node_cells).map(|(n, _)| node_dijkstra(plg, n).0);
-    let start_node = *walk_preds(&plg.cell_state, start_cell)
-        .last()
-        .expect("walk_preds returns at least the start cell");
-    let start_ctg = node_cells
-        .contains(&start_node)
-        .then(|| node_dijkstra(plg, start_node).0);
-
-    let t3 = std::time::Instant::now();
-    let graph = EpGraph::build(plg, &hops, config.voxel_size);
-    tracing::debug!(
-        label_ms = t1.duration_since(t0).as_secs_f64() * 1e3,
-        hops_ms = t2.duration_since(t1).as_secs_f64() * 1e3,
-        ctg_ms = t3.duration_since(t2).as_secs_f64() * 1e3,
-        n_hops = hops.len(),
-        n_eps = graph.labels.len(),
-        "bridge selection phases"
-    );
-    let mut banned: AHashSet<usize> = AHashSet::new();
-    for _ in 0..CHAIN_RETRIES {
-        let sol = graph.solve(
+        // Surface-aware terminal costs via the node graph and the Voronoi
+        // fields. The ribbon path scores on geometry alone and skips them.
+        let (start_ctg, goal_ctg) = if start_label == goal_label {
+            (None, None)
+        } else {
+            let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+            let goal_ctg =
+                goal_node_of(plg, goal_cell, &node_cells).map(|(n, _)| node_dijkstra(plg, n).0);
+            let start_node = *walk_preds(&plg.cell_state, start_cell)
+                .last()
+                .expect("walk_preds returns at least the start cell");
+            let start_ctg = node_cells
+                .contains(&start_node)
+                .then(|| node_dijkstra(plg, start_node).0);
+            (start_ctg, goal_ctg)
+        };
+        tracing::debug!(
+            context_ms = t0.elapsed().as_secs_f64() * 1e3,
+            "bridge selector context built"
+        );
+        Some(Selector {
             plg,
-            &hops,
-            &banned,
+            by_col,
             reachable_mask,
+            start_cell,
+            start_pose,
+            goal_cell,
+            goal_pose,
+            config,
+            label,
+            sizes,
             start_label,
             goal_label,
-            start_ctg.as_ref(),
-            goal_ctg.as_ref(),
-            start_pose,
-            goal_pose,
-            state.held,
-            config,
-        )?;
-        let best_chain = chain_of(&sol.pred, &hops, sol.best_hop, sol.best_far_ep);
-        if let Some(worst) = chain_violation(&hops, &best_chain, config) {
-            banned.insert(worst);
-            continue;
+            start_ctg,
+            goal_ctg,
+        })
+    }
+
+    /// Pick the optimistic bridge, or none when no gated chain of hops
+    /// connects the start component to the goal component.
+    pub fn select(&self, state: &BridgeState, banned_aims: &[Xyz]) -> Option<Selection> {
+        // Same adjacency component: the route exists as measured surface but
+        // is passably broken, typically a sparse stretch under the wall
+        // clearance. Approach widens such surface, so bridge along it
+        // instead of over voids.
+        if self.start_label == self.goal_label {
+            return select_ribbon_bridge(
+                self.plg,
+                self.start_cell,
+                self.goal_cell,
+                state,
+                banned_aims,
+                self.config,
+            );
         }
-        // Hold the previous bridge while it stays admissible and close in
-        // cost, so the target does not flap between rival gaps.
-        let mut choice = sol.best_hop;
-        if let Some((held_hop, held_far, held_total)) = sol.held {
-            if held_hop != sol.best_hop
-                && held_total <= sol.best_total * (1.0 + config.bridge_switch_margin)
-            {
-                let held_chain = chain_of(&sol.pred, &hops, held_hop, held_far);
-                if chain_violation(&hops, &held_chain, config).is_none() {
-                    choice = held_hop;
+
+        let t0 = std::time::Instant::now();
+        let hops = collect_hops(
+            self.plg,
+            self.by_col,
+            &self.label,
+            &self.sizes,
+            self.start_label,
+            self.goal_label,
+            state,
+            banned_aims,
+            self.config,
+        );
+        if hops.is_empty() {
+            return None;
+        }
+        let graph = EpGraph::build(self.plg, &hops, self.config.voxel_size);
+        tracing::debug!(
+            hops_ms = t0.elapsed().as_secs_f64() * 1e3,
+            n_hops = hops.len(),
+            n_eps = graph.labels.len(),
+            "bridge hop candidates gated"
+        );
+
+        let mut banned: AHashSet<usize> = AHashSet::new();
+        for _ in 0..CHAIN_RETRIES {
+            let sol = graph.solve(
+                self.plg,
+                &hops,
+                &banned,
+                self.reachable_mask,
+                self.start_label,
+                self.goal_label,
+                self.start_ctg.as_ref(),
+                self.goal_ctg.as_ref(),
+                self.start_pose,
+                self.goal_pose,
+                state.held,
+                self.config,
+            )?;
+            let best_chain = chain_of(&sol.pred, &hops, sol.best_hop, sol.best_far_ep);
+            if let Some(worst) = chain_violation(&hops, &best_chain, self.config) {
+                banned.insert(worst);
+                continue;
+            }
+            // Hold the previous bridge while it stays admissible and close
+            // in cost, so the target does not flap between rival gaps.
+            let mut choice = sol.best_hop;
+            if let Some((held_hop, held_far, held_total)) = sol.held {
+                if held_hop != sol.best_hop
+                    && held_total <= sol.best_total * (1.0 + self.config.bridge_switch_margin)
+                {
+                    let held_chain = chain_of(&sol.pred, &hops, held_hop, held_far);
+                    if chain_violation(&hops, &held_chain, self.config).is_none() {
+                        choice = held_hop;
+                    }
                 }
             }
+            let hop = &hops[choice];
+            let (near, far) = if hop.label_a == self.start_label {
+                (hop.a, hop.b)
+            } else {
+                (hop.b, hop.a)
+            };
+            return Some(Selection {
+                near,
+                aim: self.plg.cells.xyz(far, self.config.voxel_size),
+            });
         }
-        let hop = &hops[choice];
-        let (near, far) = if hop.label_a == start_label {
-            (hop.a, hop.b)
-        } else {
-            (hop.b, hop.a)
-        };
-        let (ix, iy, iz) = plg.cells.coord(far);
-        return Some(Selection {
-            near,
-            aim: surface_point_xyz(ix, iy, iz, config.voxel_size),
-        });
+        None
     }
-    None
 }
 
 /// Bridge along measured-but-impassable surface. Goal-rooted Dijkstra where
@@ -286,21 +339,12 @@ fn select_ribbon_bridge(
     let mut dist: Vec<f32> = vec![f32::INFINITY; n];
     let mut grey: Vec<f32> = vec![0.0; n];
     let mut pred: Vec<CellId> = vec![NO_CELL; n];
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<usize>> = BinaryHeap::new();
     // A* toward the start keeps the search off the far reaches of the
     // passable region. Straight-line distance under-counts every weight, so
     // the heuristic is admissible.
-    let start_pos = {
-        let c = plg.cells.coord(start_cell);
-        surface_point_xyz(c.0, c.1, c.2, config.voxel_size)
-    };
-    let h = |id: CellId| {
-        let c = plg.cells.coord(id);
-        dist3(
-            surface_point_xyz(c.0, c.1, c.2, config.voxel_size),
-            start_pos,
-        )
-    };
+    let start_pos = plg.cells.xyz(start_cell, config.voxel_size);
+    let h = |id: CellId| dist3(plg.cells.xyz(id, config.voxel_size), start_pos);
     dist[goal_cell as usize] = 0.0;
     heap.push(Scored(h(goal_cell), goal_cell as usize));
     while let Some(Scored(f, u)) = heap.pop() {
@@ -320,8 +364,7 @@ fn select_ribbon_bridge(
             } else {
                 // Demoted and banned areas are not crossable as ribbon, so
                 // the geodesic reroutes through another corridor if any.
-                let c = plg.cells.coord(e.dest);
-                let p = surface_point_xyz(c.0, c.1, c.2, config.voxel_size);
+                let p = plg.cells.xyz(e.dest, config.voxel_size);
                 if state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < 1e-3) {
                     continue;
                 }
@@ -390,8 +433,7 @@ fn select_ribbon_bridge(
         cur = next;
     }
     let aim_cell = aim_cell?;
-    let (ix, iy, iz) = plg.cells.coord(aim_cell);
-    let aim = surface_point_xyz(ix, iy, iz, config.voxel_size);
+    let aim = plg.cells.xyz(aim_cell, config.voxel_size);
     if state.is_blacklisted(aim) || banned_aims.iter().any(|&b| dist3(b, aim) < 1e-3) {
         tracing::debug!(?aim, "ribbon bridge: aim is demoted or banned");
         return None;
@@ -562,14 +604,8 @@ fn collect_hops(
             if kept == PAIRS_PER_COMPONENT_PAIR {
                 break;
             }
-            let pu = {
-                let c = plg.cells.coord(h.a);
-                surface_point_xyz(c.0, c.1, c.2, voxel)
-            };
-            let pv = {
-                let c = plg.cells.coord(h.b);
-                surface_point_xyz(c.0, c.1, c.2, voxel)
-            };
+            let pu = plg.cells.xyz(h.a, voxel);
+            let pv = plg.cells.xyz(h.b, voxel);
             let banned =
                 |p: Xyz| state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < 1e-3);
             if banned(pu) || banned(pv) {
@@ -627,7 +663,7 @@ fn comp_gap_dist(screened: &AHashMap<(u32, u32), Vec<Hop>>, source: u32) -> AHas
     }
     let mut dist: AHashMap<u32, f32> = AHashMap::new();
     dist.insert(source, 0.0);
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<usize>> = BinaryHeap::new();
     heap.push(Scored(0.0, source as usize));
     while let Some(Scored(d, u)) = heap.pop() {
         let u = u as u32;
@@ -771,10 +807,9 @@ impl EpGraph {
         {
             let mut ep_of = |id: CellId, l: u32| -> usize {
                 *index.entry(id).or_insert_with(|| {
-                    let (ix, iy, iz) = plg.cells.coord(id);
                     cells.push(id);
                     labels.push(l);
-                    pos.push(surface_point_xyz(ix, iy, iz, voxel));
+                    pos.push(plg.cells.xyz(id, voxel));
                     labels.len() - 1
                 })
             };
@@ -831,7 +866,7 @@ impl EpGraph {
         let n = self.labels.len();
         let mut dist: Vec<f32> = vec![f32::INFINITY; n];
         let mut pred: Vec<(usize, usize)> = vec![(usize::MAX, usize::MAX); n];
-        let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+        let mut heap: BinaryHeap<Scored<usize>> = BinaryHeap::new();
         for (i, &l) in self.labels.iter().enumerate() {
             if l == goal_label {
                 let d = terminal_cost(plg, goal_ctg, self.cells[i], goal_pose, config.voxel_size);
@@ -930,8 +965,7 @@ fn terminal_cost(
             }
         }
     }
-    let (ix, iy, iz) = plg.cells.coord(id);
-    dist3(surface_point_xyz(ix, iy, iz, voxel), fallback_from)
+    dist3(plg.cells.xyz(id, voxel), fallback_from)
 }
 
 fn dist3(a: Xyz, b: Xyz) -> f32 {
@@ -940,25 +974,6 @@ fn dist3(a: Xyz, b: Xyz) -> f32 {
 
 fn ground_dist(a: Xyz, b: Xyz) -> f32 {
     (a.0 - b.0).hypot(a.1 - b.1)
-}
-
-struct Scored(f32, usize);
-
-impl PartialEq for Scored {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
-    }
-}
-impl Eq for Scored {}
-impl PartialOrd for Scored {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Scored {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
-    }
 }
 
 #[cfg(test)]

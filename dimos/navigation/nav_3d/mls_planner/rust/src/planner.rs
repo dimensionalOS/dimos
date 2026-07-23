@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
 use crate::bridge::{self, BridgeState};
-use crate::dijkstra::walk_preds;
+use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
@@ -267,8 +266,7 @@ pub fn plan(
     for (attempt, &goal_cell) in goal_cells.iter().enumerate() {
         let proxy = !(attempt == 0 && snapped_goal.is_some());
         let attempt_pose = if proxy {
-            let (ix, iy, iz) = plg.cells.coord(goal_cell);
-            surface_point_xyz(ix, iy, iz, voxel_size)
+            plg.cells.xyz(goal_cell, voxel_size)
         } else {
             goal_pose
         };
@@ -297,12 +295,17 @@ pub fn plan(
         // No admissible bridge means no optimism is justified, so the caller
         // holds instead of wandering.
         let reachable = reachable.get_or_insert_with(|| {
+            // Footprint columns near the robot's feet in all three axes: a
+            // level 0.4 m away but a step up or down is a different floor,
+            // not footing.
             let footprint: Vec<CellId> = start_candidates
                 .iter()
-                .filter(|&&(ix, iy, _)| {
+                .filter(|&&(ix, iy, iz)| {
                     let x = (ix as f32 + 0.5) * voxel_size;
                     let y = (iy as f32 + 0.5) * voxel_size;
+                    let z = (iz as f32 + 1.0) * voxel_size;
                     (x - start_pose.0).hypot(y - start_pose.1) <= FOOTPRINT_RADIUS_M
+                        && (z - start_pose.2).abs() <= config.step_threshold_m + voxel_size
                 })
                 .filter_map(|&c| plg.cells.id(c))
                 .collect();
@@ -328,24 +331,24 @@ pub fn plan(
                         >= config.wall_clearance_m
             })
             .unwrap_or(start_cells[0]);
+        let Some(selector) = bridge::Selector::new(
+            plg,
+            by_col,
+            reachable,
+            bridge_start,
+            start_pose,
+            goal_cell,
+            attempt_pose,
+            config,
+        ) else {
+            continue;
+        };
         let mut banned_aims: Vec<(f32, f32, f32)> = Vec::new();
         for _ in 0..BRIDGE_PLAN_RETRIES {
-            let Some(selection) = bridge::select_bridge(
-                plg,
-                by_col,
-                reachable,
-                bridge_start,
-                start_pose,
-                goal_cell,
-                attempt_pose,
-                bridge_state,
-                &banned_aims,
-                config,
-            ) else {
+            let Some(selection) = selector.select(bridge_state, &banned_aims) else {
                 break;
             };
-            let (ix, iy, iz) = plg.cells.coord(selection.near);
-            let target_pose = surface_point_xyz(ix, iy, iz, voxel_size);
+            let target_pose = plg.cells.xyz(selection.near, voxel_size);
             tracing::debug!(
                 ?attempt_pose,
                 ?target_pose,
@@ -752,7 +755,7 @@ fn robot_search(
     let mut dist: AHashMap<CellId, f32> = AHashMap::new();
     let mut geo: AHashMap<CellId, f32> = AHashMap::new();
     let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     for &source in sources {
         dist.insert(source, 0.0);
         geo.insert(source, 0.0);
@@ -841,7 +844,7 @@ pub(crate) fn node_dijkstra(
     let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
     let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
     dist.insert(source, 0.0);
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     heap.push(Scored(0.0, source));
 
     while let Some(Scored(d, u)) = heap.pop() {
@@ -1091,25 +1094,6 @@ fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx>
         }
     }
     None
-}
-
-struct Scored(f32, NodeId);
-
-impl PartialEq for Scored {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
-    }
-}
-impl Eq for Scored {}
-impl PartialOrd for Scored {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Scored {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
-    }
 }
 
 #[cfg(test)]

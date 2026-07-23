@@ -126,6 +126,13 @@ impl SurfaceCells {
         self.coord[id as usize]
     }
 
+    /// Cell ID to its world-frame surface point.
+    #[inline]
+    pub fn xyz(&self, id: CellId, voxel_size: f32) -> (f32, f32, f32) {
+        let (ix, iy, iz) = self.coord(id);
+        crate::voxel::surface_point_xyz(ix, iy, iz, voxel_size)
+    }
+
     #[inline]
     pub fn neighbors(&self, id: CellId) -> &[Edge] {
         &self.edges[id as usize]
