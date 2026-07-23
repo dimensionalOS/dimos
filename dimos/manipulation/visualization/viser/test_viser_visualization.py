@@ -30,6 +30,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
 from dimos.manipulation.visualization.operator import TargetEvaluationResult
+from dimos.manipulation.visualization.viser import scene as scene_module
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -48,6 +49,7 @@ from dimos.manipulation.visualization.viser.scene import (
     GOAL_ROBOT_INFEASIBLE_COLOR,
     TARGET_CONTROL_FEASIBLE_COLOR,
     TARGET_CONTROL_INFEASIBLE_COLOR,
+    RobotDisplayMode,
     ViserManipulationScene,
 )
 from dimos.manipulation.visualization.viser.state import (
@@ -517,6 +519,7 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui, module, _server = panel([left, right], states("left", "right"))
     gui._toggle_group_selected(right.id)
     gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
     monkeypatch.setattr(
         gui,
         "_operation_worker",
@@ -655,6 +658,9 @@ class Urdf:
     def __init__(self, *_: object, **__: object) -> None:
         self._urdf = SimpleNamespace(actuated_joint_names=("j1", "j2"))
         self._meshes = [Mesh()]
+        self._collision_meshes = [Mesh()]
+        self.show_visual = True
+        self.show_collision = False
         self.cfg: list[float] | None = None
 
     def update_cfg(self, cfg: Sequence[float]) -> None:
@@ -662,6 +668,18 @@ class Urdf:
 
     def remove(self) -> None:
         pass
+
+
+@pytest.fixture(autouse=True)
+def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        scene_module.URDF,
+        "load",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actuated_joint_names=("j1", "j2"),
+            collision_scene=SimpleNamespace(geometry={"collision": object()}),
+        ),
+    )
 
 
 def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
@@ -1094,6 +1112,78 @@ def test_scene_detects_non_identity_base_pose() -> None:
 
     assert ViserManipulationScene._has_non_identity_base_pose(identity) is False
     assert ViserManipulationScene._has_non_identity_base_pose(translated) is True
+
+
+@pytest.mark.parametrize("mode", [RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH])
+def test_scene_display_mode_survives_primary_recreation_and_keeps_ghosts_unchanged(
+    mode: RobotDisplayMode,
+) -> None:
+    server = Server()
+    scene = ViserManipulationScene(server, Urdf)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+    current = scene._urdfs["id-arm:current"]
+    target = scene._urdfs["id-arm:target"]
+    preview = scene._urdfs["id-arm:preview"]
+    target_state = (target._meshes[0].visible, target._meshes[0].color, target._meshes[0].opacity)
+    preview_state = (
+        preview._meshes[0].visible,
+        preview._meshes[0].color,
+        preview._meshes[0].opacity,
+    )
+
+    scene.robot_display_mode = mode
+    assert (current.show_visual, current.show_collision) == (
+        mode is RobotDisplayMode.BOTH,
+        True,
+    )
+    assert (
+        target._meshes[0].visible,
+        target._meshes[0].color,
+        target._meshes[0].opacity,
+    ) == target_state
+    assert (
+        preview._meshes[0].visible,
+        preview._meshes[0].color,
+        preview._meshes[0].opacity,
+    ) == preview_state
+
+    scene._urdfs.pop("id-arm:current")
+    scene.register_robot("id-arm", config)
+    recreated = scene._urdfs["id-arm:current"]
+    scene.update_current_robot("id-arm", JointState({"name": ["j1", "j2"], "position": [0.7, 0.2]}))
+    assert recreated is not current
+    assert scene.robot_display_mode is mode
+    assert (recreated.show_visual, recreated.show_collision) == (
+        mode is RobotDisplayMode.BOTH,
+        True,
+    )
+    assert recreated.cfg == [0.7, 0.2]
+
+
+def test_panel_robot_display_selector_and_collision_warning_use_session_scene(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    # The panel fixture intentionally uses a session without a scene; attach the
+    # already-created scene controls through the normal panel API contract.
+    scene = ViserManipulationScene(server, Urdf)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    scene.register_robot(
+        "id-arm", Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    )
+    gui.scene = scene
+    gui._build_scene_controls(server.gui)
+    display = gui._handles["robot_display"]
+    assert display.options == ["Visual", "Collision", "Both"]
+    assert display.value == "Visual"
+    warning = gui._handles["robot_display_warning"]
+    assert warning.visible is False
+    display.callback(SimpleNamespace(target=SimpleNamespace(value="Collision")))
+    assert scene.robot_display_mode is RobotDisplayMode.COLLISION
+    assert warning.visible is False
 
 
 @pytest.mark.parametrize("interruption", ["cancel", "replacement", "close"])

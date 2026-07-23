@@ -473,6 +473,9 @@ class ManipulationModule(Module):
 
         Use this after an error or fault to allow new commands.
         Cannot reset while a motion is executing — cancel first.
+
+        TODO: Planning failures should not enter FAULT in the future; execution
+        failures may still require reset because the physical state is uncertain.
         """
         with self._lock:
             if self._state == ManipulationState.EXECUTING:
@@ -537,13 +540,14 @@ class ManipulationModule(Module):
             robot_name: Robot to plan for (required if multiple robots configured)
         """
         if self._world_monitor is None:
-            logger.error("Planning not initialized")
+            self._record_error("Planning not initialized")
             return None
         if (robot := self._get_robot(robot_name)) is None:
+            self._record_error("Robot not found or robot_name is required")
             return None
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                logger.warning(f"Cannot plan: state is {self._state.name}")
+                self._record_error(f"Cannot plan while state is {self._state.name}")
                 return None
             self._planning_epoch += 1
             self._last_plan = None
@@ -750,7 +754,10 @@ class ManipulationModule(Module):
             timeout=self.config.planning_timeout,
         )
         if not result.is_success():
-            self._fail_planning_epoch(planning_epoch, f"Planning failed: {result.status.name}")
+            detail = f": {result.message}" if result.message else ""
+            self._fail_planning_epoch(
+                planning_epoch, f"Planning failed: {result.status.name}{detail}"
+            )
             return None
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
@@ -777,12 +784,17 @@ class ManipulationModule(Module):
             self._state = ManipulationState.COMPLETED
         return plan
 
+    def _record_error(self, message: str) -> bool:
+        """Record an error without changing the manipulation state."""
+        logger.warning(message)
+        self._error_message = message
+        return False
+
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
-        logger.warning(msg)
+        self._record_error(msg)
         with self._lock:
             self._state = ManipulationState.FAULT
-            self._error_message = msg
         return False
 
     def _fail_planning_epoch(self, planning_epoch: int, msg: str) -> bool:
@@ -921,9 +933,25 @@ class ManipulationModule(Module):
         check_collision: bool = True,
         seed: JointState | None = None,
     ) -> IKResult:
-        """Compatibility wrapper for inverse_kinematics_single()."""
+        """Solve IK for a pose without planning a joint path.
+
+        Args:
+            pose: Target end-effector pose
+            robot_name: Robot to solve for (required if multiple robots configured)
+            check_collision: Whether to reject IK candidates in collision
+            seed: Optional joint state to initialize local IK. Uses current state when omitted.
+        """
+        if self._kinematics is None or self._world_monitor is None:
+            self._record_error("Planning not initialized")
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            self._record_error("Robot not found or robot_name is required")
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
+
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
+                self._record_error(f"Cannot solve IK while state is {self._state.name}")
                 return IKResult(
                     status=IKStatus.NO_SOLUTION,
                     message=f"Cannot solve IK while state is {self._state.name}",
@@ -938,6 +966,9 @@ class ManipulationModule(Module):
         self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
         if result.is_success():
             logger.info(f"IK solved, error: {result.position_error:.4f}m")
+        else:
+            detail = f": {result.message}" if result.message else ""
+            self._record_error(f"IK failed: {result.status.name}{detail}")
         return result
 
     @rpc
@@ -949,15 +980,18 @@ class ManipulationModule(Module):
             robot_name: Robot to plan for (required if multiple robots configured)
         """
         if self._kinematics is None or self._world_monitor is None:
+            self._record_error("Planning not initialized")
             return False
         robot = self._get_robot(robot_name)
         if robot is None:
+            self._record_error("Robot not found or robot_name is required")
             return False
         selected_robot_name, _, _, _ = robot
         try:
             group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
         except ValueError as exc:
             logger.warning("Pose planning unavailable: %s", exc)
+            self._record_error(str(exc))
             return False
         return self.plan_to_pose_targets({group_id: pose})
 
@@ -986,6 +1020,7 @@ class ManipulationModule(Module):
             f"Planning to joints for {selected_robot_name}: {[f'{j:.3f}' for j in joints.position]}"
         )
         if self._world_monitor is None:
+            self._record_error("Planning not initialized")
             return False
         group_id = self._world_monitor.planning_groups.default_group_id_for_robot(
             selected_robot_name
@@ -1084,7 +1119,8 @@ class ManipulationModule(Module):
             seed=start,
         )
         if not ik.is_success() or ik.joint_state is None:
-            self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}")
+            detail = f": {ik.message}" if ik.message else ""
+            self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
             return None
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)

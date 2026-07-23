@@ -30,11 +30,12 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.visualization.viser import (
     runtime as runtime_module,
+    scene as scene_module,
     visualizer as visualizer_module,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -47,6 +48,23 @@ class FakeDependency:
 
 class FakeViserUrdf:
     pass
+
+
+class FakeSceneUrdf:
+    def __init__(
+        self,
+        _server: FakeServer,
+        _path: Path | None = None,
+        *,
+        urdf_or_path: object | None = None,
+        **_kwargs: object,
+    ) -> None:
+        self.show_visual = True
+        self.show_collision = False
+        self.cfg: list[float] | None = None
+
+    def update_cfg(self, cfg: list[float]) -> None:
+        self.cfg = list(cfg)
 
 
 class FakeServer:
@@ -483,9 +501,15 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
 
     class Urdf:
         def __init__(
-            self, _server: Server, path: Path, *, root_node_name: str, **_kwargs: object
+            self,
+            _server: Server,
+            path: Path | None = None,
+            *,
+            urdf_or_path: object | None = None,
+            root_node_name: str,
+            **_kwargs: object,
         ) -> None:
-            created.append((path, root_node_name))
+            created.append((path or fixed_world_root, root_node_name))
             self._meshes: list[object] = []
 
     config = fake_robot_config("arm")
@@ -508,6 +532,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
         "dimos.manipulation.visualization.viser.scene.parse_model", parse_prepared_model
     )
     scene = ViserManipulationScene(Server(), Urdf)
+    monkeypatch.setattr(scene, "_model_has_collision_geometry", lambda _model: True)
 
     scene.register_robot("robot-1", config)
 
@@ -516,9 +541,45 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
         "/targets/robot-1/target/base_pose/urdf",
         "/previews/robot-1/ghost/base_pose/urdf",
     ]
-    assert prepared == [{"package_paths": {}, "xacro_args": {}, "convert_meshes": False}] * 3
-    assert all('name="world"' not in path.read_text() for path, _ in created)
+    assert prepared == [{"package_paths": {}, "xacro_args": {}, "convert_meshes": False}]
+    assert all(path == fixed_world_root for path, _ in created)
     assert all(frame["position"] == (1.0, 0.0, 0.0) for frame in frames)
     wrong_root_config = fake_robot_config("wrong")
     with pytest.raises(ValueError, match="prepared URDF root 'world'"):
         scene.prepared_urdf_path(wrong_root_config)
+
+
+@pytest.mark.parametrize("mode", ["collision", "both"])
+def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
+    mode: RobotDisplayMode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene = ViserManipulationScene(FakeServer(), FakeSceneUrdf)
+    scene.prepared_urdf_path = lambda _config: Path("prepared.urdf")
+    monkeypatch.setattr(
+        scene_module.URDF,
+        "load",
+        lambda *args, **kwargs: SimpleNamespace(
+            actuated_joint_names=("joint1",),
+            collision_scene=SimpleNamespace(),
+        ),
+    )
+    config = fake_robot_config("arm")
+    config.joint_names = ["joint1"]
+
+    scene.register_robot("robot-1", config)
+    scene.robot_display_mode = mode
+    old_current = scene._urdfs["robot-1:current"]
+    scene._urdfs.pop("robot-1:current")
+
+    scene.register_robot("robot-1", config)
+    current = scene._urdfs["robot-1:current"]
+    scene.update_current_robot("robot-1", JointState({"name": ["joint1"], "position": [0.75]}))
+
+    assert current is not old_current
+    assert scene.robot_display_mode == mode
+    assert (current.show_visual, current.show_collision) == (
+        mode == "both",
+        True,
+    )
+    assert current.cfg == [0.75]

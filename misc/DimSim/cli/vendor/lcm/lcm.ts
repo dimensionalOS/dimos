@@ -57,38 +57,8 @@ export class LCM {
     });
   }
 
-  stop(): void {
-    this.running = false;
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
-  }
-
-  subscribeRaw(channelPattern: string, handler: SubscriptionHandler<Uint8Array>): () => void {
-    const pattern = this.channelToRegex(channelPattern);
-    const subscription: Subscription = {
-      channel: channelPattern,
-      pattern,
-      handler: handler as SubscriptionHandler<unknown>,
-    };
-    this.subscriptions.push(subscription);
-    return () => {
-      const idx = this.subscriptions.indexOf(subscription);
-      if (idx !== -1) this.subscriptions.splice(idx, 1);
-    };
-  }
-
-  subscribePacket(handler: PacketHandler): () => void;
-  subscribePacket(channelPattern: string, handler: PacketHandler): () => void;
-  subscribePacket(patternOrHandler: string | PacketHandler, maybeHandler?: PacketHandler): () => void {
-    const pattern = typeof patternOrHandler === "string"
-      ? this.channelToRegex(patternOrHandler)
-      : null;
-    const handler = typeof patternOrHandler === "function"
-      ? patternOrHandler
-      : maybeHandler!;
-    const subscription: PacketSubscription = { pattern, handler };
+  subscribePacket(handler: PacketHandler): () => void {
+    const subscription: PacketSubscription = { pattern: null, handler };
     this.packetSubscriptions.push(subscription);
     return () => {
       const idx = this.packetSubscriptions.indexOf(subscription);
@@ -138,12 +108,7 @@ export class LCM {
     await this.publishRaw(fullChannel, data);
   }
 
-  async publishPacket(packet: Uint8Array): Promise<void> {
-    if (!this.socket) throw new Error("LCM not started. Call start() first.");
-    await this.socket.send(packet);
-  }
-
-  handle(timeoutMs: number = 0): number {
+  handle(): number {
     const messages = this.messageQueue.splice(0);
     for (const msg of messages) {
       this.dispatchMessage(msg);
@@ -160,10 +125,9 @@ export class LCM {
     return this.handle();
   }
 
-  async run(callback?: () => void | Promise<void>): Promise<void> {
+  async run(): Promise<void> {
     while (this.running) {
       await this.handleAsync(100);
-      if (callback) await callback();
     }
   }
 
@@ -208,25 +172,16 @@ export class LCM {
     for (const sub of this.subscriptions) {
       if (sub.pattern.test(msg.channel)) {
         try {
+          // subscribe() always sets msgClass — there is no raw-subscription path.
           if (sub.msgClass) {
             const decoded = sub.msgClass.decode(msg.data);
             sub.handler({ channel: msg.channel, data: decoded, timestamp: msg.timestamp });
-          } else {
-            sub.handler(msg);
           }
         } catch (e) {
           console.error(`Error in subscription handler for ${msg.channel}:`, e);
         }
       }
     }
-  }
-
-  getConfig(): ParsedUrl {
-    return { ...this.config };
-  }
-
-  isRunning(): boolean {
-    return this.running;
   }
 
   /** Peek at the next sequence number (for echo filtering). */

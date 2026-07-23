@@ -215,6 +215,8 @@ snapshots.
 XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 ```
 
+For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
+
 ## Architecture
 
 ```
@@ -250,6 +252,7 @@ visualization backend.
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
+| [`xarm-perception-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 simulation perception stack + LLM agent |
 
 ## Supported Robots
 
