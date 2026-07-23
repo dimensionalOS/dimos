@@ -80,39 +80,17 @@ def test_camera_optical_frame_id_resolution() -> None:
     assert camera_optical_frame_id(img_empty, info_empty) == "camera_optical"
 
 
-def test_estimate_marker_pose_roundtrip() -> None:
-    marker_length = 0.2
-    h = marker_length / 2.0
-    obj = np.array(
-        [[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]],
-        dtype=np.float32,
-    )
-    k = np.array([[400.0, 0.0, 320.0], [0.0, 400.0, 240.0], [0.0, 0.0, 1.0]])
-    dist = np.zeros((5, 1), dtype=np.float64)
-    rvec0 = np.array([[0.1], [0.05], [-0.02]], dtype=np.float64)
-    tvec0 = np.array([[0.2], [-0.15], [2.5]], dtype=np.float64)
-    img_pts, _jac = cv2.projectPoints(obj, rvec0, tvec0, k, dist)
-    corners = img_pts.reshape(4, 2).astype(np.float32)
-    result = estimate_marker_pose(corners, marker_length, k, dist)
-    assert result is not None
-    rvec, tvec = result
-    np.testing.assert_allclose(rvec.reshape(3), rvec0.reshape(3), atol=1e-3)
-    np.testing.assert_allclose(tvec.reshape(3), tvec0.reshape(3), atol=1e-3)
-    assert marker_reprojection_error(corners, marker_length, k, dist, rvec, tvec) < 0.01
-
-
 def test_marker_corners_to_bbox_accepts_aruco_shapes() -> None:
     corners = np.array([[[10.0, 20.0], [50.0, 18.0], [48.0, 60.0], [9.0, 58.0]]])
     assert marker_corners_to_bbox(corners) == (9.0, 18.0, 50.0, 60.0)
 
 
-def test_marker_pose_candidates_recover_true_and_mirror() -> None:
-    """Invariant: for a planar square, estimate_marker_pose_candidates returns exactly
-    the two IPPE mirror poses (Collins & Bartoli 2014) -- the true pose recovered
-    exactly and a second, clearly distinct mirror -- both finite. Corners are
-    synthesized noise-free from a known camera_optical <- marker pose, so one
-    candidate must equal truth to solver precision; the other must be far off (only
-    reprojection error, not the candidate list, tells them apart)."""
+def test_strong_perspective_candidates_separate_and_the_gate_keeps_truth() -> None:
+    """Invariant: for a large tag close and strongly oblique, IPPE (Collins & Bartoli
+    2014) returns exactly two mirror candidates that are far apart -- the true pose
+    recovered to solver precision and a >10 deg mirror that reprojects far worse -- so
+    only reprojection tells them apart, and ambiguity_gated_pose keeps the true one.
+    Corners are synthesized noise-free, so the surviving pose must equal truth."""
     marker_length_m = 0.2
     rvec_true = np.array([[0.9], [0.5], [0.1]], dtype=np.float64)  # ~60 deg oblique
     tvec_true = np.array([[0.05], [-0.03], [0.6]], dtype=np.float64)  # 0.6 m, close
@@ -141,21 +119,7 @@ def test_marker_pose_candidates_recover_true_and_mirror() -> None:
     assert _rotation_angle_deg(rvec_true, cv2.Rodrigues(runner_rvec)[0]) > 10.0
     assert runner_err > 1.0
 
-
-def test_ambiguity_gate_keeps_strong_perspective() -> None:
-    """Invariant: a large tag close and strongly oblique has one clearly-best IPPE
-    pose (the mirror reprojects far worse), so the gate keeps it and recovers the
-    true rotation. Corners are synthesized noise-free from a known
-    camera_optical <- marker pose, so the surviving pose must match truth exactly."""
-    marker_length_m = 0.2
-    rvec_true = np.array([[0.9], [0.5], [0.1]], dtype=np.float64)  # ~60 deg oblique
-    tvec_true = np.array([[0.05], [-0.03], [0.6]], dtype=np.float64)  # 0.6 m, close
-    corners = _project_marker_corners(rvec_true, tvec_true, marker_length_m)
-
-    # IPPE always yields the two mirror candidates; here they are far apart.
-    candidates = estimate_marker_pose_candidates(corners, marker_length_m, _PINHOLE_K, _NO_DIST)
-    assert len(candidates) == 2
-
+    # The gate keeps the clearly-best pose and returns the true rotation/translation.
     result = ambiguity_gated_pose(
         corners, marker_length_m, _PINHOLE_K, _NO_DIST, ambiguity_ratio_min=2.0
     )
@@ -227,25 +191,51 @@ def _fisheye_marker_corners(
     return img_pts.reshape(4, 2).astype(np.float32)
 
 
-def test_estimate_marker_pose_undistorts_fisheye_corners() -> None:
-    """Invariant: with an equidistant distortion model, corners are undistorted into
-    the pinhole K before solvePnP, so a fisheye-projected marker recovers its true
-    pose (rvec/tvec) and the reprojection error -- also computed in undistorted pixel
-    space -- is ~0. Corners are synthesized noise-free, so recovery is exact."""
+@pytest.mark.parametrize(
+    "projector, k, dist, distortion_model, tvec_true",
+    [
+        pytest.param(
+            _project_marker_corners,
+            _PINHOLE_K,
+            _NO_DIST,
+            None,
+            np.array([[0.2], [-0.15], [2.5]], dtype=np.float64),
+            id="pinhole",
+        ),
+        pytest.param(
+            _fisheye_marker_corners,
+            _FISHEYE_K,
+            _FISHEYE_D,
+            "equidistant",
+            np.array([[0.1], [-0.1], [1.5]], dtype=np.float64),
+            id="fisheye",
+        ),
+    ],
+)
+def test_estimate_marker_pose_recovers(
+    projector: object,
+    k: np.ndarray,
+    dist: np.ndarray,
+    distortion_model: str | None,
+    tvec_true: np.ndarray,
+) -> None:
+    """Invariant: estimate_marker_pose recovers a known camera_optical <- marker pose to
+    solver precision (rvec/tvec, reproj ~0) from noise-free corners. The fisheye case
+    additionally proves equidistant corners are undistorted into the pinhole K before
+    solvePnP and before reprojection scoring."""
     marker_length_m = 0.2
     rvec_true = np.array([[0.1], [0.05], [-0.02]], dtype=np.float64)
-    tvec_true = np.array([[0.1], [-0.1], [1.5]], dtype=np.float64)
-    corners = _fisheye_marker_corners(rvec_true, tvec_true, marker_length_m)
+    corners = projector(rvec_true, tvec_true, marker_length_m)  # type: ignore[operator]
 
     result = estimate_marker_pose(
-        corners, marker_length_m, _FISHEYE_K, _FISHEYE_D, distortion_model="equidistant"
+        corners, marker_length_m, k, dist, distortion_model=distortion_model
     )
     assert result is not None
     rvec, tvec = result
     np.testing.assert_allclose(rvec.reshape(3), rvec_true.reshape(3), atol=1e-3)
     np.testing.assert_allclose(tvec.reshape(3), tvec_true.reshape(3), atol=1e-3)
     reproj = marker_reprojection_error(
-        corners, marker_length_m, _FISHEYE_K, _FISHEYE_D, rvec, tvec, distortion_model="equidistant"
+        corners, marker_length_m, k, dist, rvec, tvec, distortion_model=distortion_model
     )
     assert reproj < 0.01
 

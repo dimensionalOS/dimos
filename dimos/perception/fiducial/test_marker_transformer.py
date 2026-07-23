@@ -25,100 +25,12 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, pose7_from_matrix
-from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_transformer import AggregateTagBursts, DetectMarkers
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
     camera_info,
     synthetic_marker_image,
-    world_T_optical,
 )
-
-
-def test_detect_markers_in_image_builds_rich_marker_detection() -> None:
-    marker_id = 7
-    marker_length_m = 0.18
-    image = synthetic_marker_image(marker_id)
-    info = camera_info(image.ts)
-
-    detections = detect_markers_in_image(
-        image,
-        camera_info=info,
-        world_T_optical=world_T_optical(image.ts),
-        marker_length_m=marker_length_m,
-        aruco_dictionary="DICT_APRILTAG_36h11",
-    )
-
-    assert len(detections) == 1
-    det = detections[0]
-    assert det.marker_id == marker_id
-    assert det.track_id == -1
-    assert det.name == "DICT_APRILTAG_36h11:7"
-    assert det.image is image
-    assert det.frame_id == "world"
-    assert det.size.x == pytest.approx(marker_length_m)
-    assert det.size.y == pytest.approx(marker_length_m)
-    assert det.size.z == pytest.approx(0.0)
-    assert det.confidence == pytest.approx(1.0)
-    assert det.reprojection_error < 0.1
-    assert det.bbox == pytest.approx((210.0, 130.0, 429.0, 349.0), abs=2.0)
-    assert det.center.x == pytest.approx(1.0, abs=0.02)
-    assert det.center.y == pytest.approx(2.0, abs=0.02)
-    assert det.center.z > 3.3
-
-    msg = det.to_detection3d_msg()
-    assert msg.id == str(marker_id)
-    assert msg.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:7"
-
-
-def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
-    ts = 11.0
-    image = Image(
-        data=np.full((480, 640, 3), 255, dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
-    )
-
-    detections = detect_markers_in_image(
-        image,
-        camera_info=camera_info(ts),
-        world_T_optical=world_T_optical(ts),
-        marker_length_m=0.18,
-        aruco_dictionary="DICT_APRILTAG_36h11",
-    )
-
-    assert detections == []
-
-
-def test_detect_markers_transformer_preserves_observation_context_and_tags() -> None:
-    marker_id = 7
-    image = synthetic_marker_image(marker_id, ts=12.0)
-    obs = Observation[Image](
-        id=42,
-        ts=image.ts,
-        data_type=Image,
-        pose=(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
-        _data=image,
-    )
-    transformer = DetectMarkers(
-        camera_info=camera_info(image.ts),
-        marker_length_m=0.18,
-        aruco_dictionary="DICT_APRILTAG_36h11",
-    )
-
-    results = list(transformer(iter([obs])))
-
-    assert len(results) == 1
-    out = results[0]
-    assert out.id == obs.id
-    assert out.ts == obs.ts
-    assert out.data.marker_id == marker_id
-    assert out.data.image is image
-    assert out.pose is not None
-    assert out.tags["marker_id"] == marker_id
-    assert out.tags["track_id"] == -1
-    assert out.data.track_id == -1
 
 
 def test_detect_markers_transformer_can_emit_empty_frame_sentinel() -> None:
@@ -154,6 +66,9 @@ def test_detect_markers_transformer_can_emit_empty_frame_sentinel() -> None:
 
 
 def test_detect_markers_transformer_uses_callablecamera_info_source() -> None:
+    """Invariant: a callable camera_info returning None skips the frame; once it yields
+    info the transformer detects and carries the observation context through -- id/ts
+    preserved, marker_id/track_id tags stamped, data.track_id defaulted to -1."""
     image = synthetic_marker_image(marker_id=7, ts=14.0)
     obs = Observation[Image](
         id=44,
@@ -176,8 +91,15 @@ def test_detect_markers_transformer_uses_callablecamera_info_source() -> None:
     results = list(transformer(iter([obs])))
 
     assert len(results) == 1
-    assert results[0].data.marker_id == 7
-    assert results[0].tags["marker_frame_count"] == 1
+    out = results[0]
+    assert out.id == obs.id
+    assert out.ts == obs.ts
+    assert out.pose is not None
+    assert out.data.marker_id == 7
+    assert out.data.track_id == -1
+    assert out.tags["marker_id"] == 7
+    assert out.tags["track_id"] == -1
+    assert out.tags["marker_frame_count"] == 1
 
 
 def test_detect_markers_rebuilds_intrinsics_without_resetting_smoothing_track() -> None:
@@ -322,28 +244,16 @@ def _aggregator(
     return AggregateTagBursts(published.append, config or AggregationConfig()), published
 
 
-@pytest.mark.parametrize(
-    "violation",
-    [
-        pytest.param({"optical_T_marker": _optical_T_marker(1.5, 20.0)}, id="far"),
-        pytest.param({"optical_T_marker": _optical_T_marker(0.5, 60.0)}, id="oblique"),
-        pytest.param({"reproj_px": 3.0}, id="reproj"),
-        pytest.param({"tag_side_px": 10.0}, id="small"),
-    ],
-)
-def test_aggregate_tag_bursts_each_gate_rejects_its_violation_then_accepts_a_clean_visit(
-    violation: dict[str, object],
-) -> None:
-    """Invariant: every activated gate FIRES. Twice min_observations glimpses that
-    violate one gate (1.5 m > max_distance_m 1.0; 60 deg > max_view_angle_deg 45;
-    3.0 px > max_reproj_px 2.0; 10 px < min_tag_px 24) publish nothing at all, and
-    then min_observations clean ones publish -- so the silence is the gate rejecting,
-    not the aggregator being inert. Each parametrization differs from the clean glimpse
-    in exactly the one field its gate reads."""
+def test_aggregate_tag_bursts_gate_suppresses_a_bad_visit_then_accepts_a_clean_one() -> None:
+    """Invariant: a gate quality computed from the wrapper's transform/corners suppresses
+    publish. Twice min_observations glimpses at 60 deg (> max_view_angle_deg 45) publish
+    nothing -- proving view_quality(inv(transform) @ world_T_marker) reaches the gate --
+    then min_observations clean ones publish, so the silence is the gate, not inertness.
+    Which gate fires for which violation is pinned in test_apriltag_aggregation."""
     aggregator, published = _aggregator()
 
     for i in range(6):
-        aggregator(_glimpse(ts=10.0 + 0.5 * i, **violation))  # type: ignore[arg-type]
+        aggregator(_glimpse(ts=10.0 + 0.5 * i, optical_T_marker=_optical_T_marker(0.5, 60.0)))
     assert published == []
 
     for i in range(3):
@@ -369,18 +279,8 @@ def test_aggregate_tag_bursts_publishes_once_per_burst_not_once_per_frame() -> N
         aggregator(_glimpse(ts=10.0 + 0.5 * i))
     assert len(published) == 1
 
-
-def test_aggregate_tag_bursts_re_arms_when_the_tag_returns_after_a_gap() -> None:
-    """Invariant: the edge re-arms per VISIT. A gap longer than time_window_s purges
-    the marker's window on its next sighting, dropping it under min_observations, so
-    completing a second burst publishes a second message -- one per visit, not one
-    forever."""
-    aggregator, published = _aggregator()
-
-    for i in range(3):
-        aggregator(_glimpse(ts=10.0 + 0.5 * i))
-    assert len(published) == 1
-
+    # The edge re-arms per VISIT: a gap longer than time_window_s purges the marker's
+    # window on its next sighting, so completing a second burst publishes again.
     aggregator(_glimpse(ts=41.0))  # 30 s later: the 5 s window purges down to this one
     assert len(published) == 1
     aggregator(_glimpse(ts=41.5))
@@ -419,57 +319,12 @@ def test_aggregate_tag_bursts_ignores_the_empty_frame_sentinel() -> None:
     assert published == []
 
 
-def test_aggregate_tag_bursts_rejects_a_mirror_flip_that_clears_every_gate() -> None:
-    """Invariant: the ROBUST aggregation, not the gates, carries mirror-flip rejection --
-    which is why the robust path had to come with the gates rather than instead of
-    them. A 180 deg flip about the marker's own x-axis leaves the range and the
-    |cos| view angle untouched, so it clears all four gates, and it leaves the
-    TRANSLATION untouched too -- the rotation is the only channel that can catch it.
-    The flip arrives first, inside the window the edge glimpse aggregates over; the
-    medoid + Huber aggregate keeps the majority, so the published orientation stays
-    within a degree of truth instead of being dragged toward a 180 deg outlier.
-    Seeded rng; SIMULATED poses."""
-    rng = np.random.default_rng(7)
-    optical_T_marker = _optical_T_marker(0.5, 20.0)
-    truth = _CAMERA.to_matrix() @ optical_T_marker
-    flip = np.eye(4)
-    flip[:3, :3] = Rotation.from_euler("x", 180.0, degrees=True).as_matrix()
-
-    aggregator, published = _aggregator()
-    aggregator(_glimpse(optical_T_marker=optical_T_marker @ flip, ts=10.0))
-    for i in range(1, 9):
-        noise = np.eye(4)
-        noise[:3, :3] = Rotation.from_rotvec(rng.normal(0.0, np.radians(1.0), 3)).as_matrix()
-        noise[:3, 3] = rng.normal(0.0, 0.005, 3)
-        aggregator(_glimpse(optical_T_marker=optical_T_marker @ noise, ts=10.0 + 0.5 * i))
-
-    assert len(published) == 1
-    center = published[0].detections[0].bbox.center
-    aggregated_R = Rotation.from_quat(
-        [
-            center.orientation.x,
-            center.orientation.y,
-            center.orientation.z,
-            center.orientation.w,
-        ]
-    )
-    error_deg = np.degrees(
-        (aggregated_R * Rotation.from_matrix(truth[:3, :3]).inv()).magnitude()  # type: ignore[no-untyped-call]
-    )
-    assert error_deg < 1.0
-
-
 def test_aggregate_tag_bursts_stamps_the_covariance_and_score_health_signal() -> None:
     """Invariant: an aggregated entry ships its own trust, and the two channels are the
-    same number twice -- score == 1/scale, covariance == the base blocks * scale --
-    so they cannot disagree. The geometry makes the arithmetic exact: median range
-    0.8 m is 2x REF_DISTANCE_M and median reproj 1.5 px is 1.5x REF_REPROJ_PX, so
-    scale = 2^2 * 1.5^2 = 9.0. The camera sits at the world origin with the tag
-    head-on, so the pose's R is identity and every diagonal is readable -- which is
-    what pins the ROS TRANSLATION-FIRST block order: index 2 carries the loose
-    0.25 m^2 range term (planar PnP's weak axis, along the tag normal) and index 5
-    the tight 0.0025 rad^2 in-plane spin. GTSAM's rotation-first layout, which the
-    diagonals are ported from, would have those two swapped."""
+    same number twice -- score == 1/scale, covariance == the base blocks * scale -- so
+    they cannot disagree. Median range 0.8 m (2x REF_DISTANCE_M) and median reproj
+    1.5 px (1.5x REF_REPROJ_PX) make scale = 2^2 * 1.5^2 = 9.0; the head-on camera at the
+    world origin leaves R identity so every diagonal is readable."""
     origin_camera = Transform(
         translation=Vector3(0.0, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),

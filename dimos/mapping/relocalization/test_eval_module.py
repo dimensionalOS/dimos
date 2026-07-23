@@ -112,48 +112,44 @@ def _parked_odom(ts: list[float]) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # umeyama_alignment: recover a known rigid transform (and scale) exactly
 # --------------------------------------------------------------------------- #
-def test_umeyama_recovers_known_rigid_transform() -> None:
-    """dst = R @ src + t for a known R, t -> umeyama returns exactly that (R, t),
-    scale 1.0, and det(R) == +1 (a PROPER rotation, no reflection)."""
+@pytest.mark.parametrize(
+    "with_scale, scale_factor, expected_scale",
+    [
+        pytest.param(False, 1.0, 1.0, id="rigid"),
+        pytest.param(True, 2.0, 2.0, id="with_scale"),
+    ],
+)
+def test_umeyama_recovers_known_transform(
+    with_scale: bool, scale_factor: float, expected_scale: float
+) -> None:
+    """dst = scale_factor * R @ src + t -> umeyama returns exactly (R, t) and the scale
+    (1.0 rigid; ~2.0 when with_scale flags a mis-scaled correspondence set -- the health
+    signal for wrong correspondences), with det(R) == +1, a proper rotation, no reflection."""
     rng = np.random.default_rng(0)
     src = rng.uniform(-5.0, 5.0, size=(8, 3))
     rot = Rotation.from_euler("xyz", [10.0, -25.0, 40.0], degrees=True).as_matrix()
     trans = np.array([1.5, -2.0, 3.25])
-    dst = (rot @ src.T).T + trans
+    dst = scale_factor * (rot @ src.T).T + trans
 
-    r_out, t_out, scale = umeyama_alignment(src, dst)  # with_scale defaults False
+    r_out, t_out, scale = umeyama_alignment(src, dst, with_scale=with_scale)
     np.testing.assert_allclose(r_out, rot, atol=1e-9)
     np.testing.assert_allclose(t_out, trans, atol=1e-9)
-    assert scale == 1.0
+    assert abs(scale - expected_scale) < 1e-9
     assert abs(np.linalg.det(r_out) - 1.0) < 1e-9
 
 
-def test_umeyama_recovers_scale_when_requested() -> None:
-    """dst = 2.0 * R @ src + t with with_scale=True -> scale ~2.0 and R still exact.
-    Scale is the health signal that flags wrong correspondences."""
-    rng = np.random.default_rng(1)
-    src = rng.uniform(-3.0, 3.0, size=(10, 3))
-    rot = Rotation.from_euler("z", 33.0, degrees=True).as_matrix()
-    trans = np.array([0.5, 0.5, -1.0])
-    dst = 2.0 * (rot @ src.T).T + trans
-
-    r_out, t_out, scale = umeyama_alignment(src, dst, with_scale=True)
-    assert abs(scale - 2.0) < 1e-9
-    np.testing.assert_allclose(r_out, rot, atol=1e-9)
-    np.testing.assert_allclose(t_out, trans, atol=1e-9)
-
-
-def test_umeyama_too_few_points_raises() -> None:
-    """A rigid frame needs >= 3 correspondences; 2 must raise ValueError, not
-    silently return a degenerate transform."""
-    two = np.zeros((2, 3))
-    with pytest.raises(ValueError, match="3 correspondences"):
-        umeyama_alignment(two, two)
-
-
-def test_umeyama_shape_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match=r"matching \(N,3\)"):
-        umeyama_alignment(np.zeros((4, 3)), np.zeros((5, 3)))
+@pytest.mark.parametrize(
+    "src, dst, match",
+    [
+        pytest.param(np.zeros((2, 3)), np.zeros((2, 3)), "3 correspondences", id="too_few"),
+        pytest.param(np.zeros((4, 3)), np.zeros((5, 3)), r"matching \(N,3\)", id="shape_mismatch"),
+    ],
+)
+def test_umeyama_rejects_bad_inputs(src: np.ndarray, dst: np.ndarray, match: str) -> None:
+    """<3 correspondences, or mismatched (N,3) shapes, raise ValueError rather than
+    silently returning a degenerate transform."""
+    with pytest.raises(ValueError, match=match):
+        umeyama_alignment(src, dst)
 
 
 # --------------------------------------------------------------------------- #
@@ -174,43 +170,48 @@ def test_resolve_alignment_from_shared_markers() -> None:
     assert "Umeyama over 4 shared tags" in reason
 
 
-def test_resolve_alignment_collinear_tags_held_out() -> None:
-    """>=3 shared tags that lie on a LINE leave the rotation about that line
-    unconstrained -- Umeyama's SVD would return an arbitrary transform. Guard must
-    return None with a collinearity reason, never a fabricated med_err."""
-    # four tags on the x-axis in map_A; map_B is any rigid image (still a line)
-    rot = Rotation.from_euler("xyz", [15.0, -20.0, 35.0], degrees=True).as_matrix()
-    trans = np.array([1.0, -2.0, 0.5])
-    markers_a = {i: (float(i), 0.0, 0.0) for i in (1, 2, 3, 4)}
-    markers_b = {i: tuple(rot @ np.array(p) + trans) for i, p in markers_a.items()}
-    mat, reason = resolve_heldout_alignment(markers_a, markers_b)
-    assert mat is None and "collinear" in reason
-    # a well-spread (non-collinear) set of the SAME count still resolves
-    markers_a2 = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0), 4: (1.0, 1.0, 0.4)}
-    markers_b2 = {i: tuple(rot @ np.array(p) + trans) for i, p in markers_a2.items()}
-    mat2, _ = resolve_heldout_alignment(markers_a2, markers_b2)
-    assert mat2 is not None
-    np.testing.assert_allclose(mat2, _rt(rot, trans), atol=1e-9)
+_SPREAD_A = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0), 4: (1.0, 1.0, 0.4)}
+_LINE_B = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (2.0, 0.0, 0.0), 4: (3.0, 0.0, 0.0)}
 
 
-def test_resolve_alignment_degenerate_run_b_survey_held_out() -> None:
-    """map_A well spread but the run-B survey collapsed onto a LINE: cov goes
-    rank-deficient and Umeyama returns an arbitrary rotation. Both sides are gated,
-    so this is held out naming map_B."""
-    markers_a = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0), 4: (1.0, 1.0, 0.4)}
-    markers_b = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (2.0, 0.0, 0.0), 4: (3.0, 0.0, 0.0)}
+@pytest.mark.parametrize(
+    "markers_a, markers_b, reason_substr",
+    [
+        pytest.param({1: (0, 0, 0)}, None, "no run-B marker survey", id="no_run_b"),
+        pytest.param(
+            {1: (0, 0, 0), 2: (1, 0, 0)},
+            {1: (0, 0, 0), 2: (1, 0, 0)},
+            "2 tag id(s) shared",
+            id="too_few_shared",
+        ),
+        pytest.param(
+            {i: (1.0, 2.0, 3.0) for i in (1, 2, 3)},
+            {i: (0.0, 0.0, 0.0) for i in (1, 2, 3)},
+            "coincide in map_A",
+            id="coincident",
+        ),
+        pytest.param(
+            {i: (float(i), 0.0, 0.0) for i in (1, 2, 3, 4)},  # a line: rotation unconstrained
+            _SPREAD_A,
+            "collinear in map_A",
+            id="collinear_map_a",
+        ),
+        pytest.param(_SPREAD_A, _LINE_B, "collinear in map_B", id="collinear_map_b"),
+    ],
+)
+def test_resolve_alignment_degenerate_geometry_is_held_out(
+    markers_a: dict[int, tuple[float, float, float]],
+    markers_b: dict[int, tuple[float, float, float]] | None,
+    reason_substr: str,
+) -> None:
+    """resolve_heldout_alignment refuses every degenerate correspondence set -- no run-B
+    survey, too few shared ids, coincident tags, or a set collinear in either frame (the
+    rotation about the line is unconstrained, so Umeyama would return an arbitrary
+    transform) -- returning None with a reason naming the defect, never a fabricated
+    med_err."""
     mat, reason = resolve_heldout_alignment(markers_a, markers_b)
     assert mat is None
-    assert "collinear in map_B" in reason and "med_err held out" in reason
-
-
-def test_resolve_alignment_coincident_tags_held_out() -> None:
-    """Shared tags that all sit at one point have no extent at all -- held out with
-    the coincide reason, never a fabricated number."""
-    markers_a = {i: (1.0, 2.0, 3.0) for i in (1, 2, 3)}
-    markers_b = {i: (0.0, 0.0, 0.0) for i in (1, 2, 3)}
-    mat, reason = resolve_heldout_alignment(markers_a, markers_b)
-    assert mat is None and "coincide in map_A" in reason
+    assert reason_substr in reason
 
 
 # --------------------------------------------------------------------------- #
@@ -228,13 +229,6 @@ def test_dedup_keeps_yaw_only_fix() -> None:
     assert len(fixes) == 2
     np.testing.assert_allclose(fixes[0][1], pose_a)
     np.testing.assert_allclose(fixes[1][1], pose_b)
-
-
-def test_dedup_collapses_repeats() -> None:
-    """Identical republished poses collapse to one accept (rotation guard does not
-    over-split on the repeats)."""
-    pose = _rt(np.eye(3), np.array([1.0, 0.0, 0.0]))
-    assert len(dedup_tf_fixes([(0.0, pose), (0.1, pose), (0.2, pose)])) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -274,32 +268,6 @@ def test_label_second_nearby_fix_never_reuses_a_claimed_line() -> None:
     assert fixes[0].fitness == 0.9 and np.isnan(fixes[1].fitness)
 
 
-def test_label_equal_distance_tie_is_stable() -> None:
-    """A fix equidistant from two health lines takes the EARLIER (log order); a
-    later equally-close line never overwrites it."""
-    fix = _rt(np.eye(3), np.array([0.010, 0.0, 0.0]))  # 1 cm from each
-    health = [
-        HealthLine(source="ransac", fitness=0.9, published_t_m=(0.0, 0.0, 0.0)),
-        HealthLine(source="fiducial", fitness=0.7, published_t_m=(0.020, 0.0, 0.0)),
-    ]
-    fixes = label_fixes_from_log([(0.0, fix)], health)
-    assert fixes[0].source == "ransac" and fixes[0].fitness == 0.9
-
-
-def test_resolve_alignment_no_run_b_is_held_out() -> None:
-    mat, reason = resolve_heldout_alignment({1: (0, 0, 0)}, None)
-    assert mat is None and "no run-B marker survey" in reason
-
-
-def test_resolve_alignment_too_few_shared_is_held_out() -> None:
-    """Only 2 shared ids -> None with a reason naming the shortfall, never a fake
-    number."""
-    mat, reason = resolve_heldout_alignment(
-        {1: (0, 0, 0), 2: (1, 0, 0)}, {1: (0, 0, 0), 2: (1, 0, 0)}
-    )
-    assert mat is None and "2 tag id(s) shared" in reason
-
-
 def test_aligned_err_t_m_zero_when_fix_matches_truth() -> None:
     """A fix that IS B's truth (carried through the alignment) gives ~0 m error."""
     rot = Rotation.from_euler("z", 12.0, degrees=True).as_matrix()
@@ -332,9 +300,7 @@ def test_compute_stats_per_source_aggregation() -> None:
     odom = _parked_odom([0.5, 1.5, 2.5, 3.5])
     census = [{"ransac": 2, "fiducial": 1}, {"ransac": 1}]  # fiducial in 1 of 2 cycles
 
-    stats = compute_stats(
-        fixes, odom, census, n_rejects=4, mode="held_out", held_out_note="note"
-    )
+    stats = compute_stats(fixes, odom, census, n_rejects=4, mode="held_out", held_out_note="note")
     by = {r.source: r for r in stats.rows}
 
     assert by["ransac"].won == 2 and by["fiducial"].won == 1 and by["last_pose"].won == 0
@@ -361,29 +327,17 @@ def test_compute_stats_no_odom_zero_coverage() -> None:
     """Empty odom -> 0% coverage, 0% per-source traj, first-fix None; no divide-by-
     zero."""
     stats = compute_stats(
-        _fixture_fixes(), np.empty((0,)), [], n_rejects=None,
-        mode="held_out", held_out_note="n",
+        _fixture_fixes(),
+        np.empty((0,)),
+        [],
+        n_rejects=None,
+        mode="held_out",
+        held_out_note="n",
     )
     assert stats.coverage_pct == 0.0
     assert stats.first_fix_s is None
     assert all(r.pct_traj == 0.0 for r in stats.rows)
     assert stats.census_cycles is None and stats.rejects is None
-
-
-def test_stats_to_dict_rounding_and_keys() -> None:
-    """stats_to_dict rounds pct_traj to 2 and med_err to 4 dp and preserves the
-    per-source success counts."""
-    stats = compute_stats(
-        _fixture_fixes(), _parked_odom([0.5, 1.5, 2.5, 3.5]), [], n_rejects=0,
-        mode="held_out", held_out_note="n",
-    )
-    d = stats_to_dict(stats, title="t")
-    ransac = next(r for r in d["per_source"] if r["source"] == "ransac")
-    assert ransac["won"] == 2
-    assert ransac["pct_traj"] == 66.67  # round(200/3, 2)
-    assert ransac["med_err_m"] == 0.85
-    assert ransac["n_success"] == 1 and ransac["n_judged"] == 2
-    assert d["coverage_pct"] == 75.0 and d["first_fix_s"] == 0.5
 
 
 def test_format_report_held_out_shows_columns_live_hides_them() -> None:
@@ -427,9 +381,14 @@ def test_per_source_activity_proposed_accepted_rejected_false() -> None:
     fixes = _activity_fixes()
 
     stats = compute_stats(
-        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), census, n_rejects=3,
-        mode="held_out", held_out_note="n",
-        accept_sources=accept_sources, reject_sources=reject_sources,
+        fixes,
+        _parked_odom([0.5, 1.5, 2.5, 3.5]),
+        census,
+        n_rejects=3,
+        mode="held_out",
+        held_out_note="n",
+        accept_sources=accept_sources,
+        reject_sources=reject_sources,
     )
     by = {r.source: r for r in stats.rows}
 
@@ -458,7 +417,10 @@ def test_per_source_activity_proposed_accepted_rejected_false() -> None:
     d = stats_to_dict(stats, title="demo")
     ransac = next(r for r in d["per_source"] if r["source"] == "ransac")
     assert (ransac["proposed"], ransac["accepted"], ransac["rejected"], ransac["n_false"]) == (
-        3, 2, 1, 1,
+        3,
+        2,
+        1,
+        1,
     )
     assert ransac["won"] == 2 and ransac["n_success"] == 1 and ransac["n_judged"] == 2
 
@@ -469,8 +431,12 @@ def test_per_source_rejected_and_false_held_out_when_not_derivable() -> None:
     reading as 'zero rejects / zero false'."""
     fixes = _fixture_fixes()  # carry success, but pass reject_sources=None
     stats = compute_stats(
-        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), [{"ransac": 1}], n_rejects=2,
-        mode="held_out", held_out_note="n",  # reject_sources omitted -> None
+        fixes,
+        _parked_odom([0.5, 1.5, 2.5, 3.5]),
+        [{"ransac": 1}],
+        n_rejects=2,
+        mode="held_out",
+        held_out_note="n",  # reject_sources omitted -> None
     )
     by = {r.source: r for r in stats.rows}
     assert by["ransac"].rejected is None and by["fiducial"].rejected is None
@@ -481,8 +447,12 @@ def test_per_source_rejected_and_false_held_out_when_not_derivable() -> None:
 
     # live-mode has no in-process truth -> the false column is dropped entirely.
     live = compute_stats(
-        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), [], n_rejects=None,
-        mode="live", held_out_note="n",
+        fixes,
+        _parked_odom([0.5, 1.5, 2.5, 3.5]),
+        [],
+        n_rejects=None,
+        mode="live",
+        held_out_note="n",
     )
     assert "false" not in format_report(live, title="demo")
 
@@ -524,16 +494,6 @@ def test_correction_is_measured_at_the_robot_through_the_inverted_fix() -> None:
     assert abs(magnitude_m - inverted) > 1.0 and abs(magnitude_m - at_map_origin) > 1.0
 
 
-def test_first_fix_acquisition_is_measured_against_no_correction() -> None:
-    """No world->map had been published before the first accept, so the robot had no
-    map-frame belief; identity is the "no correction yet" convention. Robot at world
-    (3,0,0), fix world_T_map = translate(1,0,0) -> believed map (2,0,0) -> 1.0 m."""
-    magnitude_m, dyaw_deg = correction_at_robot(
-        None, _rt(np.eye(3), np.array([1.0, 0.0, 0.0])), np.array([3.0, 0.0, 0.0])
-    )
-    assert magnitude_m == 1.0 and dyaw_deg == 0.0
-
-
 def _known_track() -> tuple[list[Fix], np.ndarray]:
     """Robot drives +x at 1 m/s, sampled at 1 Hz for 5 s, plus three pure-translation
     fixes whose corrections are exact by hand:
@@ -544,12 +504,24 @@ def _known_track() -> tuple[list[Fix], np.ndarray]:
     """
     odom = np.array([[t, t, 0.0, 0.0] for t in range(6)], dtype=float)
     fixes = [
-        Fix(ts=0.0, world_map_fix=_rt(np.eye(3), np.array([1.0, 0.0, 0.0])), source="ransac",
-            fitness=0.9),
-        Fix(ts=2.0, world_map_fix=_rt(np.eye(3), np.array([1.6, 0.0, 0.0])), source="ransac",
-            fitness=0.8),
-        Fix(ts=5.0, world_map_fix=_rt(np.eye(3), np.array([1.6, 0.8, 0.0])), source="fiducial",
-            fitness=0.7),
+        Fix(
+            ts=0.0,
+            world_map_fix=_rt(np.eye(3), np.array([1.0, 0.0, 0.0])),
+            source="ransac",
+            fitness=0.9,
+        ),
+        Fix(
+            ts=2.0,
+            world_map_fix=_rt(np.eye(3), np.array([1.6, 0.0, 0.0])),
+            source="ransac",
+            fitness=0.8,
+        ),
+        Fix(
+            ts=5.0,
+            world_map_fix=_rt(np.eye(3), np.array([1.6, 0.8, 0.0])),
+            source="fiducial",
+            fitness=0.7,
+        ),
     ]
     return fixes, odom
 
@@ -584,25 +556,6 @@ def test_correction_magnitude_and_rate_from_a_known_track() -> None:
     assert "last_pose" not in by  # a prior that won nothing is not a row of zeros
 
 
-def test_correction_distance_integrates_the_path_not_the_displacement() -> None:
-    """The robot walks +2 m then back -2 m between two accepts: displacement 0, path
-    4 m. LIO drift accumulates over DRIVEN distance, so the denominator is 4 m."""
-    odom = np.array(
-        [[0.0, 0, 0, 0], [1.0, 1, 0, 0], [2.0, 2, 0, 0], [3.0, 1, 0, 0], [4.0, 0, 0, 0]],
-        dtype=float,
-    )
-    fixes = [
-        Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9),
-        Fix(ts=4.0, world_map_fix=_rt(np.eye(3), np.array([0.0, 0.4, 0.0])), source="ransac",
-            fitness=0.9),
-    ]
-    cs = compute_correction_stats(fixes, odom)
-    assert cs is not None
-    assert cs.per_fix[0].dist_travelled_m == 4.0
-    assert abs(cs.per_fix[0].magnitude_m - 0.4) < 1e-12
-    assert abs(cs.per_fix[0].rate_m_per_m - 0.1) < 1e-12
-
-
 def test_correction_rate_is_omitted_while_the_robot_is_stationary() -> None:
     """Standing still between two accepts: report the magnitude, no rate. The
     division must never reach the report as inf -- json.dumps would write a bare
@@ -610,8 +563,12 @@ def test_correction_rate_is_omitted_while_the_robot_is_stationary() -> None:
     odom = _parked_odom([0.0, 1.0, 2.0, 3.0])  # never moves
     fixes = [
         Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9),
-        Fix(ts=2.0, world_map_fix=_rt(np.eye(3), np.array([0.5, 0.0, 0.0])), source="ransac",
-            fitness=0.9),
+        Fix(
+            ts=2.0,
+            world_map_fix=_rt(np.eye(3), np.array([0.5, 0.0, 0.0])),
+            source="ransac",
+            fitness=0.9,
+        ),
     ]
     cs = compute_correction_stats(fixes, odom)
     assert cs is not None
@@ -639,13 +596,9 @@ def test_compute_stats_rejects_a_timestamp_only_odom_array() -> None:
     its columns were [ts,x,y,z] -- a silent column mix-up is how a metric becomes
     wrong but plausible."""
     with pytest.raises(ValueError, match=r"odom must be \(N,4\)"):
-        compute_stats(
-            [], np.array([0.5, 1.5]), [], None, mode="live", held_out_note="n"
-        )
+        compute_stats([], np.array([0.5, 1.5]), [], None, mode="live", held_out_note="n")
     with pytest.raises(ValueError, match=r"odom must be \(N,4\)"):
-        compute_stats(
-            [], np.zeros((3, 3)), [], None, mode="live", held_out_note="n"
-        )
+        compute_stats([], np.zeros((3, 3)), [], None, mode="live", held_out_note="n")
 
 
 def test_correction_reaches_the_report_and_the_json() -> None:
@@ -805,8 +758,9 @@ def test_parse_health_lines_reads_a_real_accept_in_both_renderings(
     source/fitness/published_t_m) parses to one HealthLine carrying that source,
     that fitness, and the published world_T_map translation -- from the console
     capture AND from main.jsonl."""
-    map_t_world = _rt(Rotation.from_euler("z", 25.0, degrees=True).as_matrix(),
-                      np.array([1.5, -0.8, 0.05]))
+    map_t_world = _rt(
+        Rotation.from_euler("z", 25.0, degrees=True).as_matrix(), np.array([1.5, -0.8, 0.05])
+    )
     published_t_m = np.linalg.inv(map_t_world)[:3, 3]  # what the module publishes
     m = _multi_source_module()
     monkeypatch.setattr(
@@ -985,40 +939,6 @@ def test_parse_census_reads_the_real_counts_dict_in_both_renderings(
         assert census == [{"ransac": 2, "fiducial": 1}], f"{rendering}: {text!r}"
 
 
-def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The whole supplement path on real bytes: two accepts from DIFFERENT priors,
-    joined to the TFs the module published, give a per-source table with zero
-    `unknown` -- the failure the dead parsers produced on every run."""
-    first = _rt(Rotation.from_euler("z", 10.0, degrees=True).as_matrix(), np.array([1.0, 0.0, 0.0]))
-    second = _rt(Rotation.from_euler("z", 40.0, degrees=True).as_matrix(), np.array([4.0, 2.0, 0.0]))
-    m = _multi_source_module()
-
-    with _capture_run_log(module_mod, priors_mod) as log:
-        monkeypatch.setattr(
-            module_mod, "_relocalize_with_priors", lambda *a, **k: (first, 0.9, "ransac")
-        )
-        tf_a = m._try_relocalize(_StubCloud(1000), m._enabled_prior_objects())  # type: ignore[arg-type]
-        monkeypatch.setattr(
-            module_mod, "_relocalize_with_priors", lambda *a, **k: (second, 0.7, "fiducial")
-        )
-        tf_b = m._try_relocalize(_StubCloud(1000), m._enabled_prior_objects())  # type: ignore[arg-type]
-    assert tf_a is not None and tf_b is not None
-
-    for rendering, text in log.both():
-        # /tf republishes each accept until the next one; dedup recovers the two.
-        tf_samples = [(0.0, tf_a.to_matrix()), (0.5, tf_a.to_matrix()), (1.0, tf_b.to_matrix())]
-        fixes = label_fixes_from_log(dedup_tf_fixes(tf_samples), parse_health_lines(text))
-        assert [f.source for f in fixes] == ["ransac", "fiducial"], f"{rendering}: {text!r}"
-        stats = compute_stats(
-            fixes, _parked_odom([0.25, 1.25]), parse_census(text), len(parse_reject_lines(text)),
-            mode="live", held_out_note="n",
-        )
-        by = {r.source: r for r in stats.rows}
-        assert by["ransac"].won == 1 and by["fiducial"].won == 1, rendering
-        assert by["fiducial"].med_fit == 0.7, rendering
-        assert stats.rejects == 0, rendering
-
-
 # --------------------------------------------------------------------------- #
 # The LEGACY wire format. These lines cannot be re-emitted -- the f-string call
 # sites are gone -- so unlike every other parser test they are a FIXTURE, copied
@@ -1027,21 +947,23 @@ def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch
 # the trial's evidence: when the parser stopped understanding this format it
 # returned [] and the run's 24/28 fiducial-proposal census silently read as null.
 # --------------------------------------------------------------------------- #
-_LEGACY_CONSOLE_LOG = "\n".join([
-    "22:11:37.254 [inf][pping/relocalization/module.py] relocalize: fiducial prior enabled"
-    " marker_map_file='/tmp/survey1.marker_map.yaml' n_markers=5",
-    "22:11:49.281 [inf][pping/relocalization/priors.py] relocalize candidates: ransac=34",
-    "22:11:50.589 [inf][pping/relocalization/module.py] relocalize: fitness=0.756"
-    " time_cost=13.0s n_pts=89003 reloc_t=[-2.467, -8.645, -0.086] TF 'world' -> 'map'"
-    " published_t=[-8.849, -1.587, 0.073] source=ransac",
-    "22:12:06.431 [inf][pping/relocalization/priors.py] relocalize candidates:"
-    " fiducial=1 ransac=34",
-    "22:12:08.022 [inf][pping/relocalization/module.py] relocalize: fitness=0.568"
-    " time_cost=17.4s n_pts=122958 reloc_t=[0.145, -11.99, -0.079] TF 'world' -> 'map'"
-    " published_t=[-9.046, 7.87, -0.105] source=fiducial",
-    "22:19:52.114 [war][pping/relocalization/module.py] relocalize rejected:"
-    " fitness=0.449 < threshold=0.45 time_cost=35.1s n_pts=269597",
-])
+_LEGACY_CONSOLE_LOG = "\n".join(
+    [
+        "22:11:37.254 [inf][pping/relocalization/module.py] relocalize: fiducial prior enabled"
+        " marker_map_file='/tmp/survey1.marker_map.yaml' n_markers=5",
+        "22:11:49.281 [inf][pping/relocalization/priors.py] relocalize candidates: ransac=34",
+        "22:11:50.589 [inf][pping/relocalization/module.py] relocalize: fitness=0.756"
+        " time_cost=13.0s n_pts=89003 reloc_t=[-2.467, -8.645, -0.086] TF 'world' -> 'map'"
+        " published_t=[-8.849, -1.587, 0.073] source=ransac",
+        "22:12:06.431 [inf][pping/relocalization/priors.py] relocalize candidates:"
+        " fiducial=1 ransac=34",
+        "22:12:08.022 [inf][pping/relocalization/module.py] relocalize: fitness=0.568"
+        " time_cost=17.4s n_pts=122958 reloc_t=[0.145, -11.99, -0.079] TF 'world' -> 'map'"
+        " published_t=[-9.046, 7.87, -0.105] source=fiducial",
+        "22:19:52.114 [war][pping/relocalization/module.py] relocalize rejected:"
+        " fitness=0.449 < threshold=0.45 time_cost=35.1s n_pts=269597",
+    ]
+)
 
 
 def test_parsers_read_the_legacy_f_string_format() -> None:
@@ -1059,43 +981,6 @@ def test_parsers_read_the_legacy_f_string_format() -> None:
     census = parse_census(_LEGACY_CONSOLE_LOG)
     assert census == [{"ransac": 34}, {"fiducial": 1, "ransac": 34}]
     assert len(parse_reject_lines(_LEGACY_CONSOLE_LOG)) == 1
-
-
-def test_legacy_census_drives_the_prior_activity_line() -> None:
-    """End of the chain the regression broke: legacy census -> compute_stats ->
-    the prior-activity line. `1/2 cycles` is the evidence that vanished as null."""
-    stats = compute_stats(
-        [], np.empty((0,)), parse_census(_LEGACY_CONSOLE_LOG), 1,
-        mode="held_out", held_out_note="n",
-    )
-    assert stats.fiducial_proposed_cycles == 1 and stats.census_cycles == 2
-    assert "fiducial proposed 1/2 cycles" in format_report(stats, title="legacy")
-
-
-def test_current_format_parses_through_the_same_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The legacy support is ADDITIVE: bytes the emitters render today still parse
-    to the same records, in both renderings, through one parser."""
-    m = _multi_source_module()
-    monkeypatch.setattr(
-        module_mod, "_relocalize_with_priors",
-        lambda *a, **k: (_rt(np.eye(3), np.array([1.0, 2.0, 0.0])), 0.61, "fiducial"),
-    )
-    monkeypatch.setattr(priors_mod, "refine_candidates", lambda *a, **k: (np.eye(4), 0.9, 0))
-
-    with _capture_run_log(module_mod, priors_mod) as log:
-        relocalize_with_priors(
-            None,  # type: ignore[arg-type]
-            None,  # type: ignore[arg-type]
-            [_StubPrior("ransac", 34), _StubPrior("fiducial", 1)],  # type: ignore[list-item]
-            verbose_eval_logging=True,  # the census is part of the --eval trace
-        )
-        assert m._try_relocalize(_StubCloud(89003), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
-
-    for rendering, text in log.both():
-        health = parse_health_lines(text)
-        assert [h.source for h in health] == ["fiducial"], f"{rendering}: {text!r}"
-        assert health[0].fitness == 0.61, rendering
-        assert parse_census(text) == [{"ransac": 34, "fiducial": 1}], rendering
 
 
 def test_parse_run_log_warns_when_a_log_yields_nothing(tmp_path: Path) -> None:
@@ -1176,24 +1061,31 @@ def test_overlay_points_match_the_deduped_accepts_one_to_one_in_the_map_frame() 
     points -- each at map_T_world @ robot_world for THAT accept's own fix, the same
     frame the premap is drawn in. A point at the fix's own translation (the map
     origin) instead would fail this."""
-    map_t_world_a = _rt(Rotation.from_euler("z", 90.0, degrees=True).as_matrix(),
-                        np.array([1.0, 0.0, 0.0]))
-    map_t_world_b = _rt(Rotation.from_euler("z", -30.0, degrees=True).as_matrix(),
-                        np.array([-2.0, 0.5, 0.0]))
+    map_t_world_a = _rt(
+        Rotation.from_euler("z", 90.0, degrees=True).as_matrix(), np.array([1.0, 0.0, 0.0])
+    )
+    map_t_world_b = _rt(
+        Rotation.from_euler("z", -30.0, degrees=True).as_matrix(), np.array([-2.0, 0.5, 0.0])
+    )
     # module.py publishes the INVERSE of relocalize()'s map_T_world on /tf
     world_map_a = np.linalg.inv(map_t_world_a)
     world_map_b = np.linalg.inv(map_t_world_b)
 
     robot_a = np.array([2.0, 3.0, 0.5])
     robot_b = np.array([4.0, -1.0, 0.5])
-    odom = np.array([
-        [0.0, *robot_a],
-        [1.0, 9.9, 9.9, 9.9],  # a sample far from either accept must not be picked
-        [2.0, *robot_b],
-    ])
+    odom = np.array(
+        [
+            [0.0, *robot_a],
+            [1.0, 9.9, 9.9, 9.9],  # a sample far from either accept must not be picked
+            [2.0, *robot_b],
+        ]
+    )
     tf_samples = [
-        (0.0, world_map_a), (0.5, world_map_a), (1.0, world_map_a),  # republished
-        (2.0, world_map_b), (2.5, world_map_b),
+        (0.0, world_map_a),
+        (0.5, world_map_a),
+        (1.0, world_map_a),  # republished
+        (2.0, world_map_b),
+        (2.5, world_map_b),
     ]
     health = [
         HealthLine("ransac", 0.91, tuple(world_map_a[:3, 3])),

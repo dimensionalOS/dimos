@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import math
 
+import cv2
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.perception.fiducial.apriltag_aggregation import (
@@ -35,12 +37,15 @@ from dimos.perception.fiducial.apriltag_aggregation import (
     cluster_by_time,
     cluster_medoid,
     gate_reason,
+    matrix_from_pose7,
+    pose7_from_matrix,
     robust_cluster_pose,
     tag_covariance,
     tag_noise_scale,
     tag_side_px,
     view_quality,
 )
+from dimos.perception.fiducial.marker_pose import ambiguity_gated_pose
 
 
 def _pose(translation: tuple[float, float, float], rot: Rotation) -> tuple[float, ...]:
@@ -57,25 +62,29 @@ def _obs(
     return TagObservation(ts=ts, marker_id=marker_id, pose=pose, **quality)  # type: ignore[arg-type]
 
 
-def test_view_quality_head_on_is_zero_angle() -> None:
-    """A tag 0.8 m straight ahead, facing the camera (normal along -Z toward the
-    camera, i.e. the tag's +Z away from it) reads distance 0.8 m, angle ~0 deg."""
-    pose = _pose((0.0, 0.0, 0.8), Rotation.identity())
+@pytest.mark.parametrize(
+    "pose, expected_distance, expected_angle, tol",
+    [
+        # Head-on tag facing the camera: reads its true range and a ~0.003 deg floor.
+        pytest.param(_pose((0.0, 0.0, 0.8), Rotation.identity()), 0.8, 0.0, 0.01, id="head_on"),
+        # Rotating the tag 40 deg about Y reads that tilt back exactly.
+        pytest.param(
+            _pose((0.0, 0.0, 1.0), Rotation.from_euler("y", 40.0, degrees=True)),
+            1.0,
+            40.0,
+            1e-4,
+            id="oblique",
+        ),
+    ],
+)
+def test_view_quality_reads_distance_and_tilt(
+    pose: tuple[float, ...], expected_distance: float, expected_angle: float, tol: float
+) -> None:
+    """view_quality reads back the tag's true distance and the angle of its normal off
+    the line of sight -- ~0 deg head-on, growing to the exact tilt as the tag rotates."""
     distance, view_angle = view_quality(pose)
-    assert abs(distance - 0.8) < 1e-9
-    # The line-of-sight uses distance + 1e-9, a ~0.003 deg head-on floor.
-    assert view_angle < 0.01
-
-
-def test_view_quality_oblique_grows() -> None:
-    """Rotating the tag about Y off head-on increases the view angle."""
-    straight = view_quality(_pose((0.0, 0.0, 1.0), Rotation.identity()))[1]
-    tilted = view_quality(
-        _pose((0.0, 0.0, 1.0), Rotation.from_euler("y", 40.0, degrees=True))
-    )[1]
-    assert straight < 0.01
-    assert tilted > straight
-    assert abs(tilted - 40.0) < 1e-4
+    assert abs(distance - expected_distance) < 1e-9
+    assert abs(view_angle - expected_angle) < tol
 
 
 def test_tag_side_px_of_known_square() -> None:
@@ -102,28 +111,38 @@ def test_cluster_by_time_splits_on_gap_and_by_marker() -> None:
         assert len({o.marker_id for o in cluster}) == 1
 
 
-def test_cluster_medoid_picks_central_over_outlier() -> None:
-    """The medoid is the most central pose; a lone 5 m outlier is never it."""
-    inliers = [_pose((1.0 + 0.01 * i, 2.0, 3.0), Rotation.identity()) for i in range(5)]
-    outlier = _pose((6.0, 2.0, 3.0), Rotation.identity())
-    cluster = [_obs(float(i), 1, p) for i, p in enumerate([*inliers, outlier])]
-    medoid = cluster_medoid(cluster, rotation_weight_m_per_rad=0.5)
-    assert medoid.pose[0] < 1.1  # a central inlier, not the 6 m outlier
-
-
-def test_robust_cluster_pose_downweights_translation_outlier() -> None:
-    """Huber IRLS pulls the aggregated translation to the inlier consensus (~1.0 m),
-    NOT the naive mean (~1.7 m) a single 5 m outlier would drag it to."""
-    rng = np.random.default_rng(3)
-    inliers = [
-        _pose((1.0 + rng.normal(0, 0.01), 2.0, 3.0), Rotation.identity()) for _ in range(6)
-    ]
-    outlier = _pose((6.0, 2.0, 3.0), Rotation.identity())
-    cluster = [_obs(float(i), 1, p) for i, p in enumerate([*inliers, outlier])]
+@pytest.mark.parametrize(
+    "translations, has_outlier",
+    [
+        pytest.param(
+            [
+                (1.0, 2.0, 3.0),
+                (1.02, 2.0, 3.0),
+                (0.98, 2.0, 3.0),
+                (1.0, 2.03, 3.0),
+                (1.0, 1.97, 3.0),
+            ],
+            False,
+            id="all_inliers_exact_mean",
+        ),
+        pytest.param([(1.0, 2.0, 3.0)] * 6 + [(6.0, 2.0, 3.0)], True, id="outlier_downweighted"),
+    ],
+)
+def test_robust_cluster_pose_translation_holds_the_inlier_consensus(
+    translations: list[tuple[float, float, float]], has_outlier: bool
+) -> None:
+    """Huber IRLS on translation: with every sample inside huber_delta_m no sighting is
+    discounted, so the aggregate is the exact arithmetic mean; add a lone 5 m outlier and
+    IRLS drives its weight down so the aggregate holds the ~1.0 m inlier consensus rather
+    than the outlier-dragged naive mean."""
+    cluster = [_obs(float(i), 1, _pose(t, Rotation.identity())) for i, t in enumerate(translations)]
     aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    naive_mean_x = float(np.mean([p[0] for p in [*inliers, outlier]]))
-    assert naive_mean_x > 1.5  # the outlier drags the plain mean well off
-    assert abs(aggregated[0] - 1.0) < 0.05  # Huber holds the aggregated estimate at consensus
+    if has_outlier:
+        assert float(np.mean([t[0] for t in translations])) > 1.5  # outlier drags the plain mean
+        assert abs(aggregated[0] - 1.0) < 0.05  # Huber holds the aggregate at consensus
+    else:
+        mean_xyz = np.mean(np.array(translations), axis=0)
+        assert np.max(np.abs(np.array(aggregated[:3]) - mean_xyz)) < 1e-9
 
 
 def test_robust_cluster_pose_markley_quaternion_mean() -> None:
@@ -180,66 +199,29 @@ def test_cluster_medoid_seed_uses_rotation_distance() -> None:
     assert tie.ts == 0.0  # rotation ignored -> equal-translation tie takes the first
 
 
-def test_robust_cluster_pose_translation_is_exact_mean_without_outlier() -> None:
-    """With every translation inside huber_delta_m, no sample is down-weighted, so
-    the Huber IRLS translation collapses to the plain arithmetic mean of the
-    inliers -- IRLS must not spuriously discount a clean sighting."""
-    translations = [
-        (1.0, 2.0, 3.0),
-        (1.02, 2.0, 3.0),
-        (0.98, 2.0, 3.0),
-        (1.0, 2.03, 3.0),
-        (1.0, 1.97, 3.0),
-    ]
-    cluster = [
-        _obs(float(i), 1, _pose(t, Rotation.identity())) for i, t in enumerate(translations)
-    ]
-    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    mean_xyz = np.mean(np.array(translations), axis=0)
-    assert np.max(np.abs(np.array(aggregated[:3]) - mean_xyz)) < 1e-9
-
-
-def test_robust_cluster_pose_recovers_identical_rotation() -> None:
-    """The Markley eigen-mean of N identical unit quaternions is that quaternion:
-    a cluster all at one non-trivial 3D rotation aggregates back to it exactly (down to
-    quaternion double-cover, which the error metric absorbs)."""
-    truth = Rotation.from_euler("xyz", (15.0, -20.0, 30.0), degrees=True)
-    cluster = [_obs(float(i), 1, _pose((0.0, 0.0, 1.0), truth)) for i in range(4)]
-    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    err_deg = (Rotation.from_quat(aggregated[3:7]) * truth.inv()).magnitude() * 180.0 / math.pi
-    assert err_deg < 1e-6
-
-
-def test_robust_cluster_pose_clean_majority_rejects_mirror_flips() -> None:
-    """Known-truth mirror ambiguity: 5 correct sightings + 2 genuinely flipped
-    ones (180 deg about X, the kind of PnP mirror solution the ambiguity gate can
-    miss). The flips' ~pi-rad rotation residual sits far past the Huber knee, so
-    IRLS drives their weight down and the aggregated rotation lands on the clean
-    majority -- distinct from the q==-q sign flip (same rotation) tested above."""
-    flip = Rotation.from_rotvec((math.pi, 0.0, 0.0))  # 180 deg mirror, a different rotation
-    poses = [_pose((0.0, 0.0, 1.0), Rotation.identity()) for _ in range(5)]
-    poses += [_pose((0.0, 0.0, 1.0), flip) for _ in range(2)]
-    cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
-    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    err_deg = Rotation.from_quat(aggregated[3:7]).magnitude() * 180.0 / math.pi
-    assert err_deg < 0.5  # aggregated sits on the clean identity majority, not the 180 deg flip
-
-
-def test_robust_cluster_pose_follows_flip_majority() -> None:
-    """The converse bound, pinned as known-truth so the limit is explicit: the
-    aggregation is a robust majority vote, not an oracle. When the flips DOMINATE (5
-    flipped, 2 clean), the medoid seeds inside the flip cluster and IRLS converges
-    to the flipped rotation -- the estimator cannot recover truth once bad glimpses
-    outnumber good ones."""
+@pytest.mark.parametrize(
+    "n_clean, n_flip, lands_on",
+    [
+        pytest.param(5, 2, "clean", id="clean_majority_rejects_flips"),
+        pytest.param(2, 5, "flip", id="follows_flip_majority"),
+    ],
+)
+def test_robust_cluster_pose_is_a_majority_vote_over_mirror_flips(
+    n_clean: int, n_flip: int, lands_on: str
+) -> None:
+    """Known-truth mirror ambiguity: robust aggregation is a majority vote, not an oracle.
+    Flips are 180 deg about X (the PnP mirror solution the gate can miss), a genuinely
+    different rotation from the q==-q sign flip tested above. A clean majority (5 vs 2)
+    out-votes the flips and the aggregate lands on identity; once the flips DOMINATE
+    (5 vs 2) IRLS seeds and converges inside the flipped cluster instead."""
     flip = Rotation.from_rotvec((math.pi, 0.0, 0.0))
-    poses = [_pose((0.0, 0.0, 1.0), flip) for _ in range(5)]
-    poses += [_pose((0.0, 0.0, 1.0), Rotation.identity()) for _ in range(2)]
+    poses = [_pose((0.0, 0.0, 1.0), Rotation.identity()) for _ in range(n_clean)]
+    poses += [_pose((0.0, 0.0, 1.0), flip) for _ in range(n_flip)]
     cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
     aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    err_to_flip_deg = (
-        Rotation.from_quat(aggregated[3:7]) * flip.inv()
-    ).magnitude() * 180.0 / math.pi
-    assert err_to_flip_deg < 0.5  # follows the flipped majority
+    reference = Rotation.identity() if lands_on == "clean" else flip
+    err_deg = (Rotation.from_quat(aggregated[3:7]) * reference.inv()).magnitude() * 180.0 / math.pi
+    assert err_deg < 0.5
 
 
 def test_gate_reason_each_gate_fires_and_none_skips() -> None:
@@ -322,56 +304,226 @@ def test_tag_aggregator_observe_returns_gate_reason_and_drops_glimpse() -> None:
     assert agg.robust_estimate(8) is None  # nothing buffered from the rejected glimpse
 
 
-def test_tag_noise_scale_is_one_at_the_reference_glimpse() -> None:
-    """The reference glimpse (REF_DISTANCE_M, REF_REPROJ_PX) scales by exactly 1.0,
-    so the covariance an aggregated pose ships there is the documented base block and
-    nothing else. A None input reads as the reference, i.e. that term drops out --
-    that is what keeps a pixel-less estimate neutral instead of silently confident."""
-    assert tag_noise_scale(REF_DISTANCE_M, REF_REPROJ_PX) == 1.0
-    assert tag_noise_scale(None, None) == 1.0
-    assert tag_noise_scale(None, REF_REPROJ_PX) == 1.0
-    assert tag_noise_scale(REF_DISTANCE_M, None) == 1.0
-
-
-def test_tag_noise_scale_grows_quadratically_and_clamps_at_both_ends() -> None:
+@pytest.mark.parametrize(
+    "distance_m, reproj_px, expected",
+    [
+        pytest.param(REF_DISTANCE_M, REF_REPROJ_PX, 1.0, id="reference_is_one"),
+        pytest.param(None, None, 1.0, id="none_reads_as_reference"),
+        pytest.param(2.0 * REF_DISTANCE_M, 1.5 * REF_REPROJ_PX, 9.0, id="quadratic_2x_and_1.5x"),
+        pytest.param(0.0, 0.0, 0.25, id="inner_clamps_then_floor"),
+        pytest.param(0.2, 0.5, 0.25, id="exactly_at_clamps"),
+        pytest.param(0.1, 0.4, 0.25, id="below_clamps_never_lower"),
+    ],
+)
+def test_tag_noise_scale(
+    distance_m: float | None, reproj_px: float | None, expected: float
+) -> None:
     """Planar-PnP error grows ~quadratically with range and reproj is a direct misfit
-    proxy, so the two terms multiply as squares: 2x range and 1.5x reproj is
-    2^2 * 1.5^2 = 9. The inner clamps (0.2 m, 0.5 px) stop a suspiciously-perfect
-    read claiming near-zero variance, and the 0.25 floor caps how confident any tag
-    may get -- a glimpse at 0 m with 0 px misfit is still only 4x the reference."""
-    assert tag_noise_scale(2.0 * REF_DISTANCE_M, 1.5 * REF_REPROJ_PX) == 9.0
-    assert tag_noise_scale(0.0, 0.0) == 0.25  # both inner clamps, then the floor
-    assert tag_noise_scale(0.2, 0.5) == 0.25  # exactly at the clamps: same value
-    assert tag_noise_scale(0.1, 0.4) == 0.25  # below them: clamped, never lower
+    proxy, so the terms multiply as squares (2x range * 1.5x reproj = 2^2 * 1.5^2 = 9).
+    The reference glimpse scales by 1.0 and a None input reads as the reference (that term
+    drops out, keeping a pixel-less estimate neutral); the inner clamps (0.2 m, 0.5 px) and
+    the 0.25 floor bound how confident any tag may get."""
+    assert tag_noise_scale(distance_m, reproj_px) == expected
 
 
-def test_tag_covariance_is_ros_translation_first_and_scales_linearly() -> None:
-    """ROS PoseWithCovariance is (x, y, z, rot_x, rot_y, rot_z) -- TRANSLATION FIRST,
-    the opposite of the GTSAM Pose3 tangent the diagonals are ported from. With an
-    identity rotation the blocks are readable directly: index 2 must carry the loose
-    0.25 m^2 range term (planar PnP's weak axis, along the tag normal) and index 5
-    the tight 0.0025 rad^2 in-plane spin. Swapping the blocks would put 0.04 rad^2 in
-    the metres slot. Scale multiplies the whole matrix, nothing else."""
-    identity_pose = _pose((1.0, 2.0, 3.0), Rotation.identity())
+@pytest.mark.parametrize(
+    "pose, expected_diag",
+    [
+        # Identity: blocks readable directly -- index 2 is the loose range term, index 5 the spin.
+        pytest.param(
+            _pose((1.0, 2.0, 3.0), Rotation.identity()),
+            [0.0025, 0.0025, 0.25, 0.04, 0.04, 0.0025],
+            id="identity_ros_order",
+        ),
+        # 90 deg about y swings the tag normal onto world x: the range term moves to index 0.
+        pytest.param(
+            _pose((0.0, 0.0, 0.0), Rotation.from_euler("y", 90.0, degrees=True)),
+            [0.25, 0.0025, 0.0025, 0.0025, 0.04, 0.04],
+            id="rotated_weak_axis_follows_normal",
+        ),
+    ],
+)
+def test_tag_covariance_is_ros_translation_first_and_scales(
+    pose: tuple[float, ...], expected_diag: list[float]
+) -> None:
+    """ROS PoseWithCovariance is (x, y, z, rot_x, rot_y, rot_z) -- TRANSLATION FIRST, the
+    opposite of the GTSAM Pose3 tangent the diagonals are ported from: the loose 0.25 m^2
+    range term (planar PnP's weak axis, along the tag normal) sits in a translation slot and
+    the tight 0.0025 rad^2 spin in a rotation slot. The blocks are built in the tag frame and
+    rotated by the pose's R, so a 90 deg-about-y pose swings the range term onto world x.
+    Scale multiplies the whole matrix (off-diagonals stay zero here), nothing else."""
+    covariance = tag_covariance(pose, 1.0)
+    np.testing.assert_allclose(covariance, np.diag(expected_diag), atol=1e-15)
+    np.testing.assert_allclose(tag_covariance(pose, 9.0), covariance * 9.0, atol=1e-15)
 
-    base = tag_covariance(identity_pose, 1.0)
 
-    np.testing.assert_allclose(
-        base, np.diag([0.0025, 0.0025, 0.25, 0.04, 0.04, 0.0025]), atol=1e-15
+# ---------------------------------------------------------------------------
+# End-to-end integration: the ambiguity gate + robust aggregation on the FULL
+# published pixel path, on SIMULATED constructed-truth data (seeded rng, no
+# hardware, no recording). A real recording has NO ground truth for a tag's pose
+# -- that unknown IS the relocalization problem -- so correctness is proven on a
+# scene we built: ONE marker at a KNOWN world_T_marker and a KNOWN map_T_marker,
+# viewed by a pinhole camera from KNOWN world_T_optical poses. Each glimpse's
+# corner pixels come from cv2.projectPoints of the true (or mirror-flipped)
+# marker plus deterministic sub-pixel noise, driving corners -> ambiguity_gated_pose
+# -> TagAggregator -> the map_T_world = map_T_marker @ inv(world_T_marker) the judge
+# would receive. The flip is a 180 deg about the tag x-axis right-multiplied in the
+# MARKER frame (the planar-PnP two-fold ambiguity): it leaves the marker POSITION
+# unchanged and inverts only ORIENTATION.
+# ---------------------------------------------------------------------------
+
+_INT_MARKER_LENGTH_M = 0.15
+_INT_MARKER_ID = 6
+# Pinhole intrinsics (SIMULATED camera): fx=fy=600 px, 640x480 centre, no distortion.
+_INT_K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]])
+_INT_D = np.zeros((5, 1))
+_INT_SIGMA_PX = 0.3  # per-corner pixel noise: enough to make weak-perspective views ambiguous
+
+# --- KNOWN ground truth (the whole point of a constructed scene) ---
+_WORLD_T_MARKER = np.eye(4)  # the marker's true pose in the world (LIO) frame
+_WORLD_T_MARKER[:3, :3] = Rotation.from_euler("xyz", (5.0, -8.0, 12.0), degrees=True).as_matrix()
+_WORLD_T_MARKER[:3, 3] = (0.4, -0.2, 0.9)
+_MAP_T_MARKER = np.eye(4)  # the surveyed tag pose in the global map frame
+_MAP_T_MARKER[:3, :3] = Rotation.from_euler("xyz", (2.0, 3.0, 90.0), degrees=True).as_matrix()
+_MAP_T_MARKER[:3, 3] = (5.0, 3.0, 1.2)
+_MARKER_FLIP = np.eye(4)  # 180 deg about the tag x-axis == the PnP mirror flip
+_MARKER_FLIP[:3, :3] = Rotation.from_rotvec(math.pi * np.array([1.0, 0.0, 0.0])).as_matrix()
+
+# The candidate map_T_world the judge SHOULD receive, and the one a swallowed flip produces.
+_MAP_T_WORLD_TRUTH = _MAP_T_MARKER @ np.linalg.inv(_WORLD_T_MARKER)
+_MAP_T_WORLD_FLIP = _MAP_T_MARKER @ np.linalg.inv(_WORLD_T_MARKER @ _MARKER_FLIP)
+
+
+def _object_points(marker_length_m: float) -> np.ndarray:
+    """The four planar tag corners in the marker frame (OpenCV ArUco order, Z=0)."""
+    h = marker_length_m / 2.0
+    return np.array([[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]], dtype=np.float32)
+
+
+def _look_at(cam_pos: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
+    """frame_T_optical for a camera at cam_pos looking at target (optical convention:
+    +Z forward toward the target, +X right, +Y down)."""
+    z = target - cam_pos
+    z = z / np.linalg.norm(z)
+    if abs(float(np.dot(z, up))) > 0.98:  # up nearly parallel to view -> pick another
+        up = np.array([1.0, 0.0, 0.0])
+    x = np.cross(up, z)
+    x = x / np.linalg.norm(x)
+    y = np.cross(z, x)
+    frame_t_optical = np.eye(4)
+    frame_t_optical[:3, :3] = np.column_stack([x, y, z])
+    frame_t_optical[:3, 3] = cam_pos
+    return frame_t_optical
+
+
+def _marker_frame_camera(elev_deg: float, azim_deg: float, dist_m: float) -> np.ndarray:
+    """world_T_optical for a camera on a sphere AROUND the marker, placed in the MARKER
+    frame so obliquity is controlled directly: elev_deg is measured off the tag plane
+    toward the tag normal (+Z), so 90 deg is fronto-parallel (weak perspective,
+    mirror-ambiguous) and lower is oblique (strong perspective)."""
+    e, a = math.radians(elev_deg), math.radians(azim_deg)
+    pos_marker = dist_m * np.array(
+        [math.cos(e) * math.cos(a), math.cos(e) * math.sin(a), math.sin(e)]
     )
-    np.testing.assert_allclose(tag_covariance(identity_pose, 9.0), base * 9.0, atol=1e-15)
+    marker_t_optical = _look_at(pos_marker, np.zeros(3), up=np.array([0.0, 1.0, 0.0]))
+    return np.asarray(_WORLD_T_MARKER @ marker_t_optical)
 
 
-def test_tag_covariance_rotates_the_blocks_into_the_pose_frame() -> None:
-    """Both blocks are built in the TAG frame and rotated by the pose's R, so the
-    weak axis follows the tag's normal instead of pointing along world z forever.
-    Rotating 90 deg about y swings the tag normal onto world x: the 0.25 m^2 range
-    term moves to index 0, and the trace (rotation-invariant) is unchanged."""
-    turned = _pose((0.0, 0.0, 0.0), Rotation.from_euler("y", 90.0, degrees=True))
-
-    covariance = tag_covariance(turned, 1.0)
-
-    np.testing.assert_allclose(
-        np.diag(covariance), [0.25, 0.0025, 0.0025, 0.0025, 0.04, 0.04], atol=1e-15
+def _glimpse_corners(
+    world_t_optical: np.ndarray, flipped: bool, rng: np.random.Generator
+) -> np.ndarray:
+    """The tag's corner pixels for one camera pose: project the true (or mirror-flipped)
+    marker, then add deterministic sub-pixel noise."""
+    optical_t_marker = np.linalg.inv(world_t_optical) @ _WORLD_T_MARKER
+    if flipped:
+        optical_t_marker = optical_t_marker @ _MARKER_FLIP
+    rvec = cv2.Rodrigues(optical_t_marker[:3, :3])[0]
+    tvec = optical_t_marker[:3, 3]
+    projected, _ = cv2.projectPoints(
+        _object_points(_INT_MARKER_LENGTH_M), rvec, tvec, _INT_K, _INT_D
     )
-    assert abs(float(np.trace(covariance[:3, :3])) - 0.255) < 1e-15
+    noisy = projected.reshape(4, 2) + rng.normal(0.0, _INT_SIGMA_PX, (4, 2))
+    return noisy.astype(np.float32)
+
+
+def _run_full_path(
+    glimpses: list[tuple[float, float, float, bool]], ambiguity_ratio_min: float, seed: int
+) -> tuple[np.ndarray, int, int]:
+    """Drive the whole published pipeline on the constructed glimpses and return
+    (candidate map_T_world, n_kept, n_rejected). Per glimpse: corners ->
+    ambiguity_gated_pose -> lift into the world with the KNOWN world_T_optical ->
+    TagAggregator.observe; then robust_estimate and compose the candidate exactly as
+    FiducialPrior does. ts steps 0.1 s so every glimpse lands in one 5 s window."""
+    rng = np.random.default_rng(seed)
+    aggregator = TagAggregator(AggregationConfig())
+    ts, n_kept, n_rejected = 0.0, 0, 0
+    for elev_deg, azim_deg, dist_m, flipped in glimpses:
+        world_t_optical = _marker_frame_camera(elev_deg, azim_deg, dist_m)
+        corners_px = _glimpse_corners(world_t_optical, flipped, rng)
+        gated = ambiguity_gated_pose(
+            corners_px,
+            _INT_MARKER_LENGTH_M,
+            _INT_K,
+            _INT_D,
+            distortion_model=None,
+            ambiguity_ratio_min=ambiguity_ratio_min,
+        )
+        ts += 0.1
+        if gated is None:  # gate rejected this glimpse as mirror-ambiguous
+            n_rejected += 1
+            continue
+        optical_t_marker, reproj_px = gated
+        world_t_marker = world_t_optical @ optical_t_marker
+        distance_m, view_angle_deg = view_quality(pose7_from_matrix(optical_t_marker))
+        reason = aggregator.observe(
+            TagObservation(
+                ts=ts,
+                marker_id=_INT_MARKER_ID,
+                pose=pose7_from_matrix(world_t_marker),
+                distance_m=distance_m,
+                view_angle_deg=view_angle_deg,
+                reproj_px=reproj_px,
+                tag_px=tag_side_px(corners_px),
+            )
+        )
+        if reason is None:
+            n_kept += 1
+        else:
+            n_rejected += 1
+    estimate = aggregator.robust_estimate(_INT_MARKER_ID)
+    assert estimate is not None, "aggregation needs >= min_observations kept glimpses"
+    world_t_marker_aggregated = matrix_from_pose7(estimate.pose)
+    map_t_world = _MAP_T_MARKER @ np.linalg.inv(world_t_marker_aggregated)
+    return map_t_world, n_kept, n_rejected
+
+
+def _pose_error(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
+    """(rotation_deg, translation_m) between two 4x4 poses."""
+    rot_deg = (
+        (Rotation.from_matrix(a[:3, :3]) * Rotation.from_matrix(b[:3, :3]).inv()).magnitude()
+        * 180.0
+        / math.pi
+    )
+    trans_m = float(np.linalg.norm(a[:3, 3] - b[:3, 3]))
+    return rot_deg, trans_m
+
+
+def test_gate_plus_aggregation_recovers_known_pose() -> None:
+    """Gate ON + aggregation recover the CONSTRUCTED truth on the full pixel path. A clean
+    MAJORITY of oblique glimpses feeding the true marker pose, plus a MINORITY of
+    fronto-parallel glimpses whose corners are the MIRROR-FLIPPED pose. At ratio 2 the
+    flipped fronto-parallel views are rejected as mirror-ambiguous (and any that slip
+    through are out-voted), so the aggregated candidate map_T_world recovers the truth to a
+    fraction of a degree and a few mm -- and is ~180 deg from the flip."""
+    clean = [
+        (58.0 + 3.0 * (i % 4), float(az), 0.60, False) for i, az in enumerate(range(0, 360, 40))
+    ]
+    flips = [(88.0, float(az), 0.60, True) for az in (10, 100, 190, 280)]
+    candidate, _n_kept, n_rejected = _run_full_path(clean + flips, ambiguity_ratio_min=2.0, seed=7)
+
+    rot_truth_deg, trans_truth_m = _pose_error(candidate, _MAP_T_WORLD_TRUTH)
+    rot_flip_deg, _ = _pose_error(candidate, _MAP_T_WORLD_FLIP)
+    assert n_rejected >= 1  # the gate actually fired on the mirror-ambiguous flips
+    assert rot_truth_deg < 3.0  # measured 0.19 deg
+    assert trans_truth_m < 0.05  # measured 0.003 m
+    assert rot_flip_deg > 150.0  # measured 179.8 deg: did NOT land on the flip

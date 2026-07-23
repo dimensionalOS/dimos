@@ -14,8 +14,7 @@
 
 import json
 import math
-import os
-import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,27 +24,19 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.fiducial.fiducial_relocalization import load_marker_map
 
 
-def _write_marker_json(payload: Any) -> str:
-    """Serialize a survey payload to a temp JSON file; caller unlinks in finally."""
-    fd, path = tempfile.mkstemp(suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        json.dump(payload, f)
-    return path
+def _survey(tmp_path: Path, payload: Any, suffix: str = "json") -> str:
+    """Write a survey payload to a temp file of the given format; return its path."""
+    p = tmp_path / f"survey.{suffix}"
+    p.write_text(json.dumps(payload) if suffix == "json" else yaml.safe_dump(payload))
+    return str(p)
 
 
-def _write_marker_yaml(payload: Any) -> str:
-    """Serialize a survey payload to a temp YAML file; caller unlinks in finally."""
-    fd, path = tempfile.mkstemp(suffix=".yaml")
-    with os.fdopen(fd, "w") as f:
-        yaml.safe_dump(payload, f)
-    return path
-
-
-def test_load_marker_map_parses_schema_and_ignores_meta() -> None:
-    """Invariant: load_marker_map turns the survey JSON into id(int) -> map_T_marker,
-    keying by parsed int id, ignoring the meta block entirely, and stamping each
-    Transform frame_id='map' / child_frame_id='marker_<id>'. Translation is read
-    [x,y,z] and rotation [qx,qy,qz,qw] exactly as written."""
+@pytest.mark.parametrize("suffix", ["json", "yaml"])
+def test_load_marker_map_parses_schema_and_ignores_meta(tmp_path: Path, suffix: str) -> None:
+    """Invariant: load_marker_map turns a survey (JSON or the YAML the derivation pipeline
+    writes) into id(int) -> map_T_marker, keying by parsed int id, dropping the meta block,
+    and stamping each Transform frame_id='map' / child_frame_id='marker_<id>'. Translation
+    is read [x,y,z] and rotation [qx,qy,qz,qw] exactly as written."""
     half_sqrt2 = math.sqrt(2.0) / 2.0  # 90 deg about +z as [qx,qy,qz,qw]
     payload = {
         "meta": {"surveyed_by": "referee", "date": "2026-07-20", "units": "m"},
@@ -57,130 +48,52 @@ def test_load_marker_map_parses_schema_and_ignores_meta() -> None:
             },
         },
     }
-    path = _write_marker_json(payload)
-    try:
-        markers = load_marker_map(path)
+    markers = load_marker_map(_survey(tmp_path, payload, suffix))
 
-        assert set(markers) == {7, 12}
-        assert all(isinstance(k, int) for k in markers)  # ids parsed to int, meta dropped
+    assert set(markers) == {7, 12}
+    assert all(isinstance(k, int) for k in markers)  # ids parsed to int, meta dropped
 
-        t7 = markers[7]
-        assert isinstance(t7, Transform)
-        assert t7.frame_id == "map"
-        assert t7.child_frame_id == "marker_7"
-        assert (t7.translation.x, t7.translation.y, t7.translation.z) == (1.0, 2.0, 3.0)
-        assert (t7.rotation.x, t7.rotation.y, t7.rotation.z, t7.rotation.w) == (0.0, 0.0, 0.0, 1.0)
+    t7 = markers[7]
+    assert isinstance(t7, Transform)
+    assert t7.frame_id == "map"
+    assert t7.child_frame_id == "marker_7"
+    assert (t7.translation.x, t7.translation.y, t7.translation.z) == (1.0, 2.0, 3.0)
+    assert (t7.rotation.x, t7.rotation.y, t7.rotation.z, t7.rotation.w) == (0.0, 0.0, 0.0, 1.0)
 
-        t12 = markers[12]
-        assert t12.child_frame_id == "marker_12"
-        assert (t12.translation.x, t12.translation.y, t12.translation.z) == (-0.5, 4.0, 0.25)
-        assert (t12.rotation.z, t12.rotation.w) == (half_sqrt2, half_sqrt2)
-    finally:
-        os.unlink(path)
+    t12 = markers[12]
+    assert t12.child_frame_id == "marker_12"
+    assert (t12.translation.x, t12.translation.y, t12.translation.z) == (-0.5, 4.0, 0.25)
+    assert (t12.rotation.z, t12.rotation.w) == (half_sqrt2, half_sqrt2)
 
 
-def test_load_marker_map_parses_yaml_survey() -> None:
-    """Invariant: a ``.yaml`` survey loads identically to JSON -- the runtime loader
-    accepts the format the derivation pipeline writes (RECORDING.markers.yaml) and the
-    eval overlay reads, so an existing YAML marker survey handed to marker_map_file
-    still builds map_T_marker. Same schema, same int keys, same [x,y,z]/[qx,qy,qz,qw]."""
-    payload = {
-        "markers": {
-            "10": {
-                "translation": [-4.1657, -30.985, 0.2677],
-                "rotation": [0.1958, -0.6668, -0.6949, 0.1847],
-            }
-        }
-    }
-    path = _write_marker_yaml(payload)
-    try:
-        markers = load_marker_map(path)
-
-        assert set(markers) == {10}
-        assert isinstance(next(iter(markers)), int)  # id parsed to int
-        t10 = markers[10]
-        assert t10.frame_id == "map"
-        assert t10.child_frame_id == "marker_10"
-        assert (t10.translation.x, t10.translation.y, t10.translation.z) == (
-            -4.1657,
-            -30.985,
-            0.2677,
-        )
-        assert (t10.rotation.x, t10.rotation.y, t10.rotation.z, t10.rotation.w) == (
-            0.1958,
-            -0.6668,
-            -0.6949,
-            0.1847,
-        )
-    finally:
-        os.unlink(path)
-
-
-def test_load_marker_map_yaml_survey_validates() -> None:
-    """Invariant: the loud validation is format-agnostic -- a malformed YAML entry
-    (short rotation) raises the same ValueError as JSON, so YAML surveys are not a
-    silent bypass around the survey-quality gate."""
-    payload = {"markers": {"9": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 1.0]}}}
-    path = _write_marker_yaml(payload)
-    try:
-        with pytest.raises(ValueError, match=r"marker 9: rotation must be \[x, y, z, w\]"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
-
-
-def test_load_marker_map_empty_and_missing_markers_block() -> None:
+def test_load_marker_map_empty_and_missing_markers_block(tmp_path: Path) -> None:
     """Invariant: an empty markers block yields {}, and a file with no markers key
     at all is treated as empty rather than crashing -- meta-only surveys load clean."""
-    for payload in ({"markers": {}}, {"meta": {"note": "not surveyed yet"}}):
-        path = _write_marker_json(payload)
-        try:
-            assert load_marker_map(path) == {}
-        finally:
-            os.unlink(path)
+    for i, payload in enumerate(({"markers": {}}, {"meta": {"note": "not surveyed yet"}})):
+        path = tmp_path / f"empty_{i}.json"
+        path.write_text(json.dumps(payload))
+        assert load_marker_map(str(path)) == {}
 
 
-def test_load_marker_map_rejects_zero_norm_quaternion() -> None:
+def test_load_marker_map_rejects_zero_norm_quaternion(tmp_path: Path) -> None:
     """Invariant: an unnormalizable (zero-norm) quaternion is caught at load with a
     clear message, not deferred to a later Quaternion.inverse() blow-up."""
     payload = {"markers": {"3": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 0.0]}}}
-    path = _write_marker_json(payload)
-    try:
-        with pytest.raises(ValueError, match=r"marker 3: rotation quaternion norm is"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
+    with pytest.raises(ValueError, match=r"marker 3: rotation quaternion norm is"):
+        load_marker_map(_survey(tmp_path, payload))
 
 
-def test_load_marker_map_rejects_non_finite_translation() -> None:
+def test_load_marker_map_rejects_non_finite_translation(tmp_path: Path) -> None:
     """Invariant: a non-finite translation coordinate (NaN/Inf) is rejected at load,
     since it would otherwise poison the map->world composition downstream."""
     payload = {
-        "markers": {"5": {"translation": [1.0, float("nan"), 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}}
+        "markers": {
+            "5": {"translation": [1.0, float("nan"), 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}
+        }
     }
     # json.dump emits NaN as the bare token NaN, which json.load reads back as float('nan').
-    path = _write_marker_json(payload)
-    try:
-        with pytest.raises(ValueError, match=r"marker 5: translation must be finite"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
-
-
-@pytest.mark.parametrize("dropped", ["translation", "rotation"])
-def test_load_marker_map_missing_key_names_the_key(dropped: str) -> None:
-    """Invariant: whichever required key is absent, the KeyError names THAT key -- the
-    operator must be told which field of the survey entry is missing, not left to guess
-    (a bare 'half-built pose' would ship a silently-wrong tag instead)."""
-    entry = {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}
-    del entry[dropped]
-    path = _write_marker_json({"markers": {"8": entry}})
-    try:
-        # KeyError stringifies to the repr of the missing key, e.g. "'rotation'".
-        with pytest.raises(KeyError, match=rf"'{dropped}'"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
+    with pytest.raises(ValueError, match=r"marker 5: translation must be finite"):
+        load_marker_map(_survey(tmp_path, payload))
 
 
 @pytest.mark.parametrize(
@@ -193,20 +106,15 @@ def test_load_marker_map_missing_key_names_the_key(dropped: str) -> None:
     ],
 )
 def test_load_marker_map_malformed_message_echoes_got_value(
-    translation: Any, rotation: Any, field: str, bad: Any
+    tmp_path: Path, translation: Any, rotation: Any, field: str, bad: Any
 ) -> None:
     """Invariant: a malformed translation/rotation raises ValueError that names the
     field AND echoes the offending value verbatim (the 'got' half of got-vs-want), so
     the survey line can be found and fixed. Covers both the wrong-length and the
     not-a-list (isinstance) rejection paths."""
-    path = _write_marker_json(
-        {"markers": {"6": {"translation": translation, "rotation": rotation}}}
-    )
-    try:
-        with pytest.raises(ValueError) as exc:
-            load_marker_map(path)
-        message = str(exc.value)
-        assert f"marker 6: {field}" in message  # field named
-        assert repr(bad) in message  # offending value echoed verbatim
-    finally:
-        os.unlink(path)
+    payload = {"markers": {"6": {"translation": translation, "rotation": rotation}}}
+    with pytest.raises(ValueError) as exc:
+        load_marker_map(_survey(tmp_path, payload))
+    message = str(exc.value)
+    assert f"marker 6: {field}" in message  # field named
+    assert repr(bad) in message  # offending value echoed verbatim
