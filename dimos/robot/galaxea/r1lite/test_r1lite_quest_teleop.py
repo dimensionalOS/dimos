@@ -26,8 +26,10 @@ from typing import Any
 
 import pytest
 
-import dimos.core.module as module_mod
 from dimos.control.coordinator import ControlCoordinator
+import dimos.core.module as module_mod
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_coordinator import r1lite_coordinator
 from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop import (
@@ -37,8 +39,6 @@ from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop import (
     r1lite_quest_teleop_sim,
 )
 from dimos.robot.galaxea.r1lite.connection import R1LITE_UPPER_BODY_JOINTS
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_extensions import R1LiteQuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState, ThumbstickState
 
@@ -251,9 +251,9 @@ def test_pose_frame_id_routes_to_task_name() -> None:
 
 
 def _coordinator_tasks(blueprint: Any) -> list[Any]:
-    return next(
-        atom.kwargs for atom in blueprint.blueprints if atom.module is ControlCoordinator
-    )["tasks"]
+    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is ControlCoordinator)[
+        "tasks"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -292,3 +292,35 @@ def test_production_coordinator_tasks_unchanged() -> None:
         ("servo_r1lite", "servo", 10),
         ("vel_chassis", "velocity", 10),
     ]
+
+
+def test_web_server_binds_all_interfaces(monkeypatch: Any) -> None:
+    # A loopback bind serves nothing off the robot; the headset is another
+    # machine. Guard the listen_host wiring end to end without starting uvicorn.
+    import dimos.teleop.quest.quest_teleop_module as qtm
+
+    class _FakeServer:
+        def __init__(self, port: int) -> None:
+            self.port = port
+            self.host = "127.0.0.1"
+            self.app = types.SimpleNamespace(
+                get=lambda *a, **k: (lambda fn: fn),
+                websocket=lambda *a, **k: (lambda fn: fn),
+                mount=lambda *a, **k: None,
+            )
+
+        def run(self, **kw: Any) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            pass
+
+    monkeypatch.setattr(qtm, "RobotWebInterface", _FakeServer)
+    m = _module()
+    assert m.config.listen_host == "0.0.0.0"
+    m._start_server()
+    try:
+        assert m._web_server.host == "0.0.0.0"
+        assert m._web_server.port == 8443
+    finally:
+        m._stop_server()
