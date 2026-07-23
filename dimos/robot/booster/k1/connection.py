@@ -213,7 +213,7 @@ class K1Connection(Module, Camera):
         yaw = _clamp(yaw, WALK_MAX_YAW_RPS)
         duration = min(duration, WALK_MAX_DURATION_S)
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
-        zero = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+        zero = Twist.zero()
         deadline = time.monotonic() + duration
         baseline = self._connection.send_count
         rejected = False
