@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from pathlib import Path
+import sys
 
 from docutils import nodes
 import tomllib
 
+_REPO_ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(_REPO_ROOT))
+
 # -- Project information -----------------------------------------------------
 
-_PYPROJECT = Path(__file__).parents[1] / "pyproject.toml"
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
 # Parse the version from pyproject.toml rather than importing the package.
 release = tomllib.loads(_PYPROJECT.read_text("utf-8"))["project"]["version"]
 version = ".".join(release.split(".")[:2])
