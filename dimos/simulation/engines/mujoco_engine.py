@@ -24,8 +24,14 @@ import threading
 import time
 from typing import TYPE_CHECKING, cast
 
+# isort: off
+# _gl_backend selects MuJoCo's GL backend (GPU EGL when available) and MUST run
+# before the first `import mujoco`, so this ordering is frozen against isort.
+from dimos.simulation.engines import _gl_backend as _gl_backend
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
+
+# isort: on
 import numpy as np
 from numpy.typing import NDArray
 
@@ -605,6 +611,30 @@ class MujocoEngine(SimulationEngine):
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
 
+        # Real-time-factor diagnostic: sim-time advance vs wall-time over a
+        # rolling window. RTF < 1 means the sim is falling behind real time
+        # (the per-step budget is blown, e.g. by the interactive viewer sync).
+        rtf_wall_anchor = time.time()
+        rtf_sim_anchor = float(self._data.time)
+        rtf_window_s = 5.0
+
+        def _log_rtf() -> None:
+            nonlocal rtf_wall_anchor, rtf_sim_anchor
+            wall = time.time()
+            wall_elapsed = wall - rtf_wall_anchor
+            if wall_elapsed < rtf_window_s:
+                return
+            sim_elapsed = float(self._data.time) - rtf_sim_anchor
+            rtf = sim_elapsed / wall_elapsed if wall_elapsed > 0 else 0.0
+            logger.info(
+                "sim real-time factor",
+                cls=self.__class__.__name__,
+                rtf=round(rtf, 3),
+                headless=self._headless,
+            )
+            rtf_wall_anchor = wall
+            rtf_sim_anchor = float(self._data.time)
+
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
             reset_done_events: list[threading.Event] = []
@@ -642,12 +672,14 @@ class MujocoEngine(SimulationEngine):
         if self._headless:
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
+                _log_rtf()
         else:
             with viewer.launch_passive(
                 self._model, self._data, show_left_ui=False, show_right_ui=False
             ) as m_viewer:
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
+                    _log_rtf()
 
         self._close_cam_renderers(cam_renderers)
         logger.info("sim loop stopped", cls=self.__class__.__name__)

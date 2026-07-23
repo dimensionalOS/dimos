@@ -32,7 +32,13 @@ import threading
 import time
 from typing import Any
 
+# isort: off
+# _gl_backend selects MuJoCo's GL backend (GPU EGL when available) and MUST run
+# before the first `import mujoco`, so this ordering is frozen against isort.
+from dimos.simulation.engines import _gl_backend as _gl_backend
 import mujoco
+
+# isort: on
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
@@ -52,6 +58,10 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+# Must precede `import mujoco`: selects the GPU EGL backend (when available)
+# before MuJoCo binds its render backend at import. See _gl_backend.
+from dimos.simulation.engines import _gl_backend as _gl_backend
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
