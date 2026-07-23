@@ -218,6 +218,12 @@ class R1LiteConnection(Module):
         # Chassis dead-man state (see module docstring).
         self._latest_cmd_vel: Twist | None = None
         self._latest_cmd_vel_ts = 0.0
+        # Telemetry (TELEM lines, 1 Hz from the publish loop)
+        self._telem_cmd_left_q: list[float] | None = None
+        self._telem_cmd_right_q: list[float] | None = None
+        self._telem_arm_cmd_count = 0
+        self._telem_cmd_vel_count = 0
+        self._telem_tick = 0
         self._cmd_vel_active = False  # True while we still owe zero-streams
         self._last_chassis_lin = 0.0
         self._last_chassis_ang = 0.0
@@ -603,6 +609,9 @@ class R1LiteConnection(Module):
 
             left_q = list(msg.q[_LEFT_SLICE])
             right_q = list(msg.q[_RIGHT_SLICE])
+            self._telem_cmd_left_q = left_q
+            self._telem_cmd_right_q = right_q
+            self._telem_arm_cmd_count += 1
             left_dq = self._tracking_velocities(msg.dq[_LEFT_SLICE])
             right_dq = self._tracking_velocities(msg.dq[_RIGHT_SLICE])
 
@@ -665,6 +674,7 @@ class R1LiteConnection(Module):
         with self._lock:
             self._latest_cmd_vel = msg
             self._latest_cmd_vel_ts = time.monotonic()
+            self._telem_cmd_vel_count += 1
             self._cmd_vel_active = True
 
     def _publish_chassis_command(self, twist: Twist) -> bool:
@@ -922,6 +932,35 @@ class R1LiteConnection(Module):
                     # a fresh cmd_vel arrives. Keeps the robot-side latch
                     # pointed at zero without spamming before first use.
                     self._latest_cmd_vel = None
+
+            self._telem_tick += 1
+            if self._telem_tick % int(self.config.publish_rate_hz) == 0:
+                with self._lock:
+                    cl, cr = self._telem_cmd_left_q, self._telem_cmd_right_q
+                    fl, fr = list(self._latest_left_q), list(self._latest_right_q)
+                    n_arm, n_vel = self._telem_arm_cmd_count, self._telem_cmd_vel_count
+                    self._telem_arm_cmd_count = 0
+                    self._telem_cmd_vel_count = 0
+                    cv = self._latest_cmd_vel
+                import math
+
+                err_l = (
+                    max(abs(a - b) for a, b in zip(cl, fl, strict=False)) if cl else float("nan")
+                )
+                err_r = (
+                    max(abs(a - b) for a, b in zip(cr, fr, strict=False)) if cr else float("nan")
+                )
+                logger.info(
+                    "TELEM conn: arm_cmd_hz=%d cmdvel_hz=%d track_err_deg L=%.1f R=%.1f "
+                    "cmd_vel=(%.2f,%.2f,%.2f)",
+                    n_arm,
+                    n_vel,
+                    math.degrees(err_l) if not math.isnan(err_l) else float("nan"),
+                    math.degrees(err_r) if not math.isnan(err_r) else float("nan"),
+                    cv.linear.x if cv else 0.0,
+                    cv.linear.y if cv else 0.0,
+                    cv.angular.z if cv else 0.0,
+                )
 
             if bootstrapped and fresh:
                 now = time.time()

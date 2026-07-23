@@ -337,6 +337,13 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._joy_rx_ts: dict[Hand, float] = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+        # Telemetry (TELEM lines, 1 Hz from the control loop)
+        self._telem_joy_count: dict[Hand, int] = {Hand.LEFT: 0, Hand.RIGHT: 0}
+        self._telem_joy_gap_max: dict[Hand, float] = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+        self._telem_pose_count = 0
+        self._telem_loop_gap_max = 0.0
+        self._telem_last_tick = 0.0
+        self._telem_last_emit = 0.0
 
     @rpc
     def start(self) -> None:
@@ -364,8 +371,13 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
             return
         with self._lock:
             self._controllers[hand] = controller
+            now = time.monotonic()
+            prev = self._joy_rx_ts[hand]
+            if prev > 0.0:
+                self._telem_joy_gap_max[hand] = max(self._telem_joy_gap_max[hand], now - prev)
+            self._telem_joy_count[hand] += 1
             # Local receive time, not msg.ts: headset and robot clocks are not synced.
-            self._joy_rx_ts[hand] = time.monotonic()
+            self._joy_rx_ts[hand] = now
 
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
@@ -398,6 +410,11 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
         span = self.config.gripper_closed - self.config.gripper_open
         return JointState(position=[self.config.gripper_open + span * clamped])
 
+    def _on_pose_bytes(self, data: bytes) -> None:
+        super()._on_pose_bytes(data)
+        with self._lock:
+            self._telem_pose_count += 1
+
     def _publish_button_state(
         self,
         left: QuestControllerState | None,
@@ -405,6 +422,27 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
     ) -> None:
         super()._publish_button_state(left, right)
         now = time.monotonic()
+        if self._telem_last_tick > 0.0:
+            self._telem_loop_gap_max = max(self._telem_loop_gap_max, now - self._telem_last_tick)
+        self._telem_last_tick = now
+        if now - self._telem_last_emit >= 1.0:
+            logger.info(
+                "TELEM quest: joyL_hz=%d joyR_hz=%d pose_hz=%d "
+                "joy_gap_ms L=%.0f R=%.0f loop_gap_ms=%.0f engaged L=%s R=%s",
+                self._telem_joy_count[Hand.LEFT],
+                self._telem_joy_count[Hand.RIGHT],
+                self._telem_pose_count,
+                self._telem_joy_gap_max[Hand.LEFT] * 1000.0,
+                self._telem_joy_gap_max[Hand.RIGHT] * 1000.0,
+                self._telem_loop_gap_max * 1000.0,
+                self._is_engaged[Hand.LEFT],
+                self._is_engaged[Hand.RIGHT],
+            )
+            self._telem_last_emit = now
+            self._telem_joy_count = {Hand.LEFT: 0, Hand.RIGHT: 0}
+            self._telem_joy_gap_max = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+            self._telem_pose_count = 0
+            self._telem_loop_gap_max = 0.0
         self.cmd_vel.publish(self._chassis_twist(left, right, now))
         if left is not None and self._is_engaged[Hand.LEFT] and self._fresh(Hand.LEFT, now):
             self.gripper_left_command.publish(self._gripper_command(left.trigger))

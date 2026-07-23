@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -196,6 +197,14 @@ class TeleopIKTask(BaseControlTask):
 
         self._gripper_target: float = config.gripper_open_pos
 
+        # Telemetry (TELEM lines, 1 Hz while active)
+        self._telem_last_emit = 0.0
+        self._telem_computes = 0
+        self._telem_rejects = 0
+        self._telem_lag_m = 0.0
+        self._telem_solve_s = 0.0
+        self._telem_scale_min = 1.0
+
         logger.info(
             f"TeleopIKTask {name} initialized with model: {config.model_path}, "
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
@@ -288,6 +297,10 @@ class TeleopIKTask(BaseControlTask):
         # windowed solve still exceeds the gate (near singularities the
         # joint-space cost of a window-sized step varies widely), retry with a
         # progressively smaller window instead of giving up.
+        ee_now = self._ik.forward_kinematics(q_current)
+        raw_lag = float(np.linalg.norm(target_pose.translation - ee_now.translation))
+        solve_t0 = time.perf_counter()
+
         windowed = (
             self._config.max_target_offset_m is not None
             or self._config.max_target_rot_deg is not None
@@ -315,7 +328,31 @@ class TeleopIKTask(BaseControlTask):
                 q_solution = q_candidate
                 break
 
+        self._telem_computes += 1
+        self._telem_lag_m = max(self._telem_lag_m, raw_lag)
+        self._telem_solve_s = max(self._telem_solve_s, time.perf_counter() - solve_t0)
+        if q_solution is not None:
+            self._telem_scale_min = min(self._telem_scale_min, scale)
+        if state.t_now - self._telem_last_emit >= 1.0:
+            logger.info(
+                "TELEM ik %s: computes_hz=%d rejects=%d hand_lag_cm=%.1f "
+                "solve_ms_max=%.1f window_scale_min=%.2f",
+                self._name,
+                self._telem_computes,
+                self._telem_rejects,
+                self._telem_lag_m * 100.0,
+                self._telem_solve_s * 1000.0,
+                self._telem_scale_min,
+            )
+            self._telem_last_emit = state.t_now
+            self._telem_computes = 0
+            self._telem_rejects = 0
+            self._telem_lag_m = 0.0
+            self._telem_solve_s = 0.0
+            self._telem_scale_min = 1.0
+
         if q_solution is None:
+            self._telem_rejects += 1
             worst = float(np.max(np.abs(q_candidate - q_current)))
             logger.warning(
                 f"TeleopIKTask {self._name}: joint delta {np.rad2deg(worst):.1f}° exceeds "
