@@ -162,7 +162,7 @@ source .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 
 # Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
+# NOTE: First run will show a black rerun window while ~75 MB of data downloads
 dimos --replay run unitree-go2
 ```
 

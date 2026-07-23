@@ -51,7 +51,7 @@ _stores: dict[str, SqliteStore] = {}
 
 
 def _resolve_db_path(dataset: str) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss).
+    """Map a dataset name to an on-disk .db path (downloaded on miss).
 
     - ``"go2_bigoffice"`` → ``{data_dir}/go2_bigoffice.db``
     - Absolute/relative paths are used as-is.

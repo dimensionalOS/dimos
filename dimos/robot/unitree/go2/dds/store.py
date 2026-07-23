@@ -23,7 +23,7 @@
 
 Thin Go2 wiring over the generic :class:`dimos.memory2.store.mcap.McapStore`:
 supplies the Go2 codec set and stream-name map, and resolves the path through
-the repo data dir / LFS.
+the repo data dir / Hub-backed data assets.
 """
 
 from __future__ import annotations

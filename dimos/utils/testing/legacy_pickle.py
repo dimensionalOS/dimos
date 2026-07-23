@@ -26,7 +26,7 @@ from typing import Any, cast
 
 from reactivex.observable import Observable
 
-from dimos.utils.data import get_data, get_data_dir
+from dimos.utils.data import _create_data_dir_for_write, get_data
 from dimos.utils.timeseries.base import T, TimeSeriesStore
 
 
@@ -43,7 +43,7 @@ class LegacyPickleStore(TimeSeriesStore[T]):
     No index is built - iteration is lazy and memory-efficient for large datasets.
 
     Usage:
-        # Load existing recording (auto-downloads from LFS if needed)
+        # Load existing recording (auto-downloads the data asset if needed)
         store = LegacyPickleStore("unitree_go2_bigoffice/lidar")
         data = store.find_closest_seek(10.0)
 
@@ -75,7 +75,10 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         if self._root_dir is not None:
             # Ensure directory exists if writing
             if for_write:
-                self._root_dir.mkdir(parents=True, exist_ok=True)
+                if Path(self._name).is_absolute():
+                    self._root_dir.mkdir(parents=True, exist_ok=True)
+                else:
+                    self._root_dir = _create_data_dir_for_write(self._name)
             return self._root_dir
 
         # If absolute path, use directly
@@ -85,10 +88,9 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                 self._root_dir.mkdir(parents=True, exist_ok=True)
         elif for_write:
             # For writing: use get_data_dir and create if needed
-            self._root_dir = get_data_dir(self._name)
-            self._root_dir.mkdir(parents=True, exist_ok=True)
+            self._root_dir = _create_data_dir_for_write(self._name)
         else:
-            # For reading: use get_data (handles LFS download)
+            # For reading: use get_data (handles data-asset download)
             self._root_dir = get_data(self._name)
 
         return self._root_dir

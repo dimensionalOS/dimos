@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Open a real Go2 DDS mcap as a memory2 store (LFS-backed).
+"""Open a real Go2 DDS mcap as a memory2 store (data-asset backed).
 
 One test per message type — each prints a sample and checks the decode.
 """

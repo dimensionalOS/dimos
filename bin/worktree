@@ -113,8 +113,8 @@ cmd_add() {
 
     echo ">>> worktree: $DIR  (branch: $BRANCH)"
 
-    # Skip LFS smudge: code worktrees don't need the multi-GB data/ blobs (those
-    # are fetched on demand via get_data). Saves a large checkout.
+    # Skip LFS smudge: code worktrees do not need documentation/media blobs.
+    # Runtime data is fetched on demand via get_data. Saves a large checkout.
     if [[ -d "$DIR" ]]; then
         echo ">>> $DIR already exists, skipping 'git worktree add'"
     elif git show-ref --verify --quiet "refs/heads/$BRANCH"; then

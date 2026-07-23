@@ -80,7 +80,7 @@ _STATE_MAX_AGE_S = 0.1
 class OpenArmAdapter:
     """7-DOF OpenArm on one SocketCAN bus. side=left|right picks URDF + limits."""
 
-    # Per-side URDFs for Pinocchio gravity model (LFS-backed)
+    # Per-side URDFs for Pinocchio gravity model (Hub-backed data asset)
     _URDF_LEFT = LfsPath("openarm_description/urdf/robot/openarm_v10_left.urdf")
     _URDF_RIGHT = LfsPath("openarm_description/urdf/robot/openarm_v10_right.urdf")
 

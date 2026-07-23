@@ -53,17 +53,34 @@ from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
 )
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import _create_data_dir_for_write, get_data_dir
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-SCENE_PACKAGE_DIR = get_data_dir("scene_packages")
 _PACKAGE_KEY_LEN = 12
 _COOK_VERSION = 4
 #: Cap on entity id samples recorded in cook stats -- diagnostics only, not
 #: the full entity list (that lives in ``scene.meta.json``).
 _ENTITY_ID_SAMPLE_CAP = 100
+
+
+def _prepare_package_dir(output_dir: str | Path | None, package_key: str) -> Path:
+    """Resolve a package output and lock creation under canonical data storage."""
+    if output_dir is None:
+        return _create_data_dir_for_write(Path("scene_packages") / package_key)
+
+    candidate = Path(output_dir).expanduser().resolve()
+    canonical_data_dir = get_data_dir().resolve()
+    try:
+        relative = candidate.relative_to(canonical_data_dir)
+    except ValueError:
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    if relative.parts:
+        return _create_data_dir_for_write(relative)
+    candidate.mkdir(parents=True, exist_ok=True)
+    return candidate
 
 
 def cook_scene_package(
@@ -102,11 +119,7 @@ def cook_scene_package(
     )
     sidecar = cook_sidecar or SceneCookSidecar.auto_discover(source)
 
-    package_dir = (
-        Path(output_dir).expanduser().resolve()
-        if output_dir is not None
-        else SCENE_PACKAGE_DIR / _package_key(cook_spec, sidecar)
-    )
+    package_dir = _prepare_package_dir(output_dir, _package_key(cook_spec, sidecar))
     browser_dir = package_dir / "browser"
     mujoco_dir = package_dir / "mujoco"
     package_dir.mkdir(parents=True, exist_ok=True)

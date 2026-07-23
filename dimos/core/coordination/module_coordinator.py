@@ -232,7 +232,7 @@ class ModuleCoordinator(Resource):
     def build_all_modules(self) -> None:
         """Call build() on all deployed modules in parallel.
 
-        build() handles heavy one-time work (docker builds, LFS downloads, etc.)
+        build() handles heavy one-time work (docker builds, data downloads, etc.)
         with a very long timeout. Must be called after deploy and stream wiring
         but before start_all_modules().
         """

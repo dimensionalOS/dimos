@@ -2,111 +2,50 @@
 title: "Data Loading"
 ---
 
-The [`get_data`](/dimos/utils/data.py) function provides access to test data and model files, handling Git LFS downloads automatically.
+DimOS resolves data references through `get_data()` and `LfsPath`. The public
+read API is unchanged, but the backing store is the public Hugging Face
+dataset [`playercc7/dimensional`](https://huggingface.co/datasets/playercc7/dimensional).
+The remote directory is rooted at `data/` and contains one archive per
+top-level asset (`data/<top-level>.tar.gz`). Runtime reads use the immutable
+dataset revision
+`f262d7f8775c2d507b1bfde62a5aa21cffabb3a1`.
 
-## Basic Usage
-
-```python
+```python skip
 from dimos.utils.data import get_data
 
-# Get path to a data file/directory
-data_path = get_data("cafe.jpg")
-print(f"Path: {data_path}")
-print(f"Exists: {data_path.exists()}")
-```
-
-```results
-Path: /home/lesh/coding/dimos/data/cafe.jpg
-Exists: True
+image = get_data("osm_map_test/full.png")
 ```
 
 ## How It Works
 
-<details>
-<summary>Pikchr</summary>
+Reads are local-first. If `data/{reference}` already exists, no network call is
+made. Otherwise the shim downloads only `data/<top-level>.tar.gz`, validates
+the archive's single root and safe members, and extracts it into
+same-filesystem staging beneath the established DimOS data directory. For
+cooperating writers, only the initial staged-root rename/install is atomic.
+Top-level assets are immutable at the pinned revision: an existing local root
+is authoritative and is never replaced. A missing nested member beneath an
+existing root raises `FileNotFoundError` without a download. Paths into the
+Hugging Face cache are never exposed, and unrelated archives are never
+downloaded.
 
-```pikchr fold output=assets/get_data_flow.svg
-color = white
-fill = none
+All in-repository top-level writers use the same per-asset advisory `filelock`,
+including relative `LegacyPickleStore` recording writes. Cooperative callers
+wait for the active materialization rather than failing because a legitimate
+large archive takes time to download or extract. Writers that do not acquire
+the lock are external/non-participating writers and are unsupported; the lock
+does not claim to protect against their races. Lock files may remain after
+release and are not state markers.
 
-A: box "get_data(name)" rad 5px fit wid 170% ht 170%
-arrow right 0.4in
-B: box "Check" "data/{name}" rad 5px fit wid 170% ht 170%
-
-# Branch: exists
-arrow from B.e right 0.3in then up 0.4in then right 0.3in
-C: box "Return path" rad 5px fit wid 170% ht 170%
-
-# Branch: missing
-arrow from B.e right 0.3in then down 0.4in then right 0.3in
-D: box "Pull LFS" rad 5px fit wid 170% ht 170%
-arrow right 0.3in
-E: box "Decompress" rad 5px fit wid 170% ht 170%
-arrow right 0.3in
-F: box "Return path" rad 5px fit wid 170% ht 170%
-```
-
-</details>
-
-![output](assets/get_data_flow.svg)
-
-1. Checks if `data/{name}` already exists locally
-2. If missing, pulls the `.tar.gz` archive from Git LFS
-3. Decompresses the archive to `data/`
-4. Returns the `Path` to the extracted file/directory
+`LfsPath("assets/example.bin")` keeps the same lazy behavior: construction is
+local, and the first filesystem operation resolves the reference. An existing
+absolute local path passed to `get_data()` is returned unchanged; a missing
+absolute path raises `FileNotFoundError`. Relative traversal or unsafe
+references raise `ValueError`. Hub metadata, network, cache, and operational
+failures are reported as `RuntimeError`; a genuinely absent remote asset is
+`FileNotFoundError`.
 
 ## Common Patterns
-
-### Loading Images
-
-```python
-from dimos.utils.data import get_data
-from dimos.msgs.sensor_msgs.Image import Image
-
-image = Image.from_file(get_data("cafe.jpg"))
-print(f"Image shape: {image.data.shape}")
-```
-
-```results
-Image shape: (771, 1024, 3)
-```
-
-### Loading Model Checkpoints
-
-```python skip
-from dimos.utils.data import get_data
-
-model_dir = get_data("models_yolo")
-checkpoint = model_dir / "yolo11n.pt"
-print(f"Checkpoint: {checkpoint.name} ({checkpoint.stat().st_size // 1024}KB)")
-```
-
-```results
-Checkpoint: yolo11n.pt (5482KB)
-```
-
-### Loading Recorded Data for Replay
-
-```python skip
-from dimos.utils.data import get_data
-from dimos.utils.testing.replay import TimedSensorReplay
-
-data_dir = get_data("unitree_office_walk")
-replay = TimedSensorReplay(data_dir / "lidar")
-print(f"Replay {replay} loaded from: {data_dir.name}")
-print(replay.find_closest_seek(1))
-```
-
-```results
-Replay <dimos.utils.testing.replay.TimedSensorReplay object at 0x7fdc24c708f0> loaded from: unitree_office_walk
-{'type': 'msg', 'topic': 'rt/utlidar/voxel_map_compressed', 'data': {'stamp': 1751591000.0, 'frame_id': 'odom', 'resolution': 0.05, 'src_size': 77824, 'origin': [-3.625, -3.275, -0.575], 'width': [128, 128, 38], 'data': {'points': array([[ 2.725, -1.025, -0.575],
-       [ 2.525, -0.275, -0.575],
-       [ 2.575, -0.275, -0.575],
-       ...,
-       [ 2.675, -0.525,  0.775],
-       [ 2.375,  1.175,  0.775],
-       [ 2.325,  1.225,  0.775]], shape=(22730, 3))}}}
-```
 
 ### Loading Point Clouds
 
@@ -124,92 +63,57 @@ Loaded pointcloud with 63672 points
 
 ## Data Directory Structure
 
-Data files live in `data/` at the repo root. Large files are stored in `data/.lfs/` as `.tar.gz` archives tracked by Git LFS.
+Materialized data files live under `data/` at the repo root (or the installed
+package's synthetic data root). The Hugging Face dataset stores archives, while
+`get_data()` transparently materializes their top-level roots locally:
 
-<details>
-<summary>Diagram</summary>
+```text
+remote data/
+  osm_map_test.tar.gz
+  apartment.tar.gz
 
-```diagon fold mode=Tree
-data/
-  cafe.jpg
+local data/
+  osm_map_test/
+    full.png
   apartment/
     sum.ply
-  .lfs/
-    cafe.jpg.tar.gz
-    apartment.tar.gz
 ```
 
-</details>
+## Publishing Data
 
-```results
-data/
- ├──cafe.jpg
- ├──apartment/
- │   └──sum.ply
- └──.lfs/
-     ├──cafe.jpg.tar.gz
-     └──apartment.tar.gz
-```
-
-
-## Adding New Data
-
-### Small Files (< 1MB)
-
-Commit directly to `data/`:
-
-```sh skip
-cp my_image.jpg data/
-
-# 2. Compress and upload to LFS
-./bin/lfs_push
-
-git add data/.lfs/my_image.jpg.tar.gz
-
-git commit -m "Add test image"
-```
-
-### Large Files or Directories
-
-Use the LFS workflow:
-
-```sh skip
-# 1. Copy data to data/
-cp -r my_dataset/ data/
-
-# 2. Compress and upload to LFS
-./bin/lfs_push
-
-git add data/.lfs/my_dataset.tar.gz
-
-# 3. Commit the .tar.gz reference
-git commit -m "Add my_dataset test data"
-```
-
-The [`lfs_push`](/bin/lfs_push) script:
-1. Compresses `data/my_dataset/` → `data/.lfs/my_dataset.tar.gz`
-2. Uploads to Git LFS
-3. Stages the compressed file
-
-A pre-commit hook ([`bin/hooks/lfs_check`](/bin/hooks/lfs_check#L26)) blocks commits if you have uncompressed directories in `data/` without a corresponding `.tar.gz` in `data/.lfs/`.
+Publication is managed outside this repository through the Hugging Face
+dataset. The runtime does not use a branch, environment override, mutable main
+fallback, or replacement/rollback generation mechanism. Source-repository Git
+LFS is not part of runtime data loading.
 
 ## Location Resolution
 
 When running from:
-- **Git repo**: Uses `{repo}/data/`
-- **Installed package**: Clones repo to user data dir:
+
+- **Git repo**: Uses `{repo}/data/`.
+- **Installed package**: Uses the established synthetic project root
+  `<user-data>/repo/data`:
   - Linux: `~/.local/share/dimos/repo/data/`
   - macOS: `~/Library/Application Support/dimos/repo/data/`
-  - Fallback: `/tmp/dimos/repo/data/`
+  - Platform fallback: `/tmp/dimos/repo/data/`
+  - Virtual environment: `site-packages/dimos/data` when `VIRTUAL_ENV` is set.
+
+The runtime does not clone the source repository or invoke Git LFS.
 
 ## Docs media assets
 
-Binary media displayed by the docs (screenshots, plots, GIFs) is LFS-tracked here under `docs/**/assets/`, but Mintlify deploys the docs site without fetching Git LFS.
+Binary media displayed by the docs (screenshots, plots, GIFs) remains
+LFS-tracked here under `docs/**/assets/`, but Mintlify deploys the docs site
+without fetching Git LFS.
 
-So content behind those LFS pointers is hosted as plain git blobs in [dimensionalOS/dimos-docs-assets](https://github.com/dimensionalOS/dimos-docs-assets) (mirroring the `docs` tree, minus the `docs/` prefix), and docs pages reference that copy with an absolute URL:
+Content behind those LFS pointers is hosted as plain git blobs in
+[dimensionalOS/dimos-docs-assets](https://github.com/dimensionalOS/dimos-docs-assets),
+mirroring the `docs` tree minus the `docs/` prefix. Docs pages reference that
+copy with absolute URLs:
 
 ```markdown
 ![Coverage](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/coverage.png)
 ```
 
-Small text SVGs emitted by pikchr and `to_svg` are exempt: they are committed here as plain text and referenced relatively.
+Small text SVGs emitted by pikchr and `to_svg` are exempt: they are committed
+here as plain text and referenced relatively.

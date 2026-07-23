@@ -85,13 +85,6 @@ repos:
         files: ^pyproject\.toml$
         pass_filenames: false
 
-      - id: lfs_check
-        name: LFS data
-        always_run: true
-        pass_filenames: false
-        entry: bin/hooks/lfs_check
-        language: script
-
       - id: largefiles-check
         name: Large files check
         always_run: true

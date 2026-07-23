@@ -33,7 +33,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
-# get_data() auto-pulls + decompresses data/.lfs/<name>.tar.gz on first use.
+# get_data() lazily resolves the named asset from the pinned data revision.
 _DEFAULT_TRAJECTORY_NAME = "g1_wholebody_replay.json"
 
 NUM_DOF = 29
@@ -74,7 +74,7 @@ def main() -> None:
     p.add_argument(
         "--file",
         default=None,
-        help=f"trajectory JSON path (defaults to LFS-bundled {_DEFAULT_TRAJECTORY_NAME})",
+        help=f"trajectory JSON path (defaults to the Hub-backed data asset {_DEFAULT_TRAJECTORY_NAME})",
     )
     p.add_argument(
         "--ramp",

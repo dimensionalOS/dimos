@@ -478,7 +478,7 @@ If you want motion planning (collision-free trajectories via Drake), you need a 
 
 ### 4a. Add your URDF
 
-Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
+Place your URDF/xacro files in a data asset so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads the asset on first access — this avoids downloading at import time when the blueprint module is loaded.
 
 ```python skip
 from dimos.utils.data import LfsPath

@@ -12,20 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
-import os
+from io import BytesIO
+import multiprocessing
 from pathlib import Path
-import subprocess
+import tarfile
+import time
+from typing import Any
 
+from huggingface_hub.errors import EntryNotFoundError
 import pytest
 
 from dimos.utils import data
 from dimos.utils.data import LfsPath, backup_file
 
 
-def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
-    for ts in timestamps:
-        (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+def _make_backups(directory: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
+    for timestamp in timestamps:
+        (directory / f"{stem}.{timestamp}{suffix}").write_text(timestamp)
 
 
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
@@ -34,384 +39,500 @@ def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
 
 
 def test_backup_file_renames_with_timestamp(tmp_path: Path) -> None:
-    db = tmp_path / "recording_go2.db"
-    db.write_text("live")
-
-    backup = backup_file(db)
-
-    assert backup is not None
-    assert not db.exists()
-    assert backup.exists()
-    assert backup.read_text() == "live"
-    # name is "<stem>.<14-digit timestamp><suffix>"
-    assert backup.parent == tmp_path
-    assert backup.suffix == ".db"
-    middle = backup.name[len("recording_go2.") : -len(".db")]
-    assert len(middle) == 14 and middle.isdigit()
+    path = tmp_path / "recording_go2.db"
+    path.write_text("live")
+    backup = backup_file(path)
+    assert backup is not None and backup.read_text() == "live"
+    assert not path.exists()
+    timestamp = backup.name[len("recording_go2.") : -len(".db")]
+    assert len(timestamp) == 14 and timestamp.isdigit()
 
 
 def test_backup_file_prunes_to_keep_last(tmp_path: Path) -> None:
-    db = tmp_path / "recording_go2.db"
-    # four pre-existing backups, oldest first
+    path = tmp_path / "recording_go2.db"
     _make_backups(
         tmp_path,
-        "recording_go2",
-        ".db",
+        path.stem,
+        path.suffix,
         ["20260101010101", "20260101010102", "20260101010103", "20260101010104"],
     )
-    db.write_text("live")
-
-    backup_file(db, keep_last=3)
-
-    remaining = sorted(p.name for p in tmp_path.glob("recording_go2.*.db"))
-    # two oldest pruned; two newest pre-existing + the just-created one == 3
+    path.write_text("live")
+    backup_file(path, keep_last=3)
+    remaining = sorted(tmp_path.glob("recording_go2.*.db"))
     assert len(remaining) == 3
-    assert "recording_go2.20260101010101.db" not in remaining
-    assert "recording_go2.20260101010102.db" not in remaining
-    assert "recording_go2.20260101010103.db" in remaining
-    assert "recording_go2.20260101010104.db" in remaining
+    assert not (tmp_path / "recording_go2.20260101010101.db").exists()
+    assert not (tmp_path / "recording_go2.20260101010102.db").exists()
 
 
-def test_backup_file_ignores_non_timestamp_siblings(tmp_path: Path) -> None:
-    db = tmp_path / "recording_go2.db"
-    decoy = tmp_path / "recording_go2.notes.db"  # not a 14-digit timestamp
-    other = tmp_path / "other.db"
-    decoy.write_text("keep me")
-    other.write_text("unrelated")
-    _make_backups(tmp_path, "recording_go2", ".db", ["20260101010101", "20260101010102"])
-    db.write_text("live")
-
-    backup_file(db, keep_last=1)
-
-    # only real backups are pruned; decoy and unrelated files survive
-    assert decoy.exists()
-    assert other.exists()
-    ts_backups = sorted(p.name for p in tmp_path.glob("recording_go2.*.db") if p.name != decoy.name)
-    assert len(ts_backups) == 1
+def test_backup_file_ignores_unrelated_siblings(tmp_path: Path) -> None:
+    path = tmp_path / "recording_go2.db"
+    (tmp_path / "recording_go2.notes.db").write_text("keep")
+    (tmp_path / "other.db").write_text("keep")
+    _make_backups(tmp_path, path.stem, path.suffix, ["20260101010101", "20260101010102"])
+    path.write_text("live")
+    backup_file(path, keep_last=1)
+    assert (tmp_path / "recording_go2.notes.db").exists()
+    assert (tmp_path / "other.db").exists()
 
 
-def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
-    db = tmp_path / "recording_go2.db"
-    _make_backups(tmp_path, "recording_go2", ".db", ["20260101010101"])
-    db.write_text("live")
-
-    assert backup_file(db, keep_last=0) is None
-
-    assert list(tmp_path.glob("recording_go2.*.db")) == []
+def test_backup_file_keep_last_zero(tmp_path: Path) -> None:
+    path = tmp_path / "recording_go2.db"
+    _make_backups(tmp_path, path.stem, path.suffix, ["20260101010101"])
+    path.write_text("live")
+    assert backup_file(path, keep_last=0) is None
+    assert not list(tmp_path.glob("recording_go2.*.db"))
 
 
-@pytest.mark.self_hosted
-def test_pull_file() -> None:
-    repo_root = data.get_project_root()
-    test_file_name = "cafe.jpg"
-    test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
-    test_file_decompressed = data.get_data_dir() / test_file_name
+def _archive(path: Path, members: list[tuple[str, bytes | None, str | None]]) -> Path:
+    with tarfile.open(path, "w:gz") as tar:
+        for name, content, kind in members:
+            info = tarfile.TarInfo(name)
+            if kind == "dir":
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                tar.addfile(info)
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = "target"
+                tar.addfile(info)
+            elif kind == "hardlink":
+                info.type = tarfile.LNKTYPE
+                info.linkname = "top/file"
+                tar.addfile(info)
+            elif kind == "fifo":
+                info.type = tarfile.FIFOTYPE
+                tar.addfile(info)
+            else:
+                payload = content or b""
+                info.size = len(payload)
+                if kind == "executable":
+                    info.mode = 0o751
+                tar.addfile(info, BytesIO(payload))
+    return path
 
-    # delete decompressed test file if it exists
-    if test_file_decompressed.exists():
-        test_file_decompressed.unlink()
 
-    # delete lfs archive file if it exists
-    if test_file_compressed.exists():
-        test_file_compressed.unlink()
+def _hub_test_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    calls: list[dict[str, object]] = []
 
-    assert not test_file_compressed.exists()
-    assert not test_file_decompressed.exists()
+    def download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return str(tmp_path / "archive.tar.gz")
 
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_file_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
+    monkeypatch.setattr(data, "hf_hub_download", download)
+    return calls
 
-    # ensure we have a pointer file from git (small ASCII text file)
-    assert test_file_compressed.exists()
-    assert test_file_compressed.stat().st_size < 200
 
-    # trigger a data file pull
-    assert data.get_data(test_file_name) == test_file_decompressed
+def _assert_download(calls: list[dict[str, object]], filename: str) -> None:
+    assert calls == [
+        {
+            "repo_id": "playercc7/dimensional",
+            "filename": filename,
+            "repo_type": "dataset",
+            "revision": data.HF_DATASET_REVISION,
+            "token": False,
+        }
+    ]
 
-    # validate data is received
-    assert test_file_compressed.exists()
-    assert test_file_decompressed.exists()
 
-    # validate hashes
-    with test_file_compressed.open("rb") as f:
-        assert test_file_compressed.stat().st_size > 200
-        compressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert (
-            compressed_sha256 == "b8cf30439b41033ccb04b09b9fc8388d18fb544d55b85c155dbf85700b9e7603"
-        )
-
-    with test_file_decompressed.open("rb") as f:
-        decompressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert (
-            decompressed_sha256
-            == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
-        )
+def test_get_data_file_archive_and_download_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _archive(tmp_path / "archive.tar.gz", [("cafe.jpg", b"jpeg", None)])
+    calls = _hub_test_setup(tmp_path, monkeypatch)
+    result = data.get_data("cafe.jpg")
+    assert result.read_bytes() == b"jpeg"
+    _assert_download(calls, "data/cafe.jpg.tar.gz")
+    assert "local_dir" not in calls[0]
 
 
 @pytest.mark.self_hosted
-def test_pull_dir() -> None:
-    repo_root = data.get_project_root()
-    test_dir_name = "ab_lidar_frames"
-    test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
-    test_dir_decompressed = data.get_data_dir() / test_dir_name
+def test_get_data_live_occupancy_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the public pinned dataset without using checkout data.
 
-    # delete decompressed test directory if it exists
-    if test_dir_decompressed.exists():
-        for item in test_dir_decompressed.iterdir():
-            item.unlink()
-        test_dir_decompressed.rmdir()
-
-    # delete lfs archive file if it exists
-    if test_dir_compressed.exists():
-        test_dir_compressed.unlink()
-
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_dir_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
-
-    # ensure we have a pointer file from git (small ASCII text file)
-    assert test_dir_compressed.exists()
-    assert test_dir_compressed.stat().st_size < 200
-
-    # trigger a data file pull
-    assert data.get_data(test_dir_name) == test_dir_decompressed
-    assert test_dir_compressed.stat().st_size > 200
-
-    # validate data is received
-    assert test_dir_compressed.exists()
-    assert test_dir_decompressed.exists()
-
-    for [file, expected_hash] in zip(
-        sorted(test_dir_decompressed.iterdir()),
-        [
-            "6c3aaa9a79853ea4a7453c7db22820980ceb55035777f7460d05a0fa77b3b1b3",
-            "456cc2c23f4ffa713b4e0c0d97143c27e48bbe6ef44341197b31ce84b3650e74",
-        ],
-        strict=False,
-    ):
-        with file.open("rb") as f:
-            sha256 = hashlib.sha256(f.read()).hexdigest()
-            assert sha256 == expected_hash
-
-
-def test_lfs_path_lazy_creation() -> None:
-    """Test that creating LfsPath doesn't trigger download."""
-    lfs_path = LfsPath("test_data_file")
-
-    # Check that the object is created
-    assert isinstance(lfs_path, LfsPath)
-
-    # Check that cache is None (not downloaded yet)
-    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
-    assert cache is None
-
-    # Check that filename is stored
-    filename = object.__getattribute__(lfs_path, "_lfs_filename")
-    assert filename == "test_data_file"
-
-
-def test_lfs_path_safe_attributes() -> None:
-    """Test that safe attributes don't trigger download."""
-    lfs_path = LfsPath("test_data_file")
-
-    # Access safe attributes directly
-    filename = object.__getattribute__(lfs_path, "_lfs_filename")
-    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
-    ensure_fn = object.__getattribute__(lfs_path, "_ensure_downloaded")
-
-    # Verify they exist and cache is still None
-    assert filename == "test_data_file"
-    assert cache is None
-    assert callable(ensure_fn)
-
-
-def test_lfs_path_no_download_on_creation() -> None:
-    """Test that LfsPath construction doesn't trigger download.
-
-    Path(lfs_path) extracts internal _raw_paths (\".\") and does NOT
-    call __fspath__, so it won't trigger download. The correct way to
-    convert is Path(str(lfs_path)), which triggers __str__ -> download.
+    ``self_hosted`` is the repository's opt-in marker for tests requiring
+    network access; the default fast suite excludes it.
     """
-    lfs_path = LfsPath("nonexistent_file")
+    isolated_data_dir = tmp_path / "data"
+    monkeypatch.setattr(data, "get_data_dir", lambda: isolated_data_dir)
+    calls: list[dict[str, object]] = []
+    download = data.hf_hub_download
 
-    # Construction should not trigger download
-    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
-    assert cache is None
+    def tracked_download(**kwargs: object) -> str:
+        live_kwargs = {
+            **kwargs,
+            "cache_dir": tmp_path / "hub-cache",
+            "force_download": True,
+        }
+        calls.append(live_kwargs)
+        return download(**live_kwargs)
 
-    # Accessing internal LfsPath attributes should not trigger download
-    filename = object.__getattribute__(lfs_path, "_lfs_filename")
-    assert filename == "nonexistent_file"
-    assert cache is None
+    monkeypatch.setattr(data, "hf_hub_download", tracked_download)
+    extracted = data.get_data("occupancy_simple.npy")
 
-
-def test_lfs_path_with_real_file() -> None:
-    """Test LfsPath with a real small LFS file."""
-    # Use a small existing LFS file
-    filename = "three_paths.png"
-    lfs_path = LfsPath(filename)
-
-    # Initially, cache should be None
-    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
-    assert cache is None
-
-    # Access a Path method - this should trigger download
-    exists = lfs_path.exists()
-
-    # Now cache should be populated
-    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
-    assert cache is not None
-    assert isinstance(cache, Path)
-
-    # File should exist after download
-    assert exists is True
-
-    # Should be able to get file stats
-    stat_result = lfs_path.stat()
-    assert stat_result.st_size > 0
-
-    # Should be able to read the file
-    content = lfs_path.read_bytes()
-    assert len(content) > 0
-
-    # Verify it's a PNG file
-    assert content.startswith(b"\x89PNG")
+    assert hashlib.sha256(extracted.read_bytes()).hexdigest() == (
+        "e8457964918d6bec7eacc253d1d3573bad878247d7debe2cb6827a61c48bcea3"
+    )
+    assert [call["filename"] for call in calls] == ["data/occupancy_simple.npy.tar.gz"]
+    assert all(call["repo_id"] == data.HF_DATASET_REPO_ID for call in calls)
+    assert all(call["revision"] == data.HF_DATASET_REVISION for call in calls)
 
 
-@pytest.mark.self_hosted
-def test_lfs_path_unload_and_reload() -> None:
-    """Test unloading and reloading an LFS file."""
-    filename = "three_paths.png"
-    data_dir = data.get_data_dir()
-    file_path = data_dir / filename
-
-    # Clean up if file already exists
-    if file_path.exists():
-        file_path.unlink()
-
-    # Create LfsPath
-    lfs_path = LfsPath(filename)
-
-    # Verify file doesn't exist yet
-    assert not file_path.exists()
-
-    # Access the file - this triggers download
-    content_first = lfs_path.read_bytes()
-    assert file_path.exists()
-
-    # Get hash of first download
-    hash_first = hashlib.sha256(content_first).hexdigest()
-
-    # Now unload (delete the file)
-    file_path.unlink()
-    assert not file_path.exists()
-
-    # Create a new LfsPath instance for the same file
-    lfs_path_2 = LfsPath(filename)
-
-    # Access the file again - should re-download
-    content_second = lfs_path_2.read_bytes()
-    assert file_path.exists()
-
-    # Get hash of second download
-    hash_second = hashlib.sha256(content_second).hexdigest()
-
-    # Hashes should match (same file downloaded)
-    assert hash_first == hash_second
-
-    # Content should be identical
-    assert content_first == content_second
+def test_get_data_directory_archive_and_nested_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _archive(
+        tmp_path / "archive.tar.gz",
+        [
+            ("assets", None, "dir"),
+            ("assets/frames", None, "dir"),
+            ("assets/frames/a.bin", b"a", None),
+            ("assets/frames/b.bin", b"b", None),
+        ],
+    )
+    calls = _hub_test_setup(tmp_path, monkeypatch)
+    assert data.get_data("assets/frames/a.bin").read_bytes() == b"a"
+    _assert_download(calls, "data/assets.tar.gz")
+    assert (tmp_path / "data/assets/frames/b.bin").read_bytes() == b"b"
 
 
-def test_lfs_path_operations() -> None:
-    """Test various Path operations with LfsPath."""
-    filename = "three_paths.png"
-    lfs_path = LfsPath(filename)
-
-    # Test is_file
-    assert lfs_path.is_file() is True
-    assert lfs_path.is_dir() is False
-
-    # Test absolute path
-    abs_path = lfs_path.absolute()
-    assert abs_path.is_absolute()
-
-    # Test resolve
-    resolved = lfs_path.resolve()
-    assert resolved.is_absolute()
-
-    # Test string conversion
-    path_str = str(lfs_path)
-    assert isinstance(path_str, str)
-    assert filename in path_str
-
-    # Test __fspath__
-    fspath_result = os.fspath(lfs_path)
-    assert isinstance(fspath_result, str)
-    assert filename in fspath_result
+def test_get_data_preserves_sanitized_file_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _archive(tmp_path / "archive.tar.gz", [("tool", b"#!/bin/sh", "executable")])
+    _hub_test_setup(tmp_path, monkeypatch)
+    result = data.get_data("tool")
+    assert result.read_bytes() == b"#!/bin/sh"
+    assert result.stat().st_mode & 0o777 == 0o751
 
 
-def test_lfs_path_division_operator() -> None:
-    """Test path division operator with LfsPath."""
-    # Use a directory for testing
-    lfs_path = LfsPath("three_paths.png")
+@pytest.mark.parametrize(
+    "name",
+    [".hidden", "_leading", "-leading", "has*glob", "has?glob", "has[glob]", "é"],
+)
+def test_get_data_rejects_invalid_top_level_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(data, "hf_hub_download", lambda **kwargs: pytest.fail("network used"))
+    with pytest.raises(ValueError):
+        data.get_data(name)
 
-    # Test truediv - this should trigger download and return resolved path
-    result = lfs_path / "subpath"
-    assert isinstance(result, Path)
 
-    # The result should be the resolved path with subpath appended
-    assert "three_paths.png" in str(result)
+@pytest.mark.parametrize(
+    "root_kind", ["file", "empty_dir", "nonempty_dir", "valid_symlink", "broken_symlink"]
+)
+def test_get_data_existing_root_is_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_kind: str
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    destination = data_dir / "top"
+    if root_kind == "file":
+        destination.write_bytes(b"existing")
+    elif root_kind == "empty_dir":
+        destination.mkdir()
+    elif root_kind == "nonempty_dir":
+        (destination / "existing").mkdir(parents=True)
+    elif root_kind == "valid_symlink":
+        (data_dir / "symlink_target").mkdir()
+        destination.symlink_to(data_dir / "symlink_target", target_is_directory=True)
+    else:
+        destination.symlink_to(data_dir / "missing_target", target_is_directory=True)
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "hf_hub_download", lambda **kwargs: pytest.fail("network used"))
+    with pytest.raises(FileNotFoundError):
+        data.get_data("top/missing")
 
 
-def test_lfs_path_multiple_instances() -> None:
-    """Test that multiple LfsPath instances for same file work correctly."""
-    filename = "three_paths.png"
+def test_get_data_cleans_abandoned_staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "data"
+    abandoned = data_dir / ".top.tmp-abandoned"
+    abandoned.mkdir(parents=True)
+    (abandoned / "partial").write_bytes(b"partial")
+    archive = _archive(tmp_path / "archive.tar.gz", [("top", b"new", None)])
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "hf_hub_download", lambda **kwargs: str(archive))
+    assert data.get_data("top").read_bytes() == b"new"
+    assert not abandoned.exists()
 
-    # Create two separate instances
-    lfs_path_1 = LfsPath(filename)
-    lfs_path_2 = LfsPath(filename)
 
-    # Both should start with None cache
-    cache_1 = object.__getattribute__(lfs_path_1, "_lfs_resolved_cache")
-    cache_2 = object.__getattribute__(lfs_path_2, "_lfs_resolved_cache")
-    assert cache_1 is None
-    assert cache_2 is None
+def test_asset_lock_timeout_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class TimeoutLock:
+        def __init__(self, path: str) -> None:
+            pass
 
-    # Access file through first instance
-    content_1 = lfs_path_1.read_bytes()
+        def acquire(self, timeout: float) -> Any:
+            raise data.FileLockTimeout("busy")
 
-    # First instance should have cache
-    cache_1 = object.__getattribute__(lfs_path_1, "_lfs_resolved_cache")
-    assert cache_1 is not None
+    monkeypatch.setattr(data, "FileLock", TimeoutLock)
+    with pytest.raises(RuntimeError, match="Timed out acquiring data asset lock"):
+        with data._asset_lock(tmp_path / "data", "top"):
+            pass
 
-    # Second instance cache should still be None (separate instance)
-    cache_2 = object.__getattribute__(lfs_path_2, "_lfs_resolved_cache")
-    assert cache_2 is None
 
-    # Access through second instance
-    content_2 = lfs_path_2.read_bytes()
+def test_asset_lock_filesystem_error_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class BrokenLock:
+        def __init__(self, path: str) -> None:
+            raise OSError("cannot create lock")
 
-    # Now second instance should also have cache
-    cache_2 = object.__getattribute__(lfs_path_2, "_lfs_resolved_cache")
-    assert cache_2 is not None
+    monkeypatch.setattr(data, "FileLock", BrokenLock)
+    with pytest.raises(RuntimeError, match="Could not prepare data asset lock"):
+        with data._asset_lock(tmp_path / "data", "top"):
+            pass
 
-    # Content should be the same
-    assert content_1 == content_2
 
-    # Both caches should point to the same file
-    assert cache_1 == cache_2
+def test_abandoned_staging_enumeration_error_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    iterdir = Path.iterdir
+
+    def fail_iterdir(path: Path) -> Any:
+        if path == data_dir:
+            raise OSError("cannot enumerate")
+        return iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+    with pytest.raises(RuntimeError, match="Could not enumerate staging"):
+        data._cleanup_abandoned_staging(data_dir, "top")
+
+
+def test_abandoned_staging_removal_error_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    staging = data_dir / ".top.tmp-abandoned"
+    staging.mkdir(parents=True)
+    rmtree = data.shutil.rmtree
+
+    def fail_rmtree(path: Path) -> None:
+        if path == staging:
+            raise OSError("cannot remove")
+        rmtree(path)
+
+    monkeypatch.setattr(data.shutil, "rmtree", fail_rmtree)
+    with pytest.raises(RuntimeError, match="Could not remove abandoned staging"):
+        data._cleanup_abandoned_staging(data_dir, "top")
+
+
+def test_materialization_data_dir_setup_error_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    archive = _archive(tmp_path / "archive.tar.gz", [("top", b"value", None)])
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    mkdir = Path.mkdir
+
+    def fail_mkdir(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == data_dir:
+            raise OSError("cannot prepare materialization directory")
+        mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        data._materialize_archive(archive, "top", (), data_dir, "top")
+
+
+def test_materialization_staging_setup_error_maps_to_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = _archive(tmp_path / "archive.tar.gz", [("top", b"value", None)])
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "hf_hub_download", lambda **kwargs: str(archive))
+    monkeypatch.setattr(
+        data.tempfile,
+        "mkdtemp",
+        lambda **kwargs: (_ for _ in ()).throw(OSError("cannot create staging")),
+    )
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        data.get_data("top")
+
+
+def _hold_asset_lock(data_dir: str, ready: Any) -> None:
+    with data._asset_lock(Path(data_dir), "process"):
+        ready.set()
+        time.sleep(30)
+
+
+def test_asset_lock_survives_process_death(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    process = context.Process(target=_hold_asset_lock, args=(str(data_dir), ready))
+    process.start()
+    try:
+        assert ready.wait(10)
+        process.terminate()
+        process.join(10)
+        assert not process.is_alive()
+        with data._asset_lock(data_dir, "process"):
+            pass
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join()
+
+
+def test_get_data_serializes_repeated_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = _archive(tmp_path / "archive.tar.gz", [("shared", b"value", None)])
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    calls: list[dict[str, object]] = []
+
+    def download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return str(archive)
+
+    monkeypatch.setattr(data, "hf_hub_download", download)
+    locations: list[Path] = []
+    extract = data._extract_archive
+
+    def record_staging(
+        archive_path: Path,
+        staging: Path,
+        top_level: str,
+        requested: tuple[str, ...],
+        name: str | Path,
+    ) -> Path:
+        locations.append(staging)
+        return extract(archive_path, staging, top_level, requested, name)
+
+    monkeypatch.setattr(data, "_extract_archive", record_staging)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: data.get_data("shared"), range(2)))
+    assert results[0].read_bytes() == b"value"
+    assert results[1] == results[0]
+    assert len(calls) == 1
+    assert locations and all(location.parent == tmp_path / "data" for location in locations)
+    assert not list((tmp_path / "data").glob(".shared.tmp-*"))
+
+
+def test_get_data_local_hit_does_not_use_hub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = tmp_path / "data/cafe.jpg"
+    local.parent.mkdir()
+    local.write_bytes(b"local")
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(data, "hf_hub_download", lambda **kwargs: pytest.fail("network used"))
+    assert data.get_data("cafe.jpg") == local
+
+
+def test_get_data_missing_archive_vs_operational_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(
+        data,
+        "hf_hub_download",
+        lambda **kwargs: (_ for _ in ()).throw(EntryNotFoundError("missing")),
+    )
+    with pytest.raises(FileNotFoundError):
+        data.get_data("missing.bin")
+    monkeypatch.setattr(
+        data, "hf_hub_download", lambda **kwargs: (_ for _ in ()).throw(OSError("offline"))
+    )
+    with pytest.raises(
+        RuntimeError, match="playercc7/dimensional.*f262d7f8775c2d507b1bfde62a5aa21cffabb3a1"
+    ):
+        data.get_data("offline.bin")
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        [("other/file", b"x", None)],
+        [("top", b"x", None), ("top/child", b"x", None)],
+        [("top", b"x", None), ("other", b"x", None)],
+        [("/top/file", b"x", None)],
+        [("top/../escape", b"x", None)],
+        [("top/link", None, "symlink")],
+        [("top/link", None, "hardlink")],
+        [("top/pipe", None, "fifo")],
+    ],
+)
+def test_get_data_rejects_unsafe_or_wrong_archives(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    members: list[tuple[str, bytes | None, str | None]],
+) -> None:
+    _archive(tmp_path / "archive.tar.gz", members)
+    _hub_test_setup(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError):
+        data.get_data("top")
+    assert not list((tmp_path / "data").glob(".top.tmp-*"))
+
+
+def test_get_data_existing_root_skips_malformed_remote_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "data/top/file"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"old")
+    (tmp_path / "archive.tar.gz").write_bytes(b"not gzip")
+    calls = _hub_test_setup(tmp_path, monkeypatch)
+    with pytest.raises(FileNotFoundError):
+        data.get_data("top/new")
+    assert destination.read_bytes() == b"old"
+    assert calls == []
+
+
+def test_get_data_missing_nested_member_preserves_old_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "data/top/old"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"old")
+    _archive(tmp_path / "archive.tar.gz", [("top", None, "dir"), ("top/old", b"new", None)])
+    _hub_test_setup(tmp_path, monkeypatch)
+    with pytest.raises(FileNotFoundError):
+        data.get_data("top/missing")
+    assert destination.read_bytes() == b"old"
+
+
+def test_get_data_absolute_paths_and_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    existing = tmp_path / "recording.pcap"
+    existing.write_bytes(b"pcap")
+    monkeypatch.setattr(data, "get_data_dir", lambda: tmp_path / "data")
+    assert data.get_data(existing) == existing
+    with pytest.raises(FileNotFoundError):
+        data.get_data(tmp_path / "missing.pcap")
+    with pytest.raises(ValueError, match="Unsafe"):
+        data.get_data("../secret")
+
+
+def test_lfs_path_lazy_and_filesystem_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "three_paths.png"
+    path.write_bytes(b"\x89PNG data")
+    monkeypatch.setattr(data, "get_data", lambda name: path)
+    lazy = LfsPath("three_paths.png")
+    assert object.__getattribute__(lazy, "_lfs_resolved_cache") is None
+    assert lazy.is_file() and not lazy.is_dir()
+    assert lazy.read_bytes().startswith(b"\x89PNG")
+    assert lazy.absolute().is_absolute() and lazy.resolve().is_absolute()
+    assert isinstance(lazy / "subpath", Path)
+    other = LfsPath("three_paths.png")
+    assert other.read_bytes() == lazy.read_bytes()
+    assert object.__getattribute__(other, "_lfs_resolved_cache") == path
+
+
+def test_lfs_path_unload_and_reload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "three_paths.png"
+    path.write_bytes(b"first")
+    monkeypatch.setattr(data, "get_data", lambda name: path)
+    assert LfsPath("three_paths.png").read_bytes() == b"first"
+    path.unlink()
+    path.write_bytes(b"second")
+    assert LfsPath("three_paths.png").read_bytes() == b"second"

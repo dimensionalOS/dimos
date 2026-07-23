@@ -33,9 +33,10 @@ __pycache__
 
 .bash_history
 
-# Ignore all test data directories but allow compressed files
+# Ignore locally materialized data payloads and temporary staging/cache files.
 /data/*
-!/data/.lfs/
+/data/.hf-archive-upload-root/
+/data/.cache/
 
 # node env (used by devcontainers cli)
 node_modules
@@ -50,9 +51,6 @@ build/
 **/target/
 **/*.rs.bk
 
-# Ignore data directory but keep .lfs subdirectory
-data/*
-!data/.lfs/
 FastSAM-x.pt
 yolo11n.pt
 

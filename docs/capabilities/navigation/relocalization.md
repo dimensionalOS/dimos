@@ -64,7 +64,7 @@ dimos map global recording_go2 --export
 
 1. Current working directory
 2. `DIMOS_PROJECT_ROOT`
-3. `data/` via LFS (`get_data`)
+3. `data/` via `get_data()` (a local materialization of the Hub-backed data asset)
 
 Examples:
 

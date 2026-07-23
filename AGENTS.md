@@ -393,5 +393,5 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 - Configuration: `docs/usage/configuration.md`
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/development/dimos_run.md`
-- LFS data: `docs/development/large_file_management.md`
+- Hub-backed data assets: `docs/development/large_file_management.md`
 - Agent system: `docs/coding-agents/`

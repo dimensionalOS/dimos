@@ -72,8 +72,8 @@ from dimos.utils.ros1 import (
 logger = setup_logger()
 PI = math.pi
 
-# LFS data asset name for the Unity sim binary
-_LFS_ASSET = "unity_sim_x86"
+# Hub-backed data asset name for the Unity sim binary
+_DATA_ASSET = "unity_sim_x86"
 
 # Read timeout for the Unity TCP connection (seconds).  If Unity stops
 # sending data for longer than this the bridge treats it as a hung
@@ -144,13 +144,13 @@ def _validate_platform() -> None:
 class UnityBridgeConfig(ModuleConfig):
     """Configuration for the Unity bridge / vehicle simulator.
 
-    Set ``unity_binary=""`` to auto-resolve from LFS data (default).
-    Set to an explicit path to use a custom binary. The LFS asset
-    ``unity_sim_x86`` is pulled automatically via ``get_data()``.
+    Set ``unity_binary=""`` to auto-resolve from a data asset (default).
+    Set to an explicit path to use a custom binary. The Hub-backed asset
+    ``unity_sim_x86`` is fetched automatically via ``get_data()``.
     """
 
     # Path to the Unity x86_64 binary. Leave empty to auto-resolve
-    # from LFS data (unity_sim_x86/environment/Model.x86_64).
+    # from the data asset (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
 
     # Max seconds to wait for Unity to connect after launch.
@@ -359,9 +359,9 @@ class UnityBridgeModule(Module):
         super().stop()
 
     def _resolve_binary(self) -> Path | None:
-        """Find the Unity binary from config or LFS data.
+        """Find the Unity binary from config or a data asset.
 
-        When ``unity_binary`` is empty (default), pulls the LFS asset
+        When ``unity_binary`` is empty (default), fetches the data asset
         ``unity_sim_x86`` via ``get_data()`` and returns the path to
         ``environment/Model.x86_64``.
         """
@@ -379,15 +379,15 @@ class UnityBridgeModule(Module):
             logger.warning(f"Unity binary not found at {p}")
             return None
 
-        # Pull from LFS (auto-downloads + extracts on first use)
+        # Fetch and materialize the asset on first use.
         try:
-            data_dir = get_data(_LFS_ASSET)
+            data_dir = get_data(_DATA_ASSET)
             candidate = data_dir / "environment" / "Model.x86_64"
             if candidate.exists():
                 return candidate
-            logger.warning(f"LFS asset '{_LFS_ASSET}' extracted but Model.x86_64 not found")
+            logger.warning(f"Data asset '{_DATA_ASSET}' extracted but Model.x86_64 not found")
         except Exception as e:
-            logger.warning(f"Failed to resolve Unity binary from LFS: {e}")
+            logger.warning(f"Failed to resolve Unity binary from data asset: {e}")
 
         return None
 

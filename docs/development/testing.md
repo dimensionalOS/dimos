@@ -4,7 +4,7 @@ title: "Testing"
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
-Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
+Self-hosted tests need the heavy optional extras (data assets, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
 ```bash
 uv sync --all-groups              # all dependency groups (tests-self-hosted, lint, …)

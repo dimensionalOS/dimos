@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.experimental.scene_cooking import planning as plan_module
+from dimos.experimental.scene_cooking import cook as cook_module, planning as plan_module
 from dimos.experimental.scene_cooking.package_config import browser_visual_spec_for_target
 from dimos.experimental.scene_cooking.sidecar import SceneCookSidecar
 from dimos.experimental.scene_cooking.source_assets.mesh import ScenePrimMesh
@@ -31,6 +31,7 @@ from dimos.simulation.scene_assets.spec import (
     ScenePackage,
     load_scene_package,
 )
+from dimos.utils import data as data_module
 
 
 def _metadata(tmp_path: Path) -> dict[str, Any]:
@@ -57,6 +58,35 @@ def _metadata(tmp_path: Path) -> dict[str, Any]:
         },
         "stats": {},
     }
+
+
+def test_scene_package_default_output_uses_data_asset_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(cook_module, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data_module, "get_data_dir", lambda: data_dir)
+
+    package_dir = cook_module._prepare_package_dir(None, "abc123")
+
+    assert package_dir == data_dir / "scene_packages/abc123"
+    assert package_dir.is_dir()
+
+
+def test_scene_package_canonical_and_external_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(cook_module, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data_module, "get_data_dir", lambda: data_dir)
+
+    canonical = cook_module._prepare_package_dir(data_dir / "scene_packages/explicit", "ignored")
+    external = cook_module._prepare_package_dir(tmp_path / "external/package", "ignored")
+
+    assert canonical == data_dir / "scene_packages/explicit"
+    assert canonical.is_dir()
+    assert external == tmp_path / "external/package"
+    assert external.is_dir()
 
 
 def test_load_scene_package_rejects_missing_artifact_frames(tmp_path: Path) -> None:

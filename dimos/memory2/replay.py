@@ -50,7 +50,7 @@ _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss)."""
+    """Map a dataset name to an on-disk .db path (downloaded on miss)."""
     return resolve_named_path(dataset, ".db")
 
 

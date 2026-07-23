@@ -16,7 +16,8 @@
 
 These talk to the LFS batch API directly (no `git lfs` toolchain), so when CI
 fails the diagnostic is "the LFS server returned X" rather than the looser
-"git lfs pull failed". The end-to-end smudge test lives in test_data.py.
+"git lfs pull failed". The fixture is a tracked documentation asset; runtime
+data is served by the pinned Hugging Face dataset instead.
 """
 
 import hashlib
@@ -27,10 +28,9 @@ import requests
 
 LFS_URL = "https://lfs.dimensionalos.com/dimensionalOS/dimos"
 
-# Known fixture: cafe.jpg.tar.gz pointer in dev. SHA + size match the LFS
-# pointer file at data/.lfs/cafe.jpg.tar.gz.
-KNOWN_OID = "b8cf30439b41033ccb04b09b9fc8388d18fb544d55b85c155dbf85700b9e7603"
-KNOWN_SIZE = 136165
+# Known fixture: tracked documentation SVG pointer.
+KNOWN_OID = "566d6c7009d0e3d2e8a6da49bdaa4e865c44a5b6e3dc10082bf1ac200bb9681b"
+KNOWN_SIZE = 333223
 
 
 def _batch(operation: str, oid: str, size: int, *, auth=None):

@@ -43,9 +43,9 @@ build/
 .env.local
 .env.*.local
 
-# Large data files (LFS archives only)
-data/*
-!data/.lfs/
+# Locally materialized data payloads and temporary HF staging are not part of
+# the application build context.
+data/
 
 # Model files (can be downloaded at runtime)
 *.pt

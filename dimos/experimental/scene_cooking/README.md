@@ -206,12 +206,10 @@ render debugging; it can run much slower.
 ## Data Publishing
 
 Raw scene sources and cooked packages live under `data/` and should not be
-added with ordinary `git add`. Publish large data through the LFS bin workflow
-documented in:
+added with ordinary `git add`. Publication is managed through the external
+Hugging Face dataset; repository code and documentation changes go through
+normal Git. See the data-loading documentation for the runtime contract:
 
 ```text
 docs/development/large_file_management.md
 ```
-
-Code and docs changes go through normal git. Data archives should be updated
-with `./bin/lfs_push` when the package is ready to ship.
