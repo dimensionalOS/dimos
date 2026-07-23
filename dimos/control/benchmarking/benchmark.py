@@ -406,17 +406,8 @@ class Benchmarker(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.odom.subscribe(self._recorder.on_odom)))
-        if self.cmd_vel.transport is not None:
-            self.register_disposable(Disposable(self.cmd_vel.subscribe(self._recorder.on_cmd_vel)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._recorder.on_cmd_vel)))
         if self.config.gate_source == "stream":
-            # Fail fast: with no gate transport the run loop would block forever
-            # in _wait_gate() for an ENTER that can never arrive. Use
-            # gate_source="auto" for headless/ungated runs.
-            if self.operator_command.transport is None:
-                raise RuntimeError(
-                    "gate_source='stream' requires a gate transport; "
-                    "wire one or use gate_source='auto'"
-                )
             self.register_disposable(
                 Disposable(self.operator_command.subscribe(self._on_gate_event))
             )
