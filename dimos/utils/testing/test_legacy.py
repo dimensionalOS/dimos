@@ -13,8 +13,12 @@
 # limitations under the License.
 """Tests specific to LegacyPickleStore."""
 
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import pytest
 
+from dimos.utils import data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
@@ -50,3 +54,19 @@ class TestLegacyPickleStoreRealData:
             prev_ts = item.ts
             if i >= 10:  # Only check first 10 items
                 break
+
+
+def test_relative_write_root_cooperates_with_asset_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    store = LegacyPickleStore("shared/recording")
+    executor = ThreadPoolExecutor(max_workers=1)
+    with data._asset_lock(data_dir, "shared"):
+        pending = executor.submit(store._get_root_dir, True)
+        with pytest.raises(TimeoutError):
+            pending.result(timeout=0.1)
+        assert not (data_dir / "shared").exists()
+    executor.shutdown()
+    assert store._get_root_dir(for_write=True) == data_dir / "shared/recording"

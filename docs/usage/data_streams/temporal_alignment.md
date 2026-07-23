@@ -35,7 +35,7 @@ Below we set up replay of real camera and lidar data from the Unitree Go2 robot.
 <details>
 <summary>Stream Setup</summary>
 
-You can read more about [sensor storage here](/docs/usage/data_streams/storage_replay.md) and [LFS data storage here](/docs/development/large_file_management.md).
+You can read more about [sensor storage here](/docs/usage/data_streams/storage_replay.md) and [data loading here](/docs/development/large_file_management.md).
 
 ```python skip session=align no-result
 from reactivex import Subject

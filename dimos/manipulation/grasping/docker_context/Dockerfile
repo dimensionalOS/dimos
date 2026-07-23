@@ -3,6 +3,7 @@
 #
 # This Dockerfile packages the GraspGen model for grasp pose generation.
 # Requires CUDA 12.8+ for PyTorch and CUDA extensions.
+# Run ./build.sh from this directory to materialize the model asset and build.
 
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
@@ -51,10 +52,11 @@ RUN conda run -n app pip install --no-cache-dir --no-build-isolation torch-scatt
 RUN conda run -n app pip install --no-cache-dir \
     numpy trimesh pillow pyrender imageio scipy
 
-# Model checkpoints from LFS archive
-COPY data/.lfs/models_graspgen.tar.gz /tmp/
-RUN tar -xzf /tmp/models_graspgen.tar.gz -C /app/GraspGen/ && \
-    rm /tmp/models_graspgen.tar.gz
+# Model checkpoints from the locally materialized data asset. Populate
+# data/models_graspgen/ with get_data() before building this image.
+COPY data/models_graspgen/ /tmp/models_graspgen/
+RUN cp -a /tmp/models_graspgen/. /app/GraspGen/ && \
+    rm -rf /tmp/models_graspgen
 
 # Verify checkpoints exist
 RUN test -f /app/GraspGen/checkpoints/graspgen_robotiq_2f_140_gen.pth || \

@@ -15,7 +15,7 @@
 """Resolve xacro $(find pkg) to custom package paths.
 
 xacro's $(find pkg) calls ament_index_python which requires a ROS workspace.
-Since DimOS downloads robot descriptions via LFS to custom paths, we need
+Since DimOS downloads robot descriptions to custom paths, we need
 to redirect package resolution.
 
 When ament_index_python is available (ROS environment), we set up a fake

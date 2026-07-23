@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the stream-level `pose_fill` (no LFS data, runs in normal CI).
+"""Unit tests for the stream-level `pose_fill` (no downloaded data, runs in normal CI).
 
 The end-to-end `dimos map pose-fill` path against a real recording lives in
 `test_cli.py` (self-hosted). These cover the pure stream transform directly.

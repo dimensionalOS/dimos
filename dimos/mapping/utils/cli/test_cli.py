@@ -15,7 +15,7 @@
 """End-to-end tests for the `dimos map` verbs, run in-process.
 
 Each test invokes the real CLI against the `go2_short` recording (60s, auto-
-pulled via LFS) and asserts on the artifact it produces. A short `--duration`
+fetched as a data asset) and asserts on the artifact it produces. A short `--duration`
 snippet keeps every invocation to a few seconds, and `--no-gui` stops the rrd
 verbs from spawning a rerun viewer.
 
@@ -32,7 +32,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-# These drive the real CLI against an LFS recording (CPU voxel accumulation,
+# These drive the real CLI against a data-asset recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.
 pytestmark = pytest.mark.self_hosted
 

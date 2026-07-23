@@ -36,7 +36,7 @@ class RPCInspectable(Protocol):
 DEFAULT_RPC_TIMEOUT: float = 120.0
 DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType(
     {
-        "build": 86400.0,  # 24h — docker builds, LFS downloads, etc.
+        "build": 86400.0,  # 24h — docker builds, data downloads, etc.
         "start": 1200.0,
     }
 )

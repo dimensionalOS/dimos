@@ -52,7 +52,7 @@ class Yoloe2DDetector(Detector):
         Initialize YOLO-E 2D detector.
 
         Args:
-            model_path: Path to model directory (fetched via get_data from LFS).
+            model_path: Path to model directory (fetched via get_data from the Hub).
             model_name: Model filename. Defaults based on prompt_mode.
             device: Device to run inference on ('cuda', 'cpu', or None for auto).
             prompt_mode: LRPC for prompt-free detection, PROMPT for text/visual prompting.

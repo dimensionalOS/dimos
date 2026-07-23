@@ -15,7 +15,7 @@
 """
 Usage:
     # fetch a sample Mid-360 capture (the get_data arg is the dir/file inside the
-    # LFS archive, NOT the archive name)
+    # data asset archive, NOT the archive name)
     PCAP_PATH="$(python -c "from dimos.utils.data import get_data; print(get_data('mid360_shake_stairs/mid360_shake_stairs.pcap'))")"
 
     # gen .db from pcap (defaults to <pcap>.db next to the pcap)
@@ -421,7 +421,7 @@ def _load_overrides(config: str) -> dict[str, Any]:
 
 def _resolve_db_path(args: argparse.Namespace, pcap_path: Path) -> Path:
     """Where to record. Omitted --db -> <pcap>.db. A given --db that's missing is
-    fetched via get_data (LFS) before falling back to building from scratch."""
+    fetched via get_data before falling back to building from scratch."""
     if not args.db:
         return pcap_path.with_suffix(".db")
     db_path = Path(args.db).expanduser().resolve()
@@ -433,7 +433,7 @@ def _resolve_db_path(args: argparse.Namespace, pcap_path: Path) -> Path:
             if fetched.exists():
                 print(f"[pcap_to_db] fetched --db via get_data: {fetched}", flush=True)
                 return fetched.resolve()
-        except (FileNotFoundError, RuntimeError, OSError) as exc:  # not an LFS db -> build fresh
+        except (FileNotFoundError, RuntimeError, OSError) as exc:  # not a data asset -> build fresh
             print(
                 f"[pcap_to_db] --db not found locally or via get_data ({exc}); "
                 "building from scratch",

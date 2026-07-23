@@ -1,0 +1,11 @@
+# This Dockerfile uses the repository root as its context. Keep the context
+# limited to the Dockerfile and the one materialized data asset it consumes.
+*
+!dimos/
+!dimos/manipulation/
+!dimos/manipulation/grasping/
+!dimos/manipulation/grasping/docker_context/
+!dimos/manipulation/grasping/docker_context/Dockerfile
+!data/
+!data/models_graspgen/
+!data/models_graspgen/**

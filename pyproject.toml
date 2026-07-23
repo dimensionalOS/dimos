@@ -151,6 +151,8 @@ dependencies = [
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
+    "filelock>=3.18",
+    "huggingface_hub>=0.30.0,<1",
 ]
 
 
