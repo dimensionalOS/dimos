@@ -19,6 +19,7 @@ import threading
 import time
 from typing import IO
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import GlobalConfig
 from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
 from dimos.utils.deno import ensure_deno
@@ -28,7 +29,7 @@ logger = setup_logger()
 
 _VIDEO_RATE = 50
 _LIDAR_RATE = 100
-_DIMSIM_DIR = Path(__file__).resolve().parents[3] / "misc" / "DimSim"
+_DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 
 
 class DimSimProcess:
