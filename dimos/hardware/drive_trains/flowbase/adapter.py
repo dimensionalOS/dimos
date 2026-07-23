@@ -27,14 +27,10 @@ We negate vy and wz when sending to the hardware.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
 
 import numpy as np
 
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.drive_trains.registry import TwistBaseAdapterRegistry
 
 logger = setup_logger()
 
@@ -175,8 +171,3 @@ class FlowBaseAdapter:
         except Exception as e:
             logger.error(f"Error sending FlowBase velocity: {e}")
             return False
-
-
-def register(registry: TwistBaseAdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("flowbase", FlowBaseAdapter)

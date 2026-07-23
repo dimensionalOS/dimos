@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -7,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -17,6 +28,7 @@ use tracing::debug;
 
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
+type Xyzi = (f32, f32, f32, f32);
 
 /// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
@@ -234,13 +246,21 @@ impl Worker {
                         return false;
                     }
                 };
-                let bounds = RegionBounds {
-                    origin_x: bounds.pose.position.x as f32,
-                    origin_y: bounds.pose.position.y as f32,
-                    radius: bounds.pose.orientation.x as f32,
-                    z_min: bounds.pose.orientation.y as f32,
-                    z_max: bounds.pose.orientation.z as f32,
-                };
+                let z_max = bounds.pose.orientation.z as f32;
+                let sensor_z = self
+                    .latest_start
+                    .lock()
+                    .expect("start mutex")
+                    .map_or(z_max, |(_, _, z)| z);
+                let bounds = RegionBounds::capped(
+                    bounds.pose.position.x as f32,
+                    bounds.pose.position.y as f32,
+                    bounds.pose.orientation.x as f32,
+                    bounds.pose.orientation.y as f32,
+                    z_max,
+                    sensor_z,
+                    self.config.max_overhead_m,
+                );
 
                 let update_start = Instant::now();
                 planner.update_region(&points, &bounds, &self.config);
@@ -277,11 +297,15 @@ impl Worker {
         let frame = &self.config.world_frame;
         let graph = planner.graph();
 
-        let surface_points: Vec<Xyz> = planner
-            .surface()
-            .map(|(ix, iy, iz)| surface_point_xyz(ix, iy, iz, voxel_size))
+        let surface_points: Vec<Xyzi> = planner
+            .surface_clearance()
+            .into_iter()
+            .map(|((ix, iy, iz), clearance)| {
+                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                (x, y, z, clearance)
+            })
             .collect();
-        let surface = build_pc2_xyz(&surface_points, frame, now());
+        let surface = build_pc2_xyzi(&surface_points, frame, now());
 
         let node_points: Vec<Xyz> = graph.nodes.iter().map(|n| n.pos).collect();
         let node_cloud = build_pc2_xyz(&node_points, frame, now());
@@ -295,6 +319,8 @@ impl Worker {
         let Some(start) = *self.latest_start.lock().expect("start mutex") else {
             return;
         };
+        // Ground-project the sensor pose so the start snaps to the supporting surface.
+        let start = (start.0, start.1, start.2 - self.config.robot_height);
         let goal = {
             let mut guard = self.active_goal.lock().expect("goal mutex");
             let Some(goal) = *guard else {
@@ -437,6 +463,40 @@ fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stam
     }
 }
 
+/// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's wall clearance.
+fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let n = points.len() as i32;
+    let mut data = Vec::with_capacity(points.len() * 16);
+    for &(x, y, z, i) in points {
+        data.extend_from_slice(&x.to_le_bytes());
+        data.extend_from_slice(&y.to_le_bytes());
+        data.extend_from_slice(&z.to_le_bytes());
+        data.extend_from_slice(&i.to_le_bytes());
+    }
+    let make_field = |name: &str, off: i32| PointField {
+        name: name.into(),
+        offset: off,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: header(frame_id, stamp),
+        height: 1,
+        width: n,
+        fields: vec![
+            make_field("x", 0),
+            make_field("y", 4),
+            make_field("z", 8),
+            make_field("intensity", 12),
+        ],
+        is_bigendian: false,
+        point_step: 16,
+        row_step: 16 * n,
+        data,
+        is_dense: true,
+    }
+}
+
 fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> PointCloud2 {
     let n = points.len() as i32;
     let mut data = Vec::with_capacity(points.len() * 12);
@@ -532,10 +592,7 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("failed to create LCM transport");
-    run::<MlsPlanner, _>(transport).await;
+    run_with_transport::<MlsPlanner>().await;
 }
 
 #[cfg(test)]

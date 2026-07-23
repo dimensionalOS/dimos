@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.coordination.blueprints import config_key
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -28,6 +29,17 @@ if TYPE_CHECKING:
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
 logger = setup_logger()
+
+
+def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, override_value in overrides.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
+            merged[key] = _merge_config_kwargs(base_value, override_value)
+        else:
+            merged[key] = override_value
+    return merged
 
 
 class WorkerManagerPython:
@@ -85,7 +97,7 @@ class WorkerManagerPython:
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class)
+        return RPCClient(actor, module_class, kwargs.get("instance_name"))
 
     def deploy_fresh(
         self,
@@ -111,7 +123,7 @@ class WorkerManagerPython:
         if module_class.dedicated_worker:
             worker.dedicated = True
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class)
+        return RPCClient(actor, module_class, kwargs.get("instance_name"))
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
@@ -161,7 +173,12 @@ class WorkerManagerPython:
             module_class, _, kwargs = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            kwargs.update(blueprint_args.get(module_class.name, {}))
+            instance_key = kwargs.get("instance_name") or module_class.name
+            args = blueprint_args.get(config_key(instance_key), {})
+            # instance_name is assigned by the blueprint; a user-supplied value
+            # would desync the module's RPC topic from the coordinator's proxy.
+            args = {k: v for k, v in args.items() if k != "instance_name"}
+            kwargs.update(_merge_config_kwargs(kwargs, args))
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
@@ -169,7 +186,9 @@ class WorkerManagerPython:
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
             worker, (module_class, global_config, kwargs) = item
             return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs), module_class
+                worker.deploy_module(module_class, global_config, kwargs),
+                module_class,
+                kwargs.get("instance_name"),
             )
 
         try:

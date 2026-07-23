@@ -23,12 +23,13 @@ class MLSPlanner:
         *,
         voxel_size: float,
         robot_height: float,
-        surface_closing_radius: float = 0.15,
+        max_overhead_m: float = 2.0,
+        surface_closing_radius: float = 0.3,
         node_spacing_m: float = 1.0,
-        wall_clearance_m: float = 0.3,
+        wall_clearance_m: float = 0.1,
         wall_buffer_m: float = 0.75,
         wall_buffer_weight: float = 100.0,
-        step_threshold_m: float = 0.25,
+        step_threshold_m: float = 0.16,
         step_penalty_weight: float = 4.0,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
@@ -42,10 +43,11 @@ class MLSPlanner:
         radius: float,
         z_min: float,
         z_max: float,
+        sensor_z: float,
     ) -> None:
         """Replace the cylindrical region with a local map slice and rebuild.
 
-        Points are (N, 3) float32.
+        Points are (N, 3) float32. z_max is capped at sensor_z + max_overhead_m.
         """
         ...
 

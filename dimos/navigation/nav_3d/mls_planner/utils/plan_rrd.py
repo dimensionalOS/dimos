@@ -21,10 +21,12 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 from time import perf_counter
+from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 import rerun as rr
+import rerun.blueprint as rrb
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
@@ -38,6 +40,15 @@ from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
 
+# Body-frame axis-triad length for the odometry transform (m).
+ODOM_AXIS_LEN = 0.5
+# Arrow radius as a fraction of the triad length.
+AXIS_RADIUS_RATIO = 25
+
+# The travelled trail. Blue, but light enough to read against the map's turbo
+# lows, and clear of PATH_PALETTE so it never reads as a planned path.
+ODOM_PATH_COLOR = [80, 160, 255]
+
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [
     [0, 255, 0],
@@ -49,6 +60,14 @@ PATH_PALETTE = [
     [120, 255, 200],
     [255, 255, 120],
 ]
+
+
+class LocalCrop(NamedTuple):
+    """Cylinder around the robot's feet that the close-up view shows."""
+
+    radius: float
+    above: float
+    below: float
 
 
 def _parse_configs(
@@ -96,7 +115,7 @@ def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
         [(float(r[0]), float(r[1]), float(r[2])), (float(r[3]), float(r[4]), float(r[5]))]
         for r in edges
     ]
-    rr.log(entity, rr.LineStrips3D(segments))
+    rr.log(entity, rr.LineStrips3D(segments, colors=[[255, 255, 255]], radii=0.02))
 
 
 def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list[int]) -> None:
@@ -107,13 +126,65 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
     rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
 
 
+def _log_odometry(
+    pose: tuple[float, ...], ts: float, trail: list[tuple[float, float, float]]
+) -> None:
+    """Log the odometry pose as a moving body-frame transform and the growing trail."""
+    px, py, pz, qx, qy, qz, qw = pose
+    rr.set_time(TIMELINE, timestamp=ts)
+    rr.log(
+        "world/odom",
+        rr.Transform3D(translation=[px, py, pz], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])),
+    )
+    trail.append((px, py, pz))
+    if len(trail) > 1:
+        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[ODOM_PATH_COLOR], radii=0.015))
+
+
 def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
-    """Map per-cell wall clearance to a blue ramp, clamped so it resolves near walls."""
+    """Color floor cells by wall clearance: dark navy where tight, pale blue in the open.
+
+    Its own ramp, not the map's turbo, so the floor reads as a distinct layer.
+    """
     norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
-    blocked = np.array([4.0, 8.0, 48.0], dtype=np.float64)
-    clear = np.array([150.0, 200.0, 255.0], dtype=np.float64)
-    rgb: NDArray[np.float64] = blocked + norm[:, None] * (clear - blocked)
+    tight = np.array([4.0, 8.0, 48.0], dtype=np.float64)
+    open_ = np.array([150.0, 200.0, 255.0], dtype=np.float64)
+    rgb: NDArray[np.float64] = tight + norm[:, None] * (open_ - tight)
     return rgb.astype(np.uint8)
+
+
+def _log_local_map(
+    voxel_map: NDArray[np.float32],
+    ground: tuple[float, float, float],
+    crop: LocalCrop,
+    render_voxel: float,
+) -> None:
+    """Log the map cropped around the robot, in a frame parented to its feet.
+
+    The close-up view takes that frame as its origin, so it rides along with the
+    robot. Translation only: yaw would spin the view.
+    """
+    gx, gy, gz = ground
+    rr.log("world/local", rr.Transform3D(translation=[gx, gy, gz]))
+    rel = (
+        voxel_map - np.array([gx, gy, gz], dtype=np.float32)
+        if voxel_map.size
+        else np.empty((0, 3), dtype=np.float32)
+    )
+    keep = (
+        (rel[:, 0] ** 2 + rel[:, 1] ** 2 <= crop.radius**2)
+        & (rel[:, 2] >= -crop.below)
+        & (rel[:, 2] <= crop.above)
+    )
+    local = rel[keep]
+    if local.size == 0:
+        rr.log("world/local/voxel_map", rr.Points3D([]))
+        return
+    # Its own turbo: spread over the crop's own height range, not the building's,
+    # so a 1 m band of floor still reads as a full gradient.
+    z = local[:, 2]
+    class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
+    rr.log("world/local/voxel_map", rr.Points3D(local, class_ids=class_ids, radii=render_voxel / 3))
 
 
 def _log_shared(
@@ -121,6 +192,8 @@ def _log_shared(
     planner: MLSPlanner,
     render_voxel: float,
     clearance_clamp: float,
+    hard_clearance: float,
+    crop: LocalCrop,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
     """Log the map artifacts shared by every config from a reference planner.
 
@@ -130,21 +203,28 @@ def _log_shared(
 
     voxel_map = planner.voxel_map()
     if voxel_map.size:
+        z = voxel_map[:, 2]
+        class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
         rr.log(
             "world/voxel_map",
-            rr.Points3D(voxel_map, colors=[[180, 125, 125]], radii=render_voxel / 2),
+            rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 3),
         )
+    _log_local_map(voxel_map, start, crop, render_voxel)
 
     surface = planner.surface_clearance_map()
-    if surface.size:
-        rr.log(
-            "world/surface_map",
-            rr.Points3D(
-                surface[:, :3],
-                colors=_clearance_colors(surface[:, 3], clearance_clamp),
-                radii=render_voxel / 2,
-            ),
-        )
+    # Walls are already drawn by the voxel map; the surface layer only answers
+    # "how much room is there", which is only a question where the robot fits.
+    passable = surface[surface[:, 3] >= hard_clearance] if surface.size else surface
+    # Always log, even when empty: an unconditional update clears the prior
+    # frame's floor so a newly blocked region doesn't keep showing stale cells.
+    rr.log(
+        "world/surface_map",
+        rr.Points3D(
+            passable[:, :3],
+            colors=_clearance_colors(passable[:, 3], clearance_clamp),
+            radii=render_voxel / 2,
+        ),
+    )
 
     nodes = planner.nodes()
     if nodes.size:
@@ -155,7 +235,32 @@ def _log_shared(
     return surface, nodes, edges
 
 
-def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
+def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
+    """Full map on the left; the robot-following crop and the metrics beside it."""
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                origin="world",
+                name="world",
+                contents=["+ $origin/**", "- $origin/local/**"],
+            ),
+            rrb.Vertical(
+                rrb.Spatial3DView(
+                    origin="world/local",
+                    name=f"local {crop.radius:g}m",
+                    contents=["+ $origin/**", "+ /world/paths/**", "+ /world/odom/**"],
+                ),
+                rrb.TimeSeriesView(origin="metrics/timing", name="timing"),
+                rrb.TimeSeriesView(origin="metrics/size", name="size"),
+                row_shares=[2, 1, 1],
+            ),
+            column_shares=[2, 1],
+        ),
+        collapse_panels=True,
+    )
+
+
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: LocalCrop) -> None:
     rr.init("plan_rrd", recording_id=db_path.stem)
     if out is not None and live:
         # Generous viewer memory so the gRPC sink never backpressures the writer.
@@ -165,6 +270,7 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
         rr.save(str(out))
     else:
         rr.spawn()
+    rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
 
 
@@ -172,6 +278,7 @@ def _build_planners(
     configs: list[tuple[float, float, float]],
     voxel_size: float,
     robot_height: float,
+    max_overhead: float,
     surface_closing_radius: float,
     node_spacing: float,
     step_height: float,
@@ -182,6 +289,7 @@ def _build_planners(
         planner = MLSPlanner(
             voxel_size=voxel_size,
             robot_height=robot_height,
+            max_overhead_m=max_overhead,
             surface_closing_radius=surface_closing_radius,
             node_spacing_m=node_spacing,
             wall_clearance_m=clr,
@@ -204,6 +312,8 @@ def _process_frame(
     robot_height: float,
     render_voxel: float,
     clearance_clamp: float,
+    hard_clearance: float,
+    crop: LocalCrop,
 ) -> dict[str, float]:
     """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
     assert ray_obs.pose_tuple is not None
@@ -218,7 +328,7 @@ def _process_frame(
     surface = nodes = edges = np.empty((0,), dtype=np.float32)
     for j, (label, color, planner) in enumerate(planners):
         t0 = perf_counter()
-        planner.update_region(pts, (ox, oy), radius, z_min, z_max)
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max, float(pz))
         t1 = perf_counter()
         waypoints = planner.plan(start, goal)
         t2 = perf_counter()
@@ -229,7 +339,9 @@ def _process_frame(
                 "plan_ms": (t2 - t1) * 1000,
                 "total_ms": (t2 - t0) * 1000,
             }
-            surface, nodes, edges = _log_shared(start, planner, render_voxel, clearance_clamp)
+            surface, nodes, edges = _log_shared(
+                start, planner, render_voxel, clearance_clamp, hard_clearance, crop
+            )
 
     for key, value in ref_timing.items():
         rr.log(f"metrics/timing/{key}", rr.Scalars(value))
@@ -250,17 +362,38 @@ def main(
         None, "--out", help="Output .rrd path. If omitted, spawn rerun live."
     ),
     lidar_stream: str = typer.Option(
-        "fastlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
+        "pointlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
     ),
     odom_stream: str = typer.Option(
-        "fastlio_odometry", "--odom-stream", help="Odometry stream in the recording"
+        "pointlio_odometry", "--odom-stream", help="Odometry stream in the recording"
     ),
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
-    voxel_size: float = typer.Option(0.1, "--voxel-size", help="Voxel edge length (m)"),
+    voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
+    shadow_depth: float = typer.Option(
+        0.1, "--shadow-depth", help="Extend rays past the endpoint to clear shadows (m)"
+    ),
+    grace_depth: float = typer.Option(
+        0.2, "--grace-depth", help="Skip clearing for voxels within this range of a point (m)"
+    ),
     emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
-    robot_height: float = typer.Option(1.0, "--robot-height", help="Robot height (m)"),
+    min_health: int = typer.Option(
+        -1,
+        "--min-health",
+        help="Voxel health floor; more negative needs more hits to appear and more misses to clear",
+    ),
+    max_health: int = typer.Option(5, "--max-health", help="Voxel health ceiling"),
+    support_min: int = typer.Option(
+        4,
+        "--support-min",
+        help="Min occupied neighbors a surface voxel needs to be emitted; "
+        "0 emits all, higher drops isolated returns",
+    ),
+    robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
+    max_overhead: float = typer.Option(
+        2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
+    ),
     surface_closing_radius: float = typer.Option(
         0.3,
         "--surface-closing-radius",
@@ -268,7 +401,7 @@ def main(
     ),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
     wall_clearance: float = typer.Option(
-        0.3,
+        0.1,
         "--wall-clearance",
         help="Hard clearance; cells closer to a wall or edge are impassable (m)",
     ),
@@ -279,7 +412,7 @@ def main(
         100.0, "--wall-buffer-weight", help="Peak soft wall penalty at the clearance edge"
     ),
     step_height: float = typer.Option(
-        0.25,
+        0.16,
         "--step-height",
         help="Max traversable vertical step (m); taller steps are impassable",
     ),
@@ -299,6 +432,18 @@ def main(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
     render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    local_radius: float = typer.Option(
+        5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
+    ),
+    local_above: float = typer.Option(
+        1.0, "--local-above", help="Close-up view: crop this far above the robot's feet (m)"
+    ),
+    local_below: float = typer.Option(
+        2.0,
+        "--local-below",
+        help="Close-up view: crop this far below the robot's feet (m); "
+        "keeps stairs down but drops the floor below",
+    ),
     clearance_clamp: float = typer.Option(
         1.0, "--clearance-clamp", help="Max clearance (m) for the surface color scale"
     ),
@@ -310,7 +455,8 @@ def main(
     ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-    _init_recording(db_path, out, live)
+    crop = LocalCrop(local_radius, local_above, local_below)
+    _init_recording(db_path, out, live, crop)
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -329,15 +475,22 @@ def main(
                 voxel_size=voxel_size,
                 max_range=max_range,
                 ray_subsample=ray_subsample,
+                shadow_depth=shadow_depth,
+                grace_depth=grace_depth,
                 emit_every=emit_every,
+                min_health=min_health,
+                max_health=max_health,
+                support_min=support_min,
             )
         )
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
+        ref_clearance = configs[0][0]
         planners = _build_planners(
             configs,
             voxel_size,
             robot_height,
+            max_overhead,
             surface_closing_radius,
             node_spacing,
             step_height,
@@ -346,14 +499,39 @@ def main(
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
+        # Static XYZ axis triad in the odometry body frame (world/odom transform).
+        rr.log(
+            "world/odom/axes",
+            rr.Arrows3D(
+                origins=[[0.0, 0.0, 0.0]] * 3,
+                vectors=[
+                    [ODOM_AXIS_LEN, 0.0, 0.0],
+                    [0.0, ODOM_AXIS_LEN, 0.0],
+                    [0.0, 0.0, ODOM_AXIS_LEN],
+                ],
+                colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+                radii=ODOM_AXIS_LEN / AXIS_RADIUS_RATIO,
+            ),
+            static=True,
+        )
+        odom_trail: list[tuple[float, float, float]] = []
+
         try:
             frame = 0
             for ray_obs in ray_pipeline:
                 if ray_obs.pose_tuple is None:
                     continue
                 ref_timing = _process_frame(
-                    ray_obs, planners, goal, robot_height, render_voxel, clearance_clamp
+                    ray_obs,
+                    planners,
+                    goal,
+                    robot_height,
+                    render_voxel,
+                    clearance_clamp,
+                    ref_clearance,
+                    crop,
                 )
+                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, odom_trail)
                 frame += 1
                 print(
                     f"frame={frame} configs={len(planners)} "

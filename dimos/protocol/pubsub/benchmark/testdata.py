@@ -15,9 +15,11 @@
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+import os
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
@@ -478,5 +480,101 @@ if ROS_AVAILABLE:
         Case(
             pubsub_context=dimos_ros_reliable_pubsub_channel,
             msg_gen=dimos_ros_msggen,
+        )
+    )
+
+
+# WebRTC over the live Cloudflare Realtime SFU. Needs network + credentials,
+# so it only registers when CF_TELEOP_APP_ID/SECRET are set (CI skips it).
+try:
+    from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import (
+        MAX_MSG_SIZE,
+        CloudflareConfig,
+        CloudflareProvider,
+    )
+    from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
+    from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+except ImportError:
+    WEBRTC_AVAILABLE = False
+
+if WEBRTC_AVAILABLE:
+    # WebRTC pubsub stack over an in-memory loopback provider: measures the
+    # WebRTCPubSub/provider dispatch overhead with no network or SCTP — the
+    # keyless upper bound to read the WebrtcCloudflare row against.
+
+    class _LoopbackProvider:
+        def __init__(self) -> None:
+            self._subs: dict[str, list[Callable[[bytes, str], None]]] = {}
+            self._started = False
+
+        @property
+        def is_connected(self) -> bool:
+            return self._started
+
+        def start(self) -> None:
+            self._started = True
+
+        def stop(self) -> None:
+            self._started = False
+
+        def publish(self, topic: str, data: bytes) -> None:
+            for cb in self._subs.get(topic, ()):
+                cb(data, topic)
+
+        def subscribe(
+            self, topic: str, callback: Callable[[bytes, str], None]
+        ) -> Callable[[], None]:
+            self._subs.setdefault(topic, []).append(callback)
+
+            def _unsub() -> None:
+                if callback in self._subs.get(topic, ()):
+                    self._subs[topic].remove(callback)
+
+            return _unsub
+
+    @contextmanager
+    def webrtc_loopback_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
+        pubsub = WebRTCPubSub(provider=_LoopbackProvider())
+        pubsub.start()
+        try:
+            yield pubsub
+        finally:
+            pubsub.stop()
+
+    def webrtc_loopback_msggen(size: int) -> tuple[str, bytes]:
+        return ("benchmark/webrtc_local", make_data_bytes(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=webrtc_loopback_pubsub_channel,
+            msg_gen=webrtc_loopback_msggen,
+        )
+    )
+
+
+if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
+
+    @contextmanager
+    def webrtc_cloudflare_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
+        config = CloudflareConfig(
+            app_id=os.environ["CF_TELEOP_APP_ID"],
+            app_secret=os.environ["CF_TELEOP_APP_SECRET"],
+        )
+        pubsub = WebRTCPubSub(provider=CloudflareProvider(config))
+        pubsub.start()
+        try:
+            yield pubsub
+        finally:
+            pubsub.stop()
+
+    def webrtc_msggen(size: int) -> tuple[str, bytes]:
+        if size > MAX_MSG_SIZE:
+            pytest.skip(f"{size}B exceeds the SCTP/CF DataChannel message limit")
+        return ("benchmark/webrtc", make_data_bytes(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=webrtc_cloudflare_pubsub_channel,
+            msg_gen=webrtc_msggen,
         )
     )

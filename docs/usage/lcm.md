@@ -21,7 +21,7 @@ Apart from python, we have examples of LCM integrations for:
 In our [/examples/language-interop/](/examples/language-interop/) dir
 
 Types generated (but no examples yet) for:
-[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/csharp) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java)
+[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/cs_lcm_msgs) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java_lcm_msgs)
 
 ### Native Modules
 

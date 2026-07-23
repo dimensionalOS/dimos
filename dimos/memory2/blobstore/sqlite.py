@@ -105,3 +105,14 @@ class SqliteBlobStore(BlobStore):
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}") from None
         if cur.rowcount == 0:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}")
+
+    def size_bytes(self, stream_name: str) -> int | None:
+        # LENGTH(data) comes from the record header, so this never reads payload pages.
+        validate_identifier(stream_name)
+        try:
+            row = self._conn.execute(
+                f'SELECT SUM(LENGTH(data)) FROM "{stream_name}_blob"'
+            ).fetchone()
+        except sqlite3.OperationalError:  # no blob table for this stream
+            return 0
+        return int(row[0]) if row[0] is not None else 0

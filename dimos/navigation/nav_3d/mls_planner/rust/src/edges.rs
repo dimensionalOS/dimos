@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Node-graph edge construction.
 //!
@@ -12,7 +23,7 @@ use rayon::prelude::*;
 
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::dijkstra::{dijkstra, dijkstra_region, walk_preds, DijkstraState, Weight};
-use crate::nodes::NodeData;
+use crate::nodes::{NodeData, NodeScratch};
 use crate::voxel::VoxelKey;
 
 /// A node is identified by the CellId it sits on. Stable across incremental
@@ -46,6 +57,8 @@ pub struct PlannerGraph {
     pub cell_state: DijkstraState,
     /// Each cell's distance to the nearest wall.
     pub wall_state: DijkstraState,
+    /// Reusable dense scratch for node placement, shared across region frames.
+    pub node_scratch: NodeScratch,
 }
 
 impl PlannerGraph {

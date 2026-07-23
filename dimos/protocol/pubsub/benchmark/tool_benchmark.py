@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from collections.abc import Generator
+import os
 import threading
 import time
 from typing import Any
@@ -54,8 +55,10 @@ BENCH_DURATION = 1.0
 # Max messages to send per test (prevents overwhelming slower transports)
 MAX_MESSAGES = 5000
 
-# Max time to wait for in-flight messages after publishing stops
-RECEIVE_TIMEOUT = 1.0
+# Max time to wait for in-flight messages after publishing stops. Networked
+# transports need more drain time than the local default, e.g.
+# DIMOS_BENCH_RECEIVE_TIMEOUT_S=5 for the webrtc/Cloudflare round trip.
+RECEIVE_TIMEOUT = float(os.environ.get("DIMOS_BENCH_RECEIVE_TIMEOUT_S", "1.0"))
 
 
 def pubsub_id(testcase: Case[Any, Any]) -> str:
@@ -90,8 +93,10 @@ def test_throughput(
     benchmark_results: BenchmarkResults,
 ) -> None:
     """Measure throughput for publishing and receiving messages over a fixed duration."""
+    # Generate (or skip on) the message before connecting: webrtc sizes over
+    # the CF DataChannel cap skip here, and shouldn't pay a live CF session.
+    topic, msg = msggen(msg_size)
     with pubsub_context() as pubsub:
-        topic, msg = msggen(msg_size)
         received_count = 0
         target_count = [0]  # Use list to allow modification after publish loop
         lock = threading.Lock()

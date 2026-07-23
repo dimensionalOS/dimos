@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -42,7 +42,7 @@ jobs:
 
       - id: filter
         if: steps.force.outputs.force != 'true'
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@v4.0.2
         with:
           base: ${{ github.event.before }}
           filters: |

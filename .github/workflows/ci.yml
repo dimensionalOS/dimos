@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -27,7 +28,7 @@ jobs:
       digest: ${{ steps.read.outputs.digest }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - id: read
         run: |
           DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' docker/ros-dev-pin/Dockerfile)
@@ -45,15 +46,27 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
         run: uv run mypy
+
+      # The deno-fmt pre-commit hook needs deno on PATH.
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
@@ -65,7 +78,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Find Cargo workspace roots
         id: find-crates
         run: |
@@ -114,7 +127,7 @@ jobs:
             (cd "$crate" && cargo test --workspace --all-features --locked)
           done
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install dependency for pyaudio
@@ -141,7 +154,7 @@ jobs:
       contents: read  # For checkout
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fetch LFS data needed by doc code blocks
         run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz"
       # Docs decode JPEG from SQLite via PyTurboJPEG; pyaudio needs portaudio.
@@ -150,17 +163,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libturbojpeg portaudio19-dev
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
         id: hf-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/huggingface
           # The docs determine which models get downloaded, so any docs
@@ -188,7 +201,7 @@ jobs:
         # Save right after the download (not in a post step) so a failure in
         # the doc blocks below doesn't throw away the downloaded models.
         if: steps.hf-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/huggingface
           key: hf-models-${{ hashFiles('docs/**/*.md') }}
@@ -207,7 +220,7 @@ jobs:
       contents: read  # For checkout
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           lfs: false
           sparse-checkout: |
@@ -216,7 +229,7 @@ jobs:
       - name: Pull docs LFS assets only
         run: git lfs pull --include="docs/assets/**" --exclude=""
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
@@ -228,6 +241,42 @@ jobs:
       # - name: Validate Mintlify docs
       #   working-directory: docs
       #   run: npm run validate
+
+  web:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+
+      - name: Deno fmt
+        working-directory: web
+        run: deno fmt --check
+
+      - name: Deno lint
+        working-directory: web
+        run: deno lint
+
+      - name: Deno check
+        working-directory: web
+        run: deno task check
+
+      - name: Deno test
+        working-directory: web
+        run: deno task test
 
   tests:
     timeout-minutes: 20
@@ -252,13 +301,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6.3.0
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
@@ -292,7 +341,7 @@ jobs:
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -307,7 +356,7 @@ jobs:
           version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -319,38 +368,48 @@ jobs:
     # Check whether the modules-for-this-config marker cache
     # already exists. Used to skip cmu-nav-natives without using the cachix environment.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
     outputs:
       cache-hit: ${{ steps.marker.outputs.cache-hit }}
+      key: ${{ steps.cache-key.outputs.key }}
     steps:
       - name: Checkout files used for cache key
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           sparse-checkout: |
             bin/build-cmu-nav-natives
             dimos/navigation/cmu_nav/modules
           sparse-checkout-cone-mode: false
+      - name: Compute cache key
+        # Recomputing the key in cmu-nav-natives after build breaks the key.
+        # Save here so it can be reused verbatim.
+        id: cache-key
+        run: echo "key=cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}" >> "$GITHUB_OUTPUT"
       - name: Look up marker cache
         id: marker
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/cmu-nav-natives-marker
-          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          key: ${{ steps.cache-key.outputs.key }}
           lookup-only: true
 
   cmu-nav-natives:
-    # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
     # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
     # reaches a `run:` step here could exfiltrate the token, letting an attacker
     # push poisoned binaries to the Cachix cache — which subsequent CI runs and
-    # every dev with the substituter configured would unwittingly install. The
-    # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
+    # every dev with the substituter configured would unwittingly install.
+    # Allowed only on trusted events: push, merge_group (a maintainer must
+    # approve + queue the PR), and same-repo PRs — NEVER on fork `pull_request`s.
+    # The `if:` guard below is the only thing keeping forks out — DO NOT REMOVE.
+    # merge_group runs the PR's *merged* workflow with secrets, so .github/
+    # changes must be reviewed before a fork PR is queued.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
     needs: cmu-nav-natives-marker
     timeout-minutes: 300
@@ -361,11 +420,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install minimal dimos for module discovery
@@ -384,7 +443,7 @@ jobs:
         # Restoring these skips the ~20s/module evaluation cost, which is
         # paid every cold run otherwise. /nix/store is intentionally NOT
         # cached here — that's the slow heavy part that Cachix handles.
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/nix
@@ -392,13 +451,13 @@ jobs:
           key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**/*.py') }}
           restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
-        uses: cachix/cachix-action@v15
+        uses: cachix/cachix-action@v17
         with:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build cmu_nav native modules
         env:
-          BUILD_WORKERS: "2"
+          BUILD_WORKERS: "1"
         run: uv run bin/build-cmu-nav-natives
       - name: Write marker file
         run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
@@ -406,16 +465,18 @@ jobs:
         # Done as a final step (rather than via actions/cache's post-step) so
         # a build failure doesn't poison the cache with a marker for a config
         # we never actually pushed.
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: /tmp/cmu-nav-natives-marker
-          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
 
   self-hosted-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
+    # Runs on push, merge_group (trusted — a maintainer must approve + queue the
+    # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
+    # self-hosted runner to untrusted code from external contributors.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
@@ -431,6 +492,9 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              # Hard-cap container RAM so a runaway test OOMs inside the container, not
+              # as a host global-OOM that takes out sshd/tmux.
+              options: --memory=6g --memory-swap=6g
               # Persist Nix state on the self-hosted runner's filesystem so
               # the ~3 GB module closures survive between jobs.
               volumes:
@@ -455,7 +519,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -466,7 +530,7 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install codecov CLI
@@ -522,7 +586,8 @@ jobs:
           extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           always-allow-substitutes = true
           build-users-group =
-          max-jobs = auto
+          # Substitute-only: everything should be compiled already and stored in Cachix.
+          max-jobs = 0
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch cmu_nav native modules from Cachix
@@ -540,7 +605,7 @@ jobs:
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -553,7 +618,7 @@ jobs:
           binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -563,6 +628,21 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Garbage-collect the persistent Nix store
+        # /nix is bind-mounted from the runner host's /var/cache/dimos-nix
+        # (see this job's container.volumes) so module closures survive between
+        # jobs. But every run also imports a fresh `…-source` closure of the
+        # tree — including the large data/.lfs recordings — and nothing ever
+        # reclaims them, so the store grows unbounded until jobs fail with
+        # "No space left on device". GC after each run keeps the last few days
+        # (module closures fetched from Cachix stay warm; stale source closures
+        # are freed). Runs on the Linux entry, the only one that mounts /nix and
+        # puts nix on PATH (Install Nix step above).
+        if: ${{ always() && contains(matrix.markers, 'skipif_no_ros') }}
+        run: |
+          df -h /nix || true
+          nix-collect-garbage --delete-older-than 3d
+          df -h /nix || true
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -582,7 +662,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -592,8 +672,19 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Fetch DimSim LFS assets only
+        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
+        # glbs are pointer stubs and the browser sim fails to load them. Pull
+        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
+        # multi-GB data/.lfs/* objects (some missing on the server → 404).
+        # persist-credentials is false above, so supply the token for this pull.
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
+          git lfs pull --include="misc/DimSim/**"
+          git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install codecov CLI
@@ -643,7 +734,7 @@ jobs:
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -656,7 +747,7 @@ jobs:
           binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -690,6 +781,7 @@ jobs:
     - rust
     - md-babel
     - docs-validate
+    - web
     - tests
     - cmu-nav-natives
     - self-hosted-tests
@@ -706,7 +798,7 @@ jobs:
         allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@v7
       with:
         run_command: send-notifications
         use_oidc: true

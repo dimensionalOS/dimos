@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
@@ -50,17 +61,19 @@ impl MLSPlanner {
         *,
         voxel_size,
         robot_height,
+        max_overhead_m = 2.0,
         surface_closing_radius = 0.3,
         node_spacing_m = 1.0,
-        wall_clearance_m = 0.3,
+        wall_clearance_m = 0.1,
         wall_buffer_m = 0.75,
         wall_buffer_weight = 100.0,
-        step_threshold_m = 0.25,
+        step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
     ))]
     fn new(
         voxel_size: f32,
         robot_height: f32,
+        max_overhead_m: f32,
         surface_closing_radius: f32,
         node_spacing_m: f32,
         wall_clearance_m: f32,
@@ -73,6 +86,7 @@ impl MLSPlanner {
             world_frame: String::new(),
             voxel_size,
             robot_height,
+            max_overhead_m,
             surface_closing_radius,
             node_spacing_m,
             wall_clearance_m,
@@ -102,7 +116,8 @@ impl MLSPlanner {
         Ok(())
     }
 
-    #[pyo3(signature = (points, origin, radius, z_min, z_max))]
+    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z))]
+    #[allow(clippy::too_many_arguments)]
     fn update_region(
         &mut self,
         py: Python<'_>,
@@ -111,15 +126,18 @@ impl MLSPlanner {
         radius: f32,
         z_min: f32,
         z_max: f32,
+        sensor_z: f32,
     ) -> PyResult<()> {
         let pts = extract_points(points)?;
-        let bounds = RegionBounds {
-            origin_x: origin.0,
-            origin_y: origin.1,
+        let bounds = RegionBounds::capped(
+            origin.0,
+            origin.1,
             radius,
             z_min,
             z_max,
-        };
+            sensor_z,
+            self.config.max_overhead_m,
+        );
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_region(&pts, &bounds, config));
@@ -268,6 +286,13 @@ impl MLSPlanner {
 
 #[pymodule]
 fn dimos_mls_planner(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Log planner tracing to stderr. Defaults to warn, override with RUST_LOG.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("dimos_mls_planner=warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
     m.add_class::<MLSPlanner>()?;
     Ok(())
 }
