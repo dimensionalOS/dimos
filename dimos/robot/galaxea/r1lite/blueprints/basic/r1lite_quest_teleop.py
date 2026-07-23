@@ -40,6 +40,11 @@ from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_coordinator import (
     r1lite_standard_tasks,
     r1lite_vis,
 )
+from dimos.robot.galaxea.r1lite.config import (
+    R1LITE_ARM_DOF,
+    R1LITE_LEFT_ARM_MODEL,
+    R1LITE_RIGHT_ARM_MODEL,
+)
 from dimos.robot.galaxea.r1lite.connection import R1LITE_UPPER_BODY_JOINTS
 from dimos.robot.manipulators._modeling import base_pose, joint_names
 from dimos.robot.manipulators.a1z.config import (
@@ -49,10 +54,7 @@ from dimos.robot.manipulators.a1z.config import (
 )
 from dimos.teleop.quest.quest_extensions import R1LiteQuestTeleopModule
 
-# The R1 Lite arms are Galaxea A1 units; the standalone flange URDF is a
-# faithful per-arm kinematic model (delta IK is insensitive to base offsets).
-_ARM_FK_MODEL = A1Z_FLANGE_MODEL_PATH
-_ARM_DOF = 6
+_ARM_DOF = R1LITE_ARM_DOF
 
 R1LITE_LEFT_ARM_JOINTS = R1LITE_UPPER_BODY_JOINTS[4:10]
 R1LITE_RIGHT_ARM_JOINTS = R1LITE_UPPER_BODY_JOINTS[10:16]
@@ -70,14 +72,18 @@ def _teleop_tasks() -> list[TaskConfig]:
             type="teleop_ik",
             joint_names=R1LITE_LEFT_ARM_JOINTS,
             priority=_TELEOP_PRIORITY,
-            params={"model_path": _ARM_FK_MODEL, "ee_joint_id": _ARM_DOF, "hand": "left"},
+            params={"model_path": R1LITE_LEFT_ARM_MODEL, "ee_joint_id": _ARM_DOF, "hand": "left"},
         ),
         TaskConfig(
             name=_TASK_NAMES["right"],
             type="teleop_ik",
             joint_names=R1LITE_RIGHT_ARM_JOINTS,
             priority=_TELEOP_PRIORITY,
-            params={"model_path": _ARM_FK_MODEL, "ee_joint_id": _ARM_DOF, "hand": "right"},
+            params={
+                "model_path": R1LITE_RIGHT_ARM_MODEL,
+                "ee_joint_id": _ARM_DOF,
+                "hand": "right",
+            },
         ),
     ]
 
@@ -113,6 +119,8 @@ def _sim_hardware() -> list[HardwareComponent]:
 
 
 def _sim_arm_model(side: str, y_offset: float) -> RobotModelConfig:
+    # Viser needs meshes; the captured per-arm URDFs are geometry-stripped, so
+    # the viewer renders the A1Z model as a visual stand-in. IK does not use it.
     return RobotModelConfig(
         name=f"{side}_arm",
         model_path=A1Z_FLANGE_MODEL_PATH,

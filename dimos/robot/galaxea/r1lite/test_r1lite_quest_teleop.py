@@ -38,6 +38,10 @@ from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop import (
     r1lite_quest_teleop,
     r1lite_quest_teleop_sim,
 )
+from dimos.robot.galaxea.r1lite.config import (
+    R1LITE_LEFT_ARM_MODEL,
+    R1LITE_RIGHT_ARM_MODEL,
+)
 from dimos.robot.galaxea.r1lite.connection import R1LITE_UPPER_BODY_JOINTS
 from dimos.teleop.quest.quest_extensions import R1LiteQuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState, ThumbstickState
@@ -284,6 +288,35 @@ def test_quest_blueprint_task_set(blueprint: Any) -> None:
 def test_arm_slices_match_connection_layout() -> None:
     assert R1LITE_LEFT_ARM_JOINTS == [f"r1lite/left_arm_joint{i}" for i in range(1, 7)]
     assert R1LITE_RIGHT_ARM_JOINTS == [f"r1lite/right_arm_joint{i}" for i in range(1, 7)]
+
+
+def test_ik_uses_per_side_captured_models() -> None:
+    tasks = {t.name: t for t in _coordinator_tasks(r1lite_quest_teleop)}
+    left_model = tasks["teleop_left_arm"].params["model_path"]
+    right_model = tasks["teleop_right_arm"].params["model_path"]
+    assert left_model == R1LITE_LEFT_ARM_MODEL
+    assert right_model == R1LITE_RIGHT_ARM_MODEL
+    assert left_model.exists()
+    assert right_model.exists()
+
+
+@pytest.mark.parametrize("model", [R1LITE_LEFT_ARM_MODEL, R1LITE_RIGHT_ARM_MODEL])
+def test_arm_model_is_the_a1x_chain(model: Any) -> None:
+    # The arms are A1X units; the A1Z flange model once shipped here had wrong
+    # link lengths and limits and produced wrong motion on hardware. Pin the
+    # captured chain: 6 revolute joints, the A1X axis pattern, the 300 mm
+    # forearm link A1Z does not have, and the A1X joint1 limits.
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(model).getroot()
+    joints = [j for j in root.findall("joint") if j.get("type") == "revolute"]
+    assert len(joints) == 6
+    axes = [j.find("axis").get("xyz") for j in joints]
+    assert axes == ["0 0 1", "0 1 0", "0 1 0", "0 1 0", "0 0 1", "1 0 0"]
+    j3_x = float(joints[2].find("origin").get("xyz").split()[0])
+    assert j3_x == pytest.approx(-0.3)
+    limit1 = joints[0].find("limit")
+    assert float(limit1.get("upper")) == pytest.approx(2.8798)
 
 
 def test_production_coordinator_tasks_unchanged() -> None:
