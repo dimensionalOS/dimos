@@ -367,7 +367,9 @@ pipeline remains a fallback.
 | `replacement_confidence_ratio` | `1.5` | Required confidence advantage for replacement |
 | `obstacle_min_height_m` | `0.08` | Minimum height above fitted ground treated as obstacle |
 | `max_future_sync_delta_s` | `0.05` | Maximum accepted lead when an auxiliary queue head is later than the global map |
-| `sync_queue_size` | Message-rate calibrated | Capacity limit for each timestamp-sorted input queue |
+| `current_frame_queue_size` | `20` | Capacity of the timestamp-sorted current-frame queue |
+| `global_map_queue_size` | `20` | Capacity of the timestamp-sorted global-map queue |
+| `odometry_queue_size` | `200` | Capacity of the timestamp-sorted odometry queue |
 | `ground_stale_after_s` | `0.0` | Optional synthetic-ground expiry; zero disables |
 | `max_ground_cells` | `1_000_000` | Memory safety limit |
 | `publish_ground_patch` | `true` | Diagnostic output gate |
@@ -556,20 +558,23 @@ The proposed package layout is:
 
 | File | Responsibility |
 |---|---|
-| `upsample_ground/__init__.py` | Public package exports |
-| `upsample_ground/module.py` | DimOS module, streams, synchronization, lifecycle, configuration |
-| `upsample_ground/estimator.py` | Candidate filtering, histogram seed, plane fitting, support mask |
-| `upsample_ground/ground_store.py` | Persistent XY-keyed ground state and confidence updates |
-| `upsample_ground/fusion.py` | Non-destructive real/synthetic conflict handling and 3D voxel union |
-| `upsample_ground/test_estimator.py` | Ground estimator unit tests |
-| `upsample_ground/test_ground_store.py` | Deduplication and revisit tests |
-| `upsample_ground/test_fusion.py` | Authority and obstacle-conflict tests |
-| `upsample_ground/test_module.py` | Stream synchronization and integration tests |
+| `upsample_ground/module.py` | DimOS `NativeModule` stream declarations, native lifecycle, and synchronization configuration |
+| `upsample_ground/cpp/main.cpp` | LCM subscriptions, synchronization-state driving, and augmented-map publication |
+| `upsample_ground/cpp/timestamp_synchronizer.hpp` | STL-based ordered queues and three-input timestamp synchronization |
+| `upsample_ground/cpp/ground_estimator.hpp/.cpp` | PCL/Eigen candidate filtering, plane fitting, and support masking |
+| `upsample_ground/cpp/ground_store.hpp/.cpp` | Persistent synthetic-ground state keyed by world XY cells |
+| `upsample_ground/cpp/fusion.hpp/.cpp` | Real-point-first conflicts, boundary clipping, and 3D voxel union |
+| `upsample_ground/cpp/test_timestamp_synchronizer.cpp` | Queue ordering, nearest-sample, waiting, and fallback tests |
+| `upsample_ground/cpp/test_ground_estimator.cpp` | Ground-estimator tests |
+| `upsample_ground/cpp/test_ground_store.cpp` | Deduplication and revisit tests |
+| `upsample_ground/cpp/test_fusion.cpp` | Authority and obstacle-conflict tests |
+| `upsample_ground/test_module.py` | Python NativeModule interface and configuration validation |
 
-Use NumPy for array filtering and key generation. A Python dictionary is sufficient for the first
-single-level implementation and makes confidence metadata explicit. The column-carving behavior in
-[`voxels.py`](/dimos/mapping/voxels.py) is a useful reference, but the combined real and synthetic
-map must not use column carving because it could erase real obstacles.
+Use the C++17 STL for synchronization, state management, and fusion. Prefer PCL for point filtering,
+downsampling, and geometry, and Eigen for plane parameters and linear algebra rather than reimplementing
+existing algorithms. The column-carving behavior in [`voxels.py`](/dimos/mapping/voxels.py) is a useful
+reference, but the combined real and synthetic map must not use column carving because it could erase
+real obstacles.
 
 ## 18. Delivery Phases
 
