@@ -123,6 +123,8 @@ class R1LiteConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
+    # Camera decode costs real CPU (four JPEG streams); teleop can turn it off.
+    enable_cameras: bool = Field(default=True)
     publish_odom: bool = Field(default=True)
     # Gentle acceleration limits.
     acc_limit_x: float = Field(default=0.5)
@@ -483,7 +485,8 @@ class R1LiteConnection(Module):
         self._sensor_executor = MultiThreadedExecutor(num_threads=4, context=self._sensor_context)
         self._sensor_executor.add_node(self._sensor_node)
 
-        for stream_name, ros_topic in _COMPRESSED_CAMERAS.items():
+        camera_items = _COMPRESSED_CAMERAS.items() if self.config.enable_cameras else ()
+        for stream_name, ros_topic in camera_items:
             cam_q: queue.Queue[Any] = queue.Queue(maxsize=1)
             self._cam_queues[stream_name] = cam_q
             self._sensor_node.create_subscription(
@@ -501,7 +504,8 @@ class R1LiteConnection(Module):
                 )
             )
 
-        for stream_name, ros_topic in _DEPTH_CAMERAS.items():
+        depth_items = _DEPTH_CAMERAS.items() if self.config.enable_cameras else ()
+        for stream_name, ros_topic in depth_items:
             depth_q: queue.Queue[Any] = queue.Queue(maxsize=1)
             self._depth_queues[stream_name] = depth_q
             self._sensor_node.create_subscription(

@@ -53,8 +53,8 @@ class PinkTeleopIKConfig:
         qp_solver: qpsolvers backend name
     """
 
-    max_iter: int = 8
-    dt: float = 0.05
+    max_iter: int = 3
+    dt: float = 0.1
     eps: float = 1e-3
     damping: float = 1e-10
     position_cost: float = 1.0

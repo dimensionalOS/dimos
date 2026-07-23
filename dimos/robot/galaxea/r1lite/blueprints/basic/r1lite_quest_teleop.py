@@ -128,7 +128,7 @@ r1lite_quest_teleop = autoconnect(
     # override, next ladder step is 1.0 after hardware feel check.
     r1lite_control_base(
         extra_tasks=_teleop_tasks(),
-        connection_kwargs={"tracking_speed": 1.0},
+        connection_kwargs={"tracking_speed": 1.0, "enable_cameras": False},
     ),
     r1lite_vis(),
 ).remappings(

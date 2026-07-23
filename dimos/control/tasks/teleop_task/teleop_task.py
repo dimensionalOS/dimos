@@ -305,7 +305,7 @@ class TeleopIKTask(BaseControlTask):
             self._config.max_target_offset_m is not None
             or self._config.max_target_rot_deg is not None
         )
-        scales = (1.0, 0.5, 0.25, 0.125) if windowed else (1.0,)
+        scales = (1.0, 0.25) if windowed else (1.0,)
         margin = np.deg2rad(self._config.joint_limit_margin_deg)
         q_low = self._ik.model.lowerPositionLimit + margin
         q_high = self._ik.model.upperPositionLimit - margin
