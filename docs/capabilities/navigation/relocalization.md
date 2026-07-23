@@ -59,6 +59,7 @@ dimos map global recording_go2 --export
 | `--no-gui` | Skip launching Rerun for headless servers or CI |
 | `--pgo-tol 0.3` | Spatial dedup tolerance for keyframes in meters. Use `0` to keep all posed frames |
 | `--voxel 0.05` | Voxel size in meters (default matches live mapper) |
+| `--markers-out {DB_NAME}.json` | Also write one `map_T_tag` per marker id into the premap frame, for the fiducial prior (implies `--markers`). See [The marker map](#the-marker-map) |
 
 `{DB_NAME}` accepts a bare stem, `./path/to/file.db`, or an absolute path. Bare names resolve in this order:
 
@@ -107,7 +108,7 @@ relocalize accepted fitness=0.657 time_cost_s=3.0
 
 `ransac reloc skipped` means the live submap is still warming up — fewer than the `ransac` entry's `min_local_points` accumulated. Only the RANSAC search is gated on it; a fiducial burst fires on a sparse submap too. `relocalize rejected` means an alignment was found but its wall fitness was under the bar of the prior that proposed it: `source=` names that prior and `threshold=` is its own bar, on every reject. Once `relocalize accepted` lines appear the `world → map` TF is live; `source=` there names the proposer that won the judge (`ransac`, `fiducial`, `last_pose`), omitted only on the lidar-only preset, where the plain solve runs and nothing was won, and `margin=` is its wall fitness minus the best rival source's.
 
-> **Held-out rule.** To *measure* relocalization, the premap must come from a **different run** of the same space than the recording you replay. Replaying the same recording the premap was built from measures memorization, not relocalization. `--eval` collects the run; the held-out score (`med_err`, `false`) comes from the offline held-out driver — see [Relocalization benchmark](/docs/capabilities/navigation/relocalization_benchmark.md).
+> **To measure it, replay a different run than the premap.** Replaying the recording the premap was built from measures memorization, not relocalization. `--eval` scores the run against loop-closure truth — see [Eval](#eval).
 
 ### Rerun visualization
 
@@ -167,7 +168,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 | `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
-| `{name}.markers.yaml` | `marker_id → map_T_tag` marker map | no shipped command — see [The marker map](#the-marker-map) | `RelocalizationModule` fiducial prior (`marker_map_file`) |
+| `{name}.json` | `marker_id → map_T_tag` marker map | `dimos map global --markers-out` | `RelocalizationModule` fiducial prior (`marker_map_file`) |
 
 ## Configuration reference
 
@@ -202,7 +203,7 @@ Every entry also carries `enabled`. The three Go2 presets:
 | `unitree-go2-relocalization-lidar-fiducial` | `ransac` (2.0 s sweep) + `fiducial` (burst) |
 | `unitree-go2-relocalization-fiducial` | `fiducial` only — burst-triggered, no periodic timer |
 
-The `fiducial` type needs a `marker_map_file` (`map_T_tag` per id, JSON or YAML — see [The marker map](#the-marker-map) for how one is produced today) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings aggregate into one `world→map` candidate (medoid seed + Huber IRLS) that competes on wall fitness once and is then dropped — re-offering it later would be the same measurement against a world that has drifted further. It never publishes a pose on its own.
+The `fiducial` type needs a `marker_map_file` (`map_T_tag` per id, JSON or YAML — see [The marker map](#the-marker-map)) and consumes an `aggregated_detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings aggregate into one `world→map` candidate (medoid seed + Huber IRLS) that competes on wall fitness once and is then dropped — re-offering it later would be the same measurement against a world that has drifted further. It never publishes a pose on its own.
 
 One constant is not overridable via CLI:
 
@@ -218,7 +219,7 @@ RelocalizationModule.blueprint(priors=[RansacPriorConfig(fitness_threshold=0.0)]
 
 ### The marker map
 
-`marker_map_file` is `marker_id → map_T_tag`, JSON or YAML, read by `load_marker_map` in [`fiducial_relocalization.py`](/dimos/perception/fiducial/fiducial_relocalization.py):
+To use the fiducial prior, the premap needs the marker locations on it: `marker_id → map_T_tag`, JSON or YAML, read by `load_marker_map` in [`fiducial_relocalization.py`](/dimos/perception/fiducial/fiducial_relocalization.py):
 
 ```yaml
 markers:
@@ -227,13 +228,56 @@ markers:
     rotation: [0.0, 0.0, 0.707, 0.707]   # qx qy qz qw, map_T_tag
 ```
 
-**There is no operator-facing survey command yet.** Nothing shipped in DimOS writes this file. `dimos map global --markers` detects tags and overlays them in the `.rrd` for visual QA ([`map.py`](/dimos/mapping/utils/cli/map.py)); it writes no marker map.
+`dimos map global {DB_NAME} --markers-out {DB_NAME}.json` writes it — one `map_T_tag` per marker id, every detection of that id reduced to a single location by the robust Huber-IRLS + Markley estimator ([`robust_cluster_pose`](/dimos/perception/fiducial/apriltag_aggregation.py)), PGO-corrected into the same frame `--export` builds the premap in. Add it to the export so one command produces the premap and its marker locations together:
 
-The marker *poses* do come from shipped code: `corrected_marker_transforms` in [`loop_closure/eval.py`](/dimos/mapping/loop_closure/eval.py). It runs sharpest-frame `QualityWindow` → `SpeedLimit` → `DetectMarkers(smoothing_window=…)`, keeps each track's final smoothed pose, and lifts it through `PoseGraph.correct`. That is the same drift-corrected frame `dimos map global --pgo --export` builds the premap in, so its output is `map_T_tag` against that premap.
+```bash
+dimos map global {DB_NAME} --export --markers-out {DB_NAME}.json
+```
 
-The only code that serializes it to a file is a pytest fixture: `marker_map_file` in [`test_unitree_go2_fiducial_relocalization_replay.py`](/dimos/robot/unitree/go2/blueprints/smart/test_unitree_go2_fiducial_relocalization_replay.py). It picks the medoid track per marker id and writes `{DB_NAME}.markers.yaml` into the test cache. It is a test fixture, not a product surface. Until a survey command ships, a marker map comes from calling `corrected_marker_transforms` yourself and writing the schema above, or from an out-of-tree harness.
+One static fisheye intrinsic serves every Go2 with no per-unit calibration, so each stored location inherits that camera's error (DIM-1308) — good, not survey-grade.
 
-Marker poses on this path are aggregated by the windowed mean inside `DetectMarkers` (`_average_marker_pose`, [`marker_transformer.py`](/dimos/perception/fiducial/marker_transformer.py)): mean translation plus a sign-aligned linear quaternion mean, no outlier rejection. The robust batch aggregation — per-visit time clustering, Huber IRLS translation, Markley quaternion eigen-mean — is `aggregate_visits` in [`apriltag_aggregation.py`](/dimos/perception/fiducial/apriltag_aggregation.py). It is implemented and tested, and nothing on the marker-map path calls it. Its streaming sibling `TagAggregator` is what the live `fiducial` prior runs ([`priors.py`](/dimos/mapping/relocalization/priors.py)). Putting the batch aggregator on the marker-map path is a follow-up.
+## Eval
+
+`--eval` attaches the `RelocEval` collector to a normal run — the same blueprint you deploy — and scores the published `world → map` TF per source (`ransac`, `fiducial`, `last_pose`) against the recording's own loop-closure PGO (`PoseGraph.correction_at(t)`). At shutdown it prints a per-source table and writes JSON, a trajectory PNG, and a CSV.
+
+To measure relocalization, replay a **different run** of the same space than the premap was built from — replaying the premap's own recording measures memorization. A fix counts as `success` within 1 m of PGO truth; PGO is silver, not survey-grade, so treat that as a floor.
+
+**Replay** (no robot; replay `<B>` against `<A>`'s premap and marker map):
+
+```bash
+uv run --project . \
+  dimos --replay --replay-db=<B> \
+  run unitree-go2-relocalization-lidar-fiducial --eval \
+  -o relocalizationmodule.map_file=<A> \
+  -o relocalizationmodule.marker_map_file=<A>.json \
+  -o reloceval.marker_map_file=<A>.json
+```
+
+**Live** drops `--replay`, sets `ROBOT_IP` + `UNITREE_AES_128_KEY`, and drops `false`/`med_err` (no PGO truth in-process); everything else prints in both modes:
+
+```bash
+uv run --project . \
+  dimos --robot-ip <ROBOT_IP> \
+  run unitree-go2-relocalization-lidar-fiducial --eval \
+  -o relocalizationmodule.map_file=<A> \
+  -o relocalizationmodule.marker_map_file=<A>.json \
+  -o reloceval.marker_map_file=<A>.json
+```
+
+Run one replay at a time — the LCM bus is exclusive (`pgrep -af 'dimos --replay'`).
+
+`--eval` writes `out/eval/releval.{eval.json,trajectory.png,accepted_fixes.csv}` (`-o reloceval.tag=<name>` renames the stem). The PNG is the robot path in the `map` frame, each stretch colored by the source that won it; tags are drawn with `-o reloceval.marker_map_file=<A>.json`, showing at a glance which source carried localization and whether the fiducial prior won near a tag. The per-source table:
+
+| Column | Meaning |
+|--------|---------|
+| `prop` | Cycles where this source put a candidate forward |
+| `acc` / `rej` | Accepts this source won and published / rejects its winner took |
+| `false` | Accepts whose held-out error exceeded 1 m (replay only) |
+| `%traj` | Share of the covered trajectory this source localized |
+| `med_err` | Median distance from PGO truth over its accepts, meters (replay only) |
+| `med_fit` | Median ICP fitness of its accepts |
+
+`proposed` vs `won` is the honest split: a prior can propose every cycle and win none — the tag was seen but its stored location did not fit the walls as well as lidar. `med_fit` (the judge's confidence) is not `med_err` (distance from truth); a confident wrong pose scores high on both, so the table reports each. Everything the eval sweeps is the module and prior config in the [Configuration reference](#configuration-reference), so an embodiment search (DIM-944) reads and writes those fields directly, and the per-source counts come from the run log, so a sweep is reproducible.
 
 ## Troubleshooting
 
