@@ -49,8 +49,7 @@ WHERE EACH PRIOR WINS. Under ``--eval`` the Module also draws every accept into 
 run's rerun viewer as it lands -- ``world/eval/accepted``, one point per accepted fix
 at the robot's position in the premap's map frame, coloured by the winning prior
 (``accepted_points_in_map``). The spatial answer the table cannot give; a no-op when
-no viewer is up. The same points ship as ``<key>.accepted_fixes.csv`` for plotting
-outside rerun (``ACCEPTED_CSV_HEADER``), one row per accept.
+no viewer is up.
 
 The Module always runs "live" (no in-process truth -> med_err/success omitted); the
 offline driver runs "held_out" (columns shown, Umeyama-aligned or ``-``). Both
@@ -62,7 +61,6 @@ from __future__ import annotations
 
 import atexit
 from collections import Counter
-import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -1238,88 +1236,6 @@ def accepted_points_in_map(fixes: list[Fix], odom_txyz: np.ndarray) -> AcceptedP
     return AcceptedPoints(positions, colors, labels)
 
 
-# --------------------------------------------------------------------------- #
-# The plot CSV: one row per ACCEPTED fix, for colouring a trajectory by prior
-# outside rerun. x/y/z are the ROBOT's position in the premap's map frame at that
-# fix -- taken from accepted_points_in_map, and the jump columns from the same
-# _correction_rows the report prints, so the CSV, the PNG and the rerun overlay
-# share one frame convention and cannot drift apart.
-# --------------------------------------------------------------------------- #
-ACCEPTED_CSV_HEADER: tuple[str, ...] = (
-    "t_s",
-    "x_map_m",
-    "y_map_m",
-    "z_map_m",
-    "source",
-    "fitness",
-    "margin",
-    "magnitude_m",
-    "dist_since_m",
-)
-
-
-def _csv_num(x: float | None, nd: int) -> str:
-    """A CSV cell for a possibly-absent number: EMPTY, never a fabricated 0.0. NaN is
-    absent too -- an unjoined fix has no fitness, and 0.0 would plot as a real one."""
-    if x is None or np.isnan(x):
-        return ""
-    return f"{x:.{nd}f}"
-
-
-def accepted_fix_rows(fixes_sorted: list[Fix], odom_txyz: np.ndarray) -> list[dict[str, str]]:
-    """One row per accepted fix: where the robot was in the map frame when the fix
-    landed, which prior won, and how much the fix moved the robot's belief.
-
-    Row 0 is the ACQUISITION fix (``dist_since_m`` 0, magnitude measured against no
-    previous fix), the same convention as ``CorrectionStats.first`` -- kept in so the
-    CSV is 1:1 with the accepts, and identifiable by that zero distance.
-
-    Empty when no odom was captured: with no robot position there is no map-frame
-    point to plot, and the fix's own translation is the map ORIGIN, not the robot.
-
-    Args:
-        fixes_sorted: accepted fixes, ascending ts (dedup_tf_fixes -> label_fixes_from_log).
-        odom_txyz: (N, 4) [ts, x, y, z] robot positions in world, same clock as the fixes.
-    """
-    points = accepted_points_in_map(fixes_sorted, odom_txyz)
-    corrections = _correction_rows(fixes_sorted, odom_txyz)
-    if not len(points):
-        return []
-    posed = [f for f in fixes_sorted if f.world_map_fix is not None]
-    if not len(points) == len(corrections) == len(posed):
-        raise ValueError(
-            "accepted_fix_rows: overlay/correction/fix counts disagree, got "
-            f"{len(points)}/{len(corrections)}/{len(posed)} -- they must filter identically"
-        )
-    return [
-        {
-            "t_s": f"{f.ts:.3f}",
-            "x_map_m": f"{p[0]:.4f}",
-            "y_map_m": f"{p[1]:.4f}",
-            "z_map_m": f"{p[2]:.4f}",
-            "source": f.source,
-            "fitness": _csv_num(f.fitness, 3),
-            "margin": _csv_num(f.margin, 3),
-            "magnitude_m": _csv_num(c.magnitude_m, 4),
-            "dist_since_m": _csv_num(c.dist_travelled_m, 4),
-        }
-        for f, p, c in zip(posed, points.positions_map_m, corrections, strict=True)
-    ]
-
-
-def write_accepted_csv(fixes_sorted: list[Fix], odom_txyz: np.ndarray, out_csv: Path) -> Path:
-    """Write ``ACCEPTED_CSV_HEADER`` + one row per accepted fix. The header is written
-    even with no rows, so a plotter reading the file gets an empty series rather than
-    a parse error on an empty file."""
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    rows = accepted_fix_rows(fixes_sorted, odom_txyz)
-    with out_csv.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=ACCEPTED_CSV_HEADER)
-        writer.writeheader()
-        writer.writerows(rows)
-    return out_csv
-
-
 def write_report(
     stats: EvalStats,
     odom_txyz: np.ndarray,
@@ -1330,12 +1246,12 @@ def write_report(
     *,
     title: str,
 ) -> dict[str, Path]:
-    """Print the table + correction block, then write ``<key>.eval.json``,
-    ``<key>.trajectory.png`` and ``<key>.accepted_fixes.csv``.
+    """Print the table + correction block, then write ``<key>.eval.json`` and
+    ``<key>.trajectory.png``.
 
     Args:
-        odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world frame. The plot
-            is top-down and takes [ts, x, y]; the CSV needs the z as well.
+        odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world frame; the plot
+            is top-down and takes [ts, x, y].
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     print(format_report(stats, title=title))
@@ -1344,13 +1260,9 @@ def write_report(
     png_path = plot_trajectory(
         odom_txyz[:, :3], fixes, markers_xy, out_dir / f"{key}.trajectory.png", title=title
     )
-    csv_path = write_accepted_csv(
-        sorted(fixes, key=lambda f: f.ts), odom_txyz, out_dir / f"{key}.accepted_fixes.csv"
-    )
     print(f"[releval] wrote {json_path}")
     print(f"[releval] wrote {png_path}")
-    print(f"[releval] wrote {csv_path}")
-    return {"json": json_path, "png": png_path, "csv": csv_path}
+    return {"json": json_path, "png": png_path}
 
 
 # --------------------------------------------------------------------------- #

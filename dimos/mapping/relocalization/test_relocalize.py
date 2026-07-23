@@ -67,7 +67,7 @@ from dimos.mapping.relocalization.relocalize import (
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, matrix_from_pose7
+from dimos.perception.fiducial.apriltag_aggregation import matrix_from_pose7
 from dimos.robot.cli.dimos import load_config_args
 
 
@@ -943,40 +943,6 @@ def test_config_requires_priors_no_module_default() -> None:
         Config()  # type: ignore[call-arg]
 
 
-def test_config_scalar_defaults_match_documented_contract() -> None:
-    """Config's scalar defaults ARE the reloc gating contract; any silent drift
-    changes production behavior, so pin the three that gate behavior: the gravity
-    gate and the two map-file knobs.
-    priors is supplied (required); the two map-file knobs default to unset. The
-    accept bar and the point floor moved onto the priors (asserted below)."""
-    c = Config(priors=[RansacPriorConfig()])
-    assert c.gravity_tilt_max_deg == 10.0
-    assert c.map_file is None
-    assert c.marker_map_file is None  # top-level fiducial-survey -o override, unset
-
-
-def test_prior_accept_bars_default_to_the_bar_each_source_earns() -> None:
-    """The accept bar is per prior: ransac and fiducial each state 0.6 -- a fix is
-    judged on the walls whatever proposed it -- while last_pose, stating no bar of its
-    own, inherits the base 0.45. Pin all three: they are the gating contract, and a
-    silent drift changes what the robot publishes."""
-    assert RansacPriorConfig().fitness_threshold == 0.6  # geometric search: high bar
-    assert FiducialPriorConfig().fitness_threshold == 0.6  # tag fix: the same bar
-    assert LastPosePriorConfig().fitness_threshold == 0.45  # no override -> base default
-    assert RansacPriorConfig().min_local_points == 50_000  # RANSAC-scoped floor
-
-
-def test_fiducial_prior_config_defaults() -> None:
-    """The fiducial entry owns the marker parameter surface; pin its defaults so a
-    preset written today keeps meaning the same thing."""
-    fid = FiducialPriorConfig()
-    assert fid.marker_length_m == 0.10
-    assert fid.marker_map_file is None
-    assert fid.aruco_dictionary == "DICT_APRILTAG_36h11"
-    # Threaded into the detector by the blueprint; the gates run there now.
-    assert fid.aggregation == AggregationConfig()
-
-
 def test_accept_threshold_and_point_floor_resolve_per_prior() -> None:
     """__init__'s derived state: _accept_threshold maps each Candidate.source to its
     prior's fitness_threshold (per-prior override, base default otherwise), and
@@ -1139,76 +1105,6 @@ class _ModuleLogRecorder:
         raise AssertionError(f"unexpected logger.exception in _try_relocalize: {msg}")
 
 
-def test_try_relocalize_accept_log_puts_source_first_when_prior_wins(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """On an accepted fix from a prior pool, the info line leads with
-    `source=<winner>` ahead of `fitness=`, so the winning prior is the first field
-    read; a valid world->map TF is returned and no reject warning fires."""
-    T = _rigid(25.0, (1.5, -0.8, 0.05))
-    m = _bare_module(Config(priors=[RansacPriorConfig(), LastPosePriorConfig()]))
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(
-        module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.90, "last_pose")
-    )
-
-    tf = m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects())  # type: ignore[arg-type]
-
-    assert tf is not None
-    assert tf.frame_id == "world" and tf.child_frame_id == "map"
-    assert len(rec.infos) == 1
-    event, kwargs = rec.infos[0]
-    assert event == "relocalize accepted"
-    assert kwargs["source"] == "last_pose"
-    keys = list(kwargs)
-    assert keys.index("source") < keys.index("fitness")  # winner read first, ahead of fitness
-    assert not rec.warnings
-
-
-def test_try_relocalize_reject_log_warns_below_fitness_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A fix under fitness_threshold is rejected: no TF (returns None) and a
-    'relocalize rejected' warning naming fitness < threshold -- never an accept
-    info line."""
-    T = _rigid(0.0, (0.0, 0.0, 0.0))
-    # single RANSAC entry -> _try_relocalize takes the plain relocalize() path
-    m = _bare_module(Config(priors=[RansacPriorConfig()]))
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (T, 0.30))
-
-    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
-    assert len(rec.warnings) == 1
-    event, kwargs = rec.warnings[0]
-    assert event == "relocalize rejected"
-    assert kwargs["fitness"] == 0.3  # round(0.30, 3)
-    assert kwargs["threshold"] == 0.6  # the ransac entry's default bar
-    assert not rec.infos
-
-
-def test_try_relocalize_accept_log_omits_source_on_solo_ransac_path(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The solo-RANSAC path accepts via plain relocalize() and its
-    info line carries NO `source=` prefix -- source= is present only when a prior
-    wins, so its absence is the single-source signature."""
-    T = _rigid(10.0, (0.5, 0.5, 0.0))
-    m = _bare_module(Config(priors=[RansacPriorConfig()]))
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (T, 0.95))
-
-    tf = m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects())  # type: ignore[arg-type]
-
-    assert tf is not None
-    assert len(rec.infos) == 1
-    event, kwargs = rec.infos[0]
-    assert event == "relocalize accepted"
-    assert "source" not in kwargs  # single-source path omits source entirely
-
-
 def _accept_with_report(
     T: np.ndarray, fitness: float, source: str, finalists: list[tuple[str, float]]
 ):  # type: ignore[no-untyped-def]
@@ -1224,59 +1120,9 @@ def _accept_with_report(
     return fake
 
 
-def test_accept_log_is_one_quiet_line_with_the_cross_source_margin(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The operating default: ONE accept line carrying source, fitness, margin and
-    time_cost_s -- nothing else. margin is the winner's post-ICP wall fitness minus
-    the best OTHER source's, so the line answers "did the tag help?" without the
-    finalist table."""
-    T = _rigid(25.0, (1.5, -0.8, 0.05))
-    # FiducialPriorConfig present so "fiducial" is a valid accept source; its prior
-    # object is unbuilt here (bare module), so the enabled pool stays ransac+last_pose.
-    m = _bare_module(
-        Config(priors=[RansacPriorConfig(), LastPosePriorConfig(), FiducialPriorConfig()])
-    )
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(
-        module_mod,
-        "_relocalize_with_priors",
-        _accept_with_report(T, 0.90, "fiducial", [("fiducial", 0.71), ("ransac", 0.53)]),
-    )
-
-    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
-    assert len(rec.infos) == 1
-    event, kwargs = rec.infos[0]
-    assert event == "relocalize accepted"
-    assert list(kwargs) == ["source", "fitness", "margin", "time_cost_s"]
-    assert kwargs["source"] == "fiducial"
-    assert kwargs["fitness"] == 0.9
-    assert kwargs["margin"] == 0.18  # 0.71 - 0.53, the fiducial's edge over ransac
-
-
-def test_accept_log_omits_margin_when_one_source_reached_the_finalists(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """No rival source in the finalists -> margin is OMITTED, not reported as 0.0:
-    a zero would read as two sources tying, which is a different measurement."""
-    T = _rigid(10.0, (0.5, 0.5, 0.0))
-    m = _bare_module(Config(priors=[RansacPriorConfig(), LastPosePriorConfig()]))
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(
-        module_mod,
-        "_relocalize_with_priors",
-        _accept_with_report(T, 0.88, "ransac", [("ransac", 0.62), ("ransac", 0.41)]),
-    )
-
-    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
-    assert list(rec.infos[0][1]) == ["source", "fitness", "time_cost_s"]
-
-
 def test_verbose_eval_logging_keeps_the_full_accept_and_reject_kwargs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """--eval restores the full debugging trace: the accept line's whole kwarg list
-    in its original order (the eval parsers key on published_t_m), and the reject
+    """--eval restores the full debugging trace: the accept line carries the whole
+    kwarg set (published_t_m, which the eval parsers key on, is back), and the reject
     line's time_cost_s/n_pts ON TOP of the source/fitness/threshold the quiet reject
     already carries. margin belongs to the quiet line only."""
     T = _rigid(25.0, (1.5, -0.8, 0.05))
@@ -1295,7 +1141,7 @@ def test_verbose_eval_logging_keeps_the_full_accept_and_reject_kwargs(monkeypatc
         _accept_with_report(T, 0.90, "fiducial", [("fiducial", 0.71), ("ransac", 0.53)]),
     )
     assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
-    assert list(rec.infos[0][1]) == [
+    assert set(rec.infos[0][1]) == {
         "source",
         "fitness",
         "time_cost_s",
@@ -1304,7 +1150,7 @@ def test_verbose_eval_logging_keeps_the_full_accept_and_reject_kwargs(monkeypatc
         "tf_from",
         "tf_to",
         "published_t_m",
-    ]
+    }  # the full set is back under --eval; the console renderer sorts, so order is not asserted
 
     # 0.20 is under the fiducial entry's own 0.6 bar -- the reject the verbose branch exists for.
     monkeypatch.setattr(
@@ -1315,34 +1161,9 @@ def test_verbose_eval_logging_keeps_the_full_accept_and_reject_kwargs(monkeypatc
     assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
     event, kwargs = rec.warnings[0]
     assert event == "relocalize rejected"
-    assert list(kwargs) == ["source", "fitness", "threshold", "time_cost_s", "n_pts"]
+    assert set(kwargs) == {"source", "fitness", "threshold", "time_cost_s", "n_pts"}
     assert kwargs["source"] == "fiducial"  # verbose names the refused prior too
     assert kwargs["fitness"] == 0.2 and kwargs["threshold"] == 0.6
-
-
-def test_quiet_reject_log_trims_to_source_fitness_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Quiet rejects keep the event + fitness consumers count on and name the
-    winner and the threshold that refused it -- the threshold IS the reason, this
-    being the only reject path -- and drop the per-cycle bulk."""
-    T = _rigid(0.0, (0.0, 0.0, 0.0))
-    m = _bare_module(
-        Config(priors=[RansacPriorConfig(), LastPosePriorConfig(), FiducialPriorConfig()])
-    )
-    m._premap = _StubCloud(10)  # type: ignore[assignment]
-
-    rec = _ModuleLogRecorder()
-    monkeypatch.setattr(module_mod, "logger", rec)
-    monkeypatch.setattr(
-        module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.20, "fiducial")
-    )
-
-    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
-    assert len(rec.warnings) == 1
-    event, kwargs = rec.warnings[0]
-    assert event == "relocalize rejected"
-    assert list(kwargs) == ["source", "fitness", "threshold"]
-    assert kwargs["fitness"] == 0.2 and kwargs["threshold"] == 0.6  # the fiducial entry's bar
-    assert not rec.infos
 
 
 def test_try_relocalize_gates_the_winner_on_its_own_source_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]

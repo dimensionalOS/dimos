@@ -27,9 +27,6 @@ no LCM bus, no replay, no DB. Four properties:
   * accepted_points_in_map (the live rerun overlay) puts one point per accepted fix
     at the robot's position IN THE MAP FRAME, 1:1 with the deduped accepts, coloured
     by the winning prior -- with `unknown` (a join failure) visibly its own colour.
-  * the plot CSV round-trips the accepted fixes 1:1 -- exact header, the robot's
-    map-frame position per accept, and the correction columns -- so a plot drawn from
-    the file says what the report says.
   * the log parsers read what the PIPELINE ACTUALLY EMITS. Those tests never write a
     log line by hand -- they run the real module.py / priors.py call sites through
     the real dimos logger and parse the bytes it rendered, in BOTH renderings
@@ -43,7 +40,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-import csv
 from dataclasses import dataclass, field
 import io
 import json
@@ -61,7 +57,6 @@ from scipy.spatial.transform import Rotation
 from dimos.constants import DIMOS_PROJECT_ROOT
 import dimos.mapping.relocalization.eval_module as eval_mod
 from dimos.mapping.relocalization.eval_module import (
-    ACCEPTED_CSV_HEADER,
     SOURCE_COLORS,
     SOURCES,
     EvalConfig,
@@ -84,7 +79,6 @@ from dimos.mapping.relocalization.eval_module import (
     resolve_heldout_alignment,
     stats_to_dict,
     umeyama_alignment,
-    write_accepted_csv,
     write_report,
 )
 import dimos.mapping.relocalization.module as module_mod
@@ -1228,94 +1222,23 @@ def test_overlay_draws_nothing_without_odom() -> None:
     assert len(accepted_points_in_map(fixes, np.empty((0, 4)))) == 0
 
 
-# --------------------------------------------------------------------------- #
-# The plot CSV. Same constructed track as the correction tests, so every cell is
-# hand-computable and the file can be checked against the report's own numbers.
-# --------------------------------------------------------------------------- #
-def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    with path.open(newline="") as fh:
-        reader = csv.DictReader(fh)
-        assert reader.fieldnames is not None
-        return list(reader.fieldnames), list(reader)
-
-
-def test_accepted_csv_round_trips_the_accepted_fixes(tmp_path: Path) -> None:
-    """One row per accepted fix, in time order, with the ROBOT's map-frame position:
-    the known track's three accepts land at map (-1,0,0), (0.4,0,0), (3.4,-0.8,0) --
-    the same points the rerun overlay draws, not the fixes' own translations (the map
-    origin), which would be (1,0,0), (1.6,0,0), (1.6,0.8,0). Sources, fitness and the
-    correction columns match the report; margin is empty where no rival source
-    reached the finalists, never 0.0, which would read as a dead heat."""
-    fixes, odom = _known_track()
-    fixes[2].margin = 0.18  # only the fiducial accept had a rival source to beat
-
-    out = write_accepted_csv(fixes, odom, tmp_path / "run.accepted_fixes.csv")
-    header, rows = _read_csv(out)
-
-    assert header == [
-        "t_s", "x_map_m", "y_map_m", "z_map_m", "source", "fitness", "margin",
-        "magnitude_m", "dist_since_m",
-    ]
-    assert header == list(ACCEPTED_CSV_HEADER)
-    assert len(rows) == len(fixes), "the CSV must be 1:1 with the accepted fixes"
-    assert [float(r["t_s"]) for r in rows] == [0.0, 2.0, 5.0]
-    assert [r["source"] for r in rows] == ["ransac", "ransac", "fiducial"]
-    xyz = [(float(r["x_map_m"]), float(r["y_map_m"]), float(r["z_map_m"])) for r in rows]
-    np.testing.assert_allclose(xyz, [(-1.0, 0.0, 0.0), (0.4, 0.0, 0.0), (3.4, -0.8, 0.0)],
-                               atol=1e-9)
-    assert [float(r["fitness"]) for r in rows] == [0.9, 0.8, 0.7]
-    assert [r["margin"] for r in rows] == ["", "", "0.180"]
-    # row 0 is the acquisition fix: 1.0 m against no previous fix, 0 m driven.
-    assert [float(r["magnitude_m"]) for r in rows] == [1.0, 0.6, 0.8]
-    assert [float(r["dist_since_m"]) for r in rows] == [0.0, 2.0, 3.0]
-
-
-def test_accepted_csv_leaves_an_unjoined_fitness_empty_not_zero(tmp_path: Path) -> None:
-    """A fix no health line claimed has source `unknown` and fitness NaN. The cell is
-    EMPTY -- 0.0 would plot as a real, terrible fitness, and NaN is not a CSV value."""
-    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="unknown", fitness=float("nan"))]
-
-    out = write_accepted_csv(fixes, np.array([[0.0, 1.0, 2.0, 0.0]]), tmp_path / "u.csv")
-    _header, rows = _read_csv(out)
-
-    assert len(rows) == 1
-    assert rows[0]["source"] == "unknown"
-    assert rows[0]["fitness"] == "" and rows[0]["margin"] == ""
-
-
-def test_accepted_csv_without_odom_is_a_header_and_no_rows(tmp_path: Path) -> None:
-    """No odom -> no robot position to place a fix at, so no rows. The header is
-    still written: a plotter reading the file gets an empty series instead of a parse
-    error on an empty file."""
-    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9)]
-
-    out = write_accepted_csv(fixes, np.empty((0, 4)), tmp_path / "empty.csv")
-    header, rows = _read_csv(out)
-
-    assert header == list(ACCEPTED_CSV_HEADER)
-    assert rows == []
-
-
-def test_write_report_prints_the_table_the_corrections_and_the_csv_path(
+def test_write_report_prints_the_table_and_the_corrections(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """What an --eval run leaves an operator with: the per-source table, the
-    correction block, and three artifact paths -- json, trajectory png, and the plot
-    CSV whose rows are the accepts the table counted."""
+    correction block, and two artifact paths -- json and trajectory png -- both on
+    disk."""
     fixes, odom = _known_track()
     stats = compute_stats(fixes, odom, [], 0, mode="live", held_out_note="n")
 
     paths = write_report(stats, odom, fixes, {}, tmp_path, "releval", title="live")
     printed = capsys.readouterr().out
 
-    assert set(paths) == {"json", "png", "csv"}
-    assert paths["csv"].name == "releval.accepted_fixes.csv"
+    assert set(paths) == {"json", "png"}
     assert all(p.exists() for p in paths.values())
     # the per-source table (columns are width-padded, so match the names in order)
     assert re.search(r"source +prop +acc +rej +%traj +med_fit", printed), printed
     assert "correction (at the robot, n=2): med=0.700m" in printed  # the correction block
-    assert str(paths["csv"]) in printed
-    assert len(_read_csv(paths["csv"])[1]) == 3
 
 
 def _bare_eval(out_dir: Path) -> RelocEval:
@@ -1338,7 +1261,7 @@ def test_the_exit_hook_writes_the_report_when_stop_never_runs(
 ) -> None:
     """Ctrl+C and a crashing run tear the module down without ever running stop()
     here, so the atexit hook start() arms is what leaves the operator a report: the
-    same table and the same three artifacts a clean stop writes."""
+    same table and the same two artifacts a clean stop writes."""
     m = _bare_eval(tmp_path)
 
     m._finalize()  # what atexit.register(self.stop) reaches at process exit
@@ -1347,7 +1270,6 @@ def test_the_exit_hook_writes_the_report_when_stop_never_runs(
     assert re.search(r"source +prop +acc +rej +%traj +med_fit", printed), printed
     assert (tmp_path / "releval.eval.json").exists()
     assert (tmp_path / "releval.trajectory.png").exists()
-    assert (tmp_path / "releval.accepted_fixes.csv").exists()
 
 
 def test_the_report_is_written_once_however_often_teardown_arrives(

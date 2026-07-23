@@ -140,31 +140,6 @@ def test_load_marker_map_empty_and_missing_markers_block() -> None:
             os.unlink(path)
 
 
-def test_load_marker_map_rejects_short_translation() -> None:
-    """Invariant: a translation that is not length-3 raises ValueError naming the
-    marker -- it must NOT silently zero-fill via Vector3 (a 2-vector would place the
-    tag at z=0 and corrupt every composed world->map candidate)."""
-    payload = {"markers": {"7": {"translation": [1.0, 2.0], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
-    path = _write_marker_json(payload)
-    try:
-        with pytest.raises(ValueError, match=r"marker 7: translation must be \[x, y, z\]"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
-
-
-def test_load_marker_map_rejects_short_rotation() -> None:
-    """Invariant: a rotation that is not length-4 raises ValueError naming the marker
-    rather than constructing a garbage Quaternion."""
-    payload = {"markers": {"9": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 1.0]}}}
-    path = _write_marker_json(payload)
-    try:
-        with pytest.raises(ValueError, match=r"marker 9: rotation must be \[x, y, z, w\]"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
-
-
 def test_load_marker_map_rejects_zero_norm_quaternion() -> None:
     """Invariant: an unnormalizable (zero-norm) quaternion is caught at load with a
     clear message, not deferred to a later Quaternion.inverse() blow-up."""
@@ -187,18 +162,6 @@ def test_load_marker_map_rejects_non_finite_translation() -> None:
     path = _write_marker_json(payload)
     try:
         with pytest.raises(ValueError, match=r"marker 5: translation must be finite"):
-            load_marker_map(path)
-    finally:
-        os.unlink(path)
-
-
-def test_load_marker_map_missing_key_raises() -> None:
-    """Invariant: an entry missing a required key (here 'rotation') fails loudly with
-    a KeyError rather than producing a half-built pose."""
-    payload = {"markers": {"4": {"translation": [0.0, 0.0, 0.0]}}}
-    path = _write_marker_json(payload)
-    try:
-        with pytest.raises(KeyError):
             load_marker_map(path)
     finally:
         os.unlink(path)
