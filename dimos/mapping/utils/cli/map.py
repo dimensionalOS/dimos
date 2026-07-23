@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Iterable
+import json
 import math
 from pathlib import Path
 import subprocess
@@ -43,6 +45,9 @@ MARKER_STEM = 1.0
 
 # Conventional world frames tried in order when --frame isn't given.
 _WORLD_FRAMES = ("world", "map", "odom")
+
+# Frame-invariant marker pose 7-vector: (x, y, z, qx, qy, qz, qw), meters + xyzw.
+_Pose7 = tuple[float, float, float, float, float, float, float]
 
 
 def _detect_world(tf_buf: Any, cloud_frame: str, ts: float) -> str | None:
@@ -180,9 +185,15 @@ def _log_reconstruction(
     graph: PoseGraph | None,
     marker_dets: list[Observation[Any]],
     marker_size: float,
+    canonical_markers: dict[int, _Pose7] | None = None,
     bottom_cutoff: float | None = None,
 ) -> None:
-    """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
+    """Log maps, paths, the PGO graph, and markers to the active rerun recording.
+
+    ``canonical_markers`` (marker_id -> fused map_T_tag), when present, draws ONE
+    fused box per id at ``world/pgo_map/markers_canonical`` alongside — not instead
+    of — the per-track boxes, so the operator can toggle between the two views.
+    """
     from dimos.memory2.vis.color import Color
     from dimos.msgs.geometry_msgs.Transform import Transform
 
@@ -298,6 +309,113 @@ def _log_reconstruction(
                 labels=labels,
             )
 
+        if canonical_markers:
+            # One robustly-fused box per marker_id (the marker map), same box size
+            # as the per-track boxes; a distinct entity the operator toggles on.
+            canonical_ids = sorted(canonical_markers)
+            n_canonical = len(canonical_ids)
+            canonical_centers = [
+                (canonical_markers[mid][0], canonical_markers[mid][1], canonical_markers[mid][2])
+                for mid in canonical_ids
+            ]
+            canonical_quats = [
+                (
+                    canonical_markers[mid][3],
+                    canonical_markers[mid][4],
+                    canonical_markers[mid][5],
+                    canonical_markers[mid][6],
+                )
+                for mid in canonical_ids
+            ]
+            _log_markers(
+                "world/pgo_map/markers_canonical",
+                canonical_centers,
+                canonical_quats,
+                fill_half=[(half, half, 0.005)] * n_canonical,
+                outline_half=[(half + outline_bump, half + outline_bump, 0.006)] * n_canonical,
+                colors=[
+                    Color.from_cmap("tab10", (mid % 10) / 10.0).rgb_u8() for mid in canonical_ids
+                ],
+                labels=[f"id={mid}" for mid in canonical_ids],
+            )
+
+
+def _fuse_marker_map(
+    dets: list[Observation[Any]],
+    graph: PoseGraph | None,
+) -> dict[int, tuple[_Pose7, int]]:
+    """Fuse every detection of each marker_id into ONE canonical ``map_T_tag`` pose.
+
+    Each detection's raw world pose is PGO-corrected (``graph.correct``) into the
+    corrected world frame, grouped by marker_id, then reduced to a single robust
+    pose by the verified Huber-IRLS + Markley-quaternion estimator
+    (``apriltag_aggregation.robust_cluster_pose``) — so a mirror-flip or grazing
+    glimpse loses influence instead of dragging the mean. With ``graph=None`` (no
+    PGO) the raw world poses are fused directly. Returns
+    ``marker_id -> (map_T_tag 7-vec, n_detections_fused)``, one entry per id.
+    """
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.perception.fiducial.apriltag_aggregation import (
+        DEFAULT_HUBER_DELTA_M,
+        DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
+        TagObservation,
+        robust_cluster_pose,
+    )
+
+    by_id: dict[int, list[TagObservation]] = defaultdict(list)
+    for d in dets:
+        if graph is not None:
+            corrected = graph.correct(
+                Transform(
+                    translation=d.data.center,
+                    rotation=d.data.orientation,
+                    frame_id="world",
+                    child_frame_id=f"marker_{d.data.marker_id}",
+                    ts=d.ts,
+                )
+            )
+            t, r = corrected.translation, corrected.rotation
+            pose7: _Pose7 = (t.x, t.y, t.z, r.x, r.y, r.z, r.w)
+        else:
+            c, o = d.data.center, d.data.orientation
+            pose7 = (c.x, c.y, c.z, o.x, o.y, o.z, o.w)
+        by_id[d.data.marker_id].append(
+            TagObservation(ts=d.ts, marker_id=d.data.marker_id, pose=pose7)
+        )
+    return {
+        marker_id: (
+            robust_cluster_pose(obs, DEFAULT_ROTATION_WEIGHT_M_PER_RAD, DEFAULT_HUBER_DELTA_M),
+            len(obs),
+        )
+        for marker_id, obs in by_id.items()
+    }
+
+
+def _write_marker_map(path: Path, fused: dict[int, tuple[_Pose7, int]], *, source: str) -> None:
+    """Serialize fused canonical poses to a ``map_T_tag`` marker-map JSON.
+
+    Schema is exactly what ``fiducial_relocalization.load_marker_map`` reads:
+    translation in meters, rotation xyzw, in the map frame. ``meta`` is provenance
+    the loader ignores (it reads only ``markers``).
+    """
+    markers = {
+        str(marker_id): {
+            "translation": [pose[0], pose[1], pose[2]],
+            "rotation": [pose[3], pose[4], pose[5], pose[6]],
+        }
+        for marker_id, (pose, _n) in sorted(fused.items())
+    }
+    doc = {
+        "meta": {
+            "schema": "map_T_tag",
+            "source_recording": source,
+            "n_detections_fused": {str(mid): n for mid, (_pose, n) in sorted(fused.items())},
+        },
+        "markers": markers,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2))
+
 
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
@@ -399,6 +517,13 @@ def main(
         "--marker-smoothing",
         help="Sliding-window track buffer for marker pose averaging (s); 0 disables (one box per raw detection)",
     ),
+    markers_out: Path | None = typer.Option(
+        None,
+        "--markers-out",
+        help="Write a canonical marker-map JSON — one robustly-fused map_T_tag pose "
+        "per marker_id (all detections of an id fused, not one box per track) — to "
+        "PATH. Implies --markers. Default: no marker map written.",
+    ),
     bottom_cutoff: float | None = typer.Option(
         None,
         "--bottom-cutoff",
@@ -429,6 +554,8 @@ def main(
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export or full_pgo:
         pgo = True
+    if markers_out is not None:
+        markers = True
 
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
@@ -595,6 +722,7 @@ def main(
         full_pgo_map = _denoise(full_pgo_map)
 
     marker_dets: list[Observation[Any]] = []
+    fused_markers: dict[int, tuple[_Pose7, int]] = {}
     if markers:
         # Image observations in dimos recordings are stamped with
         # frame_id="camera_optical", so obs.pose is already optical-in-world
@@ -646,6 +774,16 @@ def main(
             f"markers: {len(marker_dets)} entries from {len(all_dets)} raw detections "
             f"across {len(unique_ids)} unique ids {unique_ids}"
         )
+        if markers_out is not None:
+            if all_dets:
+                fused_markers = _fuse_marker_map(all_dets, graph)
+                _write_marker_map(markers_out, fused_markers, source=db_path.name)
+                fused_ids = sorted(fused_markers)
+                print(f"wrote marker map: {len(fused_ids)} tags {fused_ids} -> {markers_out}")
+                for marker_id in fused_ids:
+                    print(f"  id {marker_id}: fused {fused_markers[marker_id][1]} detections")
+            else:
+                print("no marker detections; skipping marker map")
 
     rerun_init("dimos map tool")
     rr.save(str(out))
@@ -659,6 +797,7 @@ def main(
         graph=graph,
         marker_dets=marker_dets,
         marker_size=marker_size,
+        canonical_markers={mid: pose for mid, (pose, _n) in fused_markers.items()},
         bottom_cutoff=bottom_cutoff,
     )
     print(f"wrote {out}")
