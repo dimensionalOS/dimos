@@ -89,8 +89,8 @@ def load_recordings(recordings_dir: str | Path) -> list[RunRecording]:
             # A non-finite speed can be picked as the max "safe" speed, and an
             # empty reference scores as a perfect zero-CTE run — both would forge
             # the recommendation. Reject rather than score.
-            if not math.isfinite(rec.speed) or not rec.reference:
-                raise ValueError("non-finite speed or empty reference")
+            if not math.isfinite(rec.speed) or not rec.reference or not rec.ticks:
+                raise ValueError("non-finite speed, empty reference, or empty tick trace")
         except (TypeError, ValueError):
             skipped += 1
             continue

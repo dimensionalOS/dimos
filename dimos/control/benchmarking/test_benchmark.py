@@ -123,10 +123,13 @@ def test_malformed_recording_is_skipped_not_fatal(tmp_path):
     assert len(opm.points) == 1
 
 
-@pytest.mark.parametrize("corruption", ["string_speed", "inf_speed", "empty_reference"])
+@pytest.mark.parametrize(
+    "corruption", ["string_speed", "inf_speed", "empty_reference", "empty_ticks"]
+)
 def test_unscoreable_recording_is_skipped(tmp_path, corruption):
     """A string speed breaks the sort; an infinite speed forges the max-safe
-    speed; an empty reference scores as a perfect run. All skipped at load."""
+    speed; an empty reference or empty tick trace scores as a perfect run. All
+    skipped at load."""
     import json
 
     good_ticks = [[i * 0.1, i * 0.1, 0.0, 0.0, 0.5, 0.0, 0.0] for i in range(20)]
@@ -138,8 +141,10 @@ def test_unscoreable_recording_is_skipped(tmp_path, corruption):
         data["speed"] = "fast"
     elif corruption == "inf_speed":
         data["speed"] = float("inf")
-    else:
+    elif corruption == "empty_reference":
         data["reference"] = []
+    else:
+        data["ticks"] = []
     bad.write_text(json.dumps(data))
 
     opm = score_dir(tmp_path, tolerances_cm=[10], plots=False)
