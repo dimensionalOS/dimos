@@ -76,6 +76,11 @@ _ARM_IK_LIMITS = {
     "max_target_offset_m": 0.02,
     "max_target_rot_deg": 15.0,
     "joint_limit_margin_deg": 2.0,
+    # QP solver with limits as hard constraints and posture regularization;
+    # orientation_weight becomes the FrameTask orientation cost. Falls back to
+    # dls automatically where the manipulation extra is absent.
+    "solver": "pink",
+    "orientation_weight": 0.5,
 }
 
 

@@ -335,6 +335,8 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
             assert tasks[name].params["max_step_deg_per_tick"] == 0.5
             assert tasks[name].params["max_target_offset_m"] == 0.02
             assert tasks[name].params["max_target_rot_deg"] == 15.0
+            assert tasks[name].params["solver"] == "pink"
+            assert tasks[name].params["orientation_weight"] == 0.5
 
 
 def test_teleop_chases_through_folded_home_and_teleports() -> None:
