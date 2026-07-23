@@ -147,9 +147,7 @@ def test_get_data_file_archive_and_download_contract(
 
 
 @pytest.mark.self_hosted
-def test_get_data_live_occupancy_archive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_data_live_occupancy_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Exercise the public pinned dataset without using checkout data.
 
     ``self_hosted`` is the repository's opt-in marker for tests requiring
@@ -221,7 +219,9 @@ def test_get_data_rejects_invalid_top_level_names(
         data.get_data(name)
 
 
-@pytest.mark.parametrize("root_kind", ["file", "empty_dir", "nonempty_dir", "valid_symlink", "broken_symlink"])
+@pytest.mark.parametrize(
+    "root_kind", ["file", "empty_dir", "nonempty_dir", "valid_symlink", "broken_symlink"]
+)
 def test_get_data_existing_root_is_authoritative(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_kind: str
 ) -> None:
@@ -245,9 +245,7 @@ def test_get_data_existing_root_is_authoritative(
         data.get_data("top/missing")
 
 
-def test_get_data_cleans_abandoned_staging(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_data_cleans_abandoned_staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir = tmp_path / "data"
     abandoned = data_dir / ".top.tmp-abandoned"
     abandoned.mkdir(parents=True)
@@ -442,7 +440,9 @@ def test_get_data_missing_archive_vs_operational_failure(
     monkeypatch.setattr(
         data, "hf_hub_download", lambda **kwargs: (_ for _ in ()).throw(OSError("offline"))
     )
-    with pytest.raises(RuntimeError, match="playercc7/dimensional.*f262d7f8775c2d507b1bfde62a5aa21cffabb3a1"):
+    with pytest.raises(
+        RuntimeError, match="playercc7/dimensional.*f262d7f8775c2d507b1bfde62a5aa21cffabb3a1"
+    ):
         data.get_data("offline.bin")
 
 

@@ -385,7 +385,9 @@ def get_data(name: str | Path) -> Path:
 
         _materialize_archive(archive, top_level, reference.parts[1:], data_dir, name)
         if not file_path.exists():
-            raise FileNotFoundError(f"Data asset {name!r} could not be materialized under {data_dir}")
+            raise FileNotFoundError(
+                f"Data asset {name!r} could not be materialized under {data_dir}"
+            )
         return file_path
 
 
