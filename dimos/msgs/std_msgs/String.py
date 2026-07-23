@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,11 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+"""String message type."""
+
+from typing import ClassVar
+
+from dimos_lcm.std_msgs import String as LCMString
 
 
-def get_project_root() -> Path:
-    """
-    Returns the absolute path to the project root directory.
-    """
-    return Path(__file__).resolve().parent.parent.parent
+class String(LCMString):  # type: ignore[misc]
+    """ROS-compatible String message."""
+
+    msg_name: ClassVar[str] = "std_msgs.String"
+
+    def __init__(self, data: str = "") -> None:
+        """Initialize String with data value."""
+        self.data = data
