@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -156,3 +157,23 @@ def test_config_defaults_disable_interaction() -> None:
     config = ViserVisualizationConfig()
     assert config.scan_tool is None
     assert config.ground_truth_objects == ()
+
+
+# --- runtime URL reports the actually-bound port ----------------------------
+
+
+def test_runtime_url_reports_bound_port_not_configured_port() -> None:
+    from dimos.manipulation.visualization.viser.runtime import ViserRuntime
+
+    runtime = ViserRuntime(ViserVisualizationConfig(host="127.0.0.1", port=8095))
+    # Simulate Viser auto-incrementing off a busy 8095 to 8098.
+    runtime.server = SimpleNamespace(get_host=lambda: "127.0.0.1", get_port=lambda: 8098)
+    assert runtime.url == "http://127.0.0.1:8098"
+
+
+def test_runtime_url_falls_back_to_config_without_accessors() -> None:
+    from dimos.manipulation.visualization.viser.runtime import ViserRuntime
+
+    runtime = ViserRuntime(ViserVisualizationConfig(host="127.0.0.1", port=8095))
+    runtime.server = object()  # no get_host/get_port
+    assert runtime.url == "http://127.0.0.1:8095"

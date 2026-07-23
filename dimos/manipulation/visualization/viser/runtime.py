@@ -40,7 +40,19 @@ class ViserRuntime:
     def url(self) -> str | None:
         if self.server is None:
             return None
-        return f"http://{self.config.host}:{self.config.port}"
+        # Report the port Viser actually bound: ViserServer auto-increments off
+        # the requested port when it is busy, so config.port can be stale (e.g.
+        # a second stack falling back from 8095 to 8098). Fall back to the
+        # configured values only if the accessors are unavailable.
+        host = self.config.host
+        port = self.config.port
+        get_host = getattr(self.server, "get_host", None)
+        get_port = getattr(self.server, "get_port", None)
+        if callable(get_host):
+            host = get_host()
+        if callable(get_port):
+            port = get_port()
+        return f"http://{host}:{port}"
 
     def start(self) -> ViserServer:
         if self.server is None:
