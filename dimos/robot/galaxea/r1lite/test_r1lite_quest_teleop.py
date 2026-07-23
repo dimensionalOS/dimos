@@ -397,6 +397,7 @@ def test_create_task_plumbs_step_limits() -> None:
             "max_step_deg_per_tick": 0.5,
             "max_target_offset_m": 0.02,
             "max_target_rot_deg": 15.0,
+            "joint_limit_margin_deg": 2.0,
         },
     )
     task = create_task(cfg, hardware=None)
@@ -404,6 +405,7 @@ def test_create_task_plumbs_step_limits() -> None:
     assert task._config.max_step_deg_per_tick == 0.5
     assert task._config.max_target_offset_m == 0.02
     assert task._config.max_target_rot_deg == 15.0
+    assert task._config.joint_limit_margin_deg == 2.0
 
 
 def test_web_server_binds_all_interfaces(monkeypatch: Any) -> None:

@@ -75,6 +75,7 @@ _ARM_IK_LIMITS = {
     "max_step_deg_per_tick": 0.5,
     "max_target_offset_m": 0.02,
     "max_target_rot_deg": 15.0,
+    "joint_limit_margin_deg": 2.0,
 }
 
 

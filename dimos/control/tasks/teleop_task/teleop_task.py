@@ -90,6 +90,7 @@ class TeleopIKTaskConfig:
     max_step_deg_per_tick: float | None = None
     max_target_offset_m: float | None = None  # chase-window radius around the current EE
     max_target_rot_deg: float | None = None  # chase-window rotation about the current EE
+    joint_limit_margin_deg: float = 0.0  # keep commands this far inside the URDF limits
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -254,44 +255,45 @@ class TeleopIKTask(BaseControlTask):
             return None
 
         # Chase window: clamp the target to a neighborhood of the current EE
-        # pose so the solve always stays local. Without this, a hand that
-        # outruns the arm (or a pose-stream gap) puts the target far away, the
-        # solution lands beyond the delta gate, and tracking wedges
-        # permanently. The window recenters every tick, so it does not limit
-        # chase speed, only solve locality.
-        if self._config.max_target_offset_m is not None or self._config.max_target_rot_deg:
-            ee_now = self._ik.forward_kinematics(q_current)
-            position = target_pose.translation
-            rotation = target_pose.rotation
-            if self._config.max_target_offset_m is not None:
-                offset = position - ee_now.translation
-                dist = float(np.linalg.norm(offset))
-                if dist > self._config.max_target_offset_m:
-                    position = ee_now.translation + offset * (
-                        self._config.max_target_offset_m / dist
-                    )
-            if self._config.max_target_rot_deg is not None:
-                w = pinocchio.log3(ee_now.rotation.T @ rotation)
-                angle = float(np.linalg.norm(w))
-                max_angle = np.deg2rad(self._config.max_target_rot_deg)
-                if angle > max_angle:
-                    rotation = ee_now.rotation @ pinocchio.exp3(w * (max_angle / angle))
-            target_pose = pinocchio.SE3(rotation, position)
+        # pose so the solve stays local. Without this, a hand that outruns the
+        # arm (or a pose-stream gap) puts the target far away, the solution
+        # lands beyond the delta gate, and tracking wedges permanently. The
+        # window recenters every tick, so it does not limit chase speed. If a
+        # windowed solve still exceeds the gate (near singularities the
+        # joint-space cost of a window-sized step varies widely), retry with a
+        # progressively smaller window instead of giving up.
+        windowed = (
+            self._config.max_target_offset_m is not None
+            or self._config.max_target_rot_deg is not None
+        )
+        scales = (1.0, 0.5, 0.25, 0.125) if windowed else (1.0,)
+        margin = np.deg2rad(self._config.joint_limit_margin_deg)
+        q_low = self._ik.model.lowerPositionLimit + margin
+        q_high = self._ik.model.upperPositionLimit - margin
+        q_solution = None
+        for scale in scales:
+            candidate_target = target_pose
+            if windowed:
+                candidate_target = self._windowed_target(q_current, target_pose, scale)
+            q_candidate, converged, final_error = self._ik.solve(candidate_target, q_current)
+            if not converged:
+                logger.debug(
+                    f"TeleopIKTask {self._name}: IK did not converge "
+                    f"(error={final_error:.4f}), using partial solution"
+                )
+            # The solver is unconstrained; clamp into the joint limits so every
+            # command is achievable. Out-of-range commands make the firmware
+            # clamp, commanded and actual state diverge, and tracking stalls.
+            q_candidate = np.clip(q_candidate, q_low, q_high)
+            if check_joint_delta(q_candidate, q_current, self._config.max_joint_delta_deg):
+                q_solution = q_candidate
+                break
 
-        # Compute IK
-        q_solution, converged, final_error = self._ik.solve(target_pose, q_current)
-        # Use the solution even if it didn't fully converge
-        if not converged:
-            logger.debug(
-                f"TeleopIKTask {self._name}: IK did not converge "
-                f"(error={final_error:.4f}), using partial solution"
-            )
-        # Safety: reject if any joint would jump too far in one tick
-        if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
-            worst = float(np.max(np.abs(q_solution - q_current)))
+        if q_solution is None:
+            worst = float(np.max(np.abs(q_candidate - q_current)))
             logger.warning(
                 f"TeleopIKTask {self._name}: joint delta {np.rad2deg(worst):.1f}° exceeds "
-                f"{self._config.max_joint_delta_deg}°, rejecting solution"
+                f"{self._config.max_joint_delta_deg}° at the smallest window, rejecting"
             )
             return None
 
@@ -316,6 +318,30 @@ class TeleopIKTask(BaseControlTask):
             positions=positions,
             mode=ControlMode.SERVO_POSITION,
         )
+
+    def _windowed_target(
+        self,
+        q_current: NDArray[np.floating[Any]],
+        target_pose: pinocchio.SE3,
+        scale: float,
+    ) -> pinocchio.SE3:
+        """Clamp the target into the chase window around the current EE pose."""
+        ee_now = self._ik.forward_kinematics(q_current)
+        position = target_pose.translation
+        rotation = target_pose.rotation
+        if self._config.max_target_offset_m is not None:
+            offset = position - ee_now.translation
+            dist = float(np.linalg.norm(offset))
+            max_dist = self._config.max_target_offset_m * scale
+            if dist > max_dist:
+                position = ee_now.translation + offset * (max_dist / dist)
+        if self._config.max_target_rot_deg is not None:
+            w = pinocchio.log3(ee_now.rotation.T @ rotation)
+            angle = float(np.linalg.norm(w))
+            max_angle = np.deg2rad(self._config.max_target_rot_deg) * scale
+            if angle > max_angle:
+                rotation = ee_now.rotation @ pinocchio.exp3(w * (max_angle / angle))
+        return pinocchio.SE3(rotation, position)
 
     def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
         """Get current joint positions from coordinator state."""
@@ -404,6 +430,7 @@ class TeleopIKTaskParams(BaseConfig):
     max_step_deg_per_tick: float | None = None
     max_target_offset_m: float | None = None
     max_target_rot_deg: float | None = None
+    joint_limit_margin_deg: float = 0.0
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -423,6 +450,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             max_step_deg_per_tick=params.max_step_deg_per_tick,
             max_target_offset_m=params.max_target_offset_m,
             max_target_rot_deg=params.max_target_rot_deg,
+            joint_limit_margin_deg=params.joint_limit_margin_deg,
             hand=params.hand,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
