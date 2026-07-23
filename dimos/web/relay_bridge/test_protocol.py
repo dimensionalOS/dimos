@@ -28,6 +28,7 @@ from dimos.web.relay_bridge.protocol import (
     ControlFrameReader,
     DataFrameReader,
     FrameHeader,
+    Ping,
     ProtocolError,
     decode_data_frame,
     decode_datagram,
@@ -189,6 +190,32 @@ def test_msg_from_dict_validates_types():
         msg_from_dict({"t": "bogus"})  # unknown type
     with pytest.raises(ProtocolError):
         msg_from_dict({"t": "ping", "n": True, "ts": 2.5})  # bool is not a number
+
+
+def test_non_finite_numbers_rejected():
+    # Python's JSON parser accepts NaN/Infinity where the TS mirror's
+    # JSON.parse errors; the validator must reject them, and a local encode
+    # must fail fast instead of emitting wire JSON the relay cannot parse.
+    with pytest.raises(ProtocolError):
+        msg_from_dict({"t": "ping", "n": 1, "ts": float("nan")})
+    with pytest.raises(ProtocolError):
+        msg_from_dict({"t": "ping", "n": float("inf"), "ts": 2.5})
+    assert decode_datagram(b'{"t":"ping","n":7,"ts":NaN}') is None
+    with pytest.raises(ValueError):
+        Ping(n=1, ts=float("nan"))
+
+
+def test_data_frame_header_rejects_non_finite():
+    hdr = b'{"ch":"c","seq":1,"ts":1e999,"delivery":"latest"}'
+    with pytest.raises(ProtocolError):
+        decode_data_frame(_raw_data_frame(hdr))
+
+
+def test_huge_int_is_a_valid_number():
+    # Arbitrary-precision ints are legal JSON and always finite; they must
+    # pass (a math.isfinite check would raise OverflowError on them).
+    msg = msg_from_dict({"t": "ping", "n": 10**400, "ts": 2.5})
+    assert isinstance(msg, Ping) and msg.n == 10**400
 
 
 def test_control_reader_drops_invalid_keeps_valid_neighbors():

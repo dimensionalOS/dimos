@@ -52,8 +52,6 @@ WHITELIST = [
         "dimos/utils/cli/spy/conftest.py",
         "lg = logging.getLogger(_CORE_LOGGER)",
     ),
-    # Must stay importable with no dependencies (shipped in the relay-only wheel).
-    ("dimos/web/relay_bridge/protocol.py", "logger = logging.getLogger(__name__)"),
 ]
 
 

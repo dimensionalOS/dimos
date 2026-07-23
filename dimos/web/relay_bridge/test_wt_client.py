@@ -70,10 +70,10 @@ def _frame(seq: int) -> DataFrame:
 async def test_pump_dies_visibly_on_encode_error() -> None:
     session = StubSession()
     writer = _client(session).latest_writer("cam")
-    writer.offer(b"data", meta=object())  # object() is not JSON-serializable
+    writer.offer(b"data", meta=object())  # not a dict: header validation rejects it
     await asyncio.sleep(0.05)  # let the pump run and die
     assert writer._task.done()
-    assert isinstance(writer._task.exception(), TypeError)
+    assert isinstance(writer._task.exception(), ValueError)  # pydantic ValidationError
     # The dead channel is visible at the producer, not silently accepting.
     with pytest.raises(RuntimeError):
         writer.offer(b"more")

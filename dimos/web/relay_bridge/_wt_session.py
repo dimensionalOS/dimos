@@ -93,7 +93,7 @@ class SessionProtocol(QuicConnectionProtocol):
         self.frames: asyncio.Queue[DataFrame] = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         self.frames_dropped = 0
         self.session_id: int | None = None
-        self._pong_waiters: dict[int, asyncio.Future[Pong]] = {}
+        self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
         self._frame_readers: dict[int, DataFrameReader | None] = {}
 
     def open_session(self, authority: str, path: str) -> None:

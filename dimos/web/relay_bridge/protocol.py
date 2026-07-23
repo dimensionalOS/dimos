@@ -15,7 +15,8 @@
 """Wire-protocol mirror of web/shared/protocol.ts.
 
 Pinned by the golden vectors in web/shared/fixtures/ (tested from both pytest
-and deno test). Stdlib-only on purpose: importable without aioquic.
+and deno test). Validation runs on pydantic; nothing here needs aioquic or the
+rest of the [web] extra.
 
 Framing (see web/README.md for the upstream-bug rationale):
 - Control stream frame: u32-LE length | UTF-8 JSON.
@@ -30,17 +31,15 @@ kill a session. Framing-level corruption (absurd length prefixes) raises
 ProtocolError and kills only the affected stream.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, fields
-import json
-import logging
+from dataclasses import dataclass
 import struct
-from typing import Any, ClassVar, Literal, Union, cast
+from typing import Annotated, Any, Literal
 
-# Stdlib logging, not dimos.utils.logging_config (which needs structlog):
-# this module must stay importable with no dependencies at all.
-logger = logging.getLogger(__name__)
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 PROTOCOL_VERSION = 1
 
@@ -59,83 +58,72 @@ class ProtocolError(ValueError):
     pass
 
 
-@dataclass
-class Hello:
-    t: ClassVar[str] = "hello"
-    v: int
+class _WireModel(BaseModel):
+    # strict: no coercion, so a bool or "1" is not a protocol number (mirrors
+    # the typeof checks in protocol.ts). allow_inf_nan=False: Python's JSON
+    # parser accepts NaN/Infinity where JSON.parse errors, so the mirror must
+    # reject them explicitly -- and must refuse to encode them locally.
+    model_config = ConfigDict(strict=True, allow_inf_nan=False)
+
+
+# Number fields are `int | float`, not `float`: JSON has a single number type
+# (booleans excluded above), and plain `float` would coerce ints and serialize
+# seq=1 as 1.0, breaking byte-exact encoding against the golden fixtures.
+
+
+class Hello(_WireModel):
+    t: Literal["hello"] = "hello"
+    v: int | float
     role: Role
 
 
-@dataclass
-class Welcome:
-    t: ClassVar[str] = "welcome"
-    v: int
+class Welcome(_WireModel):
+    t: Literal["welcome"] = "welcome"
+    v: int | float
 
 
-@dataclass
-class Ping:
-    t: ClassVar[str] = "ping"
-    n: int
-    ts: float
+class Ping(_WireModel):
+    t: Literal["ping"] = "ping"
+    n: int | float
+    ts: int | float
 
 
-@dataclass
-class Pong:
-    t: ClassVar[str] = "pong"
-    n: int
-    ts: float
+class Pong(_WireModel):
+    t: Literal["pong"] = "pong"
+    n: int | float
+    ts: int | float
 
 
-@dataclass
-class Error:
-    t: ClassVar[str] = "error"
+class Error(_WireModel):
+    t: Literal["error"] = "error"
     code: str
     message: str
 
 
 # Teleop datagrams (carried from T6 on; declared so the wire format is pinned
 # by fixtures from day one).
-@dataclass
-class Twist:
-    t: ClassVar[str] = "twist"
-    vx: float
-    wz: float
-    seq: int
-    ts: float
+class Twist(_WireModel):
+    t: Literal["twist"] = "twist"
+    vx: int | float
+    wz: int | float
+    seq: int | float
+    ts: int | float
 
 
-@dataclass
-class Stop:
-    t: ClassVar[str] = "stop"
-    seq: int
-    ts: float
+class Stop(_WireModel):
+    t: Literal["stop"] = "stop"
+    seq: int | float
+    ts: int | float
 
 
-Msg = Union[Hello, Welcome, Ping, Pong, Error, Twist, Stop]
+Msg = Hello | Welcome | Ping | Pong | Error | Twist | Stop
 
-_MSG_TYPES: dict[str, type[Any]] = {
-    cls.t: cls for cls in (Hello, Welcome, Ping, Pong, Error, Twist, Stop)
-}
-
-# Runtime field validation, derived from the dataclass annotations (mirrors
-# MSG_FIELDS in protocol.ts): "string" is a JSON string, "number" any JSON
-# number except booleans. An unmapped annotation fails loudly at import.
-_KIND_BY_ANNOTATION = {"int": "number", "float": "number", "str": "string", "Role": "string"}
-_MSG_FIELD_KINDS: dict[str, dict[str, str]] = {
-    # cast: `from __future__ import annotations` makes f.type always a str.
-    t: {f.name: _KIND_BY_ANNOTATION[cast("str", f.type)] for f in fields(cls)}
-    for t, cls in _MSG_TYPES.items()
-}
+# One pydantic-core pass takes raw peer bytes to a validated message: UTF-8
+# decoding, JSON parsing, and shape checks together, discriminated on "t".
+_MSG_TA: TypeAdapter[Msg] = TypeAdapter(Annotated[Msg, Field(discriminator="t")])
 
 
-def _is_kind(value: Any, kind: str) -> bool:
-    if kind == "string":
-        return isinstance(value, str)
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-@dataclass
-class FrameHeader:
+class FrameHeader(_WireModel):
     """Data-plane frame header.
 
     `delivery` tells the relay how to forward without a manifest (T1 only; the
@@ -143,8 +131,8 @@ class FrameHeader:
     """
 
     ch: str
-    seq: int
-    ts: float
+    seq: int | float
+    ts: int | float
     delivery: Delivery
     meta: dict[str, Any] | None = None
 
@@ -155,32 +143,22 @@ class DataFrame:
     payload: bytes
 
 
-def _dump_json(obj: dict[str, Any]) -> bytes:
-    # Canonical form shared with JSON.stringify: compact separators, raw UTF-8.
-    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
-
-
-def _msg_to_dict(msg: Msg) -> dict[str, Any]:
-    out: dict[str, Any] = {"t": type(msg).t}
-    for f in fields(msg):
-        out[f.name] = getattr(msg, f.name)
-    return out
-
-
 def msg_from_dict(data: dict[str, Any]) -> Msg:
-    t = data.get("t")
-    if not isinstance(t, str) or t not in _MSG_TYPES:
-        raise ProtocolError(f"unknown message type: {t!r}")
-    cls = _MSG_TYPES[t]
-    for name, kind in _MSG_FIELD_KINDS[t].items():
-        if not _is_kind(data.get(name), kind):
-            raise ProtocolError(f"invalid {t} message: field {name!r} is not a {kind}")
-    msg: Msg = cls(**{f.name: data[f.name] for f in fields(cls)})
-    return msg
+    try:
+        return _MSG_TA.validate_python(data)
+    except ValidationError as e:
+        raise ProtocolError(f"invalid message: {e}") from e
+
+
+def _msg_from_json(data: bytes) -> Msg:
+    try:
+        return _MSG_TA.validate_json(data)
+    except ValidationError as e:
+        raise ProtocolError(f"invalid message: {e}") from e
 
 
 def encode_control_frame(msg: Msg) -> bytes:
-    body = _dump_json(_msg_to_dict(msg))
+    body = msg.model_dump_json().encode()
     return struct.pack("<I", len(body)) + body
 
 
@@ -203,50 +181,29 @@ class ControlFrameReader:
                 raise ProtocolError(f"invalid control frame length: {length}")
             if len(self._buf) < 4 + length:
                 break
-            body_bytes = self._buf[4 : 4 + length]
+            body = bytes(self._buf[4 : 4 + length])
             del self._buf[: 4 + length]
             try:
-                body = json.loads(body_bytes.decode())
-                if not isinstance(body, dict):
-                    raise ProtocolError("control frame is not a JSON object")
-                msgs.append(msg_from_dict(body))
-            except ValueError as e:  # ProtocolError, bad JSON, and bad UTF-8
+                msgs.append(_msg_from_json(body))
+            except ProtocolError as e:
                 logger.warning(f"dropping bad control message: {e}")
         return msgs
 
 
 def encode_datagram(msg: Msg) -> bytes:
-    return _dump_json(_msg_to_dict(msg))
+    return msg.model_dump_json().encode()
 
 
 def decode_datagram(data: bytes) -> Msg | None:
     """Returns None for datagrams that are not our JSON messages."""
     try:
-        body = json.loads(data.decode())
-    except (ValueError, UnicodeDecodeError):
+        return _MSG_TA.validate_json(data)
+    except ValidationError:
         return None
-    if not isinstance(body, dict):
-        return None
-    try:
-        return msg_from_dict(body)
-    except ProtocolError:
-        return None
-
-
-def _header_to_dict(header: FrameHeader) -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "ch": header.ch,
-        "seq": header.seq,
-        "ts": header.ts,
-        "delivery": header.delivery,
-    }
-    if header.meta is not None:
-        out["meta"] = header.meta
-    return out
 
 
 def encode_data_frame(header: FrameHeader, payload: bytes) -> bytes:
-    hdr = _dump_json(_header_to_dict(header))
+    hdr = header.model_dump_json(exclude_none=True).encode()
     return struct.pack("<II", len(hdr), len(payload)) + hdr + payload
 
 
@@ -263,24 +220,6 @@ def peek_data_frame_lengths(buf: bytes | bytearray) -> tuple[int, int, int] | No
     return header_len, payload_len, total
 
 
-def _frame_header_from_dict(body: dict[str, Any]) -> FrameHeader:
-    ch, seq, ts, delivery = body.get("ch"), body.get("seq"), body.get("ts"), body.get("delivery")
-    meta = body.get("meta")
-    if (
-        not isinstance(ch, str)
-        or not _is_kind(seq, "number")
-        or not _is_kind(ts, "number")
-        or delivery not in ("latest", "reliable")
-        or ("meta" in body and not isinstance(meta, dict))
-    ):
-        raise ProtocolError(f"invalid data frame header: {body!r}")
-    # cast: _is_kind proved seq/ts are numbers, which is as precise as JSON
-    # gets (no int/float split on the wire, mirroring protocol.ts).
-    return FrameHeader(
-        ch=ch, seq=cast("int", seq), ts=cast("float", ts), delivery=delivery, meta=meta
-    )
-
-
 def decode_data_frame(frame: bytes | bytearray) -> DataFrame:
     lens = peek_data_frame_lengths(frame)
     if lens is None or len(frame) < lens[2]:
@@ -288,15 +227,11 @@ def decode_data_frame(frame: bytes | bytearray) -> DataFrame:
     header_len, _, total = lens
     view = memoryview(frame)
     try:
-        body = json.loads(bytes(view[8 : 8 + header_len]).decode())
-    except ValueError as e:  # bad JSON or bad UTF-8
+        header = FrameHeader.model_validate_json(bytes(view[8 : 8 + header_len]))
+    except ValidationError as e:
         raise ProtocolError(f"bad data frame header: {e}") from e
-    if not isinstance(body, dict):
-        raise ProtocolError("data frame header is not a JSON object")
     # The payload slice is the only whole-payload copy on the receive path.
-    return DataFrame(
-        header=_frame_header_from_dict(body), payload=bytes(view[8 + header_len : total])
-    )
+    return DataFrame(header=header, payload=bytes(view[8 + header_len : total]))
 
 
 class DataFrameReader:
