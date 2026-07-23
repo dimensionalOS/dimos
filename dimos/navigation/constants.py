@@ -14,7 +14,5 @@
 
 """Shared navigation constants."""
 
-# Max staleness in seconds for tf lookups against a live odometry stamp. Must
-# comfortably exceed the coarsest static-transform publish period so leading-edge
-# phase or modest clock skew does not silently drop frames.
+# Maximum time window to look for transforms before refusing a tf.
 TF_LOOKUP_TOLERANCE_S = 0.25

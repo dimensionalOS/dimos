@@ -44,11 +44,10 @@ from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
-# cost-coloured edges. Drives both its publishing and the rerun overrides.
+# cost-colored edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
 
-# The mount tree GO2Zenoh publishes onto tf; nav reads its odometry corrections from
-# there. Verified against Point-LIO's own attitude.
+# GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
 MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
 
 
@@ -176,16 +175,10 @@ go2_zenoh_nav = autoconnect(
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
 
-# The nav stack with BasicPathFollower swapped for the DanLocalPlanner + DanHolonomicTC
-# pair from unitree-go2-mls-htc. The raw planner stream moves to planner_path; the gate
-# forwards committed paths on path, so world/planner_path is muted in rerun.
 go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    # start_pose is base_link odometry, so the Dan modules use it as both planner
-    # start and follower odom.
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    # Setting resample_spacing_m to > 0.0 will smooth out jagged paths returned by MLSP
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
     ),

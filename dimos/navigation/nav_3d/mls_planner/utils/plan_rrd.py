@@ -46,22 +46,18 @@ from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
 
-# Axis-triad length for the odometry transform (m).
 ODOM_AXIS_LEN = 0.5
-# Arrow radius as a fraction of the triad length.
 AXIS_RADIUS_RATIO = 25
 
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
 SENSOR_FRAME = "mid360_link"
-# Static mount edges settle within the first handful of tf messages.
+# need to wait to get tfs sometimes
 TF_WARMUP_SAMPLES = 20
 
-# The travelled trail. Blue, but light enough to read against the map's turbo
-# lows, and clear of PATH_PALETTE so it never reads as a planned path.
 ODOM_PATH_COLOR = [80, 160, 255]
 
-# Distinct path colors for overlaid configurations, config 0 first.
+# Different colors for each path when running with multiple configs
 PATH_PALETTE = [
     [0, 255, 0],
     [255, 0, 255],
@@ -139,7 +135,7 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
 
 
 def _base_from_sensor(store: SqliteStore) -> Transform | None:
-    """The sensor -> base_link transform from the recording's static mount frames."""
+    """Sensor to robot base link transform using the stored tf stream."""
     buffer = MultiTBuffer()
     try:
         for i, obs in enumerate(store.stream("tf", TFMessage).order_by("ts")):
@@ -153,7 +149,7 @@ def _base_from_sensor(store: SqliteStore) -> Transform | None:
 
 
 def _base_pose(pose: tuple[float, ...], ts: float, base_from_sensor: Transform) -> Transform:
-    """Compose the odometry pose with the recorded mount frames into world -> base_link."""
+    """World to robot base link, using the sensor to robot base link transform."""
     px, py, pz, qx, qy, qz, qw = pose
     sensor = Transform(
         translation=Vector3(px, py, pz),
@@ -171,7 +167,7 @@ def _log_odometry(
     trail: list[tuple[float, float, float]],
     base_from_sensor: Transform | None,
 ) -> None:
-    """Log the moving sensor pose and its growing trajectory trail."""
+    """Trace the sensor moving throughout the scene."""
     px, py, pz, qx, qy, qz, qw = pose
     rr.set_time(TIMELINE, timestamp=ts)
     rr.log(

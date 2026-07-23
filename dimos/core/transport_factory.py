@@ -57,12 +57,7 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 
 
 def tf_channel(g: GlobalConfig = global_config) -> str:
-    """Wire channel for the tf stream on the active backend.
-
-    tf can't be a declared port because every Module reserves the name, so
-    native modules are handed this channel directly. Backends format the type
-    suffix differently, so match the active one.
-    """
+    """Wire channel for the tf stream on the active backend."""
     name = transport_topic("/tf", g)
     if g.transport == "zenoh":
         return ZenohTopic(name, TFMessage).key_expr

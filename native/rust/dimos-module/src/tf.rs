@@ -65,7 +65,7 @@ impl Transform {
         }
     }
 
-    /// Translation component (`parent`-frame position of the `child` origin).
+    /// Translation component.
     pub fn translation(&self) -> Vector3<f64> {
         self.iso.translation.vector
     }
@@ -84,7 +84,6 @@ impl Transform {
         }
     }
 
-    // self a -> b, then other b -> c, gives a -> c.
     fn compose(&self, other: &Transform) -> Transform {
         Transform {
             parent: self.parent.clone(),

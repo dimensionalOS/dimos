@@ -76,7 +76,7 @@ class BasicPathFollower(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._current_odom: PoseStamped | None = None
+        self._current_pose: PoseStamped | None = None
         self._waypoints: NDArray[np.float32] | None = None
         self._stop_event = Event()
         self._thread: Thread | None = None
@@ -100,7 +100,7 @@ class BasicPathFollower(Module):
         super().stop()
 
     def _on_odometry(self, msg: Odometry) -> None:
-        # Steer from the robot base pose, not the LIO body frame.
+        # Steer from the robot base pose, not the sensor frame.
         base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
         if base is None:
             logger.warning(
@@ -111,7 +111,7 @@ class BasicPathFollower(Module):
             )
             return
         with self._lock:
-            self._current_odom = base.to_pose(ts=msg.ts)
+            self._current_pose = base.to_pose(ts=msg.ts)
 
     def _on_path(self, path: Path) -> None:
         # The planner owns path safety: it sends the route as far as it is safe,
@@ -136,15 +136,15 @@ class BasicPathFollower(Module):
         while not self._stop_event.is_set():
             start_time = time.perf_counter()
             with self._lock:
-                odom = self._current_odom
+                pose = self._current_pose
                 waypoints = self._waypoints
-            if odom is not None and waypoints is not None:
-                self._step(odom, waypoints)
+            if pose is not None and waypoints is not None:
+                self._step(pose, waypoints)
             elapsed = time.perf_counter() - start_time
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _step(self, odom: PoseStamped, waypoints: NDArray[np.float32]) -> None:
-        position = np.array([odom.position.x, odom.position.y], dtype=np.float32)
+    def _step(self, pose: PoseStamped, waypoints: NDArray[np.float32]) -> None:
+        position = np.array([pose.position.x, pose.position.y], dtype=np.float32)
         if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
             self.nav_cmd_vel.publish(Twist())
             with self._lock:
@@ -157,7 +157,7 @@ class BasicPathFollower(Module):
         target = self._lookahead_point(waypoints, position)
         yaw_error = angle_diff(
             math.atan2(target[1] - position[1], target[0] - position[0]),
-            odom.orientation.euler[2],
+            pose.orientation.euler[2],
         )
 
         angular = max(

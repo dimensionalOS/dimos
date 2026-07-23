@@ -81,7 +81,6 @@ class GoalRelay(Module):
         self.start_pose.publish(start)
 
     def _base_from_ground(self) -> float | None:
-        # The base -> sensor mount is static rig geometry, so resolve it once.
         if self._base_height is None and self.config.lidar_height is not None:
             mount = self.tf.get(self.config.base_frame, self.config.sensor_frame)
             if mount is None:
