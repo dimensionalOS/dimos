@@ -31,7 +31,7 @@ IGNORED_FILES: set[str] = {
     "dimos/robot/test_all_blueprints_generation.py",
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
-    "dimos/memory2/puremodule_api_sketch3_rpc.py",  # design sketch, not importable
+    "dimos/pure/puremodule_api_sketch3_rpc.py",  # design sketch, not importable
 }
 # Terminal builder methods that mark a top-level blueprint expression. "blueprint"
 # is included so a bare single-module `X.blueprint(...)` (no transports/remappings
@@ -44,7 +44,7 @@ BLUEPRINT_METHODS = {
     "requirements",
     "configurators",
 }
-_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule", "PureModule"}
+_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 
 def test_all_blueprints_is_current() -> None:
