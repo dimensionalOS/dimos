@@ -11,7 +11,9 @@ build:
     post_create_environment:
       - pip install uv
     post_install:
-      - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH uv sync --frozen --only-group docs
+      # uv sync ignores VIRTUAL_ENV and targets .venv; UV_PROJECT_ENVIRONMENT is what
+      # points it at RTD's build venv, so the deps land where sphinx-build runs.
+      - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv sync --frozen --only-group docs
 
 sphinx:
   configuration: docs/conf.py
