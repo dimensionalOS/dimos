@@ -61,13 +61,15 @@ class FeedforwardGainConfig:
 
 
 def validate_plant_gains(K_vx: float, K_vy: float, K_wz: float) -> None:
-    """Raise if any gain is non-finite or ~0. Callers divide by these (u/K,
-    envelope/K limits), so validate before that, not only at construction."""
+    """Raise if any gain is non-finite or non-positive. Callers divide by these
+    (u/K, envelope/K limits): ~0 blows up, and a negative gain reverses the
+    command (and inverts the envelope bounds). Validate before that division,
+    not only at construction."""
     for axis, k in (("vx", K_vx), ("vy", K_vy), ("wz", K_wz)):
-        if not math.isfinite(k) or abs(k) < 1e-6:
+        if not math.isfinite(k) or k <= 1e-6:
             raise ValueError(
                 f"plant gain K_{axis}={k} is not usable (must be finite and "
-                f"non-zero); invalid calibration artifact."
+                f"positive); invalid calibration artifact."
             )
 
 
