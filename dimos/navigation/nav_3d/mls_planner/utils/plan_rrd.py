@@ -19,9 +19,14 @@ Pass one or more --config clearance,buffer,weight to overlay each as a colored p
 
 from __future__ import annotations
 
+import os
 from pathlib import Path as FsPath
 from time import perf_counter
 from typing import NamedTuple
+
+from dimos.core.native_module import rust_log_from_env
+
+os.environ["RUST_LOG"] = rust_log_from_env()
 
 import numpy as np
 from numpy.typing import NDArray
@@ -64,6 +69,28 @@ PATH_PALETTE = [
     [160, 120, 255],
     [120, 255, 200],
     [255, 255, 120],
+]
+
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom; the label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
 
 
@@ -199,7 +226,7 @@ def _log_local_map(
     # so a 1 m band of floor still reads as a full gradient.
     z = local[:, 2]
     class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
-    rr.log("world/local/voxel_map", rr.Points3D(local, class_ids=class_ids, radii=render_voxel / 3))
+    rr.log("world/local/voxel_map", rr.Points3D(local, class_ids=class_ids, radii=render_voxel / 6))
 
 
 def _log_shared(
@@ -222,7 +249,7 @@ def _log_shared(
         class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
         rr.log(
             "world/voxel_map",
-            rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 3),
+            rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 6),
         )
     _log_local_map(voxel_map, start, crop, render_voxel)
 
@@ -243,7 +270,7 @@ def _log_shared(
 
     nodes = planner.nodes()
     if nodes.size:
-        rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
+        rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.025))
 
     edges = planner.node_edges()
     _log_edges(edges, "world/node_edges")
@@ -287,6 +314,13 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
 
 
 def _build_planners(
@@ -359,16 +393,16 @@ def _process_frame(
                 start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
-    for key, value in ref_timing.items():
-        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
     sizes = {
         "voxels": planners[0][2].voxel_count(),
         "surface_cells": len(surface),
         "nodes": len(nodes),
         "edges": len(edges),
     }
-    for key, value in sizes.items():
-        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
     return ref_timing
 
 

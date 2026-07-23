@@ -18,9 +18,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
+use crate::bridge::Bridge;
 use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
-use crate::planner::Bridge;
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]

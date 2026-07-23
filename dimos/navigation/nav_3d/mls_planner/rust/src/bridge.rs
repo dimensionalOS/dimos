@@ -12,30 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Optimistic bridge selection between disconnected surface components.
-//!
-//! When the goal's component is unreachable, pick where to wait out the map:
-//! a short hop across unobserved space that mapping is likely to fill in as
-//! the robot approaches. Candidates pair boundary cells of different
-//! components within a hop cap, gated by slope and headroom so a bridge is
-//! never steeper or tighter than anything the robot could traverse. The
-//! selected bridge is the first hop of the cheapest gated chain of hops from
-//! the start component to the goal component, so long unknown stretches lose
-//! to chains of short hops across observed fragments.
+//! Optimistic bridge selection toward an unreachable goal: a short, gated
+//! stretch of unobserved or sub-clearance surface that mapping is likely to
+//! fill in as the robot approaches. Hops cross voids between components,
+//! ribbons run along measured-but-impassable surface within one component.
 
 use std::collections::BinaryHeap;
 
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{CellId, NO_CELL};
-use crate::dijkstra::{walk_preds, Scored};
+use crate::dijkstra::{goal_node_of, node_dijkstra, walk_preds, Scored};
 use crate::edges::{NodeId, PlannerGraph};
 use crate::mls_planner::Config;
-use crate::planner::{goal_node_of, node_dijkstra, Bridge};
 use crate::surfaces::ColumnIz;
 use crate::voxel::VoxelKey;
 
 type Xyz = (f32, f32, f32);
+
+/// Optimistic bridge endpoints: the best-effort route's end and the goal
+/// side's closest approach point, world frame.
+pub type Bridge = ((f32, f32, f32), (f32, f32, f32));
 
 /// Bridges kept per component pair after gating.
 const PAIRS_PER_COMPONENT_PAIR: usize = 2;
@@ -45,15 +42,11 @@ const CANDIDATES_PER_COMPONENT_PAIR: usize = 8;
 const MAX_CHAIN_HOPS: usize = 4;
 /// Max total bridged distance across a chain.
 const MAX_CHAIN_GAP_M: f32 = 2.5;
-/// Max contiguous sub-clearance run a ribbon geodesic may cross. Each run is
-/// its own widen-as-approached claim, so the bound is per run rather than
-/// summed over the route, and it is far looser than the void budget because
-/// a ribbon is measured surface, only thin.
+/// Max contiguous sub-clearance run a ribbon geodesic may cross. Per run
+/// rather than summed, since each run is its own widen-as-approached claim.
 const RIBBON_RUN_MAX_M: f32 = 4.0;
-/// Cap on how far past the near side a ribbon aim reaches. The bridge claim
-/// stays local to where the robot actually attempts, so demotion and
-/// hysteresis anchor there and the drawn bridge reflects the next stretch,
-/// not the whole ribbon.
+/// Cap on how far past the near side a ribbon aim reaches, so the bridge
+/// claim stays local to what the robot is about to attempt.
 const RIBBON_AIM_LOOKAHEAD_M: f32 = 2.0;
 /// Smallest component worth hopping to. Start and goal components are exempt.
 const MIN_LANDING_CELLS: u32 = 3;
@@ -71,6 +64,8 @@ const STALL_REPLANS: u32 = 40;
 const BLACKLIST_REPLANS: u32 = 300;
 /// Candidates this close to a demoted endpoint are rejected too.
 const BLACKLIST_RADIUS_M: f32 = 0.5;
+/// Points closer than this to a banned aim count as that aim.
+const AIM_TOL_M: f32 = 1e-3;
 
 /// The chosen bridge: the start-side cell to plan to and the far-side point.
 pub struct Selection {
@@ -85,16 +80,14 @@ pub struct BridgeState {
     held: Option<Bridge>,
     stall: u32,
     /// The robot has been away from the held bridge's near side, so arriving
-    /// counts as an attempt. Without this a robot loitering next to a gap
-    /// would demote every nearby bridge without ever trying one.
+    /// counts as an attempt rather than loitering.
     armed: bool,
     blacklist: Vec<(Xyz, u32)>,
 }
 
 impl BridgeState {
-    /// Record the bridge a replan selected. Traveling to the target and then
-    /// holding the same bridge without the components connecting demotes it,
-    /// so the next replan tries the runner-up gap instead.
+    /// Record the bridge a replan selected, demoting it once the robot has
+    /// traveled to it and stalled there without the components connecting.
     pub fn note_bridge(&mut self, bridge: Bridge, start: Xyz) {
         self.tick();
         let same = self
@@ -153,42 +146,34 @@ struct Hop {
     cost: f32,
 }
 
-/// Per-replan bridge selector. The component labels and terminal costs are
-/// invariant across reselection retries, so they are built once and reused
-/// while only the banned-aim set changes between select calls.
+/// Per-replan bridge selection context, built once and reused across
+/// reselection retries where only the banned-aim set changes.
 pub struct Selector<'a> {
     plg: &'a PlannerGraph,
-    by_col: &'a ColumnIz,
     reachable_mask: &'a [bool],
     start_cell: CellId,
     start_pose: Xyz,
     goal_cell: CellId,
     goal_pose: Xyz,
     config: &'a Config,
-    label: Vec<u32>,
-    sizes: Vec<u32>,
     start_label: u32,
     goal_label: u32,
     start_ctg: Option<AHashMap<NodeId, f32>>,
     goal_ctg: Option<AHashMap<NodeId, f32>>,
+    hops: Vec<Hop>,
+    graph: Option<EpGraph>,
 }
 
 impl<'a> Selector<'a> {
-    /// Build the retry-invariant context, or none when bridging is disabled.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         plg: &'a PlannerGraph,
-        by_col: &'a ColumnIz,
+        by_col: &ColumnIz,
         reachable_mask: &'a [bool],
-        start_cell: CellId,
-        start_pose: Xyz,
-        goal_cell: CellId,
-        goal_pose: Xyz,
+        (start_cell, start_pose): (CellId, Xyz),
+        (goal_cell, goal_pose): (CellId, Xyz),
+        node_cells: &AHashSet<NodeId>,
         config: &'a Config,
-    ) -> Option<Self> {
-        if config.bridge_max_hop_m <= 0.0 {
-            return None;
-        }
+    ) -> Self {
         let t0 = std::time::Instant::now();
         let (label, sizes) = label_components(plg);
         let start_label = label[start_cell as usize];
@@ -196,49 +181,48 @@ impl<'a> Selector<'a> {
 
         // Surface-aware terminal costs via the node graph and the Voronoi
         // fields. The ribbon path scores on geometry alone and skips them.
-        let (start_ctg, goal_ctg) = if start_label == goal_label {
-            (None, None)
+        let (start_ctg, goal_ctg, hops, graph) = if start_label == goal_label {
+            (None, None, Vec::new(), None)
         } else {
-            let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
             let goal_ctg =
-                goal_node_of(plg, goal_cell, &node_cells).map(|(n, _)| node_dijkstra(plg, n).0);
+                goal_node_of(plg, goal_cell, node_cells).map(|(n, _)| node_dijkstra(plg, n).0);
             let start_node = *walk_preds(&plg.cell_state, start_cell)
                 .last()
                 .expect("walk_preds returns at least the start cell");
             let start_ctg = node_cells
                 .contains(&start_node)
                 .then(|| node_dijkstra(plg, start_node).0);
-            (start_ctg, goal_ctg)
+            let hops = collect_hops(plg, by_col, &label, &sizes, start_label, goal_label, config);
+            let graph = (!hops.is_empty()).then(|| EpGraph::build(plg, &hops, config.voxel_size));
+            (start_ctg, goal_ctg, hops, graph)
         };
         tracing::debug!(
             context_ms = t0.elapsed().as_secs_f64() * 1e3,
+            n_hops = hops.len(),
             "bridge selector context built"
         );
-        Some(Selector {
+        Selector {
             plg,
-            by_col,
             reachable_mask,
             start_cell,
             start_pose,
             goal_cell,
             goal_pose,
             config,
-            label,
-            sizes,
             start_label,
             goal_label,
             start_ctg,
             goal_ctg,
-        })
+            hops,
+            graph,
+        }
     }
 
     /// Pick the optimistic bridge, or none when no gated chain of hops
     /// connects the start component to the goal component.
     pub fn select(&self, state: &BridgeState, banned_aims: &[Xyz]) -> Option<Selection> {
-        // Same adjacency component: the route exists as measured surface but
-        // is passably broken, typically a sparse stretch under the wall
-        // clearance. Approach widens such surface, so bridge along it
-        // instead of over voids.
+        // One adjacency component means the route exists as measured surface
+        // but is passably broken, so bridge along it instead of over voids.
         if self.start_label == self.goal_label {
             return select_ribbon_bridge(
                 self.plg,
@@ -249,48 +233,25 @@ impl<'a> Selector<'a> {
                 self.config,
             );
         }
+        let graph = self.graph.as_ref()?;
 
-        let t0 = std::time::Instant::now();
-        let hops = collect_hops(
-            self.plg,
-            self.by_col,
-            &self.label,
-            &self.sizes,
-            self.start_label,
-            self.goal_label,
-            state,
-            banned_aims,
-            self.config,
-        );
-        if hops.is_empty() {
-            return None;
-        }
-        let graph = EpGraph::build(self.plg, &hops, self.config.voxel_size);
-        tracing::debug!(
-            hops_ms = t0.elapsed().as_secs_f64() * 1e3,
-            n_hops = hops.len(),
-            n_eps = graph.labels.len(),
-            "bridge hop candidates gated"
-        );
-
-        let mut banned: AHashSet<usize> = AHashSet::new();
+        let voxel = self.config.voxel_size;
+        let refused = |p: Xyz| {
+            state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < AIM_TOL_M)
+        };
+        let mut banned: AHashSet<usize> = self
+            .hops
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| {
+                refused(self.plg.cells.xyz(h.a, voxel)) || refused(self.plg.cells.xyz(h.b, voxel))
+            })
+            .map(|(i, _)| i)
+            .collect();
         for _ in 0..CHAIN_RETRIES {
-            let sol = graph.solve(
-                self.plg,
-                &hops,
-                &banned,
-                self.reachable_mask,
-                self.start_label,
-                self.goal_label,
-                self.start_ctg.as_ref(),
-                self.goal_ctg.as_ref(),
-                self.start_pose,
-                self.goal_pose,
-                state.held,
-                self.config,
-            )?;
-            let best_chain = chain_of(&sol.pred, &hops, sol.best_hop, sol.best_far_ep);
-            if let Some(worst) = chain_violation(&hops, &best_chain, self.config) {
+            let sol = graph.solve(self, &banned, state.held)?;
+            let best_chain = chain_of(&sol.pred, sol.best_hop, sol.best_far_ep);
+            if let Some(worst) = chain_violation(&self.hops, &best_chain, self.config) {
                 banned.insert(worst);
                 continue;
             }
@@ -301,13 +262,13 @@ impl<'a> Selector<'a> {
                 if held_hop != sol.best_hop
                     && held_total <= sol.best_total * (1.0 + self.config.bridge_switch_margin)
                 {
-                    let held_chain = chain_of(&sol.pred, &hops, held_hop, held_far);
-                    if chain_violation(&hops, &held_chain, self.config).is_none() {
+                    let held_chain = chain_of(&sol.pred, held_hop, held_far);
+                    if chain_violation(&self.hops, &held_chain, self.config).is_none() {
                         choice = held_hop;
                     }
                 }
             }
-            let hop = &hops[choice];
+            let hop = &self.hops[choice];
             let (near, far) = if hop.label_a == self.start_label {
                 (hop.a, hop.b)
             } else {
@@ -315,18 +276,17 @@ impl<'a> Selector<'a> {
             };
             return Some(Selection {
                 near,
-                aim: self.plg.cells.xyz(far, self.config.voxel_size),
+                aim: self.plg.cells.xyz(far, voxel),
             });
         }
         None
     }
 }
 
-/// Bridge along measured-but-impassable surface. Goal-rooted Dijkstra where
-/// an impassable edge costs its geometric length times the bridge weight,
-/// with the total impassable length capped. The bridge spans the first
-/// sub-clearance ribbon on the winning geodesic: the robot drives to the
-/// ribbon's near side and mapping widens the sparse surface as it arrives.
+/// Bridge along measured-but-impassable surface. Goal-rooted search where an
+/// impassable edge costs its geometric length times the bridge weight, with
+/// each contiguous impassable run capped. The bridge spans the first
+/// sub-clearance ribbon on the winning geodesic.
 fn select_ribbon_bridge(
     plg: &PlannerGraph,
     start_cell: CellId,
@@ -337,6 +297,10 @@ fn select_ribbon_bridge(
 ) -> Option<Selection> {
     let n = plg.cells.slot_capacity();
     let mut dist: Vec<f32> = vec![f32::INFINITY; n];
+    // One label per cell: the grey run along the dist-optimal path. A
+    // grey-heavy corridor that wins on dist can shadow a grey-free rival
+    // through the same cell, which only ever under-permits, never crosses a
+    // longer run than recorded.
     let mut grey: Vec<f32> = vec![0.0; n];
     let mut pred: Vec<CellId> = vec![NO_CELL; n];
     let mut heap: BinaryHeap<Scored<usize>> = BinaryHeap::new();
@@ -357,15 +321,15 @@ fn select_ribbon_bridge(
         }
         for e in plg.cells.neighbors(u) {
             // Geometric costs on both sides: this search weighs evidence, so
-            // a meter of real surface counts as a meter no matter how tight
-            // its soft wall penalty is. Comfort belongs to the path planner.
+            // a meter of tight-but-real surface counts as a meter. Comfort
+            // penalties belong to the path planner.
             let (w, ng) = if e.cost.is_finite() {
                 (e.base_cost, 0.0)
             } else {
                 // Demoted and banned areas are not crossable as ribbon, so
                 // the geodesic reroutes through another corridor if any.
                 let p = plg.cells.xyz(e.dest, config.voxel_size);
-                if state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < 1e-3) {
+                if state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < AIM_TOL_M) {
                     continue;
                 }
                 (
@@ -390,27 +354,37 @@ fn select_ribbon_bridge(
         return None;
     }
 
-    // Walk the geodesic from the start. The bridge starts at the last cell
-    // before the first impassable edge and aims at the cell where the ribbon
-    // hands back to passable surface, or at the lookahead cap into a long
-    // ribbon, whichever comes first.
+    let (near, aim_cell) = ribbon_span(plg, &pred, start_cell)?;
+    let aim = plg.cells.xyz(aim_cell, config.voxel_size);
+    if state.is_blacklisted(aim) || banned_aims.iter().any(|&b| dist3(b, aim) < AIM_TOL_M) {
+        tracing::debug!(?aim, "ribbon bridge: aim is demoted or banned");
+        return None;
+    }
+    Some(Selection { near, aim })
+}
+
+/// Walk the geodesic from the start and span its first impassable ribbon:
+/// near is the last cell before it, aim is where the ribbon hands back to
+/// passable surface or the lookahead cap into it, whichever comes first.
+fn ribbon_span(
+    plg: &PlannerGraph,
+    pred: &[CellId],
+    start_cell: CellId,
+) -> Option<(CellId, CellId)> {
     let mut cur = start_cell;
     let mut near = start_cell;
     let mut in_ribbon = false;
     let mut ribbon_len = 0.0_f32;
-    let mut aim_cell: Option<CellId> = None;
-    while aim_cell.is_none() {
+    loop {
         let next = pred[cur as usize];
         if next == NO_CELL {
-            // Reached the goal. Inside a ribbon it is the aim itself; on a
+            // Reached the goal. Inside a ribbon it is the aim itself. On a
             // fully passable geodesic there is nothing to bridge.
             if in_ribbon {
-                aim_cell = Some(cur);
-            } else {
-                tracing::debug!("ribbon bridge: geodesic fully passable, nothing to bridge");
-                return None;
+                return Some((near, cur));
             }
-            break;
+            tracing::debug!("ribbon bridge: geodesic fully passable, nothing to bridge");
+            return None;
         }
         let edge = plg.cells.neighbors(cur).iter().find(|e| e.dest == next);
         let passable = edge.is_some_and(|e| e.cost.is_finite());
@@ -423,22 +397,15 @@ fn select_ribbon_bridge(
                 ribbon_len = step_len;
             }
         } else if passable {
-            aim_cell = Some(cur);
+            return Some((near, cur));
         } else {
             ribbon_len += step_len;
         }
-        if in_ribbon && aim_cell.is_none() && ribbon_len >= RIBBON_AIM_LOOKAHEAD_M {
-            aim_cell = Some(next);
+        if in_ribbon && ribbon_len >= RIBBON_AIM_LOOKAHEAD_M {
+            return Some((near, next));
         }
         cur = next;
     }
-    let aim_cell = aim_cell?;
-    let aim = plg.cells.xyz(aim_cell, config.voxel_size);
-    if state.is_blacklisted(aim) || banned_aims.iter().any(|&b| dist3(b, aim) < 1e-3) {
-        tracing::debug!(?aim, "ribbon bridge: aim is demoted or banned");
-        return None;
-    }
-    Some(Selection { near, aim })
 }
 
 /// Connected-component label per cell over surface adjacency, edge costs
@@ -480,10 +447,7 @@ struct BinData {
 
 /// Gather gated candidate hops: cross-component boundary-cell pairs within
 /// the hop cap, sloped no steeper than the grade, with body clearance along
-/// the chord, keeping the cheapest few per component pair. Pairs that cannot
-/// sit on a start-to-goal chain within the total gap budget are dropped
-/// before the expensive chord walk.
-#[allow(clippy::too_many_arguments)]
+/// the chord, keeping the cheapest few per component pair.
 fn collect_hops(
     plg: &PlannerGraph,
     by_col: &ColumnIz,
@@ -491,10 +455,22 @@ fn collect_hops(
     sizes: &[u32],
     start_label: u32,
     goal_label: u32,
-    state: &BridgeState,
-    banned_aims: &[Xyz],
     config: &Config,
 ) -> Vec<Hop> {
+    let screened = screen_pairs(plg, label, sizes, start_label, goal_label, config);
+    gate_hops(plg, by_col, screened, start_label, goal_label, config)
+}
+
+/// Screen cross-component boundary-cell pairs by gap, slope, and landing
+/// size, keeping the cheapest few per component pair.
+fn screen_pairs(
+    plg: &PlannerGraph,
+    label: &[u32],
+    sizes: &[u32],
+    start_label: u32,
+    goal_label: u32,
+    config: &Config,
+) -> AHashMap<(u32, u32), Vec<Hop>> {
     let voxel = config.voxel_size;
     let hop_cap = config.bridge_max_hop_m;
     let grade = config.bridge_max_grade;
@@ -523,9 +499,8 @@ fn collect_hops(
         }
     }
 
-    // Screen cross-component pairs, cheapest few per component pair. Bins
-    // whose whole neighborhood holds one component cannot produce a pair, and
-    // that is almost every bin along the mapped perimeter.
+    // Bins whose whole neighborhood holds one component cannot produce a
+    // pair, and that is almost every bin along the mapped perimeter.
     let mut screened: AHashMap<(u32, u32), Vec<Hop>> = AHashMap::new();
     for (&(bx, by), bd) in &bins {
         if !neighborhood_mixed(&bins, bx, by, bd) {
@@ -581,9 +556,20 @@ fn collect_hops(
             }
         }
     }
+    screened
+}
 
-    // Component-level budget prune: a hop is only worth gating if some chain
-    // through it fits the total bridged-gap budget end to end.
+/// Budget-prune the screened pairs, then keep the cheapest chord-clear hops
+/// per component pair. Pairs that cannot sit on a start-to-goal chain within
+/// the total gap budget are dropped before the expensive chord walk.
+fn gate_hops(
+    plg: &PlannerGraph,
+    by_col: &ColumnIz,
+    mut screened: AHashMap<(u32, u32), Vec<Hop>>,
+    start_label: u32,
+    goal_label: u32,
+    config: &Config,
+) -> Vec<Hop> {
     let ds = comp_gap_dist(&screened, start_label);
     let dg = comp_gap_dist(&screened, goal_label);
     let within = |l: u32, d: &AHashMap<u32, f32>| d.get(&l).copied().unwrap_or(f32::INFINITY);
@@ -603,13 +589,6 @@ fn collect_hops(
         for h in list.drain(..) {
             if kept == PAIRS_PER_COMPONENT_PAIR {
                 break;
-            }
-            let pu = plg.cells.xyz(h.a, voxel);
-            let pv = plg.cells.xyz(h.b, voxel);
-            let banned =
-                |p: Xyz| state.is_blacklisted(p) || banned_aims.iter().any(|&b| dist3(b, p) < 1e-3);
-            if banned(pu) || banned(pv) {
-                continue;
             }
             if chord_clear(
                 by_col,
@@ -761,7 +740,7 @@ fn chain_violation(hops: &[Hop], chain: &[usize], config: &Config) -> Option<usi
 }
 
 /// Bridge hops on the path from a first hop through the goal component.
-fn chain_of(pred: &[(usize, usize)], _hops: &[Hop], first_hop: usize, far_ep: usize) -> Vec<usize> {
+fn chain_of(pred: &[(usize, usize)], first_hop: usize, far_ep: usize) -> Vec<usize> {
     let mut chain = vec![first_hop];
     let mut cur = far_ep;
     while pred[cur].0 != usize::MAX {
@@ -847,29 +826,26 @@ impl EpGraph {
 
     /// Dijkstra from the goal side, then score every admissible first hop as
     /// start cost + hop cost + remaining cost to the goal component.
-    #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
-        plg: &PlannerGraph,
-        hops: &[Hop],
+        sel: &Selector<'_>,
         banned: &AHashSet<usize>,
-        reachable_mask: &[bool],
-        start_label: u32,
-        goal_label: u32,
-        start_ctg: Option<&AHashMap<NodeId, f32>>,
-        goal_ctg: Option<&AHashMap<NodeId, f32>>,
-        start_pose: Xyz,
-        goal_pose: Xyz,
         held_bridge: Option<Bridge>,
-        config: &Config,
     ) -> Option<Solution> {
+        let config = sel.config;
         let n = self.labels.len();
         let mut dist: Vec<f32> = vec![f32::INFINITY; n];
         let mut pred: Vec<(usize, usize)> = vec![(usize::MAX, usize::MAX); n];
         let mut heap: BinaryHeap<Scored<usize>> = BinaryHeap::new();
         for (i, &l) in self.labels.iter().enumerate() {
-            if l == goal_label {
-                let d = terminal_cost(plg, goal_ctg, self.cells[i], goal_pose, config.voxel_size);
+            if l == sel.goal_label {
+                let d = terminal_cost(
+                    sel.plg,
+                    sel.goal_ctg.as_ref(),
+                    self.cells[i],
+                    sel.goal_pose,
+                    config.voxel_size,
+                );
                 dist[i] = d;
                 heap.push(Scored(d, i));
             }
@@ -898,25 +874,36 @@ impl EpGraph {
             held: None,
             pred,
         };
-        for (hi, h) in hops.iter().enumerate() {
+        for (hi, h) in sel.hops.iter().enumerate() {
             if banned.contains(&hi) {
                 continue;
             }
-            let (near, far) = if h.label_a == start_label {
+            let (near, far) = if h.label_a == sel.start_label {
                 (h.a, h.b)
-            } else if h.label_b == start_label {
+            } else if h.label_b == sel.start_label {
                 (h.b, h.a)
             } else {
                 continue;
             };
-            if !reachable_mask.get(near as usize).copied().unwrap_or(false) {
+            if !sel
+                .reachable_mask
+                .get(near as usize)
+                .copied()
+                .unwrap_or(false)
+            {
                 continue;
             }
             let far_ep = self.index[&far];
             if !sol_dist_finite(&dist, far_ep) {
                 continue;
             }
-            let start_cost = terminal_cost(plg, start_ctg, near, start_pose, config.voxel_size);
+            let start_cost = terminal_cost(
+                sel.plg,
+                sel.start_ctg.as_ref(),
+                near,
+                sel.start_pose,
+                config.voxel_size,
+            );
             let total = start_cost + h.cost + dist[far_ep];
             if total < sol.best_total {
                 sol.best_total = total;
@@ -979,7 +966,7 @@ fn ground_dist(a: Xyz, b: Xyz) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mls_planner::Config;
+    use crate::mls_planner::test_config;
 
     #[test]
     fn state_demotes_a_bridge_the_robot_traveled_to() {
@@ -1064,26 +1051,7 @@ mod tests {
 
     #[test]
     fn chain_gates_reject_ladders_and_marathons() {
-        let mut config = Config {
-            world_frame: String::new(),
-            voxel_size: 0.1,
-            robot_height: 0.3,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.0,
-            wall_buffer_m: 0.0,
-            wall_buffer_weight: 0.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 0.0,
-            bridge_max_hop_m: 1.0,
-            bridge_max_grade: 0.85,
-            bridge_cost_weight: 4.0,
-            bridge_switch_margin: 0.25,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 0.0,
-        };
-        config.step_threshold_m = 0.25;
+        let config = test_config();
 
         // A gentle stair chain passes.
         let stairs: Vec<Hop> = (0..4).map(|_| flat_hop(0.58, 0.5, 0.3)).collect();

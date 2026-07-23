@@ -74,6 +74,41 @@ def test_plan_to_unreachable_goal_returns_none() -> None:
     assert planner.plan((0.0, 0.0, 0.0), (100.0, 100.0, 0.0)) is None
 
 
+def two_slab_floor(gap_start: float, gap_end: float) -> np.ndarray:
+    floor = flat_floor()
+    in_gap = (floor[:, 0] >= gap_start) & (floor[:, 0] < gap_end)
+    return floor[~in_gap]
+
+
+def test_plan_or_truncate_bridges_a_short_gap() -> None:
+    planner = MLSPlanner(voxel_size=0.2, robot_height=1.0, surface_closing_radius=0.0)
+    planner.update_global_map(two_slab_floor(0.0, 0.6))
+
+    path = planner.plan_or_truncate((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0))
+    assert path.shape[1] == 3
+    assert path.dtype == np.float32
+    assert len(path) >= 2
+    assert path[-1][0] < 0.4, "best-effort path ends at the near slab's lip"
+
+    bridge = planner.frontier_bridge()
+    assert bridge is not None
+    near, aim = bridge
+    assert abs(near[0]) < 0.4, f"bridge starts at the lip: {near}"
+    assert 0.3 < aim[0] < 1.2, f"bridge aims at the far slab's edge: {aim}"
+
+    planner.plan_or_truncate((-2.0, 0.0, 0.0), (-0.5, 0.5, 0.0))
+    assert planner.frontier_bridge() is None, "a full plan clears the bridge"
+
+
+def test_plan_or_truncate_refuses_a_wide_gap() -> None:
+    planner = MLSPlanner(voxel_size=0.2, robot_height=1.0, surface_closing_radius=0.0)
+    planner.update_global_map(two_slab_floor(0.0, 2.4))
+
+    path = planner.plan_or_truncate((-2.0, 0.0, 0.0), (2.7, 0.0, 0.0))
+    assert path.shape == (0, 3), "no admissible bridge and no cached path"
+    assert planner.frontier_bridge() is None
+
+
 def test_wrong_shape_is_rejected() -> None:
     planner = make_planner()
     with pytest.raises(ValueError):

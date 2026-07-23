@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::bridge::BridgeState;
+use crate::bridge::{Bridge, BridgeState};
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
 use crate::nodes::{place_nodes, place_nodes_region};
 use crate::planner;
@@ -64,8 +64,8 @@ pub struct Config {
     /// Soft cost added per meter of vertical climb.
     #[validate(range(min = 0.0))]
     pub step_penalty_weight: f32,
-    /// Max unobserved gap one optimistic bridge hop may span. 0 disables
-    /// bridging entirely.
+    /// Max unobserved gap one optimistic bridge hop may span. 0 disables all
+    /// optimism: no bridges and no best-effort paths toward unseen goals.
     #[validate(range(min = 0.0))]
     pub bridge_max_hop_m: f32,
     /// Max rise per unit of horizontal run for a bridge, with one step of
@@ -187,7 +187,7 @@ pub struct Planner {
     // of every cycle.
     last_result: Option<((f32, f32, f32), ReplanOutcome)>,
     // Optimistic bridge of the last plan when it was best-effort.
-    last_bridge: Option<planner::Bridge>,
+    last_bridge: Option<Bridge>,
     // Bridge hysteresis, stall tracking, and demoted endpoints.
     bridge_state: BridgeState,
 }
@@ -485,9 +485,9 @@ impl Planner {
         );
     }
 
-    /// Plan a full path to the goal. Best-effort bridge paths do not count:
-    /// this is the stateless query the evaluator gates on, so it answers
-    /// "does a complete route exist", and only plan_or_truncate applies the
+    /// Plan a full path to the goal. This is the stateless query the
+    /// evaluator gates on, so it answers "does a complete route exist" and
+    /// skips the optimism entirely. Only plan_or_truncate applies the
     /// optimistic replan policy.
     pub fn plan(
         &self,
@@ -498,15 +498,7 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(
-            &self.graph,
-            &self.by_col,
-            start,
-            goal,
-            config,
-            &self.bridge_state,
-        )
-        .and_then(|p| p.bridge.is_none().then_some(p.waypoints))
+        planner::plan(&self.graph, &self.by_col, start, goal, config, None).map(|p| p.waypoints)
     }
 
     /// Plan to the goal, or follow the cached path as far as it is still safe.
@@ -524,7 +516,7 @@ impl Planner {
                 start,
                 goal,
                 config,
-                &self.bridge_state,
+                Some(&self.bridge_state),
             );
             if let Some(path) = path {
                 match path.bridge {
@@ -579,7 +571,7 @@ impl Planner {
     /// Optimistic bridge of the last plan_or_truncate call: from the
     /// best-effort route's end to the goal component's closest approach
     /// point. None when the last plan reached the goal.
-    pub fn frontier_bridge(&self) -> Option<planner::Bridge> {
+    pub fn frontier_bridge(&self) -> Option<Bridge> {
         self.last_bridge
     }
 
@@ -614,6 +606,30 @@ impl Planner {
 
     pub fn voxel_keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.voxel_map.iter().copied()
+    }
+}
+
+/// Shared test config. Tests override the fields they exercise.
+#[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    Config {
+        world_frame: "world".into(),
+        voxel_size: 0.1,
+        robot_height: 1.5,
+        max_overhead_m: 2.0,
+        surface_closing_radius: 0.0,
+        node_spacing_m: 1.0,
+        wall_clearance_m: 0.2,
+        wall_buffer_m: 0.5,
+        wall_buffer_weight: 4.0,
+        step_threshold_m: 0.25,
+        step_penalty_weight: 4.0,
+        bridge_max_hop_m: 1.0,
+        bridge_max_grade: 0.85,
+        bridge_cost_weight: 4.0,
+        bridge_switch_margin: 0.25,
+        goal_tolerance: 0.3,
+        viz_publish_hz: 2.0,
     }
 }
 
@@ -658,23 +674,13 @@ mod region_tests {
 
     fn test_config() -> Config {
         Config {
-            world_frame: String::new(),
-            voxel_size: 0.1,
             robot_height: 0.5,
-            max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
-            node_spacing_m: 1.0,
             wall_clearance_m: 0.0,
             wall_buffer_m: 0.3,
             wall_buffer_weight: 1.0,
-            step_threshold_m: 0.25,
             step_penalty_weight: 0.0,
-            bridge_max_hop_m: 1.0,
-            bridge_max_grade: 0.85,
-            bridge_cost_weight: 4.0,
-            bridge_switch_margin: 0.25,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 2.0,
+            ..super::test_config()
         }
     }
 
@@ -1212,6 +1218,57 @@ mod region_tests {
             max_y(&wp_avoid) > 0.9,
             "with a heavy step penalty the path should detour to the flat gap: max_y={}",
             max_y(&wp_avoid)
+        );
+    }
+
+    /// The demotion loop end to end: plan_or_truncate selects a bridge, the
+    /// robot sits at its near side, the far side never materializes, and the
+    /// replan loop alone must eventually demote it and stop bridging.
+    #[test]
+    fn stalled_bridge_demotes_through_the_replan_loop() {
+        let mut cfg = test_config();
+        cfg.surface_closing_radius = 0.0;
+        let vs = cfg.voxel_size;
+        let half = vs * 0.5;
+        let mut pts = Vec::new();
+        for ix in 0..30 {
+            for iy in 0..5 {
+                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+            }
+        }
+        for ix in 37..46 {
+            for iy in 0..5 {
+                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+            }
+        }
+        let mut p = Planner::default();
+        p.update_global_map(&pts, &cfg);
+
+        let start = (0.55, 0.25, 0.1);
+        let goal = (4.25, 0.25, 0.1);
+        let wp = p.plan_or_truncate(start, goal, &cfg);
+        assert!(!wp.is_empty(), "best-effort path expected");
+        assert!(
+            p.frontier_bridge().is_some(),
+            "disconnected goal starts on a bridge"
+        );
+
+        // Within arrive distance of the bridge near side, but with the far
+        // floor still outside the start snap radius, so the plan can never
+        // quietly complete by snapping across the gap.
+        let at_lip = (2.15, 0.25, 0.1);
+        let mut demoted_after = None;
+        for i in 0..200 {
+            p.plan_or_truncate(at_lip, goal, &cfg);
+            if p.frontier_bridge().is_none() {
+                demoted_after = Some(i);
+                break;
+            }
+        }
+        let demoted_after = demoted_after.expect("stalled bridge never demoted");
+        assert!(
+            demoted_after > 10,
+            "demotion must take sustained stalling, not a few replans: {demoted_after}"
         );
     }
 

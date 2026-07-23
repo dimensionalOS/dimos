@@ -112,8 +112,13 @@ _PYTHON_TO_RUST_LEVELS = {
 }
 
 
+def rust_log_from_env() -> str:
+    """RUST_LOG level matching DIMOS_LOG_LEVEL, defaulting to info."""
+    return _PYTHON_TO_RUST_LEVELS.get(os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info")
+
+
 class NativeModuleConfig(ModuleConfig):
-    """Configuration for a native (C/C++) subprocess module."""
+    """Configuration for a native module."""
 
     executable: str
     build_command: str | None = None
@@ -230,9 +235,7 @@ class NativeModule(Module):
         env["DIMOS_TRANSPORT"] = global_config.transport
 
         # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env["RUST_LOG"] = rust_log_from_env()
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(

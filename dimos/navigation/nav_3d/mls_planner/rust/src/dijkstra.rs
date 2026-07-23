@@ -16,11 +16,12 @@
 //! the heap live in a reusable struct so the inner loop never allocates.
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{CellId, SurfaceCells, NO_CELL};
+use crate::edges::{NodeId, PlannerGraph};
 use crate::voxel::VoxelKey;
 
 #[derive(Default)]
@@ -208,6 +209,98 @@ pub fn walk_preds(state: &DijkstraState, start: CellId) -> Vec<CellId> {
         cells.push(cur);
     }
     cells
+}
+
+/// Cost-to-go to source for every reachable node, with a predecessor pointing
+/// one hop toward it. Nodes are keyed by their CellId. Unreachable nodes are
+/// simply absent from the maps.
+pub(crate) fn node_dijkstra(
+    plg: &PlannerGraph,
+    source: NodeId,
+) -> (AHashMap<NodeId, f32>, AHashMap<NodeId, NodeId>) {
+    let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
+    let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
+    dist.insert(source, 0.0);
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
+    heap.push(Scored(0.0, source));
+
+    while let Some(Scored(d, u)) = heap.pop() {
+        if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
+            continue;
+        }
+        let Some(adj) = plg.node_adj.get(&u) else {
+            continue;
+        };
+        for &edge_idx in adj {
+            let edge = &plg.node_edges[edge_idx as usize];
+            let neighbor = if edge.a == u { edge.b } else { edge.a };
+            let nd = d + edge.cost;
+            if nd < dist.get(&neighbor).copied().unwrap_or(f32::INFINITY) {
+                dist.insert(neighbor, nd);
+                pred.insert(neighbor, u);
+                heap.push(Scored(nd, neighbor));
+            }
+        }
+    }
+    (dist, pred)
+}
+
+/// Node owning the cell's Voronoi region, with the cell path to it. The
+/// penalized Voronoi cannot own sub-clearance cells, so those fall back to
+/// the nearest node by hops.
+pub(crate) fn goal_node_of(
+    plg: &PlannerGraph,
+    goal_cell: CellId,
+    node_cells: &AHashSet<NodeId>,
+) -> Option<(NodeId, Vec<CellId>)> {
+    let segment = walk_preds(&plg.cell_state, goal_cell);
+    let node = *segment
+        .last()
+        .expect("walk_preds returns at least the start cell");
+    if node_cells.contains(&node) {
+        return Some((node, segment));
+    }
+    nearest_node(&plg.cells, goal_cell, node_cells)
+}
+
+/// Nearest node to `from` by hops, ignoring edge cost so it reaches a node
+/// across cells the wall penalty makes impassable. Returns the node and the
+/// path from `from`.
+fn nearest_node(
+    cells: &SurfaceCells,
+    from: CellId,
+    node_cells: &AHashSet<NodeId>,
+) -> Option<(NodeId, Vec<CellId>)> {
+    if node_cells.contains(&from) {
+        return Some((from, vec![from]));
+    }
+    let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
+    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut queue: VecDeque<CellId> = VecDeque::new();
+    seen.insert(from);
+    queue.push_back(from);
+
+    while let Some(u) = queue.pop_front() {
+        for edge in cells.neighbors(u) {
+            let v = edge.dest;
+            if !seen.insert(v) {
+                continue;
+            }
+            pred.insert(v, u);
+            if node_cells.contains(&v) {
+                let mut path = vec![v];
+                let mut cur = v;
+                while let Some(&p) = pred.get(&cur) {
+                    cur = p;
+                    path.push(cur);
+                }
+                path.reverse();
+                return Some((v, path));
+            }
+            queue.push_back(v);
+        }
+    }
+    None
 }
 
 /// Min-heap entry: cost first, with an ordered payload as a deterministic
