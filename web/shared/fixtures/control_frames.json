@@ -1,0 +1,57 @@
+{
+  "vectors": [
+    {
+      "name": "hello_robot",
+      "message": {
+        "t": "hello",
+        "v": 1,
+        "role": "robot"
+      },
+      "b64": "IgAAAHsidCI6ImhlbGxvIiwidiI6MSwicm9sZSI6InJvYm90In0="
+    },
+    {
+      "name": "hello_viewer",
+      "message": {
+        "t": "hello",
+        "v": 1,
+        "role": "viewer"
+      },
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6MSwicm9sZSI6InZpZXdlciJ9"
+    },
+    {
+      "name": "welcome",
+      "message": {
+        "t": "welcome",
+        "v": 1
+      },
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2IjoxfQ=="
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBpbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBvbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "error_version",
+      "message": {
+        "t": "error",
+        "code": "version_mismatch",
+        "message": "protocol v1 required, versiune neacceptată"
+      },
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjEgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+    }
+  ]
+}

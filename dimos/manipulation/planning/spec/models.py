@@ -30,9 +30,11 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 RobotName: TypeAlias = str
@@ -40,6 +42,15 @@ RobotName: TypeAlias = str
 
 WorldRobotID: TypeAlias = str
 """Internal Drake world robot ID"""
+
+PlanningGroupID: TypeAlias = str
+"""Public planning group ID of the form {robot_name}/{group_name}."""
+
+LocalModelJointName: TypeAlias = str
+"""Joint name as it appears in URDF/SRDF before world binding."""
+
+GlobalJointName: TypeAlias = str
+"""Public joint name of the form {robot_name}/{local_joint_name}."""
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
@@ -55,6 +66,25 @@ class PlanningSceneInfo:
 
     robots: Mapping[WorldRobotID, RobotModelConfig]
     """Robot model configurations keyed by world robot ID."""
+
+    planning_groups: tuple[PlanningGroup, ...] = ()
+    """Resolved immutable planning groups for the initialized scene."""
+
+
+@dataclass(frozen=True)
+class VisualizationSession:
+    """One-shot immutable visualization initialization payload."""
+
+    scene: PlanningSceneInfo
+    operator: object | None = None
+    """Optional concrete ManipulationOperator; typed as object to avoid low-level cycles."""
+
+
+@dataclass(frozen=True)
+class VisualizationStateFrame:
+    """Pushed current joint states for visualization backends."""
+
+    joint_states: Mapping[WorldRobotID, JointState]
 
 
 Jacobian: TypeAlias = "NDArray[np.float64]"
@@ -138,6 +168,24 @@ class PlanningResult:
 
     def is_success(self) -> bool:
         """Check if planning was successful."""
+        return self.status == PlanningStatus.SUCCESS
+
+
+@dataclass
+class GeneratedPlan:
+    """Canonical selected-planning-group plan exposed by ManipulationModule."""
+
+    group_ids: tuple[PlanningGroupID, ...]
+    trajectory: JointTrajectory
+    path: list[JointState] = field(default_factory=list)
+    status: PlanningStatus = PlanningStatus.NO_SOLUTION
+    planning_time: float = 0.0
+    path_length: float = 0.0
+    iterations: int = 0
+    message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if the generated plan was successful."""
         return self.status == PlanningStatus.SUCCESS
 
 

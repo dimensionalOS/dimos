@@ -15,3 +15,7 @@
 TASK_FACTORIES = {
     "velocity": "dimos.control.tasks.velocity_task.velocity_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "velocity": {"joint_command": ("on_joint_command", "claim_overlap")},
+}
