@@ -48,11 +48,17 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.manipulators.xarm.blueprints.teleop import (
+    coordinator_teleop_xarm6,
+    coordinator_teleop_xarm7,
+)
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
 from dimos.teleop.hosted.go2_command import Go2CommandModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.map_compress import MapCompressModule
+from dimos.teleop.hosted.robot_type import RobotType
 
 # Single camera: only the Go2's front camera feeds the video track.
 teleop_hosted_go2_transport = (
@@ -80,7 +86,9 @@ teleop_hosted_go2_transport = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.GO2
+            ),  # → stats + command
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
             # outbound operator planes
@@ -125,7 +133,9 @@ teleop_hosted_go2_multicam = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.GO2
+            ),  # → stats + command
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
             ("cam2", Image): LCMTransport.spec("cam2", Image),  # realsense over LCM
@@ -141,4 +151,89 @@ teleop_hosted_go2_multicam = (
         }
     )
     .global_config(viewer="none", n_workers=2)  # go2 driver | broker+nav modules
+)
+
+
+# ─── XArm hosted manipulation (coordinator-driven, WebXR + browser operator) ──
+#
+# ArmCommandModule is the operator command plane; actuation runs through the
+# ControlCoordinator over LCM. Two RealSense cameras (front = cam1, wrist =
+# cam2), operator-selectable via the mux.
+
+
+# Distinct classes so two RealSense units coexist in one blueprint. Serials:
+# -o frontcamera.serial_number=... -o wristcamera.serial_number=...
+
+
+# These subclasses exist only until blueprints support running multiple
+# instances of the same module.
+class FrontCamera(RealSenseCamera):
+    pass
+
+
+class WristCamera(RealSenseCamera):
+    pass
+
+
+teleop_hosted_xarm6 = (
+    autoconnect(
+        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        HostedStatsModule.blueprint(),
+        CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
+        coordinator_teleop_xarm6,
+        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+    )
+    .remappings(
+        [
+            (FrontCamera, "color_image", "cam1"),
+            (WristCamera, "color_image", "cam2"),
+            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
+        ]
+    )
+    .transports(
+        {
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.ARM
+            ),
+            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
+        }
+    )
+    .global_config(viewer="none", n_workers=1)  # one process → one CF session
+)
+
+
+teleop_hosted_xarm7 = (
+    autoconnect(
+        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        HostedStatsModule.blueprint(),
+        CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
+        coordinator_teleop_xarm7,
+        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+    )
+    .remappings(
+        [
+            (FrontCamera, "color_image", "cam1"),
+            (WristCamera, "color_image", "cam2"),
+            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
+        ]
+    )
+    .transports(
+        {
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.ARM
+            ),
+            ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
+        }
+    )
+    .global_config(viewer="none", n_workers=1)  # one process → one CF session
 )
