@@ -20,7 +20,11 @@ import pytest
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.manipulation.visualization.config import (
+    NoManipulationVisualizationConfig,
+)
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
 from dimos.robot.manipulators.common.blueprints import eef_twist_task, planner
@@ -38,6 +42,7 @@ from dimos.robot.manipulators.piper.blueprints.teleop import (
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
+    dual_xarm6_planner_coordinator,
     xarm6_planner_only,
     xarm7_planner_coordinator,
 )
@@ -142,13 +147,35 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
         assert isinstance(config.visualization, NoManipulationVisualizationConfig)
 
 
+def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backends() -> None:
+    assert get_blueprint_by_name("dual-xarm6-planner-coordinator") is dual_xarm6_planner_coordinator
+
+    config = _manipulation_config(dual_xarm6_planner_coordinator)
+    coordinator_kwargs = next(
+        atom.kwargs
+        for atom in dual_xarm6_planner_coordinator.blueprints
+        if atom.module is ControlCoordinator
+    )
+
+    assert isinstance(config.visualization, ViserVisualizationConfig)
+    assert [robot.name for robot in config.robots] == ["left_arm", "right_arm"]
+    assert [hardware.hardware_id for hardware in coordinator_kwargs["hardware"]] == [
+        "left_arm",
+        "right_arm",
+    ]
+    assert [task.name for task in coordinator_kwargs["tasks"]] == [
+        "traj_left_arm",
+        "traj_right_arm",
+    ]
+
+
 def test_xarm_perception_sim_uses_aligned_camera_frame() -> None:
     sim_robot = make_xarm7_sim_robot_config()
     sim_config = MujocoSimModuleConfig(
         **make_xarm7_sim_module_kwargs("test-xarm7-scene.xml"),
     )
 
-    assert sim_robot.xacro_args["attach_rpy"] == "0 0.0 0"
+    assert sim_robot.xacro_args["attach_rpy"] == "0 0 0"
     assert sim_config.base_frame_id == "link7"
     assert sim_config.reset_joint_positions == sim_robot.home_joints
 
