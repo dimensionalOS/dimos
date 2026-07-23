@@ -31,7 +31,6 @@ IGNORED_FILES: set[str] = {
     "dimos/robot/test_all_blueprints_generation.py",
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
-    "dimos/pure/puremodule_api_sketch3_rpc.py",  # design sketch, not importable
 }
 # Terminal builder methods that mark a top-level blueprint expression. "blueprint"
 # is included so a bare single-module `X.blueprint(...)` (no transports/remappings
@@ -118,7 +117,7 @@ def _build_module_class_set(root: Path) -> set[str]:
     all_classes: list[tuple[str, list[str]]] = []
 
     for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in str(path) or str(path.relative_to(root.parent)) in IGNORED_FILES:
+        if "__pycache__" in str(path):
             continue
         try:
             tree = ast.parse(path.read_text("utf-8"), str(path))
