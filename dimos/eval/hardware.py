@@ -47,7 +47,6 @@ class GpuInfo:
 @dataclass(frozen=True)
 class HardwareProfile:
     """A snapshot of the machine's compute resources."""
-
     hostname: str
     tier: str
     os: str
