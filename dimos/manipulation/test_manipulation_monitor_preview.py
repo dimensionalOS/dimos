@@ -364,8 +364,8 @@ class TestManipulationPreview:
         module._last_plan = plan
         module._world_monitor = MagicMock()
         plan_during_dismissal: list[GeneratedPlan | None] = []
-        module._world_monitor.cancel_preview_animation.side_effect = (
-            lambda: plan_during_dismissal.append(module._last_plan)
+        module._world_monitor.cancel_preview_animation.side_effect = lambda: (
+            plan_during_dismissal.append(module._last_plan)
         )
 
         assert module.clear_planned_path() is True
