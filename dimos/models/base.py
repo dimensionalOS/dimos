@@ -85,7 +85,7 @@ class LocalModel(Resource, Configurable):
 
         Subclasses should override to add custom initialization.
         """
-        _ = self._model
+        self._model  # noqa: B018 -- touch the property to trigger the lazy load
 
     def stop(self) -> None:
         """Release model and free GPU memory (Resource interface).
@@ -118,7 +118,7 @@ class LocalModel(Resource, Configurable):
         """
         if self.config.device.startswith("cuda") and torch.cuda.is_available():
             try:
-                _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
+                torch.matmul(torch.zeros(1, 1, device="cuda"), torch.zeros(1, 1, device="cuda"))
                 torch.cuda.synchronize()
             except Exception:
                 pass
