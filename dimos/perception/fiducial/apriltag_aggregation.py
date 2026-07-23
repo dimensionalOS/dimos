@@ -47,10 +47,6 @@ group them all. Online the LIO frame drifts under you, so a 60 s-old sighting is
 in a frame that has since moved -- the window MUST forget. Same math, different
 scope, and the scope is the reason both exist.
 
-:func:`cluster_by_time` groups same-marker sightings into visits by time gap -- the
-offline benefit harness reuses it to batch a whole recording rather than re-implement
-the grouping.
-
 No up-front sharpness gate: the detector's ``QualityWindow`` already drops
 blurry frames before these post-detection observations arrive.
 
@@ -243,26 +239,6 @@ def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
     if obs.view_angle_deg is not None and obs.view_angle_deg > config.max_view_angle_deg:
         return "oblique"
     return None
-
-
-def cluster_by_time(observations: list[TagObservation], gap_s: float) -> list[list[TagObservation]]:
-    """Group same-marker observations into visits. A new cluster begins whenever
-    the time gap to the previous same-marker observation exceeds ``gap_s``."""
-    by_marker: dict[int, list[TagObservation]] = defaultdict(list)
-    for obs in observations:
-        by_marker[obs.marker_id].append(obs)
-    clusters: list[list[TagObservation]] = []
-    for marker_obs in by_marker.values():
-        marker_obs.sort(key=lambda o: o.ts)
-        current = [marker_obs[0]]
-        for obs in marker_obs[1:]:
-            if obs.ts - current[-1].ts > gap_s:
-                clusters.append(current)
-                current = [obs]
-            else:
-                current.append(obs)
-        clusters.append(current)
-    return clusters
 
 
 def _pose_distance(

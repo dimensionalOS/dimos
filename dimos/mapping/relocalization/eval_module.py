@@ -30,14 +30,6 @@ by -- and the per-cycle census. An operating run logs one QUIET accept line inst
 (source/fitness/time_cost_s, no position); the parsers read it too, but such
 a line cannot be joined to a fix, so its source degrades to ``unknown``.
 
-HELD-OUT ACCURACY. Premap + marker map come from run A; run B is a DIFFERENT
-traversal of the same scene. A fix is ``world_B_T_map_A`` -- in A's map frame, while
-B's PGO truth lives in B's independent map frame, so a raw distance is inflated by
-the map_A<->map_B offset. ``resolve_heldout_alignment`` recovers the rigid
-``map_B_T_map_A`` from markers surveyed in both frames (Umeyama), making per-source
-``med_err`` a real metre value. Without those shared references the error prints
-``-`` with the reason, never a fabricated number (a house non-negotiable).
-
 HOW MUCH IT CORRECTS. Accuracy says whether a fix is right; ``CorrectionStats`` says
 how much work it did -- the jump in the ROBOT's believed map-frame position between
 consecutive accepts, and that jump per metre driven between them (the LIO drift rate
@@ -97,11 +89,8 @@ SOURCE_COLORS: dict[str, str] = {
     "fiducial": "#dd6b20",  # orange
     "unknown": "#9b2c2c",  # dim red
 }
-SUCCESS_T_M = 1.0  # held-out translation gate (m); matches score_replay.SUCCESS_T_M
 _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same accept
 _TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
-_COLLINEAR_RATIO = 1e-2  # shared-tag 2nd/1st singular value below this -> collinear
-_TAG_SPREAD_MIN_M = 1e-6  # principal spread below this -> the shared tags coincide
 # Correction-per-metre needs a real baseline: the go2 walks ~0.5 m/s against a ~2 s
 # accept cadence, so 5 cm between two accepts means the robot stood still and the
 # ratio would be odom noise in the denominator. Report the magnitude, no rate.
@@ -368,125 +357,6 @@ def resolve_run_log(run_log_file: str | None) -> Path | None:
 
 
 # --------------------------------------------------------------------------- #
-# Held-out frame alignment (Umeyama)
-# --------------------------------------------------------------------------- #
-def umeyama_alignment(
-    src_xyz: np.ndarray, dst_xyz: np.ndarray, *, with_scale: bool = False
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Least-squares transform ``dst ~= scale * R @ src + t`` from corresponding
-    points. Umeyama 1991: https://web.stanford.edu/class/cs273/refs/umeyama.pdf
-    (the SVD reflection fix ``diag(1,1,det(U)det(V))`` is the point of using it over
-    a bare Kabsch). Two independent metric PGO frames differ by a rigid motion, so
-    ``with_scale`` defaults False; scale is still returned as a health signal (far
-    from 1.0 means the correspondences are wrong).
-
-    Args:
-        src_xyz: (N, 3) source points (here: marker centres in map_A).
-        dst_xyz: (N, 3) destination points (here: the same markers in map_B).
-    Returns:
-        (R 3x3, t 3, scale) with ``dst ~= scale * R @ src + t``.
-    Raises:
-        ValueError: fewer than 3 correspondences (a rigid frame needs 3).
-    """
-    src = np.asarray(src_xyz, dtype=float)
-    dst = np.asarray(dst_xyz, dtype=float)
-    if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 3:
-        raise ValueError(f"umeyama: need matching (N,3) arrays, got {src.shape} vs {dst.shape}")
-    n = src.shape[0]
-    if n < 3:
-        raise ValueError(f"umeyama: need >=3 correspondences for a rigid frame, got {n}")
-
-    src_mean = src.mean(axis=0)
-    dst_mean = dst.mean(axis=0)
-    src_c = src - src_mean
-    dst_c = dst - dst_mean
-    cov = (dst_c.T @ src_c) / n
-    u_mat, sing, vt_mat = np.linalg.svd(cov)
-    d = np.ones(3)
-    if np.linalg.det(u_mat) * np.linalg.det(vt_mat) < 0:
-        d[2] = -1.0  # reflection fix -- keep a proper rotation (det = +1)
-    rot = u_mat @ np.diag(d) @ vt_mat
-    if with_scale:
-        var_src = (src_c**2).sum() / n
-        scale = float((sing * d).sum() / var_src) if var_src > 0 else 1.0
-    else:
-        scale = 1.0
-    trans = dst_mean - scale * rot @ src_mean
-    return rot, trans, scale
-
-
-def _rt_to_matrix(rot: np.ndarray, trans: np.ndarray) -> np.ndarray:
-    m = np.eye(4)
-    m[:3, :3] = rot
-    m[:3, 3] = trans
-    return m
-
-
-def _degenerate_reason(pts: np.ndarray, frame: str) -> str | None:
-    """Why this shared-tag set cannot pin a rotation, or None if it can. sv[0] is the
-    point cloud's principal extent (m), sv[1] the spread off that axis: coincident
-    points have no extent, a line has no spread off it, and either leaves rotation
-    free about that axis -- Umeyama's SVD then returns an ARBITRARY proper rotation
-    with a ~0 residual, and errors from it would read as real accuracy."""
-    sv = np.linalg.svd(pts - pts.mean(axis=0), compute_uv=False)
-    if sv[0] <= _TAG_SPREAD_MIN_M:
-        return f"coincide in {frame} (spread {sv[0]:.2e} m)"
-    if sv[1] / sv[0] < _COLLINEAR_RATIO:
-        return f"are (near-)collinear in {frame} (spread ratio {sv[1] / sv[0]:.2e})"
-    return None
-
-
-def resolve_heldout_alignment(
-    markers_map_a: dict[int, tuple[float, float, float]],
-    markers_map_b: dict[int, tuple[float, float, float]] | None,
-) -> tuple[np.ndarray | None, str]:
-    """The rigid ``map_B_T_map_A`` from markers surveyed in both frames.
-
-    Returns ``(map_B_T_map_A 4x4 or None, reason)``. None whenever fewer than 3
-    tag ids are shared -- the reason states exactly why (so the table's ``-`` is
-    explained, never silent)."""
-    if not markers_map_b:
-        return None, (
-            "no run-B marker survey (map_B_T_tag) to anchor the map_A->map_B "
-            "alignment; med_err held out until run B is surveyed or PGO-tagged"
-        )
-    shared = sorted(set(markers_map_a) & set(markers_map_b))
-    if len(shared) < 3:
-        return None, (
-            f"only {len(shared)} tag id(s) shared between run A and run B "
-            f"({shared}); Umeyama needs >=3 correspondences"
-        )
-    src = np.array([markers_map_a[i] for i in shared], dtype=float)
-    dst = np.array([markers_map_b[i] for i in shared], dtype=float)
-    # Either frame's tags being degenerate underdetermines the rotation (cov =
-    # dst_c.T @ src_c goes rank-deficient), so BOTH sides are gated -- a collapsed
-    # run-B survey is as fabricated a number as a collinear run-A one.
-    for pts, frame in ((src, "map_A"), (dst, "map_B")):
-        why = _degenerate_reason(pts, frame)
-        if why is not None:
-            return None, (
-                f"{len(shared)} shared tags {shared} {why}; rotation "
-                "underdetermined, med_err held out"
-            )
-    rot, trans, scale = umeyama_alignment(src, dst, with_scale=True)
-    reason = f"Umeyama over {len(shared)} shared tags {shared} (scale={scale:.4f})"
-    return _rt_to_matrix(rot, trans), reason
-
-
-def aligned_err_t_m(
-    world_T_map: np.ndarray, truth_map_B_T_world_B: np.ndarray, map_B_T_map_A: np.ndarray
-) -> float:
-    """Held-out translation error (m): the fix's world origin, carried from map_A
-    into map_B by the alignment, versus B's PGO-truth world origin.
-
-    ``est = map_B_T_map_A @ inv(world_T_map)`` gives ``map_B_T_world_B``; compare
-    its translation to ``truth`` (also map_B_T_world_B, from score_replay)."""
-    est_map_a = np.linalg.inv(world_T_map)  # map_A_T_world_B
-    est_map_b = map_B_T_map_A @ est_map_a  # map_B_T_world_B
-    return float(np.linalg.norm(est_map_b[:3, 3] - truth_map_B_T_world_B[:3, 3]))
-
-
-# --------------------------------------------------------------------------- #
 # Fixes + stats (shared by the Module and the offline driver)
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -518,7 +388,7 @@ class SourceRow:
     proposed: int = 0  # cycles this source put >=1 candidate forward (census PRESENCE)
     accepted: int = 0  # `relocalize accepted` log lines this source won
     rejected: int | None = None  # `relocalize rejected` lines; None = no source parsed
-    n_false: int | None = None  # accepts beyond SUCCESS_T_M (a wrong accept); None = no truth
+    n_false: int | None = None  # accepts beyond the held-out gate (a wrong accept); None = no truth
 
 
 @dataclass
@@ -863,7 +733,7 @@ def compute_stats(
                 accepted=accepted_by.get(s, 0),
                 rejected=None if rejected_by is None else rejected_by.get(s, 0),
                 # FALSE reuses the held-out accuracy gate already applied upstream
-                # (Fix.success = err_t_m < SUCCESS_T_M): a judged accept that failed it.
+                # (Fix.success = err_t_m under the held-out gate): a judged accept that failed it.
                 n_false=sum(1 for f in judged if f.success is False) if judged else None,
             )
         )
@@ -940,7 +810,7 @@ def format_report(stats: EvalStats, *, title: str) -> str:
       acc   -- accepts this source won and published (``relocalize accepted`` lines)
       rej   -- rejects this source's winning candidate took (``relocalize rejected``);
                ``-`` when the run log carried no source to attribute the reject by
-      false -- accepts whose held-out error exceeded SUCCESS_T_M (a WRONG accept)
+      false -- accepts whose held-out error exceeded the translation gate (a WRONG accept)
 
     ``won``/``success`` stay in the JSON (``stats_to_dict``) for downstream readers; the
     printed table shows ``acc``/``false``, the same quantities read straight from the log
@@ -1270,7 +1140,7 @@ def write_report(
 
 
 # --------------------------------------------------------------------------- #
-# Marker / odom loaders (offline driver + plot overlay)
+# Marker loader (plot overlay)
 # --------------------------------------------------------------------------- #
 def load_markers_xyz(marker_file: Path) -> dict[int, tuple[float, float, float]]:
     """map_T_tag translations by tag id, from the reloc module's marker map
@@ -1283,118 +1153,6 @@ def load_markers_xyz(marker_file: Path) -> dict[int, tuple[float, float, float]]
         t = val["translation"]
         out[int(tag_id)] = (float(t[0]), float(t[1]), float(t[2]))
     return out
-
-
-def load_odom_txyz(recording_db: Path) -> np.ndarray:
-    """(N,4) [recording_ts, x, y, z] from a recording's ``odom`` stream. z is carried
-    because correction magnitude and driven distance are 3D -- a stairs traversal
-    moves mostly in z, and a top-down projection would under-report both."""
-    from dimos.memory2.store.sqlite import SqliteStore
-
-    store = SqliteStore(path=str(recording_db), must_exist=True)
-    rows: list[tuple[float, float, float, float]] = []
-    with store:
-        for o in store.stream("odom", PoseStamped).to_list():
-            rows.append((float(o.ts), float(o.data.x), float(o.data.y), float(o.data.z)))
-    return np.array(rows, dtype=float) if rows else np.empty((0, 4), dtype=float)
-
-
-def _fixes_from_replay_json(fixes_json: list[dict[str, Any]]) -> list[Fix]:
-    out: list[Fix] = []
-    for f in fixes_json:
-        mat = f.get("world_map_fix")
-        out.append(
-            Fix(
-                ts=float(f["ts"]),
-                world_map_fix=np.asarray(mat, dtype=float) if mat is not None else None,
-                source=str(f.get("source", "unknown")),
-                fitness=float(f.get("fitness", float("nan"))),
-            )
-        )
-    return out
-
-
-def run_offline_report(
-    replay_json: Path,
-    recording_db: Path,
-    marker_map_a_file: Path,
-    out_dir: Path,
-    key: str,
-    *,
-    title: str,
-    run_log: Path | None = None,
-    score_json: Path | None = None,
-    marker_map_b_file: Path | None = None,
-) -> dict[str, Any]:
-    """Held-out report from CAPTURED artifacts -- no replay launched. Consumes the
-    real pipeline's published fixes (replay_bench's replay.json), B's odom, and A's
-    marker survey; enriches per-source ``med_err`` via Umeyama IF run-B references
-    (marker_map_b_file) and per-fix truth (score_json) are both available, else ``-``.
-
-    The scoring itself is score_replay's job -- this only aligns published fixes and
-    reports; it re-implements no dimos data-path step.
-    """
-    replay = json.loads(replay_json.read_text())
-    fixes = _fixes_from_replay_json(replay["fixes"])
-    meta = replay.get("meta", {})
-
-    markers_a = load_markers_xyz(marker_map_a_file)
-    markers_b = (
-        load_markers_xyz(marker_map_b_file)
-        if marker_map_b_file and marker_map_b_file.exists()
-        else None
-    )
-    align, align_reason = resolve_heldout_alignment(markers_a, markers_b)
-
-    # Per-fix held-out error needs BOTH the alignment and per-fix PGO truth.
-    if align is not None and score_json is not None and score_json.exists():
-        truth_by_ts = {
-            round(float(s["ts"]), 3): np.asarray(s["truth_t_m"], dtype=float)
-            for s in json.loads(score_json.read_text()).get("fixes", [])
-        }
-        for f in fixes:
-            truth_t = truth_by_ts.get(round(f.ts, 3))
-            if f.world_map_fix is not None and truth_t is not None:
-                truth_mat = np.eye(4)
-                truth_mat[:3, 3] = truth_t
-                f.err_t_m = aligned_err_t_m(f.world_map_fix, truth_mat, align)
-                f.success = bool(f.err_t_m < SUCCESS_T_M)
-
-    census: list[dict[str, int]] = []
-    reject_sources: list[str] | None = None
-    log_rejects: int | None = None
-    if run_log is None:
-        cand = replay_json.with_name(replay_json.name.replace(".replay.json", ".replay_run.log"))
-        run_log = cand if cand.exists() else None
-    if run_log is not None:
-        _health, census, reject_sources = parse_run_log(run_log)
-        log_rejects = len(reject_sources)
-    n_rejects = meta.get("n_rejects")
-    if n_rejects is None:
-        n_rejects = log_rejects
-
-    note = (
-        "held-out: premap+markers from run A, replay run B of the same scene; map "
-        f"frames are independent PGO runs. med_err alignment: {align_reason}."
-    )
-    odom = load_odom_txyz(recording_db)
-    # accept_sources default (the replay fixes' own sources): held-out fixes ARE the
-    # pipeline's published accepts, so no separate log-accept join is needed here.
-    stats = compute_stats(
-        fixes,
-        odom,
-        census,
-        n_rejects,
-        mode="held_out",
-        held_out_note=note,
-        reject_sources=reject_sources,
-    )
-    markers_xy = {i: (x, y) for i, (x, y, _z) in markers_a.items()}
-    paths = write_report(stats, odom, fixes, markers_xy, out_dir, key, title=title)
-    return {
-        "stats": stats_to_dict(stats, title=title),
-        "paths": {k: str(v) for k, v in paths.items()},
-    }
 
 
 # --------------------------------------------------------------------------- #
