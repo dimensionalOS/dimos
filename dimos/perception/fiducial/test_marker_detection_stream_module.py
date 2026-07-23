@@ -94,7 +94,7 @@ def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
     module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
     try:
         assert set(module.inputs) == {"color_image"}
-        assert set(module.outputs) == {"detections", "fused_detections"}
+        assert set(module.outputs) == {"detections", "aggregated_detections"}
     finally:
         module.stop()
 
@@ -336,34 +336,34 @@ def _run_pipeline(
         return [obs.data for obs in module.pipeline(stream).to_list()]
 
 
-def test_fused_stream_leaves_the_detections_array_byte_identical() -> None:
-    """Invariant: adding fused_detections changes NOTHING an existing consumer sees.
-    FuseTagBursts is installed as a pass-through tap, so the same frames yield the same
+def test_aggregated_stream_leaves_the_detections_array_byte_identical() -> None:
+    """Invariant: adding aggregated_detections changes NOTHING an existing consumer sees.
+    AggregateTagBursts is installed as a pass-through tap, so the same frames yield the same
     `detections` arrays whether the tap runs or is stubbed out -- id, class label,
     score, pose, size and the all-zero covariance included. This is what protects
     MarkerTfModule, the /marker_detection/detections topic and the rerun bridge."""
     images = [synthetic_marker_image(7, ts=10.0 + 0.5 * i) for i in range(4)]
 
-    def _detections(*, fuse: bool) -> list[tuple[Any, ...]]:
+    def _detections(*, aggregate: bool) -> list[tuple[Any, ...]]:
         module = MarkerDetectionStreamModule(
             marker_length_m=0.18, camera_info=camera_info(images[0].ts), quality_window_s=0.01
         )
-        if not fuse:
-            module._fuse = lambda obs: None  # type: ignore[assignment]
+        if not aggregate:
+            module._aggregate = lambda obs: None  # type: ignore[assignment]
         try:
             return [_array_repr(msg) for msg in _run_pipeline(module, images)]
         finally:
             module.stop()
 
-    assert _detections(fuse=True) == _detections(fuse=False)
+    assert _detections(aggregate=True) == _detections(aggregate=False)
 
 
-def test_fused_detections_publishes_once_per_burst_over_a_run_of_frames() -> None:
+def test_aggregated_detections_publishes_once_per_burst_over_a_run_of_frames() -> None:
     """Invariant: the second Out fires on the burst edge, not per frame. Six frames of
-    the same tag produce six `detections` arrays but exactly ONE fused message, and only
-    the fused one carries a populated covariance. That last part is also the regression
+    the same tag produce six `detections` arrays but exactly ONE aggregated message, and only
+    the aggregated one carries a populated covariance. That last part is also the regression
     test for the shared LCM default: every ObjectHypothesisWithPose in the process
-    starts life sharing ONE PoseWithCovariance object, so a fused covariance written in
+    starts life sharing ONE PoseWithCovariance object, so an aggregated covariance written in
     place instead of assigned would show up on the per-frame detections too.
     Out.subscribe is the capture seam -- no transport, no bus."""
     images = [synthetic_marker_image(7, ts=10.0 + 0.5 * i) for i in range(6)]
@@ -373,7 +373,7 @@ def test_fused_detections_publishes_once_per_burst_over_a_run_of_frames() -> Non
     )
     published: list[Detection3DArray] = []
     try:
-        module.fused_detections.subscribe(published.append)
+        module.aggregated_detections.subscribe(published.append)
         detections = _run_pipeline(module, images)
     finally:
         module.stop()
@@ -381,11 +381,11 @@ def test_fused_detections_publishes_once_per_burst_over_a_run_of_frames() -> Non
     assert len(detections) == 6
     assert len(published) == 1
 
-    fused = published[0].detections[0].results[0]
+    aggregated = published[0].detections[0].results[0]
     # This synthetic tag reads 0.49 m at 0.05 px, close and sharp enough to saturate
     # the score cap; the covariance is the channel that stays graded either way.
-    assert fused.hypothesis.score == 1.0
-    assert np.any(np.asarray(fused.pose.covariance) != 0.0)
+    assert aggregated.hypothesis.score == 1.0
+    assert np.any(np.asarray(aggregated.pose.covariance) != 0.0)
 
     per_frame = detections[0].detections[0].results[0]
     assert per_frame.hypothesis.score == 1.0  # unchanged marker confidence

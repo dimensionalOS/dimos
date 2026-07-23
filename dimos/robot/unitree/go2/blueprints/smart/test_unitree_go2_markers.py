@@ -35,10 +35,10 @@ def test_unitree_go2_markers_uses_detector_backed_tf_stack() -> None:
         == "/marker_detection/detections"
     )
     # Pinned alongside its sibling so the burst-rate stream stays in the same
-    # namespace instead of defaulting to a bare /fused_detections.
+    # namespace instead of defaulting to a bare /aggregated_detections.
     assert (
         unitree_go2_markers.transport_map[
-            ("fused_detections", MarkerDetectionStreamModule)
+            ("aggregated_detections", MarkerDetectionStreamModule)
         ].topic.topic
-        == "/marker_detection/fused_detections"
+        == "/marker_detection/aggregated_detections"
     )

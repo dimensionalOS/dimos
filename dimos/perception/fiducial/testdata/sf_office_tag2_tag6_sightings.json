@@ -3,8 +3,8 @@
   "source": "sf_office_go2_20260718_survey1.fixes.json",
   "recording": "sf_office_go2_20260718_survey1",
   "field": "world_T_marker per gated sighting; rotation as quaternion [qx,qy,qz,qw]",
-  "why": "tag 2 = clean-majority + flip minority (fusion recovers); tag 6 = flip-majority 6-6 tie (fusion cannot recover). Real detections, no synthetic poses.",
-  "note": "flips pass the reproj gate (mirror-ambiguity PnP solutions have low reproj), so gating cannot remove them -- robust fusion must."
+  "why": "tag 2 = clean-majority + flip minority (aggregation recovers); tag 6 = flip-majority 6-6 tie (aggregation cannot recover). Real detections, no synthetic poses.",
+  "note": "flips pass the reproj gate (mirror-ambiguity PnP solutions have low reproj), so gating cannot remove them -- robust aggregation must."
  },
  "sightings": {
   "2": [

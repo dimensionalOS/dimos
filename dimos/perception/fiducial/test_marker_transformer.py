@@ -26,7 +26,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, pose7_from_matrix
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
-from dimos.perception.fiducial.marker_transformer import DetectMarkers, FuseTagBursts
+from dimos.perception.fiducial.marker_transformer import AggregateTagBursts, DetectMarkers
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
     camera_info,
@@ -235,7 +235,7 @@ def test_detect_markers_rebuilds_intrinsics_without_resetting_smoothing_track() 
 
 
 # ---------------------------------------------------------------------------
-# FuseTagBursts: the four AggregationConfig glimpse gates + ONE robustly-fused
+# AggregateTagBursts: the four AggregationConfig glimpse gates + ONE robustly-aggregated
 # pose per tag visit. All four gates were dead before the move -- corners_px, the
 # reprojection error and the camera transform are dropped by the wire
 # Detection3DArray, so nothing downstream could ever evaluate them. Every glimpse
@@ -313,13 +313,13 @@ def _glimpse(
     )
 
 
-def _fuser(
+def _aggregator(
     config: AggregationConfig | None = None,
-) -> tuple[FuseTagBursts, list[Detection3DArray]]:
-    """A FuseTagBursts publishing into a capture list -- the same callable seam
+) -> tuple[AggregateTagBursts, list[Detection3DArray]]:
+    """An AggregateTagBursts publishing into a capture list -- the same callable seam
     ``Out.publish`` hands it live, with no transport and no bus."""
     published: list[Detection3DArray] = []
-    return FuseTagBursts(published.append, config or AggregationConfig()), published
+    return AggregateTagBursts(published.append, config or AggregationConfig()), published
 
 
 @pytest.mark.parametrize(
@@ -331,82 +331,82 @@ def _fuser(
         pytest.param({"tag_side_px": 10.0}, id="small"),
     ],
 )
-def test_fuse_tag_bursts_each_gate_rejects_its_violation_then_accepts_a_clean_visit(
+def test_aggregate_tag_bursts_each_gate_rejects_its_violation_then_accepts_a_clean_visit(
     violation: dict[str, object],
 ) -> None:
     """Invariant: every activated gate FIRES. Twice min_observations glimpses that
     violate one gate (1.5 m > max_distance_m 1.0; 60 deg > max_view_angle_deg 45;
     3.0 px > max_reproj_px 2.0; 10 px < min_tag_px 24) publish nothing at all, and
     then min_observations clean ones publish -- so the silence is the gate rejecting,
-    not the fuser being inert. Each parametrization differs from the clean glimpse
+    not the aggregator being inert. Each parametrization differs from the clean glimpse
     in exactly the one field its gate reads."""
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
     for i in range(6):
-        fuser(_glimpse(ts=10.0 + 0.5 * i, **violation))  # type: ignore[arg-type]
+        aggregator(_glimpse(ts=10.0 + 0.5 * i, **violation))  # type: ignore[arg-type]
     assert published == []
 
     for i in range(3):
-        fuser(_glimpse(ts=20.0 + 0.5 * i))
+        aggregator(_glimpse(ts=20.0 + 0.5 * i))
     assert len(published) == 1
 
 
-def test_fuse_tag_bursts_publishes_once_per_burst_not_once_per_frame() -> None:
+def test_aggregate_tag_bursts_publishes_once_per_burst_not_once_per_frame() -> None:
     """Invariant: emission is EDGE-triggered. The glimpse that first brings the
     window to min_observations publishes; every later glimpse of the same visit
     keeps it satisfied and must publish nothing, or one unchanged fix would ship at
     the detector's rate (~2/s behind the 0.5 s QualityWindow)."""
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
     for i in range(2):
-        fuser(_glimpse(ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(ts=10.0 + 0.5 * i))
     assert published == []  # 2 < min_observations 3
 
-    fuser(_glimpse(ts=11.0))
+    aggregator(_glimpse(ts=11.0))
     assert len(published) == 1  # the 3rd glimpse IS the edge
 
     for i in range(3, 11):  # the visit continues inside time_window_s: still one
-        fuser(_glimpse(ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(ts=10.0 + 0.5 * i))
     assert len(published) == 1
 
 
-def test_fuse_tag_bursts_re_arms_when_the_tag_returns_after_a_gap() -> None:
+def test_aggregate_tag_bursts_re_arms_when_the_tag_returns_after_a_gap() -> None:
     """Invariant: the edge re-arms per VISIT. A gap longer than time_window_s purges
     the marker's window on its next sighting, dropping it under min_observations, so
     completing a second burst publishes a second message -- one per visit, not one
     forever."""
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
     for i in range(3):
-        fuser(_glimpse(ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(ts=10.0 + 0.5 * i))
     assert len(published) == 1
 
-    fuser(_glimpse(ts=41.0))  # 30 s later: the 5 s window purges down to this one
+    aggregator(_glimpse(ts=41.0))  # 30 s later: the 5 s window purges down to this one
     assert len(published) == 1
-    fuser(_glimpse(ts=41.5))
-    fuser(_glimpse(ts=42.0))
+    aggregator(_glimpse(ts=41.5))
+    aggregator(_glimpse(ts=42.0))
     assert len(published) == 2
 
 
-def test_fuse_tag_bursts_publishes_one_message_per_marker_id() -> None:
+def test_aggregate_tag_bursts_publishes_one_message_per_marker_id() -> None:
     """Invariant: one message per (marker, visit). Two tags in view are two bursts --
     each composes its own map_T_world downstream, so they cannot share an array."""
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
     for i in range(3):
-        fuser(_glimpse(marker_id=7, ts=10.0 + 0.5 * i))
-        fuser(_glimpse(marker_id=9, ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(marker_id=7, ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(marker_id=9, ts=10.0 + 0.5 * i))
 
     assert [msg.detections[0].id for msg in published] == ["7", "9"]
 
 
-def test_fuse_tag_bursts_ignores_the_empty_frame_sentinel() -> None:
+def test_aggregate_tag_bursts_ignores_the_empty_frame_sentinel() -> None:
     """Invariant: DetectMarkers(emit_empty_frames=True) yields data=None for a
     tag-free frame, which is the FIRST thing most streams carry. It must be skipped,
     not dereferenced."""
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
-    fuser(
+    aggregator(
         Observation(
             id=0,
             ts=10.0,
@@ -419,14 +419,14 @@ def test_fuse_tag_bursts_ignores_the_empty_frame_sentinel() -> None:
     assert published == []
 
 
-def test_fuse_tag_bursts_rejects_a_mirror_flip_that_clears_every_gate() -> None:
-    """Invariant: the ROBUST fusion, not the gates, carries mirror-flip rejection --
+def test_aggregate_tag_bursts_rejects_a_mirror_flip_that_clears_every_gate() -> None:
+    """Invariant: the ROBUST aggregation, not the gates, carries mirror-flip rejection --
     which is why the robust path had to come with the gates rather than instead of
     them. A 180 deg flip about the marker's own x-axis leaves the range and the
     |cos| view angle untouched, so it clears all four gates, and it leaves the
     TRANSLATION untouched too -- the rotation is the only channel that can catch it.
-    The flip arrives first, inside the window the edge glimpse fuses over; the
-    medoid + Huber fuse keeps the majority, so the published orientation stays
+    The flip arrives first, inside the window the edge glimpse aggregates over; the
+    medoid + Huber aggregate keeps the majority, so the published orientation stays
     within a degree of truth instead of being dragged toward a 180 deg outlier.
     Seeded rng; SIMULATED poses."""
     rng = np.random.default_rng(7)
@@ -435,17 +435,17 @@ def test_fuse_tag_bursts_rejects_a_mirror_flip_that_clears_every_gate() -> None:
     flip = np.eye(4)
     flip[:3, :3] = Rotation.from_euler("x", 180.0, degrees=True).as_matrix()
 
-    fuser, published = _fuser()
-    fuser(_glimpse(optical_T_marker=optical_T_marker @ flip, ts=10.0))
+    aggregator, published = _aggregator()
+    aggregator(_glimpse(optical_T_marker=optical_T_marker @ flip, ts=10.0))
     for i in range(1, 9):
         noise = np.eye(4)
         noise[:3, :3] = Rotation.from_rotvec(rng.normal(0.0, np.radians(1.0), 3)).as_matrix()
         noise[:3, 3] = rng.normal(0.0, 0.005, 3)
-        fuser(_glimpse(optical_T_marker=optical_T_marker @ noise, ts=10.0 + 0.5 * i))
+        aggregator(_glimpse(optical_T_marker=optical_T_marker @ noise, ts=10.0 + 0.5 * i))
 
     assert len(published) == 1
     center = published[0].detections[0].bbox.center
-    fused_R = Rotation.from_quat(
+    aggregated_R = Rotation.from_quat(
         [
             center.orientation.x,
             center.orientation.y,
@@ -454,13 +454,13 @@ def test_fuse_tag_bursts_rejects_a_mirror_flip_that_clears_every_gate() -> None:
         ]
     )
     error_deg = np.degrees(
-        (fused_R * Rotation.from_matrix(truth[:3, :3]).inv()).magnitude()  # type: ignore[no-untyped-call]
+        (aggregated_R * Rotation.from_matrix(truth[:3, :3]).inv()).magnitude()  # type: ignore[no-untyped-call]
     )
     assert error_deg < 1.0
 
 
-def test_fuse_tag_bursts_stamps_the_covariance_and_score_health_signal() -> None:
-    """Invariant: a fused entry ships its own trust, and the two channels are the
+def test_aggregate_tag_bursts_stamps_the_covariance_and_score_health_signal() -> None:
+    """Invariant: an aggregated entry ships its own trust, and the two channels are the
     same number twice -- score == 1/scale, covariance == the base blocks * scale --
     so they cannot disagree. The geometry makes the arithmetic exact: median range
     0.8 m is 2x REF_DISTANCE_M and median reproj 1.5 px is 1.5x REF_REPROJ_PX, so
@@ -477,10 +477,10 @@ def test_fuse_tag_bursts_stamps_the_covariance_and_score_health_signal() -> None
         child_frame_id="camera_optical",
         ts=10.0,
     )
-    fuser, published = _fuser()
+    aggregator, published = _aggregator()
 
     for i in range(3):
-        fuser(
+        aggregator(
             _glimpse(
                 optical_T_marker=_optical_T_marker(0.8, 0.0),
                 reproj_px=1.5,

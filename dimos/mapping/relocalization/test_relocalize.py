@@ -362,11 +362,11 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior: composition + age + judge integrity. Gating and fusion moved
-# UPSTREAM into the detector's FuseTagBursts (that is the only place corners_px,
+# FiducialPrior: composition + age + judge integrity. Gating and aggregation moved
+# UPSTREAM into the detector's AggregateTagBursts (that is the only place corners_px,
 # the reprojection error and the camera transform still exist), so every
-# world_T_marker arriving here is one already-gated, already-fused pose and each
-# observe() call IS one completed burst. The gate/fusion tests live beside their
+# world_T_marker arriving here is one already-gated, already-aggregated pose and each
+# observe() call IS one completed burst. The gate/aggregation tests live beside their
 # code now: perception/fiducial/test_marker_transformer.py.
 # ---------------------------------------------------------------------------
 
@@ -376,18 +376,18 @@ def test_fiducial_prior_unset_proposes_nothing() -> None:
     assert FiducialPrior({}).propose(gm, lm) == []
 
 
-def test_fiducial_prior_composes_map_T_world_from_one_fused_pose() -> None:
-    """ONE fused world_T_marker composes straight to this tag's candidate,
-    map_T_world = map_T_marker @ inv(world_T_marker_fused), exactly -- no second
-    glimpse to wait for and no fusion left to do, because the detector already did
+def test_fiducial_prior_composes_map_T_world_from_one_aggregated_pose() -> None:
+    """ONE aggregated world_T_marker composes straight to this tag's candidate,
+    map_T_world = map_T_marker @ inv(world_T_marker_aggregated), exactly -- no second
+    glimpse to wait for and no aggregation left to do, because the detector already did
     it. Non-identity on both sides so a transposed or swapped compose cannot pass."""
     gm, lm, _ = _rect_room_scene(seed=14, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
     map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
-    world_T_marker_fused = _rigid(-40.0, (1.0, 0.5, 0.8))
-    truth = map_T_marker @ np.linalg.inv(world_T_marker_fused)
+    world_T_marker_aggregated = _rigid(-40.0, (1.0, 0.5, 0.8))
+    truth = map_T_marker @ np.linalg.inv(world_T_marker_aggregated)
 
     prior = FiducialPrior({7: map_T_marker})
-    assert prior.observe(7, world_T_marker_fused) is None
+    assert prior.observe(7, world_T_marker_aggregated) is None
 
     candidates = prior.propose(gm, lm)
     assert len(candidates) == 1 and candidates[0].source == "fiducial"
@@ -395,7 +395,7 @@ def test_fiducial_prior_composes_map_T_world_from_one_fused_pose() -> None:
 
 
 def test_fiducial_prior_proposes_each_fix_exactly_once() -> None:
-    """propose() CONSUMES: a fused fix is offered to the judge on one fire and gone
+    """propose() CONSUMES: an aggregated fix is offered to the judge on one fire and gone
     on the next. Re-offering it would be the same measurement against a world that
     drifted further since, so it could only score worse than it just did."""
     gm, lm, _ = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
@@ -481,13 +481,13 @@ def test_fiducial_prior_observe_waits_for_the_drain() -> None:
 
 
 def test_fiducial_prior_never_bypasses_judge() -> None:
-    """A consistent-but-wrong fused fix (stale map, moved tag) 6.4 m off must
+    """A consistent-but-wrong aggregated fix (stale map, moved tag) 6.4 m off must
     lose to a correct candidate — the fiducial source gets no special treatment;
     the judge ranks on wall fitness only."""
     gm, lm, T_true = _rect_room_scene(seed=13, yaw_deg=45.0, t=(2.0, 1.0, 0.0))
     T_wrong = T_true.copy()
     T_wrong[:3, 3] += np.array([5.0, -4.0, 0.0])  # 6.4 m off
-    # world_T_marker chosen so the fused map_T_world (map_T_marker == I) is T_wrong.
+    # world_T_marker chosen so the aggregated map_T_world (map_T_marker == I) is T_wrong.
     world_T_marker = np.linalg.inv(T_wrong)
 
     fid = FiducialPrior({7: np.eye(4)})
@@ -603,7 +603,7 @@ def test_ransac_prior_empty_pool_stays_empty(monkeypatch) -> None:  # type: igno
 
 
 def test_fiducial_prior_rejects_unmapped_id_without_arming_a_fire() -> None:
-    """A fused pose for a tag absent from the surveyed marker map is refused with
+    """An aggregated pose for a tag absent from the surveyed marker map is refused with
     'unmapped_id': there is no map_T_marker to compose against. It must also leave
     the burst counter alone -- an unsurveyed tag that armed the trigger would fire a
     relocalization with no candidate to judge, and relocalize_with_priors raises on
@@ -619,7 +619,7 @@ def test_fiducial_prior_rejects_unmapped_id_without_arming_a_fire() -> None:
 
 
 def test_fiducial_prior_proposes_one_candidate_per_mapped_tag() -> None:
-    """Two tags' fused poses yield two candidates -- one per tag, each the tag's own
+    """Two tags' aggregated poses yield two candidates -- one per tag, each the tag's own
     map_T_marker @ inv(world_T_marker) (identity world poses here, so each fix
     equals that tag's surveyed map_T_marker)."""
     gm, lm, _ = _rect_room_scene(seed=18, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
@@ -889,8 +889,8 @@ def test_judge_report_margin_is_winner_minus_best_other_source() -> None:
 #
 # These exercise module.py directly, never through a live/replay Module: the
 # Config defaults, the per-prior accept bar + RANSAC point floor, the accept/reject
-# log-line shape, marker-id parsing, and _on_fused_detections routing each entry's
-# fused world_T_marker into the fiducial prior. Instances are built with object.__new__
+# log-line shape, marker-id parsing, and _on_aggregated_detections routing each entry's
+# aggregated world_T_marker into the fiducial prior. Instances are built with object.__new__
 # and only the attributes the helper under test reads -- the full Module
 # lifecycle (start()'s reactive wiring) needs a coordinator these helpers do not.
 # ---------------------------------------------------------------------------
@@ -1023,7 +1023,7 @@ def test_marker_id_from_detection_falls_back_to_dict_class_label() -> None:
 
 def test_marker_id_from_detection_returns_none_when_unparseable() -> None:
     """Neither a numeric id nor a ':'-delimited numeric tail -> None, so
-    _on_fused_detections skips the entry rather than inventing a tag id."""
+    _on_aggregated_detections skips the entry rather than inventing a tag id."""
     assert RelocalizationModule._marker_id_from_detection(_detection(det_id="abc")) is None
     assert (
         RelocalizationModule._marker_id_from_detection(_detection(det_id="", class_id="chair"))
@@ -1061,18 +1061,18 @@ def _detection_array(dets: list[Detection3D], ts: float) -> Detection3DArray:
 
 
 class _RecordingPrior:
-    """FiducialPrior stand-in recording (marker_id, world_T_marker_fused) per
-    observe -- lets _on_fused_detections' routing be asserted on its own."""
+    """FiducialPrior stand-in recording (marker_id, world_T_marker_aggregated) per
+    observe -- lets _on_aggregated_detections' routing be asserted on its own."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, np.ndarray]] = []
 
-    def observe(self, marker_id: int, world_T_marker_fused: np.ndarray) -> None:
-        self.calls.append((marker_id, world_T_marker_fused))
+    def observe(self, marker_id: int, world_T_marker_aggregated: np.ndarray) -> None:
+        self.calls.append((marker_id, world_T_marker_aggregated))
 
 
-def test_on_fused_detections_routes_each_world_T_marker_into_prior() -> None:
-    """Each parseable entry's bbox.center (the detector's fused world_T_marker) is
+def test_on_aggregated_detections_routes_each_world_T_marker_into_prior() -> None:
+    """Each parseable entry's bbox.center (the detector's aggregated world_T_marker) is
     composed via matrix_from_pose7 and handed to the fiducial prior; unparseable
     entries are skipped rather than routed. No timestamp travels with it -- the
     glimpse window that needed one lives upstream now."""
@@ -1086,10 +1086,10 @@ def test_on_fused_detections_routes_each_world_T_marker_into_prior() -> None:
     det_skip = _detection(det_id="not-a-tag")  # unparseable -> dropped
     arr = _detection_array([det_a, det_skip, det_b], ts=3.5)
 
-    m._on_fused_detections(arr)
+    m._on_aggregated_detections(arr)
 
     assert [mid for mid, _ in prior.calls] == [5, 8]  # det_skip never routed
-    for (_mid, world_T_marker_fused), det in (
+    for (_mid, world_T_marker_aggregated), det in (
         (prior.calls[0], det_a),
         (prior.calls[1], det_b),
     ):
@@ -1105,15 +1105,15 @@ def test_on_fused_detections_routes_each_world_T_marker_into_prior() -> None:
                 c.orientation.w,
             )
         )
-        np.testing.assert_array_equal(world_T_marker_fused, expected)
+        np.testing.assert_array_equal(world_T_marker_aggregated, expected)
 
 
-def test_on_fused_detections_noop_without_fiducial_prior() -> None:
+def test_on_aggregated_detections_noop_without_fiducial_prior() -> None:
     """With the fiducial prior unbuilt (prior disabled / no marker_map_file),
-    _on_fused_detections is a silent no-op on wire traffic -- returns None, no raise."""
+    _on_aggregated_detections is a silent no-op on wire traffic -- returns None, no raise."""
     m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._fiducial_prior = None
-    m._on_fused_detections(
+    m._on_aggregated_detections(
         _detection_array([_pose_detection(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))], ts=1.0)
     )
     assert m._fiducial_prior is None  # still a no-op: nothing built, nothing routed
@@ -1592,7 +1592,7 @@ def test_maybe_log_skip_warns_for_starved_ransac_then_throttles(monkeypatch) -> 
 def test_start_fiducial_prior_noops_without_marker_map_file(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Fiducial prior enabled but no marker_map_file surveyed: _start_fiducial_prior
     warns and leaves the prior unbuilt (None) -- it never fabricates a map, mirroring
-    start()'s no-map_file disable, so _on_fused_detections stays a no-op afterwards."""
+    start()'s no-map_file disable, so _on_aggregated_detections stays a no-op afterwards."""
     m = _bare_module(Config(priors=[FiducialPriorConfig(marker_map_file=None)]))
     rec = _ModuleLogRecorder()
     monkeypatch.setattr(module_mod, "logger", rec)
@@ -1625,16 +1625,16 @@ def test_init_leaves_priors_in_unset_state(monkeypatch) -> None:  # type: ignore
     assert m._enabled_prior_objects() == [m._ransac_prior]  # the SAME instance every frame
 
 
-class _FusedDetectionsStub:
-    """Stands in for the `fused_detections` In-stream: observable().subscribe(cb)
+class _AggregatedDetectionsStub:
+    """Stands in for the `aggregated_detections` In-stream: observable().subscribe(cb)
     returns a disposable sentinel, letting _start_fiducial_prior's wiring run without
     a live coordinator. Only the framework seam is stubbed; FiducialPrior is real."""
 
-    def observable(self) -> _FusedDetectionsStub:
+    def observable(self) -> _AggregatedDetectionsStub:
         return self
 
     def subscribe(self, callback: object) -> str:
-        return "fused_detections_disposable"
+        return "aggregated_detections_disposable"
 
 
 class _FakeSurveyedTransform:
@@ -1644,15 +1644,15 @@ class _FakeSurveyedTransform:
         return np.eye(4)
 
 
-def test_start_fiducial_prior_loads_map_and_wires_fused_detections(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_fiducial_prior_loads_map_and_wires_aggregated_detections(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """With a marker_map_file present, _start_fiducial_prior resolves + loads the
     survey into map_T_marker matrices, builds the real FiducialPrior, subscribes the
-    detector's fused_detections stream into it (registering the disposable), and logs
+    detector's aggregated_detections stream into it (registering the disposable), and logs
     the marker count -- the fiducial source is now live and age-gated in the judge."""
     m = _bare_module(
         Config(priors=[FiducialPriorConfig(marker_map_file="survey", marker_length_m=0.1)])
     )
-    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
+    m.aggregated_detections = _AggregatedDetectionsStub()  # type: ignore[assignment]
     registered: list[object] = []
     m.register_disposable = registered.append  # type: ignore[assignment,method-assign]
 
@@ -1668,7 +1668,7 @@ def test_start_fiducial_prior_loads_map_and_wires_fused_detections(monkeypatch) 
     m._start_fiducial_prior()
 
     assert isinstance(m._fiducial_prior, FiducialPrior)
-    assert registered == ["fused_detections_disposable"]  # fused stream wired in
+    assert registered == ["aggregated_detections_disposable"]  # aggregated stream wired in
     assert len(rec.infos) == 1
     event, kwargs = rec.infos[0]
     assert event == "fiducial prior enabled"
@@ -1691,7 +1691,7 @@ def test_start_fiducial_prior_loads_a_yaml_survey(tmp_path: Path) -> None:
     m = _bare_module(
         Config(priors=[FiducialPriorConfig(marker_map_file=str(survey), marker_length_m=0.1)])
     )
-    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
+    m.aggregated_detections = _AggregatedDetectionsStub()  # type: ignore[assignment]
     m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
 
     m._start_fiducial_prior()
@@ -1718,7 +1718,7 @@ def test_marker_map_resolution_keeps_a_stated_survey_suffix(
     name), so passing .json unconditionally would look up '<survey>.yaml.json' --
     a name nothing writes -- and a yaml survey would fail at start()."""
     m = _bare_module(Config(priors=[FiducialPriorConfig(marker_map_file=marker_map_file)]))
-    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
+    m.aggregated_detections = _AggregatedDetectionsStub()  # type: ignore[assignment]
     m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
     seen: list[tuple[str, str]] = []
 
@@ -1777,7 +1777,7 @@ def test_o_override_marker_map_file_reaches_fiducial_prior(tmp_path: Path) -> No
     # 3. The module loads THAT survey into the live FiducialPrior (real load path:
     #    absolute path -> resolve_named_path returns it -> real load_marker_map).
     m = _bare_module(config)
-    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
+    m.aggregated_detections = _AggregatedDetectionsStub()  # type: ignore[assignment]
     registered: list[object] = []
     m.register_disposable = registered.append  # type: ignore[assignment,method-assign]
     m._start_fiducial_prior()
@@ -1902,7 +1902,7 @@ def test_min_wall_points_boundary_solves_at_threshold_raises_one_above(monkeypat
 # throttle: each prior says when it wants a fire (is_due) and acks the fire
 # that answered it (on_fired), and the module runs one INDEPENDENT relocalization
 # per prior that asked. RANSAC paces itself because a global search waits on
-# nothing; the fiducial prior asks the moment a fused tag pose lands, so a tag fix
+# nothing; the fiducial prior asks the moment an aggregated tag pose lands, so a tag fix
 # publishes at the tag's latency, never behind a seconds-long RANSAC solve.
 # Clocks are passed in (is_due(now_s), the module's _now_fn) so every case below
 # is driven, not slept through.
@@ -1951,15 +1951,15 @@ def test_last_pose_prior_never_asks_for_a_fire() -> None:
 
 
 def _burst(prior: FiducialPrior, marker_id: int, fix_T: np.ndarray | None = None) -> None:
-    """One fused pose for one mapped marker. The detector publishes exactly one per
+    """One aggregated pose for one mapped marker. The detector publishes exactly one per
     (marker, visit), so a single observe() IS one completed burst here. Marker maps
     are identity in these tests, so observing inv(fix_T) composes map_T_world ==
     fix_T; the default identity pose leaves it identity."""
     prior.observe(marker_id, np.eye(4) if fix_T is None else np.linalg.inv(fix_T))
 
 
-def test_fiducial_prior_asks_for_one_fire_per_fused_pose() -> None:
-    """Every arriving fused pose IS a completed burst, so it asks for exactly one
+def test_fiducial_prior_asks_for_one_fire_per_aggregated_pose() -> None:
+    """Every arriving aggregated pose IS a completed burst, so it asks for exactly one
     fire and the PROPOSE consumes it. Trigger and payload are one fact -- pending is
     what is_due reports -- so the prior cannot ask for a fire it has no candidate
     for, nor stay silent while holding one."""
@@ -1998,7 +1998,7 @@ def test_fiducial_declined_fire_keeps_its_estimate() -> None:
 
 
 def test_fiducial_prior_holds_each_markers_burst_separately() -> None:
-    """Two markers' fused poses are two independent pending fixes: they ride the
+    """Two markers' aggregated poses are two independent pending fixes: they ride the
     same fire (each is its own candidate for the judge) and the fire clears both."""
     gm, lm, _ = _rect_room_scene(seed=22, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
     prior = FiducialPrior({7: np.eye(4), 9: np.eye(4)})
@@ -2053,8 +2053,8 @@ def _fired_pool(priors: list[RelocPrior]) -> list[str]:
     return [prior.name for prior in priors]
 
 
-def _fused_burst(marker_id: int) -> Detection3DArray:
-    """The wire form of ONE completed burst: a single-entry fused_detections array
+def _aggregated_burst(marker_id: int) -> Detection3DArray:
+    """The wire form of ONE completed burst: a single-entry aggregated_detections array
     whose bbox.center is an identity world_T_marker."""
     det = _pose_detection(marker_id, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
     return _detection_array([det], ts=1.0)
@@ -2089,7 +2089,7 @@ def test_completed_burst_fires_against_the_cached_cloud_with_no_new_frame(monkey
     m._on_local_map(cast("PointCloud2", cached))
     assert judged == []  # a cloud with no tag pending fires nothing
 
-    m._on_fused_detections(_fused_burst(7))
+    m._on_aggregated_detections(_aggregated_burst(7))
 
     assert judged == [cached.pointcloud]  # fired on the cached cloud, no new frame
     assert m._fiducial_prior is not None
@@ -2104,7 +2104,7 @@ def test_burst_before_the_first_cloud_stays_pending_and_fires_on_it(monkeypatch)
     m = _fiducial_module(Config(priors=[FiducialPriorConfig()]))
     judged = _judged_clouds(monkeypatch, m)
 
-    m._on_fused_detections(_fused_burst(7))
+    m._on_aggregated_detections(_aggregated_burst(7))
     assert judged == []  # no cloud cached -> nothing to judge against
     assert m._fiducial_prior is not None
     assert m._fiducial_prior.is_due(100.0) is True  # declined, so the estimate survived
@@ -2145,7 +2145,7 @@ def test_burst_path_never_touches_the_ransac_search_or_its_timer(monkeypatch) ->
     assert fires == [["ransac"]]
 
     clock["now"] = 101.0  # RANSAC has 1 s of its interval left
-    m._on_fused_detections(_fused_burst(7))
+    m._on_aggregated_detections(_aggregated_burst(7))
     assert fires == [["ransac"], ["fiducial"]]  # tag alone, off the cached cloud
 
     clock["now"] = 102.0  # interval elapsed: the sweep the burst did not consume

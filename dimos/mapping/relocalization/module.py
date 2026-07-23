@@ -141,7 +141,7 @@ class Config(ModuleConfig):
 class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
-    fused_detections: In[Detection3DArray]  # the detector's per-burst fused tag poses
+    aggregated_detections: In[Detection3DArray]  # the detector's per-burst aggregated tag poses
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
 
@@ -180,7 +180,7 @@ class RelocalizationModule(Module):
         self._last_fix_map_T_world: np.ndarray | None = None
         self._last_fix_ts_s = 0.0
         # Latest global_map, so a completed tag burst is judged the instant it lands
-        # instead of idling until the next cloud (_on_fused_detections). Sound because
+        # instead of idling until the next cloud (_on_aggregated_detections). Sound because
         # the stream ACCUMULATES in the world frame: the previous cloud scores wall
         # fitness as well as the newest, and the tag candidate needs no lidar at all.
         self._last_local_map: PointCloud2 | None = None
@@ -270,7 +270,7 @@ class RelocalizationModule(Module):
         }
         self._fiducial_prior = FiducialPrior(marker_map)
         self.register_disposable(
-            self.fused_detections.observable().subscribe(self._on_fused_detections)  # type: ignore[no-untyped-call]
+            self.aggregated_detections.observable().subscribe(self._on_aggregated_detections)  # type: ignore[no-untyped-call]
         )
         logger.info(
             "fiducial prior enabled",
@@ -296,20 +296,20 @@ class RelocalizationModule(Module):
             return
         self._world_to_map.on_next(tf)
 
-    def _on_fused_detections(self, msg: Detection3DArray) -> None:
-        """Compose each fused tag pose into this tag's world->map fix, then fire.
+    def _on_aggregated_detections(self, msg: Detection3DArray) -> None:
+        """Compose each aggregated tag pose into this tag's world->map fix, then fire.
 
-        Every entry here is one already-gated, already-fused world_T_marker (the
-        detector's FuseTagBursts publishes one per marker per visit), so the work
-        left is id-parse + compose -- no gating, no fusion, no timestamp."""
+        Every entry here is one already-gated, already-aggregated world_T_marker (the
+        detector's AggregateTagBursts publishes one per marker per visit), so the work
+        left is id-parse + compose -- no gating, no aggregation, no timestamp."""
         if self._fiducial_prior is None:
             return
         for detection in msg.detections[: msg.detections_length]:
             marker_id = self._marker_id_from_detection(detection)
             if marker_id is None:
                 continue
-            center = detection.bbox.center  # world_T_marker_fused (frame_id == world)
-            world_T_marker_fused = matrix_from_pose7(
+            center = detection.bbox.center  # world_T_marker_aggregated (frame_id == world)
+            world_T_marker_aggregated = matrix_from_pose7(
                 (
                     center.position.x,
                     center.position.y,
@@ -320,7 +320,7 @@ class RelocalizationModule(Module):
                     center.orientation.w,
                 )
             )
-            self._fiducial_prior.observe(marker_id, world_T_marker_fused)
+            self._fiducial_prior.observe(marker_id, world_T_marker_aggregated)
         # Fire HERE, not at the next cloud: the tag candidate is composed from the
         # marker alone, so waiting on lidar is dead time on acquisition -- the latency
         # that matters, since the planner is blind to the premap until the first fix.
@@ -342,7 +342,7 @@ class RelocalizationModule(Module):
             global_map -> _on_local_map -> cache the cloud
                                         +-> ransac.is_due   --> _fire(this cloud)
                                         +-> fiducial.is_due --> _fire(this cloud)    (a)
-            fused_detections -> _on_fused_detections -> observe()
+            aggregated_detections -> _on_aggregated_detections -> observe()
                                         +-> fiducial.is_due --> _fire(cached cloud)  (b)
 
         (b) is the tag path: a fix publishes at the tag's latency instead of idling
@@ -403,7 +403,7 @@ class RelocalizationModule(Module):
         evidence), and each prior's own fitness_threshold is the accept gate.
 
         RANSAC lives on THIS path because it GENERATES its candidates from the cloud
-        in hand. The fiducial prior normally fires from _on_fused_detections instead
+        in hand. The fiducial prior normally fires from _on_aggregated_detections instead
         and reaches here only when its burst beat the first cloud.
 
         ``min_local_points`` (the ransac entry's) gates the RANSAC prior ONLY: a

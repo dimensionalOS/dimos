@@ -112,7 +112,7 @@ def test_cluster_medoid_picks_central_over_outlier() -> None:
 
 
 def test_robust_cluster_pose_downweights_translation_outlier() -> None:
-    """Huber IRLS pulls the fused translation to the inlier consensus (~1.0 m),
+    """Huber IRLS pulls the aggregated translation to the inlier consensus (~1.0 m),
     NOT the naive mean (~1.7 m) a single 5 m outlier would drag it to."""
     rng = np.random.default_rng(3)
     inliers = [
@@ -120,29 +120,29 @@ def test_robust_cluster_pose_downweights_translation_outlier() -> None:
     ]
     outlier = _pose((6.0, 2.0, 3.0), Rotation.identity())
     cluster = [_obs(float(i), 1, p) for i, p in enumerate([*inliers, outlier])]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
     naive_mean_x = float(np.mean([p[0] for p in [*inliers, outlier]]))
     assert naive_mean_x > 1.5  # the outlier drags the plain mean well off
-    assert abs(fused[0] - 1.0) < 0.05  # Huber holds the fused estimate at consensus
+    assert abs(aggregated[0] - 1.0) < 0.05  # Huber holds the aggregated estimate at consensus
 
 
 def test_robust_cluster_pose_markley_quaternion_mean() -> None:
-    """The fused rotation is the Markley eigen-mean: symmetric small yaws about Z
+    """The aggregated rotation is the Markley eigen-mean: symmetric small yaws about Z
     (-2..+2 deg) average to ~0 deg, and q/-q double-cover does not cancel it."""
     rots = [Rotation.from_euler("z", d, degrees=True) for d in (-2.0, -1.0, 0.0, 1.0, 2.0)]
     poses = [_pose((0.0, 0.0, 1.0), r) for r in rots]
     # Flip the sign of one quaternion (same rotation, q == -q) to exercise the
-    # hemisphere alignment inside the fusion.
+    # hemisphere alignment inside the aggregation.
     poses[1] = tuple(-c for c in poses[1])  # type: ignore[assignment]
     cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    yaw = Rotation.from_quat(fused[3:7]).as_euler("xyz", degrees=True)[2]
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    yaw = Rotation.from_quat(aggregated[3:7]).as_euler("xyz", degrees=True)[2]
     assert abs(yaw) < 0.2  # symmetric spread averages to ~0 deg
 
 
-def test_robust_fusion_beats_median_single_sighting() -> None:
+def test_robust_aggregation_beats_median_single_sighting() -> None:
     """THE benefit mechanism, deterministically: 15 sightings of one fixed marker
-    with ~2 deg per-sighting orientation noise. The Huber-fused orientation error
+    with ~2 deg per-sighting orientation noise. The Huber-aggregated orientation error
     is smaller than the MEDIAN single-sighting orientation error -- the variance
     reduction that shrinks lever-arm fix scatter."""
     rng = np.random.default_rng(7)
@@ -155,9 +155,11 @@ def test_robust_fusion_beats_median_single_sighting() -> None:
         poses.append(_pose((0.5, -0.3, 0.9), r))
         single_errs_deg.append(noise.magnitude() * 180.0 / math.pi)
     cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    fused_err_deg = (Rotation.from_quat(fused[3:7]) * truth.inv()).magnitude() * 180.0 / math.pi
-    assert fused_err_deg < float(np.median(single_errs_deg))
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    aggregated_err_deg = (
+        (Rotation.from_quat(aggregated[3:7]) * truth.inv()).magnitude() * 180.0 / math.pi
+    )
+    assert aggregated_err_deg < float(np.median(single_errs_deg))
 
 
 def test_cluster_medoid_seed_uses_rotation_distance() -> None:
@@ -192,19 +194,19 @@ def test_robust_cluster_pose_translation_is_exact_mean_without_outlier() -> None
     cluster = [
         _obs(float(i), 1, _pose(t, Rotation.identity())) for i, t in enumerate(translations)
     ]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
     mean_xyz = np.mean(np.array(translations), axis=0)
-    assert np.max(np.abs(np.array(fused[:3]) - mean_xyz)) < 1e-9
+    assert np.max(np.abs(np.array(aggregated[:3]) - mean_xyz)) < 1e-9
 
 
 def test_robust_cluster_pose_recovers_identical_rotation() -> None:
     """The Markley eigen-mean of N identical unit quaternions is that quaternion:
-    a cluster all at one non-trivial 3D rotation fuses back to it exactly (down to
+    a cluster all at one non-trivial 3D rotation aggregates back to it exactly (down to
     quaternion double-cover, which the error metric absorbs)."""
     truth = Rotation.from_euler("xyz", (15.0, -20.0, 30.0), degrees=True)
     cluster = [_obs(float(i), 1, _pose((0.0, 0.0, 1.0), truth)) for i in range(4)]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    err_deg = (Rotation.from_quat(fused[3:7]) * truth.inv()).magnitude() * 180.0 / math.pi
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    err_deg = (Rotation.from_quat(aggregated[3:7]) * truth.inv()).magnitude() * 180.0 / math.pi
     assert err_deg < 1e-6
 
 
@@ -212,20 +214,20 @@ def test_robust_cluster_pose_clean_majority_rejects_mirror_flips() -> None:
     """Known-truth mirror ambiguity: 5 correct sightings + 2 genuinely flipped
     ones (180 deg about X, the kind of PnP mirror solution the ambiguity gate can
     miss). The flips' ~pi-rad rotation residual sits far past the Huber knee, so
-    IRLS drives their weight down and the fused rotation lands on the clean
+    IRLS drives their weight down and the aggregated rotation lands on the clean
     majority -- distinct from the q==-q sign flip (same rotation) tested above."""
     flip = Rotation.from_rotvec((math.pi, 0.0, 0.0))  # 180 deg mirror, a different rotation
     poses = [_pose((0.0, 0.0, 1.0), Rotation.identity()) for _ in range(5)]
     poses += [_pose((0.0, 0.0, 1.0), flip) for _ in range(2)]
     cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
-    err_deg = Rotation.from_quat(fused[3:7]).magnitude() * 180.0 / math.pi
-    assert err_deg < 0.5  # fused sits on the clean identity majority, not the 180 deg flip
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    err_deg = Rotation.from_quat(aggregated[3:7]).magnitude() * 180.0 / math.pi
+    assert err_deg < 0.5  # aggregated sits on the clean identity majority, not the 180 deg flip
 
 
 def test_robust_cluster_pose_follows_flip_majority() -> None:
     """The converse bound, pinned as known-truth so the limit is explicit: the
-    fusion is a robust majority vote, not an oracle. When the flips DOMINATE (5
+    aggregation is a robust majority vote, not an oracle. When the flips DOMINATE (5
     flipped, 2 clean), the medoid seeds inside the flip cluster and IRLS converges
     to the flipped rotation -- the estimator cannot recover truth once bad glimpses
     outnumber good ones."""
@@ -233,9 +235,9 @@ def test_robust_cluster_pose_follows_flip_majority() -> None:
     poses = [_pose((0.0, 0.0, 1.0), flip) for _ in range(5)]
     poses += [_pose((0.0, 0.0, 1.0), Rotation.identity()) for _ in range(2)]
     cluster = [_obs(float(i), 1, p) for i, p in enumerate(poses)]
-    fused = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
+    aggregated = robust_cluster_pose(cluster, rotation_weight_m_per_rad=0.5, huber_delta_m=0.05)
     err_to_flip_deg = (
-        Rotation.from_quat(fused[3:7]) * flip.inv()
+        Rotation.from_quat(aggregated[3:7]) * flip.inv()
     ).magnitude() * 180.0 / math.pi
     assert err_to_flip_deg < 0.5  # follows the flipped majority
 
@@ -254,7 +256,7 @@ def test_gate_reason_each_gate_fires_and_none_skips() -> None:
     assert gate_reason(_obs(0.0, 1, good, distance_m=0.5, view_angle_deg=5.0), cfg) is None
 
 
-def test_aggregate_visits_fuses_and_drops_thin() -> None:
+def test_aggregate_visits_aggregates_and_drops_thin() -> None:
     """A dense visit (>= min_observations) yields one estimate; a thin visit is
     dropped and its glimpses tallied under 'thin'."""
     cfg = AggregationConfig()
@@ -287,13 +289,13 @@ def test_tag_aggregator_streaming_needs_min_observations() -> None:
 
 
 def test_robust_cluster_pose_single_observation_returns_medoid() -> None:
-    """A one-glimpse cluster has nothing to fuse: robust_cluster_pose short-circuits
+    """A one-glimpse cluster has nothing to aggregate: robust_cluster_pose short-circuits
     to the medoid (the sole pose itself) rather than running Huber IRLS on n=1."""
     pose = _pose((1.0, -2.0, 0.5), Rotation.from_euler("z", 20.0, degrees=True))
-    fused = robust_cluster_pose(
+    aggregated = robust_cluster_pose(
         [_obs(0.0, 3, pose)], rotation_weight_m_per_rad=0.5, huber_delta_m=0.05
     )
-    assert fused == pose
+    assert aggregated == pose
 
 
 def test_aggregate_visits_tallies_gate_rejections_by_reason() -> None:
@@ -305,7 +307,7 @@ def test_aggregate_visits_tallies_gate_rejections_by_reason() -> None:
     dense = [_obs(float(i) * 0.1, 5, pose, distance_m=0.5) for i in range(3)]
     far_glimpse = _obs(0.35, 5, pose, distance_m=2.0)  # past the 1 m distance gate
     estimates, rejected = aggregate_visits([*dense, far_glimpse], cfg)
-    assert len(estimates) == 1  # the three in-gate glimpses still fuse
+    assert len(estimates) == 1  # the three in-gate glimpses still aggregate
     assert rejected.get("far") == 1
     assert "thin" not in rejected  # the far glimpse was gated, not tallied as a thin cluster
 
@@ -313,7 +315,7 @@ def test_aggregate_visits_tallies_gate_rejections_by_reason() -> None:
 def test_tag_aggregator_observe_returns_gate_reason_and_drops_glimpse() -> None:
     """Streaming observe() returns the gate name of a rejected glimpse (here 'far')
     and never appends it to the marker's window, so a gated sighting cannot pad the
-    min_observations count toward a premature fused estimate."""
+    min_observations count toward a premature aggregated estimate."""
     agg = TagAggregator(AggregationConfig())
     pose = _pose((1.0, 0.0, 0.5), Rotation.identity())
     assert agg.observe(_obs(0.0, 8, pose, distance_m=2.0)) == "far"  # 2 m > 1 m gate
@@ -322,7 +324,7 @@ def test_tag_aggregator_observe_returns_gate_reason_and_drops_glimpse() -> None:
 
 def test_tag_noise_scale_is_one_at_the_reference_glimpse() -> None:
     """The reference glimpse (REF_DISTANCE_M, REF_REPROJ_PX) scales by exactly 1.0,
-    so the covariance a fused pose ships there is the documented base block and
+    so the covariance an aggregated pose ships there is the documented base block and
     nothing else. A None input reads as the reference, i.e. that term drops out --
     that is what keeps a pixel-less estimate neutral instead of silently confident."""
     assert tag_noise_scale(REF_DISTANCE_M, REF_REPROJ_PX) == 1.0

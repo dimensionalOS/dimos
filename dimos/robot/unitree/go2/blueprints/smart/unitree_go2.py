@@ -90,8 +90,8 @@ unitree_go2_markers = (
                 "/marker_detection/detections",
                 Detection3DArray,
             ),
-            ("fused_detections", MarkerDetectionStreamModule): LCMTransport(
-                "/marker_detection/fused_detections",
+            ("aggregated_detections", MarkerDetectionStreamModule): LCMTransport(
+                "/marker_detection/aggregated_detections",
                 Detection3DArray,
             ),
         }

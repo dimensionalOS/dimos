@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Marker-map fusion for `dimos map global --markers-out`.
+"""Marker-location aggregation for `dimos map global --markers-out`.
 
 Constructed known-truth detections: three marker_ids, each seen across three
 separate tracks, with two far outlier glimpses injected for one id. The verified
-robust estimator must fuse each id to ONE canonical map_T_tag pose that lands on
+robust estimator must aggregate each id to ONE map_T_tag pose that lands on
 truth and down-weights the outliers a naive mean cannot.
 """
 
@@ -32,11 +32,11 @@ import pytest
 import rerun as rr
 
 from dimos.mapping.utils.cli import map as map_cli
-from dimos.mapping.utils.cli.map import _fuse_marker_map, _write_marker_map
+from dimos.mapping.utils.cli.map import _aggregate_marker_map, _write_marker_map
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-# marker_id -> (translation_m, rotation_xyzw) known truth we fuse back toward.
+# marker_id -> (translation_m, rotation_xyzw) known truth we aggregate back toward.
 TRUTH: dict[int, tuple[tuple[float, float, float], tuple[float, float, float, float]]] = {
     2: ((1.0, 2.0, 0.5), (0.0, 0.0, 0.0, 1.0)),
     3: ((-4.0, 0.0, 0.3), (0.1010, 0.2020, 0.0, 0.9740)),
@@ -55,7 +55,7 @@ def _make_detection(
     marker_id: int, ts: float, translation: np.ndarray, rotation: np.ndarray
 ) -> Any:
     """A minimal stand-in for one Observation[Detection3DMarker] carrying only the
-    fields `_fuse_marker_map` reads (real Vector3/Quaternion pose, ts, marker_id)."""
+    fields `_aggregate_marker_map` reads (real Vector3/Quaternion pose, ts, marker_id)."""
     return SimpleNamespace(
         ts=float(ts),
         data=SimpleNamespace(
@@ -96,20 +96,20 @@ def _build_detections(seed: int) -> list[Any]:
     return dets
 
 
-def test_fuse_one_canonical_pose_per_id_downweights_outlier() -> None:
-    """Each marker_id fuses to exactly ONE pose on truth; the outlier id's robust
+def test_aggregate_one_pose_per_id_downweights_outlier() -> None:
+    """Each marker_id aggregates to exactly ONE pose on truth; the outlier id's robust
     translation beats its naive (outlier-poisoned) mean while keeping every glimpse."""
     dets = _build_detections(seed=7)
 
-    fused = _fuse_marker_map(dets, graph=None)
+    aggregated = _aggregate_marker_map(dets, graph=None)
 
-    assert set(fused) == set(TRUTH)  # one canonical entry per id, no per-track duplicates
+    assert set(aggregated) == set(TRUTH)  # one aggregated entry per id, no per-track duplicates
     for marker_id, (trans_true, _quat) in TRUTH.items():
-        pose, n = fused[marker_id]
+        pose, n = aggregated[marker_id]
         assert len(pose) == 7
-        assert n == 15  # all glimpses fused (3 tracks x 5), outliers down-weighted not dropped
+        assert n == 15  # all glimpses aggregated (3 tracks x 5), outliers down-weighted not dropped
         err = float(np.linalg.norm(np.array(pose[:3]) - np.array(trans_true)))
-        assert err < 0.05, f"id {marker_id}: fused translation off truth by {err:.3f} m"
+        assert err < 0.05, f"id {marker_id}: aggregated translation off truth by {err:.3f} m"
 
     outlier_truth = np.array(TRUTH[OUTLIER_ID][0])
     id_trans = np.array(
@@ -120,7 +120,7 @@ def test_fuse_one_canonical_pose_per_id_downweights_outlier() -> None:
         ]
     )
     naive_err = float(np.linalg.norm(id_trans.mean(axis=0) - outlier_truth))
-    robust_err = float(np.linalg.norm(np.array(fused[OUTLIER_ID][0][:3]) - outlier_truth))
+    robust_err = float(np.linalg.norm(np.array(aggregated[OUTLIER_ID][0][:3]) - outlier_truth))
     assert naive_err > 0.2  # two far glimpses drag the naive mean well off truth
     assert robust_err < 0.05  # the robust estimate stays on truth
     assert robust_err < 0.25 * naive_err  # and is far better than the naive mean
@@ -128,19 +128,19 @@ def test_fuse_one_canonical_pose_per_id_downweights_outlier() -> None:
 
 def test_marker_map_round_trips_through_reloc_loader(tmp_path: Path) -> None:
     """The written JSON is the map_T_tag schema load_marker_map reads back to one
-    map_T_marker Transform per id, translations matching the fused poses exactly."""
+    map_T_marker Transform per id, translations matching the aggregated poses exactly."""
     from dimos.perception.fiducial.fiducial_relocalization import load_marker_map
 
     dets = _build_detections(seed=7)
-    fused = _fuse_marker_map(dets, graph=None)
+    aggregated = _aggregate_marker_map(dets, graph=None)
     path = tmp_path / "site.marker_map.json"
 
-    _write_marker_map(path, fused, source="unit_test.db")
+    _write_marker_map(path, aggregated, source="unit_test.db")
 
     doc = json.loads(path.read_text())
     assert doc["meta"]["schema"] == "map_T_tag"
     assert doc["meta"]["source_recording"] == "unit_test.db"
-    assert doc["meta"]["n_detections_fused"] == {str(m): 15 for m in TRUTH}
+    assert doc["meta"]["n_detections_aggregated"] == {str(m): 15 for m in TRUTH}
     assert set(doc["markers"]) == {str(m) for m in TRUTH}
     for entry in doc["markers"].values():
         assert len(entry["translation"]) == 3
@@ -149,14 +149,14 @@ def test_marker_map_round_trips_through_reloc_loader(tmp_path: Path) -> None:
     loaded = load_marker_map(path)  # the real fiducial-prior loader
     assert set(loaded) == set(TRUTH)
     for marker_id, transform in loaded.items():
-        pose = fused[marker_id][0]
+        pose = aggregated[marker_id][0]
         assert (transform.translation.x, transform.translation.y, transform.translation.z) == pose[
             :3
         ]
 
 
-def test_canonical_markers_drawn_as_distinct_entity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_log_reconstruction draws the fused poses as world/pgo_map/markers_canonical
+def test_aggregated_markers_drawn_as_distinct_entity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_log_reconstruction draws the aggregated poses as world/pgo_map/markers_aggregated
     — one box per marker_id, id= labels — additively (per-track boxes still drawn)."""
     calls: list[dict[str, Any]] = []
 
@@ -189,7 +189,7 @@ def test_canonical_markers_drawn_as_distinct_entity(monkeypatch: pytest.MonkeyPa
         )
         for d in dets
     ]
-    canonical = {mid: pose for mid, (pose, _n) in _fuse_marker_map(dets, graph=None).items()}
+    aggregated = {mid: pose for mid, (pose, _n) in _aggregate_marker_map(dets, graph=None).items()}
 
     map_cli._log_reconstruction(
         voxel=0.05,
@@ -201,13 +201,13 @@ def test_canonical_markers_drawn_as_distinct_entity(monkeypatch: pytest.MonkeyPa
         graph=None,
         marker_dets=marker_dets,
         marker_size=0.1,
-        canonical_markers=canonical,
+        aggregated_markers=aggregated,
     )
 
     prefixes = [c["prefix"] for c in calls]
     assert "world/raw_map/markers" in prefixes  # per-track draw stays (additive)
-    canonical_calls = [c for c in calls if c["prefix"] == "world/pgo_map/markers_canonical"]
-    assert len(canonical_calls) == 1
-    drawn = canonical_calls[0]
+    aggregated_calls = [c for c in calls if c["prefix"] == "world/pgo_map/markers_aggregated"]
+    assert len(aggregated_calls) == 1
+    drawn = aggregated_calls[0]
     assert len(drawn["centers"]) == len(TRUTH)  # exactly one box per marker_id
     assert drawn["labels"] == [f"id={m}" for m in sorted(TRUTH)]

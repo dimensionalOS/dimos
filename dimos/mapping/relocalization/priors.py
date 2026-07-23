@@ -19,7 +19,7 @@ a candidate is accepted by surviving the wall-only fine-fitness rerank, never by
 its source's own reported confidence. Three priors live here: ``RansacPrior``
 (wrapping relocalize.py's existing multi-scale FPFH+RANSAC search),
 ``LastPosePrior`` (the last accepted answer, carried forward) and
-``FiducialPrior`` (the detector's fused tag poses composed into one world->map
+``FiducialPrior`` (the detector's aggregated tag poses composed into one world->map
 candidate per tag). The same invariant binds any future prior: it
 goes through the judge on wall fitness, never bypasses it.
 
@@ -116,7 +116,7 @@ class LastPosePriorConfig(PriorConfigBase):
 
 
 class FiducialPriorConfig(PriorConfigBase):
-    """Marker sightings Huber-fused into one world->map candidate per tag
+    """Marker sightings Huber-aggregated into one world->map candidate per tag
     (``FiducialPrior``). Owns the whole fiducial parameter surface."""
 
     type: Literal["fiducial"] = "fiducial"
@@ -126,9 +126,9 @@ class FiducialPriorConfig(PriorConfigBase):
     # Surveyed marker map (map_T_marker per id), a .json path resolved via
     # resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
-    # Tag geometry, family and per-glimpse gate/fusion knobs the DETECTOR needs; none
+    # Tag geometry, family and per-glimpse gate/aggregation knobs the DETECTOR needs; none
     # of the three is read here (this prior consumes poses the detector already gated
-    # and fused). Blueprints thread all three into MarkerDetectionStreamModule so the
+    # and aggregated). Blueprints thread all three into MarkerDetectionStreamModule so the
     # fiducial family has one source of truth.
     marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
@@ -264,25 +264,25 @@ class LastPosePrior:
 
 
 class FiducialPrior:
-    """Fused fiducial tag poses -> ONE world->map candidate per tag.
+    """Aggregated fiducial tag poses -> ONE world->map candidate per tag.
 
-    ``observe()`` takes one already-gated, already-fused ``world_T_marker`` from the
-    detector's ``fused_detections`` stream and composes it with the surveyed marker
+    ``observe()`` takes one already-gated, already-aggregated ``world_T_marker`` from the
+    detector's ``aggregated_detections`` stream and composes it with the surveyed marker
     map; ``propose()`` hands each composed fix to the judge. No confidence -- the
     judge ranks it on wall fitness like every source.
 
-    Gating and fusion live UPSTREAM, in the detector's ``FuseTagBursts``, because
+    Gating and aggregation live UPSTREAM, in the detector's ``AggregateTagBursts``, because
     that is the only place ``corners_px``, the reprojection error and the camera
     transform still exist -- the wire ``Detection3DArray`` drops all three. This
     prior therefore does composition, nothing else.
 
     Frame convention: a candidate's ``T`` is map_T_world =
-    ``map_T_marker @ inv(world_T_marker_fused)`` -- the same
+    ``map_T_marker @ inv(world_T_marker_aggregated)`` -- the same
     local_map(world)->global_map(map) direction RANSAC uses.
 
     Trigger and payload are ONE fact: a composed fix stays PENDING until
     ``propose()`` consumes it, and pending is what ``is_due`` reports. Every arriving
-    fused pose is already one completed burst (``FuseTagBursts`` publishes once per
+    aggregated pose is already one completed burst (``AggregateTagBursts`` publishes once per
     marker per visit), so each tag's estimate goes past the judge exactly once and
     the prior then goes quiet until that tag is seen again.
     """
@@ -299,14 +299,14 @@ class FiducialPrior:
         # one critical section -- see propose() for what tears without it.
         self._pending_lock = threading.Lock()
 
-    def observe(self, marker_id: int, world_T_marker_fused: np.ndarray) -> str | None:
-        """Take ONE fused tag pose from the detector's ``fused_detections`` stream
+    def observe(self, marker_id: int, world_T_marker_aggregated: np.ndarray) -> str | None:
+        """Take ONE aggregated tag pose from the detector's ``aggregated_detections`` stream
         and compose this tag's world->map fix. Returns ``unmapped_id`` or ``None``."""
         map_T_marker = self._map_T_marker.get(marker_id)
         if map_T_marker is None:
             return "unmapped_id"
         with self._pending_lock:
-            self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_fused)
+            self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_aggregated)
         return None
 
     def is_due(self, now_s: float) -> bool:

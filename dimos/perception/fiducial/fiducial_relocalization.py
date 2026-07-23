@@ -15,10 +15,10 @@
 """Surveyed marker-map loading for the fiducial relocalization path.
 
 The ``map_T_marker`` poses (one per tag id) that ``FiducialPrior`` composes
-with each fused ``world_T_marker`` sighting into a ``world->map`` candidate.
+with each aggregated ``world_T_marker`` sighting into a ``world->map`` candidate.
 The per-glimpse pose solve + IPPE mirror-ambiguity gate live in
 :func:`dimos.perception.fiducial.marker_pose.ambiguity_gated_pose`; the
-robust multi-sighting fusion lives in
+robust multi-sighting aggregation lives in
 :mod:`dimos.perception.fiducial.apriltag_aggregation`.
 """
 

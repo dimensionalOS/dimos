@@ -19,22 +19,22 @@ each cluster to ONE robust pose: the medoid refined by Huber-weighted IRLS
 (weighted-mean translation + Markley quaternion eigen-mean), re-weighting each
 iteration so a lingering bad glimpse keeps losing influence.
 
-The fused pose is a frame-agnostic 7-vector ``[x, y, z, qx, qy, qz, qw]``; the
-reloc ``FiducialPrior`` fuses ``world_T_marker`` (frame-invariant, so cluster
+The aggregated pose is a frame-agnostic 7-vector ``[x, y, z, qx, qy, qz, qw]``; the
+reloc ``FiducialPrior`` aggregates ``world_T_marker`` (frame-invariant, so cluster
 drift does not enter). Only :func:`view_quality` reads a camera-relative pose --
-the caller passes ``distance``/``view_angle`` scalars in, keeping the fuse-pose
+the caller passes ``distance``/``view_angle`` scalars in, keeping the aggregation pose
 and the geometry-gate pose distinct.
 
 Two entry points:
  - :func:`aggregate_visits` -- batch: gate + cluster a whole recording into one
    estimate per (marker, visit). Offline benefit harness.
- - :class:`TagAggregator` -- streaming: sliding window per marker, fused on
+ - :class:`TagAggregator` -- streaming: sliding window per marker, aggregated on
    demand once ``min_observations`` are in-window. Live prior.
 
 No up-front sharpness gate: the detector's ``QualityWindow`` already drops
 blurry frames before these post-detection observations arrive.
 
-:func:`tag_noise_scale` / :func:`tag_covariance` turn a fused estimate's median
+:func:`tag_noise_scale` / :func:`tag_covariance` turn an aggregated estimate's median
 range + reprojection error into the health signal that ships with it.
 """
 
@@ -62,14 +62,14 @@ DEFAULT_HUBER_DELTA_M = 0.05  # residual (m) past which a sample is down-weighte
 _HUBER_ITERATIONS = 5  # IRLS weights settle within ~5 iters at huber_delta_m scale
 
 # Reference geometry of a well-posed glimpse: at exactly these values
-# tag_noise_scale is 1.0 and the fused pose carries its unscaled covariance.
+# tag_noise_scale is 1.0 and the aggregated pose carries its unscaled covariance.
 REF_DISTANCE_M = 0.4  # camera->tag range a close, in-gate glimpse sits at
 REF_REPROJ_PX = 1.0  # RMS corner misfit of a sharp glimpse
 
 
 @dataclass(frozen=True)
 class AggregationConfig:
-    """Per-glimpse gate thresholds + clustering/fusion knobs.
+    """Per-glimpse gate thresholds + clustering/aggregation knobs.
 
     Frozen value type (dimos convention for pure-number tunables). Default
     tuning is the autoresearch harness's job (#2137).
@@ -90,7 +90,7 @@ class AggregationConfig:
 class TagObservation:
     """One gated tag glimpse feeding the aggregator.
 
-    ``pose`` is the frame-invariant fuse pose ``(x, y, z, qx, qy, qz, qw)``
+    ``pose`` is the frame-invariant aggregation pose ``(x, y, z, qx, qy, qz, qw)``
     (``world_T_marker`` in the reloc prior). Quality fields drive the gates; a
     ``None`` field disables ITS gate only, so a pixel-less wire-delivered
     observation degrades gracefully.
@@ -107,14 +107,14 @@ class TagObservation:
 
 @dataclass(frozen=True)
 class TagEstimate:
-    """One robust fused pose for a marker over a cluster/window of glimpses."""
+    """One robust aggregated pose for a marker over a cluster/window of glimpses."""
 
     marker_id: int
-    pose: tuple[float, float, float, float, float, float, float]  # fused 7-vec, obs' frame
+    pose: tuple[float, float, float, float, float, float, float]  # aggregated 7-vec, obs' frame
     n_observations: int
     ts: float  # latest contributing glimpse's timestamp
     # Cluster MEDIANS, not the last glimpse's: they feed tag_noise_scale, and the
-    # fused pose is the whole cluster's, so its health has to be the cluster's too.
+    # aggregated pose is the whole cluster's, so its health has to be the cluster's too.
     # None when no member carried the field (a pixel-less wire observation).
     distance_m: float | None = None
     reproj_px: float | None = None
@@ -147,7 +147,7 @@ def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[flo
     """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
 
     view_angle is line-of-sight vs the tag normal (0 == head-on). Camera-relative
-    only: on the fuse-pose (world_T_marker) distance would be from world origin,
+    only: on the aggregation pose (world_T_marker) distance would be from world origin,
     meaningless as a gate.
     """
     translation = np.array(optical_T_marker[:3], dtype=np.float64)
@@ -172,7 +172,7 @@ def tag_side_px(corners_px: np.ndarray) -> float:
 
 
 def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
-    """Dimensionless variance inflation for one fused tag pose.
+    """Dimensionless variance inflation for one aggregated tag pose.
 
     Planar-PnP pose error grows ~quadratically with range and reproj_px is a
     direct misfit proxy, so a far/blurry glimpse contributes almost nothing while
@@ -191,7 +191,7 @@ def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
 
 
 def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.ndarray:
-    """6x6 ROS-order covariance (m^2 / rad^2) for a fused tag pose, in the pose's frame.
+    """6x6 ROS-order covariance (m^2 / rad^2) for an aggregated tag pose, in the pose's frame.
 
     ROS ``geometry_msgs/PoseWithCovariance`` is row-major
     ``(x, y, z, rot_x, rot_y, rot_z)`` -- TRANSLATION FIRST. jnav's ``tag_noise``
@@ -329,8 +329,8 @@ def robust_cluster_pose(
         estimate_quaternion = np.linalg.eigh(scatter)[1][:, -1]  # Markley quaternion eigen-mean (2007) https://ntrs.nasa.gov/citations/20070017872
         if estimate_quaternion @ reference < 0:
             estimate_quaternion = -estimate_quaternion
-    fused = (*estimate_translation.tolist(), *estimate_quaternion.tolist())
-    return fused  # type: ignore[return-value]
+    aggregated = (*estimate_translation.tolist(), *estimate_quaternion.tolist())
+    return aggregated  # type: ignore[return-value]
 
 
 def _median_present(values: list[float | None]) -> float | None:
@@ -386,7 +386,7 @@ class TagAggregator:
 
     ``observe()`` gates a glimpse and appends it to its marker's window, purging
     glimpses older than ``time_window_s`` from the newest. ``robust_estimate()``
-    Huber-fuses once a marker has ``min_observations`` in-window.
+    Huber-aggregates once a marker has ``min_observations`` in-window.
     """
 
     def __init__(self, config: AggregationConfig) -> None:
@@ -410,7 +410,7 @@ class TagAggregator:
         return None
 
     def robust_estimate(self, marker_id: int) -> TagEstimate | None:
-        """Huber-fused pose for a marker's in-window glimpses, or ``None`` when
+        """Huber-aggregated pose for a marker's in-window glimpses, or ``None`` when
         fewer than ``min_observations`` are available."""
         buf = self._by_marker.get(marker_id, [])
         if len(buf) < self._config.min_observations:

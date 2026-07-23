@@ -25,8 +25,8 @@ KNOWN ``map_T_marker`` (the surveyed tag pose in the map). A pinhole camera
 pixels come from ``cv2.projectPoints`` of the true (or mirror-flipped) marker
 pose, plus deterministic sub-pixel noise. Those corners drive the FULL published
 path together -- ``ambiguity_gated_pose`` (the per-glimpse IPPE mirror gate) ->
-``TagAggregator.observe`` / ``robust_estimate`` (the Huber fusion) -> compose the
-fused ``world_T_marker`` with the known ``map_T_marker`` into the candidate
+``TagAggregator.observe`` / ``robust_estimate`` (the Huber aggregation) -> compose the
+aggregated ``world_T_marker`` with the known ``map_T_marker`` into the candidate
 ``map_T_world`` the judge would receive. Every assertion is against the
 constructed truth ``map_T_world_truth = map_T_marker @ inv(world_T_marker)``.
 
@@ -34,7 +34,7 @@ The mirror flip is a 180 deg rotation about the tag's x-axis right-multiplied in
 the MARKER frame (the classic planar-PnP two-fold ambiguity). Being a
 right-multiply with zero translation it leaves the marker's world POSITION
 unchanged and inverts only its ORIENTATION -- so the flip corrupts the candidate
-through the ``inv(world_T_marker)`` composition, not through the fused point.
+through the ``inv(world_T_marker)`` composition, not through the aggregated point.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ _MARKER_FLIP[:3, :3] = Rotation.from_rotvec(math.pi * np.array([1.0, 0.0, 0.0]))
 
 # The candidate map_T_world the judge SHOULD receive, and the one a swallowed
 # flip produces instead. Same composition the FiducialPrior uses:
-# map_T_world = map_T_marker @ inv(world_T_marker_fused).
+# map_T_world = map_T_marker @ inv(world_T_marker_aggregated).
 _MAP_T_WORLD_TRUTH = _MAP_T_MARKER @ np.linalg.inv(_WORLD_T_MARKER)
 _MAP_T_WORLD_FLIP = _MAP_T_MARKER @ np.linalg.inv(_WORLD_T_MARKER @ _MARKER_FLIP)
 
@@ -144,9 +144,9 @@ def _run_full_path(
 
     Per glimpse: corners -> ``ambiguity_gated_pose`` (the gate) -> lift the gated
     ``optical_T_marker`` into the world with the KNOWN ``world_T_optical`` ->
-    ``TagAggregator.observe`` (Huber fusion buffer). After all glimpses, fuse via
+    ``TagAggregator.observe`` (Huber aggregation buffer). After all glimpses, aggregate via
     ``robust_estimate`` and compose the candidate exactly as ``FiducialPrior``
-    does. ``ts`` steps 0.1 s so every glimpse lands in one 5 s fusion window.
+    does. ``ts`` steps 0.1 s so every glimpse lands in one 5 s aggregation window.
     """
     rng = np.random.default_rng(seed)
     aggregator = TagAggregator(AggregationConfig())
@@ -185,9 +185,9 @@ def _run_full_path(
         else:
             n_rejected += 1
     estimate = aggregator.robust_estimate(_MARKER_ID)
-    assert estimate is not None, "fusion needs >= min_observations kept glimpses"
-    world_t_marker_fused = matrix_from_pose7(estimate.pose)
-    map_t_world = _MAP_T_MARKER @ np.linalg.inv(world_t_marker_fused)
+    assert estimate is not None, "aggregation needs >= min_observations kept glimpses"
+    world_t_marker_aggregated = matrix_from_pose7(estimate.pose)
+    map_t_world = _MAP_T_MARKER @ np.linalg.inv(world_t_marker_aggregated)
     return map_t_world, n_kept, n_rejected
 
 
@@ -202,15 +202,15 @@ def _pose_error(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     return rot_deg, trans_m
 
 
-def test_gate_plus_fusion_recovers_known_pose() -> None:
-    """Gate ON + fusion recover the CONSTRUCTED truth. A clean MAJORITY of oblique
+def test_gate_plus_aggregation_recovers_known_pose() -> None:
+    """Gate ON + aggregation recover the CONSTRUCTED truth. A clean MAJORITY of oblique
     (strong-perspective) glimpses feeding the true marker pose, plus a MINORITY of
     fronto-parallel glimpses whose corners are the MIRROR-FLIPPED pose. With the
     ambiguity gate at ratio 2 the flipped fronto-parallel views are rejected as
     mirror-ambiguous (and any that slip through are out-voted by the clean
-    majority), so the fused candidate ``map_T_world`` recovers ``map_T_world_truth``
+    majority), so the aggregated candidate ``map_T_world`` recovers ``map_T_world_truth``
     to within a fraction of a degree and a few mm -- and is ~180 deg from the flip.
-    Proves the gate and the Huber fusion recover the known answer together."""
+    Proves the gate and the Huber aggregation recover the known answer together."""
     clean = [
         (58.0 + 3.0 * (i % 4), float(az), 0.60, False) for i, az in enumerate(range(0, 360, 40))
     ]
@@ -230,7 +230,7 @@ def test_flip_majority_without_gate_is_wrong() -> None:
     inverted: a MAJORITY of fronto-parallel MIRROR-FLIPPED glimpses plus a clean
     minority, with the ambiguity gate effectively off (ratio 1.0 can never reject).
     Nothing strips the flips, the medoid lands in the flipped majority, and the
-    fused candidate tracks ``map_T_world_flip`` -- ~180 deg and >1 m from truth.
+    aggregated candidate tracks ``map_T_world_flip`` -- ~180 deg and >1 m from truth.
     Isolates the gate as the load-bearing difference from the test above."""
     flips = [(88.0, float(az), 0.60, True) for az in range(0, 360, 40)]
     clean = [(60.0, float(az), 0.60, False) for az in (30, 150, 270)]
@@ -238,7 +238,7 @@ def test_flip_majority_without_gate_is_wrong() -> None:
 
     rot_truth_deg, trans_truth_m = _pose_error(candidate, _MAP_T_WORLD_TRUTH)
     rot_flip_deg, trans_flip_m = _pose_error(candidate, _MAP_T_WORLD_FLIP)
-    assert n_rejected == 0  # gate off: nothing rejected, every flip reaches fusion
+    assert n_rejected == 0  # gate off: nothing rejected, every flip reaches aggregation
     assert rot_truth_deg > 150.0  # measured 178.8 deg: far from truth in rotation
     assert trans_truth_m > 1.0  # measured 1.78 m: far from truth in position
     assert (

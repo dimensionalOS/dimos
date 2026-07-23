@@ -100,7 +100,7 @@ Every relocalization cycle, each prior may propose candidates and the shared fit
 
 ## Metrics, and why they are split
 
-- **`proposed` vs `won` is the key split.** A prior can propose in most cycles and still win none. That is the honest picture: the marker was seen and fused, but its pose did not fit the walls as well as lidar. Proposed-but-never-won points at marker-pose accuracy; never-proposed points at detection or the marker map.
+- **`proposed` vs `won` is the key split.** A prior can propose in most cycles and still win none. That is the honest picture: the marker was seen and aggregated, but its pose did not fit the walls as well as lidar. Proposed-but-never-won points at marker-pose accuracy; never-proposed points at detection or the marker map.
 - **`med_fit` is not `med_err`.** Fitness is the judge's confidence in the alignment; error is distance from truth. A confident wrong pose has high fitness and high error. Report both.
 - **`%traj` per source** says who is actually doing the work over the drive, not just who won a single cycle.
 - **Coverage** — the share of odom samples that had a published fix active — says how much of the drive was localized at all.
@@ -125,10 +125,10 @@ The per-source counts come from the run log, so a sweep is reproducible: same re
 
 A marker helps only if its pose in the marker map is accurate. Four things break that:
 
-- **The marker map is fused by a simple windowed mean.** The path that produces it (`corrected_marker_transforms` → `DetectMarkers(smoothing_window=…)`) averages translation and takes a sign-aligned linear quaternion mean over the window. It has no outlier rejection, so one bad glimpse pulls the stored pose. The robust batch fuser — visit clustering, Huber IRLS, Markley quaternion eigen-mean — exists as `aggregate_visits` in [`apriltag_aggregation.py`](/dimos/perception/fiducial/apriltag_aggregation.py) and is tested, but nothing calls it on the survey path. Only its streaming sibling `TagAggregator` runs, inside the live prior. Wiring the batch fuser into marker-map production is a follow-up.
+- **The marker map is aggregated by a simple windowed mean.** The path that produces it (`corrected_marker_transforms` → `DetectMarkers(smoothing_window=…)`) averages translation and takes a sign-aligned linear quaternion mean over the window. It has no outlier rejection, so one bad glimpse pulls the stored pose. The robust batch aggregator — visit clustering, Huber IRLS, Markley quaternion eigen-mean — exists as `aggregate_visits` in [`apriltag_aggregation.py`](/dimos/perception/fiducial/apriltag_aggregation.py) and is tested, but nothing calls it on the survey path. Only its streaming sibling `TagAggregator` runs, inside the live prior. Wiring the batch aggregator into marker-map production is a follow-up.
 
 - **Mirror flip (IPPE planar ambiguity).** A planar tag has two pose solutions that both reproject well; the wrong one is a near-mirror of the right one and can be tens of degrees off. See Collins & Bartoli (2014) and Schweighofer & Pinz. The `ambiguity_ratio_min` gate rejects a glimpse whose flipped solution reprojects nearly as well as the best one.
-- **The gate runs at the detector.** `MarkerDetectionStreamModule` applies `ambiguity_ratio_min` (default 2.0) before anything reaches the wire, so an ambiguous view never publishes. The live `Detection3DArray` wire drops `corners_px`, so the prior's own second copy of the gate is inert; there the medoid seed plus Huber fusion are the backstop.
+- **The gate runs at the detector.** `MarkerDetectionStreamModule` applies `ambiguity_ratio_min` (default 2.0) before anything reaches the wire, so an ambiguous view never publishes. The live `Detection3DArray` wire drops `corners_px`, so the prior's own second copy of the gate is inert; there the medoid seed plus Huber aggregation are the backstop.
 - **Per-unit calibration.** One static fisheye intrinsic serves every Go2, with no per-unit calibration, so a marker pose inherits that camera's error. DIM-1308.
 
 ## Worked example: sf_office survey1 → survey2
