@@ -203,6 +203,9 @@ class VideoArmTeleopConfig(ArmTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
 
     video_jpeg_quality: int = 70
+    # JPEG encoding is GIL-heavy and can starve the control loop; turn the
+    # headset camera off when smooth tracking matters more than the view.
+    video_enabled: bool = True
 
 
 class VideoArmTeleopModule(ArmTeleopModule):
@@ -226,6 +229,8 @@ class VideoArmTeleopModule(ArmTeleopModule):
     color_image: In[Image]
 
     async def handle_color_image(self, msg: Image) -> None:
+        if not self.config.video_enabled:
+            return
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
 

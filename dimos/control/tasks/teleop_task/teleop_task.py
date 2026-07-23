@@ -452,6 +452,7 @@ class TeleopIKTask(BaseControlTask):
 class TeleopIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6
+    timeout: float = 0.5
     max_joint_delta_deg: float = 5.0
     max_step_deg_per_tick: float | None = None
     max_target_offset_m: float | None = None
@@ -474,6 +475,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             model_path=params.model_path,
             ee_joint_id=params.ee_joint_id,
             priority=cfg.priority,
+            timeout=params.timeout,
             max_joint_delta_deg=params.max_joint_delta_deg,
             max_step_deg_per_tick=params.max_step_deg_per_tick,
             max_target_offset_m=params.max_target_offset_m,

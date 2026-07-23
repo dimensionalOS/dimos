@@ -81,6 +81,9 @@ _ARM_IK_LIMITS = {
     # dls automatically where the manipulation extra is absent.
     "solver": "pink",
     "orientation_weight": 0.5,
+    # Ride through pose-stream gaps instead of cycling deactivate/reactivate;
+    # catch-up stays bounded by the chase window either way.
+    "timeout": 1.5,
 }
 
 
@@ -116,7 +119,10 @@ def _teleop_tasks() -> list[TaskConfig]:
 
 
 r1lite_quest_teleop = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES),
+    # Headset video off: JPEG encode starved the module loop on hardware and
+    # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
+    # video_enabled back on once the encode is off the critical path.
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, video_enabled=False),
     r1lite_control_base(extra_tasks=_teleop_tasks()),
     r1lite_vis(),
 ).remappings(
