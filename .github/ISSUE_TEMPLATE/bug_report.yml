@@ -6,17 +6,23 @@ body:
     id: description
     attributes:
       label: Description
+      description: Describe what happened and include any details that seem relevant.
       value: |
+        ## What happened?
+
+        ## What did you expect?
+
         ## System
         <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
 
-        ## Robot/Sim/Hardware (including firmware version)
-        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim etc -->
+        ## Robot / Sim / Hardware
+        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim, with firmware version -->
 
         ## Steps to reproduce
+        <!-- the exact command you ran -->
 
-        ## DimOS version
-        <!-- branch name or commit: git rev-parse --short HEAD -->
+        ## Environment
+        <!-- install method (uv, Nix, Docker), DimOS branch or commit (git rev-parse --short HEAD) -->
 
         ## Logs / screenshots
 

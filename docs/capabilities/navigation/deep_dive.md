@@ -1,9 +1,12 @@
 ---
-title: "Go2 Non-ROS Navigation"
+title: "Go2 Navigation Deep Dive"
 ---
-![output](assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
+
+![Live Go2 navigation in Rerun](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
+
+For return visits to a known space, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) instead of relying on live mapping alone.
 
 ## Data Flow
 
@@ -11,7 +14,7 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 <summary>diagram source</summary>
 
 ```pikchr fold output=assets/go2nav_dataflow.svg
-color = white
+color = 0x64748B
 fill = none
 
 Go2: box "Go2" rad 5px fit wid 170% ht 170%
@@ -38,29 +41,29 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 </details>
 
-![output](assets/go2nav_dataflow.svg)
+![Go2 navigation data flow](assets/go2nav_dataflow.svg)
 
 ## Pipeline Steps
 
-### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
+### 1. LiDAR Frame ([`GO2Connection`](/dimos/robot/unitree/go2/connection.py))
 
-We don't connect to the LiDAR directly — instead we use Unitree's WebRTC client (via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This allows us to support stock, unjailbroken Go2 Air and Pro models out of the box.
+We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC client via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
 
-![LiDAR frame](assets/1-lidar.png)
+![LiDAR frame](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/1-lidar.png)
 
-### 2. Global Voxel Map — [`VoxelGridMapper`](/dimos/mapping/voxels.py)
+### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels.py))
 
 The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
 
 Voxel hash map provides O(1) insert/erase/lookup, so this is efficient even with millions of voxels. The grid runs on **CUDA** by default for speed, with CPU fallback.
 
-Each incoming LiDAR frame is spliced into the global map via column carving. We consider any previously mapped voxels in the space of a received LiDAR frame stale, by erasing entire Z-columns in the footprint, we guarantee:
+Each incoming LiDAR frame is spliced into the global map via column carving: any previously mapped voxels in the space of a received LiDAR frame are considered stale, and entire Z-columns in its footprint are erased before the new frame is written. This guarantees:
 
 - No ghost obstacles from previous passes
 - Dynamic objects (people, doors) get cleared automatically
 - The latest observation always wins
 
-We don't have proper loop closure and stable odometry, we trust the data go2 odom reports, which is surprisingly stable but does drift eventually, You will reliably map and nav through very large spaces (500sqm in our tests) but you won't go down the street to a super market.
+Live column-carving has no loop closure. We trust Go2 odometry, which is stable but drifts over distance. You can reliably map and navigate large spaces around 500 m² in our tests, but not kilometer-scale outdoor routes. For return visits with loop-closed maps, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) and build the premap offline with `dimos map global --export`.
 
 
 #### Configuration
@@ -71,15 +74,15 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 | `block_count`      | 2,000,000 | Max voxels in hash map                                  |
 | `device`           | `CUDA:0`  | Compute device (`CUDA:0` or `CPU:0`)                    |
 | `carve_columns`    | `true`    | Enable column carving (disable for append-only mapping) |
-| `publish_interval` | 0         | Seconds between map publishes (0 = every frame)         |
+| `emit_every`       | 1         | Publish the map every Nth frame (1 = every frame)       |
 
-![Global map](assets/2-globalmap.png)
+![Global map](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/2-globalmap.png)
 
-### 3. Global Costmap — [`CostMapper`](/dimos/mapping/costmapper.py)
+### 3. Global Costmap ([`CostMapper`](/dimos/mapping/costmapper.py))
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
-algo settings are in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot
+Algorithm settings live in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
 
 
 #### Configuration
@@ -101,21 +104,25 @@ class HeightCostConfig(OccupancyConfig):
 | 100  | Steep or impassable (≥15cm rise per cell in case of go2) |
 | -1   | Unknown (no observations)                                |
 
-![Global costmap](assets/3-globalcostmap.png)
+![Global costmap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap — [`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py)
+### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
-The planner will process the terrain gradient and compute it's own algo-relevant costmap, prioritizing safe free paths, while be willing to path aggressively through tight spaces if it has to
+The planner processes the terrain gradient and computes its own planning costmap, preferring safe free paths but willing to path aggressively through tight spaces when it has to.
 
-We run the planner in a constant loop so it will dynamically react to obstacles encountered.
+We run the planner in a constant loop so it dynamically reacts to obstacles as they appear.
 
-![Navigation costmap with path](assets/4-navcostmap.png)
+![Navigation costmap with path](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/4-navcostmap.png)
 
 ### 5. All Layers Combined
 
-All visualization layers shown together
+All visualization layers shown together:
 
-![All layers](assets/5-all.png)
+![All layers](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/5-all.png)
+
+## Frontier Exploration
+
+The [`WavefrontFrontierExplorer`](/dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped. Like patrolling below, it is exposed as an agent skill: an LLM agent can call `begin_exploration` and `end_exploration`.
 
 ## Patrolling
 
@@ -123,13 +130,13 @@ The patrolling system drives the robot to systematically cover a **known** area.
 
 ### How it works
 
-1. **Visitation tracking** — As the robot moves, a visitation grid (aligned to the costmap) marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and hasn't been. This expires over time, and has to be visited again.
+1. **Visitation tracking:** As the robot moves, a visitation grid aligned to the costmap marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and has not been. Visits expire over time and cells must be covered again.
 
-2. **Goal selection** — A *patrol router* picks the next goal. The default strategy is **coverage**: it samples a handful of candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals are more likely to be spread evenly across the map, rather than clustering in large open areas.
+2. **Goal selection:** A patrol router picks the next goal. The default strategy is coverage: it samples candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals spread evenly across the map rather than clustering in large open areas.
 
-3. **Navigation loop** — The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available (e.g. the map hasn't loaded yet), it retries after a short delay.
+3. **Navigation loop:** The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available, for example when the map has not loaded yet, it retries after a short delay.
 
-4. **Stopping** — When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
+4. **Stopping:** When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
 
 ### Patrol router strategies
 
@@ -141,17 +148,17 @@ The patrolling system drives the robot to systematically cover a **known** area.
 
 ### Safety
 
-Goal candidates are filtered through a **safe mask** — the free-space region eroded by the robot's clearance radius — so the robot is never sent to a position too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling to ensure the robot can rotate in place at every goal.
+Goal candidates are filtered through a safe mask, which is the free-space region eroded by the robot's clearance radius, so the robot is never sent too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling so the robot can rotate in place at every goal.
 
 ### Router comparison
 
 | Coverage | Frontier | Random |
 |----------|----------|--------|
-| ![coverage](assets/coverage.png) | ![frontier](assets/frontier.png) | ![random](assets/random.png) |
+| ![coverage](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/coverage.png) | ![frontier](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/frontier.png) | ![random](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/random.png) |
 
 ### Sample patrol trace (26 min)
 
-![Patrol path](assets/patrol_path.png)
+![Patrol path](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/patrol_path.png)
 
 ## Blueprint Composition
 
@@ -165,17 +172,21 @@ from dimos.mapping.voxels import VoxelGridMapper
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
     unitree_go2_basic,
-    VoxelGridMapper.blueprint(),
+    VoxelGridMapper.blueprint(emit_every=5),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
-).global_config(n_workers=6, robot_model="unitree_go2")
+    PatrollingModule.blueprint(),
+    MovementManager.blueprint(),
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```
-![output](assets/go2_blueprint.svg)
+![unitree_go2 blueprint module graph](assets/go2_blueprint.svg)

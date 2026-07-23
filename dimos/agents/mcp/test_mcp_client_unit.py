@@ -13,16 +13,18 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
-from queue import Empty, Queue
+from queue import Empty
+from threading import RLock
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
+from langchain_openai import ChatOpenAI
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
-from dimos.utils.sequential_ids import SequentialIds
 
 
 def _mock_post(url: str, **kwargs: object) -> MagicMock:
@@ -95,19 +97,18 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
 
 
 @pytest.fixture
-def mcp_client() -> McpClient:
+def mcp_client() -> Iterator[McpClient]:
     """Build an McpClient wired to the mock MCP post handler."""
     mock_http = MagicMock()
     mock_http.post.side_effect = _mock_post
 
     with patch("dimos.agents.mcp.mcp_client.httpx.Client", return_value=mock_http):
-        client = McpClient.__new__(McpClient)
+        client = McpClient(mcp_server_url="http://localhost:9990/mcp")
 
-    client._http_client = mock_http
-    client._seq_ids = SequentialIds()
-    client.config = MagicMock()
-    client.config.mcp_server_url = "http://localhost:9990/mcp"
-    return client
+    try:
+        yield client
+    finally:
+        client.stop()
 
 
 def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
@@ -150,8 +151,6 @@ def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
 
 def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -> None:
     """A `notifications/message` delivered over LCM becomes a HumanMessage."""
-    mcp_client._message_queue = Queue()
-
     notification = {
         "jsonrpc": "2.0",
         "method": "notifications/message",
@@ -172,8 +171,6 @@ def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -
 def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
     """Unknown methods and empty bodies are dropped on the floor."""
 
-    mcp_client._message_queue = Queue()
-
     mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
     mcp_client._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": ""}}
@@ -188,8 +185,6 @@ def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
 
 def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient) -> None:
     """A `notifications/progress` frame is routed as a HumanMessage."""
-
-    mcp_client._message_queue = Queue()
 
     progress_frame = {
         "jsonrpc": "2.0",
@@ -217,8 +212,8 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
         captured["params"] = params
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    mcp_client._mcp_request = fake_request
-    mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
+    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
+        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
 
     assert captured["method"] == "tools/call"
     params = captured["params"]
@@ -229,3 +224,49 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
     assert isinstance(meta, dict)
     token = meta["progressToken"]
     assert isinstance(token, str) and len(token) > 0
+
+
+@pytest.fixture
+def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
+    """Prepare a client for testing agent model initialization."""
+    mcp_client.config.model_fixture = None
+    mcp_client.config.system_prompt = "System prompt"
+    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
+    mcp_client._lock = RLock()
+    mcp_client._thread = MagicMock()
+    mcp_client._thread.is_alive.return_value = True
+    return mcp_client
+
+
+def test_on_system_modules_uses_responses_api_model(
+    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production agents use the Responses API required for Luna tool calls."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    configured_mcp_client.config.model = "gpt-5.6-luna"
+
+    with patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent:
+        configured_mcp_client.on_system_modules([])
+
+    model = create_agent.call_args.kwargs["model"]
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "gpt-5.6-luna"
+    assert model.use_responses_api is True
+    assert model.reasoning == {"effort": "medium", "summary": "auto"}
+
+
+@pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
+def test_on_system_modules_resolves_non_reasoning_models(
+    configured_mcp_client: McpClient, model_name: str
+) -> None:
+    """Models without Responses reasoning support use provider resolution."""
+    configured_mcp_client.config.model = model_name
+    resolved_model = MagicMock()
+
+    with (
+        patch("dimos.agents.mcp.mcp_client.create_agent"),
+        patch("dimos.agents.mcp.mcp_client.init_chat_model", return_value=resolved_model) as init,
+    ):
+        configured_mcp_client.on_system_modules([])
+
+    init.assert_called_once_with(model=model_name)

@@ -44,11 +44,11 @@ WEBRTC_AVAILABLE = (
 
 @runtime_checkable
 class Provider(Protocol):
-    """WebRTC DataChannel backend (Cloudflare Realtime, broker, LiveKit, ...).
+    """WebRTC DataChannel backend (Cloudflare Realtime broker, ...).
 
     Implementations own signaling, ICE/DTLS, and channel lifecycle, and expose
     bytes-level publish/subscribe on named topics. DataChannels may be
-    unidirectional (Cloudflare) or bidirectional (LiveKit); the provider
+    unidirectional (as with Cloudflare) or bidirectional; the provider
     handles this transparently.
     """
 
@@ -68,6 +68,24 @@ class Provider(Protocol):
 
 _providers: dict[ProviderConfig, Provider] = {}
 _providers_lock = threading.Lock()
+
+
+def shutdown_all_providers() -> None:
+    """Stop every live provider in this process and clear the registry.
+
+    Providers are process-scoped singletons that ``Transport.stop()`` leaves
+    running, so nothing else disconnects them on teardown — without this the
+    broker session's DELETE never fires and the worker hangs until force-killed
+    (the broker then reaps it ~30s later). Idempotent; safe with no providers.
+    """
+    with _providers_lock:
+        providers = list(_providers.values())
+        _providers.clear()
+    for provider in providers:
+        try:
+            provider.stop()
+        except Exception:
+            logger.exception("Error stopping provider %s", type(provider).__name__)
 
 
 class ProviderConfig(BaseModel):
@@ -172,6 +190,7 @@ class AsyncProviderBase:
         self._loop = loop
         self._stop_ev = asyncio.Event()
         ready.set()
+
         try:
             loop.run_until_complete(self._stop_ev.wait())
         finally:

@@ -21,9 +21,11 @@ import uuid
 
 import httpx
 from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
+from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
@@ -40,10 +42,24 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
+_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _init_model(model_name: str) -> Any:
+    """Initialize a model while preserving LangChain provider resolution."""
+    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
+        return init_chat_model(model=model_name)
+
+    return ChatOpenAI(
+        model=model_name,
+        use_responses_api=True,
+        reasoning={"effort": "medium", "summary": "auto"},
+    )
+
 
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
-    model: str = "gpt-4o"
+    model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
 
@@ -212,11 +228,12 @@ class McpClient(Module):
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
 
-        model: str | Any = self.config.model
         if self.config.model_fixture is not None:
             from dimos.agents.testing import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
+        else:
+            model = _init_model(self.config.model)
 
         with self._lock:
             self._state_graph = create_agent(

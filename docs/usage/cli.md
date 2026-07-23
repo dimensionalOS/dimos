@@ -48,13 +48,13 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 
 Values cascade (later overrides earlier):
 
-1. `GlobalConfig` default → `simulation = False`
-2. `.env` file → `DIMOS_SIMULATION=true`
-3. Environment variable → `export DIMOS_SIMULATION=true`
-4. Blueprint definition → `.global_config(simulation=True)`
+1. `GlobalConfig` default → `simulation = ""`
+2. `.env` file → `SIMULATION=mujoco`
+3. Environment variable → `export SIMULATION=mujoco`
+4. Blueprint definition → `.global_config(simulation="mujoco")`
 5. CLI flag → `dimos --simulation run ...`
 
-Environment variables and `.env` values must be prefixed with `DIMOS_`.
+Environment variables and `.env` values use the field name in uppercase, for example `ROBOT_IPS`.
 
 ---
 
@@ -243,8 +243,6 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
----
-
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
@@ -323,8 +321,6 @@ List deployed modules and their skills.
 dimos mcp modules
 ```
 
----
-
 ## Standalone Tools
 
 These are installed as separate entry points and can be run directly without the `dimos` prefix.
@@ -377,12 +373,10 @@ rerun-bridge
 
 Also available as `dimos rerun-bridge`.
 
----
-
 ## File Locations
 
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
 | `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
-| `.env` | Local config overrides (`DIMOS_ROBOT_IP=192.168.123.161`) |
+| `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |
