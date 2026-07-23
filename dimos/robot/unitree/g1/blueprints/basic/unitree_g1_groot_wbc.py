@@ -79,6 +79,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.simulation.providers import SimulationRequest, load_simulation_provider
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -254,13 +255,27 @@ if global_config.simulation == "mujoco":
             )
         return candidate
 
-    # Sim backend: MuJoCo engine via SHM.
-    _backend, _adapter_address = _scene_mujoco_backend()
+    if global_config.simulation_provider:
+        _provider = load_simulation_provider(global_config.simulation_provider)
+        _binding = _provider.build(
+            SimulationRequest(
+                robot_model="unitree_g1",
+                model_path=_ROBOT_ONLY_MJCF_PATH,
+                mesh_dir=_ROBOT_MESHDIR,
+                scene_package=global_config.scene_package,
+            )
+        )
+        _backend = _binding.backend
+        _adapter_address = _binding.adapter_address
+        _adapter_type = _binding.adapter_type
+    else:
+        _backend, _adapter_address = _scene_mujoco_backend()
+        _adapter_type = "sim_mujoco_g1"
+
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
     # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
-    _adapter_type = "sim_mujoco_g1"
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -443,6 +458,7 @@ _rerun_config: dict[str, Any] = {
         "world/camera_info": None,
         "world/depth_image": None,
         "world/depth_camera_info": None,
+        "world/lidar": None,
         "world/coordinator_joint_state": g1_urdf_joint_state(root_path=_G1_ROOT),
         "world/global_costmap": g1_costmap,
         "world/navigation_costmap": g1_costmap,
@@ -470,7 +486,6 @@ if global_config.simulation != "mujoco":
     _rerun_config["visual_override"]["world/global_costmap"] = _g1_real_costmap
     _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
     # Raw scan is sensor-frame (LIO contract); the voxel map is the live view.
-    _rerun_config["visual_override"]["world/lidar"] = None
 
 
 def _viewer() -> Any:
