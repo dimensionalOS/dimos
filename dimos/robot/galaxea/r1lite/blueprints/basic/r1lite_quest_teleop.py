@@ -73,8 +73,8 @@ _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while 
 _ARM_IK_LIMITS = {
     "max_joint_delta_deg": 45.0,
     "max_step_deg_per_tick": 1.5,
-    "max_target_offset_m": 0.02,
-    "max_target_rot_deg": 15.0,
+    "max_target_offset_m": 0.06,
+    "max_target_rot_deg": 20.0,
     "joint_limit_margin_deg": 2.0,
     # QP solver with limits as hard constraints and posture regularization;
     # orientation_weight becomes the FrameTask orientation cost. Falls back to
@@ -128,7 +128,7 @@ r1lite_quest_teleop = autoconnect(
     # override, next ladder step is 1.0 after hardware feel check.
     r1lite_control_base(
         extra_tasks=_teleop_tasks(),
-        connection_kwargs={"tracking_speed": 0.75},
+        connection_kwargs={"tracking_speed": 1.0},
     ),
     r1lite_vis(),
 ).remappings(

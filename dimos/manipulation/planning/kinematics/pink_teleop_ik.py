@@ -127,7 +127,7 @@ class PinkTeleopIK:
         cfg = config or self._config
         # Seed strictly inside the limits: the QP is degenerate from a seed on
         # or past a bound (the folded home pose sits exactly on two bounds).
-        eps_q = 1e-5
+        eps_q = 1e-3
         q_seed = np.clip(
             q_init,
             self._model.lowerPositionLimit + eps_q,

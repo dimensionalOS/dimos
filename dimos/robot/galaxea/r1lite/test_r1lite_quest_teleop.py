@@ -291,7 +291,7 @@ def test_teleop_connection_raises_tracking_speed() -> None:
     kwargs = next(
         atom.kwargs for atom in r1lite_quest_teleop.blueprints if atom.module is R1LiteConnection
     )
-    assert kwargs["tracking_speed"] == 0.75
+    assert kwargs["tracking_speed"] == 1.0
 
 
 def test_arm_slices_match_connection_layout() -> None:
@@ -342,8 +342,8 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
         for name in ("teleop_left_arm", "teleop_right_arm"):
             assert tasks[name].params["max_joint_delta_deg"] == 45.0
             assert tasks[name].params["max_step_deg_per_tick"] == 1.5
-            assert tasks[name].params["max_target_offset_m"] == 0.02
-            assert tasks[name].params["max_target_rot_deg"] == 15.0
+            assert tasks[name].params["max_target_offset_m"] == 0.06
+            assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
             assert tasks[name].params["orientation_weight"] == 0.5
 
