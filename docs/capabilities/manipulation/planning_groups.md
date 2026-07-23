@@ -71,6 +71,20 @@ allows prismatic joints in the middle of the chain and strips only terminal tip
 prismatic joints, which usually represent gripper fingers. The generated group
 name is always `manipulator`.
 
+## RoboPlan multi-robot scenes
+
+Select RoboPlan with `world_backend="roboplan"` on a manipulation planner. The
+backend builds one collision scene when the world is finalized, namespaces
+model-internal names when more than one robot is registered, and applies each
+robot's `base_pose`. Models do not need to share joint or link names.
+
+RoboPlan can plan one group or a combination of non-overlapping groups on
+different robots. It preserves joints outside the selection—including gripper
+and other auxiliary model joints—at their current scene values. Planning is not
+ready until every registered robot has supplied an authoritative joint state.
+Add robots and obstacles before finalization; robot topology is immutable
+afterward.
+
 ## Current APIs
 
 Use `list_planning_groups()` to discover group IDs and capabilities before

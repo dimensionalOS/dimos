@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 from types import ModuleType
 from typing import Any, ClassVar
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -80,7 +81,7 @@ class FakeJointGroupInfo:
 
 
 class FakeScene:
-    joint_group_joint_names: ClassVar[list[str]] = ["joint1", "joint2"]
+    joint_group_joint_names: ClassVar[list[str] | None] = None
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
 
@@ -89,6 +90,26 @@ class FakeScene:
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
+        self.groups = self._read_groups(Path(args[2]))
+        self.native_joint_names = self._read_joint_names(Path(args[1]))
+        self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
+
+    @staticmethod
+    def _read_groups(path: Path) -> dict[str, list[str]]:
+        root = ET.parse(path).getroot()
+        return {
+            group.get("name", ""): [joint.get("name", "") for joint in group.findall("joint")]
+            for group in root.findall("group")
+        }
+
+    @staticmethod
+    def _read_joint_names(path: Path) -> list[str]:
+        root = ET.parse(path).getroot()
+        return [
+            joint.get("name", "")
+            for joint in root.findall("joint")
+            if joint.get("type") != "fixed" and joint.find("mimic") is None
+        ]
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
@@ -103,10 +124,24 @@ class FakeScene:
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
-        return FakeJointGroupInfo(self.joint_group_joint_names)
+        names = (
+            self.joint_group_joint_names
+            if self.joint_group_joint_names is not None and name == self.constructor_args[0]
+            else self.groups[name]
+        )
+        return FakeJointGroupInfo(list(names))
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
-        return q
+        full = self.current_positions.copy()
+        for name, value in zip(self.groups[group_name], q, strict=True):
+            full[self.native_joint_names.index(name)] = value
+        return full
+
+    def setJointPositions(self, q: np.ndarray) -> None:
+        self.current_positions = np.asarray(q, dtype=np.float64)
+
+    def getJointNames(self) -> list[str]:
+        return list(self.native_joint_names)
 
     def addBoxGeometry(
         self,
@@ -167,13 +202,14 @@ class FakeScene:
     def computeFrameJacobian(
         self, q: np.ndarray, frame_name: str, local: bool = True
     ) -> np.ndarray:
-        return np.ones((6, 2))
+        return np.ones((6, len(self.native_joint_names)))
 
 
 class FakeRRTOptions:
     def __init__(self) -> None:
-        self.timeout = 0.0
-        self.max_time = 0.0
+        self.group_name = ""
+        self.max_planning_time = 0.0
+        self.max_nodes = 0
         self.collision_check_use_bisection = True
 
 
@@ -243,10 +279,27 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
         <robot name="fake">
           <link name="base"/>
           <link name="link1"/>
+          <link name="link2"/>
+          <link name="link3"/>
+          <link name="tcp"/>
           <joint name="joint1" type="revolute">
             <parent link="base"/>
             <child link="link1"/>
             <limit lower="-1" upper="1" effort="1" velocity="1"/>
+          </joint>
+          <joint name="joint2" type="revolute">
+            <parent link="link1"/>
+            <child link="link2"/>
+            <limit lower="-2" upper="2" effort="1" velocity="1"/>
+          </joint>
+          <joint name="joint3" type="revolute">
+            <parent link="link2"/>
+            <child link="link3"/>
+            <limit lower="-3" upper="3" effort="1" velocity="1"/>
+          </joint>
+          <joint name="tcp_fixed" type="fixed">
+            <parent link="link3"/>
+            <child link="tcp"/>
           </joint>
         </robot>
         """
@@ -256,6 +309,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
         model_path=model_path,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
+        base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
@@ -274,7 +328,43 @@ def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[An
 
     world = module.RoboPlanWorld()
     robot_id = world.add_robot(robot_config)
+    world.finalize()
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(
+            name=list(robot_config.joint_names),
+            position=[0.0] * len(robot_config.joint_names),
+        ),
+    )
     return world, robot_id
+
+
+def _make_two_robot_world(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> tuple[Any, str, str]:
+    module = _import_roboplan_world(fake_roboplan)
+    second_config = robot_config.model_copy(
+        update={
+            "name": "right",
+            "base_pose": PoseStamped(
+                position=Vector3(1, 0, 0),
+                orientation=Quaternion(),
+            ),
+        }
+    )
+    world = module.RoboPlanWorld()
+    first_id = world.add_robot(robot_config)
+    second_id = world.add_robot(second_config)
+    world.finalize()
+    world.sync_from_joint_state(
+        first_id,
+        JointState(name=list(robot_config.joint_names), position=[0.0, 0.0]),
+    )
+    world.sync_from_joint_state(
+        second_id,
+        JointState(name=list(second_config.joint_names), position=[0.0, 0.0]),
+    )
+    return world, first_id, second_id
 
 
 def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
@@ -338,7 +428,7 @@ def test_scene_joint_limits_validate_joint_names(
     )
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "extra_joint"])
 
-    with pytest.raises(ValueError, match="joint limit names do not match"):
+    with pytest.raises(ValueError, match="does not match the composed model"):
         _make_world(fake_roboplan, config)
 
 
@@ -434,6 +524,26 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     assert world.get_obstacles() == []
 
 
+def test_obstacle_added_before_finalize_is_materialized(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    module = _import_roboplan_world(fake_roboplan)
+    world = module.RoboPlanWorld()
+    world.add_robot(robot_config)
+    world.add_obstacle(
+        Obstacle(
+            name="pending",
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            dimensions=(0.1, 0.2, 0.3),
+        )
+    )
+
+    world.finalize()
+
+    assert "pending" in world._scene.geometry
+
+
 def test_collision_config_and_edge_checks(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -506,7 +616,7 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
                     name="wrist",
                     joint_names=("joint3", "joint1"),
                     base_link="base",
-                    tip_link="wrist_tip",
+                    tip_link="tcp",
                 )
             ],
             "joint_limits_lower": [-1.0, -2.0, -3.0],
@@ -529,7 +639,7 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
     def fake_jacobian(
         self: FakeScene, q: np.ndarray, frame_name: str, local: bool = True
     ) -> np.ndarray:
-        assert frame_name == "wrist_tip"
+        assert frame_name == "tcp"
         assert local is True
         return np.arange(18, dtype=np.float64).reshape(6, 3)
 
@@ -547,9 +657,9 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
     pose = world.get_group_ee_pose(ctx, "arm/wrist")
     jacobian = world.get_group_jacobian(ctx, "arm/wrist")
 
-    assert fk_frames == ["wrist_tip"]
+    assert fk_frames == ["tcp"]
     assert pose.position.x == pytest.approx(6.0)
-    np.testing.assert_allclose(jacobian, np.arange(18, dtype=np.float64).reshape(6, 3)[:, [2, 1]])
+    np.testing.assert_allclose(jacobian, np.arange(18, dtype=np.float64).reshape(6, 3)[:, [2, 0]])
 
 
 def test_group_kinematics_reject_missing_tip_or_missing_context(
@@ -581,11 +691,11 @@ def test_group_kinematics_reject_missing_tip_or_missing_context(
     jacobian_world.finalize()
     jacobian_ctx = jacobian_world.get_live_context()
     del jacobian_ctx.q_by_robot[jacobian_robot_id]
-    with pytest.raises(KeyError, match=jacobian_robot_id):
+    with pytest.raises(RuntimeError, match="Missing authoritative state"):
         jacobian_world.get_group_jacobian(jacobian_ctx, "arm/manipulator")
 
 
-def test_group_jacobian_validates_projection_shape_and_joint_names(
+def test_group_jacobian_validates_projection_shape(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     monkeypatch: pytest.MonkeyPatch,
@@ -595,16 +705,6 @@ def test_group_jacobian_validates_projection_shape_and_joint_names(
     ctx = world.get_live_context()
     world.set_joint_state(ctx, robot_id, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
 
-    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint1", "other"])
-    monkeypatch.setattr(
-        FakeScene,
-        "computeFrameJacobian",
-        lambda self, q, frame_name, local=True: np.ones((6, 2)),
-    )
-    with pytest.raises(ValueError, match="Unknown joints"):
-        world.get_group_jacobian(ctx, "arm/manipulator")
-
-    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint1", "joint2"])
     monkeypatch.setattr(
         FakeScene,
         "computeFrameJacobian",
@@ -616,36 +716,10 @@ def test_group_jacobian_validates_projection_shape_and_joint_names(
     monkeypatch.setattr(
         FakeScene,
         "computeFrameJacobian",
-        lambda self, q, frame_name, local=True: np.ones((6, 3)),
+        lambda self, q, frame_name, local=True: np.ones((6, 4)),
     )
     with pytest.raises(ValueError, match="cannot project"):
         world.get_group_jacobian(ctx, "arm/manipulator")
-
-
-def test_group_jacobian_falls_back_to_configured_joint_order_when_scene_order_is_unavailable(
-    fake_roboplan: None,
-    robot_config: RobotModelConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    world, robot_id = _make_world(fake_roboplan, robot_config)
-    world.finalize()
-    ctx = world.get_live_context()
-    world.set_joint_state(ctx, robot_id, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
-
-    def missing_group_info(self: FakeScene, name: str) -> FakeJointGroupInfo:
-        raise AttributeError("no joint group info")
-
-    monkeypatch.setattr(FakeScene, "getJointGroupInfo", missing_group_info)
-    monkeypatch.setattr(
-        FakeScene,
-        "computeFrameJacobian",
-        lambda self, q, frame_name, local=True: np.arange(12, dtype=np.float64).reshape(6, 2),
-    )
-
-    np.testing.assert_allclose(
-        world.get_group_jacobian(ctx, "arm/manipulator"),
-        np.arange(12, dtype=np.float64).reshape(6, 2),
-    )
 
 
 def test_legacy_kinematics_wrappers_require_unique_pose_group(
@@ -753,13 +827,13 @@ def test_native_selected_planner_accepts_local_joint_names(
     result = world.plan_selected_joint_path(
         world,
         selection,
-        JointState(name=["joint2", "joint1"], position=[0.2, 0.0]),
+        JointState(name=["joint2", "joint1"], position=[0.0, 0.0]),
         JointState(name=["joint2", "joint1"], position=[0.4, 0.2]),
     )
 
     assert result.status == PlanningStatus.SUCCESS
     assert result.path[0].name == ["arm/joint1", "arm/joint2"]
-    assert result.path[0].position == [0.0, 0.2]
+    assert result.path[-1].position == [0.2, 0.4]
 
 
 def test_native_selected_planner_rejects_multi_group_selection(
@@ -787,7 +861,92 @@ def test_native_selected_planner_rejects_multi_group_selection(
     )
 
     assert result.status == PlanningStatus.UNSUPPORTED
-    assert "exactly one" in result.message
+    assert "no generated group" in result.message
+
+
+def test_native_planner_coordinates_groups_across_two_robots(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _, _ = _make_two_robot_world(fake_roboplan, robot_config)
+    selection = PlanningGroupSelection.from_groups(
+        (
+            world._planning_group_from_id("right/manipulator"),
+            world._planning_group_from_id("arm/manipulator"),
+        )
+    )
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0, 0.0, 0.0]),
+        JointState(name=list(selection.joint_names), position=[0.4, 0.2, 0.1, 0.3]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[-1].name == [
+        "arm/joint1",
+        "arm/joint2",
+        "right/joint1",
+        "right/joint2",
+    ]
+    assert result.path[-1].position == [0.1, 0.3, 0.4, 0.2]
+
+
+def test_native_planner_preserves_other_robot_and_auxiliary_joint_state(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _, second_id = _make_two_robot_world(fake_roboplan, robot_config)
+    world.sync_from_joint_state(
+        second_id,
+        JointState(name=["joint1", "joint2"], position=[0.3, 0.1]),
+    )
+    selection = PlanningGroupSelection.from_groups(
+        (world._planning_group_from_id("arm/manipulator"),)
+    )
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(name=list(selection.joint_names), position=[0.2, 0.1]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    positions = dict(
+        zip(world._scene.native_joint_names, world._scene.current_positions, strict=True)
+    )
+    assert positions["right__joint1"] == pytest.approx(0.3)
+    assert positions["right__joint2"] == pytest.approx(0.1)
+    assert positions["arm__joint3"] == pytest.approx(0.0)
+    assert positions["right__joint3"] == pytest.approx(0.0)
+
+
+def test_native_planner_waits_for_every_robot_state(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    module = _import_roboplan_world(fake_roboplan)
+    second_config = robot_config.model_copy(update={"name": "right"})
+    world = module.RoboPlanWorld()
+    first_id = world.add_robot(robot_config)
+    world.add_robot(second_config)
+    world.finalize()
+    world.sync_from_joint_state(
+        first_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+    )
+    selection = PlanningGroupSelection.from_groups(
+        (world._planning_group_from_id("arm/manipulator"),)
+    )
+
+    result = world.plan_selected_joint_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(name=list(selection.joint_names), position=[0.2, 0.1]),
+    )
+
+    assert result.status == PlanningStatus.INVALID_START
+    assert "authoritative state is incomplete" in result.message
 
 
 def test_native_planner_rejects_empty_path(
@@ -815,11 +974,11 @@ def test_native_planner_rejects_empty_path(
 def test_collision_exclusion_pairs_are_written_to_generated_srdf(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    robot_config.collision_exclusion_pairs = [("a", "b")]
+    robot_config.collision_exclusion_pairs = [("base", "link2")]
     world, _ = _make_world(fake_roboplan, robot_config)
 
     srdf_path = Path(world._scene.constructor_args[2])
-    assert 'disable_collisions link1="a" link2="b"' in srdf_path.read_text()
+    assert 'disable_collisions link1="base" link2="link2"' in srdf_path.read_text()
 
 
 def test_generated_srdf_uses_scoped_temp_directory(
@@ -828,19 +987,20 @@ def test_generated_srdf_uses_scoped_temp_directory(
     world, _ = _make_world(fake_roboplan, robot_config)
 
     srdf_path = Path(world._scene.constructor_args[2])
-    assert srdf_path.parent.name.startswith("dimos_roboplan_srdf_")
+    assert srdf_path.parent.name.startswith("dimos_roboplan_")
     assert srdf_path.exists()
-    assert world._srdf_tempdirs
+    assert world._model.owner
 
 
-def test_unsupported_base_pose_fails_before_planning(
+def test_base_pose_is_written_to_composed_model(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-
     robot_config.base_pose = PoseStamped(  # type: ignore[call-arg]
         position=Vector3(1, 0, 0), orientation=Quaternion()
     )
-    world = RoboPlanWorld()
-    with pytest.raises(ValueError, match="base_pose"):
-        world.add_robot(robot_config)
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    urdf_root = ET.parse(Path(world._scene.constructor_args[1])).getroot()
+    origin = urdf_root.find("./joint[@name='dimos_world_joint']/origin")
+    assert origin is not None
+    assert origin.get("xyz") == "1 0 0"

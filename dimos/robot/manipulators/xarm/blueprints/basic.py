@@ -53,6 +53,7 @@ dual_xarm6_planner_coordinator = autoconnect(
             make_xarm6_model_config(name="left_arm", y_offset=0.5),
             make_xarm6_model_config(name="right_arm", y_offset=-0.5),
         ],
+        world_backend="roboplan",
         visualization={"backend": "viser"},
     ),
     coordinator(
