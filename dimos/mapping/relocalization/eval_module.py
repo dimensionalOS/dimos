@@ -811,9 +811,7 @@ def compute_stats(
     """
     odom_txyz = np.asarray(odom_txyz, dtype=float)
     if odom_txyz.size and (odom_txyz.ndim != 2 or odom_txyz.shape[1] != 4):
-        raise ValueError(
-            f"compute_stats: odom must be (N,4) [ts,x,y,z], got {odom_txyz.shape}"
-        )
+        raise ValueError(f"compute_stats: odom must be (N,4) [ts,x,y,z], got {odom_txyz.shape}")
     odom_ts = odom_txyz[:, 0] if odom_txyz.size else np.empty((0,), dtype=float)
     order = np.argsort([f.ts for f in fixes]) if fixes else np.array([], dtype=int)
     fixes_sorted = [fixes[i] for i in order]
@@ -1136,19 +1134,38 @@ def plot_trajectory(
     for tid, (mx, my) in sorted(markers_xy.items()):
         ax.scatter([mx], [my], marker="*", s=320, c="#c53030", edgecolors="k", zorder=4)
         ax.annotate(
-            f"tag {tid}", (mx, my), textcoords="offset points",
-            xytext=(6, 6), fontsize=9, weight="bold",
+            f"tag {tid}",
+            (mx, my),
+            textcoords="offset points",
+            xytext=(6, 6),
+            fontsize=9,
+            weight="bold",
         )
     present = [s for s in SOURCES if any(f.source == s for f in fx)]
     legend = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=SOURCE_COLORS[s],
-               label=f"{s} won", markersize=8)
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=SOURCE_COLORS[s],
+            label=f"{s} won",
+            markersize=8,
+        )
         for s in (present or ["unknown"])
     ]
     if markers_xy:
         legend.append(
-            Line2D([0], [0], marker="*", color="w", markerfacecolor="#c53030",
-                   markeredgecolor="k", label="marker (map_T_tag)", markersize=14)
+            Line2D(
+                [0],
+                [0],
+                marker="*",
+                color="w",
+                markerfacecolor="#c53030",
+                markeredgecolor="k",
+                label="marker (map_T_tag)",
+                markersize=14,
+            )
         )
     ax.legend(handles=legend, loc="upper right", fontsize=9)
     ax.set_aspect("equal")
@@ -1364,7 +1381,12 @@ def run_offline_report(
     # accept_sources default (the replay fixes' own sources): held-out fixes ARE the
     # pipeline's published accepts, so no separate log-accept join is needed here.
     stats = compute_stats(
-        fixes, odom, census, n_rejects, mode="held_out", held_out_note=note,
+        fixes,
+        odom,
+        census,
+        n_rejects,
+        mode="held_out",
+        held_out_note=note,
         reject_sources=reject_sources,
     )
     markers_xy = {i: (x, y) for i, (x, y, _z) in markers_a.items()}
@@ -1584,8 +1606,21 @@ class RelocEval(Module):
         # have left the fix's own source ``unknown``. n_rejects = len(reject_sources).
         n_rejects = None if reject_sources is None else len(reject_sources)
         stats = compute_stats(
-            fixes, odom, census, n_rejects, mode="live", held_out_note=note,
-            accept_sources=[h.source for h in health], reject_sources=reject_sources,
+            fixes,
+            odom,
+            census,
+            n_rejects,
+            mode="live",
+            held_out_note=note,
+            accept_sources=[h.source for h in health],
+            reject_sources=reject_sources,
         )
-        write_report(stats, odom, fixes, markers_xy, Path(self.config.out_dir),
-                     self.config.tag, title="RelocEval live capture")
+        write_report(
+            stats,
+            odom,
+            fixes,
+            markers_xy,
+            Path(self.config.out_dir),
+            self.config.tag,
+            title="RelocEval live capture",
+        )

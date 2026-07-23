@@ -227,9 +227,7 @@ def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
     return None
 
 
-def cluster_by_time(
-    observations: list[TagObservation], gap_s: float
-) -> list[list[TagObservation]]:
+def cluster_by_time(observations: list[TagObservation], gap_s: float) -> list[list[TagObservation]]:
     """Group same-marker observations into visits. A new cluster begins whenever
     the time gap to the previous same-marker observation exceeds ``gap_s``."""
     by_marker: dict[int, list[TagObservation]] = defaultdict(list)
@@ -282,7 +280,9 @@ def _huber_weights(residuals: np.ndarray, delta: float) -> np.ndarray:
     """
     weights = np.ones_like(residuals)
     outside = residuals > delta
-    weights[outside] = delta / residuals[outside]  # Huber IRLS https://en.wikipedia.org/wiki/Huber_loss
+    weights[outside] = (
+        delta / residuals[outside]
+    )  # Huber IRLS https://en.wikipedia.org/wiki/Huber_loss
     return weights
 
 
@@ -326,7 +326,9 @@ def robust_cluster_pose(
         scatter = (
             weights_r[:, None, None] * np.einsum("ni,nj->nij", quaternions, quaternions)
         ).sum(0)
-        estimate_quaternion = np.linalg.eigh(scatter)[1][:, -1]  # Markley quaternion eigen-mean (2007) https://ntrs.nasa.gov/citations/20070017872
+        estimate_quaternion = np.linalg.eigh(scatter)[1][
+            :, -1
+        ]  # Markley quaternion eigen-mean (2007) https://ntrs.nasa.gov/citations/20070017872
         if estimate_quaternion @ reference < 0:
             estimate_quaternion = -estimate_quaternion
     aggregated = (*estimate_translation.tolist(), *estimate_quaternion.tolist())
@@ -364,9 +366,7 @@ def aggregate_visits(
         if len(cluster) < config.min_observations:
             rejected["thin"] += len(cluster)
             continue
-        pose = robust_cluster_pose(
-            cluster, config.rotation_weight_m_per_rad, config.huber_delta_m
-        )
+        pose = robust_cluster_pose(cluster, config.rotation_weight_m_per_rad, config.huber_delta_m)
         estimates.append(
             TagEstimate(
                 marker_id=cluster[0].marker_id,

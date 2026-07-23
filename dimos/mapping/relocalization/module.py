@@ -115,9 +115,9 @@ class Config(ModuleConfig):
     use_carving: bool = True
     # Log volume for the reloc path. False (operating default): ONE line per
     # accepted fix, plus the throttled skip/reject warnings. True (`--eval`): the
-    # full per-fire trace -- proposal census, judge finalists, every accept kwarg --
-    # which the eval parsers read. At the RANSAC prior's 2 s interval the trace is
-    # 3 lines and ~20 fields every 2 s for the life of the robot, so it is opt-in.
+    # full per-fire trace -- proposal census plus the fat accept line (every kwarg) --
+    # which the eval parsers read. At the RANSAC prior's 2 s interval that is two
+    # lines every 2 s for the life of the robot, so it is opt-in.
     verbose_eval_logging: bool = False
     # The prior pool: each entry an EQUAL, toggleable candidate proposer that owns
     # its own trigger (interval, burst edge). REQUIRED, no default -- a blueprint

@@ -69,7 +69,9 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
     camera_info: CameraInfo | None = None
-    ambiguity_ratio_min: float = Field(2.0, ge=1.0)  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
+    ambiguity_ratio_min: float = Field(
+        2.0, ge=1.0
+    )  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
     # Per-glimpse gates + aggregation knobs for the aggregated_detections stream. quality_window_s
     # paces this: at the 0.5 s default a tag must hold view min_observations * 0.5 s
     # (1.0 s at the default 3) before its first aggregated pose publishes -- the floor
@@ -147,7 +149,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = image.ts if image.ts else time.time()  # fallback: unstamped frame -> wallclock so TF lookup has a time_point
+        ts = (
+            image.ts if image.ts else time.time()
+        )  # fallback: unstamped frame -> wallclock so TF lookup has a time_point
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tf.get(
             self.config.world_frame,
