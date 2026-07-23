@@ -53,7 +53,7 @@ from typing import Any, Literal
 import numpy as np
 from reactivex.disposable import Disposable
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, STATE_DIR
 from dimos.control.benchmarking.gate import GATE_QUIT, GATE_SKIP
 from dimos.control.benchmarking.paths import (
     circle,
@@ -78,7 +78,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-DEFAULT_OUT_DIR = DIMOS_PROJECT_ROOT / "data" / "benchmark"
+DEFAULT_OUT_DIR = STATE_DIR / "benchmark"
 
 # Recording schema version — bump if the on-disk JSON shape changes.
 RECORDING_SCHEMA = 1

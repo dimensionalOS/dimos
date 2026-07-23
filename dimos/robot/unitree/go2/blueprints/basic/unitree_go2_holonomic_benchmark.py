@@ -29,8 +29,8 @@ ENTER to start each run (K=skip, Backspace=quit). Completion is detected from
 odom automatically::
 
     dimos run unitree-go2-holonomic-benchmark
-    # afterwards, score offline:
-    python -m dimos.control.benchmarking.score data/benchmark/go2
+    # afterwards, score offline (the benchmark logs the recordings dir on start):
+    python -m dimos.control.benchmarking.score <recordings-dir>
 """
 
 from __future__ import annotations
