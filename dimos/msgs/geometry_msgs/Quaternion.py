@@ -100,7 +100,7 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
         return [self.x, self.y, self.z, self.w]
 
     def to_numpy(self) -> np.ndarray:
-        """Numpy array representation of the quaternion (x, y, z, w)."""
+        """A :class:`numpy.ndarray` representation of the quaternion (x, y, z, w)."""
         return np.array([self.x, self.y, self.z, self.w])
 
     @property

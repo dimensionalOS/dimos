@@ -140,7 +140,7 @@ def extract_module_info(
                 return StreamInfo(name=parts[0], type_name=parts[1])
             return StreamInfo(name=stream_name, type_name=clean)
         # Instance stream object
-        return StreamInfo(name=stream.name, type_name=stream.type.__name__)
+        return StreamInfo(name=stream.name, type_name=stream.msg_type.__name__)
 
     input_infos = [stream_info(s, n) for n, s in inputs.items()]
     output_infos = [stream_info(s, n) for n, s in outputs.items()]

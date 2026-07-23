@@ -37,7 +37,7 @@ def rerun_init(
     **kwargs: Any,
 ) -> str | None:
     """
-    Use this inside modules for direct visualization (see docs/usage/visualization.md)
+    Use this inside modules for direct visualization (see docs-old/usage/visualization.md)
 
     This exists to consolidate visualization settings across modules
     Note only the rerun bridge module should have start_grpc=True

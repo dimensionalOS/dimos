@@ -80,7 +80,7 @@ SCAN_TEMPLATE="$REPO_ROOT/misc/auto-fixes/scan_template.md"
 FIX_TEMPLATE="$REPO_ROOT/misc/auto-fixes/fix_template.md"
 # The code-quality rules live in docs so they can be reused by other prompts; the scan prompt is
 # assembled by injecting them at the template's $$RULES$$ placeholder.
-RULES_FILE="$REPO_ROOT/docs/coding-agents/code-quality-rules.md"
+RULES_FILE="$REPO_ROOT/docs-old/coding-agents/code-quality-rules.md"
 [[ -f "$SCAN_TEMPLATE" ]] || { err "missing $SCAN_TEMPLATE"; exit 1; }
 [[ -f "$FIX_TEMPLATE" ]]  || { err "missing $FIX_TEMPLATE";  exit 1; }
 [[ -f "$RULES_FILE" ]]   || { err "missing $RULES_FILE";   exit 1; }

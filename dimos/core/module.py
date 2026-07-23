@@ -329,7 +329,7 @@ class ModuleBase(Configurable, CompositeResource):
 
     @classmethod
     def _io_class(cls, color: bool = True) -> str:
-        """Class-level io() - shows declared stream types from annotations."""
+        """Class-level ``io()`` - shows declared stream types from annotations."""
         hints = get_type_hints(cls)
 
         _yellow = colors.yellow if color else (lambda x: x)

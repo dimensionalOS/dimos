@@ -62,14 +62,14 @@ class SystemConfigurator(ABC):
     @abstractmethod
     def explanation(self) -> str | None:
         """
-        Return a human-readable summary of what would be done (sudo commands) if not configured.
+        Return a human-readable summary of what would be done (:program:`sudo` commands) if not configured.
         Return None when no changes are needed.
         """
         raise NotImplementedError
 
     @abstractmethod
     def fix(self) -> None:
-        """Apply fixes (may attempt sudo, catch, and apply fallback measures if needed)."""
+        """Apply fixes (may attempt :program:`sudo`, catch, and apply fallback measures if needed)."""
         raise NotImplementedError
 
 

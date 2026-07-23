@@ -13,7 +13,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 # Nix (multi-user), with the Cachix substituter so the cmu_nav binaries are
 # downloaded from CI's cache instead of compiled from source (see
-# docs/usage/native_modules.md).
+# docs-old/usage/native_modules.md).
 sh <(curl -L https://nixos.org/nix/install) --daemon --yes
 sudo tee -a /etc/nix/nix.conf >/dev/null <<'EOF'
 experimental-features = nix-command flakes

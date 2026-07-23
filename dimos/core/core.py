@@ -37,15 +37,14 @@ R = TypeVar("R")
 def rpc(fn: Callable[P, R]) -> Callable[P, R]:
     """Mark a method as an RPC body callable across modules.
 
-    Sync methods are tagged in place. Async methods get a sync dispatcher that
-    runs the coroutine on `self._loop`:
+    Sync methods are tagged in place. Asynchronous methods get a sync dispatcher
+    that runs it on `self._loop`:
 
-      * Caller is on self._loop (another async @rpc, a handle_*, or a
-        process_observable callback): returns the coroutine so the caller can
-        `await` it normally.
-      * Caller is on any other thread (RPC dispatcher, sync test, sync @rpc on
-        the same module): schedules the coroutine onto self._loop and blocks
-        until done.
+      * Caller is on self._loop (another asynchronous ``@rpc``, a handle_*, or a
+        process_observable callback): returns it so the caller can `await` it
+        normally.
+      * Caller is on any other thread (RPC dispatcher, sync test, sync ``@rpc``
+        on the same module): schedules it onto self._loop and blocks until done.
     """
     if not inspect.iscoroutinefunction(fn):
         fn.__rpc__ = True  # type: ignore[attr-defined]

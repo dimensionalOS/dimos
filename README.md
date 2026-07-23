@@ -39,7 +39,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="docs/capabilities/navigation/index.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
+      <a href="docs-old/capabilities/navigation/index.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
     </td>
     <td align="center" width="50%">
       <img src="assets/readme/perception.png" alt="Perception" width="100%">
@@ -47,7 +47,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/navigation/index.md">Navigation and Mapping</a></h3>
+      <h3><a href="docs-old/capabilities/navigation/index.md">Navigation and Mapping</a></h3>
       SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
@@ -57,7 +57,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   </tr>
   <tr>
     <td align="center" width="50%">
-      <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
+      <a href="docs-old/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
     </td>
     <td align="center" width="50%">
       <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%">
@@ -65,7 +65,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/agents/readme.md">Agentive Control, MCP</a></h3>
+      <h3><a href="docs-old/capabilities/agents/readme.md">Agentive Control, MCP</a></h3>
       "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
     </td>
     <td align="center" width="50%">
@@ -104,15 +104,15 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
   <tr>
     <td align="center" width="20%">
-      🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
+      🟩 <a href="docs-old/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
       🟥 <a href="dimos/robot/unitree/b1">Unitree B1</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
+      🟨 <a href="docs-old/platforms/humanoid/g1/index.md">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/capabilities/manipulation/readme.md">Xarm</a><br>
-      🟨 <a href="docs/capabilities/manipulation/readme.md">AgileX Piper</a><br>
+      🟨 <a href="docs-old/capabilities/manipulation/readme.md">Xarm</a><br>
+      🟨 <a href="docs-old/capabilities/manipulation/readme.md">AgileX Piper</a><br>
     </td>
     <td align="center" width="20%">
       🟧 <a href="dimos/robot/drone/README.md">MAVLink</a><br>
@@ -146,11 +146,11 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 To set up your system dependencies, follow one of these guides:
 
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟩 [NixOS / General Linux](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
+- 🟩 [Ubuntu 22.04 / 24.04](docs-old/installation/ubuntu.md)
+- 🟩 [NixOS / General Linux](docs-old/installation/nix.md)
+- 🟧 [macOS](docs-old/installation/osx.md)
 
-> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
+> Full system requirements, tested configs, and dependency tiers: [docs-old/requirements.md](docs-old/requirements.md)
 
 ## Python Install
 
@@ -197,7 +197,7 @@ dimos run unitree-go2
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
 
-> Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
+> Full blueprint docs: [docs-old/usage/blueprints.md](docs-old/usage/blueprints.md)
 
 # Agent CLI and MCP
 
@@ -213,7 +213,7 @@ dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
 dimos stop                                # Shut down
 ```
 
-> Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
+> Full CLI reference: [docs-old/usage/cli.md](docs-old/usage/cli.md)
 
 
 # Usage
@@ -292,13 +292,13 @@ if __name__ == "__main__":
 
 ## Library API
 
-- [Modules](docs/usage/modules.md)
-- [LCM](docs/usage/lcm.md)
-- [Blueprints](docs/usage/blueprints.md)
-- [Transports](docs/usage/transports/index.md) — LCM, SHM, DDS, ROS 2
-- [Data Streams](docs/usage/data_streams/README.md)
-- [Configuration](docs/usage/configuration.md)
-- [Visualization](docs/usage/visualization.md)
+- [Modules](docs-old/usage/modules.md)
+- [LCM](docs-old/usage/lcm.md)
+- [Blueprints](docs-old/usage/blueprints.md)
+- [Transports](docs-old/usage/transports/index.md) — LCM, SHM, DDS, ROS 2
+- [Data Streams](docs-old/usage/data_streams/README.md)
+- [Configuration](docs-old/usage/configuration.md)
+- [Visualization](docs-old/usage/visualization.md)
 
 ## Demos
 
@@ -314,7 +314,7 @@ git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 # Run the default test suite (uv run syncs deps on demand; --all-groups
-# only needed for self-hosted tests / mypy — see docs/development/testing.md)
+# only needed for self-hosted tests / mypy — see docs-old/development/testing.md)
 uv run pytest --numprocesses=auto dimos
 ```
 

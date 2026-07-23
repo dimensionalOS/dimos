@@ -242,7 +242,7 @@ class Transform(Timestamped):
         the rotation and translation of this transform.
 
         Returns:
-            np.ndarray: A 4x4 homogeneous transformation matrix
+            A 4x4 homogeneous transformation matrix
         """
         import numpy as np
 
@@ -313,7 +313,7 @@ class Transform(Timestamped):
 
         Args:
             frameless: omit ``parent_frame``/``child_frame``. By default the
-                transform carries its frame IDs (resolved via rerun's tf-graph);
+                transform carries its frame IDs (resolved via rerun's transform graph);
                 set this when positioning by entity-path hierarchy instead, where
                 the named frames would not compose.
         """

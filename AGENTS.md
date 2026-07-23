@@ -130,7 +130,7 @@ dimos/
 ├── visualization/rerun/     # Rerun bridge
 ├── msgs/                    # Message types (geometry_msgs, sensor_msgs, nav_msgs)
 └── utils/                   # Logging, data loading, CLI tools
-docs/
+docs-old/
 ├── usage/modules.md         # ← Module system deep dive
 ├── usage/blueprints.md      # Blueprint composition guide
 ├── usage/configuration.md   # GlobalConfig + Configurable pattern
@@ -143,7 +143,7 @@ docs/
 
 ## For Coding Agents
 
-If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs-old/coding-agents/index.md`
 
 ---
 
@@ -345,7 +345,7 @@ uv run pytest dimos/core/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `self_hosted` and `mujoco` markers, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted` and `mujoco` markers, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs-old/development/testing.md`.
 
 ---
 
@@ -387,11 +387,11 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 
 ## Further Reading
 
-- Module system: `docs/usage/modules.md`
-- Blueprints: `docs/usage/blueprints.md`
-- Visualization: `docs/usage/visualization.md`
-- Configuration: `docs/usage/configuration.md`
-- Testing: `docs/development/testing.md`
-- CLI / dimos run: `docs/development/dimos_run.md`
-- LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/coding-agents/`
+- Module system: `docs-old/usage/modules.md`
+- Blueprints: `docs-old/usage/blueprints.md`
+- Visualization: `docs-old/usage/visualization.md`
+- Configuration: `docs-old/usage/configuration.md`
+- Testing: `docs-old/development/testing.md`
+- CLI / dimos run: `docs-old/development/dimos_run.md`
+- LFS data: `docs-old/development/large_file_management.md`
+- Agent system: `docs-old/coding-agents/`

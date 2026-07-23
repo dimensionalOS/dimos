@@ -9,9 +9,9 @@ Use this skill before adding, changing, or reviewing Python unit tests. The goal
 
 Consult these only when the branch needs more context:
 
-- `docs/coding-agents/testing.md`
-- `docs/coding-agents/code-quality-rules.md`
-- `docs/development/testing.md`
+- `docs-old/coding-agents/testing.md`
+- `docs-old/coding-agents/code-quality-rules.md`
+- `docs-old/development/testing.md`
 - `misc/auto-fixes/fix_template.md`
 
 ## Steps

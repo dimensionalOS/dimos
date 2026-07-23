@@ -117,14 +117,14 @@ class ModuleCoordinator(Resource):
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
 
     def start_rpc_service(self) -> None:
-        """Expose the coordinator's API as @rpc methods over LCM."""
+        """Expose the coordinator's API as :func:`@rpc <dimos.core.core.rpc>` methods over LCM."""
         if self._coordinator_rpc is not None:
             return
         self._coordinator_rpc = CoordinatorRPC.serve(self)
 
     @property
     def rpcs(self) -> dict[str, Callable[..., Any]]:
-        """Methods exposed via the Coordinator @rpc service."""
+        """Methods exposed via the Coordinator :func:`@rpc <dimos.core.core.rpc>` service."""
         return {
             "ping": self.ping,
             "list_modules": self.list_modules,
@@ -304,7 +304,7 @@ class ModuleCoordinator(Resource):
             for conn in bp.streams:
                 remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
                 if isinstance(remapped_name, str):
-                    streams[remapped_name, conn.type].append((bp.name, conn.name))
+                    streams[remapped_name, conn.msg_type].append((bp.name, conn.name))
 
         for remapped_name, stream_type in streams.keys():
             key = (remapped_name, stream_type)
@@ -652,7 +652,7 @@ def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
         for conn in bp.streams:
             remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
             if isinstance(remapped_name, str):
-                result.add((remapped_name, conn.type))
+                result.add((remapped_name, conn.msg_type))
     return result
 
 
@@ -728,8 +728,8 @@ def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
     for bp in blueprint.active_blueprints:
         for conn in bp.streams:
             stream_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
-            name_to_types[stream_name].add(conn.type)
-            name_to_modules[stream_name].append((bp.module, conn.type))
+            name_to_types[stream_name].add(conn.msg_type)
+            name_to_modules[stream_name].append((bp.module, conn.msg_type))
 
     conflicts: dict[Any, dict[type, list[type]]] = {}
     for conn_name, types in name_to_types.items():
@@ -774,10 +774,10 @@ def _verify_no_conflicts_with_existing(
             remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
             if isinstance(remapped_name, str) and remapped_name in existing_names:
                 for existing_type in existing_names[remapped_name]:
-                    if existing_type != conn.type:
+                    if existing_type != conn.msg_type:
                         raise ValueError(
                             f"Stream '{remapped_name}' in {bp.module.__name__} has type "
-                            f"{conn.type.__module__}.{conn.type.__name__} but an existing "
+                            f"{conn.msg_type.__module__}.{conn.msg_type.__name__} but an existing "
                             f"transport uses {existing_type.__module__}.{existing_type.__name__}"
                         )
 

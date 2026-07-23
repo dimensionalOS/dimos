@@ -210,7 +210,7 @@ added with ordinary `git add`. Publish large data through the LFS bin workflow
 documented in:
 
 ```text
-docs/development/large_file_management.md
+docs-old/development/large_file_management.md
 ```
 
 Code and docs changes go through normal git. Data archives should be updated

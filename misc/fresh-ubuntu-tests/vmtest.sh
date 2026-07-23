@@ -4,7 +4,7 @@
 # unmodified Ubuntu Desktop 24.04 VM (VirtualBox).
 #
 # Why: CI tests dimos from a maintainer's angle (pre-built images, cached deps).
-# It does not verify that a brand-new user following docs/installation/ubuntu.md
+# It does not verify that a brand-new user following docs-old/installation/ubuntu.md
 # on a clean machine can actually install and run dimos. This tool does, by
 # replaying that flow (the suite/ next to this script) in a fresh VM.
 #

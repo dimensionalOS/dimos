@@ -105,10 +105,10 @@ repos:
         name: Doclinks
         always_run: true
         pass_filenames: false
-        entry: python -m dimos.utils.docs.doclinks docs/
+        entry: python -m dimos.utils.docs.doclinks docs-old/
         language: system
-        files: ^docs/.*\.md$
-        exclude: ^docs/node_modules/
+        files: ^docs-old/.*\.md$
+        exclude: ^docs-old/node_modules/
 
       - id: filter-commit-message
         name: Filter generated signatures from commit message

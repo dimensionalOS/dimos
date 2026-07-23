@@ -14,7 +14,7 @@
 
 """Transport-agnostic pubsub spy: topic discovery, rates, sizes, liveness.
 
-Docs: docs/usage/transports/index.md ("Inspecting traffic").
+Docs: docs-old/usage/transports/index.md ("Inspecting traffic").
 
 HARD CONSTRAINT: the spy never decodes message payloads. Sources tap the
 raw-bytes pubsub layer (LCMPubSubBase, ZenohPubSubBase — beneath the encoder

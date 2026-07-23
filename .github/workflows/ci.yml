@@ -181,7 +181,7 @@ jobs:
           # cache then. restore-keys still seeds the new cache with the
           # previously cached models, so only genuinely new models are
           # downloaded.
-          key: hf-models-${{ hashFiles('docs/**/*.md') }}
+          key: hf-models-${{ hashFiles('docs-old/**/*.md') }}
           restore-keys: |
             hf-models-
       - name: Prefetch Hugging Face models
@@ -204,7 +204,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/huggingface
-          key: hf-models-${{ hashFiles('docs/**/*.md') }}
+          key: hf-models-${{ hashFiles('docs-old/**/*.md') }}
       - name: Run Hugging Face offline on exact cache hit
         # Zero huggingface.co requests when every model is already cached:
         # immune to rate limiting.
@@ -224,23 +224,44 @@ jobs:
         with:
           lfs: false
           sparse-checkout: |
-            docs
+            docs-old
 
       - name: Pull docs LFS assets only
-        run: git lfs pull --include="docs/assets/**" --exclude=""
+        run: git lfs pull --include="docs-old/assets/**" --exclude=""
 
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
       - name: Install docs dependencies
-        working-directory: docs
+        working-directory: docs-old
         run: npm ci
 
       # Temporarily disabled — Mintlify validation blocking CI
       # - name: Validate Mintlify docs
-      #   working-directory: docs
+      #   working-directory: docs-old
       #   run: npm run validate
+
+  docs:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Install enchant (pyenchant needs the native C library)
+        run: sudo apt-get update && sudo apt-get install -y libenchant-2-2
+      - name: Install docs dependencies
+        run: uv sync --only-group docs --frozen
+      - name: Build HTML docs (strict)
+        run: uv run make -C docs html
+      - name: Check docs spelling
+        run: uv run make -C docs spelling
 
   web:
     timeout-minutes: 15
@@ -781,6 +802,7 @@ jobs:
     - rust
     - md-babel
     - docs-validate
+    - docs
     - web
     - tests
     - cmu-nav-natives
