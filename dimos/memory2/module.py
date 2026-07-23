@@ -19,11 +19,12 @@ import enum
 import inspect
 import os
 from pathlib import Path
-import sqlite3
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
+from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -44,12 +45,12 @@ from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex.abc import DisposableBase
-
     from dimos.core.stream import In, Out
     from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
+
+_TF_DRAIN_LOG_INTERVAL_SECONDS: float = 5.0
 
 T = TypeVar("T")
 TIn = TypeVar("TIn")
@@ -182,16 +183,72 @@ class MemoryModule(Module):
     config: MemoryModuleConfig
     _store: SqliteStore | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        self._memory_stop_lock = threading.RLock()
+        self._memory_stopping = False
+        self._memory_stopped = threading.Event()
+        super().__init__(**kwargs)
+
+    def __getstate__(self) -> dict[str, Any]:
+        # ModuleBase's pickle hook is intentionally untyped.
+        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
+        state.pop("_memory_stop_lock", None)
+        state.pop("_memory_stopping", None)
+        state.pop("_memory_stopped", None)
+        state.pop("_store", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self._memory_stop_lock = threading.RLock()
+        self._memory_stopping = self._module_closed
+        self._memory_stopped = threading.Event()
+        if self._module_closed:
+            self._memory_stopped.set()
+        self._store = None
+
+    def _open_store(self, path: str | Path) -> SqliteStore:
+        with self._memory_stop_lock:
+            if self._memory_stopping:
+                raise RuntimeError(f"{type(self).__name__} is stopping or stopped")
+            if self._store is not None:
+                raise RuntimeError("Memory store is already open")
+
+            store = SqliteStore(path=str(path))
+            store.start()
+            self._store = store
+            return store
+
     @property
     def store(self) -> SqliteStore:
-        if self._store is not None:
-            return self._store
+        with self._memory_stop_lock:
+            if self._memory_stopping:
+                raise RuntimeError(f"{type(self).__name__} is stopping or stopped")
+            if self._store is not None:
+                return self._store
 
-        self._store = self.register_disposable(
-            SqliteStore(path=str(self.config.db_path)),
-        )
-        self._store.start()
-        return self._store
+            return self._open_store(self.config.db_path)
+
+    def _before_memory_stop(self) -> None:
+        pass
+
+    @rpc
+    def stop(self) -> None:
+        # Keep concurrent RPC and worker shutdown calls in the same critical
+        # section so neither can close the store while the other is disposing
+        # subscriptions.
+        with self._memory_stop_lock:
+            if self._memory_stopped.is_set():
+                return
+            self._memory_stopping = True
+            self._before_memory_stop()
+            super().stop()
+
+            store = self._store
+            if store is not None:
+                store.stop()
+                self._store = None
+            self._memory_stopped.set()
 
 
 class SemanticSearchConfig(MemoryModuleConfig):
@@ -318,6 +375,22 @@ class Recorder(MemoryModule):
     config: RecorderConfig
 
     _pose_setters: dict[str, Any] = {}
+    _tf_cleanup: DisposableBase | None = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = super().__getstate__()
+        state.pop("_tf_cleanup", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self._tf_cleanup = None
+
+    def _before_memory_stop(self) -> None:
+        cleanup, self._tf_cleanup = self._tf_cleanup, None
+        if cleanup is not None:
+            cleanup.dispose()
+        super()._before_memory_stop()
 
     @rpc
     def start(self) -> None:
@@ -433,19 +506,82 @@ class Recorder(MemoryModule):
 
     def _record_tf(self) -> None:
         """Record the live tf stream under "tf" (no-op without a pubsub tf)."""
-        topic = getattr(self.tf.config, "topic", None)
-        pubsub = getattr(self.tf, "pubsub", None)
+        with self._memory_stop_lock:
+            if self._memory_stopping:
+                raise RuntimeError(f"{type(self).__name__} is stopping or stopped")
+            tf = self.tf
+            topic = getattr(tf.config, "topic", None)
+            pubsub = getattr(tf, "pubsub", None)
         if not topic or pubsub is None:
             logger.warning("Recorder: no pubsub tf available — not recording tf")
             return
-        tf_stream = self.store.stream("tf", TFMessage)
+        callback_state = threading.Condition()
+        accepting_callbacks = True
+        active_callbacks = 0
+        unsubscribe: Callable[[], None] | None = None
+        tf_stream: Stream[TFMessage] | None = None
 
         def on_tf(msg: TFMessage, _topic: Any) -> None:
+            nonlocal active_callbacks
+            with callback_state:
+                if not accepting_callbacks:
+                    return
+                active_callbacks += 1
             try:
+                assert tf_stream is not None
                 for transform in msg.transforms:
                     tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
-            except sqlite3.ProgrammingError:
-                # A late LCM callback raced teardown and hit the closed store.
-                pass
+            finally:
+                with callback_state:
+                    active_callbacks -= 1
+                    if active_callbacks == 0:
+                        callback_state.notify_all()
 
-        self.register_disposable(Disposable(pubsub.subscribe(topic, on_tf)))
+        def unsubscribe_and_drain() -> None:
+            nonlocal accepting_callbacks
+            with callback_state:
+                accepting_callbacks = False
+                unsubscribe_now = unsubscribe
+                active_at_unsubscribe = active_callbacks
+            logger.info(
+                "Stopping tf recording",
+                active_callbacks=active_at_unsubscribe,
+                unsubscribe_installed=unsubscribe_now is not None,
+            )
+            try:
+                if unsubscribe_now is not None:
+                    unsubscribe_now()
+            finally:
+                wait_started = time.monotonic()
+                while True:
+                    with callback_state:
+                        if callback_state.wait_for(
+                            lambda: active_callbacks == 0,
+                            timeout=_TF_DRAIN_LOG_INTERVAL_SECONDS,
+                        ):
+                            break
+                        remaining_callbacks = active_callbacks
+                    logger.warning(
+                        "Still waiting for tf callbacks",
+                        active_callbacks=remaining_callbacks,
+                        elapsed_seconds=time.monotonic() - wait_started,
+                    )
+
+        cleanup = Disposable(unsubscribe_and_drain)
+        with self._memory_stop_lock:
+            if self._memory_stopping:
+                cleanup.dispose()
+                raise RuntimeError(f"{type(self).__name__} is stopping or stopped")
+            self._tf_cleanup = cleanup
+            self.register_disposable(cleanup)
+            tf_stream = self.store.stream("tf", TFMessage)
+
+        returned_unsubscribe = pubsub.subscribe(topic, on_tf)
+        with callback_state:
+            if accepting_callbacks:
+                unsubscribe = returned_unsubscribe
+                unsubscribe_now = None
+            else:
+                unsubscribe_now = returned_unsubscribe
+        if unsubscribe_now is not None:
+            unsubscribe_now()
