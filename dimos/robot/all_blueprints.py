@@ -18,6 +18,10 @@
 all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
+    "booster-k1-basic": "dimos.robot.booster.k1.blueprints.basic.booster_k1_basic:booster_k1_basic",
+    "booster-k1-coordinator": "dimos.robot.booster.k1.blueprints.basic.booster_k1_coordinator:booster_k1_coordinator",
+    "booster-k1-coordinator-keyboard-teleop": "dimos.robot.booster.k1.blueprints.basic.booster_k1_coordinator_keyboard_teleop:booster_k1_coordinator_keyboard_teleop",
+    "booster-k1-keyboard-teleop": "dimos.robot.booster.k1.blueprints.basic.booster_k1_keyboard_teleop:booster_k1_keyboard_teleop",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
@@ -224,6 +228,7 @@ all_modules = {
     "hosted-twist-teleop-module": "dimos.teleop.quest_hosted.hosted_extensions.HostedTwistTeleopModule",
     "joint-trajectory-controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller.JointTrajectoryController",
     "joystick-module": "dimos.robot.unitree.b1.joystick_module.JoystickModule",
+    "k1-connection": "dimos.robot.booster.k1.connection.K1Connection",
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "local-planner": "dimos.navigation.cmu_nav.modules.local_planner.local_planner.LocalPlanner",
