@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Pre-build every nix-backed native module ready for tests.
+
+Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
+`build_command` runs nix, then runs that command. CI invokes this after
+installing Nix + the Cachix substituter so warm-cache builds are near-instant
+and any freshly-built store paths get pushed to the cache.
+
+Discovery imports each candidate module and reads the config defaults off an
+instantiated `NativeModuleConfig` — robust against any refactor of how those
+fields are declared (literal vs computed vs factory), at the cost of needing
+dimos importable (run via `uv run`).
+
+A module is rebuilt only when a source file in its build directory changed
+since the last successful build (tracked with a per-module stamp file); an
+unchanged, already-built module is skipped.
+"""
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import importlib
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+import dimos
+from dimos.core.native_module import NativeModuleConfig
+
+PACKAGE_DIR = Path(dimos.__path__[0])
+REPO_ROOT = PACKAGE_DIR.parent
+STAMP_NAME = ".native-build.stamp"
+IGNORED_DIRS = {"result", "build", "target", "__pycache__", ".git", "node_modules"}
+# Captured at import time; forked workers inherit it
+_T0 = time.monotonic()
+
+
+def _log(message: str) -> None:
+    print(f"[{time.monotonic() - _T0:6.1f}s] {message}", flush=True)
+
+
+# Pre-filter source files for a NativeModuleConfig subclass before importing
+# them. Modules that don't subclass NativeModuleConfig (e.g. nav_record) may
+# pull in heavy deps like torch at top-level import, and we don't want to
+# require those just to discover.
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
+_SKIP_PREFIXES = ("test_", "demo_", "conftest")
+
+
+def _module_name(source: Path) -> str:
+    relative = source.relative_to(REPO_ROOT).with_suffix("")
+    return ".".join(relative.parts)
+
+
+def discover() -> tuple[type[NativeModuleConfig], ...]:
+    found: dict[str, type[NativeModuleConfig]] = {}
+    for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        for filename in sorted(filenames):
+            if not filename.endswith(".py") or filename.startswith(_SKIP_PREFIXES):
+                continue
+            source = Path(dirpath) / filename
+            if not _HAS_NATIVE_CONFIG.search(source.read_text()):
+                continue
+            module = importlib.import_module(_module_name(source))
+            for attribute in vars(module).values():
+                if (
+                    isinstance(attribute, type)
+                    and attribute is not NativeModuleConfig
+                    and issubclass(attribute, NativeModuleConfig)
+                    and attribute.__module__ == module.__name__
+                ):
+                    build_command = attribute.model_fields["build_command"].default
+                    if build_command is not None and "nix" in build_command:
+                        found[f"{attribute.__module__}.{attribute.__name__}"] = attribute
+    return tuple(found.values())
+
+
+def _newest_source_mtime(build_dir: Path, stamp: Path) -> float:
+    newest = 0.0
+    for dirpath, dirnames, filenames in os.walk(build_dir):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        for filename in filenames:
+            candidate = Path(dirpath) / filename
+            if candidate == stamp:
+                continue
+            newest = max(newest, candidate.lstat().st_mtime)
+    return newest
+
+
+def build_one(config_class: type[NativeModuleConfig]) -> str:
+    name = config_class.__name__
+    config = config_class()
+    assert config.build_command is not None
+    module = importlib.import_module(config_class.__module__)
+    base_dir = Path(module.__file__).resolve().parent  # type: ignore[arg-type]
+    build_dir = Path(config.cwd) if config.cwd is not None else base_dir
+    if not build_dir.is_absolute():
+        build_dir = base_dir / build_dir
+    executable = Path(config.executable)
+    if not executable.is_absolute():
+        executable = build_dir / executable
+    stamp = build_dir / STAMP_NAME
+    if (
+        executable.exists()
+        and stamp.exists()
+        and stamp.stat().st_mtime >= _newest_source_mtime(build_dir, stamp)
+    ):
+        return f"OK:    {name} up to date at {executable}"
+    _log(f"START: {name} in {build_dir}: {config.build_command}")
+    proc = subprocess.run(
+        config.build_command,
+        shell=True,
+        cwd=str(build_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    body = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+    stamp.touch()
+    return f"DONE:  {name}\n{body}".rstrip()
+
+
+def main() -> None:
+    configs = discover()
+    failed = 0
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    _log(f"Building {len(configs)} module(s) with up to {workers} workers")
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(build_one, config): config for config in configs}
+        for future in as_completed(futures):
+            try:
+                _log(future.result())
+            except Exception as error:
+                _log(f"FAIL:  {futures[future].__name__}: {error}")
+                failed += 1
+    if failed:
+        sys.exit(f"{failed} build(s) failed")
+
+
+if __name__ == "__main__":
+    main()
