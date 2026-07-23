@@ -41,6 +41,7 @@ both. One launchable::
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
 import json
 import math
@@ -552,8 +553,6 @@ class Benchmarker(Module):
 def main() -> None:
     """Run the benchmark standalone (blueprint-free). Mostly for headless/auto
     use; the operator-paced flow is launched via the benchmark blueprint."""
-    import argparse
-
     ap = argparse.ArgumentParser(description="Path-following benchmark (pub/sub)")
     ap.add_argument("--robot", default="go2")
     ap.add_argument("--battery", choices=sorted(BATTERIES), default="hardware")
