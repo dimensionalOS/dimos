@@ -17,6 +17,10 @@
 The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
 ``Detection3DArray`` per processed frame for LCM consumers.
+
+A second ``Detection3DArray`` output, ``fused_detections``, carries the gated and
+robustly-fused pose of each tag visit -- one message per (marker, visit), with a
+covariance and a score attached. See ``FuseTagBursts``.
 """
 
 from __future__ import annotations
@@ -38,8 +42,13 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
+from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
-from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
+from dimos.perception.fiducial.marker_transformer import (
+    DetectMarkers,
+    FuseTagBursts,
+    MarkersPerFrame,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -61,6 +70,11 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
     camera_info: CameraInfo | None = None
     ambiguity_ratio_min: float = Field(2.0, ge=1.0)  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
+    # Per-glimpse gates + fusion knobs for the fused_detections stream. quality_window_s
+    # paces this: at the 0.5 s default a tag must hold view min_observations * 0.5 s
+    # (1.0 s at the default 3) before its first fused pose publishes -- the floor
+    # latency of a fiducial fix. Retune here, not in the consumer.
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
@@ -70,10 +84,18 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     color_image: In[Image]
     detections: Out[Detection3DArray]
+    # One gated, robustly-fused pose per (marker, visit) -- NOT a per-frame mirror of
+    # ``detections``. Same message type so a consumer needs no new decoder.
+    fused_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._warned_distortion_model = False
+        self._fuse = FuseTagBursts(
+            self.fused_detections.publish,
+            self.config.aggregation,
+            self.config.world_frame,
+        )
 
     def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
         result: Stream[Any] = stream.transform(
@@ -101,7 +123,12 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                 )
             ),
         )
-        return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
+        # tap yields every observation unchanged, so `detections` below is byte-
+        # identical and OpenCV still runs once per frame -- a second .observable() on
+        # a derived stream would open a second subscription and re-detect everything.
+        return markers.tap(self._fuse).transform(
+            MarkersPerFrame(frame_id=self.config.world_frame)
+        )
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
@@ -155,10 +182,11 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     def start(self) -> None:
         Module.start(self)
 
-        if len(self.inputs) != 1 or len(self.outputs) != 1:
+        if len(self.inputs) != 1 or len(self.outputs) != 2:
             raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
-                f"found {len(self.inputs)} In and {len(self.outputs)} Out"
+                f"{self.__class__.__name__} must have exactly one In and two Out ports "
+                f"(detections + fused_detections), found "
+                f"{len(self.inputs)} In and {len(self.outputs)} Out"
             )
 
         store = self.register_disposable(NullStore())
@@ -172,6 +200,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             lambda image: self._append_image_with_pose(stream, image)
         )
         self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
+        # Only `detections` is wired here: `fused_detections` publishes from the tap
+        # inside pipeline(), which fires per burst rather than per frame.
         self.register_disposable(
             stream_to_port(self._apply_pipeline(stream.live()), self.detections)
         )

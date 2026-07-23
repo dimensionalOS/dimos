@@ -199,10 +199,10 @@ def ambiguity_gated_pose(
     # error > 1e-12 px guards the ratio div-by-zero when the best pose fits the corners exactly
     if len(scored) > 1 and error > 1e-12 and scored[1][0] / error < ambiguity_ratio_min:
         return None  # the mirror explains the pixels almost as well: ambiguous view
-    cam_optical_T_marker = np.eye(4)
-    cam_optical_T_marker[:3, :3] = cv2.Rodrigues(rvec)[0]
-    cam_optical_T_marker[:3, 3] = tvec.reshape(3)
-    return cam_optical_T_marker, float(error)
+    optical_T_marker = np.eye(4)
+    optical_T_marker[:3, :3] = cv2.Rodrigues(rvec)[0]
+    optical_T_marker[:3, 3] = tvec.reshape(3)
+    return optical_T_marker, float(error)
 
 
 def rvec_tvec_to_transform(

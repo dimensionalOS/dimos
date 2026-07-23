@@ -148,7 +148,7 @@ def test_marker_tf_does_not_recompute_marker_pose() -> None:
     ts = 800_000.0
     mod = MarkerTfModule()
     try:
-        with patch("dimos.perception.fiducial.marker_pose.estimate_marker_pose") as mock_estimate:
+        with patch("dimos.perception.fiducial.marker_detect.ambiguity_gated_pose") as mock_estimate:
             mod._process_detections(_detection_array(ts=ts, marker_id="4"))
 
         mock_estimate.assert_not_called()

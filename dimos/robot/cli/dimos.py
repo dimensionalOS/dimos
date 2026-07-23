@@ -316,7 +316,12 @@ def run(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     eval_reloc: bool = typer.Option(
-        False, "--eval", help="Attach the RelocEval collector (per-source reloc table + trajectory PNG)"
+        False,
+        "--eval",
+        help=(
+            "Attach the RelocEval collector (per-source reloc table, trajectory PNG, "
+            "accepted-fixes CSV) and turn the relocalization module's verbose trace on"
+        ),
     ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
@@ -378,12 +383,25 @@ def run(
         # The VERIFIED eval path needs no CLI wiring at all: run the held-out matrix
         # via the offline held-out driver, which shells out to the shipped blueprint
         # and calls the same RelocEval report offline.
+        from dimos.core.coordination.blueprints import config_key
         from dimos.mapping.relocalization.eval_module import RelocEval
+        from dimos.mapping.relocalization.module import RelocalizationModule
 
         n_workers = int(blueprint.global_config_overrides.get("n_workers", 12))
         blueprint = autoconnect(blueprint, RelocEval.blueprint()).global_config(
             n_workers=n_workers + 1
         )
+        # RelocEval joins each accept to its winning prior through the module's VERBOSE
+        # trace: published_t_m is the join key, and the quiet operating line carries no
+        # position, so without this every fix in the table would read "unknown". Guarded
+        # on the module being present because blueprint.config() is extra="forbid" -- an
+        # unconditional override would hard-fail --eval on a stack with no relocalization.
+        # An explicit -o still wins; config_key(b.name) so a namespaced instance resolves.
+        for b in blueprint.blueprints:
+            if b.module is RelocalizationModule:
+                key = f"{config_key(b.name)}.verbose_eval_logging"
+                if not any(arg.startswith(f"{key}=") for arg in blueprint_args):
+                    blueprint_args = [*blueprint_args, f"{key}=true"]
 
     if show_help:
         print("Blueprint arguments:")

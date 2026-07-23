@@ -45,7 +45,7 @@ import yaml
 from dimos.core.transport import LCMTransport
 from dimos.mapping.loop_closure.eval import corrected_marker_transforms
 from dimos.mapping.loop_closure.pgo import PGO
-from dimos.mapping.relocalization.module import Config as RelocConfig
+from dimos.mapping.relocalization.priors import FiducialPriorConfig, RansacPriorConfig
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -69,11 +69,13 @@ OBSERVABLE_DEADLINE_S = 150.0
 SHUTDOWN_DEADLINE_S = 30.0  # DimosCliCall's clean-shutdown budget
 BUILD_TIMEOUT_S = 300.0  # premap CLI build; ~10 s measured, bounded hard
 
-# Accept line only — rejects log as "relocalize rejected fitness=...". The
-# accept line puts an optional source= right after "relocalize accepted" (the
-# fiducial blueprint always tags one), so fitness is matched past an optional
-# source token.
-_ACCEPT_RE = re.compile(r"relocalize accepted(?: source=\S+)? fitness=([0-9.]+)")
+# Accept line only — rejects log as "relocalize rejected fitness=...". This test
+# runs without --eval, so the module logs its QUIET accept (fitness, margin,
+# source, time_cost_s); with verbose_eval_logging it also carries n_pts and the
+# pose fields. Console renders structlog kwargs alphabetically, so which keys sit
+# between the event and fitness= depends on the mode — anchor on fitness= and scan
+# the rest of the line rather than assuming a field order.
+_ACCEPT_RE = re.compile(r"relocalize accepted[^\n]*?\bfitness=([0-9.]+)")
 
 
 def _cache_dir() -> Path:
@@ -269,10 +271,14 @@ test_unitree_go2_fiducial_relocalization_replay.py -m self_hosted
     # (b) every accepted fitness clears the module's own configured threshold.
     fitnesses = [float(m) for m in _ACCEPT_RE.findall(text)]
     assert fitnesses, "accept line vanished from the log after shutdown"
-    # priors is a required field now, so read the documented default off the field
-    # rather than constructing a bare Config (the blueprint leaves the threshold at
-    # its default).
-    assert min(fitnesses) >= RelocConfig.model_fields["fitness_threshold"].default
+    # The accept bar moved onto the prior entries and each prior states its own
+    # (both 0.6 today), each accept clearing it. This regex reads fitness only,
+    # not the source beside it, so assert the loosest bar in the preset:
+    # anything under it cleared no prior's gate at all. Read off the fields, not
+    # literals -- the blueprint leaves both at their defaults.
+    assert min(fitnesses) >= min(
+        RansacPriorConfig().fitness_threshold, FiducialPriorConfig().fitness_threshold
+    )
     # (c) the fix stream carries the world->map convention end to end.
     assert (fixes[0].frame_id, fixes[0].child_frame_id) == ("world", "map")
     # (d) nothing raised anywhere in the run, shutdown included.

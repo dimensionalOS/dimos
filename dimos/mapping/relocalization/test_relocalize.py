@@ -29,14 +29,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
+import time
 from typing import cast
 
-import cv2
 from dimos_lcm.vision_msgs.ObjectHypothesisWithPose import ObjectHypothesisWithPose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import ValidationError
 import pytest
+from reactivex import Subject
 from scipy.spatial.transform import Rotation
 import yaml
 
@@ -59,10 +60,10 @@ from dimos.mapping.relocalization.priors import (
 import dimos.mapping.relocalization.relocalize as relocalize_mod
 from dimos.mapping.relocalization.relocalize import (
     InsufficientWallEvidenceError,
+    JudgeReport,
     refine_candidates,
     relocalize,
 )
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -173,35 +174,6 @@ def test_judge_integrity_wall_fitness_picks_near_truth_over_decoys() -> None:
     np.testing.assert_allclose(T[:3, :3], T_true[:3, :3], atol=0.05)
 
 
-def test_floors_only_scene_raises_insufficient_wall_evidence() -> None:
-    """A floors-only scene (floor + ceiling, zero walls -> zero
-    horizontal-normal points) must refuse loudly. Regression for the old
-    silent fallback: _wall_subset used to hand back the FULL cloud below 100
-    wall points, so the "wall-only" rerank scored on floors -- rotation-blind,
-    a 180-deg flip fits as well as the truth -- and returned a confident
-    fitness anyway. Now refine_candidates raises InsufficientWallEvidenceError
-    (module.py catches -> logs + skips the frame) and never returns."""
-    rng = np.random.default_rng(21)
-    floor = _sample_plane(rng, 6.0, 4.0, 0.0, 2000)
-    ceiling = _sample_plane(rng, 6.0, 4.0, 2.5, 2000)
-    room_pts = np.concatenate([floor, ceiling], axis=0)
-    mask = (room_pts[:, 0] <= 3.2) & (room_pts[:, 1] <= 2.2)
-    T_true = _rigid(30.0, (1.0, 0.5, 0.0))
-    local_pts = _apply(np.linalg.inv(T_true), room_pts[mask].copy())
-
-    try:
-        _T, fitness, _idx = refine_candidates(_pcd(room_pts), _pcd(local_pts), [T_true.copy()])
-    except InsufficientWallEvidenceError as e:
-        msg = str(e)
-        assert "insufficient wall evidence" in msg
-        assert "submap walls=" in msg and "map walls=" in msg
-    else:
-        raise AssertionError(
-            f"expected InsufficientWallEvidenceError, got fitness={fitness:.3f} -- "
-            "the silent full-cloud fallback is back"
-        )
-
-
 def test_priors_plumbing_stub_candidate_wins_with_right_source() -> None:
     """A stub prior proposing a known-good candidate (RANSAC not in the priors
     list at all -- "disabled" is simply omitting it) -> relocalize_with_priors
@@ -215,6 +187,12 @@ def test_priors_plumbing_stub_candidate_wins_with_right_source() -> None:
             self, global_map: o3d.geometry.PointCloud, local_map: o3d.geometry.PointCloud
         ) -> list[Candidate]:
             return [Candidate(T=T_true.copy(), source=self.name)]
+
+        def is_due(self, now_s: float) -> bool:
+            return True
+
+        def on_fired(self, now_s: float) -> None:
+            """No trigger state to ack; this stub only exercises the judge path."""
 
     priors: list[RelocPrior] = [_StubPrior()]
     T, fitness, winning_source = relocalize_with_priors(global_map, local_map, priors)
@@ -384,25 +362,13 @@ def test_relocalize_parity_with_pre_refactor_baseline(monkeypatch) -> None:  # t
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior: multi-sighting Huber fusion + ambiguity gate + judge integrity
+# FiducialPrior: composition + age + judge integrity. Gating and fusion moved
+# UPSTREAM into the detector's FuseTagBursts (that is the only place corners_px,
+# the reprojection error and the camera transform still exist), so every
+# world_T_marker arriving here is one already-gated, already-fused pose and each
+# observe() call IS one completed burst. The gate/fusion tests live beside their
+# code now: perception/fiducial/test_marker_transformer.py.
 # ---------------------------------------------------------------------------
-
-
-def _rigid_noise(rng: np.random.Generator, deg_std: float, m_std: float) -> np.ndarray:
-    """A small random rigid perturbation: rotation ~deg_std, translation ~m_std."""
-    T = np.eye(4)
-    T[:3, :3] = Rotation.from_rotvec(rng.normal(0.0, np.radians(deg_std), 3)).as_matrix()
-    T[:3, 3] = rng.normal(0.0, m_std, 3)
-    return T
-
-
-def _frontal_far_corners(k: np.ndarray, marker_length_m: float) -> np.ndarray:
-    """Corners of a small tag viewed head-on at 2 m (weak perspective) with a bit
-    of pixel noise -- the mirror-ambiguous regime the gate must reject."""
-    h = marker_length_m / 2.0
-    obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], dtype=np.float32)
-    pts, _ = cv2.projectPoints(obj, np.zeros(3), np.array([0.0, 0.0, 2.0]), k, np.zeros((0, 1)))
-    return pts.reshape(4, 2) + np.random.default_rng(0).normal(0.0, 0.3, (4, 2))
 
 
 def test_fiducial_prior_unset_proposes_nothing() -> None:
@@ -410,84 +376,63 @@ def test_fiducial_prior_unset_proposes_nothing() -> None:
     assert FiducialPrior({}).propose(gm, lm) == []
 
 
-def test_fiducial_prior_fuses_sightings_into_one_robust_candidate() -> None:
-    """Eight noisy sightings of one mapped tag PLUS a gross mirror-flip outlier
-    fuse into ONE candidate whose map_T_world lands near the truth. The lever arm
-    (map_T_marker 5.4 m from origin) turns the 150 deg outlier into a ~14 m
-    single-frame fix, so a <0.25 m fused error is the Huber-medoid rejecting it."""
+def test_fiducial_prior_composes_map_T_world_from_one_fused_pose() -> None:
+    """ONE fused world_T_marker composes straight to this tag's candidate,
+    map_T_world = map_T_marker @ inv(world_T_marker_fused), exactly -- no second
+    glimpse to wait for and no fusion left to do, because the detector already did
+    it. Non-identity on both sides so a transposed or swapped compose cannot pass."""
     gm, lm, _ = _rect_room_scene(seed=14, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    rng = np.random.default_rng(14)
     map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
-    world_T_marker_true = _rigid(-40.0, (1.0, 0.5, 0.8))
-    truth = map_T_marker @ np.linalg.inv(world_T_marker_true)
+    world_T_marker_fused = _rigid(-40.0, (1.0, 0.5, 0.8))
+    truth = map_T_marker @ np.linalg.inv(world_T_marker_fused)
 
-    prior = FiducialPrior({7: map_T_marker}, now_fn=lambda: 0.0)
-    for i in range(8):
-        prior.observe(7, world_T_marker_true @ _rigid_noise(rng, 2.0, 0.01), ts=float(i) * 0.1)
-    prior.observe(7, world_T_marker_true @ _rigid(150.0, (0.0, 0.0, 0.0)), ts=0.85)  # outlier
+    prior = FiducialPrior({7: map_T_marker})
+    assert prior.observe(7, world_T_marker_fused) is None
 
     candidates = prior.propose(gm, lm)
     assert len(candidates) == 1 and candidates[0].source == "fiducial"
-    assert np.linalg.norm(candidates[0].T[:3, 3] - truth[:3, 3]) < 0.25
+    np.testing.assert_allclose(candidates[0].T, truth, atol=1e-12)
 
 
-def test_fiducial_prior_drops_mirror_ambiguous_sighting() -> None:
-    """A head-on small tag whose flipped IPPE pose reprojects nearly as well is
-    dropped by the ambiguity gate -- no fix is stored."""
-    gm, lm, _ = _rect_room_scene(seed=15, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    k = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]])
-    info = CameraInfo.from_intrinsics(600.0, 600.0, 320.0, 240.0, 640, 480)
-    prior = FiducialPrior(
-        {7: np.eye(4)}, camera_info=info, marker_length_m=0.1, ambiguity_ratio_min=2.0
-    )
-    reason = prior.observe(7, np.eye(4), ts=0.0, corners_px=_frontal_far_corners(k, 0.1))
-    assert reason == "mirror_ambiguous"
-    assert prior.propose(gm, lm) == []
-
-
-def test_fiducial_prior_age_gate_hard_cutoff() -> None:
-    """A fused fix proposes right up to ``age_max_s`` and drops past it. Hard
-    cutoff only -- no decay curve, no confidence."""
+def test_fiducial_prior_proposes_each_fix_exactly_once() -> None:
+    """propose() CONSUMES: a fused fix is offered to the judge on one fire and gone
+    on the next. Re-offering it would be the same measurement against a world that
+    drifted further since, so it could only score worse than it just did."""
     gm, lm, _ = _rect_room_scene(seed=12, yaw_deg=30.0, t=(1.0, -2.0, 0.0))
-    clock = {"now": 100.0}
-    prior = FiducialPrior({7: np.eye(4)}, age_max_s=120.0, now_fn=lambda: clock["now"])
-    for i in range(3):  # >= min_observations -> a fused fix is stamped at now=100
-        prior.observe(7, np.eye(4), ts=float(i) * 0.1)
+    prior = FiducialPrior({7: np.eye(4)})
+    prior.observe(7, np.eye(4))
 
-    fresh = prior.propose(gm, lm)
-    assert len(fresh) == 1 and fresh[0].source == "fiducial"
+    first = prior.propose(gm, lm)
+    assert len(first) == 1 and first[0].source == "fiducial"
 
-    clock["now"] = 219.0  # age 119 s < cutoff -> still proposes
-    assert len(prior.propose(gm, lm)) == 1
-
-    clock["now"] = 221.0  # age 121 s > cutoff -> dropped
-    assert prior.propose(gm, lm) == []
+    assert prior.propose(gm, lm) == []  # consumed: nothing left to re-offer
+    assert prior.is_due(0.0) is False  # and nothing left to ask a fire for
 
 
 def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
-    """propose() must iterate a SNAPSHOT of self._fixes, not the live dict. In the
-    module, observe() runs on the detections transport thread while _try_relocalize
-    -> propose() runs on the global_map transport thread; a NEW tag id landing in
-    self._fixes mid-iteration otherwise raises "dictionary changed size during
+    """propose() must drain self._pending in ONE statement, not iterate the live
+    dict. In the module, observe() runs on the detections transport thread while
+    _try_relocalize -> propose() runs on the global_map transport thread; a NEW tag
+    id landing mid-iteration otherwise raises "dictionary changed size during
     iteration", which the boundary except swallows -> a silently dropped reloc
     cycle. Writer inserts fresh ids while the reader hammers propose(); pre-fix this
     fails within a few rounds, post-fix it never does."""
     gm, lm, _ = _rect_room_scene(seed=17, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    prior = FiducialPrior({}, now_fn=lambda: 0.0)
+    prior = FiducialPrior({})
     for tag_id in range(50):  # a real iteration window for the writer to race into
-        prior._fixes[tag_id] = (np.eye(4), 0.0)
+        prior._pending[tag_id] = np.eye(4)
 
     stop = threading.Event()
     errors: list[BaseException] = []
 
     def _writer() -> None:
-        # Bounded on purpose: an unbounded writer grows _fixes without limit, so
-        # every propose() snapshot gets bigger and the test never finishes. A
+        # Bounded on purpose: an unbounded writer grows _pending without limit, so
+        # every propose() drain gets bigger and the test never finishes. A
         # fixed budget still overlaps the reader and reproduces the race.
         for tag_id in range(1000, 1200):
             if stop.is_set():
                 return
-            prior._fixes[tag_id] = (np.eye(4), 0.0)  # new key -> dict size changes
+            prior._pending[tag_id] = np.eye(4)  # new key -> dict size changes
 
     writer = threading.Thread(target=_writer, name="detections_writer")
     writer.start()
@@ -516,9 +461,8 @@ def test_fiducial_prior_never_bypasses_judge() -> None:
     # world_T_marker chosen so the fused map_T_world (map_T_marker == I) is T_wrong.
     world_T_marker = np.linalg.inv(T_wrong)
 
-    fid = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
-    for i in range(4):
-        fid.observe(7, world_T_marker, ts=float(i) * 0.1)
+    fid = FiducialPrior({7: np.eye(4)})
+    fid.observe(7, world_T_marker)
 
     class NearTruthStub:
         name = "stub_near_truth"
@@ -625,53 +569,37 @@ def test_ransac_prior_empty_pool_stays_empty(monkeypatch) -> None:  # type: igno
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior: unmapped-id rejection + min_observations fusion threshold +
-# per-tag propose fan-out
+# FiducialPrior: unmapped-id rejection + per-tag propose fan-out
 # ---------------------------------------------------------------------------
 
 
-def test_fiducial_prior_rejects_unmapped_id() -> None:
-    """A sighting of a tag absent from the surveyed marker map is refused with
-    'unmapped_id' and never touches the aggregator -- there is no map_T_marker
-    to compose a fix from."""
+def test_fiducial_prior_rejects_unmapped_id_without_arming_a_fire() -> None:
+    """A fused pose for a tag absent from the surveyed marker map is refused with
+    'unmapped_id': there is no map_T_marker to compose against. It must also leave
+    the burst counter alone -- an unsurveyed tag that armed the trigger would fire a
+    relocalization with no candidate to judge, and relocalize_with_priors raises on
+    an empty pool, once per burst, forever."""
     gm, lm, _ = _rect_room_scene(seed=16, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    prior = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
+    prior = FiducialPrior({7: np.eye(4)})
 
-    reason = prior.observe(99, np.eye(4), ts=0.0)  # id 99 is not surveyed
+    reason = prior.observe(99, np.eye(4))  # id 99 is not surveyed
 
     assert reason == "unmapped_id"
     assert prior.propose(gm, lm) == []
-
-
-def test_fiducial_prior_fix_appears_exactly_at_min_observations() -> None:
-    """No fused fix exists until a visit reaches min_observations gated glimpses;
-    the fix appears on precisely the min_observations-th sighting. Default
-    min_observations is 3, so 2 glimpses propose nothing and the 3rd stamps one."""
-    gm, lm, _ = _rect_room_scene(seed=17, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    assert AggregationConfig().min_observations == 3
-    prior = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
-
-    prior.observe(7, np.eye(4), ts=0.0)
-    prior.observe(7, np.eye(4), ts=0.1)
-    assert prior.propose(gm, lm) == []  # 2 < min_observations -> no fix yet
-
-    prior.observe(7, np.eye(4), ts=0.2)  # the 3rd glimpse stamps the fix
-    fixed = prior.propose(gm, lm)
-    assert len(fixed) == 1 and fixed[0].source == "fiducial"
+    assert prior.is_due(0.0) is False
 
 
 def test_fiducial_prior_proposes_one_candidate_per_mapped_tag() -> None:
-    """Two independently-fused tags yield two candidates -- one per tag, each the
-    tag's own map_T_marker @ inv(world_T_marker) (identity world poses here, so
-    each fix equals that tag's surveyed map_T_marker)."""
+    """Two tags' fused poses yield two candidates -- one per tag, each the tag's own
+    map_T_marker @ inv(world_T_marker) (identity world poses here, so each fix
+    equals that tag's surveyed map_T_marker)."""
     gm, lm, _ = _rect_room_scene(seed=18, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
     map_T_marker_7 = _rigid(30.0, (5.0, -2.0, 0.5))
     map_T_marker_9 = _rigid(-70.0, (-1.0, 3.0, 0.2))
-    prior = FiducialPrior({7: map_T_marker_7, 9: map_T_marker_9}, now_fn=lambda: 0.0)
+    prior = FiducialPrior({7: map_T_marker_7, 9: map_T_marker_9})
 
     for tag in (7, 9):
-        for i in range(3):
-            prior.observe(tag, np.eye(4), ts=float(i) * 0.1)
+        prior.observe(tag, np.eye(4))
 
     candidates = prior.propose(gm, lm)
 
@@ -682,142 +610,20 @@ def test_fiducial_prior_proposes_one_candidate_per_mapped_tag() -> None:
     assert got == want
 
 
-def test_fiducial_prior_age_gate_is_per_fix_not_all_or_nothing() -> None:
-    """propose() ages each fix independently: with one stale and one fresh tag,
-    only the stale one drops -- the fresh tag still proposes its candidate."""
+def test_fiducial_prior_drains_every_pending_tag_in_one_fire() -> None:
+    """Two tags arriving before a fire BOTH propose on it, and the fire empties the
+    pending set: a multi-tag pool is normal (the judge picks on wall fitness), and
+    leaving either one behind would re-offer a drifted fix on the next fire."""
     gm, lm, _ = _rect_room_scene(seed=19, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    clock = {"now": 0.0}
     map_T_marker_9 = _rigid(-70.0, (-1.0, 3.0, 0.2))
-    prior = FiducialPrior(
-        {7: np.eye(4), 9: map_T_marker_9}, age_max_s=120.0, now_fn=lambda: clock["now"]
-    )
+    prior = FiducialPrior({7: np.eye(4), 9: map_T_marker_9})
 
-    for i in range(3):  # tag 7 fix stamped at now=0
-        prior.observe(7, np.eye(4), ts=float(i) * 0.1)
-    clock["now"] = 200.0
-    for i in range(3):  # tag 9 fix stamped at now=200
-        prior.observe(9, np.eye(4), ts=200.0 + float(i) * 0.1)
+    prior.observe(7, np.eye(4))
+    prior.observe(9, np.eye(4))
 
-    clock["now"] = 210.0  # tag 7 age 210 s > cutoff (drop); tag 9 age 10 s (keep)
-    survivors = prior.propose(gm, lm)
-    assert len(survivors) == 1
-    np.testing.assert_array_equal(survivors[0].T, map_T_marker_9)
-
-
-# ---------------------------------------------------------------------------
-# FiducialPrior LIVE corners_px gate chain: a CLEAN corners glimpse survives the
-# ambiguity gate + the corners-derived distance/view gates and fuses to a fix,
-# and the corners path agrees with the world_T_optical path on one clean geometry
-# ---------------------------------------------------------------------------
-
-# SIMULATED pinhole camera shared by the corners-path tests (640x480, zero
-# distortion): corners are cv2.projectPoints of a KNOWN camera_optical<-marker
-# pose, the same construction the marker_pose ambiguity tests use.
-_CORNERS_K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]])
-_CORNERS_INFO = CameraInfo.from_intrinsics(600.0, 600.0, 320.0, 240.0, 640, 480)
-_CORNERS_MARKER_LENGTH_M = 0.1
-
-
-def _oblique_close_optical_T_marker() -> np.ndarray:
-    """A marker 0.5 m ahead tilted 35 deg about the camera x-axis: close and
-    oblique enough that the IPPE mirror gate keeps it (strong perspective, the
-    two solutions reproject far apart), yet inside the aggregator's 1.0 m
-    distance and 45 deg view-angle gates. Returns camera_optical<-marker (4x4).
-    Measured on this geometry: distance 0.50 m, view-angle 32.9 deg, tag 110 px."""
-    optical_T_marker = np.eye(4)
-    optical_T_marker[:3, :3] = Rotation.from_euler("x", 35.0, degrees=True).as_matrix()
-    optical_T_marker[:3, 3] = (0.03, -0.02, 0.5)
-    return optical_T_marker
-
-
-def _project_marker_corners(optical_T_marker: np.ndarray, marker_length_m: float) -> np.ndarray:
-    """Noise-free pixel corners of a marker at camera_optical<-marker under
-    _CORNERS_K (OpenCV ArUco corner order, zero distortion) -- the exact input
-    the live detector would hand FiducialPrior.observe as corners_px."""
-    h = marker_length_m / 2.0
-    obj = np.array([[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]], dtype=np.float32)
-    rvec = cv2.Rodrigues(optical_T_marker[:3, :3])[0]
-    tvec = optical_T_marker[:3, 3]
-    pts, _ = cv2.projectPoints(obj, rvec, tvec, _CORNERS_K, np.zeros((5, 1)))
-    return pts.reshape(4, 2).astype(np.float64)
-
-
-def test_fiducial_prior_clean_corners_glimpse_kept_and_fused() -> None:
-    """A CLEAN corners_px glimpse drives observe()'s live gate chain end to end and
-    is KEPT: ambiguity_gated_pose recovers a single trustworthy IPPE pose, the
-    corners-derived distance (0.50 m) and view-angle (32.9 deg) clear their gates,
-    and once min_observations such glimpses arrive the visit fuses to ONE candidate.
-    The stored fix is map_T_marker @ inv(world_T_marker) -- the corners only feed
-    the gates; the fused pose is the detector's drift-free world_T_marker -- so on
-    this noise-free scene the candidate equals that composition to numerical
-    precision. Complements the mirror-ambiguous reject test: this is the KEEP arm
-    of the same corners branch. corners_px are cv2.projectPoints of a known pose
-    (SIMULATED); no hardware, no replay."""
-    gm, lm, _ = _rect_room_scene(seed=21, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    optical_T_marker = _oblique_close_optical_T_marker()
-    world_T_optical = _rigid(25.0, (1.2, 0.4, 0.7))
-    world_T_marker = world_T_optical @ optical_T_marker
-    map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
-    truth = map_T_marker @ np.linalg.inv(world_T_marker)
-    corners_px = _project_marker_corners(optical_T_marker, _CORNERS_MARKER_LENGTH_M)
-
-    prior = FiducialPrior(
-        {7: map_T_marker},
-        camera_info=_CORNERS_INFO,
-        marker_length_m=_CORNERS_MARKER_LENGTH_M,
-        ambiguity_ratio_min=2.0,
-        now_fn=lambda: 0.0,
-    )
-    assert AggregationConfig().min_observations == 3
-    for i in range(2):  # kept (reason None) but below min_observations -> no fix yet
-        assert prior.observe(7, world_T_marker, ts=float(i) * 0.1, corners_px=corners_px) is None
-    assert prior.propose(gm, lm) == []
-
-    assert prior.observe(7, world_T_marker, ts=0.2, corners_px=corners_px) is None
-    candidates = prior.propose(gm, lm)
-    assert len(candidates) == 1 and candidates[0].source == "fiducial"
-    np.testing.assert_allclose(candidates[0].T, truth, atol=1e-9)
-
-
-def test_fiducial_prior_corners_path_matches_world_T_optical_path() -> None:
-    """On ONE clean geometry the two observe() input modes agree: feeding
-    corners_px (which runs solvePnP + the mirror gate, then derives distance/view
-    from the recovered optical_T_marker) yields the SAME stored fix as feeding
-    world_T_optical directly (which composes optical_T_marker = inv(world_T_optical)
-    @ world_T_marker and runs only the distance/view gates). Both KEEP their
-    glimpses and both fuse the detector's world_T_marker, so the two priors'
-    proposed candidates are identical to numerical precision -- proving the
-    corners branch's gate derivation does not perturb the fix the simpler
-    world_T_optical branch would store. SIMULATED corners (cv2.projectPoints)."""
-    gm, lm, _ = _rect_room_scene(seed=22, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    optical_T_marker = _oblique_close_optical_T_marker()
-    world_T_optical = _rigid(-15.0, (0.6, -0.3, 1.1))
-    world_T_marker = world_T_optical @ optical_T_marker
-    map_T_marker = _rigid(-40.0, (3.0, 4.0, 0.8))
-    corners_px = _project_marker_corners(optical_T_marker, _CORNERS_MARKER_LENGTH_M)
-
-    def _fresh_prior() -> FiducialPrior:
-        return FiducialPrior(
-            {7: map_T_marker},
-            camera_info=_CORNERS_INFO,
-            marker_length_m=_CORNERS_MARKER_LENGTH_M,
-            ambiguity_ratio_min=2.0,
-            now_fn=lambda: 0.0,
-        )
-
-    corners_prior = _fresh_prior()
-    optical_prior = _fresh_prior()
-    for i in range(3):  # min_observations glimpses down each input mode
-        ts = float(i) * 0.1
-        assert corners_prior.observe(7, world_T_marker, ts=ts, corners_px=corners_px) is None
-        assert (
-            optical_prior.observe(7, world_T_marker, ts=ts, world_T_optical=world_T_optical) is None
-        )
-
-    corners_candidates = corners_prior.propose(gm, lm)
-    optical_candidates = optical_prior.propose(gm, lm)
-    assert len(corners_candidates) == 1 and len(optical_candidates) == 1
-    np.testing.assert_allclose(corners_candidates[0].T, optical_candidates[0].T, atol=1e-9)
+    both = prior.propose(gm, lm)
+    assert len(both) == 2
+    assert prior.propose(gm, lm) == []  # one fire drained both
 
 
 # ---------------------------------------------------------------------------
@@ -825,25 +631,12 @@ def test_fiducial_prior_corners_path_matches_world_T_optical_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_relocalize_with_priors_raises_when_pool_empty() -> None:
-    """Every prior proposing zero candidates leaves the judge nothing to rank;
-    relocalize_with_priors raises ValueError rather than returning a bogus pose."""
-    gm, lm, _ = _rect_room_scene(seed=20, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    empty_priors: list[RelocPrior] = [LastPosePrior(), FiducialPrior({})]  # both propose []
-
-    try:
-        relocalize_with_priors(gm, lm, empty_priors)
-    except ValueError as e:
-        assert "no prior proposed any candidate" in str(e)
-    else:
-        raise AssertionError("expected ValueError on an all-empty prior pool")
-
-
 def test_relocalize_with_priors_census_reports_per_source_counts(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """The 'relocalize candidates' census log's per-source counts (a dict, sorted
     by source name) reflect each source's proposed count, independent of which
     candidate later wins the judge -- so a fiducial that proposed then LOST still
-    shows counts['fiducial'] == 1."""
+    shows counts['fiducial'] == 1. The census is an eval-only diagnostic: the same
+    call logs NOTHING with verbose_eval_logging off (the operating default)."""
     gm, lm, T_true = _rect_room_scene(seed=21, yaw_deg=12.0, t=(0.7, 0.4, 0.0))
     near = T_true.copy()
     near[:3, 3] += np.array([0.03, -0.02, 0.0])
@@ -876,11 +669,17 @@ def test_relocalize_with_priors_census_reports_per_source_counts(monkeypatch) ->
 
     monkeypatch.setattr(priors_mod, "logger", _Recorder())
 
-    _, _, source = relocalize_with_priors(gm, lm, [_MultiRansac(), _OneFiducial()])
+    _, _, source = relocalize_with_priors(
+        gm, lm, [_MultiRansac(), _OneFiducial()], verbose_eval_logging=True
+    )
 
     census = [kw for ev, kw in logged if ev == "relocalize candidates"]
     assert census == [{"counts": {"fiducial": 1, "ransac": 2}}]
     assert source == "ransac"  # the census counts a loser; ransac still wins the judge
+
+    logged.clear()
+    relocalize_with_priors(gm, lm, [_MultiRansac(), _OneFiducial()])
+    assert [kw for ev, kw in logged if ev == "relocalize candidates"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -913,7 +712,7 @@ class _LogRecorder:
 def test_all_tilted_pool_falls_back_and_still_solves() -> None:
     """When EVERY candidate is tilted past the gravity gate (degenerate clouds),
     the single-source path must not return an empty pool: it falls back to the
-    full indexed set (relocalize.py:229 `pool = upright if upright else indexed`)
+    full indexed set (relocalize.py:253 `pool = upright if upright else indexed`)
     and still ranks by wall fitness. The tilted near-truth candidate beats the
     tilted far decoy -- proving the fallback ran rather than raising/orphaning."""
     gm, lm, T_true = _rect_room_scene(seed=41, yaw_deg=20.0, t=(1.0, -1.5, 0.0))
@@ -983,11 +782,11 @@ def test_winning_index_attributes_to_correct_nonzero_position_and_source() -> No
 
 
 def test_judge_log_fires_only_for_multi_source_topk(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The per-candidate 'judge:' finalist log is a multi-source-only diagnostic
-    (relocalize.py:293): it must stay silent when there is nothing to
-    adjudicate -- sources=None, or a top-k drawn from a single source -- and
-    fire, naming the finalists with a '*' on the winner, only when >1 distinct
-    source reaches the top-k."""
+    """The per-candidate 'judge finalists' log is a multi-source-only EVAL
+    diagnostic: under verbose_eval_logging it must stay silent when there is nothing
+    to adjudicate -- sources=None, or a top-k drawn from a single source -- and fire,
+    naming the finalists and the winner, only when >1 distinct source reaches the
+    top-k. With verbose off (the operating default) it never fires at all."""
     gm, lm, T_true = _rect_room_scene(seed=44, yaw_deg=10.0, t=(0.7, 0.9, 0.0))
     good = T_true.copy()
     good[:3, 3] += np.array([0.03, -0.02, 0.0])
@@ -996,20 +795,24 @@ def test_judge_log_fires_only_for_multi_source_topk(monkeypatch) -> None:  # typ
     # (a) sources=None -> the log is guarded off entirely.
     rec = _LogRecorder()
     monkeypatch.setattr(relocalize_mod, "logger", rec)
-    refine_candidates(gm, lm, [good, other])
+    refine_candidates(gm, lm, [good, other], verbose_eval_logging=True)
     assert not any(ev == "judge finalists" for ev, _ in rec.infos)
 
     # (b) sources present but a SINGLE distinct source in the top-k -> silent.
     rec = _LogRecorder()
     monkeypatch.setattr(relocalize_mod, "logger", rec)
-    refine_candidates(gm, lm, [good, other], sources=["ransac", "ransac"])
+    refine_candidates(
+        gm, lm, [good, other], sources=["ransac", "ransac"], verbose_eval_logging=True
+    )
     assert not any(ev == "judge finalists" for ev, _ in rec.infos)
 
     # (c) two distinct sources reach the top-k -> exactly one 'judge:' line,
     # naming both sources and marking the winner.
     rec = _LogRecorder()
     monkeypatch.setattr(relocalize_mod, "logger", rec)
-    _, _, idx = refine_candidates(gm, lm, [good, other], sources=["fiducial", "ransac"])
+    _, _, idx = refine_candidates(
+        gm, lm, [good, other], sources=["fiducial", "ransac"], verbose_eval_logging=True
+    )
     judge_lines = [kw for ev, kw in rec.infos if ev == "judge finalists"]
     assert len(judge_lines) == 1
     finalists = cast("list[tuple[str, float]]", judge_lines[0]["finalists"])
@@ -1017,14 +820,48 @@ def test_judge_log_fires_only_for_multi_source_topk(monkeypatch) -> None:  # typ
     assert judge_lines[0]["winner"] == "fiducial"  # winner named via kwarg, not a '*'
     assert idx == 0  # the near-truth 'fiducial' candidate won
 
+    # (d) same two-source pool with verbose off -> the operating default is silent.
+    rec = _LogRecorder()
+    monkeypatch.setattr(relocalize_mod, "logger", rec)
+    refine_candidates(gm, lm, [good, other], sources=["fiducial", "ransac"])
+    assert not any(ev == "judge finalists" for ev, _ in rec.infos)
+
+
+def test_judge_report_margin_is_winner_minus_best_other_source() -> None:
+    """The margin the quiet accept line carries: the winner's post-ICP wall fitness
+    minus the BEST OTHER source's, computed off the judge's own finalists. A pool
+    with one source has no rival to subtract, so margin is None -- never 0.0, which
+    would read as a dead heat."""
+    gm, lm, T_true = _rect_room_scene(seed=45, yaw_deg=10.0, t=(0.7, 0.9, 0.0))
+    good = T_true.copy()
+    good[:3, 3] += np.array([0.03, -0.02, 0.0])
+    other = _rigid(140.0, (5.0, -4.0, 0.0))  # wrong room: near-zero wall fitness
+
+    report = JudgeReport()
+    _, fitness, idx = refine_candidates(
+        gm, lm, [good, other], sources=["fiducial", "ransac"], report=report
+    )
+    assert idx == 0 and report.winner == "fiducial"
+    best_ransac = max(fit for src, fit in report.finalists if src == "ransac")
+    margin = report.margin
+    assert margin is not None
+    assert margin == pytest.approx(report.finalists[0][1] - best_ransac)
+    assert margin > 0.0  # the near-truth candidate beat the wrong-room one
+
+    # Single-source pool: nothing to compare against.
+    solo = JudgeReport()
+    refine_candidates(gm, lm, [good, other], sources=["ransac", "ransac"], report=solo)
+    assert solo.winner == "ransac" and solo.margin is None
+    assert fitness > 0.5
+
 
 # ---------------------------------------------------------------------------
 # RelocalizationModule: Config contract + pure helpers (no coordinator).
 #
 # These exercise module.py directly, never through a live/replay Module: the
-# Config defaults, _has_enough_points' min_local_points gate, the accept/reject
-# log-line shape, marker-id parsing, and _on_detections routing each sighting's
-# world_T_marker into the fiducial prior. Instances are built with object.__new__
+# Config defaults, the per-prior accept bar + RANSAC point floor, the accept/reject
+# log-line shape, marker-id parsing, and _on_fused_detections routing each entry's
+# fused world_T_marker into the fiducial prior. Instances are built with object.__new__
 # and only the attributes the helper under test reads -- the full Module
 # lifecycle (start()'s reactive wiring) needs a coordinator these helpers do not.
 # ---------------------------------------------------------------------------
@@ -1039,14 +876,27 @@ def _bare_module(config: Config) -> RelocalizationModule:
     m._premap = None
     m._last_skip_log = 0.0
     m._last_pose_prior = LastPosePrior()
+    ransac_entry = next(
+        (p for p in config.priors if isinstance(p, RansacPriorConfig)), RansacPriorConfig()
+    )
+    m._ransac_prior = RansacPrior(interval_s=ransac_entry.interval_s)
     m._fiducial_prior = None
+    m._now_fn = time.monotonic  # a trigger test swaps this for a driven clock
+    m._world_to_map = Subject()  # _on_local_map publishes accepted fixes onto it
+    # Derived state __init__ builds (object.__new__ skips it): the per-source accept
+    # bar and the RANSAC point floor.
+    m._accept_threshold = {p.type: p.fitness_threshold for p in config.priors}
+    m._ransac_min_local_points = ransac_entry.min_local_points
+    m._last_fix_map_T_world = None  # no previous fix -> the jump guard is in acquisition
+    m._last_fix_ts_s = 0.0
+    m._last_local_map = None  # no cloud yet -> a burst cannot fire until one arrives
     return m
 
 
 class _StubCloud:
-    """Minimal PointCloud2 stand-in: __len__ (the point count _has_enough_points
-    and _try_relocalize read for gating / the n_pts log field) and a `.pointcloud`
-    sentinel handed straight through to the monkeypatched relocalize()."""
+    """Minimal PointCloud2 stand-in: __len__ (the point count _on_local_map reads
+    for the RANSAC floor / the n_pts log field) and a `.pointcloud` sentinel handed
+    straight through to the monkeypatched relocalize()."""
 
     def __init__(self, n: int) -> None:
         self._n = n
@@ -1066,15 +916,25 @@ def test_config_requires_priors_no_module_default() -> None:
 
 def test_config_scalar_defaults_match_documented_contract() -> None:
     """Config's scalar defaults ARE the reloc gating contract; any silent drift
-    changes production behavior, so pin every field the module documents exactly.
-    priors is supplied (required); the two map-file knobs default to unset."""
+    changes production behavior, so pin the three that gate behavior: the gravity
+    gate and the two map-file knobs.
+    priors is supplied (required); the two map-file knobs default to unset. The
+    accept bar and the point floor moved onto the priors (asserted below)."""
     c = Config(priors=[RansacPriorConfig()])
-    assert c.min_local_points == 50_000
-    assert c.reloc_interval_s == 2.0
     assert c.gravity_tilt_max_deg == 10.0
-    assert c.fitness_threshold == 0.45
     assert c.map_file is None
     assert c.marker_map_file is None  # top-level fiducial-survey -o override, unset
+
+
+def test_prior_accept_bars_default_to_the_bar_each_source_earns() -> None:
+    """The accept bar is per prior: ransac and fiducial each state 0.6 -- a fix is
+    judged on the walls whatever proposed it -- while last_pose, stating no bar of its
+    own, inherits the base 0.45. Pin all three: they are the gating contract, and a
+    silent drift changes what the robot publishes."""
+    assert RansacPriorConfig().fitness_threshold == 0.6  # geometric search: high bar
+    assert FiducialPriorConfig().fitness_threshold == 0.6  # tag fix: the same bar
+    assert LastPosePriorConfig().fitness_threshold == 0.45  # no override -> base default
+    assert RansacPriorConfig().min_local_points == 50_000  # RANSAC-scoped floor
 
 
 def test_fiducial_prior_config_defaults() -> None:
@@ -1082,23 +942,28 @@ def test_fiducial_prior_config_defaults() -> None:
     preset written today keeps meaning the same thing."""
     fid = FiducialPriorConfig()
     assert fid.marker_length_m == 0.10
-    assert fid.ambiguity_ratio_min == 2.0
     assert fid.marker_map_file is None
     assert fid.aruco_dictionary == "DICT_APRILTAG_36h11"
-    assert fid.age_max_s == 120.0
+    # Threaded into the detector by the blueprint; the gates run there now.
+    assert fid.aggregation == AggregationConfig()
 
 
-def test_has_enough_points_gates_on_config_min_local_points() -> None:
-    """_has_enough_points reads config.min_local_points, not a module constant:
-    exactly at the threshold passes, one point below fails, and changing the knob
-    moves the boundary with it."""
-    m = _bare_module(Config(priors=[RansacPriorConfig()], min_local_points=50_000))
-    assert m._has_enough_points(cast("PointCloud2", _StubCloud(50_000))) is True
-    assert m._has_enough_points(cast("PointCloud2", _StubCloud(49_999))) is False
-
-    m2 = _bare_module(Config(priors=[RansacPriorConfig()], min_local_points=100))
-    assert m2._has_enough_points(cast("PointCloud2", _StubCloud(100))) is True
-    assert m2._has_enough_points(cast("PointCloud2", _StubCloud(99))) is False
+def test_accept_threshold_and_point_floor_resolve_per_prior() -> None:
+    """__init__'s derived state: _accept_threshold maps each Candidate.source to its
+    prior's fitness_threshold (per-prior override, base default otherwise), and
+    _ransac_min_local_points reads the ransac entry's floor -- the two knobs that
+    left Config for the priors."""
+    m = _bare_module(
+        Config(
+            priors=[
+                RansacPriorConfig(fitness_threshold=0.55, min_local_points=30_000),
+                FiducialPriorConfig(fitness_threshold=0.35),
+                LastPosePriorConfig(),  # base default 0.45
+            ]
+        )
+    )
+    assert m._accept_threshold == {"ransac": 0.55, "fiducial": 0.35, "last_pose": 0.45}
+    assert m._ransac_min_local_points == 30_000
 
 
 def _detection(det_id: str = "", class_id: str | None = None) -> Detection3D:
@@ -1129,7 +994,7 @@ def test_marker_id_from_detection_falls_back_to_dict_class_label() -> None:
 
 def test_marker_id_from_detection_returns_none_when_unparseable() -> None:
     """Neither a numeric id nor a ':'-delimited numeric tail -> None, so
-    _on_detections skips the sighting rather than inventing a tag id."""
+    _on_fused_detections skips the entry rather than inventing a tag id."""
     assert RelocalizationModule._marker_id_from_detection(_detection(det_id="abc")) is None
     assert (
         RelocalizationModule._marker_id_from_detection(_detection(det_id="", class_id="chair"))
@@ -1156,8 +1021,7 @@ def _pose_detection(
 
 
 def _detection_array(dets: list[Detection3D], ts: float) -> Detection3DArray:
-    """A Detection3DArray carrying `dets` with header.stamp encoding `ts` (so
-    msg.ts == ts, the timebase _on_detections stamps each observe with)."""
+    """A Detection3DArray carrying `dets` with header.stamp encoding `ts`."""
     arr = Detection3DArray()
     sec = int(ts)
     arr.header.stamp.sec = sec
@@ -1168,20 +1032,21 @@ def _detection_array(dets: list[Detection3D], ts: float) -> Detection3DArray:
 
 
 class _RecordingPrior:
-    """FiducialPrior stand-in recording (marker_id, world_T_marker, ts) per
-    observe -- lets _on_detections' routing be asserted without the aggregator."""
+    """FiducialPrior stand-in recording (marker_id, world_T_marker_fused) per
+    observe -- lets _on_fused_detections' routing be asserted on its own."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[int, np.ndarray, float]] = []
+        self.calls: list[tuple[int, np.ndarray]] = []
 
-    def observe(self, marker_id: int, world_T_marker: np.ndarray, ts: float) -> None:
-        self.calls.append((marker_id, world_T_marker, ts))
+    def observe(self, marker_id: int, world_T_marker_fused: np.ndarray) -> None:
+        self.calls.append((marker_id, world_T_marker_fused))
 
 
-def test_on_detections_routes_each_world_T_marker_and_ts_into_prior() -> None:
-    """Each parseable sighting's bbox.center (world_T_marker) is composed via
-    matrix_from_pose7 and handed to the fiducial prior with the array's ts;
-    unparseable detections are skipped rather than routed."""
+def test_on_fused_detections_routes_each_world_T_marker_into_prior() -> None:
+    """Each parseable entry's bbox.center (the detector's fused world_T_marker) is
+    composed via matrix_from_pose7 and handed to the fiducial prior; unparseable
+    entries are skipped rather than routed. No timestamp travels with it -- the
+    glimpse window that needed one lives upstream now."""
     prior = _RecordingPrior()
     m = _bare_module(Config(priors=[FiducialPriorConfig()]))
     m._fiducial_prior = prior  # type: ignore[assignment]
@@ -1192,14 +1057,13 @@ def test_on_detections_routes_each_world_T_marker_and_ts_into_prior() -> None:
     det_skip = _detection(det_id="not-a-tag")  # unparseable -> dropped
     arr = _detection_array([det_a, det_skip, det_b], ts=3.5)
 
-    m._on_detections(arr)
+    m._on_fused_detections(arr)
 
-    assert [mid for mid, _, _ in prior.calls] == [5, 8]  # det_skip never routed
-    for (_mid, world_T_marker, ts), det in (
+    assert [mid for mid, _ in prior.calls] == [5, 8]  # det_skip never routed
+    for (_mid, world_T_marker_fused), det in (
         (prior.calls[0], det_a),
         (prior.calls[1], det_b),
     ):
-        assert ts == 3.5
         c = det.bbox.center
         expected = matrix_from_pose7(
             (
@@ -1212,15 +1076,15 @@ def test_on_detections_routes_each_world_T_marker_and_ts_into_prior() -> None:
                 c.orientation.w,
             )
         )
-        np.testing.assert_array_equal(world_T_marker, expected)
+        np.testing.assert_array_equal(world_T_marker_fused, expected)
 
 
-def test_on_detections_noop_without_fiducial_prior() -> None:
+def test_on_fused_detections_noop_without_fiducial_prior() -> None:
     """With the fiducial prior unbuilt (prior disabled / no marker_map_file),
-    _on_detections is a silent no-op on wire traffic -- returns None, no raise."""
+    _on_fused_detections is a silent no-op on wire traffic -- returns None, no raise."""
     m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._fiducial_prior = None
-    m._on_detections(
+    m._on_fused_detections(
         _detection_array([_pose_detection(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))], ts=1.0)
     )
     assert m._fiducial_prior is None  # still a no-op: nothing built, nothing routed
@@ -1251,9 +1115,7 @@ def test_try_relocalize_accept_log_puts_source_first_when_prior_wins(monkeypatch
     `source=<winner>` ahead of `fitness=`, so the winning prior is the first field
     read; a valid world->map TF is returned and no reject warning fires."""
     T = _rigid(25.0, (1.5, -0.8, 0.05))
-    m = _bare_module(
-        Config(priors=[RansacPriorConfig(), LastPosePriorConfig()], fitness_threshold=0.45)
-    )
+    m = _bare_module(Config(priors=[RansacPriorConfig(), LastPosePriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
 
     rec = _ModuleLogRecorder()
@@ -1262,7 +1124,7 @@ def test_try_relocalize_accept_log_puts_source_first_when_prior_wins(monkeypatch
         module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.90, "last_pose")
     )
 
-    tf = m._try_relocalize(_StubCloud(1234))  # type: ignore[arg-type]
+    tf = m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects())  # type: ignore[arg-type]
 
     assert tf is not None
     assert tf.frame_id == "world" and tf.child_frame_id == "map"
@@ -1281,41 +1143,314 @@ def test_try_relocalize_reject_log_warns_below_fitness_threshold(monkeypatch) ->
     info line."""
     T = _rigid(0.0, (0.0, 0.0, 0.0))
     # single RANSAC entry -> _try_relocalize takes the plain relocalize() path
-    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
 
     rec = _ModuleLogRecorder()
     monkeypatch.setattr(module_mod, "logger", rec)
     monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (T, 0.30))
 
-    assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
     assert len(rec.warnings) == 1
     event, kwargs = rec.warnings[0]
     assert event == "relocalize rejected"
     assert kwargs["fitness"] == 0.3  # round(0.30, 3)
-    assert kwargs["threshold"] == 0.45
+    assert kwargs["threshold"] == 0.6  # the ransac entry's default bar
     assert not rec.infos
 
 
-def test_try_relocalize_accept_log_omits_source_when_no_prior(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The single-source path (no priors) accepts via plain relocalize() and its
+def test_try_relocalize_accept_log_omits_source_on_solo_ransac_path(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The solo-RANSAC path accepts via plain relocalize() and its
     info line carries NO `source=` prefix -- source= is present only when a prior
     wins, so its absence is the single-source signature."""
     T = _rigid(10.0, (0.5, 0.5, 0.0))
-    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
 
     rec = _ModuleLogRecorder()
     monkeypatch.setattr(module_mod, "logger", rec)
     monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (T, 0.95))
 
-    tf = m._try_relocalize(_StubCloud(1234))  # type: ignore[arg-type]
+    tf = m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects())  # type: ignore[arg-type]
 
     assert tf is not None
     assert len(rec.infos) == 1
     event, kwargs = rec.infos[0]
     assert event == "relocalize accepted"
     assert "source" not in kwargs  # single-source path omits source entirely
+
+
+def _accept_with_report(
+    T: np.ndarray, fitness: float, source: str, finalists: list[tuple[str, float]]
+):  # type: ignore[no-untyped-def]
+    """Stand-in for _relocalize_with_priors that also fills the judge's report, the
+    way the real judge does -- the margin path is invisible without it."""
+
+    def fake(*args: object, report: JudgeReport | None = None, **kwargs: object):  # type: ignore[no-untyped-def]
+        if report is not None:
+            report.finalists = finalists
+            report.winner = source
+        return T, fitness, source
+
+    return fake
+
+
+def test_accept_log_is_one_quiet_line_with_the_cross_source_margin(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The operating default: ONE accept line carrying source, fitness, margin and
+    time_cost_s -- nothing else. margin is the winner's post-ICP wall fitness minus
+    the best OTHER source's, so the line answers "did the tag help?" without the
+    finalist table."""
+    T = _rigid(25.0, (1.5, -0.8, 0.05))
+    # FiducialPriorConfig present so "fiducial" is a valid accept source; its prior
+    # object is unbuilt here (bare module), so the enabled pool stays ransac+last_pose.
+    m = _bare_module(
+        Config(priors=[RansacPriorConfig(), LastPosePriorConfig(), FiducialPriorConfig()])
+    )
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod,
+        "_relocalize_with_priors",
+        _accept_with_report(T, 0.90, "fiducial", [("fiducial", 0.71), ("ransac", 0.53)]),
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert len(rec.infos) == 1
+    event, kwargs = rec.infos[0]
+    assert event == "relocalize accepted"
+    assert list(kwargs) == ["source", "fitness", "margin", "time_cost_s"]
+    assert kwargs["source"] == "fiducial"
+    assert kwargs["fitness"] == 0.9
+    assert kwargs["margin"] == 0.18  # 0.71 - 0.53, the fiducial's edge over ransac
+
+
+def test_accept_log_omits_margin_when_one_source_reached_the_finalists(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """No rival source in the finalists -> margin is OMITTED, not reported as 0.0:
+    a zero would read as two sources tying, which is a different measurement."""
+    T = _rigid(10.0, (0.5, 0.5, 0.0))
+    m = _bare_module(Config(priors=[RansacPriorConfig(), LastPosePriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod,
+        "_relocalize_with_priors",
+        _accept_with_report(T, 0.88, "ransac", [("ransac", 0.62), ("ransac", 0.41)]),
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert list(rec.infos[0][1]) == ["source", "fitness", "time_cost_s"]
+
+
+def test_verbose_eval_logging_keeps_the_full_accept_and_reject_kwargs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """--eval restores the full debugging trace: the accept line's whole kwarg list
+    in its original order (the eval parsers key on published_t_m), and the reject
+    line's time_cost_s/n_pts ON TOP of the source/fitness/threshold the quiet reject
+    already carries. margin belongs to the quiet line only."""
+    T = _rigid(25.0, (1.5, -0.8, 0.05))
+    config = Config(
+        priors=[RansacPriorConfig(), LastPosePriorConfig(), FiducialPriorConfig()],
+        verbose_eval_logging=True,
+    )
+    m = _bare_module(config)
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod,
+        "_relocalize_with_priors",
+        _accept_with_report(T, 0.90, "fiducial", [("fiducial", 0.71), ("ransac", 0.53)]),
+    )
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert list(rec.infos[0][1]) == [
+        "source",
+        "fitness",
+        "time_cost_s",
+        "n_pts",
+        "reloc_t_m",
+        "tf_from",
+        "tf_to",
+        "published_t_m",
+    ]
+
+    # 0.20 is under the fiducial entry's own 0.6 bar -- the reject the verbose branch exists for.
+    monkeypatch.setattr(
+        module_mod,
+        "_relocalize_with_priors",
+        _accept_with_report(T, 0.20, "fiducial", [("fiducial", 0.20)]),
+    )
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    event, kwargs = rec.warnings[0]
+    assert event == "relocalize rejected"
+    assert list(kwargs) == ["source", "fitness", "threshold", "time_cost_s", "n_pts"]
+    assert kwargs["source"] == "fiducial"  # verbose names the refused prior too
+    assert kwargs["fitness"] == 0.2 and kwargs["threshold"] == 0.6
+
+
+def test_quiet_reject_log_trims_to_source_fitness_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Quiet rejects keep the event + fitness consumers count on and name the
+    winner and the threshold that refused it -- the threshold IS the reason, this
+    being the only reject path -- and drop the per-cycle bulk."""
+    T = _rigid(0.0, (0.0, 0.0, 0.0))
+    m = _bare_module(
+        Config(priors=[RansacPriorConfig(), LastPosePriorConfig(), FiducialPriorConfig()])
+    )
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.20, "fiducial")
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    assert len(rec.warnings) == 1
+    event, kwargs = rec.warnings[0]
+    assert event == "relocalize rejected"
+    assert list(kwargs) == ["source", "fitness", "threshold"]
+    assert kwargs["fitness"] == 0.2 and kwargs["threshold"] == 0.6  # the fiducial entry's bar
+    assert not rec.infos
+
+
+def test_try_relocalize_gates_the_winner_on_its_own_source_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The module accept gate is PER-SOURCE: a fiducial fix at 0.40 clears a
+    fiducial bar of 0.35 (accepted), while a ransac fix at 0.50 fails a ransac bar
+    of 0.55 (rejected, the reject line naming the ransac bar) -- the SAME two
+    fitnesses would flip under a single module gate, so this pins the per-source
+    resolution end to end through _try_relocalize."""
+    T = _rigid(12.0, (0.4, -0.3, 0.02))
+    config = Config(
+        priors=[
+            RansacPriorConfig(fitness_threshold=0.55),
+            FiducialPriorConfig(fitness_threshold=0.35),
+        ],
+    )
+    m = _bare_module(config)
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._fiducial_prior = FiducialPrior({7: np.eye(4)})  # enables the entry
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.40, "fiducial")
+    )
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert rec.infos and rec.infos[0][0] == "relocalize accepted"
+    assert rec.infos[0][1]["source"] == "fiducial"
+    assert not rec.warnings
+
+    rec2 = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec2)
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", lambda *a, **k: (T, 0.50, "ransac"))
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    assert rec2.warnings and rec2.warnings[0][0] == "relocalize rejected"
+    assert rec2.warnings[0][1]["source"] == "ransac"
+    assert rec2.warnings[0][1]["fitness"] == 0.5 and rec2.warnings[0][1]["threshold"] == 0.55
+    assert not rec2.infos
+
+
+def test_try_relocalize_solo_path_gates_on_the_ransac_entry_bar(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The plain (ransac-only) path returns no winning_source, so the gate resolves
+    to the RANSAC entry's OWN bar -- not a hardcoded default. A ransac entry set to
+    0.55 rejects a 0.5 fix, and the reject line names both 0.55 and the prior that
+    set it: a reject prints a per-prior threshold, so it always names the owner even
+    where the ACCEPT line omits source= (single-source path)."""
+    T = _rigid(0.0, (0.0, 0.0, 0.0))
+    m = _bare_module(Config(priors=[RansacPriorConfig(fitness_threshold=0.55)]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (T, 0.5))
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    event, kwargs = rec.warnings[0]
+    assert event == "relocalize rejected"
+    assert list(kwargs) == ["source", "fitness", "threshold"]
+    assert kwargs["source"] == "ransac"  # the entry whose bar refused it
+    assert kwargs["fitness"] == 0.5 and kwargs["threshold"] == 0.55
+
+
+def _tracking_module(monkeypatch, clock: dict[str, float]) -> RelocalizationModule:  # type: ignore[no-untyped-def]
+    """A module that has already ACCEPTED one fix at the identity, so the next call
+    is a tracking fix with a previous one to be compared against. The clock is driven,
+    never slept on, so the jump budgets (per second) are exact."""
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+    monkeypatch.setattr(
+        module_mod, "_relocalize", lambda *a, **k: (_rigid(0.0, (0.0, 0.0, 0.0)), 0.9)
+    )
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    return m
+
+
+def test_jump_guard_rejects_a_180_deg_flip_metres_away_from_the_last_fix(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The failure this guard exists for: a fix 18 m and 180 deg from the previous
+    one, 0.2 s later, at a fitness that CLEARS the accept gate. The robot cannot walk
+    18 m in 0.2 s, so the fix is a mis-localization: no TF is published and the
+    warning carries the two numbers that refused it."""
+    clock = {"now": 100.0}
+    m = _tracking_module(monkeypatch, clock)
+
+    clock["now"] = 100.2  # a 0.2 s gap still gets one second's worth: 5 m and 45 deg
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod, "_relocalize", lambda *a, **k: (_rigid(180.0, (18.0, 0.0, 0.0)), 0.9)
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    assert not rec.infos  # never logged as an accept
+    event, kwargs = rec.warnings[0]
+    assert event == "relocalize jump rejected"
+    assert kwargs["jump_m"] == 18.0 and kwargs["yaw_deg"] == 180.0
+    assert kwargs["dt_s"] == 0.2 and kwargs["source"] == "ransac"
+
+
+def test_jump_guard_passes_a_normal_sub_metre_drift_correction(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The guard fires on gross violations ONLY: a 0.4 m, 3 deg correction one RANSAC
+    cadence (2 s) after the last fix is exactly what relocalization is for, and it
+    publishes -- well inside that gap's 10 m / 90 deg budget."""
+    clock = {"now": 100.0}
+    m = _tracking_module(monkeypatch, clock)
+
+    clock["now"] = 102.0
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod, "_relocalize", lambda *a, **k: (_rigid(3.0, (0.4, 0.0, 0.0)), 0.9)
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert not rec.warnings
+    assert rec.infos[0][0] == "relocalize accepted"
+
+
+def test_jump_guard_never_blocks_the_first_fix(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Acquisition is unguarded: with no previous fix there is nothing to be
+    implausible against, so even a 40 m first fix publishes. A guard that blocked the
+    first fix would leave a robot that boots far from the map origin unable to
+    localize at all."""
+    clock = {"now": 100.0}
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+    monkeypatch.setattr(
+        module_mod, "_relocalize", lambda *a, **k: (_rigid(170.0, (40.0, -12.0, 0.0)), 0.9)
+    )
+
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+    assert not rec.warnings
+    assert rec.infos[0][0] == "relocalize accepted"
 
 
 def test_marker_id_from_detection_colon_label_with_nonnumeric_tail_returns_none() -> None:
@@ -1327,15 +1462,14 @@ def test_marker_id_from_detection_colon_label_with_nonnumeric_tail_returns_none(
 
 
 def test_try_relocalize_appends_fiducial_prior_to_judge_pool(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """With the fiducial prior enabled and built, _try_relocalize adds THAT
-    prior instance to the judge pool (alongside RANSAC) and reports the winning
-    source it returns -- the fiducial candidate is judged, never bypassed."""
+    """_try_relocalize judges exactly the pool it is handed: given the built
+    fiducial prior instance alongside RANSAC, both reach the judge and the winning
+    source it returns is reported -- the fiducial candidate is judged, never
+    bypassed."""
     T = _rigid(15.0, (0.4, -0.3, 0.02))
-    m = _bare_module(
-        Config(priors=[RansacPriorConfig(), FiducialPriorConfig()], fitness_threshold=0.45)
-    )
+    m = _bare_module(Config(priors=[RansacPriorConfig(), FiducialPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
-    sentinel = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
+    sentinel = FiducialPrior({7: np.eye(4)})
     m._fiducial_prior = sentinel
 
     seen_pools: list[list[RelocPrior]] = []
@@ -1347,7 +1481,7 @@ def test_try_relocalize_appends_fiducial_prior_to_judge_pool(monkeypatch) -> Non
     monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
     monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
 
-    tf = m._try_relocalize(_StubCloud(1234))  # type: ignore[arg-type]
+    tf = m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects())  # type: ignore[arg-type]
 
     assert tf is not None
     assert len(seen_pools) == 1
@@ -1359,7 +1493,7 @@ def test_try_relocalize_returns_none_and_logs_on_relocalize_crash(monkeypatch) -
     """A crash inside the solve is caught at the module boundary: _try_relocalize
     logs it via logger.exception and returns None (no TF published) rather than
     letting the exception escape the reactive subscription."""
-    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
 
     logged: list[str] = []
@@ -1380,7 +1514,7 @@ def test_try_relocalize_returns_none_and_logs_on_relocalize_crash(monkeypatch) -
     monkeypatch.setattr(module_mod, "logger", _CrashRecorder())
     monkeypatch.setattr(module_mod, "_relocalize", _boom)
 
-    assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
     assert logged == ["relocalize() failed"]
 
 
@@ -1395,24 +1529,25 @@ def test_try_relocalize_returns_none_when_all_priors_disabled(monkeypatch) -> No
 
     monkeypatch.setattr(module_mod, "_relocalize", _boom)
     monkeypatch.setattr(module_mod, "_relocalize_with_priors", _boom)
-    assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+    assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
 
 
-def test_maybe_log_skip_warns_below_min_then_throttles(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A frame below min_local_points logs one throttled 'relocalize skipped'
-    warning naming the count and the knob; a second skip inside the 5 s throttle
-    window stays silent, and a frame at/above the floor never warns at all."""
+def test_maybe_log_skip_warns_for_starved_ransac_then_throttles(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A starved-RANSAC frame logs one throttled 'ransac reloc skipped' naming the
+    count and the ransac floor; a second inside the 5 s window stays silent, and it
+    fires again once the window passes. The point CHECK lives in _on_local_map now;
+    _maybe_log_skip is just the throttled logger it calls when it drops RANSAC."""
     clock = {"now": 100.0}
     monkeypatch.setattr("dimos.mapping.relocalization.module.time.monotonic", lambda: clock["now"])
     rec = _ModuleLogRecorder()
     monkeypatch.setattr(module_mod, "logger", rec)
 
-    m = _bare_module(Config(priors=[RansacPriorConfig()], min_local_points=50_000))
+    m = _bare_module(Config(priors=[RansacPriorConfig(min_local_points=50_000)]))
 
     m._maybe_log_skip(cast("PointCloud2", _StubCloud(10_000)))
     assert len(rec.warnings) == 1
     event, kwargs = rec.warnings[0]
-    assert event == "relocalize skipped"
+    assert event == "ransac reloc skipped"
     assert kwargs["n_pts"] == 10000
     assert kwargs["min_local_points"] == 50000
 
@@ -1420,14 +1555,15 @@ def test_maybe_log_skip_warns_below_min_then_throttles(monkeypatch) -> None:  # 
     m._maybe_log_skip(cast("PointCloud2", _StubCloud(9_000)))
     assert len(rec.warnings) == 1  # throttled: no second warning
 
-    m._maybe_log_skip(cast("PointCloud2", _StubCloud(50_000)))  # at the floor -> not a skip
-    assert len(rec.warnings) == 1
+    clock["now"] = 106.0  # >5 s after the first -> the throttle window has passed
+    m._maybe_log_skip(cast("PointCloud2", _StubCloud(9_000)))
+    assert len(rec.warnings) == 2
 
 
 def test_start_fiducial_prior_noops_without_marker_map_file(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Fiducial prior enabled but no marker_map_file surveyed: _start_fiducial_prior
     warns and leaves the prior unbuilt (None) -- it never fabricates a map, mirroring
-    start()'s no-map_file disable, so _on_detections stays a no-op afterwards."""
+    start()'s no-map_file disable, so _on_fused_detections stays a no-op afterwards."""
     m = _bare_module(Config(priors=[FiducialPriorConfig(marker_map_file=None)]))
     rec = _ModuleLogRecorder()
     monkeypatch.setattr(module_mod, "logger", rec)
@@ -1441,28 +1577,35 @@ def test_start_fiducial_prior_noops_without_marker_map_file(monkeypatch) -> None
 
 def test_init_leaves_priors_in_unset_state(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """A freshly constructed module starts with no premap and no fiducial prior
-    (both built later in start()), a zeroed skip-log clock, and a real LastPosePrior
-    ready to carry a seed forward -- the documented cold-start contract."""
+    (both built later in start()), a zeroed skip-log clock, a real LastPosePrior
+    ready to carry a seed forward, and ONE RansacPrior carrying the configured
+    interval -- the documented cold-start contract. The ransac prior is built here,
+    not per frame, because its interval timer is the trigger: a per-frame instance
+    would restart the timer every frame and fire forever."""
     monkeypatch.setattr(
-        "dimos.mapping.relocalization.module.Module.__init__", lambda self, **kwargs: None
+        "dimos.mapping.relocalization.module.Module.__init__",
+        lambda self, **kwargs: setattr(self, "config", Config(**kwargs)),
     )
-    m = RelocalizationModule()
+    m = RelocalizationModule(priors=[RansacPriorConfig(interval_s=7.5)])
     assert m._premap is None
     assert m._fiducial_prior is None
     assert m._last_skip_log == 0.0
     assert isinstance(m._last_pose_prior, LastPosePrior)
+    assert isinstance(m._ransac_prior, RansacPrior)
+    assert m._ransac_prior._interval_s == 7.5
+    assert m._enabled_prior_objects() == [m._ransac_prior]  # the SAME instance every frame
 
 
-class _DetectionsStub:
-    """Stands in for the `detections` In-stream: observable().subscribe(cb) returns
-    a disposable sentinel, letting _start_fiducial_prior's wiring run without a live
-    coordinator. Only the framework seam is stubbed; FiducialPrior is the real one."""
+class _FusedDetectionsStub:
+    """Stands in for the `fused_detections` In-stream: observable().subscribe(cb)
+    returns a disposable sentinel, letting _start_fiducial_prior's wiring run without
+    a live coordinator. Only the framework seam is stubbed; FiducialPrior is real."""
 
-    def observable(self) -> _DetectionsStub:
+    def observable(self) -> _FusedDetectionsStub:
         return self
 
     def subscribe(self, callback: object) -> str:
-        return "detections_disposable"
+        return "fused_detections_disposable"
 
 
 class _FakeSurveyedTransform:
@@ -1472,15 +1615,15 @@ class _FakeSurveyedTransform:
         return np.eye(4)
 
 
-def test_start_fiducial_prior_loads_map_and_wires_detections(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_fiducial_prior_loads_map_and_wires_fused_detections(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """With a marker_map_file present, _start_fiducial_prior resolves + loads the
     survey into map_T_marker matrices, builds the real FiducialPrior, subscribes the
-    detections stream into it (registering the disposable), and logs the marker
-    count -- the fiducial source is now live and age-gated in the judge."""
+    detector's fused_detections stream into it (registering the disposable), and logs
+    the marker count -- the fiducial source is now live and age-gated in the judge."""
     m = _bare_module(
         Config(priors=[FiducialPriorConfig(marker_map_file="survey", marker_length_m=0.1)])
     )
-    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
     registered: list[object] = []
     m.register_disposable = registered.append  # type: ignore[assignment,method-assign]
 
@@ -1496,7 +1639,7 @@ def test_start_fiducial_prior_loads_map_and_wires_detections(monkeypatch) -> Non
     m._start_fiducial_prior()
 
     assert isinstance(m._fiducial_prior, FiducialPrior)
-    assert registered == ["detections_disposable"]  # detections wired into the prior
+    assert registered == ["fused_detections_disposable"]  # fused stream wired in
     assert len(rec.infos) == 1
     event, kwargs = rec.infos[0]
     assert event == "fiducial prior enabled"
@@ -1519,7 +1662,7 @@ def test_start_fiducial_prior_loads_a_yaml_survey(tmp_path: Path) -> None:
     m = _bare_module(
         Config(priors=[FiducialPriorConfig(marker_map_file=str(survey), marker_length_m=0.1)])
     )
-    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
     m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
 
     m._start_fiducial_prior()
@@ -1546,7 +1689,7 @@ def test_marker_map_resolution_keeps_a_stated_survey_suffix(
     name), so passing .json unconditionally would look up '<survey>.yaml.json' --
     a name nothing writes -- and a yaml survey would fail at start()."""
     m = _bare_module(Config(priors=[FiducialPriorConfig(marker_map_file=marker_map_file)]))
-    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
     m.register_disposable = lambda d: None  # type: ignore[assignment,method-assign]
     seen: list[tuple[str, str]] = []
 
@@ -1605,7 +1748,7 @@ def test_o_override_marker_map_file_reaches_fiducial_prior(tmp_path: Path) -> No
     # 3. The module loads THAT survey into the live FiducialPrior (real load path:
     #    absolute path -> resolve_named_path returns it -> real load_marker_map).
     m = _bare_module(config)
-    m.detections = _DetectionsStub()  # type: ignore[assignment]
+    m.fused_detections = _FusedDetectionsStub()  # type: ignore[assignment]
     registered: list[object] = []
     m.register_disposable = registered.append  # type: ignore[assignment,method-assign]
     m._start_fiducial_prior()
@@ -1641,18 +1784,6 @@ def test_start_disabled_without_map_file_logs_and_returns(monkeypatch) -> None: 
     assert not hasattr(m, "_premap")  # no premap decoded on the disabled path
 
 
-def test_fiducial_prior_aggregator_rejection_returns_reason() -> None:
-    """A gated glimpse (here a tag 5 m out, past the 1 m distance gate) is refused
-    by the aggregator: observe returns the gate name 'far' and stores no fix, so a
-    single out-of-gate sighting can never seed a fused world->map candidate."""
-    prior = FiducialPrior({7: np.eye(4)}, now_fn=lambda: 0.0)
-    world_T_marker = np.eye(4)
-    world_T_marker[:3, 3] = [5.0, 0.0, 0.0]  # 5 m from the optical origin
-    reason = prior.observe(7, world_T_marker, ts=0.0, world_T_optical=np.eye(4))
-    assert reason == "far"
-    assert prior.propose(o3d.geometry.PointCloud(), o3d.geometry.PointCloud()) == []
-
-
 def test_relocalize_with_priors_empty_pool_raises_named_valueerror() -> None:
     """Every prior proposing zero candidates raises ValueError whose message names
     the failure ('no prior proposed any candidate'), so an operator reading the log
@@ -1683,13 +1814,17 @@ def test_floors_only_scene_raises_insufficient_wall_evidence_message() -> None:
     mask = (room_pts[:, 0] <= 3.2) & (room_pts[:, 1] <= 2.2)
     T_true = _rigid(30.0, (1.0, 0.5, 0.0))
     local_pts = _apply(np.linalg.inv(T_true), room_pts[mask].copy())
-    with pytest.raises(InsufficientWallEvidenceError, match="insufficient wall evidence"):
+    with pytest.raises(
+        InsufficientWallEvidenceError,
+        match=r"insufficient wall evidence: submap walls=\d+, map walls=\d+",
+    ):
         refine_candidates(_pcd(room_pts), _pcd(local_pts), [T_true.copy()])
 
 
 # ---------------------------------------------------------------------------
-# MIN_WALL_POINTS: the exact refuse/solve boundary (relocalize.py:259 guard
-# `n_walls < MIN_WALL_POINTS`). The floors-only tests above cover 0 walls; this
+# MIN_WALL_POINTS: the exact refuse/solve boundary (relocalize.py:280 guard
+# `n_src_walls < MIN_WALL_POINTS or n_tgt_walls < MIN_WALL_POINTS`). The
+# floors-only tests above cover 0 walls; this
 # pins the comparison itself at the threshold. The scene's real wall count is
 # read through the SAME production path refine_candidates uses (fine voxel
 # downsample + normals + _wall_subset), so the bracketed boundary is the live
@@ -1734,39 +1869,517 @@ def test_min_wall_points_boundary_solves_at_threshold_raises_one_above(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# FiducialPrior negative-age clamp: the single-timebase guard in propose()
-# (priors.py:283-289). fix_ts is stamped by now_fn() and MUST be compared only
-# against now_fn(); a mixed/non-monotonic clock makes now < fix_ts, driving the
-# age negative. Left raw, `age_s <= age_max_s` is then ALWAYS true and a stale
-# fix proposes forever -- the age gate silently disabled. The fix clamps to 0
-# (treats as fresh) and warns so the misconfig surfaces.
+# Per-prior TRIGGERS. The relocalization cycle is no longer a module-level
+# throttle: each prior says when it wants a fire (is_due) and acks the fire
+# that answered it (on_fired), and the module runs one INDEPENDENT relocalization
+# per prior that asked. RANSAC paces itself because a global search waits on
+# nothing; the fiducial prior asks the moment a fused tag pose lands, so a tag fix
+# publishes at the tag's latency, never behind a seconds-long RANSAC solve.
+# Clocks are passed in (is_due(now_s), the module's _now_fn) so every case below
+# is driven, not slept through.
 # ---------------------------------------------------------------------------
 
 
-def test_fiducial_prior_negative_age_clamps_to_fresh_and_warns(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A fix whose computed age goes NEGATIVE (propose reads a clock behind the
-    one that stamped fix_ts) is clamped to fresh -- it still proposes its ONE
-    candidate rather than the age gate silently passing it forever -- and emits
-    exactly one warning naming the negative age, so the single-timebase misconfig
-    is loud, not silent."""
-    gm, lm, _ = _rect_room_scene(seed=23, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    clock = {"now": 100.0}
-    prior = FiducialPrior({7: np.eye(4)}, age_max_s=120.0, now_fn=lambda: clock["now"])
-    for i in range(3):  # >= min_observations -> a fused fix is stamped at now=100
-        prior.observe(7, np.eye(4), ts=float(i) * 0.1)
+def test_ransac_prior_fires_on_its_interval_and_not_before() -> None:
+    """RansacPrior wants a fire immediately (nothing has run yet), then not again
+    until interval_s has fully elapsed since the fire it acked: at 1.999 s it is
+    silent, at exactly 2.0 s it asks again. This IS the 2 s cadence the module used
+    to throttle at, now owned by the prior."""
+    prior = RansacPrior(interval_s=2.0)
 
-    warned: list[dict[str, object]] = []
+    assert prior.is_due(100.0) is True  # cold start: relocalize on frame one
+    prior.on_fired(100.0)
 
-    class _WarnRecorder:
-        def warning(self, msg: str, *args: object, **kwargs: object) -> None:
-            warned.append({"msg": msg, **kwargs})
+    assert prior.is_due(100.0) is False
+    assert prior.is_due(101.999) is False
+    assert prior.is_due(102.0) is True  # exactly interval_s -> due
 
-    monkeypatch.setattr(priors_mod, "logger", _WarnRecorder())
+    prior.on_fired(102.0)
+    assert prior.is_due(103.999) is False
+    assert prior.is_due(104.0) is True
 
-    clock["now"] = 50.0  # propose reads a clock 50 s BEHIND fix_ts -> age = -50 s
+
+def test_ransac_prior_interval_comes_from_its_config_entry() -> None:
+    """The cadence knob lives on RansacPriorConfig (it left the module Config), and
+    a non-default interval_s is what the prior actually times against."""
+    assert RansacPriorConfig().interval_s == 2.0  # unchanged default cadence, s
+    prior = RansacPrior(interval_s=RansacPriorConfig(interval_s=10.0).interval_s)
+    prior.on_fired(0.0)
+    assert prior.is_due(9.999) is False
+    assert prior.is_due(10.0) is True
+
+
+def test_last_pose_prior_never_asks_for_a_fire() -> None:
+    """LastPosePrior is a seed, not a source: re-judging the pose it just published
+    announces nothing new, so it never triggers a fire on its own no matter how
+    much the clock advances or whether it holds a seed."""
+    prior = LastPosePrior()
+    assert prior.is_due(0.0) is False
+    prior.update(np.eye(4))
+    assert prior.is_due(1e9) is False
+    prior.on_fired(1e9)  # acking a fire it did not ask for is a harmless no-op
+    assert prior.is_due(2e9) is False
+
+
+def _burst(prior: FiducialPrior, marker_id: int, fix_T: np.ndarray | None = None) -> None:
+    """One fused pose for one mapped marker. The detector publishes exactly one per
+    (marker, visit), so a single observe() IS one completed burst here. Marker maps
+    are identity in these tests, so observing inv(fix_T) composes map_T_world ==
+    fix_T; the default identity pose leaves it identity."""
+    prior.observe(marker_id, np.eye(4) if fix_T is None else np.linalg.inv(fix_T))
+
+
+def test_fiducial_prior_asks_for_one_fire_per_fused_pose() -> None:
+    """Every arriving fused pose IS a completed burst, so it asks for exactly one
+    fire and the PROPOSE consumes it. Trigger and payload are one fact -- pending is
+    what is_due reports -- so the prior cannot ask for a fire it has no candidate
+    for, nor stay silent while holding one."""
+    prior = FiducialPrior({7: np.eye(4)})
+    gm, lm, _ = _rect_room_scene(seed=20, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+
+    assert prior.is_due(100.0) is False  # nothing seen yet
+
+    _burst(prior, 7)
+    assert prior.is_due(100.0) is True
+    prior.on_fired(100.0)
+    assert prior.is_due(100.0) is True  # the ack alone must NOT drop the estimate
+    prior.propose(gm, lm)
+    assert prior.is_due(100.0) is False  # the propose did
+
+    _burst(prior, 7)  # the tag's next visit: its own fire
+    assert prior.is_due(100.0) is True
+
+
+def test_fiducial_declined_fire_keeps_its_estimate() -> None:
+    """A due prior the module declines to fire (no cloud cached yet) runs neither
+    on_fired nor propose, so its estimate survives and the next real fire proposes
+    it. Losing it here would drop the very first tag fix of a run -- exactly the
+    acquisition the fiducial preset exists for."""
+    gm, lm, _ = _rect_room_scene(seed=21, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
+    prior = FiducialPrior({7: map_T_marker})
+
+    _burst(prior, 7)
+    for _declined in range(3):  # the module keeps declining; nothing acks, nothing drains
+        assert prior.is_due(100.0) is True
+
     candidates = prior.propose(gm, lm)
+    assert len(candidates) == 1
+    np.testing.assert_allclose(candidates[0].T, map_T_marker, atol=1e-12)
 
-    assert len(candidates) == 1 and candidates[0].source == "fiducial"  # clamped, still proposed
-    assert len(warned) == 1  # exactly one warning, not per-frame spam
-    assert warned[0]["msg"] == "fiducial fix age negative; clamping"
-    assert warned[0]["age_s"] == -50.0  # the pre-clamp negative age, pre-rounded
+
+def test_fiducial_prior_holds_each_markers_burst_separately() -> None:
+    """Two markers' fused poses are two independent pending fixes: they ride the
+    same fire (each is its own candidate for the judge) and the fire clears both."""
+    gm, lm, _ = _rect_room_scene(seed=22, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
+    prior = FiducialPrior({7: np.eye(4), 9: np.eye(4)})
+
+    _burst(prior, 7)
+    _burst(prior, 9)
+    assert prior.is_due(100.0) is True
+    assert set(prior._pending) == {7, 9}
+
+    assert len(prior.propose(gm, lm)) == 2
+    assert prior.is_due(100.0) is False  # both served by that one fire
+
+
+# ---------------------------------------------------------------------------
+# Module dispatch: _on_local_map fires ONE independent relocalization per prior
+# that asked, judging that prior's candidates alone. The point of the split is
+# cost -- a RANSAC solve runs 4.4-23 s on the trial's go2 recordings, so a tag
+# fix must never queue behind one. A pool of one is the expected shape, and
+# refine_candidates is the validator that keeps it honest.
+# ---------------------------------------------------------------------------
+
+
+def _scene_cloud(pcd: o3d.geometry.PointCloud, n_pts: int) -> _StubCloud:
+    """A _StubCloud whose `.pointcloud` is a REAL o3d cloud, so a test can drive
+    _try_relocalize through the real judge instead of a monkeypatched solve."""
+    cloud = _StubCloud(n_pts)
+    cloud.pointcloud = pcd
+    return cloud
+
+
+def _fiducial_module(config: Config, fix_T: np.ndarray | None = None) -> RelocalizationModule:
+    """A module with the real FiducialPrior wired (marker map identity). ``fix_T``
+    seeds ONE pending fix through the real observe(), which arms the trigger exactly
+    as a live burst does -- pending IS the trigger now, so a module holding a fix is
+    a module due to fire. Without it the prior is idle until a test bursts it."""
+    m = _bare_module(config)
+    m._fiducial_prior = FiducialPrior({7: np.eye(4)})
+    if fix_T is not None:
+        _burst(m._fiducial_prior, 7, fix_T)
+    return m
+
+
+def _fired_pool(priors: list[RelocPrior]) -> list[str]:
+    """Name the pool a fire judged, and consume what the real judge consumes:
+    relocalize_with_priors asks every prior for candidates, and that ask is what
+    clears the fiducial's pending fix. A stub skipping it leaves the trigger armed
+    and re-fires the same fix forever. Only the fiducial prior is asked -- RansacPrior
+    .propose would run a real FPFH search against these tests' stub clouds."""
+    for prior in priors:
+        if isinstance(prior, FiducialPrior):
+            prior.propose(o3d.geometry.PointCloud(), o3d.geometry.PointCloud())
+    return [prior.name for prior in priors]
+
+
+def _fused_burst(marker_id: int) -> Detection3DArray:
+    """The wire form of ONE completed burst: a single-entry fused_detections array
+    whose bbox.center is an identity world_T_marker."""
+    det = _pose_detection(marker_id, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    return _detection_array([det], ts=1.0)
+
+
+def _judged_clouds(monkeypatch, m: RelocalizationModule) -> list[object]:  # type: ignore[no-untyped-def]
+    """Record the local_map each fire hands the judge, draining the pool as the real
+    relocalize_with_priors does. Returns the list the test asserts on."""
+    judged: list[object] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        judged.append(local_map)
+        return np.eye(4), 0.90, _fired_pool(priors)[0]
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: 100.0
+    return judged
+
+
+def test_completed_burst_fires_against_the_cached_cloud_with_no_new_frame(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A tag burst relocalizes from the detections callback itself, judged against
+    the last global_map received -- no new cloud arrives here at all. Waiting for one
+    would be dead time on acquisition: the tag candidate is composed from the marker
+    alone, and global_map ACCUMULATES in the world frame, so the cached cloud scores
+    wall fitness as well as the next one would."""
+    m = _fiducial_module(Config(priors=[FiducialPriorConfig()]))
+    judged = _judged_clouds(monkeypatch, m)
+
+    cached = _StubCloud(60_000)
+    m._on_local_map(cast("PointCloud2", cached))
+    assert judged == []  # a cloud with no tag pending fires nothing
+
+    m._on_fused_detections(_fused_burst(7))
+
+    assert judged == [cached.pointcloud]  # fired on the cached cloud, no new frame
+    assert m._fiducial_prior is not None
+    assert m._fiducial_prior.is_due(100.0) is False  # that fire consumed the estimate
+
+
+def test_burst_before_the_first_cloud_stays_pending_and_fires_on_it(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The floor of the burst path: with no global_map yet the judge has nothing to
+    score against, so the burst does not fire. It is left UNACKED and undrained --
+    the same decline path a starved RANSAC cycle takes -- so the estimate survives
+    and the first cloud to arrive publishes it."""
+    m = _fiducial_module(Config(priors=[FiducialPriorConfig()]))
+    judged = _judged_clouds(monkeypatch, m)
+
+    m._on_fused_detections(_fused_burst(7))
+    assert judged == []  # no cloud cached -> nothing to judge against
+    assert m._fiducial_prior is not None
+    assert m._fiducial_prior.is_due(100.0) is True  # declined, so the estimate survived
+
+    first = _StubCloud(60_000)
+    m._on_local_map(cast("PointCloud2", first))
+
+    assert judged == [first.pointcloud]
+    assert m._fiducial_prior.is_due(100.0) is False
+
+
+def test_burst_path_never_touches_the_ransac_search_or_its_timer(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """RANSAC stays cloud-driven and untouched by the new path: it GENERATES its
+    candidates from the cloud in hand, so it fires only from _on_local_map. A
+    burst-triggered fire in between runs neither RANSAC entry point and does not ack
+    RANSAC's interval, so the sweep still lands on the first cloud after it is due."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(Config(priors=[RansacPriorConfig(interval_s=2.0), FiducialPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+
+    def _no_ransac(*args: object, **kwargs: object) -> object:
+        raise AssertionError("a burst-triggered fire must not run a RANSAC search")
+
+    monkeypatch.setattr(priors_mod, "generate_ransac_candidates", _no_ransac)
+    monkeypatch.setattr(module_mod, "_relocalize", _no_ransac)
+
+    fires: list[list[str]] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        fires.append(_fired_pool(priors))
+        return np.eye(4), 0.90, priors[0].name
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))  # cold start: RANSAC sweeps
+    assert fires == [["ransac"]]
+
+    clock["now"] = 101.0  # RANSAC has 1 s of its interval left
+    m._on_fused_detections(_fused_burst(7))
+    assert fires == [["ransac"], ["fiducial"]]  # tag alone, off the cached cloud
+
+    clock["now"] = 102.0  # interval elapsed: the sweep the burst did not consume
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == [["ransac"], ["fiducial"], ["ransac"]]
+
+
+def test_fiducial_fire_never_runs_ransac_candidate_generation(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """THE point of per-prior triggers: a burst-triggered fire judges the tag's
+    candidates alone and never touches the RANSAC global search. Both RANSAC entry
+    points are booby-trapped -- generate_ransac_candidates and the plain
+    relocalize() path -- and neither may be reached while RANSAC's own interval has
+    not elapsed."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(
+        Config(priors=[RansacPriorConfig(interval_s=2.0), FiducialPriorConfig()]),
+        fix_T=_rigid(10.0, (0.2, 0.1, 0.0)),
+    )
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+
+    def _no_ransac(*args: object, **kwargs: object) -> object:
+        raise AssertionError("a fiducial-triggered fire must not run a RANSAC search")
+
+    monkeypatch.setattr(priors_mod, "generate_ransac_candidates", _no_ransac)
+    monkeypatch.setattr(module_mod, "_relocalize", _no_ransac)
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+
+    pools: list[list[str]] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        pools.append(_fired_pool(priors))
+        return np.eye(4), 0.90, "fiducial"
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+
+    # RANSAC swept 1 s ago, so its 2 s interval has 1 s to run: the burst is the
+    # only live trigger, and the fire it causes must stay clear of both traps.
+    m._ransac_prior.on_fired(99.0)
+    _burst(m._fiducial_prior, 7)
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+
+    assert pools == [["fiducial"]]  # one fire, tag candidates only, no RANSAC
+
+
+def test_triggers_are_independent_timer_fires_ransac_burst_fires_fiducial(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Neither prior can hold the other up. With no burst at all, advancing the
+    clock past interval_s fires RANSAC alone; with the timer nowhere near due, a
+    completed burst fires the fiducial alone. Once a tag prior is configured every
+    fire goes through the judge (the plain relocalize() path is trapped), so both
+    kinds of fire stay attributed in the log and the eval census."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(Config(priors=[RansacPriorConfig(interval_s=2.0), FiducialPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+
+    fires: list[list[str]] = []
+
+    def _fake_priors(  # type: ignore[no-untyped-def]
+        global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object
+    ):
+        fires.append(_fired_pool(priors))
+        return np.eye(4), 0.90, priors[0].name
+
+    def _fake_ransac(*args: object, **kwargs: object) -> tuple[np.ndarray, float]:
+        raise AssertionError("a configured tag prior sends every fire through the judge")
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake_priors)
+    monkeypatch.setattr(module_mod, "_relocalize", _fake_ransac)
+
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))  # cold start fires RANSAC
+    assert fires == [["ransac"]]
+
+    fires.clear()
+    clock["now"] = 100.5  # timer not due, no burst -> nothing at all
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == []
+
+    fires.clear()
+    _burst(m._fiducial_prior, 7)  # burst only, timer still 1.5 s away
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == [["fiducial"]]
+
+    fires.clear()
+    clock["now"] = 102.5  # timer due, burst already served -> RANSAC only
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == [["ransac"]]
+
+
+def test_pool_of_one_still_clears_the_real_judge_and_the_fitness_gate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A lone fiducial candidate is VALIDATED, not waved through: it runs the real
+    refine_candidates and then the module's fitness_threshold. The truth candidate
+    scores above the gate and publishes a TF; a candidate 5 m into the wrong room
+    scores below it and is rejected, with no TF -- passing the gates is the safety
+    property, beating a rival never was."""
+    global_map, local_map, T_true = _rect_room_scene(seed=31, yaw_deg=12.0, t=(0.7, 0.4, 0.01))
+    config = Config(priors=[FiducialPriorConfig()])
+
+    good = _fiducial_module(config, fix_T=T_true.copy())
+    good._premap = _scene_cloud(global_map, 20_000)  # type: ignore[assignment]
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+
+    tf = good._try_relocalize(  # type: ignore[arg-type]
+        _scene_cloud(local_map, 20_000), good._enabled_prior_objects()
+    )
+    assert tf is not None
+    assert rec.infos and rec.infos[0][0] == "relocalize accepted"
+    assert rec.infos[0][1]["source"] == "fiducial"  # one source, still attributed
+    assert rec.infos[0][1]["fitness"] >= FiducialPriorConfig().fitness_threshold
+
+    wrong = T_true.copy()
+    wrong[:3, 3] += np.array([5.0, 5.0, 0.0])  # wrong room: ~0 wall inliers at FINE_VOXEL
+    bad = _fiducial_module(config, fix_T=wrong)
+    bad._premap = _scene_cloud(global_map, 20_000)  # type: ignore[assignment]
+    rec2 = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec2)
+
+    assert (
+        bad._try_relocalize(  # type: ignore[arg-type]
+            _scene_cloud(local_map, 20_000), bad._enabled_prior_objects()
+        )
+        is None
+    )
+    assert rec2.warnings and rec2.warnings[0][0] == "relocalize rejected"
+    assert rec2.warnings[0][1]["fitness"] < FiducialPriorConfig().fitness_threshold
+    assert not rec2.infos
+
+
+def test_fiducial_only_preset_fires_on_a_burst_with_no_periodic_timer(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The fiducial-only preset carries NO ransac entry, so nothing periodic can
+    trigger it. Frames stream by with no fire however far the clock runs; the
+    completed burst is what fires it -- burst-only, and not deadlocked into never
+    firing."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(Config(priors=[FiducialPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+
+    fires: list[list[str]] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        fires.append(_fired_pool(priors))
+        return np.eye(4), 0.90, "fiducial"
+
+    def _no_ransac(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the fiducial-only preset has no RANSAC path")
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+    monkeypatch.setattr(module_mod, "_relocalize", _no_ransac)
+    monkeypatch.setattr(priors_mod, "generate_ransac_candidates", _no_ransac)
+
+    for tick in range(5):  # a minute of frames, no tag: no fire, no timer to save it
+        clock["now"] = 100.0 + 15.0 * tick
+        m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == []
+
+    _burst(m._fiducial_prior, 7)
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == [["fiducial"]]
+
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))  # edge consumed
+    assert fires == [["fiducial"]]
+
+
+def test_stale_reloc_interval_s_raises_naming_its_new_home(tmp_path: Path) -> None:
+    """reloc_interval_s left the module Config for the ransac prior entry. An old
+    config, and the `-o relocalizationmodule.reloc_interval_s=...` an operator
+    still has in their shell history, must fail loudly naming where the cadence
+    went -- accepted-and-ignored would run the robot at a cadence nobody chose."""
+    with pytest.raises(ValidationError, match="reloc_interval_s moved onto the ransac prior entry"):
+        Config(priors=[RansacPriorConfig()], reloc_interval_s=5.0)  # type: ignore[call-arg]
+
+    # The real CLI overlay path: load_config_args pre-validates -o and tolerates
+    # only "missing" errors, so this stale key raises there rather than at deploy.
+    bp = RelocalizationModule.blueprint(priors=[RansacPriorConfig()])
+    key = config_key(bp.blueprints[0].name)
+    with pytest.raises(ValidationError, match="RansacPriorConfig"):
+        load_config_args(bp.config(), [f"{key}.reloc_interval_s=5"], tmp_path / "no_such_config")
+
+
+def test_moved_prior_fields_raise_naming_their_new_home() -> None:
+    """fitness_threshold and min_local_points left the module Config for the prior
+    entries. BaseConfig is extra='forbid', so a stale
+    `-o relocalizationmodule.fitness_threshold=` must fail loudly naming the new home
+    -- an opaque 'extra inputs' error would not say the accept bar is now per prior."""
+    with pytest.raises(ValidationError, match="fitness_threshold moved onto each prior entry"):
+        Config(priors=[RansacPriorConfig()], fitness_threshold=0.5)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError, match="min_local_points moved onto the ransac prior entry"):
+        Config(priors=[RansacPriorConfig()], min_local_points=100)  # type: ignore[call-arg]
+
+
+def test_last_pose_seed_rides_along_with_the_prior_that_fired(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """LastPosePrior has no trigger, so a fire it cannot ask for still carries it:
+    an enabled last_pose entry joins whichever prior fired, contributing its one
+    carried-forward candidate. Dropping it instead would silently disable a
+    configured prior; it never pulls a RANSAC search into a tag fire."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(Config(priors=[LastPosePriorConfig(), FiducialPriorConfig()]))
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    m._last_pose_prior.update(np.eye(4))
+    monkeypatch.setattr(module_mod, "logger", _ModuleLogRecorder())
+
+    pools: list[list[str]] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        pools.append(_fired_pool(priors))
+        return np.eye(4), 0.90, "fiducial"
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert pools == []  # last_pose alone triggers nothing: no fire without a source
+
+    _burst(m._fiducial_prior, 7)
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert pools == [["fiducial", "last_pose"]]  # the seed rode along, ransac absent
+
+
+def test_min_local_points_gates_ransac_only_fiducial_fires_on_a_sparse_submap(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """min_local_points is the FPFH+RANSAC geometry floor, not a global gate: a
+    completed tag burst fires and reaches the judge even with the live submap far
+    below the floor (a tag fix comes from the tag, not lidar density), while a
+    RANSAC cycle stays blocked until the submap clears the floor. A blocked RANSAC
+    is not acked, so it re-fires on the next dense frame."""
+    clock = {"now": 100.0}
+    m = _fiducial_module(
+        Config(
+            priors=[
+                RansacPriorConfig(interval_s=2.0, min_local_points=50_000),
+                FiducialPriorConfig(),
+            ]
+        )
+    )
+    m._premap = _StubCloud(10)  # type: ignore[assignment]
+    m._now_fn = lambda: clock["now"]
+    rec = _ModuleLogRecorder()
+    monkeypatch.setattr(module_mod, "logger", rec)
+
+    fires: list[list[str]] = []
+
+    def _fake(global_map: object, local_map: object, priors: list[RelocPrior], **kwargs: object):  # type: ignore[no-untyped-def]
+        fires.append(_fired_pool(priors))
+        return np.eye(4), 0.90, priors[0].name
+
+    def _no_solo(*args: object, **kwargs: object) -> object:
+        raise AssertionError("a configured tag prior routes every fire through the judge")
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _fake)
+    monkeypatch.setattr(module_mod, "_relocalize", _no_solo)
+
+    # SPARSE submap (below 50k) with a completed burst: RANSAC (cold, so due) is
+    # blocked and logs the skip; the fiducial burst fires anyway.
+    _burst(m._fiducial_prior, 7)
+    m._on_local_map(cast("PointCloud2", _StubCloud(10_000)))
+    assert fires == [["fiducial"]]  # fiducial NOT gated by min_local_points
+    assert rec.warnings and rec.warnings[0][0] == "ransac reloc skipped"  # RANSAC was blocked
+    assert rec.warnings[0][1]["n_pts"] == 10_000
+
+    # DENSE submap: RANSAC (still due -- its blocked cycle was never acked) now fires.
+    fires.clear()
+    m._on_local_map(cast("PointCloud2", _StubCloud(60_000)))
+    assert fires == [["ransac"]]  # RANSAC still gates at 50k, fires once the floor is cleared

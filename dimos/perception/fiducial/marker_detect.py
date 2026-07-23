@@ -100,9 +100,9 @@ def detect_markers_in_image(
         )
         if gated is None:
             continue
-        optical_T_marker_mat, _reproj_px = gated
-        rvec = cv2.Rodrigues(optical_T_marker_mat[:3, :3])[0]
-        tvec = optical_T_marker_mat[:3, 3].reshape(3, 1)
+        optical_T_marker, _reproj_px = gated
+        rvec = cv2.Rodrigues(optical_T_marker[:3, :3])[0]
+        tvec = optical_T_marker[:3, 3].reshape(3, 1)
         t_optical_marker = rvec_tvec_to_transform(
             rvec,
             tvec,

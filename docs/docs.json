@@ -116,7 +116,8 @@
             "pages": [
               "capabilities/navigation/index",
               "capabilities/navigation/deep_dive",
-              "capabilities/navigation/relocalization"
+              "capabilities/navigation/relocalization",
+              "capabilities/navigation/relocalization_benchmark"
             ]
           },
           {
@@ -450,6 +451,10 @@
     {
       "source": "/docs/capabilities/navigation/relocalization.md",
       "destination": "/capabilities/navigation/relocalization"
+    },
+    {
+      "source": "/docs/capabilities/navigation/relocalization_benchmark.md",
+      "destination": "/capabilities/navigation/relocalization_benchmark"
     },
     {
       "source": "/docs/capabilities/perception/index.md",

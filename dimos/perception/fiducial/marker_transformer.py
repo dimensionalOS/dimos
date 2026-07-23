@@ -16,9 +16,14 @@
 
 Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`,
 emitting one :class:`Detection3DMarker` per marker with ``.pose`` composed into
-world frame from the upstream camera pose. Also holds the smoothing helpers and
+world frame from the upstream camera pose. Also holds the smoothing helpers,
 ``MarkersPerFrame`` (collapses marker fan-out back to one ``Detection3DArray``
-per source image). :class:`MarkerTfModule` handles live TF publication.
+per source image) and :class:`FuseTagBursts` (the per-glimpse quality gates plus
+one robust fused pose per tag visit). :class:`MarkerTfModule` handles live TF
+publication.
+
+The gate + fusion core FuseTagBursts drives originates in Jeff Hykin's
+jnav apriltag aggregation, dimos PR #2587.
 
 Frames with no upstream ``.pose`` are skipped (debug log): without a camera-in-
 world pose we can't honor the always-world-frame output contract.
@@ -34,6 +39,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.memory2.transform import Transformer
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -42,6 +49,18 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
+from dimos.perception.fiducial.apriltag_aggregation import (
+    AggregationConfig,
+    TagAggregator,
+    TagEstimate,
+    TagObservation,
+    matrix_from_pose7,
+    pose7_from_matrix,
+    tag_covariance,
+    tag_noise_scale,
+    tag_side_px,
+    view_quality,
+)
 from dimos.perception.fiducial.marker_detect import (
     detect_markers_in_image as _detect_markers_in_image,
 )
@@ -57,7 +76,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory2.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -155,7 +173,6 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.ambiguity_ratio_min = ambiguity_ratio_min
         self._detector = create_aruco_detector(aruco_dictionary)
         self._camera_info_key: tuple[Any, ...] | None = None
-        self._resolved_camera_info: CameraInfo | None = None
         self._cam_mtx: np.ndarray | None = None
         self._dist: np.ndarray | None = None
         # Per marker_id sliding-window buffer of raw detections, used to emit
@@ -395,3 +412,125 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
         if detections and detections[0].transform is not None:
             return detections[0].transform
         return obs.pose
+
+
+class FuseTagBursts:
+    """Gate each tag glimpse, then publish ONE robustly-fused pose per tag VISIT.
+
+    A ``Stream.tap`` callable sitting between ``DetectMarkers`` and
+    ``MarkersPerFrame``: it reads every ``Detection3DMarker`` and yields nothing, so
+    the per-frame ``detections`` array downstream stays byte-identical. This is the
+    only place the ``AggregationConfig`` gates CAN run live -- ``corners_px``,
+    ``reprojection_error`` and the camera transform all exist here and every one of
+    them is dropped by the wire ``Detection3DArray`` encoding a step later.
+
+    Emission is EDGE-triggered per (marker, visit): the glimpse that first brings a
+    marker's window to ``min_observations`` publishes, later glimpses of the same
+    burst do not. Upstream ``QualityWindow`` passes at most one frame per
+    ``quality_window_s`` (0.5 s default), so a level-triggered publish would fire
+    ~2x/s for one unchanged fix -- and at that rate ``min_observations=3`` means a
+    tag must hold view ~1.0 s before its first fused pose ships.
+
+    ``ambiguity_ratio_min`` is NOT part of this chain: the detector already gates the
+    IPPE mirror flip per view, upstream of everything here.
+    """
+
+    def __init__(
+        self,
+        publish: Callable[[Detection3DArray], Any],
+        config: AggregationConfig,
+        world_frame: str = "world",
+    ) -> None:
+        self._publish = publish
+        self._world_frame = world_frame
+        self._aggregator = TagAggregator(config)
+        # Markers whose CURRENT burst has already published. A marker leaves the set
+        # once TagAggregator's window thins back under min_observations (it left view
+        # for longer than time_window_s), which re-arms the edge for its next visit.
+        self._burst_counted: set[int] = set()
+
+    def __call__(self, obs: Observation[Detection3DMarker | None]) -> None:
+        det = obs.data
+        if det is None:
+            return  # DetectMarkers(emit_empty_frames=True) sentinel: a tag-free frame
+
+        world_T_marker = (
+            det.center.x,
+            det.center.y,
+            det.center.z,
+            det.orientation.x,
+            det.orientation.y,
+            det.orientation.z,
+            det.orientation.w,
+        )
+        distance_m: float | None = None
+        view_angle_deg: float | None = None
+        if det.transform is not None:
+            # det.transform IS world_T_optical; this inverse is the exact undo of the
+            # compose that built world_T_marker, not a second pose estimate.
+            optical_T_marker = np.linalg.inv(det.transform.to_matrix()) @ matrix_from_pose7(
+                world_T_marker
+            )
+            distance_m, view_angle_deg = view_quality(pose7_from_matrix(optical_T_marker))
+        # else: smoothing_window > 0 emits an averaged pose with transform=None (it
+        # spans many frames), so the two camera-relative gates go quiet by design and
+        # only the reproj / tag_px gates bite. Blueprint default is 0.0 (off).
+
+        reason = self._aggregator.observe(
+            TagObservation(
+                ts=obs.ts,
+                marker_id=det.marker_id,
+                pose=world_T_marker,
+                distance_m=distance_m,
+                view_angle_deg=view_angle_deg,
+                reproj_px=det.reprojection_error,
+                tag_px=tag_side_px(det.corners_px),
+            )
+        )
+        if reason is not None:
+            return
+        estimate = self._aggregator.robust_estimate(det.marker_id)
+        if estimate is None:
+            self._burst_counted.discard(det.marker_id)  # window thinned -> re-arm the edge
+            return
+        if det.marker_id in self._burst_counted:
+            return  # same burst still satisfied: publishing per frame would fire ~2x/s
+        self._burst_counted.add(det.marker_id)
+        self._publish(self._fused_array(det, estimate))
+
+    def _fused_array(self, det: Detection3DMarker, estimate: TagEstimate) -> Detection3DArray:
+        """One-detection array carrying this tag's fused world_T_marker plus its
+        health signal: the covariance and the score are the same number twice, so
+        they cannot disagree."""
+        scale = tag_noise_scale(estimate.distance_m, estimate.reproj_px)
+        x, y, z, qx, qy, qz, qw = estimate.pose
+        fused = dataclasses.replace(
+            det,
+            center=Vector3(x, y, z),
+            orientation=Quaternion(qx, qy, qz, qw),
+            transform=None,  # fused across many frames: no ONE camera transform holds
+            confidence=min(1.0, 1.0 / scale),  # -> hypothesis.score, dimensionless 0-1
+        )
+        msg = ImageDetections3D(det.image, [fused]).to_ros_detection3d_array(
+            frame_id=self._world_frame
+        )
+        # ASSIGN, never mutate in place: the generated LCM constructor shares ONE
+        # default PoseWithCovariance across every ObjectHypothesisWithPose, so writing
+        # .covariance would stamp this onto every detection in the process. Same
+        # hazard the bbox assignment in detection3d/bbox.py documents.
+        msg.detections[0].results[0].pose = PoseWithCovariance(
+            Pose(position=fused.center, orientation=fused.orientation),
+            tag_covariance(estimate.pose, scale),
+        )
+        # n_observations stays OFF the wire and the covariance is NOT divided by n:
+        # PnP errors within one visit share a viewpoint and are strongly correlated,
+        # so 1/n would read optimistic to any downstream landmark factor.
+        logger.info(
+            "tag burst fused",
+            marker_id=det.marker_id,
+            n_obs=estimate.n_observations,
+            distance_m=None if estimate.distance_m is None else round(estimate.distance_m, 2),
+            reproj_px=None if estimate.reproj_px is None else round(estimate.reproj_px, 2),
+            score=round(fused.confidence, 2),
+        )
+        return msg

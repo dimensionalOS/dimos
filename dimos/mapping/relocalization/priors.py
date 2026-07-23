@@ -15,20 +15,26 @@
 
 """Pluggable relocalization priors -- candidate PROPOSERS feeding the shared
 fine-ICP judge in relocalize.py (``refine_candidates``). No prior is trusted:
-a candidate wins the pool by surviving the wall-only fine-fitness rerank,
-never by its source's own reported confidence. Three priors live here:
-``RansacPrior`` (wrapping relocalize.py's existing multi-scale FPFH+RANSAC
-search), ``LastPosePrior`` (the last accepted answer, carried forward) and
-``FiducialPrior`` (marker sightings Huber-fused into one robust world->map
-candidate per tag, age-gated). The same invariant binds any future prior: it
-competes through the judge on wall fitness, never bypasses it.
+a candidate is accepted by surviving the wall-only fine-fitness rerank, never by
+its source's own reported confidence. Three priors live here: ``RansacPrior``
+(wrapping relocalize.py's existing multi-scale FPFH+RANSAC search),
+``LastPosePrior`` (the last accepted answer, carried forward) and
+``FiducialPrior`` (the detector's fused tag poses composed into one world->map
+candidate per tag). The same invariant binds any future prior: it
+goes through the judge on wall fitness, never bypasses it.
+
+Each prior also owns its own TRIGGER (``is_due`` / ``on_fired``), and each fire
+judges that prior's candidates ALONE. RANSAC sweeps periodically because a global
+search has no event to wait for; the fiducial prior fires on the edge of a
+completed tag burst, so a tag fix publishes at the tag's latency instead of
+waiting on a RANSAC search that costs seconds. A pool of one is the expected
+case: the judge is a validator (wall fitness, gravity tilt, wall evidence), not a
+tournament.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-import time
 from typing import Annotated, Literal, Protocol
 
 import numpy as np
@@ -37,27 +43,21 @@ from pydantic import Field
 
 from dimos.mapping.relocalization.relocalize import (
     GRAVITY_TILT_MAX_DEG,
+    JudgeReport,
     generate_ransac_candidates,
     refine_candidates,
 )
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.perception.fiducial.apriltag_aggregation import (
-    AggregationConfig,
-    TagAggregator,
-    TagObservation,
-    matrix_from_pose7,
-    pose7_from_matrix,
-    tag_pixel_size,
-    view_quality,
-)
-from dimos.perception.fiducial.marker_pose import (
-    ambiguity_gated_pose,
-    camera_info_to_cv_matrices,
-)
+from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# s between RANSAC fires. One multi-scale FPFH+RANSAC search costs seconds of CPU
+# (4.4-23 s measured on the trial's go2/Orin recordings), so the sweep is paced
+# rather than run per frame; 2.0 is the cadence the module throttled at before the
+# trigger moved onto this prior.
+DEFAULT_RANSAC_INTERVAL_S = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -70,28 +70,41 @@ logger = setup_logger()
 
 
 class PriorConfigBase(BaseConfig):
-    """Fields every prior shares: the on/off toggle plus the (INERT) fusion surface.
-
-    ``enabled`` alone decides whether a prior proposes into the judge today.
-    ``tier``/``weight``/``max_age_s`` are declared but read by NOTHING yet -- the
-    judge ranks purely on wall fitness, never on self-reported trust. They are the
-    seam a future fusion arbiter will read; surfacing them now keeps a preset
-    written today working once that arbiter lands.
-    """
+    """Fields every prior shares: the on/off toggle plus its accept bar."""
 
     enabled: bool = True
-    tier: int = Field(default=0, ge=0)  # INERT: fusion-arbiter priority tier (0 = base)
-    weight: float = Field(default=1.0, ge=0.0)  # INERT: fusion-arbiter blend weight
-    # INERT: fusion-arbiter age-decay half-life (s). NOT a live gate -- the only
-    # live age cutoff is FiducialPriorConfig.age_max_s below.
-    max_age_s: float = Field(default=120.0, ge=0.0)
+    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) THIS prior's
+    # fix must clear to be accepted. On the base -- like ``enabled`` -- because every
+    # prior is judged on its own bar (each fire pools one source). 0.45 is the old
+    # single module gate, kept here as the fallback for a prior that states no bar of
+    # its own (last_pose, which only re-proposes an already accepted fix). ransac and
+    # fiducial DO override it below, each stating its own bar where it is configured.
+    fitness_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
 
 
 class RansacPriorConfig(PriorConfigBase):
-    """Multi-scale FPFH+RANSAC global search (``RansacPrior``). No params of its
-    own -- the search knobs live in relocalize.py."""
+    """Multi-scale FPFH+RANSAC global search (``RansacPrior``). The search knobs
+    live in relocalize.py; this entry owns the accept bar, the sweep cadence and the
+    geometry floor the search needs to be worth firing."""
 
     type: Literal["ransac"] = "ransac"
+    # HIGH bar (dimensionless wall fitness, 0-1). A RANSAC fix is a geometric FPFH
+    # search with nothing anchoring it but the walls it landed on, and a repeated
+    # corridor hands it a wrong-but-fitting wall that still scores respectably -- the
+    # wall overlap IS the whole evidence. 0.6 raises the old single 0.45 module gate,
+    # which was set when a lidar-only module had no second source to fall back on.
+    fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    # s between RANSAC fires -- this prior's trigger. Was the module's
+    # reloc_interval_s, which no longer exists: a global search has no event to
+    # wait for, so it paces itself and the tag prior fires on its own edge.
+    interval_s: float = Field(default=DEFAULT_RANSAC_INTERVAL_S, gt=0.0)
+    # Min local-map points (post VoxelGridMapper) this search needs before it fires:
+    # FPFH matching + the wall-only rerank have too little geometry below this, so a
+    # sparse frame is skipped (throttled log) and the search retries on the next
+    # dense frame. RANSAC-scoped on purpose -- a fiducial fix comes from the tag, not
+    # lidar density, so a tag burst fires regardless (its wall evidence is still
+    # validated by refine_candidates' separate, much lower MIN_WALL_POINTS gate).
+    min_local_points: int = Field(default=50_000, ge=0)
 
 
 class LastPosePriorConfig(PriorConfigBase):
@@ -106,27 +119,18 @@ class FiducialPriorConfig(PriorConfigBase):
     (``FiducialPrior``). Owns the whole fiducial parameter surface."""
 
     type: Literal["fiducial"] = "fiducial"
+    # Same wall-fitness bar as any other source (dimensionless, 0-1): a decoded id
+    # names the tag, it does not show the composed pose fits the walls.
+    fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Surveyed marker map (map_T_marker per id), a .json path resolved via
     # resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
+    # Tag geometry, family and per-glimpse gate/fusion knobs the DETECTOR needs; none
+    # of the three is read here (this prior consumes poses the detector already gated
+    # and fused). Blueprints thread all three into MarkerDetectionStreamModule so the
+    # fiducial family has one source of truth.
     marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
-    # Tag family the DETECTOR decodes; not read here (this module fuses decoded
-    # sightings). Blueprints thread it into MarkerDetectionStreamModule so detector
-    # + prior share one source of truth.
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
-    # IPPE mirror-ambiguity gate: best/runner-up reproj ratio a glimpse must beat
-    # (1.0 = off). Only bites when corners_px reach the prior (offline harness);
-    # the live wire drops the pixels, so the medoid/Huber fusion carries the
-    # mirror-flip rejection. Collins & Bartoli 2014
-    # https://link.springer.com/article/10.1007/s11263-014-0725-5
-    ambiguity_ratio_min: float = Field(default=2.0, ge=1.0)
-    # Intrinsics for the ambiguity gate's solvePnP. None -> pixel-gated path skipped.
-    camera_info: CameraInfo | None = None
-    # LIVE hard cutoff (s): propose() drops a fused fix older than this. Distinct
-    # from the INERT base max_age_s (fusion arbiter, unread today).
-    age_max_s: float = Field(default=120.0, ge=0.0)
-    # Per-glimpse gate + fusion knobs for the aggregator, so a deployment can
-    # retune fusion without code changes.
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
@@ -145,7 +149,7 @@ class Candidate:
     ``global_map``'s frame. A candidate carries only WHICH transform and WHICH
     source -- no self-reported confidence, since ``refine_candidates`` ranks purely
     on wall-only fine-scale fitness, so a "trusted" prior still loses to one that
-    fits the walls. (Composite confidence is a future fusion arbiter's job.)
+    fits the walls.
     """
 
     T: np.ndarray
@@ -153,12 +157,22 @@ class Candidate:
 
 
 class RelocPrior(Protocol):
-    """A relocalization candidate proposer.
+    """A relocalization candidate proposer that owns when it is asked.
 
     Implementations MUST NOT self-select a winner -- that is
     ``refine_candidates``'s job, always. Returning zero candidates (e.g. no
     marker in view, no prior pose seeded yet) is a valid, expected response,
     not an error.
+
+    ``is_due(now_s)`` is the prior's TRIGGER: True when it wants a relocalization
+    fired now. ``on_fired(now_s)`` acks the fire that answered it (restart the
+    timer, clear the edge). The module calls ``is_due`` on every enabled prior each
+    local-map frame and fires one INDEPENDENT relocalization per prior that said
+    yes, so no prior's latency is coupled to another's cost. The pair is split so
+    the module can decline a due prior (RANSAC below its min_local_points floor):
+    unacked, the trigger stands and fires at the first frame that qualifies.
+    ``now_s`` is seconds on the module's single monotonic timebase, passed in so a
+    test can drive the trigger without sleeping.
     """
 
     name: str
@@ -169,12 +183,27 @@ class RelocPrior(Protocol):
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]: ...
 
+    def is_due(self, now_s: float) -> bool: ...
+
+    def on_fired(self, now_s: float) -> None: ...
+
 
 class RansacPrior:
     """Wraps relocalize.py's multi-scale FPFH+RANSAC global search, proposing its
-    raw candidate pool into the judge like any other source."""
+    raw candidate pool into the judge.
+
+    Trigger: a fixed interval. A global search waits on no event -- there is always
+    a scan to match -- so the only sane trigger is a paced sweep, and the pace is
+    what bounds its cost.
+    """
 
     name = "ransac"
+
+    def __init__(self, interval_s: float = DEFAULT_RANSAC_INTERVAL_S) -> None:
+        self._interval_s = interval_s
+        # None == never fired, so the first frame with enough points relocalizes
+        # immediately -- the leading emit of the throttle this trigger replaces.
+        self._last_fired_s: float | None = None
 
     def propose(
         self,
@@ -183,6 +212,12 @@ class RansacPrior:
     ) -> list[Candidate]:
         transforms = generate_ransac_candidates(global_map, local_map)
         return [Candidate(T=T, source=self.name) for T in transforms]
+
+    def is_due(self, now_s: float) -> bool:
+        return self._last_fired_s is None or now_s - self._last_fired_s >= self._interval_s
+
+    def on_fired(self, now_s: float) -> None:
+        self._last_fired_s = now_s
 
 
 class LastPosePrior:
@@ -196,166 +231,100 @@ class LastPosePrior:
     ``map`` frame, so this seed is ``map_T_world``. module.py inverts to
     ``world_T_map`` only when publishing the TF -- ``update()`` callers must pass
     the PRE-inversion T, never the published TF.
+
+    Trigger: none. This is a SEED, not a source -- re-judging the pose it just
+    published announces nothing new, so it never asks for a fire of its own and
+    instead rides along with whichever prior did fire (module.py::_fire_pool).
+    It costs one candidate and never a search.
     """
 
     name = "last_pose"
 
     def __init__(self) -> None:
-        self._last_T: np.ndarray | None = None
+        self._last_map_T_world: np.ndarray | None = None
 
-    def update(self, T: np.ndarray) -> None:
-        self._last_T = T
+    def update(self, map_T_world: np.ndarray) -> None:
+        self._last_map_T_world = map_T_world
 
     def propose(
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
-        if self._last_T is None:
+        if self._last_map_T_world is None:
             return []
-        return [Candidate(T=self._last_T, source=self.name)]
+        return [Candidate(T=self._last_map_T_world, source=self.name)]
+
+    def is_due(self, now_s: float) -> bool:
+        return False
+
+    def on_fired(self, now_s: float) -> None:
+        """Nothing to ack: this prior never asks for a fire."""
 
 
 class FiducialPrior:
-    """Fiducial marker sightings -> ONE robust world->map candidate per tag.
+    """Fused fiducial tag poses -> ONE world->map candidate per tag.
 
-    ``observe()`` gates one sighting and Huber-fuses the visit's sightings (medoid
-    seed + IRLS: weighted-mean translation + Markley quaternion mean); ``propose()``
-    composes each fused pose with the surveyed marker map into a candidate. No
-    confidence -- the judge ranks it on wall fitness like every source.
+    ``observe()`` takes one already-gated, already-fused ``world_T_marker`` from the
+    detector's ``fused_detections`` stream and composes it with the surveyed marker
+    map; ``propose()`` hands each composed fix to the judge. No confidence -- the
+    judge ranks it on wall fitness like every source.
 
-    Fusing the marker's drift-free WORLD pose (``world_T_marker``) keeps camera
-    motion within a visit out of the fused pose. Available inputs drive the gates;
-    a gate whose input is absent is skipped (graceful degradation):
-     - ``corners_px`` + ``camera_info`` -> IPPE mirror-ambiguity gate (full
-       solvePnPGeneric, drops a glimpse whose flip reprojects nearly as well) plus
-       reproj/tag-px/view gates;
-     - ``world_T_optical`` alone -> distance/view-angle gates;
-     - neither (pixel-less wire) -> fuse on min-obs + time window, leaning on the
-       medoid/Huber to reject mirror-flip outliers.
+    Gating and fusion live UPSTREAM, in the detector's ``FuseTagBursts``, because
+    that is the only place ``corners_px``, the reprojection error and the camera
+    transform still exist -- the wire ``Detection3DArray`` drops all three. This
+    prior therefore does composition, nothing else.
 
     Frame convention: a candidate's ``T`` is map_T_world =
     ``map_T_marker @ inv(world_T_marker_fused)`` -- the same
-    local_map(world)->global_map(map) direction RANSAC uses. propose() drops a fix
-    older than ``age_max_s`` (hard cutoff, no decay). Defaults are engineering
-    guesses; tuning belongs to #2137's autoresearch harness.
+    local_map(world)->global_map(map) direction RANSAC uses.
+
+    Trigger and payload are ONE fact: a composed fix stays PENDING until
+    ``propose()`` consumes it, and pending is what ``is_due`` reports. Every arriving
+    fused pose is already one completed burst (``FuseTagBursts`` publishes once per
+    marker per visit), so each tag's estimate goes past the judge exactly once and
+    the prior then goes quiet until that tag is seen again.
     """
 
     name = "fiducial"
 
-    def __init__(
-        self,
-        marker_map: dict[int, np.ndarray],
-        *,
-        camera_info: CameraInfo | None = None,
-        marker_length_m: float = 0.10,  # 10 cm tag
-        ambiguity_ratio_min: float = 2.0,  # flip must reproject >=2x worse to keep
-        config: AggregationConfig | None = None,
-        age_max_s: float = 120.0,
-        now_fn: Callable[[], float] = time.monotonic,
-    ) -> None:
+    def __init__(self, marker_map: dict[int, np.ndarray]) -> None:
         # marker_id -> map_T_marker (4x4); the surveyed marker map.
         self._map_T_marker = marker_map
-        self._camera_info = camera_info
-        self._marker_length_m = marker_length_m
-        self._ambiguity_ratio_min = ambiguity_ratio_min
-        self._age_max_s = age_max_s
-        self._now_fn = now_fn
-        self._aggregator = TagAggregator(config if config is not None else AggregationConfig())
-        # marker_id -> (map_T_world 4x4, arrival ts). Single-timebase invariant: ts
-        # is stamped by now_fn here and MUST be compared only against now_fn() in
-        # propose() -- mixing clocks makes age negative and neuters the age gate.
-        self._fixes: dict[int, tuple[np.ndarray, float]] = {}
+        # marker_id -> map_T_world (4x4) awaiting its ONE trip past the judge.
+        self._pending: dict[int, np.ndarray] = {}
 
-    def observe(
-        self,
-        marker_id: int,
-        world_T_marker: np.ndarray,
-        ts: float,
-        *,
-        world_T_optical: np.ndarray | None = None,
-        corners_px: np.ndarray | None = None,
-    ) -> str | None:
-        """Feed one marker sighting; refresh this tag's fused fix if the visit is
-        rich enough. Returns a rejection reason (``unmapped_id`` /
-        ``mirror_ambiguous`` / a gate name) or ``None`` when the glimpse is kept.
-        """
+    def observe(self, marker_id: int, world_T_marker_fused: np.ndarray) -> str | None:
+        """Take ONE fused tag pose from the detector's ``fused_detections`` stream
+        and compose this tag's world->map fix. Returns ``unmapped_id`` or ``None``."""
         map_T_marker = self._map_T_marker.get(marker_id)
         if map_T_marker is None:
             return "unmapped_id"
-
-        distance_m: float | None = None
-        view_angle_deg: float | None = None
-        reproj_px: float | None = None
-        tag_px: float | None = None
-        optical_T_marker: np.ndarray | None = None
-        if corners_px is not None and self._camera_info is not None:
-            camera_matrix, dist_coeffs = camera_info_to_cv_matrices(self._camera_info)
-            gated = ambiguity_gated_pose(
-                corners_px,
-                self._marker_length_m,
-                camera_matrix,
-                dist_coeffs,
-                distortion_model=self._camera_info.distortion_model,
-                ambiguity_ratio_min=self._ambiguity_ratio_min,
-            )
-            if gated is None:
-                return "mirror_ambiguous"
-            optical_T_marker, reproj_px = gated
-            tag_px = tag_pixel_size(corners_px)
-        elif world_T_optical is not None:
-            optical_T_marker = np.linalg.inv(world_T_optical) @ world_T_marker
-        if optical_T_marker is not None:
-            distance_m, view_angle_deg = view_quality(pose7_from_matrix(optical_T_marker))
-
-        reason = self._aggregator.observe(
-            TagObservation(
-                ts=ts,
-                marker_id=marker_id,
-                pose=pose7_from_matrix(world_T_marker),
-                distance_m=distance_m,
-                view_angle_deg=view_angle_deg,
-                reproj_px=reproj_px,
-                tag_px=tag_px,
-            )
-        )
-        if reason is not None:
-            return reason
-        estimate = self._aggregator.robust_estimate(marker_id)
-        if estimate is not None:
-            world_T_marker_fused = matrix_from_pose7(estimate.pose)
-            self._fixes[marker_id] = (
-                map_T_marker @ np.linalg.inv(world_T_marker_fused),
-                self._now_fn(),
-            )
+        self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_fused)
         return None
+
+    def is_due(self, now_s: float) -> bool:
+        return bool(self._pending)
+
+    def on_fired(self, now_s: float) -> None:
+        """Nothing to ack: propose() consumes the pending fix, and pending IS the
+        trigger."""
 
     def propose(
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
-        now = self._now_fn()
-        candidates: list[Candidate] = []
-        # Snapshot before iterating: observe() runs on the detections transport
-        # thread and self._fixes[id] = ... on a NEW tag id changes the dict size
-        # mid-iteration -> "dictionary changed size during iteration". list() over
-        # the values view is one GIL-atomic C copy, so the reload never tears.
-        for fix_T, fix_ts in list(self._fixes.values()):
-            age_s = now - fix_ts
-            # Negative age == fix_ts and now came from different clocks. Left as-is,
-            # `<= age_max_s` is always true and a stale fix proposes forever (age gate
-            # disabled). Clamp to fresh and warn so the misconfig surfaces loudly.
-            if age_s < 0:
-                logger.warning(
-                    "fiducial fix age negative; clamping",
-                    age_s=round(age_s, 2),
-                    hint="fix_ts and now must share one clock (now_fn)",
-                )
-                age_s = 0.0
-            if age_s <= self._age_max_s:
-                candidates.append(Candidate(T=fix_T, source=self.name))
-        return candidates
+        # Consume on use, and HERE rather than in on_fired(): the module acks the
+        # trigger BEFORE the solve that reaches propose() (module.py::_fire), so an
+        # on_fired() clear would drop the fix unjudged. Re-offering a fix on a later
+        # fire hands the judge the SAME measurement against a world that has drifted
+        # further since, so it can only score worse than it did when fresh.
+        # The swap is one statement, so an observe() racing in from the detections
+        # transport thread either lands in the drained dict or stays pending for the
+        # next fire -- the reload never tears and no fix is read twice.
+        pending, self._pending = self._pending, {}
+        return [Candidate(T=fix_T, source=self.name) for fix_T in pending.values()]
 
 
 def relocalize_with_priors(
@@ -363,13 +332,21 @@ def relocalize_with_priors(
     local_map: o3d.geometry.PointCloud,
     priors: list[RelocPrior],
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
+    verbose_eval_logging: bool = False,
+    report: JudgeReport | None = None,
 ) -> tuple[np.ndarray, float, str]:
-    """Gather candidates from every prior, judge them through the shared fine-ICP
-    tail (``refine_candidates``), report which prior's candidate won.
+    """Gather candidates from the priors this fire runs, judge them through the
+    shared fine-ICP tail (``refine_candidates``), report which candidate won.
 
-    No source bypasses the judge -- a candidate that doesn't fit the walls loses.
+    Usually ONE prior: triggers are per prior, so this is the validator path for a
+    single source as often as it is a comparison. No source bypasses the judge -- a
+    candidate that doesn't fit the walls loses even with nothing to lose to.
     ``gravity_tilt_max_deg`` threads to the judge's gravity gate, defaulting to the
     module constant so behavior is unchanged unless overridden.
+    ``verbose_eval_logging`` turns the per-cycle proposal census and the judge's
+    finalist table back on (``--eval``); off, this path logs nothing per cycle and
+    module.py's single accept line carries the evidence.
+    ``report`` collects the finalists' post-ICP fitness for that line's margin.
 
     Returns ``(T, fitness, winning_source)``. Raises ``ValueError`` if every prior
     proposed zero candidates.
@@ -384,11 +361,13 @@ def relocalize_with_priors(
     if not all_transforms:
         raise ValueError("relocalize_with_priors: no prior proposed any candidate")
 
-    # Proposal census: which prior offered candidates this cycle. A fiducial source
+    # Proposal census: which prior offered candidates this fire. A fiducial source
     # absent here means no tag reached min_observations -- distinct from proposing
-    # then losing the judge below.
-    counts = {s: sources.count(s) for s in sorted(set(sources))}
-    logger.info("relocalize candidates", counts=counts)
+    # then losing the judge below. Eval-only: it is one line per fire forever,
+    # which is a debugging trace, not an operating log.
+    if verbose_eval_logging:
+        counts = {s: sources.count(s) for s in sorted(set(sources))}
+        logger.info("relocalize candidates", counts=counts)
 
     # sources= makes the judge's gravity gate per-source — a lone upright
     # seed must never orphan another source's all-tilted pool (the
@@ -399,5 +378,7 @@ def relocalize_with_priors(
         all_transforms,
         sources=sources,
         gravity_tilt_max_deg=gravity_tilt_max_deg,
+        verbose_eval_logging=verbose_eval_logging,
+        report=report,
     )
     return T, fitness, sources[winning_index]

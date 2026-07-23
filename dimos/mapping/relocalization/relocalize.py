@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -43,6 +44,37 @@ GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than th
 # hk_village1..6 recordings, so it has never been calibrated against real
 # sparse-wall data.
 MIN_WALL_POINTS = 100
+
+
+@dataclass
+class JudgeReport:
+    """Per-finalist attribution the judge fills in for a caller that asks for it.
+
+    An OUT-PARAM, not a fourth return value: ``(T, fitness, winning_index)`` is
+    ``refine_candidates``'s published contract -- ``relocalize()``,
+    ``relocalize_with_priors()`` and their callers all unpack three -- and widening
+    it would break every one of them for a number only the accept log reads.
+    """
+
+    # (source, post-ICP wall fitness) per polished finalist, best first. Empty when
+    # the caller passed no ``sources``: unlabelled candidates cannot be attributed.
+    finalists: list[tuple[str, float]] = field(default_factory=list)
+    winner: str | None = None
+
+    @property
+    def margin(self) -> float | None:
+        """Winner's post-ICP wall fitness minus the best OTHER source's -- one number
+        answering "did the tag help?".
+
+        ``None`` when no rival source reached the post-ICP finalists: there is
+        nothing to subtract, and 0.0 would read as a dead heat between two sources.
+        """
+        if self.winner is None or not self.finalists:
+            return None
+        rivals = [fitness for source, fitness in self.finalists if source != self.winner]
+        if not rivals:
+            return None
+        return self.finalists[0][1] - max(rivals)  # finalists[0] IS the winner (sorted desc)
 
 
 class InsufficientWallEvidenceError(ValueError):
@@ -190,6 +222,8 @@ def refine_candidates(
     candidates: list[np.ndarray],
     sources: list[str] | None = None,
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
+    verbose_eval_logging: bool = False,
+    report: JudgeReport | None = None,
 ) -> tuple[np.ndarray, float, int]:
     """Judge a pool of candidate local_map->global_map transforms and refine the
     winner. The single referee every prior's candidates go through: gravity-filter,
@@ -200,7 +234,10 @@ def refine_candidates(
 
     Returns ``(T, fitness, winning_index)``, ``winning_index`` being the position in
     ``candidates`` that survived to the final polish -- callers pooling multiple
-    priors use it to attribute which prior won.
+    priors use it to attribute which prior won. ``report``, when given, also collects
+    every finalist's post-ICP wall fitness (the accept log's margin). Per-cycle judge
+    logging is off unless ``verbose_eval_logging`` -- an operating log carries one
+    line per fix, not the whole finalist table.
     """
     # Fine downsample once — used for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
@@ -272,12 +309,18 @@ def refine_candidates(
         polished.append((i, float(r.fitness), np.asarray(r.transformation)))
     winning_index, best_fit, best_T = max(polished, key=lambda item: item[1])
 
-    # More than one source in the top-k: log each finalist's post-ICP wall fitness
-    # so it is visible WHY a source won (the fiducial-vs-ransac question).
-    if sources is not None and len({sources[i] for i, _, _ in polished}) > 1:
+    if sources is not None:
         ranked = sorted(polished, key=lambda item: item[1], reverse=True)
-        finalists = [(sources[i], round(fit, 3)) for i, fit, _ in ranked]
-        logger.info("judge finalists", finalists=finalists, winner=sources[winning_index])
+        if report is not None:
+            report.finalists = [(sources[i], fit) for i, fit, _ in ranked]
+            report.winner = sources[winning_index]
+        # More than one source in the top-k: log each finalist's post-ICP wall fitness
+        # so it is visible WHY a source won (the fiducial-vs-ransac question). Under
+        # --eval only; quiet runs get the same evidence compressed into the accept
+        # line's margin=.
+        if verbose_eval_logging and len({sources[i] for i, _, _ in polished}) > 1:
+            finalists = [(sources[i], round(fit, 3)) for i, fit, _ in ranked]
+            logger.info("judge finalists", finalists=finalists, winner=sources[winning_index])
 
     # Stage 3: final ICP on full clouds, incl. floor/ceiling
     final = _reg.registration_icp(
@@ -295,17 +338,25 @@ def relocalize(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
+    verbose_eval_logging: bool = False,
 ) -> tuple[np.ndarray, float]:
     """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
 
     RANSAC candidate generation feeding the shared judge (``refine_candidates``).
     module.py's ``_relocalize`` relies on this (T, fitness) signature.
     ``gravity_tilt_max_deg`` defaults to the module constant, so callers that don't
-    override it get today's behavior. (#2137's offline eval entrypoint shares only
-    the (global_map, local_map) convention; it returns the bare 4x4, not this tuple.)
+    override it get today's behavior. ``verbose_eval_logging`` threads straight to
+    the judge -- the lidar-only module reaches the judge through this solo path, so
+    the toggle must ride it too, not only the priors path.
+    (#2137's offline eval entrypoint shares only the (global_map, local_map)
+    convention; it returns the bare 4x4, not this tuple.)
     """
     candidates = generate_ransac_candidates(global_map, local_map)
     T, fitness, _winning_index = refine_candidates(
-        global_map, local_map, candidates, gravity_tilt_max_deg=gravity_tilt_max_deg
+        global_map,
+        local_map,
+        candidates,
+        gravity_tilt_max_deg=gravity_tilt_max_deg,
+        verbose_eval_logging=verbose_eval_logging,
     )
     return T, fitness

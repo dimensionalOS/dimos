@@ -27,6 +27,9 @@ no LCM bus, no replay, no DB. Four properties:
   * accepted_points_in_map (the live rerun overlay) puts one point per accepted fix
     at the robot's position IN THE MAP FRAME, 1:1 with the deduped accepts, coloured
     by the winning prior -- with `unknown` (a join failure) visibly its own colour.
+  * the plot CSV round-trips the accepted fixes 1:1 -- exact header, the robot's
+    map-frame position per accept, and the correction columns -- so a plot drawn from
+    the file says what the report says.
   * the log parsers read what the PIPELINE ACTUALLY EMITS. Those tests never write a
     log line by hand -- they run the real module.py / priors.py call sites through
     the real dimos logger and parse the bytes it rendered, in BOTH renderings
@@ -40,10 +43,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import csv
 from dataclasses import dataclass, field
 import io
+import json
 import logging
 from pathlib import Path
+import re
+import time
 from types import ModuleType
 from typing import Any
 
@@ -54,34 +61,45 @@ from scipy.spatial.transform import Rotation
 from dimos.constants import DIMOS_PROJECT_ROOT
 import dimos.mapping.relocalization.eval_module as eval_mod
 from dimos.mapping.relocalization.eval_module import (
+    ACCEPTED_CSV_HEADER,
     SOURCE_COLORS,
     SOURCES,
+    EvalConfig,
     Fix,
     HealthLine,
+    RelocEval,
     accepted_points_in_map,
     aligned_err_t_m,
+    compute_correction_stats,
     compute_stats,
-    count_rejects,
+    correction_at_robot,
+    corrections_to_dict,
     dedup_tf_fixes,
     format_report,
     label_fixes_from_log,
     parse_census,
     parse_health_lines,
+    parse_reject_lines,
     parse_run_log,
     resolve_heldout_alignment,
     stats_to_dict,
     umeyama_alignment,
+    write_accepted_csv,
+    write_report,
 )
 import dimos.mapping.relocalization.module as module_mod
 from dimos.mapping.relocalization.module import Config, RelocalizationModule
 import dimos.mapping.relocalization.priors as priors_mod
 from dimos.mapping.relocalization.priors import (
     Candidate,
+    FiducialPriorConfig,
     LastPosePrior,
     LastPosePriorConfig,
+    RansacPrior,
     RansacPriorConfig,
     relocalize_with_priors,
 )
+from dimos.mapping.relocalization.relocalize import JudgeReport
 
 
 def _rt(rot: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -89,6 +107,12 @@ def _rt(rot: np.ndarray, t: np.ndarray) -> np.ndarray:
     m[:3, :3] = rot
     m[:3, 3] = t
     return m
+
+
+def _parked_odom(ts: list[float]) -> np.ndarray:
+    """(N,4) [ts,x,y,z] odom samples, all at the world origin -- for the tests that
+    exercise only the timestamp-driven stats (coverage, %traj, first-fix)."""
+    return np.array([[t, 0.0, 0.0, 0.0] for t in ts], dtype=float)
 
 
 # --------------------------------------------------------------------------- #
@@ -129,21 +153,13 @@ def test_umeyama_too_few_points_raises() -> None:
     """A rigid frame needs >= 3 correspondences; 2 must raise ValueError, not
     silently return a degenerate transform."""
     two = np.zeros((2, 3))
-    try:
+    with pytest.raises(ValueError, match="3 correspondences"):
         umeyama_alignment(two, two)
-    except ValueError as e:
-        assert "3 correspondences" in str(e)
-    else:
-        raise AssertionError("expected ValueError for < 3 correspondences")
 
 
 def test_umeyama_shape_mismatch_raises() -> None:
-    try:
+    with pytest.raises(ValueError, match=r"matching \(N,3\)"):
         umeyama_alignment(np.zeros((4, 3)), np.zeros((5, 3)))
-    except ValueError as e:
-        assert "matching (N,3)" in str(e)
-    else:
-        raise AssertionError("expected ValueError for mismatched shapes")
 
 
 # --------------------------------------------------------------------------- #
@@ -319,11 +335,11 @@ def test_compute_stats_per_source_aggregation() -> None:
     fix), the rest map to ransac/fiducial/ransac. Assert won counts, %traj over the
     3 covered samples, medians, coverage, first-fix, and the success tally."""
     fixes = _fixture_fixes()
-    odom_ts = np.array([0.5, 1.5, 2.5, 3.5])
+    odom = _parked_odom([0.5, 1.5, 2.5, 3.5])
     census = [{"ransac": 2, "fiducial": 1}, {"ransac": 1}]  # fiducial in 1 of 2 cycles
 
     stats = compute_stats(
-        fixes, odom_ts, census, n_rejects=4, mode="held_out", held_out_note="note"
+        fixes, odom, census, n_rejects=4, mode="held_out", held_out_note="note"
     )
     by = {r.source: r for r in stats.rows}
 
@@ -364,7 +380,7 @@ def test_stats_to_dict_rounding_and_keys() -> None:
     """stats_to_dict rounds pct_traj to 2 and med_err to 4 dp and preserves the
     per-source success counts."""
     stats = compute_stats(
-        _fixture_fixes(), np.array([0.5, 1.5, 2.5, 3.5]), [], n_rejects=0,
+        _fixture_fixes(), _parked_odom([0.5, 1.5, 2.5, 3.5]), [], n_rejects=0,
         mode="held_out", held_out_note="n",
     )
     d = stats_to_dict(stats, title="t")
@@ -377,22 +393,287 @@ def test_stats_to_dict_rounding_and_keys() -> None:
 
 
 def test_format_report_held_out_shows_columns_live_hides_them() -> None:
-    """held_out mode renders med_err + success columns; live mode drops both (no
-    truth in-process). The won/%traj columns appear in both."""
+    """held_out mode renders the false + med_err columns; live mode drops both (no
+    truth in-process). prop/acc/rej and %traj/med_fit appear in both."""
     fixes = _fixture_fixes()
-    odom_ts = np.array([0.5, 1.5, 2.5, 3.5])
+    odom = _parked_odom([0.5, 1.5, 2.5, 3.5])
 
-    held = compute_stats(fixes, odom_ts, [], None, mode="held_out", held_out_note="hn")
+    held = compute_stats(fixes, odom, [], None, mode="held_out", held_out_note="hn")
     held_txt = format_report(held, title="demo")
-    assert "med_err" in held_txt and "success" in held_txt
-    assert "1/2" in held_txt  # ransac success tally rendered
+    assert re.search(r"source +prop +acc +rej +false +%traj +med_err +med_fit", held_txt), held_txt
     assert "0.850m" in held_txt  # ransac med_err
     assert "66.7%" in held_txt  # ransac %traj, 1 dp in the table
 
-    live = compute_stats(fixes, odom_ts, [], None, mode="live", held_out_note="ln")
+    live = compute_stats(fixes, odom, [], None, mode="live", held_out_note="ln")
     live_txt = format_report(live, title="demo")
-    assert "med_err" not in live_txt and "success" not in live_txt
-    assert "%traj" in live_txt and "ransac" in live_txt
+    assert "med_err" not in live_txt and "false" not in live_txt
+    assert re.search(r"source +prop +acc +rej +%traj +med_fit", live_txt), live_txt
+    assert "ransac" in live_txt
+
+
+def _activity_fixes() -> list[Fix]:
+    """Three held-out accepts: ransac wins twice (one beyond SUCCESS_T_M -> a FALSE
+    accept), fiducial once (within gate). Hand-picked so the false tally is checkable."""
+    return [
+        Fix(ts=1.0, world_map_fix=None, source="ransac", fitness=0.9, err_t_m=0.2, success=True),
+        Fix(ts=2.0, world_map_fix=None, source="ransac", fitness=0.7, err_t_m=1.5, success=False),
+        Fix(ts=3.0, world_map_fix=None, source="fiducial", fitness=0.8, err_t_m=0.4, success=True),
+    ]
+
+
+def test_per_source_activity_proposed_accepted_rejected_false() -> None:
+    """The full per-source stats print on constructed inputs. Three census cycles
+    (ransac in all 3, fiducial in 2), three accepts (ransac x2, fiducial x1), three
+    rejects (ransac, fiducial, and one source-less -> the `unknown` bucket a verbose
+    --eval reject falls into), and one held-out FALSE accept (ransac, err 1.5 m >
+    SUCCESS_T_M). Every per-source count and the TOTAL row are exact by hand."""
+    census = [{"ransac": 3, "fiducial": 1}, {"ransac": 2}, {"ransac": 1, "fiducial": 2}]
+    accept_sources = ["ransac", "ransac", "fiducial"]  # the `relocalize accepted` sources
+    reject_sources = ["ransac", "fiducial", "unknown"]  # last is a source-less reject
+    fixes = _activity_fixes()
+
+    stats = compute_stats(
+        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), census, n_rejects=3,
+        mode="held_out", held_out_note="n",
+        accept_sources=accept_sources, reject_sources=reject_sources,
+    )
+    by = {r.source: r for r in stats.rows}
+
+    # PROPOSED = cycles the source offered >=1 candidate (per-cycle presence).
+    assert by["ransac"].proposed == 3 and by["fiducial"].proposed == 2
+    assert by["last_pose"].proposed == 0
+    # ACCEPTED = `relocalize accepted` log lines for that source (from accept_sources).
+    assert by["ransac"].accepted == 2 and by["fiducial"].accepted == 1
+    assert by["last_pose"].accepted == 0
+    # REJECTED = `relocalize rejected` lines for that source; a source-less reject
+    # becomes an `unknown` row rather than being dropped or fabricated onto a prior.
+    assert by["ransac"].rejected == 1 and by["fiducial"].rejected == 1
+    assert by["last_pose"].rejected == 0
+    assert "unknown" in by and by["unknown"].rejected == 1
+    assert by["unknown"].accepted == 0 and by["unknown"].proposed == 0
+    # FALSE = accepts beyond SUCCESS_T_M; ransac has one (err 1.5 m), fiducial none.
+    assert by["ransac"].n_false == 1 and by["fiducial"].n_false == 0
+    assert by["last_pose"].n_false is None  # no judged fix -> held out, never a fake 0
+
+    # The TOTAL row sums the count columns: prop 3+2=5, acc 2+1=3, rej 1+1+1=3, false 1.
+    txt = format_report(stats, title="demo")
+    assert re.search(r"TOTAL +5 +3 +3 +1", txt), txt
+    assert re.search(r"unknown +0 +0 +1", txt), txt  # prop acc rej for the unknown row
+
+    # ...and every count survives into the machine-readable json (won/success kept too).
+    d = stats_to_dict(stats, title="demo")
+    ransac = next(r for r in d["per_source"] if r["source"] == "ransac")
+    assert (ransac["proposed"], ransac["accepted"], ransac["rejected"], ransac["n_false"]) == (
+        3, 2, 1, 1,
+    )
+    assert ransac["won"] == 2 and ransac["n_success"] == 1 and ransac["n_judged"] == 2
+
+
+def test_per_source_rejected_and_false_held_out_when_not_derivable() -> None:
+    """No reject sources parsed -> REJECTED is `-` for every row and the TOTAL, never a
+    fabricated 0. No held-out truth -> FALSE is `-`. Both degrade honestly rather than
+    reading as 'zero rejects / zero false'."""
+    fixes = _fixture_fixes()  # carry success, but pass reject_sources=None
+    stats = compute_stats(
+        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), [{"ransac": 1}], n_rejects=2,
+        mode="held_out", held_out_note="n",  # reject_sources omitted -> None
+    )
+    by = {r.source: r for r in stats.rows}
+    assert by["ransac"].rejected is None and by["fiducial"].rejected is None
+    txt = format_report(stats, title="demo")
+    # the rej column renders `-` (held out), while the overall line still counts 2.
+    assert re.search(r"ransac +\d+ +\d+ +-", txt), txt
+    assert "rejects=2" in txt
+
+    # live-mode has no in-process truth -> the false column is dropped entirely.
+    live = compute_stats(
+        fixes, _parked_odom([0.5, 1.5, 2.5, 3.5]), [], n_rejects=None,
+        mode="live", held_out_note="n",
+    )
+    assert "false" not in format_report(live, title="demo")
+
+
+# --------------------------------------------------------------------------- #
+# Correction magnitude + correction per metre: how much reloc actually moves the
+# estimate. Every number below is hand-computable from the constructed track.
+# --------------------------------------------------------------------------- #
+_R_YAW_90 = Rotation.from_euler("z", 90.0, degrees=True).as_matrix()
+
+
+def test_correction_is_measured_at_the_robot_through_the_inverted_fix() -> None:
+    """FRAME DIRECTION, pinned to a case where the three candidate answers differ.
+
+    Robot at world (2,0,0). Old fix world_T_map = translate(+1,0,0) -> the robot
+    believes it is at map (1,0,0). New fix world_T_map = yaw(+90 deg) -> map_T_world
+    = yaw(-90), so the belief jumps to (0,-2,0). The correction is therefore
+    ||(0,-2,0) - (1,0,0)|| = sqrt(5).
+
+    The two ways to get it wrong both return a plausible number:
+      * applying the fix instead of its inverse -> sqrt(13),
+      * differencing the fixes' own translations (the MAP ORIGIN) -> 1.0.
+    """
+    world_map_old = _rt(np.eye(3), np.array([1.0, 0.0, 0.0]))
+    world_map_new = _rt(_R_YAW_90, np.zeros(3))
+    p_world = np.array([2.0, 0.0, 0.0])
+
+    magnitude_m, dyaw_deg = correction_at_robot(world_map_old, world_map_new, p_world)
+    assert abs(magnitude_m - np.sqrt(5.0)) < 1e-12
+    assert abs(dyaw_deg - 90.0) < 1e-9
+
+    inverted = np.linalg.norm(
+        (world_map_new @ np.array([*p_world, 1.0]))[:3]
+        - (world_map_old @ np.array([*p_world, 1.0]))[:3]
+    )
+    at_map_origin = np.linalg.norm(world_map_new[:3, 3] - world_map_old[:3, 3])
+    assert abs(inverted - np.sqrt(13.0)) < 1e-12  # the un-inverted answer...
+    assert at_map_origin == 1.0  # ...and the map-origin answer
+    assert abs(magnitude_m - inverted) > 1.0 and abs(magnitude_m - at_map_origin) > 1.0
+
+
+def test_first_fix_acquisition_is_measured_against_no_correction() -> None:
+    """No world->map had been published before the first accept, so the robot had no
+    map-frame belief; identity is the "no correction yet" convention. Robot at world
+    (3,0,0), fix world_T_map = translate(1,0,0) -> believed map (2,0,0) -> 1.0 m."""
+    magnitude_m, dyaw_deg = correction_at_robot(
+        None, _rt(np.eye(3), np.array([1.0, 0.0, 0.0])), np.array([3.0, 0.0, 0.0])
+    )
+    assert magnitude_m == 1.0 and dyaw_deg == 0.0
+
+
+def _known_track() -> tuple[list[Fix], np.ndarray]:
+    """Robot drives +x at 1 m/s, sampled at 1 Hz for 5 s, plus three pure-translation
+    fixes whose corrections are exact by hand:
+
+      f0 t=0 world_T_map=(1,0,0)      first fix: robot at world 0 -> map (-1,0,0)  1.0 m
+      f1 t=2 world_T_map=(1.6,0,0)    robot at world 2: (1,0,0) -> (0.4,0,0)       0.6 m
+      f2 t=5 world_T_map=(1.6,.8,0)   robot at world 5: (3.4,0,0) -> (3.4,-.8,0)   0.8 m
+    """
+    odom = np.array([[t, t, 0.0, 0.0] for t in range(6)], dtype=float)
+    fixes = [
+        Fix(ts=0.0, world_map_fix=_rt(np.eye(3), np.array([1.0, 0.0, 0.0])), source="ransac",
+            fitness=0.9),
+        Fix(ts=2.0, world_map_fix=_rt(np.eye(3), np.array([1.6, 0.0, 0.0])), source="ransac",
+            fitness=0.8),
+        Fix(ts=5.0, world_map_fix=_rt(np.eye(3), np.array([1.6, 0.8, 0.0])), source="fiducial",
+            fitness=0.7),
+    ]
+    return fixes, odom
+
+
+def test_correction_magnitude_and_rate_from_a_known_track() -> None:
+    """The whole metric on the constructed track: two drift corrections of 0.6 m over
+    2 m driven and 0.8 m over 3 m driven, the acquisition fix held out of every
+    aggregate, and the per-source split attributing each to the prior that won it."""
+    fixes, odom = _known_track()
+    cs = compute_correction_stats(fixes, odom)
+    assert cs is not None
+
+    assert cs.first is not None and cs.first.magnitude_m == 1.0 and cs.first.source == "ransac"
+    assert [round(c.magnitude_m, 12) for c in cs.per_fix] == [0.6, 0.8]
+    assert [c.dist_travelled_m for c in cs.per_fix] == [2.0, 3.0]
+    assert abs(cs.per_fix[0].rate_m_per_m - 0.3) < 1e-12  # 0.6 m corrected over 2 m
+    assert abs(cs.per_fix[1].rate_m_per_m - 0.8 / 3.0) < 1e-12
+    assert [c.source for c in cs.per_fix] == ["ransac", "fiducial"]
+    assert cs.first not in cs.per_fix  # acquisition never enters the aggregates
+
+    assert abs(cs.med_magnitude_m - 0.7) < 1e-12
+    assert abs(cs.p90_magnitude_m - 0.78) < 1e-12  # 0.6 + 0.9 * (0.8 - 0.6)
+    assert abs(cs.med_rate_m_per_m - (0.3 + 0.8 / 3.0) / 2.0) < 1e-12
+    assert abs(cs.total_correction_m - 1.4) < 1e-12
+    assert cs.total_distance_m == 5.0  # first fix -> last fix, integrated over odom
+    assert abs(cs.rate_m_per_m - 0.28) < 1e-12  # 1.4 m corrected over 5 m driven
+
+    by = {r.source: r for r in cs.rows}
+    assert by["ransac"].n == 1 and abs(by["ransac"].med_magnitude_m - 0.6) < 1e-12
+    assert abs(by["ransac"].med_rate_m_per_m - 0.3) < 1e-12
+    assert by["fiducial"].n == 1 and abs(by["fiducial"].med_magnitude_m - 0.8) < 1e-12
+    assert "last_pose" not in by  # a prior that won nothing is not a row of zeros
+
+
+def test_correction_distance_integrates_the_path_not_the_displacement() -> None:
+    """The robot walks +2 m then back -2 m between two accepts: displacement 0, path
+    4 m. LIO drift accumulates over DRIVEN distance, so the denominator is 4 m."""
+    odom = np.array(
+        [[0.0, 0, 0, 0], [1.0, 1, 0, 0], [2.0, 2, 0, 0], [3.0, 1, 0, 0], [4.0, 0, 0, 0]],
+        dtype=float,
+    )
+    fixes = [
+        Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9),
+        Fix(ts=4.0, world_map_fix=_rt(np.eye(3), np.array([0.0, 0.4, 0.0])), source="ransac",
+            fitness=0.9),
+    ]
+    cs = compute_correction_stats(fixes, odom)
+    assert cs is not None
+    assert cs.per_fix[0].dist_travelled_m == 4.0
+    assert abs(cs.per_fix[0].magnitude_m - 0.4) < 1e-12
+    assert abs(cs.per_fix[0].rate_m_per_m - 0.1) < 1e-12
+
+
+def test_correction_rate_is_omitted_while_the_robot_is_stationary() -> None:
+    """Standing still between two accepts: report the magnitude, no rate. The
+    division must never reach the report as inf -- json.dumps would write a bare
+    `Infinity`, which is not valid JSON and poisons every downstream trend reader."""
+    odom = _parked_odom([0.0, 1.0, 2.0, 3.0])  # never moves
+    fixes = [
+        Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9),
+        Fix(ts=2.0, world_map_fix=_rt(np.eye(3), np.array([0.5, 0.0, 0.0])), source="ransac",
+            fitness=0.9),
+    ]
+    cs = compute_correction_stats(fixes, odom)
+    assert cs is not None
+    assert cs.per_fix[0].dist_travelled_m == 0.0
+    assert abs(cs.per_fix[0].magnitude_m - 0.5) < 1e-12
+    assert cs.per_fix[0].rate_m_per_m is None
+    assert cs.med_rate_m_per_m is None and cs.rate_m_per_m is None
+    assert "Infinity" not in json.dumps(corrections_to_dict(cs))
+
+
+def test_correction_unavailable_without_odom_or_fixes() -> None:
+    """No odom (or no fix carrying a pose) -> None, not a zero. There is no robot
+    position to evaluate the jump at, and 0.0 would read as "reloc corrected
+    nothing"."""
+    fixes, odom = _known_track()
+    assert compute_correction_stats(fixes, np.empty((0, 4))) is None
+    assert compute_correction_stats([], odom) is None
+    unposed = [Fix(ts=1.0, world_map_fix=None, source="ransac", fitness=0.5)]
+    assert compute_correction_stats(unposed, odom) is None
+
+
+def test_compute_stats_rejects_a_timestamp_only_odom_array() -> None:
+    """Correction magnitude is evaluated at the robot, so compute_stats needs the
+    POSITIONS. A ts-only (or [ts,x,y]) array raises instead of being indexed as if
+    its columns were [ts,x,y,z] -- a silent column mix-up is how a metric becomes
+    wrong but plausible."""
+    with pytest.raises(ValueError, match=r"odom must be \(N,4\)"):
+        compute_stats(
+            [], np.array([0.5, 1.5]), [], None, mode="live", held_out_note="n"
+        )
+    with pytest.raises(ValueError, match=r"odom must be \(N,4\)"):
+        compute_stats(
+            [], np.zeros((3, 3)), [], None, mode="live", held_out_note="n"
+        )
+
+
+def test_correction_reaches_the_report_and_the_json() -> None:
+    """The operator reads the printed block; a trend tracker reads the json. Both
+    carry the same numbers, and the printed form stays to three lines."""
+    fixes, odom = _known_track()
+    stats = compute_stats(fixes, odom, [], None, mode="live", held_out_note="n")
+    text = format_report(stats, title="demo")
+    assert "correction (at the robot, n=2): med=0.700m p90=0.780m" in text
+    assert "total 1.400m over 5.00m driven (0.2800m/m)" in text
+    assert "first fix: 1.000m 0.0deg (ransac, acquisition -- excluded above)" in text
+    assert "by source: ransac 0.600m 0.3000m/m (n=1)  fiducial 0.800m 0.2667m/m (n=1)" in text
+
+    d = stats_to_dict(stats, title="demo")["correction"]
+    assert d["n"] == 2
+    assert d["med_magnitude_m"] == 0.7 and d["p90_magnitude_m"] == 0.78
+    assert d["total_correction_m"] == 1.4 and d["total_distance_m"] == 5.0
+    assert d["rate_m_per_m"] == 0.28
+    assert d["first_fix"]["magnitude_m"] == 1.0 and d["first_fix"]["source"] == "ransac"
+    assert [r["source"] for r in d["per_source"]] == ["ransac", "fiducial"]
+    assert [c["magnitude_m"] for c in d["per_fix"]] == [0.6, 0.8]
+    assert json.loads(json.dumps(d))["per_fix"][0]["dist_travelled_m"] == 2.0
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +743,18 @@ def _bare_module(config: Config) -> RelocalizationModule:
     m._premap = _StubCloud(10)  # type: ignore[assignment]
     m._last_skip_log = 0.0
     m._last_pose_prior = LastPosePrior()
+    ransac_entry = next(
+        (p for p in config.priors if isinstance(p, RansacPriorConfig)), RansacPriorConfig()
+    )
+    m._ransac_prior = RansacPrior(interval_s=ransac_entry.interval_s)
+    # Mirror module.__init__: the accept gate is per-prior now (fitness_threshold moved
+    # onto each prior entry), keyed by the entry's source discriminator.
+    m._accept_threshold = {p.type: p.fitness_threshold for p in config.priors}
+    m._ransac_min_local_points = ransac_entry.min_local_points
     m._fiducial_prior = None
+    m._now_fn = time.monotonic
+    m._last_fix_map_T_world = None  # no previous fix -> the jump guard is in acquisition
+    m._last_fix_ts_s = 0.0
     return m
 
 
@@ -491,9 +783,24 @@ class _StubPrior:
 
 
 def _multi_source_module() -> RelocalizationModule:
-    """ransac + last_pose -> the judge path, which tags the accept with source=."""
+    """ransac + last_pose (enabled) -> the judge path, which tags the accept with
+    source=. A fiducial entry is configured but inert (_bare_module leaves
+    _fiducial_prior None, so it is not among the enabled objects): it supplies the
+    per-source accept gate's ``fiducial`` threshold key, so a monkeypatched fiducial
+    win is gated by its own bar exactly as a real fiducial-configured run would be.
+
+    verbose_eval_logging is ON because that is the log these parsers exist to read:
+    the operating default emits one bare accept line, while `--eval` turns on the
+    full per-cycle trace (census, judge finalists, every accept kwarg)."""
     return _bare_module(
-        Config(priors=[RansacPriorConfig(), LastPosePriorConfig()], fitness_threshold=0.45)
+        Config(
+            priors=[
+                RansacPriorConfig(fitness_threshold=0.45),
+                LastPosePriorConfig(fitness_threshold=0.45),
+                FiducialPriorConfig(fitness_threshold=0.45),
+            ],
+            verbose_eval_logging=True,
+        )
     )
 
 
@@ -513,15 +820,18 @@ def test_parse_health_lines_reads_a_real_accept_in_both_renderings(
     )
 
     with _capture_run_log(module_mod) as log:
-        assert m._try_relocalize(_StubCloud(55828)) is not None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(55828), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
 
     for rendering, text in log.both():
         health = parse_health_lines(text)
         assert len(health) == 1, f"{rendering}: parsed {health} from {text!r}"
         assert health[0].source == "last_pose", rendering
         assert health[0].fitness == 0.873, rendering
+        # the verbose accept is the one that carries a position at all -- the join key
+        parsed_t_m = health[0].published_t_m
+        assert parsed_t_m is not None, rendering
         # the log rounds the translation to 3 dp; that is the join key's precision
-        np.testing.assert_allclose(health[0].published_t_m, published_t_m, atol=5e-4)
+        np.testing.assert_allclose(parsed_t_m, published_t_m, atol=5e-4)
 
 
 def test_parse_health_lines_defaults_to_ransac_on_the_single_source_path(
@@ -530,13 +840,15 @@ def test_parse_health_lines_defaults_to_ransac_on_the_single_source_path(
     """A ransac-only pool accepts through plain relocalize(), whose log carries NO
     source= (module.py tags a winner only when the judge ran). Both renderings must
     still yield a labelled fix -- ransac, not unknown."""
-    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    m = _bare_module(
+        Config(priors=[RansacPriorConfig(fitness_threshold=0.45)], verbose_eval_logging=True)
+    )
     monkeypatch.setattr(
         module_mod, "_relocalize", lambda *a, **k: (_rt(np.eye(3), np.array([2.0, 1.0, 0.0])), 0.95)
     )
 
     with _capture_run_log(module_mod) as log:
-        assert m._try_relocalize(_StubCloud(1234)) is not None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
 
     for rendering, text in log.both():
         health = parse_health_lines(text)
@@ -545,22 +857,117 @@ def test_parse_health_lines_defaults_to_ransac_on_the_single_source_path(
         assert health[0].fitness == 0.95, rendering
 
 
-def test_count_rejects_counts_real_rejects_and_never_scores_them_as_accepts(
+def test_quiet_accept_parses_to_a_positionless_health_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operating run (verbose_eval_logging OFF, the default) logs ONE accept line:
+    source, fitness, the cross-source margin, time_cost_s -- no published_t_m. It
+    still parses to a HealthLine carrying those three real numbers, with
+    published_t_m None. Dropping it instead would make a quiet log look exactly like
+    a log this parser cannot read: empty, silent, every count zero.
+
+    Positionless means unjoinable, so the fix it belongs to stays `unknown` -- which
+    is why `--eval` must turn the verbose trace on."""
+    m = _bare_module(
+        Config(
+            priors=[
+                RansacPriorConfig(fitness_threshold=0.45),
+                LastPosePriorConfig(fitness_threshold=0.45),
+                # inert (no _fiducial_prior) -- supplies the per-source gate's fiducial key
+                FiducialPriorConfig(fitness_threshold=0.45),
+            ]
+        )
+    )
+    assert m.config.verbose_eval_logging is False, "the operating default must be quiet"
+
+    def _judged(*_a: Any, report: JudgeReport, **_k: Any) -> tuple[np.ndarray, float, str]:
+        report.finalists = [("fiducial", 0.873), ("ransac", 0.695)]  # margin 0.178
+        report.winner = "fiducial"
+        return _rt(np.eye(3), np.array([1.5, -0.8, 0.05])), 0.873, "fiducial"
+
+    monkeypatch.setattr(module_mod, "_relocalize_with_priors", _judged)
+
+    with _capture_run_log(module_mod) as log:
+        assert m._try_relocalize(_StubCloud(55828), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
+
+    for rendering, text in log.both():
+        health = parse_health_lines(text)
+        assert len(health) == 1, f"{rendering}: parsed {health} from {text!r}"
+        assert health[0].source == "fiducial", rendering
+        assert health[0].fitness == 0.873, rendering
+        assert health[0].margin == 0.178, rendering
+        assert health[0].published_t_m is None, rendering
+        # ...and with no join key it labels nothing, rather than claiming a fix.
+        fixes = label_fixes_from_log([(0.0, np.eye(4))], health)
+        assert [f.source for f in fixes] == ["unknown"], rendering
+
+
+def test_parse_reject_lines_counts_real_rejects_and_never_scores_them_as_accepts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two sub-threshold fixes emit two real `relocalize rejected` warnings: rejects
     count 2 in both renderings, and parse_health_lines stays empty -- a reject has no
     published_t_m and must never enter the per-source table."""
-    m = _bare_module(Config(priors=[RansacPriorConfig()], fitness_threshold=0.45))
+    m = _bare_module(Config(priors=[RansacPriorConfig(fitness_threshold=0.45)]))
     monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (np.eye(4), 0.30))
 
     with _capture_run_log(module_mod) as log:
-        assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
-        assert m._try_relocalize(_StubCloud(1234)) is None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(1234), m._enabled_prior_objects()) is None  # type: ignore[arg-type]
 
     for rendering, text in log.both():
-        assert count_rejects(text) == 2, f"{rendering}: {text!r}"
+        assert len(parse_reject_lines(text)) == 2, f"{rendering}: {text!r}"
         assert parse_health_lines(text) == [], rendering
+
+
+def test_parse_reject_lines_reads_the_source_on_every_live_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every live reject names the prior whose bar refused it, so ``--eval`` per-source
+    reject counts are real. Parsed from REAL bytes on all three branches: quiet
+    multi-prior, verbose ``--eval``, and the solo RANSAC path (which names ``ransac``
+    even though its ACCEPT line omits source=). Only the legacy f-string, written
+    before the field existed, buckets to ``unknown``."""
+    monkeypatch.setattr(
+        module_mod, "_relocalize_with_priors", lambda *a, **k: (np.eye(4), 0.30, "fiducial")
+    )
+
+    # QUIET multi-prior reject (operating default): the judge named the loser.
+    quiet = _bare_module(
+        Config(
+            priors=[
+                RansacPriorConfig(fitness_threshold=0.45),
+                LastPosePriorConfig(fitness_threshold=0.45),
+                # inert (no _fiducial_prior) -- supplies the per-source gate's fiducial key
+                FiducialPriorConfig(fitness_threshold=0.45),
+            ]
+        )
+    )
+    assert quiet.config.verbose_eval_logging is False
+    with _capture_run_log(module_mod) as qlog:
+        assert quiet._try_relocalize(_StubCloud(1234), quiet._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    for rendering, text in qlog.both():
+        assert parse_reject_lines(text) == ["fiducial"], f"{rendering}: {text!r}"
+
+    # VERBOSE --eval reject: the branch --eval forces on, attributed the same way.
+    verbose = _multi_source_module()
+    with _capture_run_log(module_mod) as vlog:
+        assert verbose._try_relocalize(_StubCloud(1234), verbose._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    for rendering, text in vlog.both():
+        assert parse_reject_lines(text) == ["fiducial"], f"{rendering}: {text!r}"
+
+    # SOLO ransac path: no winning source from the judge, still attributed to the
+    # entry whose threshold= the line prints.
+    solo = _bare_module(Config(priors=[RansacPriorConfig(fitness_threshold=0.45)]))
+    monkeypatch.setattr(module_mod, "_relocalize", lambda *a, **k: (np.eye(4), 0.30))
+    with _capture_run_log(module_mod) as slog:
+        assert solo._try_relocalize(_StubCloud(1234), solo._enabled_prior_objects()) is None  # type: ignore[arg-type]
+    for rendering, text in slog.both():
+        assert parse_reject_lines(text) == ["ransac"], f"{rendering}: {text!r}"
+
+    # legacy sourceless reject -> unknown, and it still counts as one reject.
+    assert parse_reject_lines(_LEGACY_CONSOLE_LOG) == ["unknown"]
+    assert len(parse_reject_lines(_LEGACY_CONSOLE_LOG)) == 1
 
 
 def test_parse_census_reads_the_real_counts_dict_in_both_renderings(
@@ -573,7 +980,10 @@ def test_parse_census_reads_the_real_counts_dict_in_both_renderings(
 
     with _capture_run_log(priors_mod) as log:
         relocalize_with_priors(
-            None, None, [_StubPrior("ransac", 2), _StubPrior("fiducial", 1)]  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            [_StubPrior("ransac", 2), _StubPrior("fiducial", 1)],  # type: ignore[list-item]
+            verbose_eval_logging=True,  # the census is part of the --eval trace
         )
 
     for rendering, text in log.both():
@@ -593,11 +1003,11 @@ def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch
         monkeypatch.setattr(
             module_mod, "_relocalize_with_priors", lambda *a, **k: (first, 0.9, "ransac")
         )
-        tf_a = m._try_relocalize(_StubCloud(1000))  # type: ignore[arg-type]
+        tf_a = m._try_relocalize(_StubCloud(1000), m._enabled_prior_objects())  # type: ignore[arg-type]
         monkeypatch.setattr(
             module_mod, "_relocalize_with_priors", lambda *a, **k: (second, 0.7, "fiducial")
         )
-        tf_b = m._try_relocalize(_StubCloud(1000))  # type: ignore[arg-type]
+        tf_b = m._try_relocalize(_StubCloud(1000), m._enabled_prior_objects())  # type: ignore[arg-type]
     assert tf_a is not None and tf_b is not None
 
     for rendering, text in log.both():
@@ -606,7 +1016,7 @@ def test_real_log_labels_stream_fixes_end_to_end(monkeypatch: pytest.MonkeyPatch
         fixes = label_fixes_from_log(dedup_tf_fixes(tf_samples), parse_health_lines(text))
         assert [f.source for f in fixes] == ["ransac", "fiducial"], f"{rendering}: {text!r}"
         stats = compute_stats(
-            fixes, np.array([0.25, 1.25]), parse_census(text), count_rejects(text),
+            fixes, _parked_odom([0.25, 1.25]), parse_census(text), len(parse_reject_lines(text)),
             mode="live", held_out_note="n",
         )
         by = {r.source: r for r in stats.rows}
@@ -654,7 +1064,7 @@ def test_parsers_read_the_legacy_f_string_format() -> None:
 
     census = parse_census(_LEGACY_CONSOLE_LOG)
     assert census == [{"ransac": 34}, {"fiducial": 1, "ransac": 34}]
-    assert count_rejects(_LEGACY_CONSOLE_LOG) == 1
+    assert len(parse_reject_lines(_LEGACY_CONSOLE_LOG)) == 1
 
 
 def test_legacy_census_drives_the_prior_activity_line() -> None:
@@ -680,9 +1090,12 @@ def test_current_format_parses_through_the_same_path(monkeypatch: pytest.MonkeyP
 
     with _capture_run_log(module_mod, priors_mod) as log:
         relocalize_with_priors(
-            None, None, [_StubPrior("ransac", 34), _StubPrior("fiducial", 1)]  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            [_StubPrior("ransac", 34), _StubPrior("fiducial", 1)],  # type: ignore[list-item]
+            verbose_eval_logging=True,  # the census is part of the --eval trace
         )
-        assert m._try_relocalize(_StubCloud(89003)) is not None  # type: ignore[arg-type]
+        assert m._try_relocalize(_StubCloud(89003), m._enabled_prior_objects()) is not None  # type: ignore[arg-type]
 
     for rendering, text in log.both():
         health = parse_health_lines(text)
@@ -699,7 +1112,7 @@ def test_parse_run_log_warns_when_a_log_yields_nothing(tmp_path: Path) -> None:
     empty.write_text("22:11:37.254 [inf][core/module.py] some other module started\n")
 
     with _capture_run_log(eval_mod) as log:
-        assert parse_run_log(empty) == ([], [], 0)
+        assert parse_run_log(empty) == ([], [], [])
 
     for rendering, text in log.both():
         assert "no relocalize records" in text, f"{rendering}: {text!r}"
@@ -709,8 +1122,9 @@ def test_parse_run_log_warns_when_a_log_yields_nothing(tmp_path: Path) -> None:
     real = tmp_path / "legacy.replay_run.log"
     real.write_text(_LEGACY_CONSOLE_LOG)
     with _capture_run_log(eval_mod) as quiet:
-        health, census, n_rejects = parse_run_log(real)
-    assert (len(health), len(census), n_rejects) == (2, 2, 1)
+        health, census, reject_sources = parse_run_log(real)
+    assert (len(health), len(census), len(reject_sources)) == (2, 2, 1)
+    assert reject_sources == ["unknown"]  # the legacy reject named no source
     assert "no relocalize records" not in quiet.console
 
 
@@ -812,3 +1226,141 @@ def test_overlay_draws_nothing_without_odom() -> None:
     and would put every accept in one blob."""
     fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9)]
     assert len(accepted_points_in_map(fixes, np.empty((0, 4)))) == 0
+
+
+# --------------------------------------------------------------------------- #
+# The plot CSV. Same constructed track as the correction tests, so every cell is
+# hand-computable and the file can be checked against the report's own numbers.
+# --------------------------------------------------------------------------- #
+def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open(newline="") as fh:
+        reader = csv.DictReader(fh)
+        assert reader.fieldnames is not None
+        return list(reader.fieldnames), list(reader)
+
+
+def test_accepted_csv_round_trips_the_accepted_fixes(tmp_path: Path) -> None:
+    """One row per accepted fix, in time order, with the ROBOT's map-frame position:
+    the known track's three accepts land at map (-1,0,0), (0.4,0,0), (3.4,-0.8,0) --
+    the same points the rerun overlay draws, not the fixes' own translations (the map
+    origin), which would be (1,0,0), (1.6,0,0), (1.6,0.8,0). Sources, fitness and the
+    correction columns match the report; margin is empty where no rival source
+    reached the finalists, never 0.0, which would read as a dead heat."""
+    fixes, odom = _known_track()
+    fixes[2].margin = 0.18  # only the fiducial accept had a rival source to beat
+
+    out = write_accepted_csv(fixes, odom, tmp_path / "run.accepted_fixes.csv")
+    header, rows = _read_csv(out)
+
+    assert header == [
+        "t_s", "x_map_m", "y_map_m", "z_map_m", "source", "fitness", "margin",
+        "magnitude_m", "dist_since_m",
+    ]
+    assert header == list(ACCEPTED_CSV_HEADER)
+    assert len(rows) == len(fixes), "the CSV must be 1:1 with the accepted fixes"
+    assert [float(r["t_s"]) for r in rows] == [0.0, 2.0, 5.0]
+    assert [r["source"] for r in rows] == ["ransac", "ransac", "fiducial"]
+    xyz = [(float(r["x_map_m"]), float(r["y_map_m"]), float(r["z_map_m"])) for r in rows]
+    np.testing.assert_allclose(xyz, [(-1.0, 0.0, 0.0), (0.4, 0.0, 0.0), (3.4, -0.8, 0.0)],
+                               atol=1e-9)
+    assert [float(r["fitness"]) for r in rows] == [0.9, 0.8, 0.7]
+    assert [r["margin"] for r in rows] == ["", "", "0.180"]
+    # row 0 is the acquisition fix: 1.0 m against no previous fix, 0 m driven.
+    assert [float(r["magnitude_m"]) for r in rows] == [1.0, 0.6, 0.8]
+    assert [float(r["dist_since_m"]) for r in rows] == [0.0, 2.0, 3.0]
+
+
+def test_accepted_csv_leaves_an_unjoined_fitness_empty_not_zero(tmp_path: Path) -> None:
+    """A fix no health line claimed has source `unknown` and fitness NaN. The cell is
+    EMPTY -- 0.0 would plot as a real, terrible fitness, and NaN is not a CSV value."""
+    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="unknown", fitness=float("nan"))]
+
+    out = write_accepted_csv(fixes, np.array([[0.0, 1.0, 2.0, 0.0]]), tmp_path / "u.csv")
+    _header, rows = _read_csv(out)
+
+    assert len(rows) == 1
+    assert rows[0]["source"] == "unknown"
+    assert rows[0]["fitness"] == "" and rows[0]["margin"] == ""
+
+
+def test_accepted_csv_without_odom_is_a_header_and_no_rows(tmp_path: Path) -> None:
+    """No odom -> no robot position to place a fix at, so no rows. The header is
+    still written: a plotter reading the file gets an empty series instead of a parse
+    error on an empty file."""
+    fixes = [Fix(ts=0.0, world_map_fix=np.eye(4), source="ransac", fitness=0.9)]
+
+    out = write_accepted_csv(fixes, np.empty((0, 4)), tmp_path / "empty.csv")
+    header, rows = _read_csv(out)
+
+    assert header == list(ACCEPTED_CSV_HEADER)
+    assert rows == []
+
+
+def test_write_report_prints_the_table_the_corrections_and_the_csv_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What an --eval run leaves an operator with: the per-source table, the
+    correction block, and three artifact paths -- json, trajectory png, and the plot
+    CSV whose rows are the accepts the table counted."""
+    fixes, odom = _known_track()
+    stats = compute_stats(fixes, odom, [], 0, mode="live", held_out_note="n")
+
+    paths = write_report(stats, odom, fixes, {}, tmp_path, "releval", title="live")
+    printed = capsys.readouterr().out
+
+    assert set(paths) == {"json", "png", "csv"}
+    assert paths["csv"].name == "releval.accepted_fixes.csv"
+    assert all(p.exists() for p in paths.values())
+    # the per-source table (columns are width-padded, so match the names in order)
+    assert re.search(r"source +prop +acc +rej +%traj +med_fit", printed), printed
+    assert "correction (at the robot, n=2): med=0.700m" in printed  # the correction block
+    assert str(paths["csv"]) in printed
+    assert len(_read_csv(paths["csv"])[1]) == 3
+
+
+def _bare_eval(out_dir: Path) -> RelocEval:
+    """A RelocEval shell holding just what _finalize reads -- one accepted /tf fix
+    and the odom it landed on -- with no bus and no coordinator (the same shell
+    _bare_module uses). run_log_file points at a file that does not exist, so the
+    log supplement degrades to empty the way a live run with no trace does."""
+    m = object.__new__(RelocEval)
+    m.config = EvalConfig(
+        out_dir=str(out_dir), tag="releval", run_log_file=str(out_dir / "absent.jsonl")
+    )
+    m._odom = [(0.0, 0.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0)]
+    m._world_map = [(0.5, _rt(np.eye(3), np.array([0.2, 0.0, 0.0])))]
+    m._finalized = False
+    return m
+
+
+def test_the_exit_hook_writes_the_report_when_stop_never_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl+C and a crashing run tear the module down without ever running stop()
+    here, so the atexit hook start() arms is what leaves the operator a report: the
+    same table and the same three artifacts a clean stop writes."""
+    m = _bare_eval(tmp_path)
+
+    m._finalize()  # what atexit.register(self.stop) reaches at process exit
+
+    printed = capsys.readouterr().out
+    assert re.search(r"source +prop +acc +rej +%traj +med_fit", printed), printed
+    assert (tmp_path / "releval.eval.json").exists()
+    assert (tmp_path / "releval.trajectory.png").exists()
+    assert (tmp_path / "releval.accepted_fixes.csv").exists()
+
+
+def test_the_report_is_written_once_however_often_teardown_arrives(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Teardown reaches this module up to three times on one shutdown (the
+    coordinator's RPC, the worker's own teardown, the exit hook). The report is
+    written on the first and never again -- a second pass would overwrite the
+    artifacts and print the table twice."""
+    m = _bare_eval(tmp_path)
+
+    m._finalize()
+    m._finalize()
+
+    printed = capsys.readouterr().out
+    assert printed.count(f"[releval] wrote {tmp_path / 'releval.eval.json'}") == 1

@@ -14,11 +14,13 @@
 
 """The combined fiducial->judge stack: composition, no-op defaults, and the wired path.
 
-MarkerDetectionStreamModule publishes marker sightings on its ``detections`` Out
-stream; autoconnect wires that (by name+type) into RelocalizationModule's
-``detections`` In, where the FiducialPrior Huber-fuses each tag's sightings into
-ONE world->map candidate. The last test drives a mapped tag's sightings through
-the reloc handler and asserts the prior ends up holding the fused
+MarkerDetectionStreamModule gates and Huber-fuses each tag visit in its own
+``FuseTagBursts``, publishing ONE pose per (marker, visit) on its
+``fused_detections`` Out; autoconnect wires that (by name+type) into
+RelocalizationModule's ``fused_detections`` In, where the FiducialPrior composes it
+into a world->map candidate. The per-frame ``detections`` Out is untouched and
+keeps feeding its own consumers. The last test drives one fused pose of a mapped
+tag through the reloc handler and asserts the prior ends up holding
 ``map_T_world = map_T_marker @ inv(world_T_marker)`` (the boundary frame rule).
 """
 
@@ -27,6 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -44,6 +47,8 @@ from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.test_helpers import blank_image
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import (
+    unitree_go2_relocalization_fiducial,
+    unitree_go2_relocalization_lidar,
     unitree_go2_relocalization_lidar_fiducial,
 )
 from dimos.utils.threadpool import get_max_workers, get_scheduler
@@ -65,9 +70,9 @@ def _prewarm_global_scheduler() -> None:
 _prewarm_global_scheduler()
 
 
-def _detections_array(marker_id: int, world_T_marker: np.ndarray, ts: float) -> Detection3DArray:
-    """Wire Detection3DArray carrying one marker at ``world_T_marker`` -- exactly
-    the fields the detector serializes (marker_id + bbox.center pose)."""
+def _fused_array(marker_id: int, world_T_marker: np.ndarray, ts: float) -> Detection3DArray:
+    """Wire Detection3DArray carrying one FUSED marker pose at ``world_T_marker`` --
+    exactly the fields FuseTagBursts serializes (marker_id + bbox.center pose)."""
     tf = Transform.from_matrix(world_T_marker, frame_id="world", child_frame_id=f"marker_{marker_id}")
     image = blank_image(ts)
     marker = Detection3DMarker(
@@ -111,13 +116,14 @@ def test_unitree_go2_fiducial_relocalization_composes_full_path() -> None:
     fid = by_type["FiducialPriorConfig"]
     assert fid.enabled is True
     assert fid.marker_length_m == 0.10
-    assert fid.camera_info.frame_id == "camera_optical"
     assert fid.marker_map_file is None  # stays unset -> prior no-ops until surveyed
 
-    # aruco_dictionary is wired from the fiducial prior config into the detector,
-    # so detector and prior decode/fuse the same tag family from one source.
+    # aruco_dictionary AND the gate/fusion knobs are wired from the fiducial prior
+    # config into the detector, so the fiducial family has one source of truth even
+    # though the gates now run in the detector.
     detector = next(b for b in bp.blueprints if b.module is MarkerDetectionStreamModule)
     assert detector.kwargs["aruco_dictionary"] == fid.aruco_dictionary
+    assert detector.kwargs["aggregation"] == fid.aggregation
 
     # ModuleCoordinator._connect_streams' grouping key: one shared (name, type)
     # entry means the detector Out and the reloc In land on the same transport --
@@ -128,33 +134,60 @@ def test_unitree_go2_fiducial_relocalization_composes_full_path() -> None:
             name = bp.remapping_map.get((atom.name, stream.name), stream.name)
             if isinstance(name, str):
                 members.setdefault((name, stream.type), set()).add((atom.name, stream.direction))
-    assert members[("detections", Detection3DArray)] == {
+    assert members[("fused_detections", Detection3DArray)] == {
         ("markerdetectionstreammodule", "out"),
         ("relocalizationmodule", "in"),
     }
+    # The per-frame stream keeps its own consumers and no longer feeds the prior.
+    assert members[("detections", Detection3DArray)] == {
+        ("markerdetectionstreammodule", "out"),
+    }
+
+
+def _reloc_priors(bp: Blueprint) -> dict[str, Any]:
+    reloc = next(b for b in bp.blueprints if b.module is RelocalizationModule)
+    return {type(p).__name__: p for p in reloc.kwargs["priors"]}
+
+
+def test_reloc_presets_declare_their_triggers() -> None:
+    """Every preset states its own trigger, because the module no longer owns one.
+    Both lidar presets pin RANSAC's sweep at the 2.0 s the module used to throttle
+    at; the fiducial-only preset carries NO ransac entry, so it has no periodic
+    trigger at all and relocalizes only on a completed tag burst."""
+    lidar = _reloc_priors(unitree_go2_relocalization_lidar)
+    assert set(lidar) == {"RansacPriorConfig"}
+    assert lidar["RansacPriorConfig"].interval_s == 2.0  # s, unchanged cadence
+
+    both = _reloc_priors(unitree_go2_relocalization_lidar_fiducial)
+    assert set(both) == {"RansacPriorConfig", "FiducialPriorConfig"}
+    assert both["RansacPriorConfig"].interval_s == 2.0  # s
+
+    fiducial_only = _reloc_priors(unitree_go2_relocalization_fiducial)
+    assert set(fiducial_only) == {"FiducialPriorConfig"}  # burst-triggered, no timer
 
 
 def test_default_config_is_noop_until_maps_configured() -> None:
     """Blueprint defaults (no map_file, no marker_map_file) must start and idle;
-    a marker frame arriving on the detections handler stays a no-op."""
+    a fused pose arriving on the handler stays a no-op."""
     ns = f"test_fidreloc_{uuid4().hex[:8]}"
     reloc = RelocalizationModule(priors=[FiducialPriorConfig()])
     reloc.set_transport("global_map", _lcm(ns, "global_map", PointCloud2))
-    reloc.set_transport("detections", _lcm(ns, "detections", Detection3DArray))
+    reloc.set_transport("fused_detections", _lcm(ns, "fused_detections", Detection3DArray))
     try:
         reloc.start()
         assert reloc._premap is None  # disabled before any map decode
         assert reloc._fiducial_prior is None  # no marker_map_file -> prior off
-        # A detection arriving with the prior off is a harmless no-op.
-        reloc._on_detections(_detections_array(_MARKER_ID, np.eye(4), ts=10.0))
+        # A fused pose arriving with the prior off is a harmless no-op.
+        reloc._on_fused_detections(_fused_array(_MARKER_ID, np.eye(4), ts=10.0))
     finally:
         reloc.stop()
 
 
-def test_detections_reach_fiducial_prior_as_fused_fix(tmp_path: Path) -> None:
-    """Repeated sightings of a mapped tag -> the FiducialPrior holds the fused
-    map_T_world = map_T_marker @ inv(world_T_marker) (marker map = identity here,
-    so the stored fix is inv(world_T_marker))."""
+def test_fused_detections_reach_fiducial_prior_as_a_composed_fix(tmp_path: Path) -> None:
+    """ONE fused pose of a mapped tag -> the FiducialPrior holds
+    map_T_world = map_T_marker @ inv(world_T_marker) (marker map = identity here, so
+    the stored fix is inv(world_T_marker)). One message is enough now: the detector
+    already spent min_observations glimpses producing it."""
     ns = f"test_fidreloc_{uuid4().hex[:8]}"
     premap_file = tmp_path / "premap.pc2.lcm"
     rng = np.random.default_rng(7)  # deterministic; pinned for reruns
@@ -173,7 +206,7 @@ def test_detections_reach_fiducial_prior_as_fused_fix(tmp_path: Path) -> None:
         map_file=str(premap_file),
     )
     reloc.set_transport("global_map", _lcm(ns, "global_map", PointCloud2))
-    reloc.set_transport("detections", _lcm(ns, "detections", Detection3DArray))
+    reloc.set_transport("fused_detections", _lcm(ns, "fused_detections", Detection3DArray))
     try:
         reloc.start()
         assert reloc._premap is not None  # map_file override flips it out of no-op
@@ -182,11 +215,10 @@ def test_detections_reach_fiducial_prior_as_fused_fix(tmp_path: Path) -> None:
         world_T_marker = np.eye(4)
         world_T_marker[:3, :3] = _rot_z_35()
         world_T_marker[:3, 3] = (1.2, -0.7, 0.3)
-        for i in range(3):  # >= min_observations -> a fused fix is stamped
-            reloc._on_detections(_detections_array(_MARKER_ID, world_T_marker, ts=10.0 + 0.1 * i))
+        reloc._on_fused_detections(_fused_array(_MARKER_ID, world_T_marker, ts=10.0))
 
-        assert _MARKER_ID in reloc._fiducial_prior._fixes
-        fix_T, _ts = reloc._fiducial_prior._fixes[_MARKER_ID]
+        assert _MARKER_ID in reloc._fiducial_prior._pending
+        fix_T = reloc._fiducial_prior._pending[_MARKER_ID]
         np.testing.assert_allclose(fix_T, np.linalg.inv(world_T_marker), atol=1e-6)
     finally:
         reloc.stop()

@@ -99,15 +99,15 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization-lidar \
 ### Reading the logs
 
 ```
-Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
-relocalize skipped: n_pts=37770 < MIN_LOCAL_POINTS=50000
-relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
-relocalize: source=ransac fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
+relocalization module started map_file='recording_go2' loaded_map_frame_id='map'
+ransac reloc skipped n_pts=37770 min_local_points=50000
+relocalize rejected source=ransac fitness=0.433 threshold=0.6
+relocalize accepted fitness=0.657 time_cost_s=3.0
 ```
 
-`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live. `source=` names which proposer won the fitness judge (`ransac`, `fiducial`, or `last_pose`).
+`ransac reloc skipped` means the live submap is still warming up — fewer than the `ransac` entry's `min_local_points` accumulated. Only the RANSAC search is gated on it; a fiducial burst fires on a sparse submap too. `relocalize rejected` means an alignment was found but its wall fitness was under the bar of the prior that proposed it: `source=` names that prior and `threshold=` is its own bar, on every reject. Once `relocalize accepted` lines appear the `world → map` TF is live; `source=` there names the proposer that won the judge (`ransac`, `fiducial`, `last_pose`), omitted only on the lidar-only preset, where the plain solve runs and nothing was won, and `margin=` is its wall fitness minus the best rival source's.
 
-> **Held-out rule.** To *measure* relocalization, the premap must come from a **different run** of the same space than the recording you replay. Replaying the same recording the premap was built from measures memorization, not relocalization. Score a held-out pair with the `--eval` flag; see [Relocalization benchmark](/docs/capabilities/navigation/relocalization_benchmark.md).
+> **Held-out rule.** To *measure* relocalization, the premap must come from a **different run** of the same space than the recording you replay. Replaying the same recording the premap was built from measures memorization, not relocalization. `--eval` collects the run; the held-out score (`med_err`, `false`) comes from the offline held-out driver — see [Relocalization benchmark](/docs/capabilities/navigation/relocalization_benchmark.md).
 
 ### Rerun visualization
 
@@ -128,7 +128,7 @@ dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization-lidar \
 Before sending navigation goals, walk through this checklist:
 
 1. Place the Go2 in a region that overlaps the premap on the same floor with recognizable geometry.
-2. Wait for `relocalize:` info lines. Skipped and rejected lines are normal for the first 30 to 60 seconds.
+2. Wait for `relocalize accepted` info lines. Skipped and rejected lines are normal for the first 30 to 60 seconds.
 3. Confirm stable `world → map` TF in Rerun before sending navigation goals.
 4. Click to navigate or use agent skills such as `navigate_with_text` on the aligned costmap.
 
@@ -176,43 +176,44 @@ CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`
 | Field | Default | Description |
 |-------|---------|-------------|
 | `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
-| `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
-| `min_local_points` | `50000` | Minimum live map points before a relocalization is attempted |
-| `reloc_interval_s` | `2.0` | Seconds between relocalization attempts |
 | `gravity_tilt_max_deg` | `10.0` | Reject a candidate whose up axis tilts more than this from world-z (degrees) |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 
 ### Priors
 
-`priors` is a list of candidate proposers, each an equal, toggleable entry keyed by `type`. Every entry competes through the same wall-fitness judge; none bypasses it. The list is set by preset (blueprint), not by a flat `-o` override (the dotted override parser cannot index a list).
+`priors` is a list of candidate proposers, each an equal, toggleable entry keyed by `type`. Every entry goes through the same wall-fitness judge; none bypasses it. The list is set by preset (blueprint), not by a flat `-o` override (the dotted override parser cannot index a list).
 
-| `type` | Enabled by default | Own params |
-|--------|--------------------|------------|
-| `ransac` | yes | none — the search knobs live in `relocalize.py` |
-| `last_pose` | no | none — the seed is captured at runtime |
-| `fiducial` | no | `marker_map_file`, `marker_length_m`, `aruco_dictionary`, `ambiguity_ratio_min`, `camera_info`, `age_max_s`, `aggregation` |
+Each entry also owns its own **trigger**, and each fires an independent relocalization judged on its own candidates. `ransac` sweeps every `interval_s` (2.0 s; a global search waits on no event). `fiducial` fires the moment a tag burst completes, on the detections callback itself, and is judged against the last `global_map` received — waiting for the next cloud would be dead time, since the tag candidate is composed from the marker alone. A pool of one is normal: the judge is a validator (wall fitness, gravity tilt, wall evidence), not a tournament. `reloc_interval_s` on the module config is gone — it is now `interval_s` on the `ransac` entry, and a stale key raises.
 
-Every entry also carries `enabled` plus the inert fusion fields (`tier`, `weight`, `max_age_s`) the Phase-4 arbiter will read. The three Go2 presets:
+The **accept bar is per entry** too (`fitness_threshold`, minimum wall fitness 0 to 1). `ransac` and `fiducial` each state `0.6`: a fix is judged on the walls whatever proposed it, and a decoded tag id names the tag without showing the composed pose fits. `last_pose` states no bar and inherits the base `0.45`. `fitness_threshold` and `min_local_points` on the module config are gone the same way — set them on the entry, and a stale key raises.
+
+| `type` | `fitness_threshold` | Own params |
+|--------|---------------------|------------|
+| `ransac` | `0.6` | `interval_s` (`2.0`, seconds between sweeps), `min_local_points` (`50000`, live map points the FPFH search needs before it fires) — the search knobs live in `relocalize.py` |
+| `last_pose` | `0.45` (base default) | none — the seed is captured at runtime; no trigger of its own, it rides along with whichever prior fired |
+| `fiducial` | `0.6` | `marker_map_file`, `marker_length_m`, `aruco_dictionary`, `ambiguity_ratio_min`, `camera_info`, `aggregation` |
+
+Every entry also carries `enabled`. The three Go2 presets:
 
 | Blueprint | Priors |
 |-----------|--------|
-| `unitree-go2-relocalization-lidar` | `ransac` |
-| `unitree-go2-relocalization-lidar-fiducial` | `ransac` + `fiducial` |
-| `unitree-go2-relocalization-fiducial` | `fiducial` only |
+| `unitree-go2-relocalization-lidar` | `ransac` (2.0 s sweep) |
+| `unitree-go2-relocalization-lidar-fiducial` | `ransac` (2.0 s sweep) + `fiducial` (burst) |
+| `unitree-go2-relocalization-fiducial` | `fiducial` only — burst-triggered, no periodic timer |
 
-The `fiducial` type needs a `marker_map_file` (`map_T_tag` per id, JSON or YAML — see [The marker map](#the-marker-map) for how one is produced today) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings fuse into one `world→map` candidate (medoid seed + Huber IRLS), age-gated, competing on wall fitness; it never publishes a pose on its own.
+The `fiducial` type needs a `marker_map_file` (`map_T_tag` per id, JSON or YAML — see [The marker map](#the-marker-map) for how one is produced today) and consumes a `detections` `Detection3DArray` In stream; `MarkerDetectionStreamModule` publishes the matching Out, so the two autoconnect by name/type in the `*-fiducial` blueprints (which share the fiducial family via `aruco_dictionary`). Each tag's sightings fuse into one `world→map` candidate (medoid seed + Huber IRLS) that competes on wall fitness once and is then dropped — re-offering it later would be the same measurement against a world that has drifted further. It never publishes a pose on its own.
 
 One constant is not overridable via CLI:
 
 | Constant | Value | Role |
 |----------|-------|------|
-| `PUBLISH_INTERVAL` | `2.0` s | TF and `loaded_map` publish rate |
+| `PUBLISH_INTERVAL_S` | `2.0` s | TF and `loaded_map` publish rate |
 
-To accept all candidates for visualization only (not for production nav):
+To accept all candidates for visualization only (not for production nav), set the bar to `0.0` on the entry — `-o relocalizationmodule.fitness_threshold=0.0` raises now, since the bar lives on the prior and a dotted `-o` cannot index a list:
 
-```bash
--o relocalizationmodule.fitness_threshold=0.0
+```python
+RelocalizationModule.blueprint(priors=[RansacPriorConfig(fitness_threshold=0.0)])
 ```
 
 ### The marker map
@@ -240,9 +241,9 @@ Marker poses on this path are fused by the windowed mean inside `DetectMarkers` 
 |---------|--------------|-----|
 | `Relocalization module disabled (no map_file configured)` | Missing `-o relocalizationmodule.map_file=…` | Set `map_file` to your premap stem |
 | File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
-| Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
-| Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |
-| Nav works but map looks misaligned | Low fitness accepted in debug mode | Raise `fitness_threshold` back to default `0.45` |
+| Long stretch of `ransac reloc skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
+| Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd`; the line's `source=` names which prior is failing |
+| Nav works but map looks misaligned | Low fitness accepted in debug mode | Put that prior's `fitness_threshold` back to its default (`ransac` and `fiducial` `0.6`) |
 | PGO map looks wrong | Bad odometry in recording | Run `dimos map replay` or `summary` and re-record with smoother motion |
 
 ## Related docs

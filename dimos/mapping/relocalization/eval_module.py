@@ -23,6 +23,13 @@ WINNING PRIOR and fitness (the TF carries neither) plus the per-cycle proposal
 census live there. Without it, trajectory + counts still stand; per-source labels
 degrade to ``unknown``.
 
+That supplement needs the module's VERBOSE trace
+(``relocalizationmodule.verbose_eval_logging=true``), which is what carries
+``published_t_m`` -- the translation this collector joins a log line to its /tf fix
+by -- and the per-cycle census. An operating run logs one QUIET accept line instead
+(source/fitness/margin/time_cost_s, no position); the parsers read it too, but such
+a line cannot be joined to a fix, so its source degrades to ``unknown``.
+
 HELD-OUT ACCURACY. Premap + marker map come from run A; run B is a DIFFERENT
 traversal of the same scene. A fix is ``world_B_T_map_A`` -- in A's map frame, while
 B's PGO truth lives in B's independent map frame, so a raw distance is inflated by
@@ -31,11 +38,19 @@ the map_A<->map_B offset. ``resolve_heldout_alignment`` recovers the rigid
 ``med_err`` a real metre value. Without those shared references the error prints
 ``-`` with the reason, never a fabricated number (a house non-negotiable).
 
+HOW MUCH IT CORRECTS. Accuracy says whether a fix is right; ``CorrectionStats`` says
+how much work it did -- the jump in the ROBOT's believed map-frame position between
+consecutive accepts, and that jump per metre driven between them (the LIO drift rate
+relocalization is removing). Measured at the robot, never at the map origin: the
+fix's own translation is the map origin, which barely moves between accepts and would
+report a flatteringly-near-zero correction.
+
 WHERE EACH PRIOR WINS. Under ``--eval`` the Module also draws every accept into the
 run's rerun viewer as it lands -- ``world/eval/accepted``, one point per accepted fix
 at the robot's position in the premap's map frame, coloured by the winning prior
 (``accepted_points_in_map``). The spatial answer the table cannot give; a no-op when
-no viewer is up.
+no viewer is up. The same points ship as ``<key>.accepted_fixes.csv`` for plotting
+outside rerun (``ACCEPTED_CSV_HEADER``), one row per accept.
 
 The Module always runs "live" (no in-process truth -> med_err/success omitted); the
 offline driver runs "held_out" (columns shown, Umeyama-aligned or ``-``). Both
@@ -45,6 +60,9 @@ the two paths cannot drift.
 
 from __future__ import annotations
 
+import atexit
+from collections import Counter
+import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -87,6 +105,10 @@ _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same a
 _TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
 _COLLINEAR_RATIO = 1e-2  # shared-tag 2nd/1st singular value below this -> collinear
 _TAG_SPREAD_MIN_M = 1e-6  # principal spread below this -> the shared tags coincide
+# Correction-per-metre needs a real baseline: the go2 walks ~0.5 m/s against a ~2 s
+# accept cadence, so 5 cm between two accepts means the robot stood still and the
+# ratio would be odom noise in the denominator. Report the magnitude, no rate.
+_MIN_TRAVEL_M = 0.05
 
 # The live rerun overlay (see accepted_points_in_map / RelocEval._log_accepted).
 # "world/" is the bridge's entity_prefix, so the overlay sits under the same
@@ -106,15 +128,19 @@ _RERUN_PROBE_TIMEOUT_S = 0.2  # the bridge's proxy is local -- it answers or it 
 # module's kwarg NAMES, so a record reads the same either way and downstream code
 # never learns which file it came from. What the emitters actually write:
 #
-#   module.py:_try_relocalize accept
+#   module.py:_try_relocalize accept, VERBOSE (verbose_eval_logging=True)
 #     jsonl   {"source": "fiducial", "fitness": 0.87, "published_t_m": [1.234, -0.5,
 #              0.02], ..., "event": "relocalize accepted", "level": "info", ...}
 #     console `08:34:01.794 [inf][...module.py] relocalize accepted fitness=0.87
 #              n_pts=55828 published_t_m=[1.234, -0.5, 0.02] ... source=fiducial ...`
+#   module.py:_try_relocalize accept, QUIET (the operating default)
+#     console `... relocalize accepted fitness=0.873 margin=0.178 source=fiducial
+#              time_cost_s=1.4`
 #   module.py reject          -> event "relocalize rejected"
 #   priors.py census          -> event "relocalize candidates", counts a dict;
 #                                console renders it as a python repr,
-#                                `counts={'ransac': 34, 'fiducial': 2}`
+#                                `counts={'ransac': 34, 'fiducial': 2}`.
+#                                VERBOSE only -- a quiet run emits no census.
 #
 # AND the LEGACY rendering, from before the emitters moved to structlog kwargs --
 # one f-string per record, bare key names:
@@ -148,6 +174,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _CONSOLE_RE: dict[str, re.Pattern[str]] = {
     "source": re.compile(r"\bsource=([A-Za-z_]\w*)"),
     "fitness": re.compile(r"\bfitness=([-\d.eE+]+)"),
+    "margin": re.compile(r"\bmargin=([-\d.eE+]+)"),  # quiet accepts only
     "published_t_m": re.compile(r"\bpublished_t(?:_m)?=\[([^\]]+)\]"),
     "counts": re.compile(r"\bcounts=\{([^}]*)\}"),
 }
@@ -157,11 +184,18 @@ _LEGACY_COUNT_RE = re.compile(r"\b([a-z_]+)=(\d+)")  # legacy census: `ransac=34
 
 @dataclass
 class HealthLine:
-    """One accepted relocalize, parsed from a ``relocalize accepted`` log record."""
+    """One accepted relocalize, parsed from a ``relocalize accepted`` log record.
+
+    ``published_t_m`` is the VERBOSE trace's field and the key every fix is joined by,
+    so a QUIET line parses to a positionless HealthLine: its fitness and winning prior
+    are still real, there is simply nowhere to attach them (see label_fixes_from_log).
+    ``margin`` is the mirror case -- quiet-only, because verbose carries the whole
+    finalist table instead."""
 
     source: str
     fitness: float
-    published_t_m: tuple[float, float, float]  # world_T_map translation (TF join key)
+    published_t_m: tuple[float, float, float] | None  # world_T_map translation (join key)
+    margin: float | None = None  # winner's fitness - best other source's; None = no rival
 
 
 def _floats(csv: str) -> list[float]:
@@ -177,6 +211,9 @@ def _console_fields(text: str) -> dict[str, Any]:
     fit = _CONSOLE_RE["fitness"].search(text)
     if fit is not None:
         fields["fitness"] = float(fit.group(1))
+    margin = _CONSOLE_RE["margin"].search(text)
+    if margin is not None:
+        fields["margin"] = float(margin.group(1))
     pub = _CONSOLE_RE["published_t_m"].search(text)
     if pub is not None:
         fields["published_t_m"] = _floats(pub.group(1))
@@ -237,24 +274,36 @@ def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
 
 
 def parse_health_lines(log_text: str) -> list[HealthLine]:
-    """Every accepted fix (source + fitness + published translation). ``source`` is
-    absent on the single-source RANSAC path -- module.py tags a winner only when the
-    multi-prior judge ran -- so it defaults to ransac there."""
+    """Every accepted fix (source + fitness, plus the published translation when the
+    line carries one). ``source`` is absent on the single-source RANSAC path --
+    module.py tags a winner only when the multi-prior judge ran -- so it defaults to
+    ransac there.
+
+    A QUIET accept has no ``published_t_m``; it still yields a HealthLine, positionless.
+    Dropping it instead would make a quiet run's log indistinguishable from a log the
+    parser cannot read at all -- both empty, no warning, and every count silently zero.
+    ``fitness`` is the one required field: it is what makes a line an accept."""
     out: list[HealthLine] = []
     for raw in log_text.splitlines():
         record = _parse_line(raw)
         if record is None or record[0] != _EVENT_ACCEPT:
             continue
         fields = record[1]
-        pub = fields.get("published_t_m")
         fit = fields.get("fitness")
-        if fit is None or not isinstance(pub, list) or len(pub) != 3:
+        if fit is None:
             continue
+        pub = fields.get("published_t_m")
+        margin = fields.get("margin")
         out.append(
             HealthLine(
                 source=str(fields.get("source", "ransac")),
                 fitness=float(fit),
-                published_t_m=(float(pub[0]), float(pub[1]), float(pub[2])),
+                published_t_m=(
+                    (float(pub[0]), float(pub[1]), float(pub[2]))
+                    if isinstance(pub, list) and len(pub) == 3
+                    else None
+                ),
+                margin=None if margin is None else float(margin),
             )
         )
     return out
@@ -274,13 +323,27 @@ def parse_census(log_text: str) -> list[dict[str, int]]:
     return out
 
 
-def count_rejects(log_text: str) -> int:
-    records = (_parse_line(raw) for raw in log_text.splitlines())
-    return sum(1 for r in records if r is not None and r[0] == _EVENT_REJECT)
+def parse_reject_lines(log_text: str) -> list[str]:
+    """The refused source of every ``relocalize rejected`` record -- ``unknown`` when
+    the line named none. Its length is the reject count.
+
+    Every live reject names it: module.py wires ``source=`` into BOTH branches (quiet
+    and verbose) and onto the solo RANSAC path too, because the line prints that
+    prior's own ``threshold=``. Only the legacy f-string format predates the field, so
+    an archived capture buckets to ``unknown`` rather than fabricating a prior."""
+    out: list[str] = []
+    for raw in log_text.splitlines():
+        record = _parse_line(raw)
+        if record is None or record[0] != _EVENT_REJECT:
+            continue
+        out.append(str(record[1].get("source", "unknown")))
+    return out
 
 
-def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], int]:
-    """Every relocalize record in a run log FILE: ``(accepts, census, n_rejects)``.
+def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], list[str]]:
+    """Every relocalize record in a run log FILE: ``(accepts, census, reject_sources)``.
+    ``reject_sources`` is one entry per reject (its winning source, or ``unknown``); its
+    length is the reject count.
 
     A log the parser reads NOTHING out of is announced, because downstream it is
     indistinguishable from a real measurement: no census reads as "the fiducial
@@ -292,15 +355,15 @@ def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], i
     text = path.read_text(errors="replace")
     health = parse_health_lines(text)
     census = parse_census(text)
-    n_rejects = count_rejects(text)
-    if not health and not census and not n_rejects:
+    reject_sources = parse_reject_lines(text)
+    if not health and not census and not reject_sources:
         logger.warning(
             "run log yielded no relocalize records; census and per-source labels "
             "will be empty -- check the log format against this parser",
             run_log=str(path),
             n_lines=text.count("\n") + 1,
         )
-    return health, census, n_rejects
+    return health, census, reject_sources
 
 
 def resolve_run_log(run_log_file: str | None) -> Path | None:
@@ -424,16 +487,16 @@ def resolve_heldout_alignment(
 
 
 def aligned_err_t_m(
-    world_map_fix: np.ndarray, truth_map_t_world_t: np.ndarray, map_b_t_map_a: np.ndarray
+    world_T_map: np.ndarray, truth_map_B_T_world_B: np.ndarray, map_B_T_map_A: np.ndarray
 ) -> float:
     """Held-out translation error (m): the fix's world origin, carried from map_A
     into map_B by the alignment, versus B's PGO-truth world origin.
 
-    ``est = map_B_T_map_A @ inv(world_map_fix)`` gives ``map_B_T_world_B``; compare
+    ``est = map_B_T_map_A @ inv(world_T_map)`` gives ``map_B_T_world_B``; compare
     its translation to ``truth`` (also map_B_T_world_B, from score_replay)."""
-    est_map_a = np.linalg.inv(world_map_fix)  # map_A_T_world_B
-    est_map_b = map_b_t_map_a @ est_map_a  # map_B_T_world_B
-    return float(np.linalg.norm(est_map_b[:3, 3] - truth_map_t_world_t[:3, 3]))
+    est_map_a = np.linalg.inv(world_T_map)  # map_A_T_world_B
+    est_map_b = map_B_T_map_A @ est_map_a  # map_B_T_world_B
+    return float(np.linalg.norm(est_map_b[:3, 3] - truth_map_B_T_world_B[:3, 3]))
 
 
 # --------------------------------------------------------------------------- #
@@ -451,6 +514,7 @@ class Fix:
     fitness: float
     err_t_m: float | None = None
     success: bool | None = None
+    margin: float | None = None  # cross-source fitness margin, when the log carried one
 
 
 @dataclass
@@ -462,6 +526,57 @@ class SourceRow:
     med_fit: float | None
     n_success: int | None
     n_judged: int | None
+    # Per-source activity read straight from the run-log census + accept + reject
+    # events -- independent of the /tf join, so these never degrade to ``unknown``
+    # the way a join-labelled fix's source can.
+    proposed: int = 0  # cycles this source put >=1 candidate forward (census PRESENCE)
+    accepted: int = 0  # `relocalize accepted` log lines this source won
+    rejected: int | None = None  # `relocalize rejected` lines; None = no source parsed
+    n_false: int | None = None  # accepts beyond SUCCESS_T_M (a wrong accept); None = no truth
+
+
+@dataclass
+class Correction:
+    """How much ONE accepted fix moved the robot's believed map-frame pose, and how
+    far the robot drove to earn that correction."""
+
+    ts: float
+    source: str  # the winning prior of the NEW fix -- the one that did the correcting
+    magnitude_m: float
+    dyaw_deg: float  # |yaw| change between the two corrections
+    dist_travelled_m: float
+    rate_m_per_m: float | None  # None while stationary (see _MIN_TRAVEL_M)
+
+
+@dataclass
+class CorrectionSourceRow:
+    source: str
+    n: int
+    med_magnitude_m: float | None
+    med_rate_m_per_m: float | None
+
+
+@dataclass
+class CorrectionStats:
+    """Run-level correction magnitude. ``first`` (acquisition -- correcting from no
+    fix at all) is kept out of every aggregate below: it measures how far off the
+    robot started, not the drift rate the run is removing."""
+
+    first: Correction | None
+    per_fix: list[Correction]  # drift corrections only; ``first`` is NOT in here
+    med_magnitude_m: float | None
+    p90_magnitude_m: float | None
+    med_dyaw_deg: float | None
+    med_rate_m_per_m: float | None
+    total_correction_m: float
+    total_distance_m: float  # driven between the first and the last accepted fix
+    rows: list[CorrectionSourceRow]
+
+    @property
+    def rate_m_per_m(self) -> float | None:
+        if self.total_distance_m < _MIN_TRAVEL_M:
+            return None
+        return self.total_correction_m / self.total_distance_m
 
 
 @dataclass
@@ -476,6 +591,7 @@ class EvalStats:
     fiducial_won: int
     mode: str
     held_out_note: str
+    corrections: CorrectionStats | None = None
 
 
 def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
@@ -518,7 +634,11 @@ def label_fixes_from_log(
     health line is a distinct accept, so it is consumed once: two accepts from
     different priors within 2 cm cannot both claim the same line, and equal-distance
     lines resolve to the earliest (log order) -- a later tie never overwrites.
-    Unmatched fixes keep source ``unknown`` -- the trajectory still stands."""
+    Unmatched fixes keep source ``unknown`` -- the trajectory still stands.
+
+    A positionless (QUIET) health line carries no join key, so it labels nothing and
+    every fix in a quiet run reads ``unknown`` -- which is what ``--eval`` turning the
+    verbose trace on exists to prevent."""
     fixes: list[Fix] = []
     used: set[int] = set()
     for wall, mat in tf_fixes:
@@ -526,7 +646,7 @@ def label_fixes_from_log(
         best_i: int | None = None
         best_d = 0.02  # 2 cm join tolerance (matches replay_bench)
         for i, h in enumerate(health):
-            if i in used:
+            if i in used or h.published_t_m is None:
                 continue
             d = float(np.linalg.norm(np.asarray(h.published_t_m) - t))
             if d <= best_d and (best_i is None or d < best_d):  # strict: first wins ties
@@ -540,9 +660,134 @@ def label_fixes_from_log(
                 world_map_fix=mat,
                 source=matched.source if matched else "unknown",
                 fitness=matched.fitness if matched else float("nan"),
+                margin=matched.margin if matched else None,
             )
         )
     return fixes
+
+
+def _yaw_deg(rot: np.ndarray) -> float:
+    """Yaw (deg) about the gravity axis of a gravity-aligned rotation, wrapped to
+    (-180, 180] by atan2. Both frames here come from the LIO's gravity-aligned world,
+    so roll/pitch of a correction are ~0 and yaw is the whole story."""
+    return float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))
+
+
+def correction_at_robot(
+    world_map_old: np.ndarray | None, world_map_new: np.ndarray, p_world_m: np.ndarray
+) -> tuple[float, float]:
+    """``(magnitude_m, |dyaw| deg)`` -- how far the ROBOT's believed map-frame
+    position jumped when ``world_map_new`` replaced ``world_map_old``.
+
+    FRAME, and why it is the load-bearing line here: a published fix is
+    ``world_T_map`` (module.py inverts relocalize()'s map_T_world before publishing
+    world->map on /tf), so the robot's map-frame belief is
+    ``p_map = inv(fix) @ p_world`` -- the same ``map_T_world = inv(fix)`` mapping
+    plot_trajectory and accepted_points_in_map use. Using the fix directly instead
+    yields a plausible-looking number that is simply a different quantity.
+
+    Evaluated AT THE ROBOT, never at the map origin: ``fix[:3, 3]`` is where the map
+    origin sits in world, which two consecutive accepts barely move, so differencing
+    it reports a near-zero correction no matter how large the real one was.
+
+    ``world_map_old=None`` means the FIRST fix -- no world->map had been published, so
+    the robot had no map-frame belief at all; identity is the convention for "no
+    correction yet", which makes this the acquisition offset, not a drift correction.
+
+    Args:
+        world_map_old: 4x4 world_T_map of the previous accept, or None for the first.
+        world_map_new: 4x4 world_T_map of this accept.
+        p_world_m: (3,) robot position in the world (LIO/odom) frame at the new fix.
+    """
+    map_T_world_new = np.linalg.inv(world_map_new)
+    map_T_world_old = np.eye(4) if world_map_old is None else np.linalg.inv(world_map_old)
+    p_h = np.array([*np.asarray(p_world_m, dtype=float)[:3], 1.0])
+    jump = (map_T_world_new @ p_h)[:3] - (map_T_world_old @ p_h)[:3]
+    r_rel = map_T_world_old[:3, :3].T @ map_T_world_new[:3, :3]
+    return float(np.linalg.norm(jump)), abs(_yaw_deg(r_rel))
+
+
+def _path_distance_m(odom_xyz: np.ndarray, i_from: int, i_to: int) -> float:
+    """Path length (m) integrated over odom samples ``i_from..i_to`` inclusive. The
+    straight-line distance would undercount a curved or doubled-back leg, and it is
+    driven distance -- not displacement -- that LIO drift accumulates over."""
+    if i_to <= i_from:
+        return 0.0
+    steps = np.diff(odom_xyz[i_from : i_to + 1], axis=0)
+    return float(np.linalg.norm(steps, axis=1).sum())
+
+
+def _correction_rows(fixes_sorted: list[Fix], odom_txyz: np.ndarray) -> list[Correction]:
+    """One Correction per accepted fix, in time order; row 0 is the acquisition fix.
+    The robot position at an accept is the nearest odom sample (odom runs 10-50 Hz
+    against a ~2 s accept cadence), and the same sample indices bound the leg the
+    distance is integrated over, so magnitude and denominator share one convention."""
+    usable: list[tuple[Fix, np.ndarray]] = [
+        (f, f.world_map_fix) for f in fixes_sorted if f.world_map_fix is not None
+    ]
+    if not usable or odom_txyz.size == 0:
+        return []
+    odom_ts, odom_xyz = odom_txyz[:, 0], odom_txyz[:, 1:4]
+    idx = [int(np.argmin(np.abs(odom_ts - f.ts))) for f, _ in usable]
+    rows: list[Correction] = []
+    for k, (f, mat) in enumerate(usable):
+        prev = usable[k - 1][1] if k else None
+        magnitude_m, dyaw_deg = correction_at_robot(prev, mat, odom_xyz[idx[k]])
+        dist_m = _path_distance_m(odom_xyz, idx[k - 1], idx[k]) if k else 0.0
+        rows.append(
+            Correction(
+                ts=f.ts,
+                source=f.source,
+                magnitude_m=magnitude_m,
+                dyaw_deg=dyaw_deg,
+                dist_travelled_m=dist_m,
+                rate_m_per_m=(magnitude_m / dist_m) if dist_m >= _MIN_TRAVEL_M else None,
+            )
+        )
+    return rows
+
+
+def compute_correction_stats(
+    fixes_sorted: list[Fix], odom_txyz: np.ndarray
+) -> CorrectionStats | None:
+    """Aggregate correction magnitude + correction-per-metre over a run's accepts.
+
+    None when there is nothing honest to report (no accepted fix carrying a pose, or
+    no odom -- with no robot position there is no place to evaluate the jump).
+
+    Args:
+        fixes_sorted: accepted fixes, ascending ts.
+        odom_txyz: (N, 4) [ts, x, y, z] robot positions in world, same clock as fixes.
+    """
+    rows = _correction_rows(fixes_sorted, odom_txyz)
+    if not rows:
+        return None
+    first, rest = rows[0], rows[1:]
+    mags = [c.magnitude_m for c in rest]
+    rates = [c.rate_m_per_m for c in rest if c.rate_m_per_m is not None]
+    present = [s for s in SOURCES if any(c.source == s for c in rest)]
+    present += sorted({c.source for c in rest} - set(SOURCES))
+    return CorrectionStats(
+        first=first,
+        per_fix=rest,
+        med_magnitude_m=_median(mags),
+        p90_magnitude_m=float(np.percentile(mags, 90)) if mags else None,
+        med_dyaw_deg=_median([c.dyaw_deg for c in rest]),
+        med_rate_m_per_m=_median(rates),
+        total_correction_m=float(sum(mags)),
+        total_distance_m=float(sum(c.dist_travelled_m for c in rest)),
+        rows=[
+            CorrectionSourceRow(
+                source=s,
+                n=sum(1 for c in rest if c.source == s),
+                med_magnitude_m=_median([c.magnitude_m for c in rest if c.source == s]),
+                med_rate_m_per_m=_median(
+                    [c.rate_m_per_m for c in rest if c.source == s and c.rate_m_per_m is not None]
+                ),
+            )
+            for s in present
+        ],
+    )
 
 
 def _active_index(fix_ts_sorted: np.ndarray, sample_ts: np.ndarray) -> np.ndarray:
@@ -556,14 +801,35 @@ def _median(xs: list[float]) -> float | None:
 
 def compute_stats(
     fixes: list[Fix],
-    odom_ts: np.ndarray,
+    odom_txyz: np.ndarray,
     census: list[dict[str, int]],
     n_rejects: int | None,
     *,
     mode: str,
     held_out_note: str,
+    accept_sources: list[str] | None = None,
+    reject_sources: list[str] | None = None,
 ) -> EvalStats:
-    """Per-source + overall stats. ``fixes`` and ``odom_ts`` MUST share a clock."""
+    """Per-source + overall stats. ``fixes`` and ``odom_txyz`` MUST share a clock.
+
+    Args:
+        odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world (LIO/odom) frame,
+            or an empty array. The POSITIONS are required, not just the timestamps:
+            correction magnitude is evaluated at the robot. A wrong-width array raises
+            rather than being indexed as if [ts, x, y] were [ts, x, y, z].
+        accept_sources: the source of every ``relocalize accepted`` log line (the
+            ACCEPTED-per-source count, straight from the log so a /tf join failure does
+            not lose it). None -> fall back to the joined fixes' sources, which is what
+            the held-out driver wants (its fixes ARE the pipeline's published accepts).
+        reject_sources: the source of every reject (``parse_reject_lines``). None -> the
+            run log was not parsed, so per-source ``rej`` is held out (``-``), not 0.
+    """
+    odom_txyz = np.asarray(odom_txyz, dtype=float)
+    if odom_txyz.size and (odom_txyz.ndim != 2 or odom_txyz.shape[1] != 4):
+        raise ValueError(
+            f"compute_stats: odom must be (N,4) [ts,x,y,z], got {odom_txyz.shape}"
+        )
+    odom_ts = odom_txyz[:, 0] if odom_txyz.size else np.empty((0,), dtype=float)
     order = np.argsort([f.ts for f in fixes]) if fixes else np.array([], dtype=int)
     fixes_sorted = [fixes[i] for i in order]
     fix_ts_sorted = np.array([f.ts for f in fixes_sorted], dtype=float)
@@ -576,11 +842,31 @@ def compute_stats(
     else:
         active_src, n_covered = [], 0
 
+    # PROPOSED is per-CYCLE PRESENCE, not candidate count: one source can offer many
+    # candidates in a cycle, so counting candidates would reward a chatty prior. The
+    # question the table answers is "in how many relocalize cycles did this source put
+    # a candidate forward" -- the same convention as fiducial_proposed_cycles below.
+    proposed_by = {
+        s: sum(1 for c in census if c.get(s, 0) > 0) for s in {k for c in census for k in c}
+    }
+    acc_src = accept_sources if accept_sources is not None else [f.source for f in fixes]
+    accepted_by = Counter(acc_src)
+    rejected_by = Counter(reject_sources) if reject_sources is not None else None
+    # SOURCES first (always shown, even at zero), then any other source that appears in
+    # the census / accepts / rejects / joined fixes -- a new prior, or ``unknown`` from a
+    # join failure or a source-less verbose reject. Same ordering as compute_correction_stats.
+    extra = sorted(
+        (set(proposed_by) | set(acc_src) | set(reject_sources or []) | {f.source for f in fixes})
+        - set(SOURCES)
+    )
+
     rows: list[SourceRow] = []
-    for s in SOURCES:
+    for s in (*SOURCES, *extra):
         s_fixes = [f for f in fixes if f.source == s]
         traj = sum(1 for a in active_src if a == s)
         judged = [f for f in s_fixes if f.success is not None]
+        n_success = sum(1 for f in judged if f.success) if judged else None
+        n_judged = len(judged) if judged else None
         rows.append(
             SourceRow(
                 source=s,
@@ -588,8 +874,14 @@ def compute_stats(
                 pct_traj=(100.0 * traj / n_covered) if n_covered else 0.0,
                 med_err_m=_median([f.err_t_m for f in s_fixes if f.err_t_m is not None]),
                 med_fit=_median([f.fitness for f in s_fixes if not np.isnan(f.fitness)]),
-                n_success=sum(1 for f in judged if f.success) if judged else None,
-                n_judged=len(judged) if judged else None,
+                n_success=n_success,
+                n_judged=n_judged,
+                proposed=proposed_by.get(s, 0),
+                accepted=accepted_by.get(s, 0),
+                rejected=None if rejected_by is None else rejected_by.get(s, 0),
+                # FALSE reuses the held-out accuracy gate already applied upstream
+                # (Fix.success = err_t_m < SUCCESS_T_M): a judged accept that failed it.
+                n_false=sum(1 for f in judged if f.success is False) if judged else None,
             )
         )
 
@@ -610,6 +902,7 @@ def compute_stats(
         fiducial_won=sum(1 for f in fixes if f.source == "fiducial"),
         mode=mode,
         held_out_note=held_out_note,
+        corrections=compute_correction_stats(fixes_sorted, odom_txyz),
     )
 
 
@@ -620,34 +913,107 @@ def _fmt(x: float | None, nd: int, suffix: str = "") -> str:
     return "-" if x is None else f"{x:.{nd}f}{suffix}"
 
 
+def _format_corrections(cs: CorrectionStats | None) -> list[str]:
+    """The correction block: one summary line, the acquisition fix on its own, then
+    per-source. Three lines, not a per-fix dump -- the per-fix rows are in the json."""
+    if cs is None:
+        return ["correction: - (no accepted fix with odom to measure a jump at)"]
+    first = (
+        "  first fix: -"
+        if cs.first is None
+        else f"  first fix: {cs.first.magnitude_m:.3f}m {cs.first.dyaw_deg:.1f}deg "
+        f"({cs.first.source}, acquisition -- excluded above)"
+    )
+    if not cs.per_fix:
+        return ["correction: - (only the acquisition fix; no second accept to compare)", first]
+    by_source = "  ".join(
+        f"{r.source} {_fmt(r.med_magnitude_m, 3, 'm')} {_fmt(r.med_rate_m_per_m, 4, 'm/m')} "
+        f"(n={r.n})"
+        for r in cs.rows
+    )
+    return [
+        f"correction (at the robot, n={len(cs.per_fix)}): med={_fmt(cs.med_magnitude_m, 3, 'm')} "
+        f"p90={_fmt(cs.p90_magnitude_m, 3, 'm')} med_yaw={_fmt(cs.med_dyaw_deg, 1, 'deg')} "
+        f"med_rate={_fmt(cs.med_rate_m_per_m, 4, 'm/m')}; total {cs.total_correction_m:.3f}m "
+        f"over {cs.total_distance_m:.2f}m driven ({_fmt(cs.rate_m_per_m, 4, 'm/m')})",
+        first,
+        f"  by source: {by_source}",
+    ]
+
+
+def _count_cell(x: int | None) -> str:
+    """A count cell: the number, or ``-`` when the datum was not derivable (no truth
+    for FALSE, no parsed reject source for REJECTED). Never a fabricated 0."""
+    return "-" if x is None else str(x)
+
+
 def format_report(stats: EvalStats, *, title: str) -> str:
-    """The exact table: [source | won | %traj | (med_err) | med_fit | (success)],
-    then the prior-activity line, then overall, then the held-out note. med_err and
-    success are dropped in live mode (no truth)."""
+    """The per-source table [source | prop | acc | rej | (false) | %traj | (med_err) |
+    med_fit], a TOTAL row, then the prior-activity line, overall, corrections, and the
+    held-out note. ``false`` and ``med_err`` are dropped in live mode (no in-process
+    truth). Columns:
+
+      prop  -- cycles this source put >=1 candidate forward (run-log census presence)
+      acc   -- accepts this source won and published (``relocalize accepted`` lines)
+      rej   -- rejects this source's winning candidate took (``relocalize rejected``);
+               ``-`` when the run log carried no source to attribute the reject by
+      false -- accepts whose held-out error exceeded SUCCESS_T_M (a WRONG accept)
+
+    ``won``/``success`` stay in the JSON (``stats_to_dict``) for downstream readers; the
+    printed table shows ``acc``/``false``, the same quantities read straight from the log
+    and the truth gate."""
     truth = stats.mode == "held_out"
-    header = ["source", "won", "%traj", "med_err", "med_fit", "success"]
-    keep = [True, True, True, truth, True, truth]
+    header = ["source", "prop", "acc", "rej", "false", "%traj", "med_err", "med_fit"]
+    keep = [True, True, True, True, truth, True, truth, True]
     header = [h for h, k in zip(header, keep, strict=True) if k]
+
+    def _row_cells(
+        source: str, prop: str, acc: str, rej: str, false: str, traj: str, err: str, fit: str
+    ) -> list[str]:
+        cells = [source, prop, acc, rej, false, traj, err, fit]
+        return [c for c, k in zip(cells, keep, strict=True) if k]
 
     body: list[list[str]] = [header]
     for r in stats.rows:
-        succ = "-" if r.n_judged is None else f"{r.n_success}/{r.n_judged}"
-        cells = [
-            r.source,
-            str(r.won),
-            _fmt(r.pct_traj, 1, "%"),
-            _fmt(r.med_err_m, 3, "m"),
-            _fmt(r.med_fit, 3),
-            succ,
-        ]
-        body.append([c for c, k in zip(cells, keep, strict=True) if k])
+        body.append(
+            _row_cells(
+                r.source,
+                str(r.proposed),
+                str(r.accepted),
+                _count_cell(r.rejected),
+                _count_cell(r.n_false),
+                _fmt(r.pct_traj, 1, "%"),
+                _fmt(r.med_err_m, 3, "m"),
+                _fmt(r.med_fit, 3),
+            )
+        )
+    # TOTAL: the count columns sum; medians and %traj do not aggregate, so they blank.
+    total_rej = (
+        None
+        if any(r.rejected is None for r in stats.rows)
+        else sum(r.rejected or 0 for r in stats.rows)
+    )
+    false_vals = [r.n_false for r in stats.rows if r.n_false is not None]
+    total_row = _row_cells(
+        "TOTAL",
+        str(sum(r.proposed for r in stats.rows)),
+        str(sum(r.accepted for r in stats.rows)),
+        _count_cell(total_rej),
+        _count_cell(sum(false_vals) if false_vals else None),
+        "",
+        "",
+        "",
+    )
 
-    widths = [max(len(row[i]) for row in body) for i in range(len(header))]
+    widths = [max(len(row[i]) for row in (*body, total_row)) for i in range(len(header))]
+    sep = "  ".join("-" * widths[j] for j in range(len(header)))
     lines = [f"=== RelocEval: {title} [{stats.mode}] ==="]
     for i, row in enumerate(body):
         lines.append("  ".join(c.ljust(widths[j]) for j, c in enumerate(row)))
         if i == 0:
-            lines.append("  ".join("-" * widths[j] for j in range(len(header))))
+            lines.append(sep)
+    lines.append(sep)
+    lines.append("  ".join(c.ljust(widths[j]) for j, c in enumerate(total_row)))
 
     if stats.census_cycles is None:
         lines.append("prior activity: census unavailable (no run log parsed)")
@@ -660,8 +1026,53 @@ def format_report(stats: EvalStats, *, title: str) -> str:
         f"overall: accepts={stats.accepts} rejects={stats.rejects if stats.rejects is not None else '-'} "
         f"coverage={stats.coverage_pct:.1f}% first-fix={_fmt(stats.first_fix_s, 1, 's')}"
     )
+    lines.extend(_format_corrections(stats.corrections))
     lines.append(stats.held_out_note)
     return "\n".join(lines)
+
+
+def _correction_to_dict(c: Correction) -> dict[str, Any]:
+    return {
+        "ts": round(c.ts, 3),
+        "source": c.source,
+        "magnitude_m": round(c.magnitude_m, 4),
+        "dyaw_deg": round(c.dyaw_deg, 3),
+        "dist_travelled_m": round(c.dist_travelled_m, 4),
+        "rate_m_per_m": None if c.rate_m_per_m is None else round(c.rate_m_per_m, 5),
+    }
+
+
+def _round(x: float | None, nd: int) -> float | None:
+    return None if x is None else round(x, nd)
+
+
+def corrections_to_dict(cs: CorrectionStats | None) -> dict[str, Any] | None:
+    """The machine-readable form, per-fix rows included -- these are the numbers a
+    trend tracker diffs across runs, so they ship in full even though the printed
+    report shows only the summary."""
+    if cs is None:
+        return None
+    return {
+        "n": len(cs.per_fix),
+        "med_magnitude_m": _round(cs.med_magnitude_m, 4),
+        "p90_magnitude_m": _round(cs.p90_magnitude_m, 4),
+        "med_dyaw_deg": _round(cs.med_dyaw_deg, 3),
+        "med_rate_m_per_m": _round(cs.med_rate_m_per_m, 5),
+        "total_correction_m": round(cs.total_correction_m, 4),
+        "total_distance_m": round(cs.total_distance_m, 4),
+        "rate_m_per_m": _round(cs.rate_m_per_m, 5),
+        "first_fix": None if cs.first is None else _correction_to_dict(cs.first),
+        "per_source": [
+            {
+                "source": r.source,
+                "n": r.n,
+                "med_magnitude_m": _round(r.med_magnitude_m, 4),
+                "med_rate_m_per_m": _round(r.med_rate_m_per_m, 5),
+            }
+            for r in cs.rows
+        ],
+        "per_fix": [_correction_to_dict(c) for c in cs.per_fix],
+    }
 
 
 def stats_to_dict(stats: EvalStats, *, title: str) -> dict[str, Any]:
@@ -686,9 +1097,14 @@ def stats_to_dict(stats: EvalStats, *, title: str) -> dict[str, Any]:
                 "med_fit": None if r.med_fit is None else round(r.med_fit, 4),
                 "n_success": r.n_success,
                 "n_judged": r.n_judged,
+                "proposed": r.proposed,
+                "accepted": r.accepted,
+                "rejected": r.rejected,
+                "n_false": r.n_false,
             }
             for r in stats.rows
         ],
+        "correction": corrections_to_dict(stats.corrections),
         "held_out_note": stats.held_out_note,
     }
 
@@ -699,7 +1115,7 @@ def _active_fix(fixes_sorted: list[Fix], fix_ts_sorted: np.ndarray, ts: float) -
 
 
 def plot_trajectory(
-    odom_xy: np.ndarray,
+    odom_txy: np.ndarray,
     fixes: list[Fix],
     markers_xy: dict[int, tuple[float, float]],
     out_png: Path,
@@ -707,7 +1123,7 @@ def plot_trajectory(
     title: str,
 ) -> Path:
     """Top-down robot path in map_A frame, coloured by the winning prior of the fix
-    active at each sample, with surveyed markers as stars. odom_xy: (N,3) [ts,x,y]
+    active at each sample, with surveyed markers as stars. odom_txy: (N,3) [ts,x,y]
     in the world (odom) frame; each covered sample is mapped by inv(active fix)."""
     import matplotlib
 
@@ -719,12 +1135,12 @@ def plot_trajectory(
     fx_ts = np.array([f.ts for f in fx], dtype=float)
     pts: list[np.ndarray] = []
     cols: list[str] = []
-    for ts, x, y in odom_xy:
+    for ts, x, y in odom_txy:
         f = _active_fix(fx, fx_ts, float(ts)) if fx_ts.size else None
         if f is None or f.world_map_fix is None:
             continue
-        map_t_world = np.linalg.inv(f.world_map_fix)  # map_A_T_world
-        pm = map_t_world @ np.array([x, y, 0.0, 1.0])
+        map_T_world = np.linalg.inv(f.world_map_fix)  # map_A_T_world
+        pm = map_T_world @ np.array([x, y, 0.0, 1.0])
         pts.append(pm[:2])
         cols.append(SOURCE_COLORS.get(f.source, SOURCE_COLORS["unknown"]))
 
@@ -738,7 +1154,7 @@ def plot_trajectory(
             f"tag {tid}", (mx, my), textcoords="offset points",
             xytext=(6, 6), fontsize=9, weight="bold",
         )
-    present = [s for s in ("ransac", "fiducial", "last_pose") if any(f.source == s for f in fx)]
+    present = [s for s in SOURCES if any(f.source == s for f in fx)]
     legend = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=SOURCE_COLORS[s],
                label=f"{s} won", markersize=8)
@@ -822,9 +1238,91 @@ def accepted_points_in_map(fixes: list[Fix], odom_txyz: np.ndarray) -> AcceptedP
     return AcceptedPoints(positions, colors, labels)
 
 
+# --------------------------------------------------------------------------- #
+# The plot CSV: one row per ACCEPTED fix, for colouring a trajectory by prior
+# outside rerun. x/y/z are the ROBOT's position in the premap's map frame at that
+# fix -- taken from accepted_points_in_map, and the jump columns from the same
+# _correction_rows the report prints, so the CSV, the PNG and the rerun overlay
+# share one frame convention and cannot drift apart.
+# --------------------------------------------------------------------------- #
+ACCEPTED_CSV_HEADER: tuple[str, ...] = (
+    "t_s",
+    "x_map_m",
+    "y_map_m",
+    "z_map_m",
+    "source",
+    "fitness",
+    "margin",
+    "magnitude_m",
+    "dist_since_m",
+)
+
+
+def _csv_num(x: float | None, nd: int) -> str:
+    """A CSV cell for a possibly-absent number: EMPTY, never a fabricated 0.0. NaN is
+    absent too -- an unjoined fix has no fitness, and 0.0 would plot as a real one."""
+    if x is None or np.isnan(x):
+        return ""
+    return f"{x:.{nd}f}"
+
+
+def accepted_fix_rows(fixes_sorted: list[Fix], odom_txyz: np.ndarray) -> list[dict[str, str]]:
+    """One row per accepted fix: where the robot was in the map frame when the fix
+    landed, which prior won, and how much the fix moved the robot's belief.
+
+    Row 0 is the ACQUISITION fix (``dist_since_m`` 0, magnitude measured against no
+    previous fix), the same convention as ``CorrectionStats.first`` -- kept in so the
+    CSV is 1:1 with the accepts, and identifiable by that zero distance.
+
+    Empty when no odom was captured: with no robot position there is no map-frame
+    point to plot, and the fix's own translation is the map ORIGIN, not the robot.
+
+    Args:
+        fixes_sorted: accepted fixes, ascending ts (dedup_tf_fixes -> label_fixes_from_log).
+        odom_txyz: (N, 4) [ts, x, y, z] robot positions in world, same clock as the fixes.
+    """
+    points = accepted_points_in_map(fixes_sorted, odom_txyz)
+    corrections = _correction_rows(fixes_sorted, odom_txyz)
+    if not len(points):
+        return []
+    posed = [f for f in fixes_sorted if f.world_map_fix is not None]
+    if not len(points) == len(corrections) == len(posed):
+        raise ValueError(
+            "accepted_fix_rows: overlay/correction/fix counts disagree, got "
+            f"{len(points)}/{len(corrections)}/{len(posed)} -- they must filter identically"
+        )
+    return [
+        {
+            "t_s": f"{f.ts:.3f}",
+            "x_map_m": f"{p[0]:.4f}",
+            "y_map_m": f"{p[1]:.4f}",
+            "z_map_m": f"{p[2]:.4f}",
+            "source": f.source,
+            "fitness": _csv_num(f.fitness, 3),
+            "margin": _csv_num(f.margin, 3),
+            "magnitude_m": _csv_num(c.magnitude_m, 4),
+            "dist_since_m": _csv_num(c.dist_travelled_m, 4),
+        }
+        for f, p, c in zip(posed, points.positions_map_m, corrections, strict=True)
+    ]
+
+
+def write_accepted_csv(fixes_sorted: list[Fix], odom_txyz: np.ndarray, out_csv: Path) -> Path:
+    """Write ``ACCEPTED_CSV_HEADER`` + one row per accepted fix. The header is written
+    even with no rows, so a plotter reading the file gets an empty series rather than
+    a parse error on an empty file."""
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    rows = accepted_fix_rows(fixes_sorted, odom_txyz)
+    with out_csv.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=ACCEPTED_CSV_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+    return out_csv
+
+
 def write_report(
     stats: EvalStats,
-    odom_xy: np.ndarray,
+    odom_txyz: np.ndarray,
     fixes: list[Fix],
     markers_xy: dict[int, tuple[float, float]],
     out_dir: Path,
@@ -832,17 +1330,27 @@ def write_report(
     *,
     title: str,
 ) -> dict[str, Path]:
-    """Print the table, then write ``<key>.eval.json`` + ``<key>.trajectory.png``."""
+    """Print the table + correction block, then write ``<key>.eval.json``,
+    ``<key>.trajectory.png`` and ``<key>.accepted_fixes.csv``.
+
+    Args:
+        odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world frame. The plot
+            is top-down and takes [ts, x, y]; the CSV needs the z as well.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     print(format_report(stats, title=title))
     json_path = out_dir / f"{key}.eval.json"
     json_path.write_text(json.dumps(stats_to_dict(stats, title=title), indent=2))
     png_path = plot_trajectory(
-        odom_xy, fixes, markers_xy, out_dir / f"{key}.trajectory.png", title=title
+        odom_txyz[:, :3], fixes, markers_xy, out_dir / f"{key}.trajectory.png", title=title
+    )
+    csv_path = write_accepted_csv(
+        sorted(fixes, key=lambda f: f.ts), odom_txyz, out_dir / f"{key}.accepted_fixes.csv"
     )
     print(f"[releval] wrote {json_path}")
     print(f"[releval] wrote {png_path}")
-    return {"json": json_path, "png": png_path}
+    print(f"[releval] wrote {csv_path}")
+    return {"json": json_path, "png": png_path, "csv": csv_path}
 
 
 # --------------------------------------------------------------------------- #
@@ -861,28 +1369,32 @@ def load_markers_xyz(marker_file: Path) -> dict[int, tuple[float, float, float]]
     return out
 
 
-def load_odom_xy(recording_db: Path) -> np.ndarray:
-    """(N,3) [recording_ts, x, y] from a recording's ``odom`` stream."""
+def load_odom_txyz(recording_db: Path) -> np.ndarray:
+    """(N,4) [recording_ts, x, y, z] from a recording's ``odom`` stream. z is carried
+    because correction magnitude and driven distance are 3D -- a stairs traversal
+    moves mostly in z, and a top-down projection would under-report both."""
     from dimos.memory2.store.sqlite import SqliteStore
 
     store = SqliteStore(path=str(recording_db), must_exist=True)
-    rows: list[tuple[float, float, float]] = []
+    rows: list[tuple[float, float, float, float]] = []
     with store:
         for o in store.stream("odom", PoseStamped).to_list():
-            rows.append((float(o.ts), float(o.data.x), float(o.data.y)))
-    return np.array(rows, dtype=float) if rows else np.empty((0, 3), dtype=float)
+            rows.append((float(o.ts), float(o.data.x), float(o.data.y), float(o.data.z)))
+    return np.array(rows, dtype=float) if rows else np.empty((0, 4), dtype=float)
 
 
 def _fixes_from_replay_json(fixes_json: list[dict[str, Any]]) -> list[Fix]:
     out: list[Fix] = []
     for f in fixes_json:
         mat = f.get("world_map_fix")
+        margin = f.get("margin")  # absent in replay.json written before the judge reported one
         out.append(
             Fix(
                 ts=float(f["ts"]),
                 world_map_fix=np.asarray(mat, dtype=float) if mat is not None else None,
                 source=str(f.get("source", "unknown")),
                 fitness=float(f.get("fitness", float("nan"))),
+                margin=None if margin is None else float(margin),
             )
         )
     return out
@@ -891,19 +1403,19 @@ def _fixes_from_replay_json(fixes_json: list[dict[str, Any]]) -> list[Fix]:
 def run_offline_report(
     replay_json: Path,
     recording_db: Path,
-    marker_map: Path,
+    marker_map_a_file: Path,
     out_dir: Path,
     key: str,
     *,
     title: str,
     run_log: Path | None = None,
     score_json: Path | None = None,
-    markers_map_b: Path | None = None,
+    marker_map_b_file: Path | None = None,
 ) -> dict[str, Any]:
     """Held-out report from CAPTURED artifacts -- no replay launched. Consumes the
     real pipeline's published fixes (replay_bench's replay.json), B's odom, and A's
     marker survey; enriches per-source ``med_err`` via Umeyama IF run-B references
-    (markers_map_b) and per-fix truth (score_json) are both available, else ``-``.
+    (marker_map_b_file) and per-fix truth (score_json) are both available, else ``-``.
 
     The scoring itself is score_replay's job -- this only aligns published fixes and
     reports; it re-implements no dimos data-path step.
@@ -912,8 +1424,12 @@ def run_offline_report(
     fixes = _fixes_from_replay_json(replay["fixes"])
     meta = replay.get("meta", {})
 
-    markers_a = load_markers_xyz(marker_map)
-    markers_b = load_markers_xyz(markers_map_b) if markers_map_b and markers_map_b.exists() else None
+    markers_a = load_markers_xyz(marker_map_a_file)
+    markers_b = (
+        load_markers_xyz(marker_map_b_file)
+        if marker_map_b_file and marker_map_b_file.exists()
+        else None
+    )
     align, align_reason = resolve_heldout_alignment(markers_a, markers_b)
 
     # Per-fix held-out error needs BOTH the alignment and per-fix PGO truth.
@@ -931,12 +1447,14 @@ def run_offline_report(
                 f.success = bool(f.err_t_m < SUCCESS_T_M)
 
     census: list[dict[str, int]] = []
+    reject_sources: list[str] | None = None
     log_rejects: int | None = None
     if run_log is None:
         cand = replay_json.with_name(replay_json.name.replace(".replay.json", ".replay_run.log"))
         run_log = cand if cand.exists() else None
     if run_log is not None:
-        _health, census, log_rejects = parse_run_log(run_log)
+        _health, census, reject_sources = parse_run_log(run_log)
+        log_rejects = len(reject_sources)
     n_rejects = meta.get("n_rejects")
     if n_rejects is None:
         n_rejects = log_rejects
@@ -945,11 +1463,15 @@ def run_offline_report(
         "held-out: premap+markers from run A, replay run B of the same scene; map "
         f"frames are independent PGO runs. med_err alignment: {align_reason}."
     )
-    odom_xy = load_odom_xy(recording_db)
-    odom_ts = odom_xy[:, 0] if odom_xy.size else np.empty((0,), dtype=float)
-    stats = compute_stats(fixes, odom_ts, census, n_rejects, mode="held_out", held_out_note=note)
+    odom = load_odom_txyz(recording_db)
+    # accept_sources default (the replay fixes' own sources): held-out fixes ARE the
+    # pipeline's published accepts, so no separate log-accept join is needed here.
+    stats = compute_stats(
+        fixes, odom, census, n_rejects, mode="held_out", held_out_note=note,
+        reject_sources=reject_sources,
+    )
     markers_xy = {i: (x, y) for i, (x, y, _z) in markers_a.items()}
-    paths = write_report(stats, odom_xy, fixes, markers_xy, out_dir, key, title=title)
+    paths = write_report(stats, odom, fixes, markers_xy, out_dir, key, title=title)
     return {
         "stats": stats_to_dict(stats, title=title),
         "paths": {k: str(v) for k, v in paths.items()},
@@ -989,8 +1511,8 @@ class RelocEval(Module):
         # clock shared by odom and /tf, so no clock mapping is required.
         self._odom: list[tuple[float, float, float, float]] = []  # (wall, x, y, z)
         self._world_map: list[tuple[float, np.ndarray]] = []  # (wall, world_T_map 4x4)
-        self._tf_t: LCMTransport[TFMessage] = LCMTransport(TF_TOPIC, TFMessage)
-        self._odom_t: LCMTransport[PoseStamped] = LCMTransport(ODOM_TOPIC, PoseStamped)
+        self._tf_transport: LCMTransport[TFMessage] = LCMTransport(TF_TOPIC, TFMessage)
+        self._odom_transport: LCMTransport[PoseStamped] = LCMTransport(ODOM_TOPIC, PoseStamped)
         self._unsub: list[Any] = []
         # Live-overlay state (all touched only from the /tf callback thread).
         self._health: list[HealthLine] = []  # accepts tailed out of the run log so far
@@ -998,12 +1520,19 @@ class RelocEval(Module):
         self._n_drawn = 0  # accepts already in the overlay
         self._rr_ready = False  # connected to the bridge's rerun recording
         self._rr_enabled = True  # cleared after a failure, so it cannot spam
+        # stop() reaches this module up to three times on one shutdown -- the
+        # coordinator's RPC, the worker's own teardown, and the exit hook below.
+        self._finalized = False
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._unsub.append(self._odom_t.subscribe(self._on_odom))
-        self._unsub.append(self._tf_t.subscribe(self._on_tf))
+        self._unsub.append(self._odom_transport.subscribe(self._on_odom))
+        self._unsub.append(self._tf_transport.subscribe(self._on_tf))
+        # Ctrl+C and a crashing run tear the worker down without ever running stop()
+        # here -- the coordinator sends it fire-and-forget (rpc_client.RpcCall) and
+        # does not wait -- so process exit is the last chance to write the report.
+        atexit.register(self.stop)
         logger.info("RelocEval collector started", tf_topic=TF_TOPIC, odom_topic=ODOM_TOPIC)
 
     def _on_odom(self, msg: PoseStamped) -> None:
@@ -1124,22 +1653,24 @@ class RelocEval(Module):
                 unsub()
             except Exception:
                 logger.exception("RelocEval unsubscribe failed")
-        self._tf_t.stop()
-        self._odom_t.stop()
+        self._tf_transport.stop()
+        self._odom_transport.stop()
         super().stop()
 
     def _finalize(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
         tf_fixes = dedup_tf_fixes(self._world_map)
         log_path = resolve_run_log(self.config.run_log_file)
         health: list[HealthLine] = []
         census: list[dict[str, int]] = []
-        n_rejects: int | None = None
+        reject_sources: list[str] | None = None
         if log_path is not None:
-            health, census, n_rejects = parse_run_log(log_path)
+            health, census, reject_sources = parse_run_log(log_path)
         fixes = label_fixes_from_log(tf_fixes, health)
 
         odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 4), dtype=float)
-        odom_ts = odom[:, 0] if odom.size else np.empty((0,), dtype=float)
         markers_xy: dict[int, tuple[float, float]] = {}
         if self.config.marker_map_file:
             markers_xy = {
@@ -1148,13 +1679,16 @@ class RelocEval(Module):
             }
 
         note = (
-            "live capture: no PGO truth in-process -> med_err/success omitted; the "
+            "live capture: no PGO truth in-process -> med_err/false omitted; the "
             "scored held-out accuracy comes from the offline held-out driver."
         )
+        # accept_sources from the LOG accepts (not the /tf join): every accept names
+        # its prior, so ACCEPTED per source is exact even where a join failure would
+        # have left the fix's own source ``unknown``. n_rejects = len(reject_sources).
+        n_rejects = None if reject_sources is None else len(reject_sources)
         stats = compute_stats(
-            fixes, odom_ts, census, n_rejects, mode="live", held_out_note=note
+            fixes, odom, census, n_rejects, mode="live", held_out_note=note,
+            accept_sources=[h.source for h in health], reject_sources=reject_sources,
         )
-        # odom_xy for the plot uses (ts, x, y): reuse the wall ts as the sample key,
-        # and drop the z the rerun overlay needs (the plot is top-down).
-        write_report(stats, odom[:, :3], fixes, markers_xy, Path(self.config.out_dir),
+        write_report(stats, odom, fixes, markers_xy, Path(self.config.out_dir),
                      self.config.tag, title="RelocEval live capture")

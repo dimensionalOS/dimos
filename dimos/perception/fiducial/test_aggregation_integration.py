@@ -51,7 +51,7 @@ from dimos.perception.fiducial.apriltag_aggregation import (
     TagObservation,
     matrix_from_pose7,
     pose7_from_matrix,
-    tag_pixel_size,
+    tag_side_px,
     view_quality,
 )
 from dimos.perception.fiducial.marker_pose import ambiguity_gated_pose
@@ -177,7 +177,7 @@ def _run_full_path(
                 distance_m=distance_m,
                 view_angle_deg=view_angle_deg,
                 reproj_px=reproj_px,
-                tag_px=tag_pixel_size(corners_px),
+                tag_px=tag_side_px(corners_px),
             )
         )
         if reason is None:

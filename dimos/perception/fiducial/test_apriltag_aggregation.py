@@ -26,6 +26,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.perception.fiducial.apriltag_aggregation import (
+    REF_DISTANCE_M,
+    REF_REPROJ_PX,
     AggregationConfig,
     TagAggregator,
     TagObservation,
@@ -34,7 +36,9 @@ from dimos.perception.fiducial.apriltag_aggregation import (
     cluster_medoid,
     gate_reason,
     robust_cluster_pose,
-    tag_pixel_size,
+    tag_covariance,
+    tag_noise_scale,
+    tag_side_px,
     view_quality,
 )
 
@@ -74,10 +78,10 @@ def test_view_quality_oblique_grows() -> None:
     assert abs(tilted - 40.0) < 1e-4
 
 
-def test_tag_pixel_size_of_known_square() -> None:
+def test_tag_side_px_of_known_square() -> None:
     """A 30x30 px axis-aligned corner quad has tag side length 30 px."""
     corners = np.array([[0.0, 0.0], [30.0, 0.0], [30.0, 30.0], [0.0, 30.0]])
-    assert abs(tag_pixel_size(corners) - 30.0) < 1e-9
+    assert abs(tag_side_px(corners) - 30.0) < 1e-9
 
 
 def test_cluster_by_time_splits_on_gap_and_by_marker() -> None:
@@ -240,13 +244,12 @@ def test_gate_reason_each_gate_fires_and_none_skips() -> None:
     """Every gate rejects its own failure; a None field disables only its gate."""
     cfg = AggregationConfig()
     good = _pose((0.0, 0.0, 0.5), Rotation.identity())
-    base = dict(distance_m=0.5, view_angle_deg=5.0, reproj_px=1.0, tag_px=40.0, speed_mps_dps=(0.1, 5.0))
+    base = dict(distance_m=0.5, view_angle_deg=5.0, reproj_px=1.0, tag_px=40.0)
     assert gate_reason(_obs(0.0, 1, good, **base), cfg) is None  # type: ignore[arg-type]
     assert gate_reason(_obs(0.0, 1, good, **{**base, "reproj_px": 3.0}), cfg) == "reproj"  # type: ignore[arg-type]
     assert gate_reason(_obs(0.0, 1, good, **{**base, "tag_px": 10.0}), cfg) == "small"  # type: ignore[arg-type]
     assert gate_reason(_obs(0.0, 1, good, **{**base, "distance_m": 2.0}), cfg) == "far"  # type: ignore[arg-type]
     assert gate_reason(_obs(0.0, 1, good, **{**base, "view_angle_deg": 60.0}), cfg) == "oblique"  # type: ignore[arg-type]
-    assert gate_reason(_obs(0.0, 1, good, **{**base, "speed_mps_dps": (1.0, 5.0)}), cfg) == "motion"  # type: ignore[arg-type]
     # Pixel-less wire observation: reproj/tag_px None -> those gates skip, kept.
     assert gate_reason(_obs(0.0, 1, good, distance_m=0.5, view_angle_deg=5.0), cfg) is None
 
@@ -315,3 +318,58 @@ def test_tag_aggregator_observe_returns_gate_reason_and_drops_glimpse() -> None:
     pose = _pose((1.0, 0.0, 0.5), Rotation.identity())
     assert agg.observe(_obs(0.0, 8, pose, distance_m=2.0)) == "far"  # 2 m > 1 m gate
     assert agg.robust_estimate(8) is None  # nothing buffered from the rejected glimpse
+
+
+def test_tag_noise_scale_is_one_at_the_reference_glimpse() -> None:
+    """The reference glimpse (REF_DISTANCE_M, REF_REPROJ_PX) scales by exactly 1.0,
+    so the covariance a fused pose ships there is the documented base block and
+    nothing else. A None input reads as the reference, i.e. that term drops out --
+    that is what keeps a pixel-less estimate neutral instead of silently confident."""
+    assert tag_noise_scale(REF_DISTANCE_M, REF_REPROJ_PX) == 1.0
+    assert tag_noise_scale(None, None) == 1.0
+    assert tag_noise_scale(None, REF_REPROJ_PX) == 1.0
+    assert tag_noise_scale(REF_DISTANCE_M, None) == 1.0
+
+
+def test_tag_noise_scale_grows_quadratically_and_clamps_at_both_ends() -> None:
+    """Planar-PnP error grows ~quadratically with range and reproj is a direct misfit
+    proxy, so the two terms multiply as squares: 2x range and 1.5x reproj is
+    2^2 * 1.5^2 = 9. The inner clamps (0.2 m, 0.5 px) stop a suspiciously-perfect
+    read claiming near-zero variance, and the 0.25 floor caps how confident any tag
+    may get -- a glimpse at 0 m with 0 px misfit is still only 4x the reference."""
+    assert tag_noise_scale(2.0 * REF_DISTANCE_M, 1.5 * REF_REPROJ_PX) == 9.0
+    assert tag_noise_scale(0.0, 0.0) == 0.25  # both inner clamps, then the floor
+    assert tag_noise_scale(0.2, 0.5) == 0.25  # exactly at the clamps: same value
+    assert tag_noise_scale(0.1, 0.4) == 0.25  # below them: clamped, never lower
+
+
+def test_tag_covariance_is_ros_translation_first_and_scales_linearly() -> None:
+    """ROS PoseWithCovariance is (x, y, z, rot_x, rot_y, rot_z) -- TRANSLATION FIRST,
+    the opposite of the GTSAM Pose3 tangent the diagonals are ported from. With an
+    identity rotation the blocks are readable directly: index 2 must carry the loose
+    0.25 m^2 range term (planar PnP's weak axis, along the tag normal) and index 5
+    the tight 0.0025 rad^2 in-plane spin. Swapping the blocks would put 0.04 rad^2 in
+    the metres slot. Scale multiplies the whole matrix, nothing else."""
+    identity_pose = _pose((1.0, 2.0, 3.0), Rotation.identity())
+
+    base = tag_covariance(identity_pose, 1.0)
+
+    np.testing.assert_allclose(
+        base, np.diag([0.0025, 0.0025, 0.25, 0.04, 0.04, 0.0025]), atol=1e-15
+    )
+    np.testing.assert_allclose(tag_covariance(identity_pose, 9.0), base * 9.0, atol=1e-15)
+
+
+def test_tag_covariance_rotates_the_blocks_into_the_pose_frame() -> None:
+    """Both blocks are built in the TAG frame and rotated by the pose's R, so the
+    weak axis follows the tag's normal instead of pointing along world z forever.
+    Rotating 90 deg about y swings the tag normal onto world x: the 0.25 m^2 range
+    term moves to index 0, and the trace (rotation-invariant) is unchanged."""
+    turned = _pose((0.0, 0.0, 0.0), Rotation.from_euler("y", 90.0, degrees=True))
+
+    covariance = tag_covariance(turned, 1.0)
+
+    np.testing.assert_allclose(
+        np.diag(covariance), [0.25, 0.0025, 0.0025, 0.0025, 0.04, 0.04], atol=1e-15
+    )
+    assert abs(float(np.trace(covariance[:3, :3])) - 0.255) < 1e-15

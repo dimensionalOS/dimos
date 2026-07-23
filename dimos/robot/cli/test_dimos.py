@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import sys
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 import pytest
@@ -375,3 +376,63 @@ def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeyp
 
     assert config.nested.enabled is False
     assert config.nested.mode == "manual"
+
+
+@pytest.fixture
+def eval_blueprint_args(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
+    """Capture the -o list `run` hands load_config_args, and stop the command there.
+
+    Everything after that call builds a ModuleCoordinator and spawns workers, which
+    is a live stack -- the override list is the whole contract under test. LOG_DIR is
+    redirected first: `run` mkdirs its per-run log dir before reaching the capture,
+    and a test may not leave run directories in the developer's real log tree."""
+    captured: list[list[str]] = []
+
+    def capture(config: Any, blueprint_args: list[str], config_path: Path) -> None:
+        captured.append(list(blueprint_args))
+        raise SystemExit(0)
+
+    monkeypatch.setattr("dimos.robot.cli.dimos.LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr("dimos.robot.cli.dimos.load_config_args", capture)
+    return captured
+
+
+def test_eval_turns_the_relocalization_modules_verbose_trace_on(
+    eval_blueprint_args: list[list[str]],
+) -> None:
+    """`--eval` implies relocalizationmodule.verbose_eval_logging=true.
+
+    RelocEval joins every accepted fix to its winning prior through published_t_m,
+    which only the verbose trace emits; left quiet, its table labels every fix
+    "unknown" and its census is empty."""
+    CliRunner().invoke(main, ["run", "unitree-go2-relocalization-lidar", "--eval"])
+
+    assert eval_blueprint_args[0] == ["relocalizationmodule.verbose_eval_logging=true"]
+
+
+def test_eval_leaves_an_explicit_verbose_override_alone(
+    eval_blueprint_args: list[list[str]],
+) -> None:
+    """An operator's own -o wins over --eval's implied one, and is not duplicated."""
+    CliRunner().invoke(
+        main,
+        [
+            "run",
+            "unitree-go2-relocalization-lidar",
+            "--eval",
+            "-o",
+            "relocalizationmodule.verbose_eval_logging=false",
+        ],
+    )
+
+    assert eval_blueprint_args[0] == ["relocalizationmodule.verbose_eval_logging=false"]
+
+
+def test_eval_on_a_stack_without_relocalization_injects_nothing(
+    eval_blueprint_args: list[list[str]],
+) -> None:
+    """blueprint.config() is extra="forbid", so an unconditional override would hard-
+    fail --eval on any stack that has no relocalization module. It must inject nothing."""
+    CliRunner().invoke(main, ["run", "coordinator-mock", "--eval"])
+
+    assert eval_blueprint_args[0] == []

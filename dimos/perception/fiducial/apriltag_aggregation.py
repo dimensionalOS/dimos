@@ -33,6 +33,9 @@ Two entry points:
 
 No up-front sharpness gate: the detector's ``QualityWindow`` already drops
 blurry frames before these post-detection observations arrive.
+
+:func:`tag_noise_scale` / :func:`tag_covariance` turn a fused estimate's median
+range + reprojection error into the health signal that ships with it.
 """
 
 from __future__ import annotations
@@ -50,13 +53,18 @@ DEFAULT_MAX_DISTANCE_M = 1.0  # camera->tag range past which perspective is too 
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # line-of-sight vs tag normal; grazing views mis-solve
 DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
 DEFAULT_MIN_TAG_PX = 24.0  # tag side length in pixels (sqrt of quad area)
-DEFAULT_MAX_LINEAR_SPEED_MPS = 0.5  # camera motion; faster == motion blur risk
-DEFAULT_MAX_ANGULAR_SPEED_DPS = 50.0
 DEFAULT_CLUSTER_GAP_S = 5.0  # sightings farther apart in time are separate visits
+# streaming: span back from the newest glimpse, not a between-sightings gap
+DEFAULT_TIME_WINDOW_S = 5.0
 DEFAULT_MIN_OBSERVATIONS = 3  # clusters thinner than this are unreliable
 DEFAULT_ROTATION_WEIGHT_M_PER_RAD = 0.5  # 1 rad of rot ~ 0.5 m of trans in pose distance
 DEFAULT_HUBER_DELTA_M = 0.05  # residual (m) past which a sample is down-weighted
 _HUBER_ITERATIONS = 5  # IRLS weights settle within ~5 iters at huber_delta_m scale
+
+# Reference geometry of a well-posed glimpse: at exactly these values
+# tag_noise_scale is 1.0 and the fused pose carries its unscaled covariance.
+REF_DISTANCE_M = 0.4  # camera->tag range a close, in-gate glimpse sits at
+REF_REPROJ_PX = 1.0  # RMS corner misfit of a sharp glimpse
 
 
 @dataclass(frozen=True)
@@ -71,13 +79,11 @@ class AggregationConfig:
     max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG
     max_reproj_px: float = DEFAULT_MAX_REPROJ_PX
     min_tag_px: float = DEFAULT_MIN_TAG_PX
-    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS
-    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS
     cluster_gap_s: float = DEFAULT_CLUSTER_GAP_S
     min_observations: int = DEFAULT_MIN_OBSERVATIONS
     rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD
     huber_delta_m: float = DEFAULT_HUBER_DELTA_M
-    time_window_s: float = DEFAULT_CLUSTER_GAP_S  # streaming sliding-window span
+    time_window_s: float = DEFAULT_TIME_WINDOW_S  # streaming sliding-window span
 
 
 @dataclass(frozen=True)
@@ -97,7 +103,6 @@ class TagObservation:
     view_angle_deg: float | None = None
     reproj_px: float | None = None
     tag_px: float | None = None
-    speed_mps_dps: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,11 @@ class TagEstimate:
     pose: tuple[float, float, float, float, float, float, float]  # fused 7-vec, obs' frame
     n_observations: int
     ts: float  # latest contributing glimpse's timestamp
+    # Cluster MEDIANS, not the last glimpse's: they feed tag_noise_scale, and the
+    # fused pose is the whole cluster's, so its health has to be the cluster's too.
+    # None when no member carried the field (a pixel-less wire observation).
+    distance_m: float | None = None
+    reproj_px: float | None = None
 
 
 def pose7_from_matrix(matrix: np.ndarray) -> tuple[float, float, float, float, float, float, float]:
@@ -133,23 +143,23 @@ def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
     return matrix
 
 
-def view_quality(pose_cam: tuple[float, ...] | list[float]) -> tuple[float, float]:
+def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[float, float]:
     """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
 
     view_angle is line-of-sight vs the tag normal (0 == head-on). Camera-relative
     only: on the fuse-pose (world_T_marker) distance would be from world origin,
     meaningless as a gate.
     """
-    translation = np.array(pose_cam[:3], dtype=np.float64)
-    distance = float(np.linalg.norm(translation))
-    normal = Rotation.from_quat(pose_cam[3:7]).as_matrix()[:, 2]
-    line_of_sight = translation / (distance + 1e-9)
+    translation = np.array(optical_T_marker[:3], dtype=np.float64)
+    distance_m = float(np.linalg.norm(translation))
+    normal = Rotation.from_quat(optical_T_marker[3:7]).as_matrix()[:, 2]
+    line_of_sight = translation / (distance_m + 1e-9)
     cos_angle = abs(float(np.dot(line_of_sight, normal)))
-    view_angle = math.degrees(math.acos(min(1.0, cos_angle)))
-    return distance, view_angle
+    view_angle_deg = math.degrees(math.acos(min(1.0, cos_angle)))
+    return distance_m, view_angle_deg
 
 
-def tag_pixel_size(corners_px: np.ndarray) -> float:
+def tag_side_px(corners_px: np.ndarray) -> float:
     """Tag side length in pixels: sqrt of the corner quad's image area (shoelace).
 
     Small == few tag pixels == unreliable pose. Shoelace matches
@@ -161,10 +171,51 @@ def tag_pixel_size(corners_px: np.ndarray) -> float:
     return math.sqrt(area)
 
 
+def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
+    """Dimensionless variance inflation for one fused tag pose.
+
+    Planar-PnP pose error grows ~quadratically with range and reproj_px is a
+    direct misfit proxy, so a far/blurry glimpse contributes almost nothing while
+    a close, sharp one dominates. The inner clamps (0.2 m, 0.5 px) stop a
+    suspiciously-perfect read claiming near-zero variance, and the 0.25 floor caps
+    how confident any tag may get. Ported unchanged from jnav's PGO tag factors
+    (post_process.py::tag_noise, Jeff Hykin) so one convention exists.
+    A ``None`` input reads as the reference, i.e. that term is neutral.
+    """
+    distance_m = REF_DISTANCE_M if distance_m is None else distance_m
+    reproj_px = REF_REPROJ_PX if reproj_px is None else reproj_px
+    return max(
+        (max(distance_m, 0.2) / REF_DISTANCE_M) ** 2 * (max(reproj_px, 0.5) / REF_REPROJ_PX) ** 2,
+        0.25,
+    )
+
+
+def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.ndarray:
+    """6x6 ROS-order covariance (m^2 / rad^2) for a fused tag pose, in the pose's frame.
+
+    ROS ``geometry_msgs/PoseWithCovariance`` is row-major
+    ``(x, y, z, rot_x, rot_y, rot_z)`` -- TRANSLATION FIRST. jnav's ``tag_noise``
+    writes the GTSAM ``Pose3`` tangent order (rotation first), so the two blocks
+    are SWAPPED relative to that source; the diagonals themselves are its. Both
+    blocks are built in the TAG frame and rotated into the pose's frame by R.
+
+    Translation diag: 0.0025 m^2 (5 cm) in the tag plane, 0.25 m^2 (50 cm) along
+    the tag normal -- range is planar PnP's weak axis. Rotation diag: 0.04 rad^2
+    (11.5 deg) about the tag's in-plane axes (the mirror-ambiguity axes),
+    0.0025 rad^2 (2.9 deg) about the normal (in-plane spin, pinned by the
+    corner ordering).
+    """
+    R = Rotation.from_quat(pose[3:7]).as_matrix()
+    covariance = np.zeros((6, 6))
+    covariance[:3, :3] = R @ np.diag([0.0025, 0.0025, 0.25]) @ R.T
+    covariance[3:, 3:] = R @ np.diag([0.04, 0.04, 0.0025]) @ R.T
+    return covariance * scale
+
+
 def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
     """Rejection reason, or ``None`` if the glimpse clears every gate whose input
-    is present. A ``None`` field skips ITS gate so a pixel-less or odometry-less
-    observation degrades to what it CAN evaluate rather than failing shut."""
+    is present. A ``None`` field skips ITS gate so a pixel-less observation
+    degrades to what it CAN evaluate rather than failing shut."""
     if obs.reproj_px is not None and obs.reproj_px > config.max_reproj_px:
         return "reproj"
     if obs.tag_px is not None and obs.tag_px < config.min_tag_px:
@@ -173,11 +224,6 @@ def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
         return "far"
     if obs.view_angle_deg is not None and obs.view_angle_deg > config.max_view_angle_deg:
         return "oblique"
-    if obs.speed_mps_dps is not None and (
-        obs.speed_mps_dps[0] > config.max_linear_speed_mps
-        or obs.speed_mps_dps[1] > config.max_angular_speed_dps
-    ):
-        return "motion"
     return None
 
 
@@ -207,9 +253,9 @@ def _pose_distance(
     a: tuple[float, ...], b: tuple[float, ...], rotation_weight_m_per_rad: float
 ) -> float:
     """Combined translation + weighted-rotation distance between two 7-vec poses."""
-    translation = float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
-    rotation = 2.0 * math.acos(min(1.0, abs(float(np.dot(a[3:7], b[3:7])))))
-    return translation + rotation_weight_m_per_rad * rotation
+    translation_m = float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
+    rotation_rad = 2.0 * math.acos(min(1.0, abs(float(np.dot(a[3:7], b[3:7])))))
+    return translation_m + rotation_weight_m_per_rad * rotation_rad
 
 
 def cluster_medoid(
@@ -287,6 +333,14 @@ def robust_cluster_pose(
     return fused  # type: ignore[return-value]
 
 
+def _median_present(values: list[float | None]) -> float | None:
+    """Median over the members that carry the field; ``None`` when none do.
+    Median, not mean, so one surviving in-gate outlier cannot inflate the health
+    signal of an otherwise clean cluster."""
+    present = [v for v in values if v is not None]
+    return float(np.median(present)) if present else None
+
+
 def aggregate_visits(
     observations: list[TagObservation], config: AggregationConfig
 ) -> tuple[list[TagEstimate], dict[str, int]]:
@@ -294,7 +348,7 @@ def aggregate_visits(
     and Huber-refine each surviving cluster to one estimate.
 
     Returns the per-visit estimates (ts-sorted) and a per-reason rejection
-    tally (blur/reproj/... counts) so a caller can log WHY glimpses were cut.
+    tally (reproj/small/far/oblique/thin counts) so a caller can log WHY glimpses were cut.
     """
     rejected: dict[str, int] = defaultdict(int)
     kept: list[TagObservation] = []
@@ -319,6 +373,8 @@ def aggregate_visits(
                 pose=pose,
                 n_observations=len(cluster),
                 ts=max(o.ts for o in cluster),
+                distance_m=_median_present([o.distance_m for o in cluster]),
+                reproj_px=_median_present([o.reproj_px for o in cluster]),
             )
         )
     estimates.sort(key=lambda e: e.ts)
@@ -367,4 +423,6 @@ class TagAggregator:
             pose=pose,
             n_observations=len(buf),
             ts=max(o.ts for o in buf),
+            distance_m=_median_present([o.distance_m for o in buf]),
+            reproj_px=_median_present([o.reproj_px for o in buf]),
         )
