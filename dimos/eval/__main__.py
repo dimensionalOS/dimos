@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Command-line : ``python -m dimos.eval <blueprint>``."""
+"""Command-line : ``python -m dimos.eval <blueprint>``.
+"""
 
 from __future__ import annotations
 
@@ -52,35 +53,17 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--simulation", action="store_true", help="Run in simulation.")
     mode.add_argument("--real", action="store_true", help="Run against real hardware.")
 
-    parser.add_argument(
-        "--simulator",
-        choices=("mujoco", "dimsim"),
-        default="mujoco",
-        help="Simulation backend for --simulation (default: mujoco).",
-    )
+    parser.add_argument("--simulator", choices=("mujoco", "dimsim"), default="mujoco",
+                        help="Simulation backend for --simulation (default: mujoco).")
 
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=15.0,
-        help="Steady-state sampling window in seconds (default: 15).",
-    )
-    parser.add_argument(
-        "--warmup",
-        type=float,
-        default=3.0,
-        help="Seconds to run before sampling starts (default: 3).",
-    )
-    parser.add_argument(
-        "--interval", type=float, default=1.0, help="Seconds between samples (default: 1)."
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=Path,
-        default=None,
-        help="JSON artifact path (default: eval_<blueprint>_<host>.json).",
-    )
+    parser.add_argument("--duration", type=float, default=15.0,
+                        help="Steady-state sampling window in seconds (default: 15).")
+    parser.add_argument("--warmup", type=float, default=3.0,
+                        help="Seconds to run before sampling starts (default: 3).")
+    parser.add_argument("--interval", type=float, default=1.0,
+                        help="Seconds between samples (default: 1).")
+    parser.add_argument("--output", "-o", type=Path, default=None,
+                        help="JSON artifact path (default: eval_<blueprint>_<host>.json).")
     parser.add_argument("--no-output", action="store_true", help="Do not write a JSON artifact.")
     parser.add_argument("--quiet", "-q", action="store_true", help="Skip the terminal report.")
 
@@ -91,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.blueprint:
         parser.error("a blueprint name is required (or use --list)")
+    if args.interval <= 0:
+        parser.error("--interval must be > 0")
 
     run_mode = "simulation" if args.simulation else "real" if args.real else "replay"
 
