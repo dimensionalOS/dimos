@@ -410,17 +410,20 @@ def test_fiducial_prior_proposes_each_fix_exactly_once() -> None:
 
 
 def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
-    """propose() must drain self._pending in ONE statement, not iterate the live
+    """propose() must drain self._pending under the lock, not iterate the live
     dict. In the module, observe() runs on the detections transport thread while
     _try_relocalize -> propose() runs on the global_map transport thread; a NEW tag
     id landing mid-iteration otherwise raises "dictionary changed size during
     iteration", which the boundary except swallows -> a silently dropped reloc
-    cycle. Writer inserts fresh ids while the reader hammers propose(); pre-fix this
-    fails within a few rounds, post-fix it never does."""
+    cycle. Writer sights fresh ids while the reader hammers propose(): the load
+    case, since a scheduler that never preempts inside observe() never trips it.
+    The exclusion itself is pinned deterministically in the test below."""
     gm, lm, _ = _rect_room_scene(seed=17, yaw_deg=0.0, t=(0.0, 0.0, 0.0))
-    prior = FiducialPrior({})
+    # Surveyed so the writer's ids compose instead of returning "unmapped_id": the
+    # writer goes through the real observe(), the seam the detections thread uses.
+    prior = FiducialPrior({tag_id: np.eye(4) for tag_id in range(1200)})
     for tag_id in range(50):  # a real iteration window for the writer to race into
-        prior._pending[tag_id] = np.eye(4)
+        prior.observe(tag_id, np.eye(4))
 
     stop = threading.Event()
     errors: list[BaseException] = []
@@ -432,7 +435,7 @@ def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
         for tag_id in range(1000, 1200):
             if stop.is_set():
                 return
-            prior._pending[tag_id] = np.eye(4)  # new key -> dict size changes
+            prior.observe(tag_id, np.eye(4))  # new key -> dict size changes
 
     writer = threading.Thread(target=_writer, name="detections_writer")
     writer.start()
@@ -449,6 +452,32 @@ def test_fiducial_prior_propose_survives_concurrent_observe() -> None:
 
     assert not writer.is_alive()
     assert errors == [], f"propose() raced with concurrent observe(): {errors!r}"
+
+
+def test_fiducial_prior_observe_waits_for_the_drain() -> None:
+    """Invariant: a sighting cannot enter the dict a fire is draining. The stress
+    test above only catches the race when the scheduler happens to preempt inside
+    observe()'s read-then-write; this pins the exclusion itself by holding the
+    drain's lock, so a sighting arriving in that window lands on the NEXT fire
+    instead of resizing the dict propose() is iterating."""
+    prior = FiducialPrior({7: np.eye(4), 9: np.eye(4)})
+    prior.observe(7, np.eye(4))
+    landed = threading.Event()
+
+    def _sighting() -> None:
+        prior.observe(9, np.eye(4))
+        landed.set()
+
+    sighting = threading.Thread(target=_sighting, name="detections_sighting")
+    try:
+        with prior._pending_lock:  # the window propose() holds to swap the dict
+            sighting.start()
+            assert not landed.wait(timeout=0.2)  # blocked, not writing
+            assert set(prior._pending) == {7}  # the dict being drained is untouched
+        assert landed.wait(timeout=5.0)  # released -> the sighting proceeds
+        assert set(prior._pending) == {7, 9}  # and is offered on the next fire
+    finally:
+        sighting.join(timeout=5.0)
 
 
 def test_fiducial_prior_never_bypasses_judge() -> None:

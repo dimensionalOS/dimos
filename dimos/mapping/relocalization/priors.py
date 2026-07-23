@@ -35,6 +35,7 @@ tournament.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Annotated, Literal, Protocol
 
 import numpy as np
@@ -293,6 +294,10 @@ class FiducialPrior:
         self._map_T_marker = marker_map
         # marker_id -> map_T_world (4x4) awaiting its ONE trip past the judge.
         self._pending: dict[int, np.ndarray] = {}
+        # observe() and propose() run on different transport threads (module.py::_fire),
+        # so the sighting that reads self._pending and the drain that replaces it are
+        # one critical section -- see propose() for what tears without it.
+        self._pending_lock = threading.Lock()
 
     def observe(self, marker_id: int, world_T_marker_fused: np.ndarray) -> str | None:
         """Take ONE fused tag pose from the detector's ``fused_detections`` stream
@@ -300,7 +305,8 @@ class FiducialPrior:
         map_T_marker = self._map_T_marker.get(marker_id)
         if map_T_marker is None:
             return "unmapped_id"
-        self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_fused)
+        with self._pending_lock:
+            self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_fused)
         return None
 
     def is_due(self, now_s: float) -> bool:
@@ -320,10 +326,19 @@ class FiducialPrior:
         # on_fired() clear would drop the fix unjudged. Re-offering a fix on a later
         # fire hands the judge the SAME measurement against a world that has drifted
         # further since, so it can only score worse than it did when fresh.
-        # The swap is one statement, so an observe() racing in from the detections
-        # transport thread either lands in the drained dict or stays pending for the
-        # next fire -- the reload never tears and no fix is read twice.
-        pending, self._pending = self._pending, {}
+        # The swap takes the lock because the swap alone is not enough: a store in
+        # observe() reads self._pending and writes it as two steps, and a detections
+        # thread preempted between them still holds the dict this fire is draining::
+        #
+        #     observe:  d = self._pending ....................... d[id] = fix
+        #     propose:                     self._pending = {}; iterate d
+        #                                                              ^ RuntimeError
+        #
+        # "dictionary changed size during iteration" -- which _try_relocalize's
+        # boundary except swallows, dropping the cycle. Under the lock a sighting
+        # either lands before the swap or waits and goes out on the next fire.
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
         return [Candidate(T=fix_T, source=self.name) for fix_T in pending.values()]
 
 
