@@ -22,9 +22,11 @@ pub mod zenoh;
 pub use dimos_module_macros::{native_config, Module};
 pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Module, ModuleConfig, NativeConfig, NoConfig, Output};
-pub use tf::Tf;
+pub use tf::{Tf, Transform};
 pub use transport::Transport;
 pub use zenoh::ZenohTransport;
+
+pub use nalgebra;
 
 // Re-export LcmOptions so callers don't need to depend on dimos-lcm directly.
 pub use dimos_lcm::LcmOptions;

@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python publishes a tf chain, a Rust #[tf] module reads it back.
+"""Python and Rust each publish part of a tf chain, a Rust #[tf] module reads it back.
+
+Python publishes a -> b -> c, a Rust broadcaster publishes c -> d, and a Rust
+listener composes the full a -> d transform.
 
 Run with:
     python examples/native-modules/rust_tf.py
@@ -84,16 +87,29 @@ class TfListenerConfig(NativeModuleConfig):
 
 
 class TfListenerModule(NativeModule):
-    """Rust module that looks up a -> c and logs it.
+    """Rust module that looks up a -> d and logs it.
 
-    Expect to see (1.0, cos(t), sin(t))
+    Expect to see (1.5, cos(t), sin(t))
     """
 
     config: TfListenerConfig
 
 
+class TfBroadcasterConfig(NativeModuleConfig):
+    executable: str = str(_EXAMPLES / "tf_broadcaster")
+    build_command: str = _BUILD
+    cwd: str = str(_RUST_DIR)
+    stdin_config: bool = True
+
+
+class TfBroadcasterModule(NativeModule):
+    """Rust module that publishes the c -> d transform."""
+
+    config: TfBroadcasterConfig
+
+
 if __name__ == "__main__":
-    bp = autoconnect(TfProducer.blueprint(), TfListenerModule.blueprint()).global_config(
-        viewer="none"
-    )
+    bp = autoconnect(
+        TfProducer.blueprint(), TfBroadcasterModule.blueprint(), TfListenerModule.blueprint()
+    ).global_config(viewer="none")
     ModuleCoordinator.build(bp).loop()

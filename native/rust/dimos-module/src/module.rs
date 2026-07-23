@@ -332,17 +332,20 @@ impl Builder {
         }
     }
 
-    /// A handle that answers transform queries from the `/tf` topic.
+    /// A handle that answers transform queries and publishes on the `tf` topic.
     ///
-    /// The first call subscribes to the resolved `tf` topic and starts filling
-    /// the transform graph in the background. Repeated calls share one graph.
+    /// The first call subscribes to the resolved `tf` topic, starts filling the
+    /// transform graph in the background, and wires a publish queue for the same
+    /// topic. Repeated calls share one graph.
     pub fn tf(&mut self) -> crate::tf::Tf {
         if let Some(tf) = &self.tf {
             return tf.clone();
         }
         let topic = self.topic_for("tf");
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.clone(), rx));
         let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_BUFFER_SIZE);
+            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_BUFFER_SIZE, tx);
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf

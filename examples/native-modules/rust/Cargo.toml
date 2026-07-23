@@ -15,6 +15,10 @@ path = "src/pong.rs"
 name = "tf_listener"
 path = "src/tf_listener.rs"
 
+[[bin]]
+name = "tf_broadcaster"
+path = "src/tf_broadcaster.rs"
+
 [dependencies]
 dimos-module = { path = "../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

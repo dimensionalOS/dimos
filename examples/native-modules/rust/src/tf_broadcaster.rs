@@ -12,36 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_module::{run_with_transport, Module, Tf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use dimos_module::nalgebra::Isometry3;
+use dimos_module::{run_with_transport, Module, Tf, Transform};
 use tokio::time::{interval, Duration};
 
 #[derive(Module)]
-#[module(setup = start_lookup)]
-struct TfListener {
+#[module(setup = start_broadcast)]
+struct TfBroadcaster {
     #[tf]
     tf: Tf,
 }
 
-impl TfListener {
-    async fn start_lookup(&mut self) {
+impl TfBroadcaster {
+    async fn start_broadcast(&mut self) {
         let tf = self.tf.clone();
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(500));
+            let mut ticker = interval(Duration::from_millis(100));
             loop {
                 ticker.tick().await;
-                match tf.get_latest("a", "d") {
-                    Some(t) => {
-                        let p = t.translation();
-                        tracing::info!(
-                            parent = %t.parent,
-                            child = %t.child,
-                            x = p.x,
-                            y = p.y,
-                            z = p.z,
-                            "transform:",
-                        );
-                    }
-                    None => tracing::info!("a -> d not available yet"),
+                let ts = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock before epoch")
+                    .as_secs_f64();
+                let t = Transform::new("c", "d", ts, Isometry3::translation(0.5, 0.0, 0.0));
+                if tf.publish(&[t]).await.is_err() {
+                    break;
                 }
             }
         });
@@ -50,5 +47,5 @@ impl TfListener {
 
 #[tokio::main]
 async fn main() {
-    run_with_transport::<TfListener>().await;
+    run_with_transport::<TfBroadcaster>().await;
 }

@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Consumer-side transform client for native modules.
+//! Transform client for native modules.
 //!
 //! Each `/tf` edge is buffered per `(parent, child)`, and [`Tf::get`] composes
 //! the shortest path through the frame graph. Lookups are nearest-in-time within
-//! a tolerance, not interpolated.
+//! a tolerance, not interpolated. [`Tf::publish`] sends transforms onto the same
+//! topic and feeds the local graph.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
+use tokio::sync::mpsc;
 
 use crate::module::Route;
 
@@ -49,6 +52,20 @@ pub struct Transform {
 }
 
 impl Transform {
+    pub fn new(
+        parent: impl Into<String>,
+        child: impl Into<String>,
+        ts: f64,
+        iso: Isometry3<f64>,
+    ) -> Self {
+        Self {
+            parent: parent.into(),
+            child: child.into(),
+            ts,
+            iso,
+        }
+    }
+
     /// The transform as an isometry.
     pub fn isometry(&self) -> Isometry3<f64> {
         self.iso
@@ -275,13 +292,14 @@ impl MultiTBuffer {
     }
 }
 
-/// A cheap-to-clone handle for querying the transform graph.
+/// A cheap-to-clone handle for querying and publishing transforms.
 ///
 /// Obtain one from `Builder::tf` (or a `#[tf]` field on a `#[derive(Module)]`
 /// struct). The graph is filled in the background as `/tf` messages arrive.
 #[derive(Clone)]
 pub struct Tf {
     buffer: Arc<RwLock<MultiTBuffer>>,
+    sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl Tf {
@@ -306,6 +324,61 @@ impl Tf {
     /// The latest available transform from `parent` to `child`.
     pub fn get_latest(&self, parent: &str, child: &str) -> Option<Transform> {
         self.get(parent, child, None, None)
+    }
+
+    /// Publish transforms on the `tf` topic.
+    ///
+    /// The transforms also feed the local graph, so a `get` right after sees
+    /// them without waiting for the transport round trip.
+    pub async fn publish(&self, transforms: &[Transform]) -> io::Result<()> {
+        {
+            let mut buffer = self.buffer.write().expect("tf buffer lock poisoned");
+            for t in transforms {
+                buffer.receive(&t.parent, &t.child, t.ts, t.iso);
+            }
+        }
+        let msg = lcm_msgs::tf2_msgs::TFMessage {
+            transforms: transforms.iter().map(to_stamped).collect(),
+        };
+        self.sender
+            .send(msg.encode())
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
+    }
+}
+
+fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
+    let mut sec = t.ts.floor();
+    let mut nsec = ((t.ts - sec) * 1e9).round();
+    if nsec >= 1e9 {
+        sec += 1.0;
+        nsec -= 1e9;
+    }
+    let p = t.iso.translation.vector;
+    let q = t.iso.rotation;
+    lcm_msgs::geometry_msgs::TransformStamped {
+        header: lcm_msgs::std_msgs::Header {
+            seq: 0,
+            stamp: lcm_msgs::std_msgs::Time {
+                sec: sec as i32,
+                nsec: nsec as i32,
+            },
+            frame_id: t.parent.clone(),
+        },
+        child_frame_id: t.child.clone(),
+        transform: lcm_msgs::geometry_msgs::Transform {
+            translation: lcm_msgs::geometry_msgs::Vector3 {
+                x: p.x,
+                y: p.y,
+                z: p.z,
+            },
+            rotation: lcm_msgs::geometry_msgs::Quaternion {
+                x: q.i,
+                y: q.j,
+                z: q.k,
+                w: q.w,
+            },
+        },
     }
 }
 
@@ -344,11 +417,17 @@ impl Route for TfRoute {
     }
 }
 
-// Builds the shared graph plus the handle and the route that feeds it.
-pub(crate) fn tf_subscription(topic: String, buffer_size: f64) -> (Tf, Box<dyn Route>) {
+// Builds the shared graph plus the handle and the route that feeds it. The
+// sender carries published messages to the tf topic's publish worker.
+pub(crate) fn tf_subscription(
+    topic: String,
+    buffer_size: f64,
+    sender: mpsc::Sender<Vec<u8>>,
+) -> (Tf, Box<dyn Route>) {
     let buffer = Arc::new(RwLock::new(MultiTBuffer::new(buffer_size)));
     let tf = Tf {
         buffer: Arc::clone(&buffer),
+        sender,
     };
     let route = Box::new(TfRoute { topic, buffer });
     (tf, route)
@@ -360,11 +439,19 @@ mod tests {
     use std::f64::consts::PI;
 
     fn tf_with(buffer_size: f64) -> (Tf, MultiHandle) {
+        let (tf, _rx, handle) = tf_with_publish(buffer_size);
+        (tf, handle)
+    }
+
+    fn tf_with_publish(buffer_size: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
         let buffer = Arc::new(RwLock::new(MultiTBuffer::new(buffer_size)));
+        let (tx, rx) = mpsc::channel(8);
         (
             Tf {
                 buffer: Arc::clone(&buffer),
+                sender: tx,
             },
+            rx,
             MultiHandle { buffer },
         )
     }
@@ -501,7 +588,8 @@ mod tests {
         use lcm_msgs::std_msgs::{Header, Time};
         use lcm_msgs::tf2_msgs::TFMessage;
 
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_BUFFER_SIZE);
+        let (tx, _rx) = mpsc::channel(8);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_BUFFER_SIZE, tx);
         let msg = TFMessage {
             transforms: vec![lcm_msgs::geometry_msgs::TransformStamped {
                 header: Header {
@@ -535,5 +623,62 @@ mod tests {
         assert!((t.translation().y - 0.2).abs() < 1e-9);
         assert!((t.translation().z - 0.3).abs() < 1e-9);
         assert!((t.ts - 5.5).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn publish_feeds_local_graph() {
+        let (tf, _rx, _h) = tf_with_publish(DEFAULT_TF_BUFFER_SIZE);
+        let iso = Isometry3::from_parts(
+            Translation3::new(1.0, 2.0, 3.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, PI / 2.0),
+        );
+        tf.publish(&[Transform::new("map", "base_link", 7.0, iso)])
+            .await
+            .unwrap();
+
+        let t = tf.get_latest("map", "base_link").unwrap();
+        assert!((t.translation().x - 1.0).abs() < 1e-9);
+        assert!((t.translation().y - 2.0).abs() < 1e-9);
+        assert!((t.translation().z - 3.0).abs() < 1e-9);
+        assert!((t.ts - 7.0).abs() < 1e-9);
+    }
+
+    // Publish on one handle, dispatch the wire bytes into another graph.
+    #[tokio::test]
+    async fn publish_round_trips_through_route() {
+        let (tf_out, mut rx, _h) = tf_with_publish(DEFAULT_TF_BUFFER_SIZE);
+        let iso = Isometry3::from_parts(
+            Translation3::new(0.5, -0.5, 0.25),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, PI / 6.0),
+        );
+        tf_out
+            .publish(&[Transform::new("a", "b", 3.25, iso)])
+            .await
+            .unwrap();
+        let bytes = rx.recv().await.unwrap();
+
+        let (tx, _rx2) = mpsc::channel(8);
+        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_BUFFER_SIZE, tx);
+        route.try_dispatch(&bytes);
+
+        let t = tf_in.get_latest("a", "b").unwrap();
+        assert!((t.translation().x - 0.5).abs() < 1e-9);
+        assert!((t.translation().y + 0.5).abs() < 1e-9);
+        assert!((t.translation().z - 0.25).abs() < 1e-9);
+        assert!((t.ts - 3.25).abs() < 1e-9);
+        let (_, _, yaw) = t.rotation().euler_angles();
+        assert!((yaw - PI / 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stamp_rounding_does_not_overflow_nsec() {
+        let st = to_stamped(&Transform::new(
+            "a",
+            "b",
+            1.9999999999,
+            Isometry3::identity(),
+        ));
+        assert_eq!(st.header.stamp.sec, 2);
+        assert_eq!(st.header.stamp.nsec, 0);
     }
 }
