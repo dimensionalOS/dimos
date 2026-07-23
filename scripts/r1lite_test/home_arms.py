@@ -41,7 +41,7 @@ from sensor_msgs.msg import JointState
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r1lite_config import ARM_DOF, CMD_ARM, FEEDBACK_ARM
 
-SPEED = 0.12  # rad/s along the slowest-joint profile, deliberately stately
+SPEED = 0.3  # rad/s; the tracker ignored slower streams, 0.5 is the proven envelope
 STREAM_HZ = 50.0
 DISCOVERY_WAIT = 5.0
 FEEDBACK_WAIT = 5.0
@@ -66,6 +66,13 @@ def home_arm(side: str) -> bool:
     deadline = time.time() + DISCOVERY_WAIT
     while time.time() < deadline:
         rclpy.spin_once(node, timeout_sec=0.1)
+
+    # A running dimos coordinator streams its own arm targets; two command
+    # streams fight and the arm follows neither. Refuse instead.
+    if node.count_publishers(cmd_topic) > 1:
+        print(f"[{side}] FAIL: another publisher is on {cmd_topic}; stop the dimos blueprint first")
+        node.destroy_node()
+        return False
 
     deadline = time.time() + FEEDBACK_WAIT
     while latest[0] is None and time.time() < deadline:
@@ -110,8 +117,8 @@ def home_arm(side: str) -> bool:
             pub.publish(cmd)
             rclpy.spin_once(node, timeout_sec=period)
             if alpha >= 1.0:
-                # Hold at zero briefly so the tracker settles there.
-                if elapsed > duration + 1.0:
+                # Hold at zero so the tracker settles there.
+                if elapsed > duration + 3.0:
                     break
     finally:
         node.destroy_node()
