@@ -159,7 +159,7 @@ lcmspy = "dimos.utils.cli.spy.run_spy:lcm_main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:cli_main"
-rerun-bridge = "dimos.visualization.rerun.bridge:app"
+rerun-bridge = "dimos.visualization.rerun.bridge:run_bridge"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
 
@@ -547,7 +547,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*|^dimos/(memory2|pure)/pure(module|graph)_api_sketch[^/]*\\.py$"
 
 [[tool.mypy.overrides]]
 module = [
@@ -661,4 +661,6 @@ ignore = [
     "dimos/manipulation/manipulation_module.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
+    "misc/DimSim/scenes/apartment/objects/manifest.json",
+    "dimos/pure/tasks/t8-rim.md",  # long spec doc (sat at the 75KB ceiling; T8b appendix, R3)
 ]

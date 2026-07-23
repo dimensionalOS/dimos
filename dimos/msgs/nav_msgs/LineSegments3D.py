@@ -83,7 +83,7 @@ class LineSegments3D(Timestamped):
 
     def to_rerun(
         self,
-        z_offset: float = 1.7,
+        z_offset: float = 0.25,
         color: tuple[int, int, int, int] = (0, 255, 150, 255),
         radii: float = 0.04,
     ) -> Archetype:

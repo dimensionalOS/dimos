@@ -55,6 +55,7 @@ class VoxelGrid:
         show_startup_log: bool = True,
     ) -> None:
         self._voxel_size = voxel_size
+        self._block_count = block_count
         self._carve_columns = carve_columns
         self._frame_id = frame_id
 
@@ -67,21 +68,28 @@ class VoxelGrid:
         if show_startup_log:
             logger.info(f"VoxelGrid using device: {dev}")
 
-        self.vbg: o3d.t.geometry.VoxelBlockGrid | None = o3d.t.geometry.VoxelBlockGrid(
+        self._dev = dev
+        self._latest_frame_ts: float = 0.0
+        self._disposed = False
+        self.vbg: o3d.t.geometry.VoxelBlockGrid | None = None
+        self.reset()
+        self._key_dtype = self._voxel_hashmap.key_tensor().dtype
+
+    def reset(self) -> None:
+        """Drop every voxel: the grid is empty again, as freshly constructed."""
+        self._check_disposed()
+        self.vbg = o3d.t.geometry.VoxelBlockGrid(
             attr_names=("dummy",),
             attr_dtypes=(o3c.uint8,),
             attr_channels=(o3c.SizeVector([1]),),
-            voxel_size=voxel_size,
+            voxel_size=self._voxel_size,
             block_resolution=1,
-            block_count=block_count,
-            device=dev,
+            block_count=self._block_count,
+            device=self._dev,
         )
-
-        self._dev = dev
         self._voxel_hashmap = self.vbg.hashmap()
-        self._key_dtype = self._voxel_hashmap.key_tensor().dtype
-        self._latest_frame_ts: float = 0.0
-        self._disposed = False
+        self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
+        self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
 
     def _check_disposed(self) -> None:
         if self._disposed:
