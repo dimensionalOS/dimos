@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- No-build diagnostic page for the relay (T1). It is NOT the Cockpit and
+     never grows panels; it exists so backend work is demoable and debuggable
+     with zero frontend tooling. It duplicates ~40 lines of framing JS from
+     web/shared/protocol.ts on purpose. -->
+  <head>
+    <meta charset="utf-8">
+    <title>DimOS relay debug</title>
+    <style>
+      body {
+        font: 13px/1.5 ui-monospace, monospace;
+        background: #14161a;
+        color: #d7dae0;
+        margin: 1.2rem;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 0.6rem;
+        color: #8ab4f8;
+      }
+      .row {
+        display: flex;
+        gap: 1.2rem;
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .card {
+        background: #1d2026;
+        border: 1px solid #2a2e36;
+        border-radius: 6px;
+        padding: 0.7rem 0.9rem;
+        margin-bottom: 1rem;
+      }
+      #status {
+        white-space: pre-wrap;
+      }
+      .ok {
+        color: #7ee787;
+      }
+      .bad {
+        color: #ff7b72;
+      }
+      canvas {
+        background: #000;
+        border: 1px solid #2a2e36;
+        max-width: 480px;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      td, th {
+        padding: 0.1rem 0.6rem;
+        text-align: right;
+        border-bottom: 1px solid #2a2e36;
+      }
+      th:first-child, td:first-child {
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>DimOS relay debug</h1>
+    <div class="card" id="status">checking WebTransport support...</div>
+    <div class="row">
+      <div class="card">
+        <div>color_image</div>
+        <canvas id="image" width="480" height="360"></canvas>
+      </div>
+      <div class="card">
+        <div>odom</div>
+        <pre id="odom">-</pre>
+        <div>round-trips</div>
+        <pre id="rtt">control: -    datagram: -</pre>
+      </div>
+    </div>
+    <div class="card">
+      <table id="stats">
+        <thead>
+          <tr>
+            <th>channel</th>
+            <th>frames</th>
+            <th>Hz</th>
+            <th>KB/s</th>
+            <th>span loss</th>
+            <th>out of order</th>
+            <th>last seq</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const enc = new TextEncoder();
+      const dec = new TextDecoder();
+
+      function say(html, cls) {
+        $("status").innerHTML = cls ? `<span class="${cls}">${html}</span>` : html;
+      }
+
+      // ---- framing (mirrors web/shared/protocol.ts) ----
+      function encodeControlFrame(msg) {
+        const body = enc.encode(JSON.stringify(msg));
+        const out = new Uint8Array(4 + body.length);
+        new DataView(out.buffer).setUint32(0, body.length, true);
+        out.set(body, 4);
+        return out;
+      }
+
+      function controlFrameReader() {
+        let buf = new Uint8Array(0);
+        return (chunk) => {
+          const merged = new Uint8Array(buf.length + chunk.length);
+          merged.set(buf, 0);
+          merged.set(chunk, buf.length);
+          buf = merged;
+          const msgs = [];
+          while (buf.length >= 4) {
+            const len = new DataView(buf.buffer, buf.byteOffset).getUint32(0, true);
+            if (buf.length < 4 + len) break;
+            msgs.push(JSON.parse(dec.decode(buf.subarray(4, 4 + len))));
+            buf = buf.subarray(4 + len);
+          }
+          return msgs;
+        };
+      }
+
+      // Read one data frame by byte count; never wait for EOF (the relay's FIN can
+      // arrive up to ~1 s late on Deno 2.6.x).
+      async function readDataFrame(stream) {
+        const reader = stream.getReader();
+        const chunks = [];
+        let size = 0;
+        let total = null;
+        let head = new Uint8Array(0);
+        try {
+          while (total === null || size < total) {
+            const { value, done } = await reader.read();
+            if (value && value.byteLength) {
+              chunks.push(value);
+              size += value.byteLength;
+              if (total === null) {
+                const merged = new Uint8Array(Math.min(size, 8));
+                let off = 0;
+                for (const c of chunks) {
+                  for (let i = 0; i < c.byteLength && off < 8; i++) merged[off++] = c[i];
+                }
+                head = merged;
+                if (size >= 8) {
+                  const dv = new DataView(head.buffer);
+                  total = 8 + dv.getUint32(0, true) + dv.getUint32(4, true);
+                }
+              }
+            }
+            if (done) break;
+          }
+        } finally {
+          reader.releaseLock(); // no cancel: the late FIN closes the stream
+        }
+        if (total === null || size < total) throw new Error("stream ended mid-frame");
+        const buf = new Uint8Array(size);
+        let off = 0;
+        for (const c of chunks) {
+          buf.set(c, off);
+          off += c.byteLength;
+        }
+        const hlen = new DataView(buf.buffer).getUint32(0, true);
+        return {
+          header: JSON.parse(dec.decode(buf.subarray(8, 8 + hlen))),
+          payload: buf.subarray(8 + hlen, total),
+        };
+      }
+
+      // ---- per-channel stats ----
+      const chans = new Map();
+      function chan(ch) {
+        let c = chans.get(ch);
+        if (!c) {
+          c = {
+            frames: 0,
+            bytes: 0,
+            winFrames: 0,
+            winBytes: 0,
+            hz: 0,
+            kbps: 0,
+            minSeq: Infinity,
+            maxSeq: -1,
+            lastSeq: -1,
+            ooo: 0,
+            seen: 0,
+          };
+          chans.set(ch, c);
+        }
+        return c;
+      }
+      function onFrame(header, payload) {
+        const c = chan(header.ch);
+        c.frames++;
+        c.winFrames++;
+        c.bytes += payload.byteLength;
+        c.winBytes += payload.byteLength;
+        c.seen++;
+        if (header.seq < c.lastSeq) c.ooo++;
+        c.lastSeq = Math.max(c.lastSeq, header.seq);
+        c.minSeq = Math.min(c.minSeq, header.seq);
+        c.maxSeq = Math.max(c.maxSeq, header.seq);
+        if (header.ch === "color_image") latestImage = payload;
+        else if (header.ch === "odom") latestOdom = { header, payload };
+      }
+      setInterval(() => {
+        const rows = [];
+        for (const [ch, c] of chans) {
+          c.hz = c.winFrames / 2;
+          c.kbps = c.winBytes / 2048;
+          c.winFrames = 0;
+          c.winBytes = 0;
+          const span = c.maxSeq >= 0 ? c.maxSeq - c.minSeq + 1 : 0;
+          const loss = span - c.seen; // span-based: streams arrive out of order
+          rows.push(
+            `<tr><td>${ch}</td><td>${c.frames}</td><td>${c.hz.toFixed(1)}</td>` +
+              `<td>${
+                c.kbps.toFixed(0)
+              }</td><td>${loss}</td><td>${c.ooo}</td><td>${c.lastSeq}</td></tr>`,
+          );
+        }
+        document.querySelector("#stats tbody").innerHTML = rows.join("");
+      }, 2000);
+
+      // ---- rendering: rAF draws the latest frame, never per-arrival ----
+      let latestImage = null;
+      let latestOdom = null;
+      let decoding = false;
+      const ctx = $("image").getContext("2d");
+      function raf() {
+        if (latestImage && !decoding) {
+          const payload = latestImage;
+          latestImage = null;
+          decoding = true;
+          createImageBitmap(new Blob([payload], { type: "image/jpeg" }))
+            .then((bmp) => {
+              if ($("image").width !== bmp.width) {
+                $("image").width = bmp.width;
+                $("image").height = bmp.height;
+              }
+              ctx.drawImage(bmp, 0, 0);
+            })
+            .catch(() => {}) // not a decodable image (e.g. synthetic bytes): counted in stats only
+            .finally(() => {
+              decoding = false;
+            });
+        }
+        if (latestOdom) {
+          const p = latestOdom;
+          latestOdom = null;
+          let text;
+          try {
+            text = JSON.stringify(JSON.parse(dec.decode(p.payload)), null, 1);
+          } catch {
+            text = `${p.payload.byteLength} B`;
+          }
+          $("odom").textContent = `seq ${p.header.seq}\n${text}`;
+        }
+        requestAnimationFrame(raf);
+      }
+      requestAnimationFrame(raf);
+
+      // ---- connection ----
+      const rtts = { control: "-", datagram: "-" };
+      function showRtt() {
+        $("rtt").textContent = `control: ${rtts.control}    datagram: ${rtts.datagram}`;
+      }
+
+      async function main() {
+        if (!window.isSecureContext) {
+          return say(
+            "this page is not a secure context - open it via http://localhost:PORT or " +
+              "http://127.0.0.1:PORT (not a LAN IP); WebTransport is unavailable otherwise",
+            "bad",
+          );
+        }
+        if (typeof WebTransport === "undefined") {
+          return say(
+            "this browser has no WebTransport support (Chrome and Firefox work; Safari " +
+              "ships it behind a feature flag and is not a target yet)",
+            "bad",
+          );
+        }
+        const info = await (await fetch("/api/info")).json();
+        say(`connecting to ${info.wtUrl} ...`);
+        const opts = {};
+        if (info.certHash) {
+          opts.serverCertificateHashes = [{
+            algorithm: "sha-256",
+            value: Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0)),
+          }];
+        }
+        let wt;
+        try {
+          wt = new WebTransport(info.wtUrl, opts);
+          await wt.ready;
+        } catch (e) {
+          return say(
+            `WebTransport connect failed: ${e.message ?? e}<br>` +
+              "hints: relay running? firewall blocking UDP? cert older than its 10-day validity?",
+            "bad",
+          );
+        }
+        say(`connected to ${info.wtUrl} (protocol v${info.v})`, "ok");
+        wt.closed.then(
+          (i) => say(`session closed: ${JSON.stringify(i)}`, "bad"),
+          (e) => say(`session lost: ${e.message ?? e}`, "bad"),
+        );
+
+        // control stream: hello -> welcome, then ping every second
+        const control = await wt.createBidirectionalStream();
+        const cw = control.writable.getWriter();
+        const pending = new Map(); // n -> send time
+        let pingN = 0;
+        cw.write(encodeControlFrame({ t: "hello", v: info.v, role: "viewer" }));
+        (async () => {
+          const push = controlFrameReader();
+          for await (const chunk of control.readable) {
+            for (const msg of push(chunk)) {
+              if (msg.t === "welcome") {
+                say(`connected, welcome received (protocol v${msg.v})`, "ok");
+              } else if (msg.t === "error") {
+                say(`relay error: ${msg.code}: ${msg.message}`, "bad");
+              } else if (msg.t === "pong" && pending.has(msg.n)) {
+                rtts.control = `${(performance.now() - pending.get(msg.n)).toFixed(1)} ms`;
+                pending.delete(msg.n);
+                showRtt();
+              }
+            }
+          }
+        })().catch(() => {});
+        setInterval(() => {
+          pending.set(++pingN, performance.now());
+          cw.write(encodeControlFrame({ t: "ping", n: pingN, ts: Date.now() / 1000 }))
+            .catch(() => {});
+        }, 1000);
+
+        // datagram ping every second (the relay answers these itself)
+        const dgw = wt.datagrams.writable.getWriter();
+        const dgPending = new Map();
+        let dgN = 0;
+        setInterval(() => {
+          dgPending.set(++dgN, performance.now());
+          dgw.write(
+            enc.encode(JSON.stringify({ t: "ping", n: dgN, ts: Date.now() / 1000 })),
+          ).catch(() => {});
+        }, 1000);
+        (async () => {
+          for await (const d of wt.datagrams.readable) {
+            try {
+              const msg = JSON.parse(dec.decode(d));
+              if (msg.t === "pong" && dgPending.has(msg.n)) {
+                rtts.datagram = `${
+                  (performance.now() - dgPending.get(msg.n)).toFixed(1)
+                } ms`;
+                dgPending.delete(msg.n);
+                showRtt();
+              }
+            } catch { /* not JSON */ }
+          }
+        })().catch(() => {});
+
+        // data plane: one uni stream per frame
+        for await (const stream of wt.incomingUnidirectionalStreams) {
+          readDataFrame(stream).then(({ header, payload }) => onFrame(header, payload))
+            .catch(() => {});
+        }
+      }
+      main().catch((e) => say(`debug page failed: ${e.message ?? e}`, "bad"));
+    </script>
+  </body>
+</html>
