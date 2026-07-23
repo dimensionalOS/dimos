@@ -379,7 +379,7 @@ class BenchmarkerConfig(ModuleConfig):
     odom_warmup_s: float = 10.0  # s to wait for the first odom each run
     speed_settle_s: float = 0.3  # s between publishing speed and the path
     gate_source: Literal["stream", "auto"] = "stream"
-    out_dir: str | None = None
+    out_dir: Path | None = None
 
 
 class Benchmarker(Module):
@@ -455,7 +455,7 @@ class Benchmarker(Module):
     def _run(self) -> None:
         cfg = self.config
         speeds = [float(s) for s in cfg.speeds.split(",") if s.strip()]
-        out_root = Path(cfg.out_dir).expanduser() if cfg.out_dir else DEFAULT_OUT_DIR / cfg.robot
+        out_root = cfg.out_dir.expanduser() if cfg.out_dir else DEFAULT_OUT_DIR / cfg.robot
         out_root.mkdir(parents=True, exist_ok=True)
         battery = BATTERIES[cfg.battery]()
 
