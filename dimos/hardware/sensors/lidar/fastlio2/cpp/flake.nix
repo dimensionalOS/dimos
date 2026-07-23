@@ -83,6 +83,7 @@
             pkgs.pcl
             pkgs.boost
             pkgs.llvmPackages.openmp
+            pkgs.nlohmann_json
           ];
 
           cmakeFlags = [
@@ -90,6 +91,9 @@
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFASTLIO_DIR=${fast-lio}"
             "-DLIVOX_COMMON_DIR=${livox-common}"
+            # The header-only SDK lives outside this dir. A git-tree flake can
+            # reach it as a path literal within the repo tree.
+            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
           ];
         };
       in {

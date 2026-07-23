@@ -47,9 +47,27 @@ FetchContent_Declare(dimos_lcm
 )
 FetchContent_MakeAvailable(dimos_lcm)
 
+# JSON parser used by the SDK's stdin config. nix provides it via buildInputs.
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+  FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+  )
+  FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
+# The header-only dimos native C++ SDK. Overridable so nix can point at the
+# flake input instead of the in-repo relative path.
+if(NOT DEFINED DIMOS_NATIVE_CPP_DIR)
+  set(DIMOS_NATIVE_CPP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../native/cpp)
+endif()
+add_subdirectory(${DIMOS_NATIVE_CPP_DIR} ${CMAKE_BINARY_DIR}/dimos_native)
+
 # LCM
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LCM REQUIRED lcm)
+find_package(Threads REQUIRED)
 
 # Eigen3
 find_package(Eigen3 REQUIRED)
@@ -90,6 +108,9 @@ target_include_directories(fastlio2_native PRIVATE
 )
 
 target_link_libraries(fastlio2_native PRIVATE
+  dimos_native
+  nlohmann_json::nlohmann_json
+  Threads::Threads
   ${LCM_LIBRARIES}
   ${LIVOX_SDK}
   ${PCL_LIBRARIES}
