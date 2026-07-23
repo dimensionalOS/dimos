@@ -35,6 +35,7 @@ from dimos.manipulation.planning.spec.models import (
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.manipulation.visualization.config import (
     MeshcatVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -325,6 +326,37 @@ def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
             world_monitor=world_monitor,
             manipulation_module=MagicMock(),
         )
+
+
+@pytest.mark.skipif(
+    not DRAKE_AVAILABLE, reason="Drake visualization tests require the manipulation extra"
+)
+def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None:
+    world = DrakeWorld(enable_viz=False)
+
+    visualization = create_manipulation_visualization(
+        MeshcatVisualizationConfig(),
+        world=world,
+        world_monitor=MagicMock(),
+        manipulation_module=MagicMock(),
+    )
+
+    assert visualization is world
+    assert isinstance(visualization, VisualizationSpec)
+    assert world.get_visualization_url() is None
+    world.initialize(VisualizationSession(PlanningSceneInfo(robots={}), operator=object()))
+    world.update_state(VisualizationStateFrame(joint_states={}))
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    world.add_vis_obstacle("box", obstacle)
+    world.remove_vis_obstacle("box")
+    world.clear_vis_obstacles()
+    world.cancel_preview_animation()
+    world.close()
 
 
 def test_create_viser_visualization_has_group_preview_protocol_without_legacy_path_api() -> None:
