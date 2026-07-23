@@ -21,7 +21,7 @@ follows paths purely over the transport:
     OUT  speed  (std_msgs/Float32, m/s) -- the target/cruise speed for one run
     IN   odom   (geometry_msgs/PoseStamped) -- the robot's executed pose
     IN   cmd_vel(geometry_msgs/Twist)       -- the command sent to the robot
-    IN   gate   (std_msgs/Int8)             -- operator advance/skip/quit (hw)
+    IN   operator_gate (std_msgs/Int8)      -- operator advance/skip/quit (hw)
 
 For each (path, speed) in a fixed battery it: waits for an operator gate (so the
 robot can be teleoped into position), anchors the reference path to the robot's
@@ -34,7 +34,7 @@ JSON. It does NOT score inline — scoring is a separate offline step (see
 
 The Benchmarker is controller-agnostic (it talks only over the transport), but
 it runs in the SAME process as the controller: the benchmark blueprint composes
-both, since two ``dimos run`` processes can't share an LCM bus. One launchable::
+both. One launchable::
 
     dimos run unitree-go2-rpp-benchmark    # controller + Benchmarker, one process
 """
@@ -393,7 +393,7 @@ class Benchmarker(Module):
     speed: Out[Float32]
     odom: In[PoseStamped]
     cmd_vel: In[Twist]
-    gate: In[Int8]
+    operator_gate: In[Int8]
 
     _gate_queue: queue.Queue[int]
 
@@ -412,12 +412,12 @@ class Benchmarker(Module):
             # Fail fast: with no gate transport the run loop would block forever
             # in _wait_gate() for an ENTER that can never arrive. Use
             # gate_source="auto" for headless/ungated runs.
-            if self.gate.transport is None:
+            if self.operator_gate.transport is None:
                 raise RuntimeError(
                     "gate_source='stream' requires a gate transport; "
                     "wire one or use gate_source='auto'"
                 )
-            self.register_disposable(Disposable(self.gate.subscribe(self._on_gate_event)))
+            self.register_disposable(Disposable(self.operator_gate.subscribe(self._on_gate_event)))
         # Run on a background thread so start() returns immediately (the session
         # is operator-paced and easily outlives the start RPC's timeout).
         threading.Thread(target=self._run, name="benchmarker", daemon=True).start()
