@@ -224,7 +224,7 @@ def refine_candidates(
     if not upright:
         raise NoUprightCandidateError(
             f"no candidate within the gravity gate: {len(indexed)} candidate(s), "
-            f"all tilt > {gravity_tilt_max_deg} deg -- refusing"
+            f"none within {gravity_tilt_max_deg} deg -- refusing"
         )
     pool = upright
 

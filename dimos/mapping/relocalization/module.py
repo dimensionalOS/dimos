@@ -291,14 +291,17 @@ class RelocalizationModule(Module):
             )
             self._last_skip_log = now
 
-    def _maybe_log_wall_skip(self, n_pts: int) -> None:
+    def _maybe_log_wall_skip(self, n_pts: int, reason: str) -> None:
         """Throttled warning that the judge refused a fire for too little wall evidence
         (a sparse submap at acquisition). Shares the RANSAC-skip throttle timer: both
         are 'no fix this fire because the cloud was too sparse', and one 5 s window
-        covering both keeps a starved feed from spamming."""
+        covering both keeps a starved feed from spamming. ``reason`` carries the
+        exception's wall counts so the log names the sparse subset, not just n_pts."""
         now = time.monotonic()
         if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
-            logger.warning("relocalize skipped: insufficient wall evidence", n_pts=n_pts)
+            logger.warning(
+                "relocalize skipped: insufficient wall evidence", n_pts=n_pts, reason=reason
+            )
             self._last_skip_log = now
 
     def _publish_tf(self, tf: Transform | None) -> None:
@@ -458,20 +461,24 @@ class RelocalizationModule(Module):
             # is lost, so this is a benign no-op, not a crash to log.exception.
             logger.debug("relocalize: no candidates this cycle")
             return None
-        except InsufficientWallEvidenceError:
+        except InsufficientWallEvidenceError as e:
             # The judge could not evaluate the pool (too few wall points -- a sparse
             # acquisition cloud, which a tag burst is deliberately allowed to fire on).
             # The unjudged fix is dropped on purpose: a pose scored against <100 walls
             # isn't trustworthy, and the tag is re-seen as the robot moves into
             # structure. This is EXPECTED, so warn (throttled), not the ERROR traceback
             # logger.exception prints.
-            self._maybe_log_wall_skip(len(msg))
+            self._maybe_log_wall_skip(len(msg), str(e))
             return None
         except NoUprightCandidateError:
             # Every candidate tilted past the gravity gate: a real rejection, so the fix
             # is consumed (re-judging a tilted pose only re-rejects it). Expected on a
-            # bad pose -> warn rather than log.exception.
-            logger.warning("relocalize rejected: all candidates tilted past gravity gate")
+            # bad pose -> a throttled warn (a solo RANSAC module in a persistently tilted
+            # space would otherwise warn every fire), not log.exception. Shares the skip window.
+            now = time.monotonic()
+            if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
+                logger.warning("relocalize rejected: all candidates tilted past gravity gate")
+                self._last_skip_log = now
             return None
         except Exception:
             logger.exception("relocalize() failed")
