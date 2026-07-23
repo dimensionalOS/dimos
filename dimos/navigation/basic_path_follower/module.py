@@ -103,6 +103,12 @@ class BasicPathFollower(Module):
         # Steer from the robot base pose, not the LIO body frame.
         base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
         if base is None:
+            logger.warning(
+                "No %s -> %s transform for odometry stamp %.3f, dropping frame.",
+                msg.frame_id,
+                self.config.base_frame,
+                msg.ts,
+            )
             return
         with self._lock:
             self._current_odom = base.to_pose(ts=msg.ts)

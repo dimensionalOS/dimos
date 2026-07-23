@@ -25,14 +25,17 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.constants import TF_LOOKUP_TOLERANCE_S
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):
     base_frame: str = "base_link"
     sensor_frame: str = "mid360_link"
-    # The lidar's height above the ground. base_link's height is derived from the
-    # base -> sensor mount transform, so this is the only fixed measurement.
-    lidar_height: float = 0.0
+    # Lidar height above the ground while standing. Leave as None to skip the
+    # ground correction and pass odometry through unshifted.
+    lidar_height: float | None = None
 
 
 class GoalRelay(Module):
@@ -61,18 +64,33 @@ class GoalRelay(Module):
 
     def _on_odometry(self, msg: Odometry) -> None:
         base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
-        base_height = self._base_from_ground()
-        if base is None or base_height is None:
+        if base is None:
+            logger.warning(
+                "No %s -> %s transform for odometry stamp %.3f, dropping frame.",
+                msg.frame_id,
+                self.config.base_frame,
+                msg.ts,
+            )
             return
         start = base.to_pose(ts=msg.ts)
-        start.position.z -= base_height
+        if self.config.lidar_height is not None:
+            base_height = self._base_from_ground()
+            if base_height is None:
+                return
+            start.position.z -= base_height
         self.start_pose.publish(start)
 
     def _base_from_ground(self) -> float | None:
         # The base -> sensor mount is static rig geometry, so resolve it once.
-        if self._base_height is None:
+        if self._base_height is None and self.config.lidar_height is not None:
             mount = self.tf.get(self.config.base_frame, self.config.sensor_frame)
-            if mount is not None:
+            if mount is None:
+                logger.warning(
+                    "No %s -> %s mount transform on tf, cannot ground-project the start pose.",
+                    self.config.base_frame,
+                    self.config.sensor_frame,
+                )
+            else:
                 self._base_height = self.config.lidar_height - mount.translation.z
         return self._base_height
 
