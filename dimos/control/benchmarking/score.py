@@ -85,7 +85,12 @@ def load_recordings(recordings_dir: str | Path) -> list[RunRecording]:
             continue
         try:
             rec = RunRecording(**data)
-            rec.speed = float(rec.speed)  # a non-numeric speed breaks the later sort
+            rec.speed = float(rec.speed)
+            # A non-finite speed can be picked as the max "safe" speed, and an
+            # empty reference scores as a perfect zero-CTE run — both would forge
+            # the recommendation. Reject rather than score.
+            if not math.isfinite(rec.speed) or not rec.reference:
+                raise ValueError("non-finite speed or empty reference")
         except (TypeError, ValueError):
             skipped += 1
             continue
