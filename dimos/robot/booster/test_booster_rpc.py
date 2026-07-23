@@ -248,7 +248,6 @@ def make_k1(request):
 
 
 class TestWalkSkill:
-
     def test_rejects_non_finite_input(self, make_k1):
         k1, conn = make_k1()
         assert "finite" in k1.walk(x=float("nan"), duration=1.0)
