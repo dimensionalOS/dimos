@@ -38,9 +38,12 @@ import pytest
 pytest.importorskip("dimos_mls_planner")
 pytest.importorskip("dimos_voxel_ray_tracing")
 
+import numpy as np  # noqa: E402
+
 from dimos.navigation.nav_3d.mls_planner.recording_eval import (  # noqa: E402
     MapperConfig,
     build_map,
+    detect_floors,
     evaluate,
     print_scorecard,
 )
@@ -53,9 +56,13 @@ PER_FLOOR = 4
 
 # Baseline measured on the incremental (production) map with the default
 # MapperConfig: 112/132 false negatives across 3 auto-detected floors.
-# Deterministic (Dijkstra planner + deterministic sampling). This test guards
-# against regression; lower it as the mapper/planner improves.
+# Deterministic (Dijkstra planner + deterministic sampling). EXPECTED_TOTAL pins
+# the denominator so the absolute baseline stays comparable -- fewer detected
+# floors would shrink the pair count and let a worse failure RATE slip under the
+# absolute count. This test guards against regression; lower it as the eval
+# improves (and re-measure EXPECTED_TOTAL if the sampling changes).
 BASELINE_FALSE_NEG = 112
+EXPECTED_TOTAL = 132
 MIN_FLOORS = 2
 
 
@@ -87,18 +94,31 @@ def test_eval_produces_multifloor_scorecard(scorecard):
 
 def test_false_negatives_do_not_regress(scorecard):
     """The headline metric: feasible pairs the planner fails to route."""
+    # Pin the denominator: the absolute baseline is only meaningful over the same
+    # number of pairs it was measured on. Fewer detected floors -> fewer pairs ->
+    # a worse RATE could otherwise slip under the absolute count.
+    assert scorecard.total == EXPECTED_TOTAL, (
+        f"denominator changed ({scorecard.total} != {EXPECTED_TOTAL}); "
+        f"floors={scorecard.floor_levels} -- re-measure the baseline before trusting it"
+    )
     assert scorecard.false_neg <= BASELINE_FALSE_NEG, (
         f"false negatives {scorecard.false_neg}/{scorecard.total} regressed past "
         f"baseline {BASELINE_FALSE_NEG} -- routing of feasible pairs got WORSE"
     )
 
 
-def test_every_false_negative_is_a_real_disconnect(scorecard):
-    """Structural invariant: the union-find disconnect diagnostic can only explain
-    false negatives it actually found, never more -- so the eval measures genuine
-    'separate connected surface components' failures, not artifacts."""
-    for (i, j), (n_pairs, n_fn, n_disc, _unsafe) in scorecard.cells.items():
-        assert n_disc <= n_fn, f"cell {i}->{j}: {n_disc} disconnects > {n_fn} false negatives"
+def test_false_negatives_are_explained_by_disconnects(scorecard):
+    """The diagnostic must actually EXPLAIN the failures: (nearly) every false
+    negative is a confirmed graph disconnect (start/goal in different connected
+    components). That is the finding -- and unlike `n_disc <= n_fn` (true by
+    construction), this can fail if the union-find stops matching the planner."""
+    total_fn = sum(c[1] for c in scorecard.cells.values())
+    total_disc = sum(c[2] for c in scorecard.cells.values())
+    assert total_fn > 0, "expected some false negatives to explain on this dataset"
+    assert total_disc / total_fn >= 0.9, (
+        f"only {total_disc}/{total_fn} false negatives are confirmed disconnects; "
+        f"the union-find diagnostic no longer matches the planner's routing"
+    )
 
 
 def test_same_floor_no_harder_than_cross_floor(scorecard):
@@ -113,8 +133,17 @@ def test_same_floor_no_harder_than_cross_floor(scorecard):
     assert diag_rate <= off_rate + 1e-9, f"same-floor FN {diag_rate:.2f} > cross-floor {off_rate:.2f}"
 
 
-def test_produced_paths_reported_for_safety(scorecard):
-    """The safety guardrail (box-slide vs voxels) is reported, not gated: it is a
-    coarse 2.5D check that over-flags on stair steps, so it is informational until
-    calibrated. Collision checking proper is a separate downstream module."""
-    assert scorecard.unsafe >= 0  # executed; value surfaced in the printed scorecard
+def test_safety_guardrail_is_exercised(scorecard):
+    """The safety guardrail (box-slide vs voxels) runs on every produced path.
+    Assert it was actually exercised (some pairs did plan) and stayed within bounds
+    -- unlike `unsafe >= 0`, which is true for a counter that never ran. Reported,
+    not gated: a coarse 2.5D check that over-flags on stair steps."""
+    produced = scorecard.total - scorecard.false_neg
+    assert produced > 0, "no paths were produced, so the safety guardrail never ran"
+    assert 0 <= scorecard.unsafe <= produced
+
+
+def test_detect_floors_rejects_empty_trajectory():
+    """Empty/failed replays must raise a clear error, not an opaque IndexError."""
+    with pytest.raises(ValueError):
+        detect_floors(np.empty((0, 3)), robot_height=0.4)

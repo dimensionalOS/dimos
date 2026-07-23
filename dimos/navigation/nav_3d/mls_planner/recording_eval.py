@@ -168,7 +168,12 @@ def build_map(
                           f"z={pz:6.2f}  {time.time() - t0:5.1f}s", flush=True)
             if max_frames and n >= max_frames:
                 break
-    return BuildResult(planner, np.array(feet, dtype=float), curve, mapper, planner_cfg)
+    feet_arr = np.array(feet, dtype=float)
+    if feet_arr.size == 0:
+        raise ValueError(
+            f"no aligned lidar/odometry observations (align_tol={align_tol}) in "
+            f"{db_path}; check the stream names and that lidar/odom timestamps overlap")
+    return BuildResult(planner, feet_arr, curve, mapper, planner_cfg)
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +186,8 @@ def detect_floors(feet: np.ndarray, robot_height: float, *,
     The robot lingers on floors (tall histogram bins) and passes through stairs
     quickly (sparse bins), so the well-populated modes are the floors. Returns a
     sorted list of z levels (pose height)."""
+    if feet.ndim != 2 or len(feet) == 0:
+        raise ValueError("detect_floors: need a non-empty (N, 3) trajectory")
     z = feet[:, 2] + robot_height
     lo, hi = float(z.min()), float(z.max())
     if hi - lo < merge_gap_m:
