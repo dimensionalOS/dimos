@@ -1588,6 +1588,7 @@ agents = [
 ]
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "aiohttp" },
     { name = "aiortc" },
     { name = "chromadb" },
     { name = "coacd" },
@@ -1603,7 +1604,6 @@ all = [
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "gtsam-extended" },
-    { name = "httpx" },
     { name = "hydra-core" },
     { name = "ipykernel" },
     { name = "jinja2" },
@@ -1839,8 +1839,8 @@ web = [
     { name = "uvicorn" },
 ]
 webrtc = [
+    { name = "aiohttp" },
     { name = "aiortc" },
-    { name = "httpx" },
 ]
 
 [package.dev-dependencies]
@@ -2008,6 +2008,7 @@ tests-self-hosted = [
 [package.metadata]
 requires-dist = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
+    { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
@@ -2036,7 +2037,6 @@ requires-dist = [
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
-    { name = "httpx", marker = "extra == 'webrtc'", specifier = ">=0.27.0" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "ipykernel", marker = "extra == 'misc'" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.6" },
