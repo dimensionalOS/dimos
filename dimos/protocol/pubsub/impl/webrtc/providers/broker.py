@@ -40,10 +40,18 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.protocol.pubsub.impl.webrtc.providers.broker_proxy import (
+    ProxyBrokerProvider,
+    SessionRelay,
+    elect_session_owner,
+    release_session_owner,
+)
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
+from dimos.protocol.pubsub.impl.webrtc.providers.session_bus import session_key
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
+    Provider,
     ProviderConfig,
     wait_connected,
 )
@@ -76,8 +84,14 @@ class BrokerConfig(ProviderConfig):
     video_codec: str = "h264"
     audio_in: bool = False
 
-    def _create(self) -> BrokerProvider:
-        return BrokerProvider(self)
+    def _create(self) -> Provider:
+        # One CF session per blueprint: workers self-elect one owner; the rest
+        # proxy over the local session bus. See broker_proxy.py.
+        session = session_key(self)
+        is_owner, lock_fd = elect_session_owner(session)
+        if not is_owner:
+            return ProxyBrokerProvider(session)
+        return _OwnerBrokerProvider(self, session, lock_fd)
 
     # robot_type is session metadata, not part of the connection — exclude it
     # from equality/hash so pinning it on one transport spec (while the blueprint's
@@ -614,3 +628,47 @@ class BrokerProvider(AsyncProviderBase):
                     pass
 
         return _unsub
+
+
+class _OwnerBrokerProvider(BrokerProvider):
+    """The elected session owner (see broker_proxy.elect_session_owner).
+
+    A real ``BrokerProvider`` that additionally runs the ``SessionRelay`` which
+    bridges non-owner workers into this one CF session, and holds the
+    machine-local ownership lock for its lifetime. Non-owner workers get a
+    ``ProxyBrokerProvider`` instead, so exactly one CF session exists per
+    blueprint no matter how many workers bind broker transports.
+    """
+
+    def __init__(self, config: BrokerConfig, session: str, lock_fd: int | None) -> None:
+        super().__init__(config)
+        self._session_relay = SessionRelay(session, self)
+        self._ownership_lock_fd = lock_fd
+
+    def start(self) -> None:
+        # On any bring-up failure, release the ownership lock so another worker
+        # can re-elect; otherwise this live process holds the flock with no
+        # owner running and wedges the session until it dies.
+        try:
+            super().start()
+            # Relay must start after the session connects, or its
+            # provider.subscribe() calls recurse into start().
+            self._session_relay.start()
+        except Exception:
+            try:
+                self._session_relay.stop()
+            except Exception:
+                logger.exception("failed to stop relay after owner start failure")
+            release_session_owner(self._ownership_lock_fd)
+            self._ownership_lock_fd = None
+            raise
+
+    def stop(self) -> None:
+        try:
+            self._session_relay.stop()
+        finally:
+            try:
+                super().stop()
+            finally:
+                release_session_owner(self._ownership_lock_fd)
+                self._ownership_lock_fd = None
