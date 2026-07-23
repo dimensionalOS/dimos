@@ -138,7 +138,7 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk==0.32.0",
-    "dimos-viewer==0.32.0a1",
+    "dimos-viewer==0.32.0a2",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -199,7 +199,7 @@ misc = [
 
 visualization = [
     "rerun-sdk==0.32.0",
-    "dimos-viewer==0.32.0a1",
+    "dimos-viewer==0.32.0a2",
     # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
     # which pulls embreex; embreex has no Linux aarch64 wheel.
     "yourdfpy>=0.0.60; sys_platform != 'linux' or platform_machine != 'aarch64'",
@@ -280,6 +280,7 @@ manipulation = [
 
     # Visualization (Optional)
     "viser[urdf]>=1.0.29",
+    "yourdfpy>=0.0.60",
     "xacro",
 
     # Other
@@ -657,6 +658,7 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
 ]
