@@ -58,6 +58,7 @@ from dimos.teleop.hosted.camera_mux import CameraMuxModule
 from dimos.teleop.hosted.go2_command import Go2CommandModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.map_compress import MapCompressModule
+from dimos.teleop.hosted.robot_type import RobotType
 
 # Single camera: only the Go2's front camera feeds the video track.
 teleop_hosted_go2_transport = (
@@ -85,7 +86,9 @@ teleop_hosted_go2_transport = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.GO2
+            ),  # → stats + command
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
             # outbound operator planes
@@ -130,7 +133,9 @@ teleop_hosted_go2_multicam = (
         {
             # inbound operator planes
             ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),  # → stats + command
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.GO2
+            ),  # → stats + command
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),  # → mux
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
             ("cam2", Image): LCMTransport.spec("cam2", Image),  # realsense over LCM
@@ -189,7 +194,9 @@ teleop_hosted_xarm6 = (
     .transports(
         {
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.ARM
+            ),
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
             ("mux_image", Image): CloudflareVideoTransport.spec(),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
@@ -219,7 +226,9 @@ teleop_hosted_xarm7 = (
     .transports(
         {
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("state_json", bytes): CloudflareTransport.spec(
+                "state_reliable", robot_type=RobotType.ARM
+            ),
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
             ("mux_image", Image): CloudflareVideoTransport.spec(),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),

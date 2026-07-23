@@ -24,11 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import math
-from pathlib import Path
 import time
 
 import lcm as lcmlib
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -67,9 +67,7 @@ def _distance(from_x: float, from_y: float, to_x: float, to_y: float) -> float:
 
 
 def _clear_precomputed_paths() -> None:
-    paths_dir = (
-        Path(__file__).resolve().parents[3] / "data" / "unitree_g1_local_planner_precomputed_paths"
-    )
+    paths_dir = DIMOS_PROJECT_ROOT / "data" / "unitree_g1_local_planner_precomputed_paths"
     if paths_dir.exists():
         for path in paths_dir.iterdir():
             path.unlink(missing_ok=True)

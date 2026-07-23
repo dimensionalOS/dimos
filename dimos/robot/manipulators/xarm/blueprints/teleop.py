@@ -136,8 +136,12 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     ],
 )
 
-_xarm7_teleop_hw = xarm7_hardware("arm", gripper=True)
-_xarm6_teleop_hw = xarm6_hardware("arm", gripper=True)
+_xarm7_teleop_hw = xarm7_hardware(
+    "arm", gripper=True, gripper_open_position=0.85, gripper_closed_position=0.0
+)
+_xarm6_teleop_hw = xarm6_hardware(
+    "arm", gripper=True, gripper_open_position=0.85, gripper_closed_position=0.0
+)
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
@@ -155,14 +159,14 @@ coordinator_teleop_xarm7 = autoconnect(
                 hand="right",
                 name="teleop_xarm",
                 priority=20,
-                params={**XARM_GRIPPER_PARAMS, "max_joint_delta_deg": 50.0},
+                params=XARM_GRIPPER_PARAMS,
             ),
             eef_twist_task(
                 _xarm7_teleop_hw,
                 model_path=XARM7_FK_MODEL,
                 ee_joint_id=7,
                 priority=10,
-                params={**XARM_GRIPPER_PARAMS, "max_joint_delta_deg": 50.0},
+                params=XARM_GRIPPER_PARAMS,
             ),
         ],
     ),
@@ -180,14 +184,14 @@ coordinator_teleop_xarm6 = autoconnect(
                 hand="right",
                 name="teleop_xarm",
                 priority=20,
-                params={**XARM_GRIPPER_PARAMS, "max_joint_delta_deg": 50.0},
+                params=XARM_GRIPPER_PARAMS,
             ),
             eef_twist_task(
                 _xarm6_teleop_hw,
                 model_path=XARM6_FK_MODEL,
                 ee_joint_id=6,
                 priority=10,
-                params={**XARM_GRIPPER_PARAMS, "max_joint_delta_deg": 50.0},
+                params=XARM_GRIPPER_PARAMS,
             ),
         ],
     ),

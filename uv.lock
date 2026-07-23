@@ -2022,8 +2022,8 @@ requires-dist = [
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm", specifier = ">=0.1.3" },
-    { name = "dimos-viewer", specifier = "==0.32.0a1" },
-    { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
+    { name = "dimos-viewer", specifier = "==0.32.0a2" },
+    { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "eclipse-zenoh", specifier = ">=1.0.0,<2.0" },
@@ -2306,18 +2306,18 @@ wheels = [
 
 [[package]]
 name = "dimos-viewer"
-version = "0.32.0a1"
+version = "0.32.0a2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/12/f5ccd760ed27c930d08289589f420e3d3e4c707cb44bc4bd85a3e7b8cd18/dimos_viewer-0.32.0a1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:1c0aa61c7369337af9fea5d49ad648fbee36ed50cfdf2463450a61866fc73783", size = 38326738, upload-time = "2026-05-19T14:54:55.116Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/fa/b1e1e0d7d125dfbcb5465af22a44de56ae892d309f07231d4a462b5d6c1b/dimos_viewer-0.32.0a1-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:4763823cc555069b703c980a8fa938e1c8f858f1a8acf00b6e257ac7f5be7e93", size = 42253912, upload-time = "2026-05-19T14:54:58.58Z" },
-    { url = "https://files.pythonhosted.org/packages/09/d9/cccad09df71d14b84f95fb384213d0d2eb36efb25db11fafe12e3f27454e/dimos_viewer-0.32.0a1-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:6db249eff2014f746e7b840a9354dc57e182d8b05bee360fdc934f34c0d4a6da", size = 44794930, upload-time = "2026-05-19T14:55:02.2Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/37/394f74ad8981c4666d9014189f3fb154e7f796c408d770d94f52ed4b1ccb/dimos_viewer-0.32.0a1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:86f2dc0f5db732b28ce5d9f13749a12b26f3b3c891e68bae8fcb4c065f08ddf5", size = 38326731, upload-time = "2026-05-19T14:55:05.95Z" },
-    { url = "https://files.pythonhosted.org/packages/35/0d/677674fd9a8ac73689642cd7c4bb1b177df9d096f39a74dadd1420ffc221/dimos_viewer-0.32.0a1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:f22176cea73d6e898230432de19ca07772a7c1293171ad86dae0b7e54e1fbbf5", size = 42253900, upload-time = "2026-05-19T14:55:09.56Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/c3/0c32f2a5e0908dcab3d8b652704d68124cbe2d74ca418561e503fa216cff/dimos_viewer-0.32.0a1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:f4a4b6e1aa83b50421a7133b22c27c0924b2f984a242d30273087f66928af5d8", size = 44794937, upload-time = "2026-05-19T14:55:12.888Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/51/efcf47f154b5940d09d6e480f3f75f00a927396d9be1f5b2523b1ff9d62e/dimos_viewer-0.32.0a1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:a4cc88e26567955ce964a250c7250cd3d52e99f330d892420699f0580de8c4f3", size = 38326735, upload-time = "2026-05-19T14:55:16.477Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/3e/7564e12f24f4678ba5e311a538eda0a2e46add9afcd58d08984e66bc280c/dimos_viewer-0.32.0a1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:68354192271a201a71491245a7b444b0e4047b74c9d2496a395010356917c0c3", size = 42253910, upload-time = "2026-05-19T14:55:20.232Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/4b/d97f13e3585582c79037cd24952ac99de593a30c300ddcc8c83d9cab1128/dimos_viewer-0.32.0a1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:ebdd64ce20d73e9d6e0256ef099a3d544c14b9b227aa005ba8c362052889b3c4", size = 44794790, upload-time = "2026-05-19T14:55:24.211Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/57/df6e81ca83379e264a63bb87fc9fceb3dc7e445300ac8655756be3619ec5/dimos_viewer-0.32.0a2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:22281f7db2d4524710f3bb68a68a75e7017868b9d4fd4a58673876afcff2e3d9", size = 38327656, upload-time = "2026-07-22T18:49:37.633Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/ca/3c610ccb10c334e06b40c8d0894801323dbebd506746011c989cd0473b20/dimos_viewer-0.32.0a2-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:f75f72d39c8cde15ebb17e3edefca3523992d3991ec44f54fb004840ba077f7e", size = 42255685, upload-time = "2026-07-22T18:49:40.867Z" },
+    { url = "https://files.pythonhosted.org/packages/49/2a/b413d4f86bc306dd26f6ee1206cc3f4f0df6e3f9e9ec2a4d20ec5824d616/dimos_viewer-0.32.0a2-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:c38af675e708494aad8d66b4a7a35974633400d897e4dd73f9dba8562c04282a", size = 44799199, upload-time = "2026-07-22T18:49:44.014Z" },
+    { url = "https://files.pythonhosted.org/packages/da/ae/159ff85671a4f13d683ed181ab2d917747a7cc837b7aa81a9b32a4aaad19/dimos_viewer-0.32.0a2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f284e5d9271334c93190c64d6eff7fd4addc5f1ad19c3598f1976a93e3ff85fd", size = 38327655, upload-time = "2026-07-22T18:49:47.112Z" },
+    { url = "https://files.pythonhosted.org/packages/04/67/68a3bab1a817a9f143f7f50355afb93c45d999814f386c3a0c7c7cd6becc/dimos_viewer-0.32.0a2-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:1d44158e854109c48c243640d8a88cc2eced3c5bcd1932b93080252e45de4ca6", size = 42255680, upload-time = "2026-07-22T18:49:51.011Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/b1/15d3579109ee6b6f8aa93642340eced7c444849433fc04ed0c3715f963ae/dimos_viewer-0.32.0a2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c13479d8266606b1e7dcf1296d091b229374a83d84ba16849b2bbd830413ed5f", size = 44799215, upload-time = "2026-07-22T18:49:54.529Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/d1/9582095e8b2fdc8708afe3e9e4b9bfaba925c7d53ede8e675bf556bdd593/dimos_viewer-0.32.0a2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:bdeb607ffef680d1e56dcdf5cd7c11eca148dbb2e957cbd43b8642efe0857d3a", size = 38327650, upload-time = "2026-07-22T18:49:57.804Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/60/f48f22a1ab1a8208d9cc6892ceb37c74baf80859be7f3c75e76a3e082ddf/dimos_viewer-0.32.0a2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:4f22e03a6c1290911c467723407c5ed8fd189a4c6447d32647feb706b87dc727", size = 42255679, upload-time = "2026-07-22T18:50:01.071Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/15/b38b583cdf07082d58ca33500343da8153d7859133e2c924922873364c42/dimos_viewer-0.32.0a2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4a32c39c8cc8e9a03f2cc9d8446e7d49a132692f833cbd7277c185f171ede614", size = 44799194, upload-time = "2026-07-22T18:50:04.462Z" },
 ]
 
 [[package]]

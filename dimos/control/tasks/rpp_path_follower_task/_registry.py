@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+TASK_FACTORIES = {
+    "rpp_path_follower": (
+        "dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task:create_task"
+    ),
+}
 
-
-def get_project_root() -> Path:
-    """
-    Returns the absolute path to the project root directory.
-    """
-    return Path(__file__).resolve().parent.parent.parent
+TASK_CONSUMES = {
+    "rpp_path_follower": {
+        "path": ("on_path", "direct"),
+        "speed": ("on_speed", "direct"),
+    },
+}

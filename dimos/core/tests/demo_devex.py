@@ -41,9 +41,9 @@ import subprocess
 import sys
 import time
 
-REPO_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+from dimos.constants import DIMOS_PROJECT_ROOT
+
+REPO_DIR = str(DIMOS_PROJECT_ROOT)
 VENV_PYTHON = os.path.join(REPO_DIR, ".venv", "bin", "python")
 # Use the repo's own python if venv exists, otherwise fall back to system
 if not os.path.exists(VENV_PYTHON):
