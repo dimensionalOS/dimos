@@ -158,6 +158,11 @@ class WorldMonitor:
                     logger.exception("Obstacle visualization remove failed for '%s'", obstacle_id)
             return removed
 
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Update an obstacle through the authoritative planning-world mutation path."""
+        with self._lock:
+            return self._world.update_obstacle_pose(obstacle_id, pose)
+
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
         with self._lock:
@@ -217,10 +222,7 @@ class WorldMonitor:
                 return
 
             self._obstacle_monitor = WorldObstacleMonitor(
-                world=self._world,
-                lock=self._lock,
-                add_obstacle=self.add_obstacle,
-                remove_obstacle=self.remove_obstacle,
+                parent=self,
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")

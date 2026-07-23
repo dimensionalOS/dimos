@@ -19,12 +19,14 @@ from typing import Any
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
+    CollisionObjectMessage,
     PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
@@ -298,6 +300,40 @@ def test_world_monitor_forwards_successful_native_obstacle_id() -> None:
     # The native fake returns its owned identifier; the monitor must not derive one.
     assert monitor.add_obstacle(obstacle) == "obstacle-1"  # type: ignore[arg-type]
     assert fake_viz.calls[-1] == ("add_vis_obstacle", "obstacle-1", obstacle)
+
+
+def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
+    mocker: MockerFixture,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
+    update_obstacle_pose = mocker.patch.object(
+        parent, "update_obstacle_pose", return_value=True
+    )
+    remove_obstacle = mocker.patch.object(parent, "remove_obstacle", return_value=True)
+    parent.start_obstacle_monitor()
+    obstacle_monitor = parent.obstacle_monitor
+    assert obstacle_monitor is not None
+
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="add",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 2.0, 3.0),
+        )
+    )
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(id="source-id", operation="update", pose=pose)
+    )
+    obstacle_monitor.on_collision_object(CollisionObjectMessage(id="source-id", operation="remove"))
+
+    added_obstacle = add_obstacle.call_args.args[0]
+    assert added_obstacle.name == "source-id"
+    update_obstacle_pose.assert_called_once_with("parent-id", pose)
+    remove_obstacle.assert_called_once_with("parent-id")
 
 
 def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
