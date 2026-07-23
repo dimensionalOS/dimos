@@ -120,15 +120,19 @@ def r1lite_standard_tasks() -> list[TaskConfig]:
     ]
 
 
-def r1lite_control_base(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
+def r1lite_control_base(
+    extra_tasks: Sequence[TaskConfig] = (),
+    connection_kwargs: dict[str, Any] | None = None,
+) -> Any:
     """R1LiteConnection wired to the ControlCoordinator over transport_lcm.
 
     extra_tasks are appended to the standard servo and chassis velocity tasks;
-    the quest teleop blueprint uses this to add its per-arm IK tasks.
+    the quest teleop blueprint uses this to add its per-arm IK tasks and to
+    raise the arm tracking speed via connection_kwargs.
     """
     return (
         autoconnect(
-            R1LiteConnection.blueprint(),
+            R1LiteConnection.blueprint(**(connection_kwargs or {})),
             ControlCoordinator.blueprint(
                 hardware=[
                     HardwareComponent(

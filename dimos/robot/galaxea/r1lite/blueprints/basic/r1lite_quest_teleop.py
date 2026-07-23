@@ -72,7 +72,7 @@ _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while 
 # hard reject remains as the backstop for branch-flip solutions.
 _ARM_IK_LIMITS = {
     "max_joint_delta_deg": 45.0,
-    "max_step_deg_per_tick": 0.5,
+    "max_step_deg_per_tick": 1.5,
     "max_target_offset_m": 0.02,
     "max_target_rot_deg": 15.0,
     "joint_limit_margin_deg": 2.0,
@@ -123,7 +123,13 @@ r1lite_quest_teleop = autoconnect(
     # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
     # video_enabled back on once the encode is off the critical path.
     R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, video_enabled=False),
-    r1lite_control_base(extra_tasks=_teleop_tasks()),
+    # tracking_speed is the actual arm speed (the vendor tracker follows each
+    # target at this rate); 0.5 measured as the dominant slowness. Teleop-only
+    # override, next ladder step is 1.0 after hardware feel check.
+    r1lite_control_base(
+        extra_tasks=_teleop_tasks(),
+        connection_kwargs={"tracking_speed": 0.75},
+    ),
     r1lite_vis(),
 ).remappings(
     [
