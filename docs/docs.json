@@ -98,8 +98,10 @@
             "group": "Manipulation",
             "pages": [
               "capabilities/manipulation/index",
+              "capabilities/manipulation/agentic",
               "capabilities/manipulation/adding_a_custom_arm",
               "capabilities/manipulation/openarm_integration",
+              "capabilities/manipulation/piper_integration",
               "capabilities/manipulation/a750"
             ]
           },
@@ -408,12 +410,20 @@
       "destination": "/capabilities/manipulation/index"
     },
     {
+      "source": "/docs/capabilities/manipulation/agentic.md",
+      "destination": "/capabilities/manipulation/agentic"
+    },
+    {
       "source": "/docs/capabilities/manipulation/adding_a_custom_arm.md",
       "destination": "/capabilities/manipulation/adding_a_custom_arm"
     },
     {
       "source": "/docs/capabilities/manipulation/openarm_integration.md",
       "destination": "/capabilities/manipulation/openarm_integration"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/piper_integration.md",
+      "destination": "/capabilities/manipulation/piper_integration"
     },
     {
       "source": "/docs/capabilities/manipulation/a750.md",

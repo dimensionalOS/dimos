@@ -20,7 +20,10 @@ from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.visualization.viser.scene import (
+    RobotDisplayMode,
+    ViserManipulationScene,
+)
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
     BackendConnectionStatus,
@@ -68,6 +71,11 @@ PanelHandle: TypeAlias = (
 
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
+ROBOT_DISPLAY_LABELS = tuple(mode.value.title() for mode in RobotDisplayMode)
+ROBOT_DISPLAY_MODES: dict[str, RobotDisplayMode] = {mode.value: mode for mode in RobotDisplayMode}
+ROBOT_DISPLAY_COLLISION_WARNING = (
+    "**Collision meshes unavailable.** Showing visual geometry with collision styling."
+)
 
 
 class ViserPanelGui:
@@ -138,6 +146,8 @@ class ViserPanelGui:
         self._sync_robot_dropdown(robots)
         self._refresh_selected_robot_state()
         self._ensure_scene_controls()
+        self._sync_robot_display_dropdown()
+        self._sync_robot_display_warning()
         self._sync_preset_dropdown()
         self._update_status_text()
         self._update_control_state()
@@ -187,11 +197,77 @@ class ViserPanelGui:
     def _build_scene_controls(self, gui: GuiApi) -> None:
         if self.scene is None:
             return
-        if not self.scene.has_reference_grid():
+        if self.scene.has_reference_grid():
+            handle = gui.add_checkbox("Scene grid", initial_value=True)
+            self._handles["scene_grid"] = handle
+            handle.on_update(lambda event: self._set_scene_grid_visible(event.target.value))
+
+        display_folder = gui.add_folder("Robot display", expand_by_default=True)
+        self._handles["robot_display_folder"] = display_folder
+        with display_folder:
+            try:
+                display_handle = gui.add_dropdown(
+                    "Robot display",
+                    options=ROBOT_DISPLAY_LABELS,
+                    initial_value=self._robot_display_label(),
+                    hint="Choose which primary robot geometry to show.",
+                )
+            except TypeError:
+                # Keep compatibility with small fake GUI implementations and
+                # older Viser releases that predate dropdown hints.
+                display_handle = gui.add_dropdown(
+                    "Robot display",
+                    options=ROBOT_DISPLAY_LABELS,
+                    initial_value=self._robot_display_label(),
+                )
+            display_handle.on_update(lambda event: self._set_robot_display_mode(event.target.value))
+            self._handles["robot_display"] = display_handle
+            try:
+                warning_handle = gui.add_markdown(ROBOT_DISPLAY_COLLISION_WARNING, visible=False)
+            except TypeError:
+                # Keep compatibility with lightweight GUI fakes and older Viser
+                # releases that do not accept the visible keyword.
+                warning_handle = gui.add_markdown(ROBOT_DISPLAY_COLLISION_WARNING)
+                self._set_optional_handle_attr(warning_handle, "visible", False)
+            self._handles["robot_display_warning"] = warning_handle
+            self._sync_robot_display_warning()
+
+    def _robot_display_label(self) -> str:
+        scene = self.scene
+        if scene is None:
+            return ROBOT_DISPLAY_LABELS[0]
+        mode = scene.robot_display_mode.value
+        if mode not in ROBOT_DISPLAY_MODES:
+            return ROBOT_DISPLAY_LABELS[0]
+        return ROBOT_DISPLAY_MODES[mode].value.title()
+
+    def _set_robot_display_mode(self, label: str) -> None:
+        if self._closed or self.scene is None:
             return
-        handle = gui.add_checkbox("Scene grid", initial_value=True)
-        self._handles["scene_grid"] = handle
-        handle.on_update(lambda event: self._set_scene_grid_visible(event.target.value))
+        scene = self.scene
+        mode = str(label).lower()
+        if mode not in ROBOT_DISPLAY_MODES:
+            return
+        scene.robot_display_mode = ROBOT_DISPLAY_MODES[mode]
+        self._sync_robot_display_dropdown()
+        self._sync_robot_display_warning()
+
+    def _sync_robot_display_dropdown(self) -> None:
+        handle = self._handles.get("robot_display")
+        scene = self.scene
+        if handle is None or self._closed or scene is None:
+            return
+        self._set_optional_handle_attr(handle, "value", self._robot_display_label())
+
+    def _sync_robot_display_warning(self) -> None:
+        handle = self._handles.get("robot_display_warning")
+        scene = self.scene
+        if handle is None or self._closed or scene is None:
+            return
+        mode = scene.robot_display_mode
+        has_collision = scene.collision_geometry_available
+        visible = mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH} and not has_collision
+        self._set_optional_handle_attr(handle, "visible", visible)
 
     def _set_scene_grid_visible(self, visible: bool) -> None:
         if self._closed:
