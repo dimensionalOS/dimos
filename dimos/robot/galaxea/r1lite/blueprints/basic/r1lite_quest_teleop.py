@@ -62,11 +62,20 @@ R1LITE_RIGHT_ARM_JOINTS = R1LITE_UPPER_BODY_JOINTS[10:16]
 _TASK_NAMES = {"left": "teleop_left_arm", "right": "teleop_right_arm"}
 _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while engaged
 
-# The arms start folded, where small cartesian targets need more than the
-# default 5 degree gate of joint motion, so solutions are rejected forever and
-# the arm wedges. Accept locally sane solutions (30 degree hard reject) and
-# execute them as bounded 0.5 degree steps per 100 Hz tick (50 deg/s cap).
-_ARM_IK_LIMITS = {"max_joint_delta_deg": 30.0, "max_step_deg_per_tick": 0.5}
+# Near the folded home pose small cartesian targets need large joint motion
+# (measured: up to 24 degrees for 2 cm), so a plain per-tick delta gate wedges
+# tracking permanently. Three-layer scheme, values validated by offline chase
+# simulation with these models: the target is clamped to a 2 cm / 15 degree
+# window around the current EE (recentered every tick, so hand speed and
+# pose-stream gaps never put the solve far away), accepted solutions execute
+# as bounded 0.5 degree steps per 100 Hz tick (50 deg/s cap), and a 45 degree
+# hard reject remains as the backstop for branch-flip solutions.
+_ARM_IK_LIMITS = {
+    "max_joint_delta_deg": 45.0,
+    "max_step_deg_per_tick": 0.5,
+    "max_target_offset_m": 0.02,
+    "max_target_rot_deg": 15.0,
+}
 
 
 def _teleop_tasks() -> list[TaskConfig]:

@@ -331,15 +331,19 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
     for blueprint in (r1lite_quest_teleop, r1lite_quest_teleop_sim):
         tasks = {t.name: t for t in _coordinator_tasks(blueprint)}
         for name in ("teleop_left_arm", "teleop_right_arm"):
-            assert tasks[name].params["max_joint_delta_deg"] == 30.0
+            assert tasks[name].params["max_joint_delta_deg"] == 45.0
             assert tasks[name].params["max_step_deg_per_tick"] == 0.5
+            assert tasks[name].params["max_target_offset_m"] == 0.02
+            assert tasks[name].params["max_target_rot_deg"] == 15.0
 
 
-def test_teleop_tracks_from_folded_home() -> None:
-    # Regression for the first hardware session: the arms home folded, where a
-    # 3 cm cartesian target needs more than 5 degrees of joint motion, so the
-    # default gate rejected every solution and the arm wedged permanently.
-    # With the r1lite limits the same target must be reached in bounded steps.
+def test_teleop_chases_through_folded_home_and_teleports() -> None:
+    # Regression for the hardware sessions: the arms home folded, where small
+    # cartesian targets need large joint motion, and pose-stream gaps teleport
+    # the target far from the arm. A plain per-tick delta gate wedges tracking
+    # permanently in both cases. With the chase window recentered on the EE
+    # each tick, bounded steps, and the 45 degree backstop, tracking must
+    # reach a far teleported target from folded with zero rejections.
     import numpy as np
     import pinocchio
 
@@ -348,22 +352,32 @@ def test_teleop_tracks_from_folded_home() -> None:
     ik = PinocchioIK.from_model_path(R1LITE_LEFT_ARM_MODEL, ee_joint_id=6)
     q0 = np.zeros(6)
     ee0 = ik.forward_kinematics(q0)
-    target = pinocchio.SE3(ee0.rotation, ee0.translation + np.array([0.0, 0.0, 0.03]))
+    target = pinocchio.SE3(ee0.rotation, ee0.translation + np.array([0.25, 0.05, 0.15]))
 
     q_sol, _, _ = ik.solve(target, q0)
-    assert np.rad2deg(np.max(np.abs(q_sol - q0))) > 5.0  # the wedge, documented
+    assert np.rad2deg(np.max(np.abs(q_sol - q0))) > 45.0  # the wedge, documented
 
-    hard_reject = np.deg2rad(30.0)
+    hard = np.deg2rad(45.0)
     step = np.deg2rad(0.5)
+    win_t, win_r = 0.02, np.deg2rad(15.0)
     q = q0
     ticks = 0
-    while np.linalg.norm(ik.forward_kinematics(q).translation - target.translation) >= 0.001:
+    while np.linalg.norm(ik.forward_kinematics(q).translation - target.translation) >= 0.005:
         ticks += 1
-        assert ticks <= 400, "folded-start target not reached in 400 ticks"
-        q_sol, _, _ = ik.solve(target, q)
-        assert np.max(np.abs(q_sol - q)) < hard_reject
+        assert ticks <= 600, "teleported target not reached in 600 ticks"
+        ee = ik.forward_kinematics(q)
+        off = target.translation - ee.translation
+        dist = np.linalg.norm(off)
+        pos = target.translation if dist <= win_t else ee.translation + off * (win_t / dist)
+        w = pinocchio.log3(ee.rotation.T @ target.rotation)
+        angle = np.linalg.norm(w)
+        rot = (
+            target.rotation if angle <= win_r else ee.rotation @ pinocchio.exp3(w * (win_r / angle))
+        )
+        q_sol, _, _ = ik.solve(pinocchio.SE3(rot, pos), q)
+        assert np.max(np.abs(q_sol - q)) < hard  # zero rejections along the chase
         q = q + np.clip(q_sol - q, -step, step)
-    assert ticks < 100
+    assert ticks < 500
 
 
 def test_create_task_plumbs_step_limits() -> None:
@@ -379,13 +393,17 @@ def test_create_task_plumbs_step_limits() -> None:
             "model_path": R1LITE_LEFT_ARM_MODEL,
             "ee_joint_id": 6,
             "hand": "left",
-            "max_joint_delta_deg": 30.0,
+            "max_joint_delta_deg": 45.0,
             "max_step_deg_per_tick": 0.5,
+            "max_target_offset_m": 0.02,
+            "max_target_rot_deg": 15.0,
         },
     )
     task = create_task(cfg, hardware=None)
-    assert task._config.max_joint_delta_deg == 30.0
+    assert task._config.max_joint_delta_deg == 45.0
     assert task._config.max_step_deg_per_tick == 0.5
+    assert task._config.max_target_offset_m == 0.02
+    assert task._config.max_target_rot_deg == 15.0
 
 
 def test_web_server_binds_all_interfaces(monkeypatch: Any) -> None:
