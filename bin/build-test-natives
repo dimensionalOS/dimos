@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Build the native artifacts the test suite exercises, so pytest-slow and
+# pytest-coverage run those tests instead of silently skipping them.
+
+. .venv/bin/activate
+
+python setup.py build_ext --inplace
+
+# PyO3 Rust extension modules (separate distributions installed into the venv).
+if command -v cargo &>/dev/null; then
+  maturin develop --uv -m dimos/mapping/ray_tracing/rust/Cargo.toml
+  maturin develop --uv -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
+else
+  echo "warning: cargo not found; skipping Rust extension builds, their tests will skip." >&2
+  echo "         Install Rust via https://rustup.rs" >&2
+fi
+
+# pyzed (ZED camera wrapper). Not on PyPI: the wheel is downloaded from
+# Stereolabs by a script shipped with the system-wide ZED SDK
+if [ -d /usr/local/zed ]; then
+  if ! python -c 'import pyzed.sl' &>/dev/null; then
+    whl_dir=$(mktemp -d)
+    (cd "$whl_dir" && python /usr/local/zed/get_python_api.py) || true
+    uv pip install "$whl_dir"/pyzed-*.whl
+  fi
+else
+  echo "warning: ZED SDK not found; ZED tests will skip. It needs an NVIDIA GPU and" >&2
+  echo "         ~2 GB; install from https://www.stereolabs.com/developers/release" >&2
+fi
+
+# cmu_nav native binaries (nix). Skips modules whose executable already exists.
+if command -v nix &>/dev/null; then
+  bin/build-cmu-nav-natives
+else
+  echo "warning: nix not found; skipping cmu_nav native builds, their tests will skip." >&2
+  echo "         Install Nix via https://nixos.org/download. Cold builds are slow; see" >&2
+  echo "         'Faster builds via the Cachix substituter' in docs/usage/native_modules.md" >&2
+  echo "         to download CI-built binaries instead." >&2
+fi

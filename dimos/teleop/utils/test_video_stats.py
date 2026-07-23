@@ -32,6 +32,7 @@ def _sample() -> VideoStats:
         decode_ms=6.0,
         frames_dropped=2,
         freezes=14,
+        e2e_latency_ms=87.5,
     )
 
 
@@ -57,6 +58,7 @@ def test_from_dict_matches_browser_payload_shape() -> None:
         "freezes": 14,
         "jitter_buffer_ms": 28.0,
         "decode_ms": 6.0,
+        "e2e_latency_ms": 87.5,
     }
     stats = VideoStats.from_dict(payload)
     assert stats.fps == 28.0
@@ -65,6 +67,7 @@ def test_from_dict_matches_browser_payload_shape() -> None:
     assert stats.height == 720
     assert stats.frames_dropped == 2
     assert stats.freezes == 14
+    assert stats.e2e_latency_ms == 87.5
 
 
 def test_decode_pads_short_axes_for_forward_compat() -> None:
@@ -91,7 +94,7 @@ def test_carrier_is_lcm_joy() -> None:
     """Encoded bytes are a valid LCMJoy — proves we ride on the existing type."""
     blob = _sample().lcm_encode()
     j = LCMJoy.lcm_decode(blob)
-    expected = [28.0, 2100.5, 1280.0, 720.0, 2.1, 28.0, 6.0, 2.0, 14.0]
+    expected = [28.0, 2100.5, 1280.0, 720.0, 2.1, 28.0, 6.0, 2.0, 14.0, 87.5]
     # Joy.axes is float32[], so compare with tolerance.
     assert len(j.axes) == len(expected)
     for got, want in zip(j.axes, expected, strict=True):

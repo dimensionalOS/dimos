@@ -353,7 +353,9 @@ def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeyp
         def deploy_module(self, _module_class, _global_config, kwargs):
             return kwargs
 
-    monkeypatch.setattr(worker_manager_python, "RPCClient", lambda actor, _module_class: actor)
+    monkeypatch.setattr(
+        worker_manager_python, "RPCClient", lambda actor, _module_class, _instance_name: actor
+    )
 
     blueprint = TestModule.blueprint(nested={"mode": "manual"})
     blueprint_args = load_config_args(
