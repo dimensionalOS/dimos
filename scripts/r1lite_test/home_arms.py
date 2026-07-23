@@ -128,7 +128,10 @@ def home_arm(side: str) -> bool:
     if residual < SETTLE_TOLERANCE:
         print(f"[{side}] HOME ({[round(p, 3) for p in final]})")
         return True
-    print(f"[{side}] finished streaming but residual {residual:.3f} rad; check feedback")
+    print(
+        f"[{side}] finished streaming but residual {residual:.3f} rad; "
+        f"final {[round(p, 3) for p in final] if final else None}"
+    )
     return False
 
 
