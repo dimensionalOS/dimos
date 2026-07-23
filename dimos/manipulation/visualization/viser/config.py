@@ -19,12 +19,42 @@ from typing import Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
+class GroundTruthObject(BaseModel):
+    """A known scene-truth object position for the Viser ground-truth overlay.
+
+    Sim blueprints declare these from MJCF so detected-vs-truth pose error is
+    visible at a glance; ignored by hardware blueprints (which have no truth).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    x: float
+    y: float
+    z: float
+
+
 class ViserVisualizationConfig(BaseModel):
     """Runtime options for the in-process Viser manipulation visualizer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     backend: Literal["viser"] = "viser"
+    # Interactive perception controls (R3). When scan_tool is set, the panel
+    # shows a "Scan from here" button that calls that MCP skill at the current
+    # pose; empty disables the perception controls entirely.
+    scan_tool: str | None = Field(
+        default=None, validation_alias=AliasChoices("scan_tool", "viser_scan_tool")
+    )
+    scan_prompt: str = Field(
+        default="", validation_alias=AliasChoices("scan_prompt", "viser_scan_prompt")
+    )
+    # MJCF ground-truth objects rendered alongside detections for pose-error
+    # inspection. Empty => no overlay.
+    ground_truth_objects: tuple[GroundTruthObject, ...] = Field(
+        default=(),
+        validation_alias=AliasChoices("ground_truth_objects", "viser_ground_truth_objects"),
+    )
     host: str = Field(
         default="127.0.0.1", validation_alias=AliasChoices("host", "visualization_host")
     )

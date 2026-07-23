@@ -162,6 +162,20 @@ class GuiSliderHandle:
         self.removed = True
 
 
+@dataclass
+class GuiTextHandle:
+    label: str
+    value: str
+    update_callback: GuiCallback | None = None
+    removed: bool = False
+
+    def on_update(self, callback: GuiCallback) -> None:
+        self.update_callback = callback
+
+    def remove(self) -> None:
+        self.removed = True
+
+
 class FakeHandle:
     def __init__(self) -> None:
         self.visible: object | None = None
@@ -309,14 +323,16 @@ class FakeGuiServer:
         self.theme_kwargs: dict[str, ThemeValue] | None = None
         self.folders = []
         self.gui = SimpleNamespace(
-            add_markdown=lambda value: GuiMarkdownHandle(value=value),
+            add_markdown=lambda value, **kwargs: GuiMarkdownHandle(value=value),
             add_dropdown=self.add_dropdown,
             add_button=self.add_button,
             add_checkbox=self.add_checkbox,
             add_slider=self.add_slider,
             add_folder=self.add_folder,
+            add_text=self.add_text,
             configure_theme=self.configure_theme,
         )
+        self.texts: dict[str, GuiTextHandle] = {}
         self.buttons: dict[str, GuiButtonHandle] = {}
         self.checkboxes: dict[str, GuiCheckboxHandle] = {}
         self.sliders: list[GuiSliderHandle] = []
@@ -356,6 +372,11 @@ class FakeGuiServer:
     ) -> GuiSliderHandle:
         handle = GuiSliderHandle(label=label, min=min, max=max, step=step, value=initial_value)
         self.sliders.append(handle)
+        return handle
+
+    def add_text(self, label: str, *, initial_value: str = "") -> GuiTextHandle:
+        handle = GuiTextHandle(label=label, value=initial_value)
+        self.texts[label] = handle
         return handle
 
 
@@ -1818,3 +1839,94 @@ def test_operation_worker_reports_timeout() -> None:
 
     assert errors == ["Operation timed out after 0.0s"]
     assert finished.wait(timeout=1.0)
+
+
+class _SyncOperationWorker:
+    """Run submitted operations inline so button clicks resolve synchronously."""
+
+    def start(self) -> None:
+        pass
+
+    def stop(self, timeout: float | None = None) -> None:
+        pass
+
+    def submit(self, operation: Callable[[], None], **_kwargs: object) -> None:
+        operation()
+
+
+def _interaction_scene_stub() -> SimpleNamespace:
+    calls: dict[str, list[object]] = {"ground_truth": [], "detections": []}
+    scene = SimpleNamespace(
+        robot_display_mode=RobotDisplayMode.VISUAL,
+        collision_geometry_available=False,
+        has_reference_grid=lambda: False,
+        ensure_target_controls=lambda *args: None,
+        set_target_joints=lambda *args: True,
+        set_target_pose=lambda *args: None,
+        set_target_visual_state=lambda *args: None,
+        render_ground_truth=lambda truth: calls["ground_truth"].append(truth),
+        render_detections=lambda objs, truth=(): calls["detections"].append((objs, truth)),
+    )
+    scene._calls = calls  # type: ignore[attr-defined]
+    return scene
+
+
+def test_scan_button_invokes_skill_and_renders_detections(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    adapter = make_adapter_with_robot()
+    scanned = [{"name": "red ball", "x": 0.41, "y": 0.07, "z": 0.2}]
+    scan_calls: list[tuple[str, str]] = []
+    adapter.scan = lambda tool, prompt="", timeout=180.0: (  # type: ignore[method-assign]
+        scan_calls.append((tool, prompt)) or scanned
+    )
+    config = ViserVisualizationConfig(
+        scan_tool="scan",
+        scan_prompt="red ball, orange ball",
+        ground_truth_objects=[{"name": "apple", "x": 0.4, "y": 0.08, "z": 0.17}],
+    )
+    scene = _interaction_scene_stub()
+    gui = make_panel(FakeGuiServer(), adapter, config, scene)
+    gui._operation_worker.stop(timeout=1.0)
+    gui._operation_worker = _SyncOperationWorker()
+
+    # Ground-truth overlay was rendered when the panel built.
+    assert scene._calls["ground_truth"], "ground-truth overlay not rendered on build"
+
+    gui._handles["scan"].click_callback(SimpleNamespace())  # type: ignore[attr-defined]
+
+    assert scan_calls == [("scan", "red ball, orange ball")]
+    assert scene._calls["detections"], "detections not rendered after scan"
+    rendered_objects, rendered_truth = scene._calls["detections"][-1]
+    assert rendered_objects == [("red ball", 0.41, 0.07, 0.2)]
+    assert rendered_truth == [("apple", 0.4, 0.08, 0.17)]
+    assert gui.state.last_result == "scan=1"
+
+
+def test_bookmark_and_goto_viewpoint_use_joint_target_path(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    adapter = make_adapter_with_robot()
+    config = ViserVisualizationConfig(scan_tool="scan")
+    scene = _interaction_scene_stub()
+    gui = make_panel(FakeGuiServer(), adapter, config, scene)
+
+    submitted: list[object] = []
+    gui._worker.stop()
+    gui._worker = SimpleNamespace(  # type: ignore[assignment]
+        submit=lambda request: submitted.append(request), stop=lambda: None
+    )
+
+    gui._handles["bookmark"].click_callback(SimpleNamespace())  # type: ignore[attr-defined]
+    dropdown = gui._handles["viewpoints"]
+    assert dropdown.options == ["vp1"]  # type: ignore[attr-defined]
+    assert dropdown.value == "vp1"  # type: ignore[attr-defined]
+
+    # Current joints for the stub are [0.3, 0.4]; going to the bookmark should
+    # push those into the sliders and submit a joint-target evaluation.
+    gui._joint_sliders["j1"].value = 0.0
+    gui._joint_sliders["j2"].value = 0.0
+    gui._handles["goto_viewpoint"].click_callback(SimpleNamespace())  # type: ignore[attr-defined]
+    assert gui._joint_sliders["j1"].value == pytest.approx(0.3)
+    assert gui._joint_sliders["j2"].value == pytest.approx(0.4)
+    assert submitted and submitted[-1].source == "joints"

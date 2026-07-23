@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import tempfile
+import threading
 import time
 from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
@@ -60,7 +61,14 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_WORLD_FRAME = ""
+# Pinocchio always exposes a root frame named "universe" (frame id 0). A URDF may
+# additionally define a "world" link. Obstacle poses arrive in the DimOS world
+# frame, which -- given the base-at-origin invariant enforced by
+# _validate_robot_config -- coincides with both. We attach geometry to whichever
+# of these frames the scene exposes; the empty string is NOT a valid frame name
+# for geometry attachment (RoboPlan raises "Frame name '' not found").
+_GEOMETRY_FRAME_CANDIDATES = ("world", "universe")
+_FK_REFERENCE_FRAME = ""  # empty == express FK in the model root; valid for FK only
 
 
 @dataclass
@@ -69,6 +77,10 @@ class _RoboPlanRobotData:
     config: RobotModelConfig
     lower_limits: NDArray[np.float64]
     upper_limits: NDArray[np.float64]
+    # Columns of the full-scene Jacobian that belong to this robot's planning
+    # group. The scene Jacobian spans every DoF (e.g. an appended gripper drive
+    # joint); consumers expect 6 x n_group. None => use all columns.
+    group_v_indices: NDArray[np.int64] | None = None
 
 
 @dataclass
@@ -93,6 +105,13 @@ class RoboPlanWorld:
         self._finalized = False
         self._live_context = RoboPlanContext()
         self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
+        self._geometry_frame = _GEOMETRY_FRAME_CANDIDATES[-1]
+        # A single RoboPlan Scene is shared by the state monitor, obstacle
+        # monitor, planner, and visualization threads. RoboPlan's C++ queries and
+        # geometry mutations are not internally synchronized, so -- unlike
+        # DrakeWorld, which isolates work in cloned scratch contexts -- we
+        # serialize every scene touch through this lock.
+        self._scene_lock = threading.RLock()
 
     # Robot Management
 
@@ -115,12 +134,30 @@ class RoboPlanWorld:
             config=config,
             lower_limits=lower,
             upper_limits=upper,
+            group_v_indices=self._query_group_v_indices(config),
         )
         self._live_context.q_by_robot[robot_id] = np.zeros(
             len(config.joint_names), dtype=np.float64
         )
         logger.info(f"Added RoboPlan robot '{robot_id}' ({config.name})")
         return robot_id
+
+    def _query_group_v_indices(self, config: RobotModelConfig) -> NDArray[np.int64] | None:
+        """Return the full-scene Jacobian columns owned by the planning group."""
+        scene = self._require_scene()
+        try:
+            group_info = scene.getJointGroupInfo(config.name)
+        except (AttributeError, RuntimeError):
+            return None
+        v_indices = getattr(group_info, "v_indices", None)
+        if v_indices is None:
+            return None
+        arr = np.asarray(v_indices, dtype=np.int64)
+        if arr.size != len(config.joint_names):
+            # A mismatch means the group model disagrees with configured joints;
+            # fall back to all columns and let the shape check flag it downstream.
+            return None
+        return arr
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs in the world."""
@@ -144,26 +181,29 @@ class RoboPlanWorld:
         obstacle_id = obstacle.name
         if obstacle_id in self._obstacles:
             return obstacle_id
-        self._add_obstacle_to_scene(obstacle, obstacle_id)
-        self._obstacles[obstacle_id] = obstacle
+        with self._scene_lock:
+            self._add_obstacle_to_scene(obstacle, obstacle_id)
+            self._obstacles[obstacle_id] = obstacle
         return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
         if obstacle_id not in self._obstacles:
             return False
-        scene = self._require_scene()
-        scene.removeGeometry(obstacle_id)
-        del self._obstacles[obstacle_id]
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene.removeGeometry(obstacle_id)
+            del self._obstacles[obstacle_id]
         return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         """Update an obstacle pose and invalidate collision scratch."""
         if obstacle_id not in self._obstacles:
             return False
-        scene = self._require_scene()
-        scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
-        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene.updateGeometryPlacement(obstacle_id, self._geometry_frame, pose_to_matrix(pose))
+            self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
         return True
 
     def clear_obstacles(self) -> None:
@@ -185,6 +225,14 @@ class RoboPlanWorld:
         """
         self._require_scene()
         self._finalized = True
+        # Seed the live context from each robot's configured home pose so FK / TF
+        # publishing before the first driver joint-state message matches DrakeWorld,
+        # which applies home_joints at finalize.
+        for robot_id, robot in self._robots.items():
+            if robot.config.home_joints is not None:
+                self._live_context.q_by_robot[robot_id] = np.asarray(
+                    robot.config.home_joints, dtype=np.float64
+                )
 
     @property
     def is_finalized(self) -> bool:
@@ -292,23 +340,34 @@ class RoboPlanWorld:
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
+        with self._scene_lock:
+            scene = self._require_scene()
+            result = scene.forwardKinematics(
+                self._to_scene_q(robot_id, q), link_name, _FK_REFERENCE_FRAME
+            )
         return np.asarray(result, dtype=np.float64)
 
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
+        """Get the end-effector Jacobian as 6 x n_group_joints.
+
+        RoboPlan returns the full-scene Jacobian (all DoF, e.g. including an
+        appended gripper joint); we slice to the planning group's columns so the
+        shape matches DrakeWorld and what KinematicsSpec consumers expect.
+        """
         robot = self._get_robot(robot_id)
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.computeFrameJacobian(
-            self._to_scene_q(robot_id, q), robot.config.end_effector_link, True
-        )
+        with self._scene_lock:
+            scene = self._require_scene()
+            result = scene.computeFrameJacobian(
+                self._to_scene_q(robot_id, q), robot.config.end_effector_link, True
+            )
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
+        if robot.group_v_indices is not None:
+            arr = arr[:, robot.group_v_indices]
         return arr
 
     # PlannerSpec for native RoboPlan planning
@@ -374,7 +433,21 @@ class RoboPlanWorld:
         package_paths = [str(path) for path in config.package_paths.values()]
         scene = roboplan_core.Scene(config.name, str(urdf_path), str(srdf_path), package_paths)
         self._apply_collision_exclusions(scene, config, urdf_path)
+        self._geometry_frame = self._resolve_geometry_frame(scene)
         return scene
+
+    def _resolve_geometry_frame(self, scene: roboplan_core.Scene) -> str:
+        """Pick a valid frame to attach world-frame obstacle geometry to."""
+        for candidate in _GEOMETRY_FRAME_CANDIDATES:
+            try:
+                scene.getFrameId(candidate)
+            except RuntimeError:
+                continue
+            return candidate
+        raise RuntimeError(
+            "RoboPlan scene exposes none of the expected root frames "
+            f"{_GEOMETRY_FRAME_CANDIDATES}; cannot attach obstacle geometry"
+        )
 
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
@@ -544,9 +617,10 @@ class RoboPlanWorld:
         return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
 
     def _has_collisions(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
-        scene = self._require_scene()
-        scene_q = self._to_scene_q(robot_id, q)
-        return bool(scene.hasCollisions(scene_q))
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene_q = self._to_scene_q(robot_id, q)
+            return bool(scene.hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
@@ -555,19 +629,20 @@ class RoboPlanWorld:
         q_end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        scene = self._require_scene()
-        scene_q_start = self._to_scene_q(robot_id, q_start)
-        scene_q_end = self._to_scene_q(robot_id, q_end)
-        return bool(
-            roboplan_core.hasCollisionsAlongPath(
-                scene,
-                scene_q_start,
-                scene_q_end,
-                step_size,
-                False,
-                True,
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene_q_start = self._to_scene_q(robot_id, q_start)
+            scene_q_end = self._to_scene_q(robot_id, q_end)
+            return bool(
+                roboplan_core.hasCollisionsAlongPath(
+                    scene,
+                    scene_q_start,
+                    scene_q_end,
+                    step_size,
+                    False,
+                    True,
+                )
             )
-        )
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
@@ -578,7 +653,7 @@ class RoboPlanWorld:
             width, height, depth = obstacle.dimensions
             scene.addBoxGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                self._geometry_frame,
                 roboplan_core.Box(width, height, depth),
                 matrix,
                 color,
@@ -588,7 +663,7 @@ class RoboPlanWorld:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
             scene.addSphereGeometry(
-                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+                obstacle_id, self._geometry_frame, roboplan_core.Sphere(radius), matrix, color
             )
             return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
@@ -596,7 +671,7 @@ class RoboPlanWorld:
             radius, length = obstacle.dimensions
             scene.addCylinderGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                self._geometry_frame,
                 roboplan_core.Cylinder(radius, length),
                 matrix,
                 color,
@@ -607,7 +682,7 @@ class RoboPlanWorld:
                 raise ValueError("MESH obstacle requires mesh_path")
             scene.addMeshGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                self._geometry_frame,
                 roboplan_core.Mesh(obstacle.mesh_path),
                 matrix,
                 color,
@@ -629,16 +704,19 @@ class RoboPlanWorld:
         q_goal: NDArray[np.float64],
         timeout: float,
     ) -> list[NDArray[np.float64]]:
-        scene = self._require_scene()
         robot = self._get_robot(robot_id)
         options = roboplan_rrt.RRTOptions()
         options.group_name = robot.config.name
         options.max_planning_time = timeout
         options.collision_check_use_bisection = False
-        planner = roboplan_rrt.RRT(scene, options)
         start_config = self._to_native_joint_configuration(robot_id, q_start)
         goal_config = self._to_native_joint_configuration(robot_id, q_goal)
-        result = planner.plan(start_config, goal_config)
+        # Hold the scene lock across the whole plan: the RRT reads the scene
+        # repeatedly and must not run concurrently with an obstacle mutation.
+        with self._scene_lock:
+            scene = self._require_scene()
+            planner = roboplan_rrt.RRT(scene, options)
+            result = planner.plan(start_config, goal_config)
         if result is None:
             raise ValueError("RoboPlan RRT returned no path")
         return self._extract_native_path(result)

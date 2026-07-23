@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 from typing import TYPE_CHECKING
 
-from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
+from dimos.manipulation.visualization.types import DetectedObject, RobotInfo, TargetEvaluation
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -27,6 +29,68 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import JointPath, RobotName, WorldRobotID
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+logger = setup_logger()
+
+
+def parse_scan_objects(payload: object) -> list[DetectedObject]:
+    """Extract detected objects from an MCP scan-skill JSON-RPC response.
+
+    Handles both the WorldBelief ``scan`` shape (``metadata.objects`` with
+    ``xyz``) and the PickAndPlace ``scan_objects`` text shape
+    (``- name: (x, y, z)`` lines). Unknown shapes yield an empty list.
+    """
+    import re
+
+    text = _extract_tool_text(payload)
+    if text is None:
+        return []
+    out: list[DetectedObject] = []
+    try:
+        body = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        body = None
+    if isinstance(body, dict):
+        objects = body.get("metadata", {}).get("objects", [])
+        for obj in objects:
+            xyz = obj.get("xyz")
+            if isinstance(xyz, list) and len(xyz) == 3:
+                out.append(
+                    DetectedObject(
+                        name=str(obj.get("name", "?")),
+                        x=float(xyz[0]),
+                        y=float(xyz[1]),
+                        z=float(xyz[2]),
+                    )
+                )
+        if out or body.get("metadata") is not None:
+            return out
+    # Fallback: plain-text "- name: (x, y, z)" lines (scan_objects).
+    for match in re.finditer(r"-\s+(.+?):\s*\(([-0-9.]+),\s*([-0-9.]+),\s*([-0-9.]+)\)", text):
+        out.append(
+            DetectedObject(
+                name=match.group(1).strip(),
+                x=float(match.group(2)),
+                y=float(match.group(3)),
+                z=float(match.group(4)),
+            )
+        )
+    return out
+
+
+def _extract_tool_text(payload: object) -> str | None:
+    """Pull the text field out of an MCP tools/call response envelope."""
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        content = payload.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and isinstance(first.get("text"), str):
+                return first["text"]
+        if isinstance(payload.get("text"), str):
+            return payload["text"]
+    return None
 
 
 def copy_joint_state(joint_state: JointState | None) -> JointState | None:
@@ -45,6 +109,36 @@ class InProcessViserAdapter:
     ) -> None:
         self._world_monitor = world_monitor
         self._module = manipulation_module
+        self._mcp_adapter: object | None = None
+
+    def scan(self, tool: str, prompt: str = "", timeout: float = 180.0) -> list[DetectedObject]:
+        """Invoke a scan skill over MCP and return detected objects.
+
+        The Viser panel is a client of the running stack's skills: rather than
+        reaching into another module, it calls the named MCP tool exactly as any
+        external client would. ``prompt`` (comma-separated) is forwarded when
+        non-empty for skills that require it (WorldBelief ``scan``).
+        """
+        adapter = self._ensure_mcp_adapter(timeout)
+        if adapter is None:
+            raise RuntimeError("MCP adapter unavailable; cannot invoke scan skill")
+        arguments: dict[str, object] = {}
+        prompts = [p.strip() for p in prompt.split(",") if p.strip()]
+        if prompts:
+            arguments["prompt"] = prompts
+        response = adapter.call_tool(tool, arguments)
+        return parse_scan_objects(response)
+
+    def _ensure_mcp_adapter(self, timeout: float) -> object | None:
+        if self._mcp_adapter is None:
+            try:
+                from dimos.agents.mcp.mcp_adapter import McpAdapter
+
+                self._mcp_adapter = McpAdapter(timeout=int(timeout))
+            except Exception:
+                logger.warning("Could not create MCP adapter for scan skill", exc_info=True)
+                return None
+        return self._mcp_adapter
 
     def list_robots(self) -> list[RobotName]:
         return list(self._module.list_robots())

@@ -35,7 +35,23 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[make_xarm7_sim_robot_config()],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        # Sim stack runs on the RoboPlan (pinocchio) backend with its native
+        # RRT planner; Drake stays the default for hardware blueprints.
+        world_backend="roboplan",
+        planner_name="roboplan",
+        # Viser replaces the retired DrakeWorld meshcat; reachable over an SSH
+        # port-forward to 127.0.0.1:8095 (logged as "Visualization:" at startup).
+        # "Scan from here" drives the PickAndPlace scan_objects skill; the
+        # ground-truth overlay mirrors the MJCF object positions.
+        visualization={
+            "backend": "viser",
+            "scan_tool": "scan_objects",
+            "ground_truth_objects": [
+                {"name": "apple", "x": 0.40, "y": 0.08, "z": 0.17},
+                {"name": "orange", "x": 0.45, "y": -0.08, "z": 0.175},
+                {"name": "cup", "x": 0.50, "y": 0.0, "z": 0.19},
+            ],
+        },
     ),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),

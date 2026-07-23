@@ -63,6 +63,25 @@ xarm6_worldbelief_sim = autoconnect(
                 home_joints=XARM6_SIM_HOME,
             ),
         ],
+        # Sim stack runs on the RoboPlan (pinocchio) backend with its native
+        # RRT planner; Drake stays the default for hardware blueprints.
+        world_backend="roboplan",
+        planner_name="roboplan",
+        # Viser replaces the retired DrakeWorld meshcat; reachable over an SSH
+        # port-forward to 127.0.0.1:8095 (logged as "Visualization:" at startup).
+        # The interactive layer adds a "Scan from here" button (WorldBelief scan
+        # skill) and a ground-truth overlay of the MJCF object positions so
+        # detected-vs-truth pose error is visible in the viewer.
+        visualization={
+            "backend": "viser",
+            "scan_tool": "scan",
+            "scan_prompt": "red ball, orange ball",
+            "ground_truth_objects": [
+                {"name": "apple", "x": 0.40, "y": 0.08, "z": 0.17},
+                {"name": "orange", "x": 0.45, "y": -0.08, "z": 0.175},
+                {"name": "cup", "x": 0.50, "y": 0.0, "z": 0.19},
+            ],
+        },
     ),
     MujocoSimModule.blueprint(**make_xarm6_sim_module_kwargs(XARM6_SIM_PATH)),
     RerunBridgeModule.blueprint(
