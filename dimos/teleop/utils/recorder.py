@@ -22,8 +22,8 @@ doesn't drive simply stay empty in the DB.
 
 Compose at the CLI::
 
-    dimos run teleop-quest-xarm7  teleop-recorder
-    dimos run teleop-hosted-go2   teleop-recorder
+    dimos run teleop-quest-xarm7          teleop-recorder
+    dimos run teleop-hosted-go2-transport teleop-recorder
 """
 
 from datetime import datetime

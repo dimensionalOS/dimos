@@ -27,7 +27,7 @@ Channels (topic == DataChannel name):
 Media rides the same session: a sendonly camera track (``set_video_frame``)
 and, opt-in (``audio_in``), the operator's mic (``set_audio_frame_callback``).
 The aiortc/CF quirks (MAX_BUNDLE, the id=0 throwaway channel) are documented
-in ``dimos/teleop/quest_hosted/README.md``. Config via ``transports.broker.*``.
+in ``dimos/teleop/hosted/README.md``. Config via ``transports.broker.*``.
 """
 
 from __future__ import annotations
@@ -199,7 +199,7 @@ class BrokerProvider(AsyncProviderBase):
         try:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
             # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds —
-            # see dimos/teleop/quest_hosted/README.md before changing.
+            # see dimos/teleop/hosted/README.md before changing.
             self._pc = RTCPeerConnection(
                 RTCConfiguration(
                     iceServers=await self._fetch_ice_servers(),
