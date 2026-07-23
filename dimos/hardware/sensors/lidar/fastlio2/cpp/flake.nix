@@ -12,6 +12,11 @@
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
+    pfr = {
+      url = "github:apolukhin/pfr_non_boost/2.3.2";
+      flake = false;
+    };
     fast-lio = {
       # get_body_cloud()/get_body_cloud_down() with the IMU<-lidar extrinsic
       # applied (PR #1); retarget to jeff/feat/fastlio-body-cloud once merged.
@@ -25,7 +30,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, fast-lio, lcm-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -89,6 +94,7 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
             "-DLIVOX_COMMON_DIR=${livox-common}"
             # The header-only SDK lives outside this dir. A git-tree flake can

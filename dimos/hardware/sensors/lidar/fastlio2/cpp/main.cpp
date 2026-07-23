@@ -82,16 +82,6 @@ struct FastLio2Config {
     int host_imu_data_port;
     int host_log_data_port;
 };
-DIMOS_NATIVE_CONFIG(FastLio2Config, host_ip, lidar_ip, frequency, frame_id,
-                    sensor_frame_id, msr_freq, main_freq, pointcloud_freq, odom_freq,
-                    debug, time_sync_en, time_offset_lidar_to_imu, lidar_type,
-                    scan_line, scan_rate, timestamp_unit, blind, acc_cov, gyr_cov,
-                    b_acc_cov, b_gyr_cov, filter_size_surf, filter_size_map,
-                    fov_degree, det_range, extrinsic_est_en, extrinsic_t, extrinsic_r,
-                    scan_publish_en, dense_publish_en, cmd_data_port, push_msg_port,
-                    point_data_port, imu_data_port, log_data_port, host_cmd_data_port,
-                    host_push_msg_port, host_point_data_port, host_imu_data_port,
-                    host_log_data_port);
 
 namespace {
 

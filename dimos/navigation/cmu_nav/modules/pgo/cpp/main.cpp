@@ -43,11 +43,6 @@ struct PGOConfig {
     double global_map_publish_rate;
     bool debug;
 };
-DIMOS_NATIVE_CONFIG(PGOConfig, world_frame, local_frame, key_pose_delta_deg,
-                    key_pose_delta_trans, loop_search_radius, loop_time_thresh,
-                    loop_score_thresh, loop_submap_half_range, submap_resolution,
-                    min_loop_detect_duration, unregister_input, global_map_voxel_size,
-                    global_map_publish_rate, debug);
 
 namespace {
 

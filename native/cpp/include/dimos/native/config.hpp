@@ -5,14 +5,21 @@
 // Mirrors the Rust SDK's contract: Python owns every default and always sends
 // every field, so parse<T>() requires every field to be present and rejects any
 // unknown field. The C++ side never fills anything in.
+//
+// A config is a plain aggregate struct; parse<T>() reflects over its fields
+// with PFR (mirrors Rust's #[native_config] on a plain struct), so the struct
+// declaration is the whole contract. Any number of fields, no macros.
 
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <pfr.hpp>
 
+#include <cstddef>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace dimos::native {
@@ -62,23 +69,30 @@ public:
         }
     }
 
-    /// Deserialize the whole config into a struct declared with DIMOS_NATIVE_CONFIG,
-    /// enforcing the one-to-one key check (every field present, no unknowns) and the
-    /// struct's optional validate(). Python owns defaults, so a missing field errors.
+    /// Deserialize the whole config into a plain aggregate struct, enforcing
+    /// the one-to-one key check (every field present, no unknowns) and the
+    /// struct's optional validate(). Python owns defaults, so a missing field
+    /// errors.
     template <class T>
     T parse() {
-        T out;
-        try {
-            out = obj_.get<T>();
-        } catch (const std::exception& e) {
-            throw std::runtime_error(std::string("config: ") + e.what());
-        }
-        // Expected keys are the struct's own fields, recovered by re-serializing.
-        // Anything the module sent that isn't one of them is an unknown field.
-        nlohmann::json expected = out;
-        for (auto it = expected.begin(); it != expected.end(); ++it) {
-            consumed_.insert(it.key());
-        }
+        static_assert(std::is_aggregate_v<T>,
+                      "config structs must be plain aggregates (no constructors, "
+                      "no base classes) so PFR can reflect their fields");
+        T out{};
+        constexpr auto names = pfr::names_as_array<T>();
+        pfr::for_each_field(out, [&](auto& field, std::size_t i) {
+            const std::string key(names[i]);
+            auto it = obj_.find(key);
+            if (it == obj_.end()) {
+                throw std::runtime_error("config: missing required field '" + key + "'");
+            }
+            try {
+                field = it->template get<std::decay_t<decltype(field)>>();
+            } catch (const std::exception& e) {
+                throw std::runtime_error("config: field '" + key + "': " + e.what());
+            }
+            consumed_.insert(key);
+        });
         enforce_all_consumed();
         config_detail::validate_if_present(out, 0);
         return out;
@@ -91,26 +105,3 @@ private:
 };
 
 }  // namespace dimos::native
-
-// Declare a config struct's fields once (mirrors Rust's #[native_config]).
-// Generates the JSON (de)serialization Config::parse<T>() uses. Every listed
-// field is required. Add a void validate() const method for range checks.
-#define DIMOS_NATIVE_CONFIG(Type, ...) NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Type, __VA_ARGS__)
-
-// List form of DIMOS_NATIVE_CONFIG for structs past nlohmann's 64-field macro
-// limit. FIELDS is an X-macro applying F(name) to every field:
-//
-//   #define MY_CONFIG_FIELDS(F) F(host_ip) F(frequency) ...
-//   DIMOS_NATIVE_CONFIG_LIST(MyConfig, MY_CONFIG_FIELDS)
-//
-// Same contract: every listed field is required, unknown fields are rejected.
-#define DIMOS_NATIVE_CONFIG_FIELD_GET(name) j.at(#name).get_to(c.name);
-#define DIMOS_NATIVE_CONFIG_FIELD_PUT(name) j[#name] = c.name;
-#define DIMOS_NATIVE_CONFIG_LIST(Type, FIELDS)                \
-    inline void from_json(const nlohmann::json& j, Type& c) { \
-        FIELDS(DIMOS_NATIVE_CONFIG_FIELD_GET)                 \
-    }                                                         \
-    inline void to_json(nlohmann::json& j, const Type& c) {   \
-        j = nlohmann::json::object();                         \
-        FIELDS(DIMOS_NATIVE_CONFIG_FIELD_PUT)                 \
-    }

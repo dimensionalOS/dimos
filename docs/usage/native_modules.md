@@ -195,7 +195,6 @@ using geometry_msgs::Twist;
 struct PongConfig {
     std::int64_t sample_config;
 };
-DIMOS_NATIVE_CONFIG(PongConfig, sample_config);
 
 class Pong : public Module {
 public:
@@ -222,7 +221,7 @@ int main() {
 }
 ```
 
-Every field listed in `DIMOS_NATIVE_CONFIG` is required and unknown fields are rejected — Python owns all defaults and always sends every field. Input handlers run serialized on the dispatch thread; each output publishes through its own worker so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
+The config is a plain aggregate struct — `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks; it runs automatically after parsing. Input handlers run serialized on the dispatch thread; each output publishes through its own worker so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
 A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
 

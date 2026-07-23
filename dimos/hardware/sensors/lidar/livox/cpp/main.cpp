@@ -50,10 +50,6 @@ struct Mid360Config {
     int host_imu_data_port;
     int host_log_data_port;
 };
-DIMOS_NATIVE_CONFIG(Mid360Config, host_ip, lidar_ip, frequency, enable_imu, frame_id,
-                    imu_frame_id, cmd_data_port, push_msg_port, point_data_port,
-                    imu_data_port, log_data_port, host_cmd_data_port, host_push_msg_port,
-                    host_point_data_port, host_imu_data_port, host_log_data_port);
 
 namespace {
 

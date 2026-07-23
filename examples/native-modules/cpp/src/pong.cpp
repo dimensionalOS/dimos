@@ -22,7 +22,6 @@ struct PongConfig {
         }
     }
 };
-DIMOS_NATIVE_CONFIG(PongConfig, sample_config);
 
 class Pong : public Module {
 public:
