@@ -160,7 +160,6 @@ class K1Connection(Module, Camera):
                 "Arm it with the Booster app, or call the `standup` RPC (or `stand` "
                 "skill) once the robot is clear."
             )
-        logger.info("K1Connection started (ip=%s)", self.config.ip)
 
     @rpc
     def stop(self) -> None:
