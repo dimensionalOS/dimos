@@ -307,9 +307,7 @@ def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
 ) -> None:
     parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
     add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
-    update_obstacle_pose = mocker.patch.object(
-        parent, "update_obstacle_pose", return_value=True
-    )
+    update_obstacle_pose = mocker.patch.object(parent, "update_obstacle_pose", return_value=True)
     remove_obstacle = mocker.patch.object(parent, "remove_obstacle", return_value=True)
     parent.start_obstacle_monitor()
     obstacle_monitor = parent.obstacle_monitor
