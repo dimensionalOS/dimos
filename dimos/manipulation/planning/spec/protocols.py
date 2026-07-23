@@ -20,6 +20,7 @@ Use factory functions from dimos.manipulation.planning.factory to create instanc
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -28,17 +29,20 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         IKResult,
-        JointPath,
         Obstacle,
+        PlanningGroupID,
         PlanningResult,
-        PlanningSceneInfo,
+        VisualizationSession,
+        VisualizationStateFrame,
         WorldRobotID,
     )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 @runtime_checkable
@@ -170,6 +174,14 @@ class WorldSpec(Protocol):
         """Get end-effector Jacobian (6 x n_joints)."""
         ...
 
+    def get_group_ee_pose(self, ctx: Any, group_id: PlanningGroupID) -> PoseStamped:
+        """Get planning-group tip pose."""
+        ...
+
+    def get_group_jacobian(self, ctx: Any, group_id: PlanningGroupID) -> NDArray[np.float64]:
+        """Get planning-group Jacobian (6 x n_group_joints)."""
+        ...
+
 
 @runtime_checkable
 class VisualizationSpec(Protocol):
@@ -182,28 +194,26 @@ class VisualizationSpec(Protocol):
     visualization affordances.
     """
 
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
-        """Receive stable planning-scene metadata after world startup."""
+    def initialize(self, session: VisualizationSession) -> None:
+        """Receive one-shot visualization session metadata after world startup."""
         ...
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         ...
 
-    def publish_visualization(self, ctx: Any | None = None) -> None:
-        """Publish current state to visualization."""
+    def update_state(self, frame: VisualizationStateFrame) -> None:
+        """Receive current joint states keyed by initialized world robot ID."""
         ...
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot."""
+    def animate_trajectory(
+        self, trajectory: JointTrajectory, duration: float | None = None
+    ) -> None:
+        """Animate a raw globally named trajectory."""
         ...
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot."""
-        ...
-
-    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
-        """Animate a path in visualization."""
+    def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
+        """Cancel an active preview animation without waiting for its renderer to finish."""
         ...
 
     def close(self) -> None:
@@ -229,6 +239,20 @@ class KinematicsSpec(Protocol):
         """Solve IK with optional collision checking."""
         ...
 
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve planning-group-scoped pose targets."""
+        ...
+
 
 @runtime_checkable
 class PlannerSpec(Protocol):
@@ -252,6 +276,18 @@ class PlannerSpec(Protocol):
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a collision-free joint-space path."""
+        ...
+
+    def plan_selected_joint_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        goal: JointState,
+        timeout: float = 10.0,
+        max_iterations: int = 5000,
+    ) -> PlanningResult:
+        """Plan a collision-free path for an ordered planning-group selection."""
         ...
 
     def get_name(self) -> str:
