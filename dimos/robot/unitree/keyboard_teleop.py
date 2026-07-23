@@ -166,11 +166,11 @@ class KeyboardTeleop(Module):
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
                         self._stop_event.set()
-                    elif event.key == pygame.K_RETURN:  # type: ignore[attr-defined]
+                    elif event.key == pygame.K_RETURN:
                         self.operator_command.publish(Int8(GATE_ADVANCE))
                     elif event.key == pygame.K_k:
                         self.operator_command.publish(Int8(GATE_SKIP))
-                    elif event.key == pygame.K_BACKSPACE:  # type: ignore[attr-defined]
+                    elif event.key == pygame.K_BACKSPACE:
                         self.operator_command.publish(Int8(GATE_QUIT))
                     elif pygame.K_0 <= event.key <= pygame.K_9:
                         # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
