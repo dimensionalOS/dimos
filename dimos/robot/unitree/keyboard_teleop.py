@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import sys
 import threading
 from typing import Any
 
@@ -29,8 +30,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Force X11 driver to avoid OpenGL threading issues
-os.environ["SDL_VIDEODRIVER"] = "x11"
+# Force X11 driver on Linux to avoid OpenGL threading issues. macOS has no X11
+# driver (SDL uses cocoa); forcing x11 there makes pygame.display fail outright.
+if sys.platform.startswith("linux"):
+    os.environ["SDL_VIDEODRIVER"] = "x11"
 
 DEFAULT_LINEAR_SPEED: float = 0.5  # m/s
 DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s

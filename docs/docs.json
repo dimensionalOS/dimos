@@ -148,6 +148,12 @@
                   "platforms/quadruped/go2/setup",
                   "platforms/quadruped/go2/simulation"
                 ]
+              },
+              {
+                "group": "Boston Dynamics Spot",
+                "pages": [
+                  "platforms/quadruped/spot/index"
+                ]
               }
             ]
           },
@@ -488,6 +494,14 @@
     {
       "source": "/docs/platforms/quadruped/go2/simulation.md",
       "destination": "/platforms/quadruped/go2/simulation"
+    },
+    {
+      "source": "/docs/platforms/quadruped/spot/index.md",
+      "destination": "/platforms/quadruped/spot/index"
+    },
+    {
+      "source": "/docs/platforms/quadruped/spot",
+      "destination": "/platforms/quadruped/spot/index"
     },
     {
       "source": "/docs/platforms/humanoid/g1/index.md",
