@@ -20,23 +20,18 @@ dimos run unitree-go2
 dimos --viewer none run unitree-go2
 ```
 
-Control how the Rerun viewer opens with `--rerun-open` and `--rerun-web`:
+The supported global viewer modes are `rerun` and `none`:
 
 ```bash
 # Open native desktop viewer (default)
 dimos --rerun-open native run unitree-go2
 
-# Open web viewer in browser
+# Open the Rerun web viewer (0.32) or both viewers
 dimos --rerun-open web run unitree-go2
-
-# Open both native and web
 dimos --rerun-open both run unitree-go2
 
-# No viewer (headless) — data still accessible via gRPC
+# Keep the Rerun bridge but do not open a viewer
 dimos --rerun-open none run unitree-go2
-
-# Serve the web viewer without auto-opening a browser
-dimos --rerun-web --rerun-open native run unitree-go2
 ```
 
 ## Viewer Modes Explained
@@ -49,15 +44,22 @@ dimos --rerun-web --rerun-open native run unitree-go2
 - Better performance with larger maps/higher resolution
 - No browser or web server required
 
----
+`--rerun-open web` starts Rerun with `--web-viewer`; `both` starts the native
+viewer and the web viewer. `none` still records data but does not launch a
+viewer. If a launcher is unavailable, DimOS preserves the finalized `.rrd` and
+prints a manual command using the exact path. The global options are also
+available as `DIMOS_RERUN_OPEN` and are inherited by worker completion.
 
-### Rerun Web (`rerun`, `--rerun-open web`)
+For the GraspGenX YCB demo, headless verification checks the finalized RRD and
+its expected entities (`scene/raw`, `scene/banana`, `grasps/*/axes`, and the
+best-sweep boxes). It does not directly observe native GUI rendering or viewer
+state persistence; detached launch and process persistence are verified as a
+launcher surrogate. Open a saved recording manually when reviewing those
+visual properties:
 
-**What you get:**
-- Browser-based dashboard at http://localhost:7779
-- Rerun 3D viewer + command center sidebar in one page
-- Teleop controls and goal setting via the web UI
-- Works headless (no display required)
+```bash
+rerun path/to/graspgenx-ycb-demo.rrd
+```
 
 ---
 

@@ -28,6 +28,7 @@ from dimos.core.coordination.process_lifecycle import (
     DIMOS_RUN_ID_ENV,
     kill_run_processes,
     spawn_watchdog,
+    stop_watchdog,
     wait_for_pid_exit,
 )
 
@@ -204,6 +205,12 @@ def test_spawn_watchdog_strips_run_id_env(mocker: MockerFixture, run_id: str) ->
     assert DIMOS_RUN_ID_ENV not in kwargs["env"]
     assert kwargs["env"]["DIMOS_WATCHDOG_TARGET_ENV"] == DIMOS_RUN_ID_ENV
     assert kwargs["start_new_session"] is True
+
+
+def test_stop_watchdog_reaps_running_sidecar(run_id: str) -> None:
+    watchdog = spawn_watchdog(run_id)
+    stop_watchdog(watchdog)
+    assert watchdog.poll() is not None
 
 
 def test_spawn_watchdog_custom_env_var(mocker: MockerFixture, run_id: str) -> None:

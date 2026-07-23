@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "**/*.npz",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -355,6 +356,12 @@ scene = [
     "usd-core>=23.11",
 ]
 
+graspgenx = [
+    "graspgenx",
+    "torch>=2.1,<2.7",
+    "torchvision>=0.16,<0.22",
+]
+
 all = [
     "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
@@ -473,6 +480,7 @@ required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
@@ -489,7 +497,31 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
+    # GraspGenX pins stale yourdfpy==0.0.56; DimOS requires the compatible
+    # maintained release line.
+    "yourdfpy>=0.0.60",
+    # GraspGenX pins stale trimesh==4.5.3; DimOS lint requires the maintained
+    # release line, and GraspGenX inference was validated with 4.12.2.
+    "trimesh>=4.12",
+    # GraspGenX pins numpy==1.26.4, while the current DimOS Rerun stack requires
+    # numpy>=2; inference was validated with numpy 2.2.6.
+    "numpy>=2",
+    # GraspGenX pins timm==1.0.15, while open-clip-torch requires >=1.0.17;
+    # inference was validated with timm 1.0.24.
+    "timm>=1.0.17",
+    # GraspGenX pins huggingface-hub==0.25.2; DimOS requires hub>=0.30, and
+    # inference was validated with hub 0.36.2 and diffusers 0.39.0.
+    "huggingface-hub>=0.30,<1",
+    # GraspGenX's diffusers==0.11.1 imports removed hub APIs after the hub
+    # upgrade; inference was validated with diffusers 0.39.0.
+    "diffusers>=0.29",
+    # GraspGenX requires pyopengl==3.1.5 while pyrender pins 3.1.0; the
+    # final resolved version 3.1.10 was validated in the inference environment.
+    "pyopengl>=3.1.5",
 ]
+
+[tool.uv.sources]
+graspgenx = { git = "https://github.com/NVlabs/GraspGenX.git", rev = "b9429097728cb1c430dd78b92edf17ba318aad03" }
 
 [tool.ruff]
 line-length = 100

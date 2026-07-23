@@ -77,7 +77,7 @@ import pytest
 import tqdm
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.coordination.process_lifecycle import spawn_watchdog
+from dimos.core.coordination.process_lifecycle import spawn_watchdog, stop_watchdog
 from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 # The first tqdm bar constructed in the process spawns a TMonitor daemon thread that lives until
@@ -125,7 +125,7 @@ def pytest_configure(config):
 
     # Only spawn on the controller, without doing it on xdist workers.
     if not hasattr(config, "workerinput"):
-        spawn_watchdog(
+        config._dimos_pytest_watchdog = spawn_watchdog(
             os.environ[DIMOS_PYTEST_RUN_ID_ENV],
             env_var=DIMOS_PYTEST_RUN_ID_ENV,
         )
@@ -204,6 +204,11 @@ def pytest_sessionfinish(session):
     """Track threads that exist at session start - these are not leaks."""
 
     yield
+
+    # The controller watchdog is intentionally long-lived, so retain and reap
+    # its Popen object before interpreter teardown can warn about it.
+    watchdog = getattr(session.config, "_dimos_pytest_watchdog", None)
+    stop_watchdog(watchdog)
 
     # Check for session-level thread leaks at teardown. A stopped thread that
     # lingers in the registry (e.g. a zenoh pyo3-closure thread awaiting reaping)

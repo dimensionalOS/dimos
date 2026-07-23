@@ -73,9 +73,14 @@ class RpcCall:
                 self._stop_rpc_client()
             return None
 
+        # ``rpc_timeout`` is a client-side control argument, not an argument
+        # to the remote method.  This uses the transport's existing timeout
+        # mechanism and is especially important for cold model inference.
+        rpc_timeout = kwargs.pop("rpc_timeout", None)
         result, unsub_fn = self._rpc.call_sync(
             f"{self._remote_name}/{self._name}",
             (args, kwargs),  # type: ignore[arg-type]
+            rpc_timeout=rpc_timeout,
         )
         self._unsub_fns.append(unsub_fn)
         return result

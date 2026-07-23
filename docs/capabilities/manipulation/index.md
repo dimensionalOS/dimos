@@ -217,6 +217,11 @@ XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
 
+## GraspGenX proposals
+
+[Run the direct, in-process GraspGenX YCB proposal demo](/docs/capabilities/manipulation/graspgenx.md).
+It returns unvalidated TCP candidates; planning and execution remain downstream.
+
 ## Architecture
 
 ```

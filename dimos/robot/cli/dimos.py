@@ -20,6 +20,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 import types
@@ -302,6 +303,27 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
     return kwargs  # type: ignore[no-any-return]
 
 
+def _stop_watchdog(watchdog: Any) -> None:
+    """Terminate and reap a watchdog, with a bounded kill fallback."""
+    if watchdog is None:
+        return
+    if watchdog.poll() is not None:
+        return
+    try:
+        watchdog.terminate()
+        watchdog.wait(timeout=2)
+    except Exception:
+        try:
+            watchdog.kill()
+        finally:
+            watchdog.wait(timeout=2)
+
+
+def _report_cleanup_errors(errors: list[BaseException]) -> None:
+    for error in errors:
+        logger.error("One-shot cleanup failed", error=error, exc_info=error)
+
+
 @main.command()
 def run(
     ctx: typer.Context,
@@ -360,6 +382,10 @@ def run(
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
+    if daemon and blueprint.one_shot_modules:
+        names = ", ".join(module.__name__ for module in blueprint.one_shot_modules)
+        raise typer.BadParameter(f"--daemon is not supported for one-shot blueprint ({names})")
+
     if show_help:
         print("Blueprint arguments:")
         print("  Override with --option/-o module.field=value.")
@@ -373,6 +399,75 @@ def run(
         kwargs["g"] = cli_config_overrides
 
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    if blueprint.one_shot_modules:
+        # Everything after build is one scope.  Each acquired resource is
+        # cleaned independently so one failure cannot strand workers or the
+        # watchdog, and the first failure remains the primary exception.
+        entry = None
+        watchdog = None
+        previous_sigterm = signal.getsignal(signal.SIGTERM)
+        previous_sigint = signal.getsignal(signal.SIGINT)
+        signals_changed = False
+        run_succeeded = False
+        cleanup_errors: list[BaseException] = []
+        primary: BaseException | None = None
+        result: Any = None
+        try:
+            coordinator.start_rpc_service()
+            entry = RunEntry(
+                run_id=run_id,
+                pid=os.getpid(),
+                blueprint=blueprint_name,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                log_dir=str(log_dir),
+                cli_args=list(robot_types),
+                config_overrides=cli_config_overrides,
+                original_argv=sys.argv,
+            )
+            entry.save()
+            watchdog = spawn_watchdog(run_id, log_dir=log_dir)
+            install_signal_handlers(entry, coordinator)
+            signals_changed = True
+            result = coordinator.run_one_shot(blueprint)
+            run_succeeded = True
+        except BaseException as error:
+            primary = error
+        # Normal ordering: workers first, then registry, watchdog, signals.
+        try:
+            coordinator.stop()
+        except BaseException as error:
+            cleanup_errors.append(error)
+        if entry is not None:
+            try:
+                entry.remove()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        try:
+            _stop_watchdog(watchdog)
+        except BaseException as error:
+            cleanup_errors.append(error)
+        if signals_changed or entry is not None:
+            try:
+                signal.signal(signal.SIGTERM, previous_sigterm)
+            except BaseException as error:
+                cleanup_errors.append(error)
+            try:
+                signal.signal(signal.SIGINT, previous_sigint)
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if primary is not None:
+            _report_cleanup_errors(cleanup_errors)
+            raise primary
+        if cleanup_errors:
+            _report_cleanup_errors(cleanup_errors)
+            raise typer.Exit(1)
+        if run_succeeded:
+            try:
+                coordinator.complete_one_shot(blueprint, result)
+            except BaseException as error:
+                typer.echo(f"Error: one-shot parent completion failed: {error}", err=True)
+                raise typer.Exit(1) from error
+        return
 
     if daemon:
         # Health check before daemonizing — catch early crashes

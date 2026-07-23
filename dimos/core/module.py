@@ -126,6 +126,7 @@ class _BlueprintPartial(Protocol):
 
 class ModuleBase(Configurable, CompositeResource):
     config: ModuleConfig
+    one_shot: ClassVar[bool] = False
 
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
@@ -735,6 +736,8 @@ class ModuleBase(Configurable, CompositeResource):
 
 
 class Module(ModuleBase):
+    one_shot: ClassVar[bool] = False
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 
@@ -814,6 +817,61 @@ class Module(ModuleBase):
         if not isinstance(input_stream, In):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
+
+
+class OneShotModule(Module):
+    """A module whose coordinator-owned work runs once after startup.
+
+    ``run_once`` crosses the worker RPC boundary, so its result must be
+    pickleable.  After teardown succeeds, the coordinator invokes
+    ``complete_in_parent`` in the parent process; that hook is never a worker
+    lifecycle hook and is not called when the run or cleanup fails.
+    """
+
+    one_shot: ClassVar[bool] = True
+    one_shot_rpc_timeout: ClassVar[float] = 600.0
+
+    def __init__(self, **config_args: Any) -> None:
+        super().__init__(**config_args)
+        # Keep the normal proxy call shape while giving this lifecycle RPC a
+        # cold-inference-safe transport timeout.  Users can override the
+        # existing per-method ``rpc_timeouts`` config or the coordinator API.
+        self.config.rpc_timeouts.setdefault("run_once", self.one_shot_rpc_timeout)
+        if self.rpc is not None:
+            self.rpc.rpc_timeouts.setdefault("run_once", self.one_shot_rpc_timeout)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # RPC discovery walks the concrete class.  Allowing a subclass to
+        # replace these methods therefore silently changes the lifecycle API.
+        protected_owners = {
+            "run_once": OneShotModule,
+            "complete_in_parent": OneShotModule,
+            "start": ModuleBase,
+        }
+        for name in ("run_once", "complete_in_parent", "start"):
+            # Check the resolved MRO, not only cls.__dict__: a mixin must not
+            # silently replace the protected lifecycle methods either.
+            resolved = next((base for base in cls.__mro__ if name in base.__dict__), None)
+            if resolved is not protected_owners[name]:
+                raise TypeError(f"OneShotModule subclasses must not override {name}()")
+
+    @rpc
+    def run_once(self) -> Any:
+        """Perform the module's one-shot work and return when it is complete."""
+        return self._run_once()
+
+    @classmethod
+    def complete_in_parent(cls, result: Any) -> None:
+        """Complete one-shot work in the coordinator's (parent) process."""
+        cls._complete_in_parent(result)
+
+    @classmethod
+    def _complete_in_parent(cls, result: Any) -> None:
+        """Optional parent-process completion hook."""
+
+    def _run_once(self) -> Any:
+        raise NotImplementedError(f"{type(self).__name__}._run_once() is not implemented")
 
 
 ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]

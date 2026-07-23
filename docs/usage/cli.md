@@ -21,8 +21,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
-| `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
-| `--rerun-web` / `--no-rerun-web` | bool | `False` | Serve the Rerun web viewer |
+| `--rerun-open` | `native\|web\|both\|none` | `native` | Open native, web, both, or no Rerun viewer (`none` still records) |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
@@ -120,6 +119,11 @@ When `--daemon` is used, the process:
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
 4. Prints run ID, PID, log path, and MCP endpoint
+
+One-shot blueprints use the coordinator-owned finite-job lifecycle and cannot be run
+with `--daemon`; the CLI rejects that combination. A successful one-shot job exits 0
+after `run_once()` and coordinated cleanup. Ordinary service blueprints continue to
+run until stopped and may use `--daemon`.
 
 #### Adding a New Blueprint
 

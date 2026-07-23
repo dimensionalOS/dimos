@@ -380,6 +380,11 @@ class Blueprint:
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
+    @property
+    def one_shot_modules(self) -> tuple[type[ModuleBase], ...]:
+        """One-shot module classes, determined without constructing modules."""
+        return tuple(bp.module for bp in self.active_blueprints if bp.module.one_shot)
+
 
 def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
