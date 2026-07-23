@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.control.task import (
     BaseControlTask,
@@ -35,6 +35,9 @@ from dimos.control.task import (
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 
@@ -116,11 +119,6 @@ class JointServoTask(BaseControlTask):
             self._target = list(config.default_positions)
 
         logger.info(f"JointServoTask {name} initialized for joints: {config.joint_names}")
-
-    @property
-    def name(self) -> str:
-        """Unique task identifier."""
-        return self._name
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -222,6 +220,12 @@ class JointServoTask(BaseControlTask):
             ordered.append(positions[name])
 
         return self.set_target(ordered, t_now)
+
+    def on_joint_command(self, msg: JointState, t_now: float) -> bool:
+        """Uniform stream handler: digest the position half of a joint_command."""
+        if not msg.position:
+            return False
+        return self.set_target_by_name(dict(zip(msg.name, msg.position, strict=True)), t_now)
 
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""

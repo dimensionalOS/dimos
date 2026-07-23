@@ -36,7 +36,7 @@ except ModuleNotFoundError as e:
 
 DIMOS_THEME_TITLE = "DimOS Manipulation"
 DIMOS_THEME_URL = "https://github.com/dimensionalOS/dimos"
-DIMOS_BRAND_COLOR = (22, 130, 163)
+DIMOS_BRAND_COLOR = (0, 153, 255)
 DIMOS_LOGO_PATH = Path(__file__).with_name("assets") / "dimensional-logo.svg"
 
 logger = setup_logger()
@@ -86,8 +86,8 @@ def _configure_theme(server: ViserServer, titlebar_content: TitlebarConfig | Non
     try:
         server.gui.configure_theme(
             titlebar_content=titlebar_content,
-            control_layout="collapsible",
-            control_width="medium",
+            control_layout="fixed",
+            control_width="large",
             dark_mode=True,
             show_logo=False,
             show_share_button=False,
