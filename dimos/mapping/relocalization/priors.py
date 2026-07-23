@@ -328,7 +328,7 @@ class FiducialPrior:
         # further since, so it can only score worse than it did when fresh.
         # The swap takes the lock because the swap alone is not enough: a store in
         # observe() reads self._pending and writes it as two steps, and a detections
-        # thread preempted between them still holds the dict this fire is draining::
+        # thread preempted between them still holds the dict this fire is draining:
         #
         #     observe:  d = self._pending ....................... d[id] = fix
         #     propose:                     self._pending = {}; iterate d
