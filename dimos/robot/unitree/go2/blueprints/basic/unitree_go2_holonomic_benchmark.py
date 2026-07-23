@@ -47,7 +47,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_holonomic_controller i
 )
 
 # The Benchmarker's ``odom`` In must read the same topic the controller emits
-# leg odom on (/go2/odom). path/speed/cmd_vel/operator_gate already share names+topics
+# leg odom on (/go2/odom). path/speed/cmd_vel/operator_command already share names+topics
 # with the controller blueprint, so they wire up by the controller's transports.
 _BENCHMARK_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),

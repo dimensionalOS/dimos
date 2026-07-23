@@ -136,7 +136,7 @@ unitree_go2_holonomic_controller = (
             ("path", Path): LCMTransport("/path", Path),
             ("speed", Float32): LCMTransport("/speed", Float32),
             # Operator gate (teleop -> benchmark) to pace runs.
-            ("operator_gate", Int8): LCMTransport("/benchmark/gate", Int8),
+            ("operator_command", Int8): LCMTransport("/benchmark/gate", Int8),
             # Aggregated joint state for observability (positions = [x,y,yaw]).
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("coordinator_joint_state", JointState): LCMTransport(

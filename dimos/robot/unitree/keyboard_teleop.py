@@ -21,7 +21,7 @@ import pygame
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
-# Gate event codes published on KeyboardTeleop.operator_gate for tools that need
+# Gate event codes published on KeyboardTeleop.operator_command for tools that need
 # operator-confirmation per step. Defined in a dependency-free module so offline
 # consumers (e.g. the benchmark scorer) don't pull pygame just to read them;
 # re-exported here for back-compat with `from keyboard_teleop import GATE_*`.
@@ -57,11 +57,11 @@ _INDICATOR_RADIUS = 15
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control. Outputs Twist on cmd_vel.
 
-    Also emits operator gate events on ``operator_gate: Out[Int8]`` for
+    Also emits operator gate events on ``operator_command: Out[Int8]`` for
     tools that need to pause for operator confirmation between steps (e.g.
     the one-terminal Go2 benchmark blueprint). Three keys: ``ENTER`` ->
     advance, ``K`` -> skip, ``Backspace`` -> quit. Existing blueprints that
-    don't wire the ``operator_gate`` port are unaffected — the events
+    don't wire the ``operator_command`` port are unaffected — the events
     publish into a stream nobody listens to.
     """
 
@@ -70,7 +70,7 @@ class KeyboardTeleop(Module):
     dedicated_worker = True
 
     cmd_vel: Out[Twist]
-    operator_gate: Out[Int8]
+    operator_command: Out[Int8]
     # Reference-governor corridor half-width (m). Number keys 0-9 map
     # to 0.0–0.9 m so an operator can dial precision live during a run.
     e_max: Out[Float32]
@@ -167,11 +167,11 @@ class KeyboardTeleop(Module):
                         # ESC quits
                         self._stop_event.set()
                     elif event.key == pygame.K_RETURN:  # type: ignore[attr-defined]
-                        self.operator_gate.publish(Int8(GATE_ADVANCE))
+                        self.operator_command.publish(Int8(GATE_ADVANCE))
                     elif event.key == pygame.K_k:
-                        self.operator_gate.publish(Int8(GATE_SKIP))
+                        self.operator_command.publish(Int8(GATE_SKIP))
                     elif event.key == pygame.K_BACKSPACE:  # type: ignore[attr-defined]
-                        self.operator_gate.publish(Int8(GATE_QUIT))
+                        self.operator_command.publish(Int8(GATE_QUIT))
                     elif pygame.K_0 <= event.key <= pygame.K_9:
                         # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
                         self.e_max.publish(Float32(data=(event.key - pygame.K_0) * 0.1))

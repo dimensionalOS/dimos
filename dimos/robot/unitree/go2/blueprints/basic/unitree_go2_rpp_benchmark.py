@@ -27,7 +27,7 @@ talks to it over LCM topics —
     Benchmarker.speed -> /speed          -> coordinator retunes the follower
     Benchmarker.odom  <- /go2/odom       -- the executed pose
     Benchmarker.cmd_vel <- /cmd_vel      -- the command sent to the robot
-    Benchmarker.operator_gate <- /benchmark/gate -- operator advance/skip/quit (teleop)
+    Benchmarker.operator_command <- /benchmark/gate -- operator advance/skip/quit (teleop)
 
 (Two separate ``dimos run`` processes can't share an LCM bus — the runtime's
 ``Coordinator`` RPC service is a per-bus singleton — so one blueprint is the
@@ -60,7 +60,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller import 
 )
 
 # The Benchmarker's ``odom`` In must read the same topic the controller emits leg
-# odom on (/go2/odom). path/speed/cmd_vel/operator_gate already share names+topics with
+# odom on (/go2/odom). path/speed/cmd_vel/operator_command already share names+topics with
 # the controller blueprint, so they wire up by the controller's transports.
 _BENCHMARK_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
