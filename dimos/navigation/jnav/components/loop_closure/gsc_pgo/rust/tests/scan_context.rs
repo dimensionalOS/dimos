@@ -20,8 +20,8 @@ use std::f32::consts::PI as PI32;
 use std::f64::consts::PI;
 
 use dimos_gsc_pgo::scan_context::{
-    self, best_distance, column_cosine_distance, descriptor_occupancy, descriptor_structure,
-    make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
+    self, auto_max_range, best_distance, column_cosine_distance, descriptor_occupancy,
+    descriptor_structure, make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
 };
 
 /// A synthetic structured scene: one point per chosen (ring, sector) cell,
@@ -211,4 +211,27 @@ fn ring_key_top_k_ranks_by_l2_distance() {
     let top_1 = ring_key_top_k(&query, &candidates, 1);
     assert_eq!(top_1.len(), 1);
     assert_eq!(top_1[0].1, 0);
+}
+
+#[test]
+fn auto_max_range_tracks_the_cloud_extent_and_ignores_outliers() {
+    // A dense short-range cloud (planar range ~2 m) with a single far outlier.
+    // The 95th percentile follows the bulk, not the stray point.
+    let mut cloud: Vec<[f32; 3]> = (0..100)
+        .map(|i| {
+            let range = 1.0 + 0.01 * i as f32; // 1.0 .. ~2.0 m
+            [range, 0.0, 0.2]
+        })
+        .collect();
+    cloud.push([500.0, 0.0, 0.2]);
+
+    let auto = auto_max_range(&cloud);
+    assert!(
+        (1.5..=2.5).contains(&auto),
+        "auto range follows the ~2 m bulk, not the 500 m outlier: {auto}"
+    );
+
+    // Empty / origin-only clouds are unresolvable -> 0 (caller keeps waiting).
+    assert_eq!(auto_max_range(&[]), 0.0);
+    assert_eq!(auto_max_range(&[[0.0, 0.0, 1.0]]), 0.0);
 }

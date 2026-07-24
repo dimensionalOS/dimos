@@ -28,7 +28,7 @@
 //! - `pointcloud`: the PCL pieces the core leans on — voxel-grid centroid
 //!   downsampling, kd-tree NN, point-to-point ICP with PCL convergence
 //!   semantics, and the normal-scatter degeneracy measure.
-//! - `simple_pgo`: the `SimplePgo` port itself (keyframe gating, loop
+//! - `gsc_pgo`: the `GscPgo` port itself (keyframe gating, loop
 //!   search + gates, location constraints with revision, iSAM2 smoothing).
 //! - `msgs`: the jnav custom LCM wire formats the module executable speaks
 //!   (Graph3D / GraphDelta3D / DeformationNode encode, LocationConstraint
@@ -42,9 +42,9 @@
 //! env-var contract and flake.nix for the pinned environment
 //! (`nix develop path:. --command cargo test`).
 
+pub mod gsc_pgo;
 pub mod gtsam;
 pub mod mat3;
 pub mod msgs;
 pub mod pointcloud;
 pub mod scan_context;
-pub mod simple_pgo;

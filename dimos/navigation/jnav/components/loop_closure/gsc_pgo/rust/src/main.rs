@@ -21,9 +21,10 @@
 //! - LCM handlers stash odometry (latest + a sliding interpolation buffer),
 //!   pair each lidar scan with the LATEST odometry pose (CloudWithPose), and
 //!   buffer LocationConstraints.
-//! - A 20 Hz worker loop drains constraints (each becomes its own pose node
-//!   placed via odometry interpolated at the constraint's own timestamp),
-//!   feeds one scan per tick into SimplePgo, and publishes:
+//! - A worker loop, woken by the callbacks as scans/constraints arrive, drains
+//!   constraints (each becomes its own pose node placed via odometry
+//!   interpolated at the constraint's own timestamp), feeds scans into GscPgo
+//!   oldest-first, and publishes:
 //!   corrected_odometry (offset-corrected pose), correction (map->odom
 //!   TFMessage), pose_graph (Graph3D snapshot per keyframe),
 //!   loop_closure_event (GraphDelta3D of pre->post iSAM2 deltas when a loop
@@ -31,32 +32,35 @@
 //!   only when the optimizer moves a node past an epsilon), and the optional
 //!   throttled _global_map debug cloud.
 //!
-//! SimplePgo wraps gtsam, which is thread-unsafe (`!Send`), so the worker is
-//! a dedicated OS thread that OWNS the SimplePgo; publishes hop back onto the
+//! GscPgo wraps gtsam, which is thread-unsafe (`!Send`), so the worker is
+//! a dedicated OS thread that OWNS the GscPgo; publishes hop back onto the
 //! tokio runtime via a captured Handle.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
+use dimos_gsc_pgo::gsc_pgo::{
+    CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, LocationConstraintObs,
+    PoseWithTime,
+};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::msgs::{
-    DeformationNode, DeltaTransform, Edge, Graph3D, GraphDelta3D, LocationConstraint, Node3D,
-    PoseStamped as WirePose,
+    DeformationNode, Graph3D, GraphDelta3D, LocationConstraint, PoseStamped as WirePose,
 };
 use dimos_gsc_pgo::pointcloud::{self, PointCloud};
-use dimos_gsc_pgo::simple_pgo::{
-    CloudWithPose, Config as PgoConfig, KeyPoseWithCloud, LocationConstraintObs, PoseWithTime,
-    SimplePgo,
-};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{Point, Quaternion, Transform, TransformStamped, Vector3};
 use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::tf2_msgs::TFMessage;
+
+mod utils;
 use tracing::{error, info, warn};
+use utils::{
+    build_loop_closure_event, build_odometry, build_pointcloud2, build_pose_graph,
+    build_tf_message, extract_xyz, frobenius_diff, interpolate_odom, SplitMix64,
+};
 
 #[native_config]
 #[derive(Clone)]
@@ -71,8 +75,8 @@ pub struct Config {
     pub body_frame: String,
 
     // Keyframe detection
-    pub key_pose_delta_deg: f64,
-    pub key_pose_delta_trans: f64,
+    pub keyframe_min_rotation_degrees: f64,
+    pub keyframe_min_distance_meters: f64,
 
     // Loop closure
     pub loop_search_radius: f64,
@@ -86,7 +90,7 @@ pub struct Config {
     pub loop_min_degeneracy: f64,
 
     /// Transform world-frame scans to body-frame using the paired odometry.
-    pub unregister_input: bool,
+    pub subtract_odom_from_cloud: bool,
 
     // Debug global-map publishing (rate <= 0 disables; see module.py).
     pub global_map_voxel_size: f64,
@@ -134,8 +138,8 @@ pub struct Config {
 impl Config {
     fn pgo(&self) -> PgoConfig {
         PgoConfig {
-            key_pose_delta_deg: self.key_pose_delta_deg,
-            key_pose_delta_trans: self.key_pose_delta_trans,
+            keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
+            keyframe_min_distance_meters: self.keyframe_min_distance_meters,
             loop_search_radius: self.loop_search_radius,
             loop_time_thresh: self.loop_time_thresh,
             loop_score_thresh: self.loop_score_thresh,
@@ -175,8 +179,8 @@ impl Config {
 #[derive(Clone)]
 struct OdomSample {
     ts: f64,
-    r: Mat3,
-    t: Vec3,
+    rotation: Mat3,
+    translation: Vec3,
     frame_id: String,
 }
 
@@ -198,82 +202,13 @@ struct SharedState {
 
 type Shared<T> = Arc<Mutex<T>>;
 
-/// Interpolate the odometry pose at `ts` (slerp rotation, lerp translation).
-/// Port of interpolate_odom: `None` if the buffer is empty or `ts` predates it
-/// by more than 1 ms; clamps to the newest sample when `ts` is past it.
-fn interpolate_odom(buffer: &VecDeque<OdomSample>, ts: f64) -> Option<(Mat3, Vec3, String)> {
-    let front = buffer.front()?;
-    if ts <= front.ts {
-        if front.ts - ts > 1e-3 {
-            return None;
-        }
-        return Some((front.r, front.t, front.frame_id.clone()));
-    }
-    let back = buffer.back()?;
-    if ts >= back.ts {
-        return Some((back.r, back.t, back.frame_id.clone()));
-    }
-    for i in 1..buffer.len() {
-        let hi = &buffer[i];
-        if hi.ts < ts {
-            continue;
-        }
-        let lo = &buffer[i - 1];
-        let span = hi.ts - lo.ts;
-        let alpha = if span > 0.0 { (ts - lo.ts) / span } else { 0.0 };
-        let t = [
-            lo.t[0] + alpha * (hi.t[0] - lo.t[0]),
-            lo.t[1] + alpha * (hi.t[1] - lo.t[1]),
-            lo.t[2] + alpha * (hi.t[2] - lo.t[2]),
-        ];
-        let q = slerp(
-            &mat3::quat_from_mat(&lo.r),
-            &mat3::quat_from_mat(&hi.r),
-            alpha,
-        );
-        return Some((mat3::mat_from_quat(&q), t, lo.frame_id.clone()));
-    }
-    None
-}
-
-/// Quaternion slerp with Eigen's shortest-path semantics (quats are [w,x,y,z]).
-fn slerp(a: &[f64; 4], b: &[f64; 4], alpha: f64) -> [f64; 4] {
-    let mut dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
-    dot *= sign;
-    let (wa, wb) = if dot > 0.9995 {
-        (1.0 - alpha, alpha)
-    } else {
-        let theta = dot.clamp(-1.0, 1.0).acos();
-        let sin_theta = theta.sin();
-        (
-            ((1.0 - alpha) * theta).sin() / sin_theta,
-            (alpha * theta).sin() / sin_theta,
-        )
-    };
-    let mut out = [0.0; 4];
-    for i in 0..4 {
-        out[i] = wa * a[i] + sign * wb * b[i];
-    }
-    let norm = out.iter().map(|v| v * v).sum::<f64>().sqrt();
-    if norm > 0.0 {
-        for v in out.iter_mut() {
-            *v /= norm;
-        }
-    }
-    out
-}
-
 // ---- module ----------------------------------------------------------------------
 
 #[derive(Module)]
 #[module(setup = spawn_worker, teardown = stop_worker)]
-struct GscPgo {
-    // Named "lidar" to match the jnav LoopClosure spec: the scan is paired
-    // with the LATEST odometry pose internally, so a raw sensor-frame lidar +
-    // odometry is what's expected.
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
-    lidar: Input<PointCloud2>,
+struct GscPgoModule {
+    #[input(decode = PointCloud2::decode, handler = on_cloud)]
+    cloud: Input<PointCloud2>,
 
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
@@ -308,6 +243,9 @@ struct GscPgo {
     config: Config,
 
     state: Shared<SharedState>,
+    /// Signaled by callbacks when new work (a scan or constraint) is enqueued,
+    /// so the worker wakes immediately instead of polling.
+    wake: Arc<Condvar>,
     worker: Option<WorkerHandle>,
 }
 
@@ -316,7 +254,7 @@ struct WorkerHandle {
     thread: std::thread::JoinHandle<()>,
 }
 
-impl GscPgo {
+impl GscPgoModule {
     async fn spawn_worker(&mut self) {
         let stop = Arc::new(AtomicBool::new(false));
         let worker = Worker {
@@ -330,8 +268,9 @@ impl GscPgo {
             global_map: self._global_map.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
+            wake: Arc::clone(&self.wake),
         };
-        // SimplePgo (gtsam) is !Send: a dedicated OS thread owns it for the
+        // GscPgo (gtsam) is !Send: a dedicated OS thread owns it for the
         // module's whole life instead of a tokio task.
         let thread = std::thread::Builder::new()
             .name("gsc-pgo-worker".into())
@@ -344,8 +283,9 @@ impl GscPgo {
     async fn stop_worker(&mut self) {
         if let Some(WorkerHandle { stop, thread }) = self.worker.take() {
             stop.store(true, Ordering::Relaxed);
-            // The worker sleeps <= 50 ms per tick; a blocking join here at
-            // teardown is bounded and simpler than an async dance.
+            // Wake the worker out of its Condvar wait so it observes the stop
+            // flag promptly instead of sitting until the wait times out.
+            self.wake.notify_all();
             let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
     }
@@ -353,14 +293,14 @@ impl GscPgo {
     /// Port of Handlers::on_odometry.
     async fn on_odometry(&mut self, msg: Odometry) {
         let q = &msg.pose.pose.orientation;
-        let r = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
+        let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
         let p = &msg.pose.pose.position;
-        let t = [p.x, p.y, p.z];
+        let translation = [p.x, p.y, p.z];
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
         let sample = OdomSample {
             ts,
-            r,
-            t,
+            rotation,
+            translation,
             frame_id: msg.header.frame_id.clone(),
         };
         let mut state = self.state.lock().expect("state");
@@ -377,7 +317,7 @@ impl GscPgo {
     }
 
     /// Port of Handlers::on_registered_scan.
-    async fn on_lidar(&mut self, msg: PointCloud2) {
+    async fn on_cloud(&mut self, msg: PointCloud2) {
         let mut state = self.state.lock().expect("state");
         let Some(latest) = state.latest_odom.clone() else {
             return;
@@ -395,7 +335,7 @@ impl GscPgo {
                 return;
             }
         };
-        let mut pose = PoseWithTime::new(latest.r, latest.t);
+        let mut pose = PoseWithTime::new(latest.rotation, latest.translation);
         pose.set_time(
             latest.ts as i32,
             ((latest.ts - (latest.ts as i32) as f64) * 1e9) as u32,
@@ -409,6 +349,8 @@ impl GscPgo {
         while cap > 0 && state.cloud_buffer.len() as i32 > cap {
             state.cloud_buffer.pop_front(); // drop oldest stale scan
         }
+        drop(state);
+        self.wake.notify_one();
     }
 
     /// Port of Handlers::on_location_constraint.
@@ -437,12 +379,14 @@ impl GscPgo {
         let obs = LocationConstraintObs {
             to_id: msg.to_id.clone(),
             constraint_instance_id: msg.constraint_instance_id.clone(),
-            r_body_loc: mat3::mat_from_quat(&[qw, qx, qy, qz]),
-            t_body_loc: msg.position,
+            rotation_body_loc: mat3::mat_from_quat(&[qw, qx, qy, qz]),
+            translation_body_loc: msg.position,
             covariance: msg.covariance,
             ts: msg.ts,
         };
         state.constraints.push((obs, frame_id));
+        drop(state);
+        self.wake.notify_one();
     }
 }
 
@@ -459,6 +403,7 @@ struct Worker {
     global_map: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
+    wake: Arc<Condvar>,
 }
 
 impl Worker {
@@ -469,7 +414,7 @@ impl Worker {
     }
 
     fn run(self) {
-        let mut pgo = SimplePgo::new(self.config.pgo());
+        let mut pgo = GscPgo::new(self.config.pgo());
         let frame_id = self.config.world_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
         let body_frame = self.config.body_frame.clone();
@@ -482,7 +427,9 @@ impl Worker {
             0.0
         };
         let mut last_global_map_time = 0.0f64;
-        let timer_period = Duration::from_millis(50); // 20 Hz, matching original
+        // Backstop for the Condvar wait so the stop flag is still observed even
+        // if a notify is somehow missed; normal wakeups come from callbacks.
+        let wake_timeout = Duration::from_secs(1);
 
         // Per-node deformation stream state: a stable random id per keyframe
         // plus its last published pose (re-publish only on new/moved nodes).
@@ -504,7 +451,7 @@ impl Worker {
                         let state = self.state.lock().expect("state");
                         interpolate_odom(&state.odom_buffer, constraint.ts)
                     };
-                    let Some((r, t, interp_frame)) = interp else {
+                    let Some((rotation, translation, interp_frame)) = interp else {
                         warn!(
                             to_id = %constraint.to_id,
                             ts = constraint.ts,
@@ -512,7 +459,7 @@ impl Worker {
                         );
                         continue;
                     };
-                    let mut node_pose = PoseWithTime::new(r, t);
+                    let mut node_pose = PoseWithTime::new(rotation, translation);
                     node_pose.set_time(
                         constraint.ts as i32,
                         ((constraint.ts - (constraint.ts as i32) as f64) * 1e9) as u32,
@@ -529,30 +476,41 @@ impl Worker {
                 }
             }
 
-            // Strict FIFO: one scan per tick (backlog bounded at enqueue time).
+            // Strict FIFO: process scans oldest-first (backlog bounded at
+            // enqueue time). Loops back immediately when more remain, so a
+            // burst drains at full speed rather than one-per-tick.
             let cloud_with_pose = {
                 let mut state = self.state.lock().expect("state");
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
-                std::thread::sleep(timer_period);
+                // Nothing to do: block until a callback signals new work,
+                // re-checking under the lock to avoid a lost wakeup.
+                let state = self.state.lock().expect("state");
+                if state.cloud_buffer.is_empty()
+                    && (!self.config.use_location_constraints || state.constraints.is_empty())
+                {
+                    let _ = self.wake.wait_timeout(state, wake_timeout);
+                }
                 continue;
             };
 
             // Optionally transform world-frame scan to body-frame:
             // body = R_odom^T * (world_pts - t_odom).
-            if self.config.unregister_input {
+            if self.config.subtract_odom_from_cloud {
                 if let Some(cloud) = cloud_with_pose.cloud.take() {
                     if !cloud.is_empty() {
-                        let r_inv = mat3::transpose(&cloud_with_pose.pose.r);
-                        let neg_t = [
-                            -cloud_with_pose.pose.t[0],
-                            -cloud_with_pose.pose.t[1],
-                            -cloud_with_pose.pose.t[2],
+                        let rotation_inv = mat3::transpose(&cloud_with_pose.pose.rotation);
+                        let neg_translation = [
+                            -cloud_with_pose.pose.translation[0],
+                            -cloud_with_pose.pose.translation[1],
+                            -cloud_with_pose.pose.translation[2],
                         ];
-                        let t_body = mat3::mat_vec(&r_inv, &neg_t);
+                        let translation_body = mat3::mat_vec(&rotation_inv, &neg_translation);
                         cloud_with_pose.cloud = Some(Arc::new(pointcloud::transform_cloud(
-                            &cloud, &r_inv, &t_body,
+                            &cloud,
+                            &rotation_inv,
+                            &translation_body,
                         )));
                     } else {
                         cloud_with_pose.cloud = Some(cloud);
@@ -572,7 +530,6 @@ impl Worker {
                     &body_frame,
                     &child_frame_id,
                 );
-                std::thread::sleep(timer_period);
                 continue;
             }
 
@@ -583,7 +540,7 @@ impl Worker {
             let pre_poses: Vec<(Mat3, Vec3)> = if had_loop {
                 pgo.key_poses()
                     .iter()
-                    .map(|kp| (kp.r_global, kp.t_global))
+                    .map(|kp| (kp.rotation_global, kp.translation_global))
                     .collect()
             } else {
                 Vec::new()
@@ -606,9 +563,9 @@ impl Worker {
             if debug {
                 info!(
                     keyframes = pgo.key_poses().len(),
-                    x = cloud_with_pose.pose.t[0],
-                    y = cloud_with_pose.pose.t[1],
-                    z = cloud_with_pose.pose.t[2],
+                    x = cloud_with_pose.pose.translation[0],
+                    y = cloud_with_pose.pose.translation[1],
+                    z = cloud_with_pose.pose.translation[2],
                     "PGO: keyframe added"
                 );
             }
@@ -648,8 +605,8 @@ impl Worker {
                     if let Some(body_cloud) = &kp.body_cloud {
                         global_cloud.extend(pointcloud::transform_cloud(
                             body_cloud,
-                            &kp.r_global,
-                            &kp.t_global,
+                            &kp.rotation_global,
+                            &kp.translation_global,
                         ));
                     }
                 }
@@ -658,8 +615,6 @@ impl Worker {
                 let msg = build_pointcloud2(&filtered, &frame_id, cur_time);
                 self.publish(&self.global_map, &msg, "_global_map");
             }
-
-            std::thread::sleep(timer_period);
         }
 
         if debug {
@@ -669,21 +624,30 @@ impl Worker {
 
     fn publish_corrected(
         &self,
-        pgo: &SimplePgo,
+        pgo: &GscPgo,
         pose: &PoseWithTime,
         ts: f64,
         frame_id: &str,
         body_frame: &str,
         child_frame_id: &str,
     ) {
-        let corr_r = mat3::mat_mul(&pgo.offset_r(), &pose.r);
-        let corr_t = mat3::add(&mat3::mat_vec(&pgo.offset_r(), &pose.t), &pgo.offset_t());
-        let corrected = build_odometry(&corr_r, &corr_t, ts, frame_id, body_frame);
+        let corrected_rotation = mat3::mat_mul(&pgo.rotation_offset(), &pose.rotation);
+        let corrected_translation = mat3::add(
+            &mat3::mat_vec(&pgo.rotation_offset(), &pose.translation),
+            &pgo.translation_offset(),
+        );
+        let corrected = build_odometry(
+            &corrected_rotation,
+            &corrected_translation,
+            ts,
+            frame_id,
+            body_frame,
+        );
         self.publish(&self.corrected_odometry, &corrected, "corrected_odometry");
 
         let tf_msg = build_tf_message(
-            &pgo.offset_r(),
-            &pgo.offset_t(),
+            &pgo.rotation_offset(),
+            &pgo.translation_offset(),
             ts,
             frame_id,
             child_frame_id,
@@ -708,25 +672,25 @@ impl Worker {
         for (i, kp) in key_poses.iter().enumerate() {
             let is_new = i >= ids.len();
             if !is_new {
-                let (last_r, last_t) = &last_published[i];
-                let pos_moved = mat3::norm(&mat3::sub(&kp.t_global, last_t));
-                let rot_moved = frobenius_diff(&kp.r_global, last_r);
+                let (last_rotation, last_translation) = &last_published[i];
+                let pos_moved = mat3::norm(&mat3::sub(&kp.translation_global, last_translation));
+                let rot_moved = frobenius_diff(&kp.rotation_global, last_rotation);
                 if pos_moved <= POS_EPS && rot_moved <= ROT_EPS {
                     continue;
                 }
-                last_published[i] = (kp.r_global, kp.t_global);
+                last_published[i] = (kp.rotation_global, kp.translation_global);
             } else {
                 ids.push(rng.next());
-                last_published.push((kp.r_global, kp.t_global));
+                last_published.push((kp.rotation_global, kp.translation_global));
             }
-            let q = mat3::quat_from_mat(&kp.r_global);
+            let q = mat3::quat_from_mat(&kp.rotation_global);
             let node = DeformationNode {
                 id: ids[i],
                 tf_id,
                 pose: WirePose {
                     ts: kp.time,
                     frame_id: frame_id.to_string(),
-                    position: kp.t_global,
+                    position: kp.translation_global,
                     orientation: [q[1], q[2], q[3], q[0]],
                 },
             };
@@ -735,287 +699,7 @@ impl Worker {
     }
 }
 
-fn frobenius_diff(a: &Mat3, b: &Mat3) -> f64 {
-    let mut sum = 0.0;
-    for row in 0..3 {
-        for col in 0..3 {
-            let d = a[row][col] - b[row][col];
-            sum += d * d;
-        }
-    }
-    sum.sqrt()
-}
-
-// ---- message builders (ports of the C++ helpers) ---------------------------------------
-
-fn make_time(ts: f64) -> Time {
-    Time {
-        sec: ts as i32,
-        nsec: ((ts - (ts as i32) as f64) * 1e9) as i32,
-    }
-}
-
-fn make_header(frame_id: &str, ts: f64) -> Header {
-    Header {
-        seq: 0,
-        stamp: make_time(ts),
-        frame_id: frame_id.to_string(),
-    }
-}
-
-fn build_odometry(r: &Mat3, t: &Vec3, ts: f64, frame_id: &str, child_frame_id: &str) -> Odometry {
-    let q = mat3::quat_from_mat(r);
-    let mut odom = Odometry {
-        header: make_header(frame_id, ts),
-        child_frame_id: child_frame_id.to_string(),
-        ..Default::default()
-    };
-    odom.pose.pose.position = Point {
-        x: t[0],
-        y: t[1],
-        z: t[2],
-    };
-    odom.pose.pose.orientation = Quaternion {
-        x: q[1],
-        y: q[2],
-        z: q[3],
-        w: q[0],
-    };
-    odom
-}
-
-fn build_tf_message(
-    correction_r: &Mat3,
-    correction_t: &Vec3,
-    ts: f64,
-    frame_id: &str,
-    child_frame_id: &str,
-) -> TFMessage {
-    let q = mat3::quat_from_mat(correction_r);
-    TFMessage {
-        transforms: vec![TransformStamped {
-            header: make_header(frame_id, ts),
-            child_frame_id: child_frame_id.to_string(),
-            transform: Transform {
-                translation: Vector3 {
-                    x: correction_t[0],
-                    y: correction_t[1],
-                    z: correction_t[2],
-                },
-                rotation: Quaternion {
-                    x: q[1],
-                    y: q[2],
-                    z: q[3],
-                    w: q[0],
-                },
-            },
-        }],
-    }
-}
-
-// Pose-graph metadata ids (match the C++ constants).
-const NODE_KEYFRAME: u64 = 0;
-const EDGE_ODOMETRY: u64 = 0;
-const EDGE_LOOP_CLOSURE: u64 = 1;
-
-fn build_pose_graph(
-    key_poses: &[KeyPoseWithCloud],
-    loop_pairs: &[(usize, usize)],
-    ts: f64,
-    frame_id: &str,
-) -> Graph3D {
-    let mut msg = Graph3D {
-        ts,
-        nodes: Vec::with_capacity(key_poses.len()),
-        edges: Vec::with_capacity(key_poses.len() + loop_pairs.len()),
-    };
-    for (i, kp) in key_poses.iter().enumerate() {
-        let q = mat3::quat_from_mat(&kp.r_global);
-        msg.nodes.push(Node3D {
-            pose: WirePose {
-                ts: kp.time,
-                frame_id: frame_id.to_string(),
-                position: kp.t_global,
-                orientation: [q[1], q[2], q[3], q[0]],
-            },
-            id: i as u64,
-            metadata_id: NODE_KEYFRAME,
-        });
-    }
-    for (i, key_pose) in key_poses.iter().enumerate().skip(1) {
-        msg.edges.push(Edge {
-            start_id: (i - 1) as u64,
-            end_id: i as u64,
-            timestamp: key_pose.time,
-            metadata_id: EDGE_ODOMETRY,
-        });
-    }
-    for &(first, second) in loop_pairs {
-        if first >= key_poses.len() || second >= key_poses.len() {
-            continue;
-        }
-        msg.edges.push(Edge {
-            start_id: first as u64,
-            end_id: second as u64,
-            timestamp: ts,
-            metadata_id: EDGE_LOOP_CLOSURE,
-        });
-    }
-    msg
-}
-
-const NODE_KEYFRAME_DELTA: u64 = 0;
-
-/// Port of build_loop_closure_event: each pair is (pre-smooth node, SE(3)
-/// delta such that post = delta * pre).
-fn build_loop_closure_event(
-    pre_poses: &[(Mat3, Vec3)],
-    post_poses: &[KeyPoseWithCloud],
-    ts: f64,
-    frame_id: &str,
-) -> GraphDelta3D {
-    let count = pre_poses.len().min(post_poses.len());
-    let mut msg = GraphDelta3D {
-        ts,
-        nodes: Vec::with_capacity(count),
-        transforms: Vec::with_capacity(count),
-    };
-    for i in 0..count {
-        let (pre_r, pre_t) = &pre_poses[i];
-        let post_r = &post_poses[i].r_global;
-        let post_t = &post_poses[i].t_global;
-
-        // SE(3) delta such that post = delta * pre.
-        let r_delta = mat3::mat_mul(post_r, &mat3::transpose(pre_r));
-        let t_delta = mat3::sub(post_t, &mat3::mat_vec(&r_delta, pre_t));
-        let q_pre = mat3::quat_from_mat(pre_r);
-        let q_delta = mat3::quat_from_mat(&r_delta);
-
-        msg.nodes.push(Node3D {
-            pose: WirePose {
-                ts: post_poses[i].time,
-                frame_id: frame_id.to_string(),
-                position: *pre_t,
-                orientation: [q_pre[1], q_pre[2], q_pre[3], q_pre[0]],
-            },
-            id: i as u64,
-            metadata_id: NODE_KEYFRAME_DELTA,
-        });
-        msg.transforms.push(DeltaTransform {
-            translation: t_delta,
-            rotation: [q_delta[1], q_delta[2], q_delta[3], q_delta[0]],
-        });
-    }
-    msg
-}
-
-/// The `from_pcl` wire layout (x/y/z/intensity float32, 16-byte points).
-/// The Rust core's PointCloud carries no intensity, so it's published as 0.
-fn build_pointcloud2(points: &[[f32; 3]], frame_id: &str, ts: f64) -> PointCloud2 {
-    let mut data = Vec::with_capacity(points.len() * 16);
-    for p in points {
-        data.extend_from_slice(&p[0].to_le_bytes());
-        data.extend_from_slice(&p[1].to_le_bytes());
-        data.extend_from_slice(&p[2].to_le_bytes());
-        data.extend_from_slice(&0.0f32.to_le_bytes());
-    }
-    let field = |name: &str, offset: i32| PointField {
-        name: name.into(),
-        offset,
-        datatype: PointField::FLOAT32 as u8,
-        count: 1,
-    };
-    let n = points.len() as i32;
-    PointCloud2 {
-        header: make_header(frame_id, ts),
-        height: 1,
-        width: n,
-        fields: vec![
-            field("x", 0),
-            field("y", 4),
-            field("z", 8),
-            field("intensity", 12),
-        ],
-        is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * n,
-        data,
-        is_dense: true,
-    }
-}
-
-#[derive(Debug)]
-struct ExtractError(String);
-impl std::fmt::Display for ExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Port of smartnav::parse_pointcloud2 (x/y/z float32 offsets; intensity is
-/// dropped — the PGO core never reads it).
-fn extract_xyz(msg: &PointCloud2) -> Result<PointCloud, ExtractError> {
-    let mut ox = None;
-    let mut oy = None;
-    let mut oz = None;
-    for f in &msg.fields {
-        match f.name.as_str() {
-            "x" => ox = Some(f.offset as usize),
-            "y" => oy = Some(f.offset as usize),
-            "z" => oz = Some(f.offset as usize),
-            _ => {}
-        }
-    }
-    let (ox, oy, oz) = match (ox, oy, oz) {
-        (Some(a), Some(b), Some(c)) => (a, b, c),
-        _ => return Err(ExtractError("missing x/y/z fields".into())),
-    };
-    let step = msg.point_step as usize;
-    if step == 0 {
-        return Err(ExtractError("zero point_step".into()));
-    }
-    let num_points = (msg.width as usize) * (msg.height as usize);
-    let data = &msg.data;
-    let mut out = Vec::with_capacity(num_points);
-    for i in 0..num_points {
-        let base = i * step;
-        if base + step > data.len() {
-            break;
-        }
-        let read = |off: usize| -> f32 {
-            let b = &data[base + off..base + off + 4];
-            f32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        };
-        out.push([read(ox), read(oy), read(oz)]);
-    }
-    Ok(out)
-}
-
-/// Tiny non-crypto RNG for the stable deformation-node ids (the C++ uses
-/// std::mt19937_64 seeded from random_device; the ids only need to be stable
-/// within a run and unlikely to collide, so no rand crate dependency).
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn from_entropy() -> Self {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E3779B97F4A7C15)
-            ^ (std::process::id() as u64) << 32;
-        SplitMix64(seed)
-    }
-
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-        z ^ (z >> 31)
-    }
-}
-
 #[tokio::main]
 async fn main() {
-    run_with_transport::<GscPgo>().await;
+    run_with_transport::<GscPgoModule>().await;
 }

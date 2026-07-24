@@ -19,7 +19,7 @@
 use dimos_gsc_pgo::gtsam::{symbol_key, FactorGraph, Isam2, NoiseModel, Pose3, Values};
 
 fn translation_x(pose: &Pose3) -> f64 {
-    pose.t[0]
+    pose.translation[0]
 }
 
 /// Prior + odometry chain 0-1-2-3 at x = 0,1,2,3, then a loop closure
@@ -207,8 +207,8 @@ fn symbol_keys_and_noise_models_round_trip() {
     let estimate = isam2.calculate_best_estimate().unwrap();
     let location = estimate.pose3(loc_key).unwrap();
     assert!(
-        (location.t[1] - 3.0).abs() < 1e-3,
+        (location.translation[1] - 3.0).abs() < 1e-3,
         "landmark sits where observed: {:?}",
-        location.t
+        location.translation
     );
 }

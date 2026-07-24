@@ -43,16 +43,16 @@ mod ffi {
         pub fn gtsam_shim_graph_add_prior_pose3(
             graph: *mut c_void,
             key: u64,
-            r: *const f64,
-            t: *const f64,
+            rotation: *const f64,
+            translation: *const f64,
             noise: *const c_void,
         ) -> i32;
         pub fn gtsam_shim_graph_add_between_pose3(
             graph: *mut c_void,
             key1: u64,
             key2: u64,
-            r: *const f64,
-            t: *const f64,
+            rotation: *const f64,
+            translation: *const f64,
             noise: *const c_void,
         ) -> i32;
 
@@ -62,14 +62,14 @@ mod ffi {
         pub fn gtsam_shim_values_insert_pose3(
             values: *mut c_void,
             key: u64,
-            r: *const f64,
-            t: *const f64,
+            rotation: *const f64,
+            translation: *const f64,
         ) -> i32;
         pub fn gtsam_shim_values_at_pose3(
             values: *const c_void,
             key: u64,
-            out_r: *mut f64,
-            out_t: *mut f64,
+            out_rotation: *mut f64,
+            out_translation: *mut f64,
         ) -> bool;
 
         pub fn gtsam_shim_isam2_create() -> *mut c_void;
@@ -116,36 +116,36 @@ fn check(code: i32, context: &'static str) -> Result<(), GtsamError> {
 /// the C++ core's `M3D`/`V3D` (Eigen) pairs carry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose3 {
-    pub r: [[f64; 3]; 3],
-    pub t: [f64; 3],
+    pub rotation: [[f64; 3]; 3],
+    pub translation: [f64; 3],
 }
 
 impl Pose3 {
     pub fn identity() -> Pose3 {
         Pose3 {
-            r: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            t: [0.0, 0.0, 0.0],
+            rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            translation: [0.0, 0.0, 0.0],
         }
     }
 
-    pub fn from_translation(t: [f64; 3]) -> Pose3 {
+    pub fn from_translation(translation: [f64; 3]) -> Pose3 {
         Pose3 {
-            t,
+            translation,
             ..Pose3::identity()
         }
     }
 
-    fn r_flat(&self) -> [f64; 9] {
+    fn rotation_flat(&self) -> [f64; 9] {
         [
-            self.r[0][0],
-            self.r[0][1],
-            self.r[0][2],
-            self.r[1][0],
-            self.r[1][1],
-            self.r[1][2],
-            self.r[2][0],
-            self.r[2][1],
-            self.r[2][2],
+            self.rotation[0][0],
+            self.rotation[0][1],
+            self.rotation[0][2],
+            self.rotation[1][0],
+            self.rotation[1][1],
+            self.rotation[1][2],
+            self.rotation[2][0],
+            self.rotation[2][1],
+            self.rotation[2][2],
         ]
     }
 }
@@ -231,13 +231,13 @@ impl FactorGraph {
         pose: &Pose3,
         noise: &NoiseModel,
     ) -> Result<(), GtsamError> {
-        let r = pose.r_flat();
+        let rotation = pose.rotation_flat();
         let code = unsafe {
             ffi::gtsam_shim_graph_add_prior_pose3(
                 self.handle,
                 key,
-                r.as_ptr(),
-                pose.t.as_ptr(),
+                rotation.as_ptr(),
+                pose.translation.as_ptr(),
                 noise.handle,
             )
         };
@@ -251,14 +251,14 @@ impl FactorGraph {
         pose: &Pose3,
         noise: &NoiseModel,
     ) -> Result<(), GtsamError> {
-        let r = pose.r_flat();
+        let rotation = pose.rotation_flat();
         let code = unsafe {
             ffi::gtsam_shim_graph_add_between_pose3(
                 self.handle,
                 key1,
                 key2,
-                r.as_ptr(),
-                pose.t.as_ptr(),
+                rotation.as_ptr(),
+                pose.translation.as_ptr(),
                 noise.handle,
             )
         };
@@ -296,26 +296,40 @@ impl Values {
     }
 
     pub fn insert_pose3(&mut self, key: u64, pose: &Pose3) -> Result<(), GtsamError> {
-        let r = pose.r_flat();
+        let rotation = pose.rotation_flat();
         let code = unsafe {
-            ffi::gtsam_shim_values_insert_pose3(self.handle, key, r.as_ptr(), pose.t.as_ptr())
+            ffi::gtsam_shim_values_insert_pose3(
+                self.handle,
+                key,
+                rotation.as_ptr(),
+                pose.translation.as_ptr(),
+            )
         };
         check(code, "insert_pose3")
     }
 
     /// `at<Pose3>(key)`; `None` when the key is absent.
     pub fn pose3(&self, key: u64) -> Option<Pose3> {
-        let mut r = [0.0f64; 9];
-        let mut t = [0.0f64; 3];
+        let mut rotation = [0.0f64; 9];
+        let mut translation = [0.0f64; 3];
         let found = unsafe {
-            ffi::gtsam_shim_values_at_pose3(self.handle, key, r.as_mut_ptr(), t.as_mut_ptr())
+            ffi::gtsam_shim_values_at_pose3(
+                self.handle,
+                key,
+                rotation.as_mut_ptr(),
+                translation.as_mut_ptr(),
+            )
         };
         if !found {
             return None;
         }
         Some(Pose3 {
-            r: [[r[0], r[1], r[2]], [r[3], r[4], r[5]], [r[6], r[7], r[8]]],
-            t,
+            rotation: [
+                [rotation[0], rotation[1], rotation[2]],
+                [rotation[3], rotation[4], rotation[5]],
+                [rotation[6], rotation[7], rotation[8]],
+            ],
+            translation,
         })
     }
 }

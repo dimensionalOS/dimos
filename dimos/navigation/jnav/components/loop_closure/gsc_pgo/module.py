@@ -57,8 +57,8 @@ class PGOConfig(NativeModuleConfig):
     body_frame: str = "base_link"
 
     # Keyframe detection
-    key_pose_delta_deg: float = 10.0
-    key_pose_delta_trans: float = 0.5
+    keyframe_min_rotation_degrees: float = 10.0
+    keyframe_min_distance_meters: float = 0.5
 
     # Loop closure
     loop_search_radius: float = 3.0
@@ -86,8 +86,8 @@ class PGOConfig(NativeModuleConfig):
     # 0 disables.
     loop_min_degeneracy: float = 0.05
 
-    # Input mode: transform world-frame scans to body-frame using odom
-    unregister_input: bool = True
+    # basically only needed because of the go2, and partly b/c we don't have rust tf.get yet
+    subtract_odom_from_cloud: bool = False
 
     # Debug global-map publishing — OFF by default. Emitted on the internal
     # `_global_map` port (leading underscore) so it never autoconnects to a
@@ -101,7 +101,9 @@ class PGOConfig(NativeModuleConfig):
     use_scan_context: bool = True
     scan_context_num_rings: int = 20
     scan_context_num_sectors: int = 60
-    scan_context_max_range_m: float = 80.0
+    # 0 = auto-scale the ring range from the first scan's extent (short-range
+    # lidars like the Go2 L1 need this; a fixed 80 m collapses them to one ring)
+    scan_context_max_range_m: float = 0.0
     scan_context_top_k: int = 10
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
@@ -169,9 +171,9 @@ class PGO(NativeModule):
 
     config: PGOConfig
 
-    # named "lidar" to match the LoopClosure spec; the binary pairs it with the
+    # named "cloud" to match the LoopClosure spec; the binary pairs it with the
     # latest odometry pose internally, so a raw sensor-frame scan is expected.
-    lidar: In[PointCloud2]
+    cloud: In[PointCloud2]
     odometry: In[Odometry]
     # Optional: decoupled LocationConstraint events from a perceiver. Only
     # consumed when config.use_location_constraints is set; each becomes its own
