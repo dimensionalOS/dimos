@@ -121,11 +121,11 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    world_backend: WorldBackend = "drake"
+    world_backend: WorldBackend = "roboplan"
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
     )
-    planner_name: PlannerName = "rrt_connect"
+    planner_name: PlannerName = "roboplan"
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None

@@ -33,7 +33,10 @@ from dimos.manipulation.planning.factory import (
     validate_backend_combination,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.kinematics.config import JacobianKinematicsConfig
+from dimos.manipulation.planning.kinematics.config import (
+    JacobianKinematicsConfig,
+    PinkKinematicsConfig,
+)
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -89,13 +92,19 @@ def test_factory_selects_expected_implementations() -> None:
     assert isinstance(create_kinematics(name="jacobian"), JacobianIK)
 
 
-def test_default_planner_path_does_not_import_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_explicit_legacy_planner_path_does_not_import_roboplan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     for module_name in list(sys.modules):
         if module_name == "roboplan" or module_name.startswith("roboplan."):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
 
     create_planner(name="rrt_connect")
-    validate_backend_combination()
+    validate_backend_combination(
+        world_backend="drake",
+        planner_name="rrt_connect",
+        kinematics_name="pink",
+    )
 
     assert "roboplan.core" not in sys.modules
     assert "roboplan.rrt" not in sys.modules
@@ -126,7 +135,7 @@ def test_create_planner_rejects_roboplan_without_roboplan_world(mocker: MockerFi
         create_planner(name="roboplan", world=mocker.MagicMock(), world_backend="drake")
 
 
-def test_create_planning_stack_wires_selected_components(
+def test_create_planning_stack_defaults_to_roboplan(
     mocker: MockerFixture, robot_config: RobotModelConfig
 ) -> None:
     world = mocker.MagicMock()
@@ -147,17 +156,12 @@ def test_create_planning_stack_wires_selected_components(
         return_value=planner,
     )
 
-    result = create_planning_stack(
-        robot_config,
-        world_backend="drake",
-        planner_name="rrt_connect",
-        kinematics_name="jacobian",
-    )
+    result = create_planning_stack(robot_config)
 
     assert result == (world, kinematics, planner, "robot-id")
-    mock_world.assert_called_once_with(backend="drake", visualization=None)
-    mock_kinematics.assert_called_once_with(config=JacobianKinematicsConfig())
-    mock_planner.assert_called_once_with(name="rrt_connect", world=world, world_backend="drake")
+    mock_world.assert_called_once_with(backend="roboplan", visualization=None)
+    mock_kinematics.assert_called_once_with(config=PinkKinematicsConfig())
+    mock_planner.assert_called_once_with(name="roboplan", world=world, world_backend="roboplan")
     world.add_robot.assert_called_once_with(robot_config)
     world.finalize.assert_called_once()
 
@@ -206,12 +210,12 @@ def test_start_uses_configured_planner_and_kinematics(
     module._initialize_planning()
 
     create_world_mock.assert_called_once_with(
-        backend="drake", visualization=module.config.visualization
+        backend="roboplan", visualization=module.config.visualization
     )
     create_planning_specs_mock.assert_called_once_with(
         world=world,
-        world_backend="drake",
-        planner_name="rrt_connect",
+        world_backend="roboplan",
+        planner_name="roboplan",
         kinematics_name=None,
         kinematics=module.config.kinematics,
     )
