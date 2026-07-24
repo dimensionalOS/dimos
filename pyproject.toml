@@ -119,10 +119,10 @@ dependencies = [
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
-    # Contrib variant (superset of opencv-python) because cv2.legacy CSRT
-    # trackers (perception/drone) are contrib-only. <5 defers the OpenCV 5
-    # major bump. See also the opencv-python entry in override-dependencies.
-    "opencv-contrib-python>=4.8,<5",
+    # Contrib variant (superset of opencv-python) because the CSRT tracker
+    # (perception/drone) lives in the contrib tracking module.
+    # See also the opencv-python entry in override-dependencies.
+    "opencv-contrib-python>=4.8,<6",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI

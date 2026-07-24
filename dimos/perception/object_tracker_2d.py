@@ -63,12 +63,12 @@ class ObjectTracker2D(Module):
         super().__init__(**kwargs)
 
         # Tracker state
-        self.tracker = None
-        self.tracking_bbox = None  # Stores (x, y, w, h)
+        self.tracker: cv2.Tracker | None = None
+        self.tracking_bbox: tuple[int, int, int, int] | None = None  # Stores (x, y, w, h)
         self.tracking_initialized = False
 
         # Stuck detection
-        self._last_bbox = None
+        self._last_bbox: tuple[int, int, int, int] | None = None
         self._stuck_count = 0
         self._max_stuck_frames = 10  # Higher threshold for stationary objects
 
@@ -131,21 +131,21 @@ class ObjectTracker2D(Module):
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
             return {"status": "invalid_bbox"}
 
-        self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]
-        self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
+        self.tracking_bbox = (x1, y1, w, h)
+        self.tracker = cv2.TrackerCSRT.create()  # type: ignore[attr-defined]
         self.tracking_initialized = False
         logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
         # Convert RGB to BGR for CSRT (OpenCV expects BGR)
         frame_bgr = cv2.cvtColor(self._latest_rgb_frame, cv2.COLOR_RGB2BGR)
-        init_success = self.tracker.init(frame_bgr, self.tracking_bbox)  # type: ignore[attr-defined]
-        if init_success:
-            self.tracking_initialized = True
-            logger.info("Tracker initialized successfully.")
-        else:
+        try:
+            self.tracker.init(frame_bgr, self.tracking_bbox)
+        except cv2.error:
             logger.error("Tracker initialization failed.")
             self.stop_track()
             return {"status": "init_failed"}
+        self.tracking_initialized = True
+        logger.info("Tracker initialized successfully.")
 
         # Start tracking thread
         self._start_tracking_thread()

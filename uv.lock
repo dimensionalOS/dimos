@@ -2095,7 +2095,7 @@ requires-dist = [
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
-    { name = "opencv-contrib-python", specifier = ">=4.8,<5" },
+    { name = "opencv-contrib-python", specifier = ">=4.8,<6" },
     { name = "packaging", specifier = ">=24.0" },
     { name = "pandas", marker = "extra == 'learning'" },
     { name = "pillow", marker = "extra == 'perception'" },
