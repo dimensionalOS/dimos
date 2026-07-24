@@ -143,7 +143,7 @@ def relocalize(
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
     """
     candidates = generate_ransac_candidates(global_map, local_map)
-    T, fitness, _winning_index = refine_candidates(
+    T, fitness = refine_candidates(
         global_map,
         local_map,
         candidates,
@@ -189,8 +189,8 @@ def refine_candidates(
     local_map: o3d.geometry.PointCloud,
     candidates: list[np.ndarray],
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
-) -> tuple[np.ndarray, float, int]:
-    """Judge a pool of candidate local_map->global_map transforms and refine the winner (gravity-filter, WALL-only rerank, wall ICP polish, final full-cloud ICP); returns ``(T, fitness, winning_index)`` so pooled-prior callers can attribute the win."""
+) -> tuple[np.ndarray, float]:
+    """Judge a pool of candidate local_map->global_map transforms and refine the winner (gravity-filter, WALL-only rerank, wall ICP polish, final full-cloud ICP)."""
     # Fine downsample once — used for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
     src_fine.estimate_normals(
@@ -199,11 +199,10 @@ def refine_candidates(
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
     # Gravity filter. An all-tilted pool is REFUSED, not resurrected -- a tilted winner is a rotationally-symmetric-floor mis-solve, not a valid pose.
-    indexed = list(enumerate(candidates))
-    upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= gravity_tilt_max_deg]
+    upright = [T for T in candidates if _gravity_tilt_deg(T) <= gravity_tilt_max_deg]
     if not upright:
         raise NoUprightCandidateError(
-            f"no candidate within the gravity gate: {len(indexed)} candidate(s), "
+            f"no candidate within the gravity gate: {len(candidates)} candidate(s), "
             f"none within {gravity_tilt_max_deg} deg -- refusing"
         )
     pool = upright
@@ -237,14 +236,14 @@ def refine_candidates(
         r = _reg.evaluate_registration(src_walls, tgt_walls, RERANK_DIST, T)
         return float(r.fitness)
 
-    top_k = sorted(pool, key=lambda item: fine_fitness(item[1]), reverse=True)[:10]
+    top_k = sorted(pool, key=fine_fitness, reverse=True)[:10]
 
     # Stage 2: run a moderate-distance ICP on each top-10 on WALL clouds.
     # Wall correspondences drive yaw and xy; the rerank then picks the
     # candidate whose walls actually align (not the one whose floors agree).
     tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
-    polished: list[tuple[int, float, np.ndarray]] = []
-    for i, T0 in top_k:
+    polished: list[tuple[float, np.ndarray]] = []
+    for T0 in top_k:
         r = _reg.registration_icp(
             src_walls,
             tgt_walls,
@@ -253,8 +252,8 @@ def refine_candidates(
             tukey,
             _reg.ICPConvergenceCriteria(max_iteration=70),
         )
-        polished.append((i, float(r.fitness), np.asarray(r.transformation)))
-    winning_index, best_fit, best_T = max(polished, key=lambda item: item[1])
+        polished.append((float(r.fitness), np.asarray(r.transformation)))
+    best_fit, best_T = max(polished, key=lambda fT: fT[0])
 
     # Stage 3: final ICP on full clouds, incl. floor/ceiling
     final = _reg.registration_icp(
@@ -265,4 +264,4 @@ def refine_candidates(
         tukey,
         _reg.ICPConvergenceCriteria(max_iteration=50),
     )
-    return np.asarray(final.transformation), best_fit, winning_index
+    return np.asarray(final.transformation), best_fit

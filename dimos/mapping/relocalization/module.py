@@ -27,7 +27,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.eval import SourceTally, format_eval_summary
 from dimos.mapping.relocalization.priors import (
-    EmptyProposalError,
     FiducialPrior,
     FiducialPriorConfig,
     PriorConfig,
@@ -35,7 +34,7 @@ from dimos.mapping.relocalization.priors import (
     RansacPriorConfig,
     RelocPrior,
     load_marker_map,
-    relocalize_with_priors,
+    relocalize_with_prior,
 )
 from dimos.mapping.relocalization.relocalize import (
     InsufficientWallEvidenceError,
@@ -66,7 +65,7 @@ MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
 SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
 # Jump guard, TRACKING only: largest per-second step from the previous accepted fix. T is world->map, so between accepts it moves only by the drift the fix corrects; this refuses the mirror-flipped fix that lands a room over. Floored at one second's worth below so back-to-back priors keep a real budget.
 MAX_JUMP_M_PER_S = 5.0  # m/s; 10 m at the 2 s RANSAC interval
-MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s; 90 deg at the 2 s RANSAC interval
+MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s; a half turn needs 2 s between accepted fixes
 
 
 class Config(ModuleConfig):
@@ -105,7 +104,7 @@ class RelocalizationModule(Module):
             RansacPriorConfig(),
         )
         self._ransac_prior = RansacPrior()
-        # Per-source accept gate {Candidate.source: min wall fitness}. Each fire pools one source, so gating the winner by its own source's bar IS per-source. Key = the entry's `type` discriminator, which equals the source its prior proposes.
+        # Per-source accept gate {prior name: min wall fitness}. Key = the entry's `type` discriminator, which equals the ``name`` of the prior it builds.
         self._accept_threshold: dict[str, float] = {
             p.type: p.fitness_threshold for p in self.config.priors
         }
@@ -266,7 +265,7 @@ class RelocalizationModule(Module):
 
     def _fire(self, prior: RelocPrior, local_map: PointCloud2) -> None:
         """Run this prior's ONE relocalization and publish the resulting TF."""
-        self._publish_tf(self._try_relocalize(local_map, [prior]))
+        self._publish_tf(self._try_relocalize(local_map, prior))
 
     @staticmethod
     def _marker_id_from_detection(detection: Detection3D) -> int | None:
@@ -283,7 +282,7 @@ class RelocalizationModule(Module):
         return None
 
     def _enabled_prior_objects(self) -> list[RelocPrior]:
-        """The candidate PROPOSERS for enabled entries, in list order (the judge's tie-break)."""
+        """The candidate PROPOSERS for enabled entries."""
         objects: list[RelocPrior] = []
         for prior_config in self.config.priors:
             if not prior_config.enabled:
@@ -317,32 +316,29 @@ class RelocalizationModule(Module):
             # Cold start: a burst arrived before any cloud was cached; fire it on the first cloud.
             self._fire(self._fiducial_prior, msg)
 
-    def _try_relocalize(self, msg: PointCloud2, priors: list[RelocPrior]) -> Transform | None:
+    def _try_relocalize(self, msg: PointCloud2, prior: RelocPrior) -> Transform | None:
         assert self._premap is not None
-        if not priors:
-            return None  # every prior disabled (or fiducial-only with no marker map yet)
         t0 = time.monotonic()
-        winning_source: str | None = None
         # Plain relocalize() is reserved for the lidar-only MODULE, where the SOLVE is the pre-prior path bit-for-bit and the accept line carries no source=. Once a tag prior is configured every fire goes through the judge instead, so both sources are counted.
-        solo_prior_module = len(self._enabled_prior_objects()) == 1
+        solo_ransac = len(self._enabled_prior_objects()) == 1 and isinstance(prior, RansacPrior)
         try:
-            if solo_prior_module and len(priors) == 1 and isinstance(priors[0], RansacPrior):
+            if solo_ransac:
                 T, fitness = _relocalize(
                     self._premap.pointcloud,
                     msg.pointcloud,
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
                 )
             else:
-                T, fitness, winning_source = relocalize_with_priors(
+                result = relocalize_with_prior(
                     self._premap.pointcloud,
                     msg.pointcloud,
-                    priors,
+                    prior,
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
                 )
-        except EmptyProposalError:
-            # Double-fire race: the other thread drained the pending tag fix first, so this cycle judges an empty pool. The winner already published it -- benign no-op.
-            logger.debug("relocalize: no candidates this cycle")
-            return None
+                if result is None:
+                    # Double-fire race: the other thread's propose() drained the pending tag fix first and already published it -- benign no-op.
+                    return None
+                T, fitness = result
         except InsufficientWallEvidenceError as e:
             # Too few wall points to judge the pool (a sparse acquisition cloud a tag burst is allowed to fire on): drop the unjudged fix -- a pose scored against <100 walls isn't trustworthy, and the tag is re-seen as the robot moves into structure.
             self._maybe_log_wall_skip(len(msg), str(e))
@@ -360,10 +356,10 @@ class RelocalizationModule(Module):
         dt = time.monotonic() - t0
         n_pts = len(msg)
         # source= emission: ACCEPT names the prior that WON (omitted on the single-source path, which the parsers read as ransac); REJECT names the prior whose BAR refused the fix, so --eval can bucket rejects by source instead of "unknown".
-        source_kw: dict[str, str] = {} if winning_source is None else {"source": winning_source}
+        source_kw: dict[str, str] = {} if solo_ransac else {"source": prior.name}
 
-        # The winner is gated on ITS OWN source's bar. winning_source is None only on the plain (ransac-only) path -> resolve to the ransac entry.
-        gate_source = winning_source if winning_source is not None else RansacPrior.name
+        # The fix is gated on ITS OWN prior's bar.
+        gate_source = prior.name
         threshold = self._accept_threshold[gate_source]
         if fitness < threshold:
             if self.config.verbose_eval_logging:

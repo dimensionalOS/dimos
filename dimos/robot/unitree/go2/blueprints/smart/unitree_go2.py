@@ -97,16 +97,13 @@ unitree_go2_markers = (
 
 # Both priors declared: RANSAC on its timer, fiducial on the tag-burst edge, one judge.
 # Toggle a prior with -o, or run lidar-only with --disable MarkerDetectionStreamModule.
-_fiducial = FiducialPriorConfig(marker_length_m=0.10)
 unitree_go2_relocalization = autoconnect(
     unitree_go2,
     MarkerDetectionStreamModule.blueprint(
-        marker_length_m=_fiducial.marker_length_m,
+        marker_length_m=0.10,
         camera_info=GO2Connection.camera_info_static,
-        aruco_dictionary=_fiducial.aruco_dictionary,
-        aggregation=_fiducial.aggregation,
     ),
-    RelocalizationModule.blueprint(priors=[RansacPriorConfig(interval_s=2.0), _fiducial]),
+    RelocalizationModule.blueprint(priors=[RansacPriorConfig(), FiducialPriorConfig()]),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
 unitree_go2_memory = autoconnect(

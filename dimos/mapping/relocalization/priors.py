@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import threading
@@ -36,12 +35,8 @@ from dimos.mapping.relocalization.relocalize import (
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, Pose7
+from dimos.perception.fiducial.apriltag_aggregation import Pose7
 from dimos.protocol.service.spec import BaseConfig
-
-# s between RANSAC fires; one FPFH+RANSAC search costs seconds of CPU (4.4-23 s on the trial's go2/Orin recordings), so the sweep is paced, not per-frame.
-DEFAULT_RANSAC_INTERVAL_S = 2.0
-
 
 # One pydantic config per prior, keyed by a Literal ``type`` into a discriminated union. Pattern from dimos/manipulation/planning/kinematics/config.py:26-57.
 
@@ -58,8 +53,8 @@ class RansacPriorConfig(PriorConfigBase):
     """Multi-scale FPFH+RANSAC global search (``RansacPrior``); search knobs live in relocalize.py, this entry owns the accept bar, cadence and geometry floor."""
 
     type: Literal["ransac"] = "ransac"
-    # s between RANSAC fires; a global search waits on no event, so it paces itself.
-    interval_s: float = Field(default=DEFAULT_RANSAC_INTERVAL_S, gt=0.0)
+    # s between RANSAC fires; one FPFH+RANSAC search costs 4.4-23 s of CPU on the trial's go2/Orin recordings, so the sweep is paced, not per-frame.
+    interval_s: float = Field(default=2.0, gt=0.0)
     # Min local-map points (post VoxelGridMapper) before this search fires; below this FPFH matching + the wall-only rerank have too little geometry, so the frame is skipped.
     min_local_points: int = Field(default=50_000, ge=0)
 
@@ -70,10 +65,6 @@ class FiducialPriorConfig(PriorConfigBase):
     type: Literal["fiducial"] = "fiducial"
     # Surveyed marker map (map_T_marker per id), a .json path resolved via resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
-    # Tag geometry/family/aggregation knobs the DETECTOR needs; none is read here.
-    marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
-    aruco_dictionary: str = "DICT_APRILTAG_36h11"
-    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
 # Discriminated on ``type`` (kinematics/config.py:54 is the exemplar).
@@ -81,14 +72,6 @@ PriorConfig = Annotated[
     RansacPriorConfig | FiducialPriorConfig,
     Field(discriminator="type"),
 ]
-
-
-@dataclass
-class Candidate:
-    """One proposed transform, pre-judging. ``T`` is the 4x4 mapping ``local_map`` into ``global_map``'s frame; no self-reported confidence (the judge ranks it)."""
-
-    T: np.ndarray
-    source: str
 
 
 class RelocPrior(Protocol):
@@ -100,7 +83,7 @@ class RelocPrior(Protocol):
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
-    ) -> list[Candidate]: ...
+    ) -> list[np.ndarray]: ...
 
 
 class RansacPrior:
@@ -112,9 +95,8 @@ class RansacPrior:
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
-    ) -> list[Candidate]:
-        transforms = generate_ransac_candidates(global_map, local_map)
-        return [Candidate(T=T, source=self.name) for T in transforms]
+    ) -> list[np.ndarray]:
+        return generate_ransac_candidates(global_map, local_map)
 
 
 MAP_FRAME = "map"
@@ -206,38 +188,26 @@ class FiducialPrior:
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
-    ) -> list[Candidate]:
+    ) -> list[np.ndarray]:
         # Consume on use (re-offering a drained fix scores worse, world has drifted); swap under the lock or observe()'s read-modify-write tears here into a "dict changed size during iteration" dropped cycle.
         with self._pending_lock:
             pending, self._pending = self._pending, {}
-        return [Candidate(T=fix_T, source=self.name) for fix_T in pending.values()]
+        return list(pending.values())
 
 
-class EmptyProposalError(ValueError):
-    """No prior proposed any candidate this fire; a benign race artifact (the loser of two threads drains an empty _pending), treated as a no-op, not a crash."""
-
-
-def relocalize_with_priors(
+def relocalize_with_prior(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
-    priors: list[RelocPrior],
+    prior: RelocPrior,
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
-) -> tuple[np.ndarray, float, str]:
-    """Gather candidates from the priors this fire runs, judge them through the shared fine-ICP tail, report the winning source; returns ``(T, fitness, winning_source)``, raises ``EmptyProposalError`` if every prior proposed zero candidates (a benign race)."""
-    all_transforms: list[np.ndarray] = []
-    sources: list[str] = []
-    for prior in priors:
-        for candidate in prior.propose(global_map, local_map):
-            all_transforms.append(candidate.T)
-            sources.append(candidate.source)
-
-    if not all_transforms:
-        raise EmptyProposalError("relocalize_with_priors: no prior proposed any candidate")
-
-    T, fitness, winning_index = refine_candidates(
+) -> tuple[np.ndarray, float] | None:
+    """Judge this prior's candidates through the shared fine-ICP tail; ``None`` when it proposed none."""
+    transforms = prior.propose(global_map, local_map)
+    if not transforms:
+        return None
+    return refine_candidates(
         global_map,
         local_map,
-        all_transforms,
+        transforms,
         gravity_tilt_max_deg=gravity_tilt_max_deg,
     )
-    return T, fitness, sources[winning_index]
