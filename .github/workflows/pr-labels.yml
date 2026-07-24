@@ -142,12 +142,8 @@ jobs:
               'FIRST_TIME_CONTRIBUTOR',
             ]);
             const { owner, repo } = context.repo;
-            const prNumber = context.payload.pull_request.number;
-
-            // Refetch so a delayed or replayed event uses the current PR data.
-            const { data: pr } = await github.rest.pulls.get({
-              owner, repo, pull_number: prNumber,
-            });
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
             core.info(`pr=#${prNumber} authorAssociation=${pr.author_association}`);
 
             if (!firstTimeAssociations.has(pr.author_association)) {
