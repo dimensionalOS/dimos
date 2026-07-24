@@ -363,9 +363,6 @@ class TagRequest:
     legs_mm: float = 0.0
     leg_thickness_mm: float = 6.0
     leg_brace: bool = True
-    base_color: str = "#F5F5F5"
-    marker_color: str = "#141414"
-    text_color: str = ""
 
     def __post_init__(self) -> None:
         """Reject bad input up front, so describing a request can't trip over it."""
@@ -377,9 +374,6 @@ class TagRequest:
             raise ValueError(
                 f"unsupported page_size: {self.page_size}; choose from {sorted(_PAGE_SIZES)}"
             )
-        if self.three_d:
-            for color in (self.base_color, self.marker_color, self.text_color or "#000000"):
-                display_color(color)
 
     @property
     def mounted(self) -> bool:
@@ -449,15 +443,6 @@ class TagRequest:
                 if self.back_text
                 else "none",
             ),
-            (
-                "colors",
-                f"base {self.base_color}, marker {self.marker_color}"
-                + (
-                    f", text {self.text_color or self.marker_color}"
-                    if self.back_text and self.text_inlay
-                    else ""
-                ),
-            ),
         ]
 
     def render(self) -> list[Path]:
@@ -493,9 +478,6 @@ class TagRequest:
                 legs_mm=self.legs_mm,
                 leg_thickness_mm=self.leg_thickness_mm,
                 leg_brace=self.leg_brace,
-                base_color=self.base_color,
-                marker_color=self.marker_color,
-                text_color=self.text_color or None,
             )
         return written
 

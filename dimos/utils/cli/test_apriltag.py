@@ -183,8 +183,6 @@ def test_render_and_summary_cover_the_whole_3d_file_set(tmp_path: Path) -> None:
         ({"ids": []}, "no IDs"),
         ({"family": "bogus"}, "unsupported family"),
         ({"page_size": "a99"}, "unsupported page_size"),
-        ({"three_d": True, "marker_color": "red"}, "color must be"),
-        ({"three_d": True, "base_color": "#GGGGGG"}, "color must be"),
     ],
 )
 def test_bad_input_is_rejected_before_anything_is_described(

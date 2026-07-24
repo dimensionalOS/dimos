@@ -991,15 +991,6 @@ def apriltag(
     leg_brace: bool = typer.Option(
         True, "--leg-brace/--no-leg-brace", help="[3d] Gusset up the back of the leg column"
     ),
-    base_color: str = typer.Option(
-        "#F5F5F5", "--base-color", help="[3d] Base (light) color in the 3MF, #RRGGBB"
-    ),
-    marker_color: str = typer.Option(
-        "#141414", "--marker-color", help="[3d] Marker (dark) color in the 3MF, #RRGGBB"
-    ),
-    text_color: str = typer.Option(
-        "", "--text-color", help="[3d] Back-text color in the 3MF, #RRGGBB (default: marker color)"
-    ),
 ) -> None:
     """Generate a printable AprilTag/ArUco PDF, optionally with 3D-printable STLs."""
     from dimos.utils.cli.apriltag import TagRequest, parse_id_spec
@@ -1024,9 +1015,6 @@ def apriltag(
             legs_mm=legs,
             leg_thickness_mm=leg_thickness_mm,
             leg_brace=leg_brace,
-            base_color=base_color,
-            marker_color=marker_color,
-            text_color=text_color,
         )
         typer.echo("apriltag")
         for key, value in request.describe():

@@ -48,7 +48,7 @@ def tag() -> TagParts:
 @pytest.fixture(scope="module")
 def written(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
     out = tmp_path_factory.mktemp("tags")
-    return generate_3d([0], out, size_mm=SIZE_MM, legs_mm=250.0, marker_color="#101010")
+    return generate_3d([0], out, size_mm=SIZE_MM, legs_mm=250.0)
 
 
 def test_grid_rects_stacks_runs_that_repeat_down_rows() -> None:
@@ -164,7 +164,10 @@ def test_3mf_carries_every_part_with_its_own_color(written: list[Path]) -> None:
     archive_path = next(p for p in written if p.suffix == ".3mf")
     with zipfile.ZipFile(archive_path) as archive:
         model = archive.read("3D/3dmodel.model").decode()
-    assert '<base name="marker" displaycolor="#101010FF"/>' in model
+    # The plate is the light filament and the tag cells the dark one; a slicer that
+    # swaps them prints a photographic negative no detector will decode.
+    assert '<base name="base" displaycolor="#F5F5F5FF"/>' in model
+    assert '<base name="marker" displaycolor="#141414FF"/>' in model
     assert model.count("<object ") == 3
     assert model.count("<item ") == 3
 

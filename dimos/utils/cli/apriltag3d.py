@@ -49,6 +49,11 @@ _CORNER_R_MM = 4.0
 # Facets per mounting-hole cylinder.
 _HOLE_SEGMENTS = 48
 
+# 3MF part colors. Only there so the slicer shows the two solids apart and picks sane
+# filaments; what matters is which is light and which is dark, not the exact shade.
+_BASE_COLOR = "#F5F5F5"
+_MARKER_COLOR = "#141414"
+
 # Diagonally adjacent cells would otherwise meet at a single point, which is non-manifold
 # and makes slicers report a broken mesh. Growing every cell by this much turns each such
 # contact into a real overlap. It has to stay well clear of the float32 an STL stores —
@@ -690,9 +695,6 @@ def generate_3d(
     legs_mm: float = 0.0,
     leg_thickness_mm: float = 6.0,
     leg_brace: bool = True,
-    base_color: str = "#F5F5F5",
-    marker_color: str = "#141414",
-    text_color: str | None = None,
 ) -> list[Path]:
     """Write an STL per solid plus one colored 3MF per tag into `out_dir`."""
     if not ids:
@@ -717,9 +719,9 @@ def generate_3d(
             text_inlay=text_inlay,
         )
         stem = f"{family.lower()}_{tag_id:03d}"
-        parts = [("base", tag.base, base_color), ("marker", tag.marker, marker_color)]
+        parts = [("base", tag.base, _BASE_COLOR), ("marker", tag.marker, _MARKER_COLOR)]
         if tag.text is not None:
-            parts.append(("text", tag.text, text_color or marker_color))
+            parts.append(("text", tag.text, _MARKER_COLOR))
         for name, mesh, _color in parts:
             path = out_dir / f"{stem}_{name}.stl"
             mesh.export(path)
