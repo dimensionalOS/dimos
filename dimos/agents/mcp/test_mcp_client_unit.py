@@ -13,24 +13,22 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Iterator
-import json
+from collections.abc import Callable
 from queue import Empty
 from threading import RLock
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_openai import ChatOpenAI
 import pytest
+import requests
 
 from dimos.agents.mcp.mcp_client import McpClient
 
 
-def _mock_post(url: str, **kwargs: object) -> MagicMock:
-    """Return a fake httpx response based on the JSON-RPC method."""
-    body = kwargs.get("json") or (kwargs.get("content") and json.loads(kwargs["content"]))
-    assert isinstance(body, dict)
+def _mock_payload(body: dict[str, object]) -> dict[str, object]:
+    """Return the JSON-RPC response dict for a request body, keyed by method."""
     method = body["method"]
     req_id = body["id"]
 
@@ -79,32 +77,33 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
             text = "Skill not found"
         result = {"content": [{"type": "text", "text": text}]}
     else:
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+        return {
             "jsonrpc": "2.0",
             "id": req_id,
             "error": {"code": -32601, "message": f"Unknown: {method}"},
         }
+
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) -> MagicMock:
+    """Return an autospec'd requests.Session whose .post() replies via payload_fn."""
+
+    def _post(url: str, *, json: dict[str, object], timeout: float | None = None) -> MagicMock:
+        resp = create_autospec(requests.Response, instance=True, spec_set=True)
+        resp.json.return_value = payload_fn(json)
         return resp
 
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"jsonrpc": "2.0", "id": req_id, "result": result}
-    return resp
+    session = create_autospec(requests.Session, instance=True, spec_set=True)
+    session.post.side_effect = _post
+    return session
 
 
 @pytest.fixture
-def mcp_client() -> Iterator[McpClient]:
-    """Build an McpClient wired to the mock MCP post handler."""
-    mock_http = MagicMock()
-    mock_http.post.side_effect = _mock_post
-
-    with patch("dimos.agents.mcp.mcp_client.httpx.Client", return_value=mock_http):
-        client = McpClient(mcp_server_url="http://localhost:9990/mcp")
-
+def mcp_client() -> McpClient:
+    """Build an McpClient wired to a mock requests session."""
+    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+    client._http_client = _mock_session(_mock_payload)
     try:
         yield client
     finally:
@@ -129,18 +128,14 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
-    def error_post(url: str, **kwargs: object) -> MagicMock:
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+    def error_payload(body: dict[str, object]) -> dict[str, object]:
+        return {
             "jsonrpc": "2.0",
             "id": 1,
             "error": {"code": -32601, "message": "Unknown: bad/method"},
         }
-        return resp
 
-    mcp_client._http_client.post.side_effect = error_post
+    mcp_client._http_client = _mock_session(error_payload)
 
     try:
         mcp_client._mcp_request("bad/method")

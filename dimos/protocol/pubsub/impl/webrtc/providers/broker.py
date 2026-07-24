@@ -55,8 +55,8 @@ logger = setup_logger()
 DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
 
 if TYPE_CHECKING:
+    import aiohttp
     from aiortc import RTCDataChannel, RTCIceServer, RTCPeerConnection
-    import httpx
 
     from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
 
@@ -115,7 +115,7 @@ class BrokerProvider(AsyncProviderBase):
 
     def __init__(self, config: BrokerConfig | None = None) -> None:
         if not WEBRTC_AVAILABLE:
-            raise RuntimeError("aiortc and httpx required: pip install dimos[webrtc]")
+            raise RuntimeError("aiortc and aiohttp required: pip install dimos[webrtc]")
         super().__init__()
         config = config or BrokerConfig()
         if not config.api_key:
@@ -131,7 +131,7 @@ class BrokerProvider(AsyncProviderBase):
         self._robot_name = config.robot_name
         self._config = config
 
-        self._http: httpx.AsyncClient | None = None
+        self._http: aiohttp.ClientSession | None = None
         self._pc: RTCPeerConnection | None = None
         self.session_id: str | None = None
         self._hb_task: asyncio.Task[None] | None = None
@@ -164,20 +164,21 @@ class BrokerProvider(AsyncProviderBase):
         assert self._http is not None
         stun_only = [RTCIceServer(urls=[self._config.stun_url])]
         try:
-            r = await self._http.get(
+            async with self._http.get(
                 f"{self._broker_url}/api/v1/sessions/turn-credentials",
                 headers=self._headers,
-            )
-            if r.status_code != 200:
-                logger.warning("TURN credential fetch failed (%d); STUN only", r.status_code)
-                return stun_only
+            ) as r:
+                if r.status != 200:
+                    logger.warning("TURN credential fetch failed (%d); STUN only", r.status)
+                    return stun_only
+                data = await r.json(content_type=None)
             servers = [
                 RTCIceServer(
                     urls=s["urls"],
                     username=s.get("username"),
                     credential=s.get("credential"),
                 )
-                for s in r.json().get("ice_servers", [])
+                for s in data.get("ice_servers", [])
                 if s.get("urls")
             ]
             return servers or stun_only
@@ -186,17 +187,17 @@ class BrokerProvider(AsyncProviderBase):
             return stun_only
 
     async def _connect(self) -> None:
+        import aiohttp
         from aiortc import (
             RTCBundlePolicy,
             RTCConfiguration,
             RTCPeerConnection,
             RTCSessionDescription,
         )
-        import httpx
 
         # Roll back partial state on failure so a retry doesn't leak.
         try:
-            self._http = httpx.AsyncClient(timeout=30.0)
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
             # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds —
             # see dimos/teleop/quest_hosted/README.md before changing.
             self._pc = RTCPeerConnection(
@@ -234,7 +235,7 @@ class BrokerProvider(AsyncProviderBase):
 
                 await asyncio.wait_for(ev.wait(), 10.0)
 
-            r = await self._http.post(
+            async with self._http.post(
                 f"{self._broker_url}/api/v1/sessions",
                 headers=self._headers,
                 json={
@@ -245,11 +246,13 @@ class BrokerProvider(AsyncProviderBase):
                     **({"robot_type": self._config.robot_type} if self._config.robot_type else {}),
                     "sdp_offer": self._pc.localDescription.sdp,
                 },
-            )
-            if r.status_code not in (200, 201):
-                # 200-char cap — SDP carries short-lived ICE ufrag/pwd.
-                raise RuntimeError(f"Broker session create failed: {r.status_code} {r.text[:200]}")
-            data = r.json()
+            ) as r:
+                if r.status not in (200, 201):
+                    # 200-char cap — SDP carries short-lived ICE ufrag/pwd.
+                    raise RuntimeError(
+                        f"Broker session create failed: {r.status} {(await r.text())[:200]}"
+                    )
+                data = await r.json(content_type=None)
             self.session_id = data["session_id"]
             await self._pc.setRemoteDescription(
                 RTCSessionDescription(
@@ -341,15 +344,18 @@ class BrokerProvider(AsyncProviderBase):
                 await self._audio_task
             self._audio_task = None
         if self._http and self.session_id:
-            import httpx
+            import aiohttp
 
             # Best-effort deregistration: swallow network errors only — a
             # non-network exception here is a bug we want to hear about.
-            with contextlib.suppress(httpx.HTTPError):
-                await self._http.delete(
+            # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) on
+            # the session's total timeout, so suppress that explicitly too.
+            with contextlib.suppress(aiohttp.ClientError, asyncio.TimeoutError):
+                async with self._http.delete(
                     f"{self._broker_url}/api/v1/sessions/{self.session_id}",
                     headers=self._headers,
-                )
+                ) as r:
+                    await r.read()
         for name in list(self._dcs):
             self._close_channel(name)
         # Forget the broker's channel ids: after a reconnect the heartbeat
@@ -361,7 +367,7 @@ class BrokerProvider(AsyncProviderBase):
             self._pc = None
         self._video_track = None
         if self._http:
-            await self._http.aclose()
+            await self._http.close()
             self._http = None
         self.session_id = None
 
@@ -408,15 +414,15 @@ class BrokerProvider(AsyncProviderBase):
         """Return the HTTP status code (or None if skipped)."""
         if self._http is None or self.session_id is None:
             return None
-        r = await self._http.post(
+        async with self._http.post(
             f"{self._broker_url}/api/v1/sessions/{self.session_id}/heartbeat",
             headers=self._headers,
             json={},
-        )
-        if r.status_code != 200:
-            logger.debug("Heartbeat non-200: %d %s", r.status_code, r.text[:200])
-            return r.status_code
-        ack = r.json()
+        ) as r:
+            if r.status != 200:
+                logger.debug("Heartbeat non-200: %d %s", r.status, (await r.text())[:200])
+                return r.status
+            ack = await r.json(content_type=None)
         # state_reliable_back first so the state_reliable ping handler can
         # find it in _dcs if a ping arrives during channel bring-up.
         self._reconcile_channels(
@@ -467,15 +473,17 @@ class BrokerProvider(AsyncProviderBase):
             await self._pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type="offer"))
             answer = await self._pc.createAnswer()
             await self._pc.setLocalDescription(answer)
-            r = await self._http.post(
+            async with self._http.post(
                 f"{self._broker_url}/api/v1/sessions/{self.session_id}/renegotiate-robot",
                 headers=self._headers,
                 json={"sdp_answer": self._pc.localDescription.sdp},
-            )
-            if r.status_code not in (200, 201):
-                logger.warning("renegotiate-robot failed: %d %s", r.status_code, r.text[:200])
-            else:
-                logger.info("Robot renegotiation complete (operator audio bridged)")
+            ) as r:
+                if r.status not in (200, 201):
+                    logger.warning(
+                        "renegotiate-robot failed: %d %s", r.status, (await r.text())[:200]
+                    )
+                else:
+                    logger.info("Robot renegotiation complete (operator audio bridged)")
         except Exception:
             logger.exception("Robot renegotiation failed — continuing without audio")
 

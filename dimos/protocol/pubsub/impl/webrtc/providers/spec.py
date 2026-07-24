@@ -38,7 +38,8 @@ logger = setup_logger()
 # find_spec instead of importing: aiortc takes ~150ms and core.transport pulls
 # this module in everywhere. Providers import aiortc lazily on start().
 WEBRTC_AVAILABLE = (
-    importlib.util.find_spec("aiortc") is not None and importlib.util.find_spec("httpx") is not None
+    importlib.util.find_spec("aiortc") is not None
+    and importlib.util.find_spec("aiohttp") is not None
 )
 
 

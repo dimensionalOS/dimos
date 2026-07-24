@@ -1,5 +1,6 @@
 {
   "workspace": [
+    "./relay",
     "./shared"
   ],
   "unstable": [
@@ -11,6 +12,7 @@
     "@std/cli": "jsr:@std/cli@^1"
   },
   "tasks": {
+    "dev": "deno run --allow-net --allow-read relay/main.ts",
     "test": "deno test --allow-net --allow-read",
     "check": "deno check ."
   },
