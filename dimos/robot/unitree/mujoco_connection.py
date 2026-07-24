@@ -77,6 +77,11 @@ class MujocoConnection:
         # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
 
+        # Pre-download scene packages so the LFS pull doesn't eat into the
+        # sim subprocess's ready timeout.
+        if global_config.scene_package:
+            get_data("scene_packages")
+
         # Trigger the download of the mujoco_menagerie package. This is so it
         # doesn't trigger in the mujoco process where it can time out.
         from mujoco_playground._src import mjx_env

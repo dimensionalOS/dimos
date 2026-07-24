@@ -39,12 +39,18 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_WIDTH,
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
-from dimos.simulation.mujoco.model import load_model, load_scene_xml
+from dimos.simulation.mujoco.model import load_model, load_scene
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Known-good spawn points inside cooked scene packages, keyed by package dir
+# name; the global start-pos default can land inside geometry there.
+_SCENE_PACKAGE_SPAWNS: dict[str, tuple[float, float]] = {
+    "dimos_office": (-2.0, 1.6),
+}
 
 
 class MockController:
@@ -71,13 +77,23 @@ class MockController:
         pass
 
 
+def _start_pos_is_default(config: GlobalConfig) -> bool:
+    return config.mujoco_start_pos == GlobalConfig.model_fields["mujoco_start_pos"].default
+
+
 def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
 
     controller = MockController(shm)
-    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
+    scene_xml, scene_package = load_scene(config)
+    extra_asset_dirs = []
+    if scene_package is not None and scene_package.mujoco_scene_path is not None:
+        extra_asset_dirs.append(scene_package.mujoco_scene_path.parent)
+    model, data = load_model(
+        controller, robot=robot_name, scene_xml=scene_xml, extra_asset_dirs=extra_asset_dirs
+    )
 
     if model is None or data is None:
         raise ValueError("Failed to load MuJoCo model: model or data is None")
@@ -91,6 +107,11 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             z = 0
 
     start_pos = config.mujoco_start_pos_float
+
+    if scene_package is not None and _start_pos_is_default(config):
+        default_spawn = _SCENE_PACKAGE_SPAWNS.get(scene_package.package_dir.name)
+        if default_spawn is not None:
+            start_pos = default_spawn
 
     data.qpos[0:3] = [start_pos[0], start_pos[1], z]
 
@@ -123,6 +144,13 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         depth_right_renderer.enable_depth_rendering()
 
         scene_option = mujoco.MjvOption()
+        if scene_package is not None:
+            # Cooked scene packages put their collision hulls in geom group 3,
+            # which default render options hide; enable it so the depth cameras
+            # (lidar), RGB camera, and viewer can see the scene. Note this also
+            # unhides the robot's own group-3 collision geoms.
+            scene_option.geomgroup[3] = 1
+            m_viewer.opt.geomgroup[3] = 1
 
         # Timing control
         last_video_time = 0.0
