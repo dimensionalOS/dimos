@@ -88,29 +88,23 @@ def run_eval(
     gpu = GpuSampler(interval=interval)
     resource_logger = InMemoryResourceLogger()
     monitor: StatsMonitor | None = None
+    coordinator: "ModuleCoordinator | None" = None
 
-    # --- Phase 1: build ---
-    # If build() raises at any point (including after starting workers), we
-    # early-return here. coordinator is never assigned, so there is nothing
-    # for us to stop. ModuleCoordinator.build() is responsible for cleaning
-    # up any workers it started before the exception.
     try:
         bp = get_by_name(blueprint)
         build_start = time.monotonic()
         from dimos.core.coordination.module_coordinator import ModuleCoordinator
-        coordinator = ModuleCoordinator.build(bp)
+        
+        # Instantiate explicitly instead of using .build().
+        # This guarantees we hold a reference to 'coordinator' so the finally
+        # block can call .stop() and kill workers even if load_blueprint fails
+        # mid-way (e.g. while connecting streams or starting modules).
+        coordinator = ModuleCoordinator()
+        coordinator.start()
+        coordinator.load_blueprint(bp)
+        
         result.startup_seconds = time.monotonic() - build_start
-    except Exception as exc:
-        result.status = "failed"
-        result.error = f"{type(exc).__name__}: {exc}"
-        logger.error("Eval failed during build", blueprint=blueprint, exc_info=True)
-        traceback.print_exc()
-        return result
 
-    # --- Phase 2: measurement ---
-    # coordinator is guaranteed non-None here. The finally block unconditionally
-    # calls coordinator.stop() so workers are cleaned up whatever happens.
-    try:
         worker_source = cast("WorkerManagerPython", coordinator._managers["python"])
         monitor = StatsMonitor(worker_source, resource_logger=resource_logger, interval=interval)
 
@@ -147,7 +141,7 @@ def run_eval(
     except Exception as exc:
         result.status = "failed"
         result.error = f"{type(exc).__name__}: {exc}"
-        logger.error("Eval failed during measurement", blueprint=blueprint, exc_info=True)
+        logger.error("Eval failed", blueprint=blueprint, exc_info=True)
         traceback.print_exc()
     finally:
         if monitor is not None:
@@ -156,9 +150,10 @@ def run_eval(
             except Exception:
                 pass
         gpu.stop()
-        try:
-            coordinator.stop()
-        except Exception:
-            logger.error("Error stopping coordinator", exc_info=True)
+        if coordinator is not None:
+            try:
+                coordinator.stop()
+            except Exception:
+                logger.error("Error stopping coordinator", exc_info=True)
 
     return result
