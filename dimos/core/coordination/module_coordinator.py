@@ -29,7 +29,7 @@ from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import ModuleBase, ModuleSpec, OneShotModule, is_module_type
+from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
 from dimos.core.stream import Transport
 from dimos.core.transport import (
@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
 logger = setup_logger()
-ONE_SHOT_RPC_TIMEOUT = 600.0
 
 
 class ModuleDescriptor(NamedTuple):
@@ -87,12 +86,6 @@ class ModuleCoordinator(Resource):
         self._started = False
         self._modules_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
-        self._stop_event = threading.Event()
-        self._stop_lock = threading.Lock()
-        self._stop_complete = threading.Event()
-        self._stopping = False
-        self._stopped = False
-        self._stop_owner: int | None = None
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
@@ -103,65 +96,25 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
-        # A few lightweight embedders construct coordinators without calling
-        # __init__ (notably test harnesses); initialize the completion barrier
-        # lazily without weakening the normal lifecycle.
-        if not hasattr(self, "_stop_complete"):
-            self._stop_complete = threading.Event()
-        if not hasattr(self, "_stopping"):
-            self._stopping = False
-        if not hasattr(self, "_stop_owner"):
-            self._stop_owner = None
-        caller = threading.get_ident()
-        with self._stop_lock:
-            if self._stopping:
-                # A signal handler can re-enter stop() while teardown is
-                # running on this thread.  Waiting here would deadlock.
-                if self._stop_owner == caller:
-                    return
-                complete = self._stop_complete
-                owner = False
-            elif self._stopped:
-                complete = self._stop_complete
-                owner = False
-            else:
-                self._stopping = True
-                self._stopped = True
-                self._stop_owner = caller
-                self._stop_event.set()
-                complete = self._stop_complete
-                owner = True
-        if not owner:
-            complete.wait()
-            return
-        try:
-            if self._coordinator_rpc is not None:
-                try:
-                    self._coordinator_rpc.stop()
-                except Exception:
-                    logger.error("Error stopping coordinator RPC", exc_info=True)
-                finally:
-                    self._coordinator_rpc = None
+        if self._coordinator_rpc is not None:
+            self._coordinator_rpc.stop()
+            self._coordinator_rpc = None
 
-            for name, module in reversed(self._deployed_modules.items()):
-                logger.info("Stopping module...", module=name)
-                try:
-                    module.stop()
-                except Exception:
-                    logger.error("Error stopping module", module=name, exc_info=True)
-                logger.info("Module stopped.", module=name)
+        for name, module in reversed(self._deployed_modules.items()):
+            logger.info("Stopping module...", module=name)
+            try:
+                module.stop()
+            except Exception:
+                logger.error("Error stopping module", module=name, exc_info=True)
+            logger.info("Module stopped.", module=name)
 
-            def _stop_manager(m: WorkerManager) -> None:
-                try:
-                    m.stop()
-                except Exception:
-                    logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
+        def _stop_manager(m: WorkerManager) -> None:
+            try:
+                m.stop()
+            except Exception:
+                logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
 
-            safe_thread_map(tuple(self._managers.values()), _stop_manager)
-        finally:
-            with self._stop_lock:
-                self._stop_owner = None
-                self._stop_complete.set()
+        safe_thread_map(tuple(self._managers.values()), _stop_manager)
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""
@@ -302,28 +255,6 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
-    def run_one_shot(self, blueprint: Blueprint, *, rpc_timeout: float | None = None) -> Any:
-        """Run the sole one-shot module after every module has started."""
-        if rpc_timeout is not None and rpc_timeout <= 0:
-            raise ValueError("rpc_timeout must be greater than zero")
-        modules = blueprint.one_shot_modules
-        if len(modules) > 1:
-            names = ", ".join(module.__name__ for module in modules)
-            raise ValueError(f"A blueprint may contain at most one OneShotModule; found: {names}")
-        if not modules:
-            return None
-        timeout = ONE_SHOT_RPC_TIMEOUT if rpc_timeout is None else rpc_timeout
-        return self.get_instance(modules[0]).run_once(rpc_timeout=timeout)
-
-    def complete_one_shot(self, blueprint: Blueprint, result: Any) -> None:
-        """Invoke the sole one-shot module's parent-process completion hook."""
-        modules = blueprint.one_shot_modules
-        if len(modules) > 1:
-            names = ", ".join(module.__name__ for module in modules)
-            raise ValueError(f"A blueprint may contain at most one OneShotModule; found: {names}")
-        if modules:
-            cast("type[OneShotModule]", modules[0]).complete_in_parent(result)
-
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
 
@@ -405,10 +336,6 @@ class ModuleCoordinator(Resource):
         blueprint_args: MutableMapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
         logger.info("Building the blueprint")
-        one_shot_modules = blueprint.one_shot_modules
-        if len(one_shot_modules) > 1:
-            names = ", ".join(module.__name__ for module in one_shot_modules)
-            raise ValueError(f"A blueprint may contain at most one OneShotModule; found: {names}")
         global_config.update(**dict(blueprint.global_config_overrides))
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
@@ -428,12 +355,8 @@ class ModuleCoordinator(Resource):
         coordinator._connect_streams(blueprint, transports)
         _connect_module_refs(blueprint, coordinator)
 
-        try:
-            coordinator.build_all_modules()
-            coordinator.start_all_modules()
-        except BaseException:
-            coordinator.stop()
-            raise
+        coordinator.build_all_modules()
+        coordinator.start_all_modules()
 
         _log_blueprint_graph(blueprint, coordinator)
 
@@ -452,10 +375,6 @@ class ModuleCoordinator(Resource):
         """
         if not self._started:
             raise RuntimeError("ModuleCoordinator not started; call start() first")
-
-        if blueprint.one_shot_modules:
-            names = ", ".join(module.__name__ for module in blueprint.one_shot_modules)
-            raise ValueError(f"Cannot hot-load OneShotModule blueprint: {names}")
 
         with self._modules_lock:
             self._load_blueprint(blueprint, blueprint_args)
@@ -713,8 +632,9 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
+        stop = threading.Event()
         try:
-            self._stop_event.wait()
+            stop.wait()
         except KeyboardInterrupt:
             return
         finally:

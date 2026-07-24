@@ -3,7 +3,6 @@
 
 import os
 from pathlib import Path
-import pickle
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -262,13 +261,7 @@ def test_native_window_backend_missing_display_is_nonfatal_with_exact_fallback(
     assert "env -u WAYLAND_DISPLAY rerun '/tmp/space recording.rrd'" in capsys.readouterr().out
 
 
-def test_parent_completion_is_pickleable_and_web_does_not_change_display_environment(
-    monkeypatch: Any,
-) -> None:
-    from .demo import ParentCompletion
-
-    completion = ParentCompletion("/tmp/final.rrd", "both", "x11")
-    assert pickle.loads(pickle.dumps(completion)) == completion
+def test_web_viewer_does_not_change_display_environment(monkeypatch: Any) -> None:
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/rerun")
     monkeypatch.setattr("os.posix_spawn", lambda *args, **kwargs: calls.append((args, kwargs)))

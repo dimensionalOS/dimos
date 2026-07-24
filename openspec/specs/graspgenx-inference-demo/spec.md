@@ -6,10 +6,10 @@ Define the deterministic, non-executing GraspGenX CUDA demonstration used to val
 
 ### Requirement: Provide a deterministic YCB banana proposal demo
 
-The demo SHALL use a deterministic recorded YCB banana scene fixture containing a table, banana, and distractor in the `world` frame. It MUST load the canonical inclusive ROI `[0.18, 0.08, 0.10]`–`[0.42, 0.32, 0.24]` by default, permit deployment-time runner configuration overrides, reject request-time ROI controls, run the configured GraspGenX CUDA adapter, and write ranked candidates to YAML.
+The demo SHALL use a deterministic recorded YCB banana scene fixture containing a table, banana, and distractor in the `world` frame. It MUST use the fixed canonical inclusive ROI `[0.18, 0.08, 0.10]`–`[0.42, 0.32, 0.24]`, provide no request-time or runtime ROI option, run the GraspGenX CUDA adapter, and write ranked candidates to YAML.
 
 #### Scenario: Fixture produces a usable object crop
-- **GIVEN** the checked-in or repository-convention fixture and its configured banana ROI
+- **GIVEN** the checked-in or repository-convention fixture and its canonical banana ROI
 - **WHEN** demo smoke mode runs
 - **THEN** the scene and object point counts are reported
 - **AND** the crop contains sufficient finite banana points
@@ -17,11 +17,11 @@ The demo SHALL use a deterministic recorded YCB banana scene fixture containing 
 
 ### Requirement: Report and validate real inference
 
-The demo MUST report checkpoint, CUDA/device, scene point count, object point count, candidate count, best score, result frame, and output path. Smoke mode MUST assert at least one candidate, descending scores, finite poses in `world`, application of the TCP transform, and successful YAML output. The generic coordinator-owned `OneShotModule` lifecycle MUST run the demo once and exit 0 after cleanup on success.
+The direct contributor tool MUST report checkpoint, CUDA/device, scene point count, object point count, candidate count, best score, result frame, and output path. It MUST validate nonempty finite ranked TCP-frame output with the expected header and successful YAML output. The adapter contract and its nonidentity unit test verify TCP calibration by right-multiplication; the contributor layer does not independently observe raw backend transforms. Contributors invoke it with `uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo`. The tool MUST run fixture loading, the real adapter, ranked candidate generation, and atomic YAML/RRD publication in one direct process; it MAY launch a detached viewer. Its exit status MUST be zero only after successful validation and publication, and nonzero for configuration, inference, validation, or output failures. This requirement does not provide evidence of worker, RPC, coordinator, or blueprint deployment coverage.
 
 #### Scenario: CUDA smoke run succeeds
 - **GIVEN** a compatible checkpoint, fixed sweep-volume gripper configuration, and available CUDA device
-- **WHEN** the demo is run without visualization
+- **WHEN** the contributor tool is run without visualization
 - **THEN** the model loads once and real CUDA inference runs
 - **AND** at least one finite candidate is written in the `world` frame
 - **AND** the terminal reports the required diagnostics
@@ -34,14 +34,14 @@ The demo MUST report checkpoint, CUDA/device, scene point count, object point co
 
 ### Requirement: Visualize proposal inputs and ranked outputs
 
-When the supported `rerun` viewer mode is enabled, the demo MUST show the raw scene in grey, the yellow object crop, the top 20 TCP candidate axes colored by score, and the best candidate's propagated sweep-volume boxes. Visualization MUST not be required for smoke inference or YAML output. The only supported viewer modes are `rerun` and `none`.
+When the optional Rerun viewer is enabled, the contributor tool MUST show the raw scene in grey, the yellow object crop, and up to five abstract Grasp Envelope Glyphs when candidates are available. Each glyph MUST be one non-occluding `LineStrips3D` planar fork transformed by a candidate's full 6-DoF TCP pose and colored by score. Rank 1 MUST be visible by default when present; remaining recorded ranks up to 5 MUST remain toggleable in Rerun. Visualization MUST not be required for inference or YAML output.
 
 #### Scenario: Rerun view matches serialized proposals
 - **GIVEN** successful demo inference with visualization enabled
 - **WHEN** the viewer is inspected
 - **THEN** raw scene and cropped object are visibly distinct
-- **AND** candidate axes are ranked/color-coded consistently with the YAML scores
-- **AND** optional sweep boxes correspond to the best candidate
+- **AND** rank 1 is visible by default when present
+- **AND** remaining recorded ranks up to 5 can be toggled without changing YAML output
 
 ### Requirement: Keep the demo outside robot execution
 
@@ -49,7 +49,7 @@ The demo MUST NOT require a camera, robot, IK, collision checker, planner, actua
 
 #### Scenario: Headless demo runs without execution dependencies
 - **GIVEN** the shared DimOS environment with the GraspGenX extra and packaged fixture
-- **WHEN** the smoke command runs with no viewer
+- **WHEN** the contributor command runs with no viewer
 - **THEN** it completes proposal inference and YAML serialization
 - **AND** no hardware command or execution-stage dependency is invoked
 

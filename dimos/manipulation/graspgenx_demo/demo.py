@@ -1,21 +1,36 @@
 # Copyright 2026 Dimensional Inc.
 """The deterministic scene-to-YAML orchestration seam."""
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from importlib import import_module
+import math
+import os
 from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_x import (
+    GraspGenXConfig,
+    GraspGenXModule,
+    SweepVolumeGripperConfig,
+)
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 from .extractor import AxisAlignedROI, ObjectPointCloudExtractor
 from .fixture import fixture_roi, load_ycb_scene
 from .output import write_grasps
-from .visualization import Logger, log_scene
+from .visualization import (
+    Logger,
+    RerunLogger,
+    launch_native_viewer,
+    launch_web_viewer,
+    log_scene,
+    recording_path_for_yaml,
+)
 
 DEFAULT_ROI = fixture_roi()
 IDENTITY_CALIBRATION = (
@@ -43,13 +58,22 @@ class DemoResult:
     visualization_error: str | None = None
 
 
-@dataclass(frozen=True)
-class ParentCompletion:
-    """Pickleable value handed to the CLI parent after worker cleanup."""
-
-    recording_path: str | None
-    rerun_open: str = "native"
-    native_window_backend: str = "x11"
+def deployment_config() -> GraspGenXConfig:
+    """Build the fixed sweep-volume deployment without loading the checkpoint."""
+    return GraspGenXConfig(
+        checkpoint_path=os.environ.get(
+            "DIMOS_GRASPGENX_CHECKPOINT", "/__missing_graspgenx_checkpoint__"
+        ),
+        gripper=SweepVolumeGripperConfig(
+            extents_open=(0.08, 0.045, 0.04),
+            offset_open=(0.0, 0.0, 0.135),
+            extents_half_open=(0.04, 0.045, 0.035),
+            offset_half_open=(0.0, 0.0, 0.118),
+            fingertip_depth=0.15,
+            family="revolute_3f",
+        ),
+        max_candidates=100,
+    )
 
 
 def _cuda_context() -> dict[str, object]:
@@ -98,7 +122,6 @@ def run_demo(
     tcp_calibration: object = IDENTITY_CALIBRATION,
     gripper: Any | None = None,
     logger: Logger | None = None,
-    proposer_rpc_timeout: float | None = None,
 ) -> DemoResult:
     """Run scene → crop → generic GraspGenSpec → deterministic YAML."""
     if not callable(getattr(proposer, "propose_grasps", None)):
@@ -112,15 +135,7 @@ def run_demo(
         "cuda": runtime,
     }
     print(f"graspgenx-ycb-demo deployment={context}", flush=True)
-    if proposer_rpc_timeout is None:
-        result = proposer.propose_grasps(crop)
-    else:
-        # RpcCall consumes this control kwarg locally; ordinary in-process
-        # proposers retain the original call shape above.
-        result = proposer.propose_grasps(  # type: ignore[call-arg]
-            crop,
-            rpc_timeout=proposer_rpc_timeout,  # type: ignore[call-arg]
-        )
+    result = proposer.propose_grasps(crop)
     print(
         "graspgenx-ycb-demo inference "
         f"candidates={len(result)} "
@@ -169,3 +184,83 @@ def run_demo(
         visualization_complete,
         visualization_error,
     )
+
+
+def run_contributor_demo(
+    *,
+    output_path: Path,
+    recording_path: Path | None = None,
+    viewer: str = "rerun",
+    rerun_open: str = "native",
+    native_window_backend: str = "x11",
+    flush_timeout: float = 10.0,
+    config: GraspGenXConfig | None = None,
+    module_factory: Callable[[GraspGenXConfig], GraspGenXModule] = GraspGenXModule,
+) -> DemoResult:
+    """Run the real adapter directly, then publish and optionally open results."""
+    if viewer not in {"rerun", "none"}:
+        raise ValueError("viewer must be 'rerun' or 'none'")
+    if rerun_open not in {"none", "native", "web", "both"}:
+        raise ValueError("rerun_open must be none, native, web, or both")
+    if native_window_backend not in {"x11", "wayland", "auto"}:
+        raise ValueError("native_window_backend must be x11, wayland, or auto")
+    if not math.isfinite(flush_timeout) or flush_timeout <= 0:
+        raise ValueError("flush_timeout must be finite and positive")
+    if not callable(module_factory):
+        raise TypeError("module_factory must be callable")
+    output_path = output_path.expanduser().resolve()
+    final_recording = recording_path_for_yaml(output_path, recording_path)
+    active_config = config if config is not None else deployment_config()
+    logger = (
+        RerunLogger(final_recording, flush_timeout=flush_timeout) if viewer == "rerun" else None
+    )
+    adapter: GraspGenXModule | None = None
+    result: DemoResult | None = None
+    recording: Path | None = None
+    primary_error: BaseException | None = None
+    try:
+        adapter = module_factory(active_config)
+        adapter.start()
+        result = run_demo(
+            adapter,
+            output_path,
+            roi=DEFAULT_ROI,
+            checkpoint=active_config.checkpoint_path,
+            device=os.environ.get("DIMOS_GRASPGENX_DEVICE", "cuda"),
+            cuda=None,
+            tcp_calibration=active_config.grasp_frame_to_tcp,
+            gripper=active_config.gripper,
+            logger=logger,
+        )
+        if logger is not None:
+            recording = logger.finalize()
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        cleanup_error: Exception | None = None
+        try:
+            if logger is not None:
+                logger.abort()
+        except Exception as exc:
+            cleanup_error = exc
+        try:
+            if adapter is not None:
+                adapter.stop()
+        except Exception:
+            if primary_error is None and cleanup_error is None:
+                raise
+        if primary_error is None and cleanup_error is not None:
+            raise cleanup_error
+    assert result is not None
+    result = replace(
+        result,
+        recording_path=recording,
+        visualization_complete=logger is None or recording is not None,
+    )
+    if recording is not None and rerun_open != "none":
+        if rerun_open in {"native", "both"}:
+            launch_native_viewer(recording, window_backend=native_window_backend)
+        if rerun_open in {"web", "both"}:
+            launch_web_viewer(recording)
+    return result

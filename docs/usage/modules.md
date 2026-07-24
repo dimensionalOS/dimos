@@ -460,20 +460,6 @@ Compared to splitting the same work across `__init__` / `start()` / `stop()`, `m
 
 A blueprint is a predefined structure of interconnected modules. You can include blueprints or modules in new blueprints.
 
-## One-shot modules
-
-`OneShotModule` is the generic coordinator-owned lifecycle for finite jobs. A
-blueprint may contain at most one. The coordinator builds and starts every module,
-calls that module's `run_once()` exactly once, then stops the whole deployment. A
-successful return is ordinary service completion, so the process exits with status 0
-after cleanup; exceptions stop the deployment and propagate as a failed run.
-
-One-shot modules are not daemons: `dimos run ... --daemon` is rejected because there
-is no long-running service to supervise. Ordinary service modules keep the usual
-behavior: foreground runs block until stopped, while `--daemon` backgrounds the
-running service after its health check. Put finite work in `run_once()` rather than a
-demo-specific lifecycle protocol.
-
 A basic Unitree Go2 blueprint looks like what we saw before.
 
 ```python skip session=blueprints output=assets/go2_agentic.svg

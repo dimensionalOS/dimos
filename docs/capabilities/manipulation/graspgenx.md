@@ -2,8 +2,9 @@
 title: "GraspGenX grasp proposals"
 ---
 
-GraspGenX runs directly in-process in a DimOS worker. There is no ZMQ transport,
-sidecar, or runtime clone. The integration proposes robot TCP targets from one
+GraspGenX runs directly in-process as a deterministic contributor acceptance tool.
+There is no ZMQ transport, sidecar, or runtime clone. The integration proposes robot
+TCP targets from one
 already-segmented object point cloud; it does not plan or execute a grasp.
 
 ## Install
@@ -45,51 +46,59 @@ it with `git lfs install` and `git lfs pull`, then verify the files are populate
 
 ## Run the YCB demo
 
-This one-shot command loads the recorded fixture, crops the banana, initializes the
-model, writes YAML, and exits:
+This direct-process contributor command loads the recorded fixture, crops the banana,
+initializes the real adapter, writes ranked candidates to atomic YAML and (when
+enabled) atomic RRD, and exits with success or failure status:
 
 ```bash
 export DIMOS_GRASPGENX_CHECKPOINT=/path/to/checkpoint
 export DIMOS_GRASPGENX_OUTPUT=./graspgenx-ycb-demo.yaml  # optional
-uv run --extra graspgenx dimos --viewer none run graspgenx-ycb-demo
+uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo
 ```
 
-The global `--rerun-open` contract is honored by worker completion: `none` writes a
-complete RRD without launching, `native` launches the desktop viewer, `web` launches
-Rerun 0.32 with `--web-viewer`, and `both` launches both. `--viewer none` disables
-Rerun recording entirely:
+The contributor tool can run headless or with its optional Rerun recording. Rerun writes
+a complete RRD and may launch a detached viewer; viewer launch is not part of inference
+validity. Select headless mode explicitly:
+Use the tool's direct-process viewer option rather than global DimOS CLI options:
 
 ```bash
-uv run --extra graspgenx dimos --viewer rerun run graspgenx-ycb-demo
+uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo --viewer none
+uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo --viewer rerun
 ```
 
-`--viewer none` is headless and creates no Rerun objects or recording files. Viewer launch
+Headless mode creates no Rerun objects or recording files. Viewer launch
 failures are nonfatal and never replace a finalized RRD or YAML output. Recording and YAML
 failures are fatal and preserve any prior valid final files. Diagnostics before inference
-include checkpoint, CUDA, and device; the final diagnostics include scene/object counts,
-candidate count, best score, result frame, TCP calibration, output path, recording path,
-and visualization completion.
+include checkpoint, CUDA, and device. The inference diagnostic reports candidate count and
+best score; the structured diagnostic also reports scene/object counts, result frame, TCP
+calibration, output path, and visualization status. The final completion line reports the
+YAML and recording paths.
 
-With `rerun`, the demo writes a native Rerun 0.32 `.rrd` file and then launches
-the native viewer automatically from the CLI parent, after worker/watchdog and
-registry cleanup. This demo defaults that native launch to X11/XWayland: it removes
+With Rerun enabled, the direct process writes a native Rerun 0.32 `.rrd` file and may
+launch the detached native viewer. This demo defaults that native launch to X11/XWayland: it removes
 `WAYLAND_DISPLAY` from the child environment and uses the existing `DISPLAY`. This is
 scoped to this demo; global DimOS viewer defaults are unchanged. The viewer remains
-open after the one-shot exits and receives the complete recording: the full raw scene in
-grey, the cropped object in yellow, and five abstract Grasp Envelope Glyphs. Each glyph
+open after the tool exits and receives the complete recording: the full raw scene in
+grey, the cropped object in yellow, and up to five abstract Grasp Envelope Glyphs when
+candidates are available. Each glyph
 is one non-occluding `LineStrips3D` planar fork: a 2D X-Z profile derived from the
 configured open/half-open sweep volumes and transformed by the candidate's full
 6-DoF TCP pose. Its whole fork silhouette uses a Viridis score color. The mouth
 opens toward candidate-local +Z and the span runs along local ±X; this is a profile
 of the 3D Gripper Model, not physical finger geometry or execution validity.
-The default
-blueprint shows rank 01 only (highest-score yellow); ranks 02–05 remain recorded at
-stable paths and can be added or toggled manually in Rerun. There are no physical
-meshes, fingers, axes, joints, or separate box entities. The coordinator-owned one-shot
-lifecycle runs this finite job once and exits 0 after cleanup when inference and YAML
-output succeed.
+The default Rerun view shows rank 01 only when present (highest-score yellow); remaining
+ranks up to 05 remain recorded at stable paths and can be added or toggled manually in
+Rerun. This is a viewer layout, not a DimOS Blueprint. There are no physical
+meshes, fingers, axes, joints, or separate box entities.
 
-Visualization is intentionally limited to five glyphs, while the YAML result remains
+The acceptance path is deliberately direct and deterministic:
+
+```text
+fixture + provenance → banana crop → real GraspGenX CUDA adapter
+       → ranked TCP candidates → atomic YAML + optional atomic RRD → optional detached viewer
+```
+
+Visualization is intentionally limited to up to five glyphs, while the YAML result remains
 unchanged and retains up to 100 ordered candidates. In Rerun, expand the
 `grasp_candidates` tree or edit the Spatial3D contents to inspect ranks 02–05.
 
@@ -109,10 +118,10 @@ The user-verified failure mode for this demo is specific to the default Rerun 0.
 Wayland/NVIDIA path: the recording renders, then the native window becomes
 unresponsive. The same recording was responsive when launched with
 `env -u WAYLAND_DISPLAY rerun file.rrd` under X11/XWayland. This is observed evidence
-for this environment, not a claim about all Linux systems. To override the demo's
-backend, set the runner deployment option in a blueprint/configuration to
-`native_window_backend: auto` or `native_window_backend: wayland`. `wayland` instead
+for this environment, not a claim about all Linux systems. Select the backend directly
+with `--native-window-backend auto` or `--native-window-backend wayland`. `wayland`
 requires `WAYLAND_DISPLAY` and removes `DISPLAY` from the child; `auto` preserves both.
+The default is `x11`.
 For a finalized recording, the equivalent manual commands are:
 
 ```bash
@@ -121,8 +130,8 @@ rerun /absolute/path/to/foo.rrd                          # auto
 env -u DISPLAY rerun /absolute/path/to/foo.rrd           # wayland
 ```
 
-The default recording path follows the YAML path: `foo.yaml` produces `foo.rrd`. Set
-the deployment `recording_path` to override it. Capture uses a sibling `.partial` file,
+The default recording path follows the YAML path: `foo.yaml` produces `foo.rrd`. Use the
+contributor flag `--recording-path /path/to/foo.rrd` to override it. Capture uses a sibling `.partial` file,
 flushes and disconnects before atomic publication, and removes stale or failed partials.
 If the native executable is missing or cannot launch, inference remains successful and
 the terminal prints the exact manual fallback command, for example:
@@ -166,10 +175,8 @@ max_candidates: 100
 frame and installed TCP coincide. The adapter applies
 `T_input_tcp = T_input_graspgenx @ T_graspgenx_tcp`.
 
-The canonical inclusive banana ROI is `[0.18, 0.08, 0.10]` to
-`[0.42, 0.32, 0.24]`. It is a deployment default, not proposal request data.
-Override it through runner configuration (`roi_minimum` and `roi_maximum` in a
-blueprint/config file), then restart the stack.
+The contributor tool always uses the canonical inclusive banana ROI `[0.18, 0.08, 0.10]` to
+`[0.42, 0.32, 0.24]`. It is fixed fixture-processing behavior, not proposal request data.
 
 To deploy another gripper, intentionally create a deployment with its tested
 sweep-volume dimensions and calibrated transform, validate it, and restart the
@@ -199,7 +206,7 @@ and quaternion `orientation`).
 | Sweep-incompatible backbone | Use sweep-volume-compatible diffusion and discriminator backbones. |
 | CUDA/model initialization failure | Check driver/CUDA, `torch.cuda.is_available()`, resolved torch versions, and checkpoint contents; retry with `--viewer none`. |
 | No candidates | Empty is valid API no-result, but demo smoke acceptance fails; inspect ROI, crop counts, checkpoint, and diagnostics. |
-| Visualization failure | Use `--viewer none`; visualization is non-blocking while inference and YAML remain primary. |
+| Visualization failure | Use headless mode; visualization is non-blocking while inference and YAML remain primary. |
 
 ## Contributor verification
 
@@ -207,14 +214,11 @@ and quaternion `orientation`).
 uv run pytest dimos/manipulation/grasping/test_grasp_gen_x.py \
   dimos/manipulation/graspgenx_demo/test_demo.py \
   dimos/manipulation/graspgenx_demo/test_visualization.py
-uv run pytest dimos/robot/test_all_blueprints_generation.py
-uv run ruff check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo \
-  dimos/robot/manipulators/graspgenx_ycb_demo.py
-uv run ruff format --check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo \
-  dimos/robot/manipulators/graspgenx_ycb_demo.py
+uv run ruff check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo
+uv run ruff format --check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo
 ```
 
-An optional real-GPU smoke uses the production command with a real checkpoint.
+An optional real-GPU acceptance run uses the direct contributor command with a real checkpoint.
 Record CUDA initialization, inference, diagnostics, and YAML output separately; these
 focused checks are not evidence for the broad full suite. Packaging checks must also
 confirm the fixture is present in both wheel and sdist and retain source/hash
