@@ -173,6 +173,13 @@ class RelocalizationModule(Module):
             f"Relocalization module started: map_file={self.config.map_file!r}  "
             f"loaded_map.frame_id={self._premap.frame_id!r}"
         )
+        # Both priors default on and the blueprint names none, so this is where an operator sees what actually came up: an enabled fiducial entry with no marker map is inert.
+        live = [prior.name for prior in self._enabled_prior_objects()]
+        logger.info(
+            "relocalize priors",
+            live=live,
+            inert=[p.type for p in self.config.priors if p.type not in live],
+        )
 
     @rpc
     def stop(self) -> None:

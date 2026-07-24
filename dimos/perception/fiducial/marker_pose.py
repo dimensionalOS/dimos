@@ -115,7 +115,7 @@ def estimate_marker_pose_candidates(
     *,
     distortion_model: str | None = None,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric`` -- the two IPPE mirror solutions ``estimate_marker_pose`` hides (Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5), non-finite solver output dropped."""
+    """Every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric`` -- the two IPPE mirror solutions ``estimate_marker_pose`` hides, non-finite solver output dropped."""
     obj = _aruco_marker_object_points(marker_length_m)
     img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
     solve_dist = dist_coeffs
@@ -152,7 +152,7 @@ def ambiguity_gated_pose(
     distortion_model: str | None = None,
     ambiguity_ratio_min: float,
 ) -> tuple[np.ndarray, float] | None:
-    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (IPPE mirror explains the pixels nearly as well; Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5)."""
+    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (the mirror solution explains the pixels nearly as well)."""
     candidates = estimate_marker_pose_candidates(
         corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
     )

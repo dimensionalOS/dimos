@@ -69,7 +69,7 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     camera_info: CameraInfo | None = None
     ambiguity_ratio_min: float = Field(
         2.0, ge=1.0
-    )  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
+    )  # 1.0 = off; runner-up reproj must be >=2x the best -- a planar tag has two poses fitting the same four corners, and the wrong one flips orientation ~180 deg
     # per-glimpse gates + aggregation for aggregated_detections; first pose only after min_observations * quality_window_s (1.0 s at defaults) -- the floor latency of a fix
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
@@ -82,7 +82,6 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     color_image: In[Image]
     detections: Out[Detection3DArray]
     # One gated, aggregated pose per (marker, visit), not a per-frame mirror; same message type.
-    # No transport override: autoconnect wires it. An explicit LCMTransport is only needed when a consumer is a cpp/rust or external (non-blueprint) module.
     aggregated_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:
