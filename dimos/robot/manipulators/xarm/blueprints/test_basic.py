@@ -18,13 +18,12 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.xarm.blueprints.basic import dual_xarm6_planner_coordinator
 
 
-def test_dual_xarm6_uses_roboplan_without_removing_grippers() -> None:
+def test_dual_xarm6_preserves_grippers_with_default_backend() -> None:
     planner = next(
         atom
         for atom in dual_xarm6_planner_coordinator.blueprints
         if atom.module is ManipulationModule
     )
 
-    assert planner.kwargs["world_backend"] == "roboplan"
     assert all(robot.gripper_hardware_id for robot in planner.kwargs["robots"])
     assert all(robot.xacro_args["add_gripper"] == "true" for robot in planner.kwargs["robots"])

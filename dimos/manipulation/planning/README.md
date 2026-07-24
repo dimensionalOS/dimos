@@ -78,7 +78,8 @@ module = ManipulationModule(
     robots=[config],
     planning_timeout=10.0,
     enable_viz=True,
-    planner_name="rrt_connect",           # Only option
+    world_backend="drake",                # RoboPlan is the default
+    planner_name="rrt_connect",           # RoboPlan is the default
     kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
 )
 module.start()

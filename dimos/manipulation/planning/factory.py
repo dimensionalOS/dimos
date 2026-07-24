@@ -66,9 +66,9 @@ DEFAULT_KINEMATICS_NAME: KinematicsName = "pink"
 
 def validate_backend_combination(
     *,
-    world_backend: str = "drake",
-    planner_name: str = "rrt_connect",
-    kinematics_name: str = "jacobian",
+    world_backend: str = "roboplan",
+    planner_name: str = "roboplan",
+    kinematics_name: str = DEFAULT_KINEMATICS_NAME,
 ) -> None:
     """Validate manipulation backend choices before constructing the stack."""
     if world_backend not in SUPPORTED_WORLD_BACKENDS:
@@ -89,7 +89,7 @@ def validate_backend_combination(
 
 
 def create_world(
-    backend: str = "drake",
+    backend: str = "roboplan",
     visualization: ManipulationVisualizationConfig | None = None,
     **kwargs: Any,
 ) -> WorldSpec:
@@ -137,7 +137,7 @@ def create_kinematics(
 
 
 def create_planner(
-    name: str = "rrt_connect",
+    name: str = "roboplan",
     world: WorldSpec | None = None,
     world_backend: str | None = None,
     **kwargs: Any,
@@ -163,8 +163,8 @@ def create_planner(
 
 def create_planning_specs(
     world: WorldSpec,
-    world_backend: str = "drake",
-    planner_name: str = "rrt_connect",
+    world_backend: str = "roboplan",
+    planner_name: str = "roboplan",
     kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
 ) -> PlanningSpecs:
@@ -191,9 +191,9 @@ def create_planning_specs(
 
 def create_planning_stack(
     robot_config: Any,
-    world_backend: str = "drake",
+    world_backend: str = "roboplan",
     visualization: ManipulationVisualizationConfig | None = None,
-    planner_name: str = "rrt_connect",
+    planner_name: str = "roboplan",
     kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
