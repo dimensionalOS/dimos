@@ -889,12 +889,53 @@ def cameracalibrate(
             "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
         ),
     ),
+    board: str = typer.Option(
+        "chessboard", "--board", help="Target; charuco takes --cols/--rows as SQUARE counts"
+    ),
+    charuco_dict: str = typer.Option(
+        "DICT_4X4_50", "--charuco-dict", help="cv2.aruco.DICT_* name for --board charuco"
+    ),
+    marker_size_m: float | None = typer.Option(
+        None, "--marker-size-m", help="ChArUco marker edge in meters (default 0.8 * square)"
+    ),
+    check: Path | None = typer.Option(
+        None, "--check", help="Deployed CameraInfo YAML to score on fresh frames (--out = JSON)"
+    ),
+    rms_threshold_px: float = typer.Option(
+        1.0, "--rms-threshold-px", help="--check: median reprojection RMS (px) pass bar"
+    ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
-    from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
+    from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration, run_check
 
     if preview_out is not None and out is None:
         raise typer.BadParameter("preview output requires --out")
+
+    if check is not None:
+        try:
+            report = run_check(
+                source=source,
+                device_index=device_index,
+                images=images,
+                topic=topic,
+                topic_timeout_sec=topic_timeout_sec,
+                cols=cols,
+                rows=rows,
+                square_size_m=square_size_m,
+                camera_info=check,
+                rms_threshold_px=rms_threshold_px,
+                out=out,
+                target_count=target_count,
+                no_display=no_display,
+                board=board,
+                charuco_dict=charuco_dict,
+                marker_size_m=marker_size_m,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps(report, indent=2))
+        typer.echo(f"CALIBRATION CHECK: {report['verdict']}")
+        return
 
     try:
         result = run_calibration(
@@ -912,6 +953,9 @@ def cameracalibrate(
             target_count=target_count,
             no_display=no_display,
             distortion_model=distortion_model,
+            board=board,
+            charuco_dict=charuco_dict,
+            marker_size_m=marker_size_m,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc
