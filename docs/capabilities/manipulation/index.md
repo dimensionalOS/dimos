@@ -3,8 +3,7 @@ title: "Manipulation"
 ---
 
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
-the default world and native path planner, Drake remains available explicitly,
-and manipulation visualization supports Meshcat or Viser.
+the default world and native path planner.
 
 ## Quick Start
 
@@ -88,7 +87,6 @@ Manipulation planning separates the world backend from the planner algorithm:
 - `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
   field remains available as a compatibility shim.
 
-RoboPlan is the default world and native path planner:
 
 ```bash
 dimos run xarm7-planner-coordinator
