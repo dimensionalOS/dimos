@@ -17,6 +17,7 @@
 
     <nav>
       <button class="tab active" data-page="robot">机器人</button>
+      <button class="tab" data-page="mission">任务控制台</button>
       <button class="tab" data-page="agent">Agent</button>
       <button class="tab" data-page="skill">Skill 开发</button>
       <button class="tab" data-page="settings">模型与参数</button>
@@ -79,6 +80,97 @@
             <a href="http://127.0.0.1:7779" target="_blank">Rerun 调试页</a>
           </div>
         </article>
+      </section>
+
+      <section id="page-mission" class="page mission-page">
+        <div class="mission-heading">
+          <div>
+            <h1>Go2 Mission Control</h1>
+            <p>相机、雷达地图、路线和自主任务集中在一个页面。</p>
+          </div>
+          <button id="mission-estop" class="estop">急停 E-STOP</button>
+        </div>
+
+        <div class="mission-status-strip">
+          <div><span>DimOS</span><strong id="mission-runtime-state">未运行</strong></div>
+          <div><span>任务</span><strong id="mission-state">尚未创建</strong></div>
+          <div><span>阶段</span><strong id="mission-phase">—</strong></div>
+          <div><span>安全</span><strong id="mission-safety-state">运动锁开启</strong></div>
+        </div>
+
+        <div class="mission-layout">
+          <article class="visual-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>实时相机与雷达地图</h2>
+                <small>由 DimOS 7779 可视化服务提供；启动仿真或连接 Go2 后显示。</small>
+              </div>
+              <a href="http://127.0.0.1:7779/" target="_blank">新窗口打开</a>
+            </div>
+            <div id="visual-frame" class="visual-frame is-offline">
+              <iframe
+                id="dimos-visualizer"
+                title="DimOS camera and LiDAR visualization"
+                src="http://127.0.0.1:7779/"
+              ></iframe>
+              <div class="visual-offline">
+                <strong>可视化服务尚未运行</strong>
+                <span>启动仿真或连接真实 Go2 后，这里会显示相机和雷达地图。</span>
+                <button id="reload-visualizer">重新连接画面</button>
+              </div>
+            </div>
+            <div class="visual-help">
+              看不到画面时，先去“机器人”页启动仿真或“连接真实 Go2（运动锁定）”。
+            </div>
+          </article>
+
+          <aside class="mission-sidebar">
+            <article>
+              <h2>1. 写下任务</h2>
+              <label>你希望机器狗完成什么
+                <textarea
+                  id="mission-objective"
+                  rows="4"
+                  placeholder="例如：自主探索会场，找到出口门，在门前 1 米停下并报告。"
+                ></textarea>
+              </label>
+              <button id="create-mission" class="primary wide">创建任务</button>
+            </article>
+
+            <article>
+              <h2>2. 安全确认与控制</h2>
+              <p class="safety-copy">
+                启动前必须确认运动锁已关闭、DimOS 已运行、现场有人远程看守。
+              </p>
+              <label>启动确认
+                <input id="mission-confirmation" placeholder="输入 START MISSION" />
+              </label>
+              <div class="mission-actions">
+                <button id="start-mission" class="primary">启动</button>
+                <button id="pause-mission">暂停</button>
+                <button id="resume-mission">恢复</button>
+                <button id="stop-mission">停止</button>
+              </div>
+              <div id="mission-action-result" class="inline-result">等待操作</div>
+            </article>
+
+            <article>
+              <h2>固定安全策略</h2>
+              <dl id="mission-policy" class="policy-list">
+                <div><dt>最大自主速度</dt><dd>0.1 m/s</dd></div>
+                <div><dt>人员安全半径</dt><dd>1.5 m</dd></div>
+                <div><dt>人流礼让</dt><dd>有人即停，连续安全 3 秒再走</dd></div>
+                <div><dt>门前停止距离</dt><dd>1.0 m</dd></div>
+                <div><dt>自主倒车</dt><dd>禁止</dd></div>
+              </dl>
+            </article>
+
+            <article>
+              <h2>任务事件</h2>
+              <div id="mission-events" class="event-list">尚无任务事件</div>
+            </article>
+          </aside>
+        </div>
       </section>
 
       <section id="page-agent" class="page">

@@ -221,3 +221,24 @@ def test_emergency_stop_is_recorded_when_mcp_is_unavailable(
     assert stopped.json()["mission"]["phase"] == "急停"
     assert stopped.json()["remote_stop_confirmed"] is False
     assert "MCP unavailable" in stopped.json()["remote_stop_error"]
+
+
+def test_studio_has_unified_mission_control_page(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    client = TestClient(create_app(tmp_path / "settings.json", skill_path))
+
+    html = client.get("/").text
+
+    assert 'data-page="mission"' in html
+    assert 'src="http://127.0.0.1:7779/"' in html
+    assert 'id="mission-objective"' in html
+    assert 'id="create-mission"' in html
+    assert 'id="start-mission"' in html
+    assert 'id="pause-mission"' in html
+    assert 'id="resume-mission"' in html
+    assert 'id="stop-mission"' in html
+    assert 'id="mission-estop"' in html
+    assert 'id="mission-state"' in html
+    assert "人流礼让" in html
+    assert "运动锁" in html
