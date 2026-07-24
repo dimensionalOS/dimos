@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `SimplePgo` — line-faithful port of gsc_pgo's `SimplePGO`
+//! `GscPgo` — line-faithful port of gsc_pgo's `SimplePGO`
 //! (simple_pgo.{h,cpp} @ remove-tag-handling). Same keyframe gating, same
 //! loop-candidate search + gates, same factor graph construction, same
 //! iSAM2 update sequence, same outputs, given the same inputs.
@@ -42,18 +42,18 @@ const FREE_VARIANCE: f64 = 1e8;
 /// `PoseWithTime` from commons.h.
 #[derive(Debug, Clone)]
 pub struct PoseWithTime {
-    pub t: Vec3,
-    pub r: Mat3,
+    pub translation: Vec3,
+    pub rotation: Mat3,
     pub sec: i32,
     pub nsec: u32,
     pub second: f64,
 }
 
 impl PoseWithTime {
-    pub fn new(r: Mat3, t: Vec3) -> PoseWithTime {
+    pub fn new(rotation: Mat3, translation: Vec3) -> PoseWithTime {
         PoseWithTime {
-            t,
-            r,
+            translation,
+            rotation,
             sec: 0,
             nsec: 0,
             second: 0.0,
@@ -75,8 +75,8 @@ impl PoseWithTime {
 pub struct LocationConstraintObs {
     pub to_id: String,
     pub constraint_instance_id: String,
-    pub r_body_loc: Mat3,
-    pub t_body_loc: Vec3,
+    pub rotation_body_loc: Mat3,
+    pub translation_body_loc: Vec3,
     pub covariance: [f64; 36],
     pub ts: f64,
 }
@@ -92,10 +92,10 @@ pub struct CloudWithPose {
 /// `KeyPoseWithCloud` from simple_pgo.h.
 #[derive(Debug, Clone)]
 pub struct KeyPoseWithCloud {
-    pub r_local: Mat3,
-    pub t_local: Vec3,
-    pub r_global: Mat3,
-    pub t_global: Vec3,
+    pub rotation_local: Mat3,
+    pub translation_local: Vec3,
+    pub rotation_global: Mat3,
+    pub translation_global: Vec3,
     pub time: f64,
     pub body_cloud: Option<Arc<PointCloud>>,
 }
@@ -105,8 +105,8 @@ pub struct KeyPoseWithCloud {
 pub struct LoopPair {
     pub source_id: usize,
     pub target_id: usize,
-    pub r_offset: Mat3,
-    pub t_offset: Vec3,
+    pub rotation_offset: Mat3,
+    pub translation_offset: Vec3,
     /// Diagnostic: ICP fitness (lidar) or 0 otherwise.
     pub score: f64,
     pub noise: NoiseModel,
@@ -127,8 +127,8 @@ pub struct PoseStamped {
 /// `Config` from simple_pgo.h — every field, same defaults.
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub key_pose_delta_deg: f64,
-    pub key_pose_delta_trans: f64,
+    pub keyframe_min_rotation_degrees: f64,
+    pub keyframe_min_distance_meters: f64,
     pub loop_search_radius: f64,
     pub loop_time_thresh: f64,
     pub loop_score_thresh: f64,
@@ -151,7 +151,7 @@ pub struct Config {
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
-    /// by SimplePgo itself — kept for config parity).
+    /// by GscPgo itself — kept for config parity).
     pub use_location_constraints: bool,
     // Odometry between-factor noise (anisotropic).
     pub odom_rot_rp_var: f64,
@@ -180,8 +180,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            key_pose_delta_deg: 10.0,
-            key_pose_delta_trans: 1.0,
+            keyframe_min_rotation_degrees: 10.0,
+            keyframe_min_distance_meters: 1.0,
             loop_search_radius: 1.0,
             loop_time_thresh: 60.0,
             loop_score_thresh: 0.15,
@@ -223,7 +223,7 @@ struct StagedConstraintFactor {
     graph_pos: usize,
 }
 
-pub struct SimplePgo {
+pub struct GscPgo {
     config: Config,
     scan_context_config: scan_context::Config,
     key_poses: Vec<KeyPoseWithCloud>,
@@ -231,8 +231,8 @@ pub struct SimplePgo {
     cache_pairs: Vec<LoopPair>,
     scan_context_descriptors: Vec<scan_context::Descriptor>,
     scan_context_ring_keys: Vec<scan_context::RingKey>,
-    r_offset: Mat3,
-    t_offset: Vec3,
+    rotation_offset: Mat3,
+    translation_offset: Vec3,
     isam2: Isam2,
     initial_values: Values,
     graph: FactorGraph,
@@ -259,8 +259,8 @@ struct TimingStats {
     smooth_calls: u64,
 }
 
-impl SimplePgo {
-    pub fn new(config: Config) -> SimplePgo {
+impl GscPgo {
+    pub fn new(config: Config) -> GscPgo {
         let scan_context_config = scan_context::Config {
             n_rings: config.scan_context_num_rings.max(0) as usize,
             n_sectors: config.scan_context_num_sectors.max(0) as usize,
@@ -269,7 +269,7 @@ impl SimplePgo {
             match_threshold: config.scan_context_match_threshold,
             lidar_height_m: config.scan_context_lidar_height_m,
         };
-        SimplePgo {
+        GscPgo {
             config,
             scan_context_config,
             key_poses: Vec::new(),
@@ -277,8 +277,8 @@ impl SimplePgo {
             cache_pairs: Vec::new(),
             scan_context_descriptors: Vec::new(),
             scan_context_ring_keys: Vec::new(),
-            r_offset: mat3::identity(),
-            t_offset: [0.0; 3],
+            rotation_offset: mat3::identity(),
+            translation_offset: [0.0; 3],
             // The shim configures ISAM2 like the C++ constructor:
             // relinearizeThreshold = 0.01, relinearizeSkip = 1.
             isam2: Isam2::new(),
@@ -306,10 +306,11 @@ impl SimplePgo {
             return true;
         }
         let last_item = self.key_poses.last().unwrap();
-        let delta_trans = mat3::norm(&mat3::sub(&pose.t, &last_item.t_local));
-        // NOTE: 57.324 (not 57.2958) — kept verbatim from the C++.
-        let delta_deg = mat3::angular_distance(&pose.r, &last_item.r_local) * 57.324;
-        delta_trans > self.config.key_pose_delta_trans || delta_deg > self.config.key_pose_delta_deg
+        let delta_trans = mat3::norm(&mat3::sub(&pose.translation, &last_item.translation_local));
+        let delta_deg =
+            mat3::angular_distance(&pose.rotation, &last_item.rotation_local).to_degrees();
+        delta_trans > self.config.keyframe_min_distance_meters
+            || delta_deg > self.config.keyframe_min_rotation_degrees
     }
 
     /// `SimplePGO::addKeyPose`.
@@ -356,12 +357,12 @@ impl SimplePgo {
         &self.key_poses
     }
 
-    pub fn offset_r(&self) -> Mat3 {
-        self.r_offset
+    pub fn rotation_offset(&self) -> Mat3 {
+        self.rotation_offset
     }
 
-    pub fn offset_t(&self) -> Vec3 {
-        self.t_offset
+    pub fn translation_offset(&self) -> Vec3 {
+        self.translation_offset
     }
 
     pub fn node_poses(&self) -> &BTreeMap<u64, PoseStamped> {
@@ -387,11 +388,14 @@ impl SimplePgo {
         frame_id: &str,
     ) -> usize {
         let idx = self.key_poses.len();
-        let init_r = mat3::mat_mul(&self.r_offset, &pose.r);
-        let init_t = mat3::add(&mat3::mat_vec(&self.r_offset, &pose.t), &self.t_offset);
+        let init_rotation = mat3::mat_mul(&self.rotation_offset, &pose.rotation);
+        let init_translation = mat3::add(
+            &mat3::mat_vec(&self.rotation_offset, &pose.translation),
+            &self.translation_offset,
+        );
         let init_pose = Pose3 {
-            r: init_r,
-            t: init_t,
+            rotation: init_rotation,
+            translation: init_translation,
         };
         self.initial_values
             .insert_pose3(idx as u64, &init_pose)
@@ -420,9 +424,12 @@ impl SimplePgo {
             // Odometry constraint to the previous keyframe. Anisotropic:
             // stiff relative roll/pitch (gravity-accurate), looser yaw.
             let last_item = self.key_poses.last().unwrap();
-            let last_r_t = mat3::transpose(&last_item.r_local);
-            let r_between = mat3::mat_mul(&last_r_t, &pose.r);
-            let t_between = mat3::mat_vec(&last_r_t, &mat3::sub(&pose.t, &last_item.t_local));
+            let last_rotation_transpose = mat3::transpose(&last_item.rotation_local);
+            let rotation_between = mat3::mat_mul(&last_rotation_transpose, &pose.rotation);
+            let translation_between = mat3::mat_vec(
+                &last_rotation_transpose,
+                &mat3::sub(&pose.translation, &last_item.translation_local),
+            );
             let noise = NoiseModel::diagonal_variances(&[
                 self.config.odom_rot_rp_var,
                 self.config.odom_rot_rp_var,
@@ -436,8 +443,8 @@ impl SimplePgo {
                     (idx - 1) as u64,
                     idx as u64,
                     &Pose3 {
-                        r: r_between,
-                        t: t_between,
+                        rotation: rotation_between,
+                        translation: translation_between,
                     },
                     &noise,
                 )
@@ -463,33 +470,51 @@ impl SimplePgo {
         }
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
-            r_local: pose.r,
-            t_local: pose.t,
+            rotation_local: pose.rotation,
+            translation_local: pose.translation,
             body_cloud: cloud.clone(),
-            r_global: init_r,
-            t_global: init_t,
+            rotation_global: init_rotation,
+            translation_global: init_translation,
         });
 
         // Record this node's frame (from the odometry) alongside its pose.
-        let q = mat3::quat_from_mat(&pose.r);
+        let q = mat3::quat_from_mat(&pose.rotation);
         self.node_poses.insert(
             idx as u64,
             PoseStamped {
                 frame_id: frame_id.to_string(),
                 sec: pose.second as i32,
                 nsec: ((pose.second - (pose.second as i32) as f64) * 1e9) as u32,
-                position: pose.t,
+                position: pose.translation,
                 orientation: [q[1], q[2], q[3], q[0]],
             },
         );
 
         // Cache the Scan Context descriptor + ring-key (empty when the node
-        // has no cloud, e.g. a constraint-triggered node).
+        // has no cloud, e.g. a constraint-triggered node). A non-positive
+        // max_range means "auto": resolve it once from the first real cloud's
+        // extent and reuse it, so all descriptors share one binning.
         if let Some(cloud) = cloud {
-            let descriptor = scan_context::make_descriptor(&cloud, &self.scan_context_config);
-            self.scan_context_ring_keys
-                .push(scan_context::make_ring_key(&descriptor));
-            self.scan_context_descriptors.push(descriptor);
+            if self.scan_context_config.max_range_m <= 0.0 {
+                let auto_range = scan_context::auto_max_range(&cloud);
+                if auto_range > 0.0 {
+                    self.scan_context_config.max_range_m = auto_range;
+                    eprintln!(
+                        "scan-context: auto ring range = {auto_range:.2} m (from cloud extent)"
+                    );
+                }
+            }
+            if self.scan_context_config.max_range_m > 0.0 {
+                let descriptor = scan_context::make_descriptor(&cloud, &self.scan_context_config);
+                self.scan_context_ring_keys
+                    .push(scan_context::make_ring_key(&descriptor));
+                self.scan_context_descriptors.push(descriptor);
+            } else {
+                self.scan_context_descriptors
+                    .push(scan_context::Descriptor::empty());
+                self.scan_context_ring_keys
+                    .push(scan_context::RingKey::new());
+            }
         } else {
             self.scan_context_descriptors
                 .push(scan_context::Descriptor::empty());
@@ -511,8 +536,11 @@ impl SimplePgo {
         let mut ret: PointCloud = Vec::new();
         for key_pose in &self.key_poses[min_idx..=max_idx] {
             if let Some(body_cloud) = &key_pose.body_cloud {
-                let global_cloud =
-                    transform_cloud(body_cloud, &key_pose.r_global, &key_pose.t_global);
+                let global_cloud = transform_cloud(
+                    body_cloud,
+                    &key_pose.rotation_global,
+                    &key_pose.translation_global,
+                );
                 ret.extend_from_slice(&global_cloud);
             }
         }
@@ -529,16 +557,16 @@ impl SimplePgo {
         let cur_idx = self.key_poses.len() - 1;
         let last_item = self.key_poses.last().unwrap();
         let last = [
-            last_item.t_global[0] as f32,
-            last_item.t_global[1] as f32,
-            last_item.t_global[2] as f32,
+            last_item.translation_global[0] as f32,
+            last_item.translation_global[1] as f32,
+            last_item.translation_global[2] as f32,
         ];
         let radius_sq = (self.config.loop_search_radius * self.config.loop_search_radius) as f32;
         let mut neighbors: Vec<(f32, usize)> = Vec::new();
         for (i, key_pose) in self.key_poses[..cur_idx].iter().enumerate() {
-            let dx = key_pose.t_global[0] as f32 - last[0];
-            let dy = key_pose.t_global[1] as f32 - last[1];
-            let dz = key_pose.t_global[2] as f32 - last[2];
+            let dx = key_pose.translation_global[0] as f32 - last[0];
+            let dy = key_pose.translation_global[1] as f32 - last[1];
+            let dz = key_pose.translation_global[2] as f32 - last[2];
             let sq = dx * dx + dy * dy + dz * dz;
             if sq <= radius_sq {
                 neighbors.push((sq, i));
@@ -574,6 +602,9 @@ impl SimplePgo {
 
         // Two-stage retrieval: rank by ring-key L2 distance, then score the
         // top-K via column-shifted cosine distance on the full descriptor.
+        // TODO: switch to a kd-tree later for O(log n) instead of O(n) — this
+        // ring-key ranking is a linear scan (O(N^2) over a run) and won't scale
+        // to massive maps.
         let cur_idx = self.key_poses.len() - 1;
         let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(cur_idx);
         for i in 0..cur_idx {
@@ -689,8 +720,8 @@ impl SimplePgo {
         // Positional-plausibility gate on scan-context false matches.
         if self.config.loop_candidate_max_distance_m > 0.0 {
             let candidate_distance = mat3::norm(&mat3::sub(
-                &self.key_poses[cur_idx].t_global,
-                &self.key_poses[loop_idx].t_global,
+                &self.key_poses[cur_idx].translation_global,
+                &self.key_poses[loop_idx].translation_global,
             ));
             if candidate_distance > self.config.loop_candidate_max_distance_m {
                 return;
@@ -703,8 +734,8 @@ impl SimplePgo {
         // Built in f32 like the C++ (`Eigen::Matrix4f init_guess` from
         // AngleAxisf / Matrix3f / Vector3f), then widened to f64 for the
         // icp_point_to_point API — which narrows it back losslessly.
-        let mut init_r = mat3::identity();
-        let mut init_t = [0.0f64; 3];
+        let mut init_rotation = mat3::identity();
+        let mut init_translation = [0.0f64; 3];
         if self.config.use_scan_context && sector_shift != 0 {
             let yaw =
                 scan_context::yaw_from_shift(sector_shift, self.scan_context_config.n_sectors);
@@ -713,20 +744,24 @@ impl SimplePgo {
             // (2,2) entry is computed as (1 - cos) + cos, which is not
             // always exactly 1.0f.
             let (s, c) = (yaw_f.sin(), yaw_f.cos());
-            let r22 = (1.0f32 - c) + c;
-            let rotation = [[c, -s, 0.0f32], [s, c, 0.0f32], [0.0f32, 0.0f32, r22]];
-            let sp = [
-                self.key_poses[cur_idx].t_global[0] as f32,
-                self.key_poses[cur_idx].t_global[1] as f32,
-                self.key_poses[cur_idx].t_global[2] as f32,
+            let rotation_zz = (1.0f32 - c) + c;
+            let rotation = [
+                [c, -s, 0.0f32],
+                [s, c, 0.0f32],
+                [0.0f32, 0.0f32, rotation_zz],
+            ];
+            let source_position = [
+                self.key_poses[cur_idx].translation_global[0] as f32,
+                self.key_poses[cur_idx].translation_global[1] as f32,
+                self.key_poses[cur_idx].translation_global[2] as f32,
             ];
             // rotation * source_position: fixed-size Eigen Matrix3f *
             // Vector3f, unrolled binary-tree redux t0 + (t1 + t2).
             for i in 0..3 {
-                let rsp =
-                    sp[0] * rotation[i][0] + (sp[1] * rotation[i][1] + sp[2] * rotation[i][2]);
-                init_t[i] = f64::from(sp[i] - rsp);
-                init_r[i] = [
+                let rotated_source = source_position[0] * rotation[i][0]
+                    + (source_position[1] * rotation[i][1] + source_position[2] * rotation[i][2]);
+                init_translation[i] = f64::from(source_position[i] - rotated_source);
+                init_rotation[i] = [
                     f64::from(rotation[i][0]),
                     f64::from(rotation[i][1]),
                     f64::from(rotation[i][2]),
@@ -747,8 +782,8 @@ impl SimplePgo {
         let icp = icp_point_to_point(
             &source_cloud,
             &target_cloud,
-            &init_r,
-            &init_t,
+            &init_rotation,
+            &init_translation,
             &IcpParams::default(),
         );
         self.timing.icp_s += t0.elapsed().as_secs_f64();
@@ -765,8 +800,8 @@ impl SimplePgo {
 
         if self.config.debug {
             let cand_dist = mat3::norm(&mat3::sub(
-                &self.key_poses[cur_idx].t_global,
-                &self.key_poses[loop_idx].t_global,
+                &self.key_poses[cur_idx].translation_global,
+                &self.key_poses[loop_idx].translation_global,
             ));
             let have_desc =
                 self.config.use_scan_context && !self.scan_context_descriptors.is_empty();
@@ -822,24 +857,28 @@ impl SimplePgo {
         }
 
         let score = icp.fitness;
-        let r_refined = mat3::mat_mul(&icp.r, &self.key_poses[cur_idx].r_global);
-        let t_refined = mat3::add(
-            &mat3::mat_vec(&icp.r, &self.key_poses[cur_idx].t_global),
-            &icp.t,
+        let rotation_refined =
+            mat3::mat_mul(&icp.rotation, &self.key_poses[cur_idx].rotation_global);
+        let translation_refined = mat3::add(
+            &mat3::mat_vec(&icp.rotation, &self.key_poses[cur_idx].translation_global),
+            &icp.translation,
         );
-        let loop_r_t = mat3::transpose(&self.key_poses[loop_idx].r_global);
-        let r_offset = mat3::mat_mul(&loop_r_t, &r_refined);
-        let t_offset = mat3::mat_vec(
-            &loop_r_t,
-            &mat3::sub(&t_refined, &self.key_poses[loop_idx].t_global),
+        let loop_rotation_transpose = mat3::transpose(&self.key_poses[loop_idx].rotation_global);
+        let rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
+        let translation_offset = mat3::mat_vec(
+            &loop_rotation_transpose,
+            &mat3::sub(
+                &translation_refined,
+                &self.key_poses[loop_idx].translation_global,
+            ),
         );
         // Original isotropic noise = ICP fitness on all 6 DOF.
         let noise = NoiseModel::diagonal_variances(&[score; 6]);
         self.cache_pairs.push(LoopPair {
             source_id: cur_idx,
             target_id: loop_idx,
-            r_offset,
-            t_offset,
+            rotation_offset,
+            translation_offset,
             score,
             noise,
         });
@@ -874,17 +913,18 @@ impl SimplePgo {
 
         if is_new {
             // Initialize the location in the world frame from this node.
-            let r_loc_world = mat3::mat_mul(&node.r_global, &constraint.r_body_loc);
-            let t_loc_world = mat3::add(
-                &mat3::mat_vec(&node.r_global, &constraint.t_body_loc),
-                &node.t_global,
+            let rotation_loc_world =
+                mat3::mat_mul(&node.rotation_global, &constraint.rotation_body_loc);
+            let translation_loc_world = mat3::add(
+                &mat3::mat_vec(&node.rotation_global, &constraint.translation_body_loc),
+                &node.translation_global,
             );
             self.initial_values
                 .insert_pose3(
                     loc_key,
                     &Pose3 {
-                        r: r_loc_world,
-                        t: t_loc_world,
+                        rotation: rotation_loc_world,
+                        translation: translation_loc_world,
                     },
                 )
                 .expect("gtsam: insert location initial value");
@@ -922,8 +962,8 @@ impl SimplePgo {
                 node_idx as u64,
                 loc_key,
                 &Pose3 {
-                    r: constraint.r_body_loc,
-                    t: constraint.t_body_loc,
+                    rotation: constraint.rotation_body_loc,
+                    translation: constraint.translation_body_loc,
                 },
                 noise,
             )
@@ -935,11 +975,11 @@ impl SimplePgo {
 
         if self.config.debug {
             eprintln!(
-                "PGO_LOCATION node={} to_id={} new={} |t_body_loc|={:.2} instance={}",
+                "PGO_LOCATION node={} to_id={} new={} |translation_body_loc|={:.2} instance={}",
                 node_idx,
                 constraint.to_id,
                 if is_new { 1 } else { 0 },
-                mat3::norm(&constraint.t_body_loc),
+                mat3::norm(&constraint.translation_body_loc),
                 constraint.constraint_instance_id
             );
         }
@@ -949,7 +989,7 @@ impl SimplePgo {
     /// factors, run the iSAM2 update sequence (with revision removals and
     /// the extra relinearization passes a closure needs), commit staged
     /// constraint-factor indices, then refresh all keyframe globals and the
-    /// r/t offsets from the best estimate.
+    /// rotation/translation offsets from the best estimate.
     pub fn smooth_and_update(&mut self) {
         let smooth_t0 = std::time::Instant::now();
         let cache_pairs = std::mem::take(&mut self.cache_pairs);
@@ -968,8 +1008,8 @@ impl SimplePgo {
                     pair.target_id as u64,
                     pair.source_id as u64,
                     &Pose3 {
-                        r: pair.r_offset,
-                        t: pair.t_offset,
+                        rotation: pair.rotation_offset,
+                        translation: pair.translation_offset,
                     },
                     noise,
                 )
@@ -1018,29 +1058,32 @@ impl SimplePgo {
             let pose = estimate_values
                 .pose3(i as u64)
                 .expect("gtsam: keyframe missing from best estimate");
-            key_pose.r_global = pose.r;
-            key_pose.t_global = pose.t;
+            key_pose.rotation_global = pose.rotation;
+            key_pose.translation_global = pose.translation;
         }
         // Update offset.
         let last_item = self.key_poses.last().unwrap();
-        self.r_offset = mat3::mat_mul(&last_item.r_global, &mat3::transpose(&last_item.r_local));
-        self.t_offset = mat3::sub(
-            &last_item.t_global,
-            &mat3::mat_vec(&self.r_offset, &last_item.t_local),
+        self.rotation_offset = mat3::mat_mul(
+            &last_item.rotation_global,
+            &mat3::transpose(&last_item.rotation_local),
+        );
+        self.translation_offset = mat3::sub(
+            &last_item.translation_global,
+            &mat3::mat_vec(&self.rotation_offset, &last_item.translation_local),
         );
 
         self.timing.gtsam_s += smooth_t0.elapsed().as_secs_f64();
         self.timing.smooth_calls += 1;
         if self.config.debug && self.timing.smooth_calls.is_multiple_of(100) {
-            let t = &self.timing;
+            let timing = &self.timing;
             eprintln!(
                 "PGO_TIMING kf={} sc={:.1}s submap={:.1}s icp={:.1}s degen={:.1}s gtsam={:.1}s",
                 self.key_poses.len(),
-                t.scan_context_s,
-                t.submap_s,
-                t.icp_s,
-                t.degeneracy_s,
-                t.gtsam_s,
+                timing.scan_context_s,
+                timing.submap_s,
+                timing.icp_s,
+                timing.degeneracy_s,
+                timing.gtsam_s,
             );
         }
     }

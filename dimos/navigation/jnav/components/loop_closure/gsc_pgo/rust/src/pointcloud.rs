@@ -30,8 +30,9 @@
 //!   iterations, max correspondence distance 10 m, transformation epsilon
 //!   1e-6, euclidean fitness epsilon 1e-6. The whole ICP core runs on f32
 //!   4x4 transforms with PCL/Eigen's per-coefficient evaluation order so the
-//!   iterates match the C++ reference bit for bit; only the returned r/t are
-//!   widened to f64 (mirroring `getFinalTransformation().cast<double>()`).
+//!   iterates match the C++ reference bit for bit; only the returned
+//!   rotation/translation are widened to f64 (mirroring
+//!   `getFinalTransformation().cast<double>()`).
 //!   Fitness score is PCL `getFitnessScore()`: mean *squared* NN distance
 //!   over all source points (default max_range = DBL_MAX).
 //! - `cloud_degeneracy`: the Zhang-2016/X-ICP normal-scatter observability
@@ -49,13 +50,14 @@ use crate::mat3::{self, Mat3, Vec3};
 /// intensity (nothing in the PGO core reads intensity).
 pub type PointCloud = Vec<[f32; 3]>;
 
-/// `pcl::transformPointCloud(cloud, out, t, Quaterniond(r))`: p' = r*p + t.
-pub fn transform_cloud(cloud: &[[f32; 3]], r: &Mat3, t: &Vec3) -> PointCloud {
+/// `pcl::transformPointCloud(cloud, out, translation, Quaterniond(rotation))`:
+/// p' = rotation*p + translation.
+pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) -> PointCloud {
     cloud
         .iter()
         .map(|p| {
             let v = [p[0] as f64, p[1] as f64, p[2] as f64];
-            let out = mat3::add(&mat3::mat_vec(r, &v), t);
+            let out = mat3::add(&mat3::mat_vec(rotation, &v), translation);
             [out[0] as f32, out[1] as f32, out[2] as f32]
         })
         .collect()
@@ -263,13 +265,13 @@ fn sq_dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// Result of `icp_point_to_point`, mirroring what simple_pgo.cpp reads off
-/// `m_icp`: `hasConverged()`, `getFinalTransformation()` (r, t) and
-/// `getFitnessScore()`.
+/// `m_icp`: `hasConverged()`, `getFinalTransformation()` (rotation,
+/// translation) and `getFitnessScore()`.
 #[derive(Debug, Clone)]
 pub struct IcpResult {
     pub converged: bool,
-    pub r: Mat3,
-    pub t: Vec3,
+    pub rotation: Mat3,
+    pub translation: Vec3,
     /// PCL `getFitnessScore()`: mean squared NN distance over all source
     /// points (f64::MAX when the target is empty).
     pub fitness: f64,
@@ -394,21 +396,21 @@ fn se3_transform_cloud(cloud: &[[f32; 3]], m: &Mat4f) -> PointCloud {
 ///   `euclidean_fitness_epsilon`;
 /// - aborts unconverged when fewer than 3 correspondences remain.
 ///
-/// The returned r/t are the f32 final matrix entries widened to f64, like
-/// `getFinalTransformation().cast<double>()` in simple_pgo.cpp. The f64
-/// guess is narrowed to f32 on entry, so an f32-exact guess (as built by
-/// the loop search) round-trips losslessly.
+/// The returned rotation/translation are the f32 final matrix entries widened
+/// to f64, like `getFinalTransformation().cast<double>()` in simple_pgo.cpp.
+/// The f64 guess is narrowed to f32 on entry, so an f32-exact guess (as built
+/// by the loop search) round-trips losslessly.
 pub fn icp_point_to_point(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
-    guess_r: &Mat3,
-    guess_t: &Vec3,
+    guess_rotation: &Mat3,
+    guess_translation: &Vec3,
     params: &IcpParams,
 ) -> IcpResult {
     let mut result = IcpResult {
         converged: false,
-        r: *guess_r,
-        t: *guess_t,
+        rotation: *guess_rotation,
+        translation: *guess_translation,
         fitness: f64::MAX,
     };
     if target.is_empty() || source.is_empty() {
@@ -420,9 +422,9 @@ pub fn icp_point_to_point(
     let mut guess = mat4_identity();
     for i in 0..3 {
         for j in 0..3 {
-            guess[i][j] = guess_r[i][j] as f32;
+            guess[i][j] = guess_rotation[i][j] as f32;
         }
-        guess[i][3] = guess_t[i] as f32;
+        guess[i][3] = guess_translation[i] as f32;
     }
 
     // `align`: final_transformation_ = guess; pre-transform the working
@@ -501,9 +503,9 @@ pub fn icp_point_to_point(
     result.converged = converged;
     for i in 0..3 {
         for j in 0..3 {
-            result.r[i][j] = f64::from(final_m[i][j]);
+            result.rotation[i][j] = f64::from(final_m[i][j]);
         }
-        result.t[i] = f64::from(final_m[i][3]);
+        result.translation[i] = f64::from(final_m[i][3]);
     }
     result.fitness = fitness_score(source, &tree, &final_m);
     result
