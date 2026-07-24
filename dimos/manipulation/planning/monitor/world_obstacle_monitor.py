@@ -279,6 +279,9 @@ class WorldObstacleMonitor:
                 if det_id in self._perception_objects:
                     # Update existing obstacle
                     obstacle_id = self._perception_objects[det_id]
+                    # TODO: Cache the last accepted obstacle and use complete
+                    # replacement when detection dimensions change. Advance
+                    # tracking state only after the world accepts the update.
                     self._parent.update_obstacle_pose(obstacle_id, pose)
                     self._perception_timestamps[det_id] = current_time
                 else:
@@ -502,6 +505,8 @@ class WorldObstacleMonitor:
 
         # Step 3: apply to Drake world under lock (fast)
         with self._lock:
+            # TODO: Diff stable ObjectDB IDs and update existing obstacles
+            # instead of removing and re-adding the complete set.
             for obs_id in self._object_obstacles.values():
                 self._parent.remove_obstacle(obs_id)
             self._object_obstacles.clear()
