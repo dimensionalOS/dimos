@@ -59,7 +59,7 @@ logger = setup_logger()
 FRAME_MAP = "map"
 FRAME_WORLD = "world"
 
-PUBLISH_INTERVAL_S = 2.0  # s; for loaded_map + TF
+PUBLISH_INTERVAL = 2.0  # for loaded_map + TF
 MAP_SUFFIX = ".pc2.lcm"
 # Suffixes load_marker_map parses; a bare name gets the .json default (see _start_fiducial_prior).
 MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
@@ -153,7 +153,7 @@ class RelocalizationModule(Module):
         )
 
         self.register_disposable(
-            rx.interval(PUBLISH_INTERVAL_S)
+            rx.interval(PUBLISH_INTERVAL)
             .pipe(ops.with_latest_from(self._world_to_map))
             .subscribe(self._publish_periodic)
         )
@@ -161,9 +161,8 @@ class RelocalizationModule(Module):
         self._start_fiducial_prior()
 
         logger.info(
-            "relocalization module started",
-            map_file=self.config.map_file,
-            loaded_map_frame_id=self._premap.frame_id,
+            f"Relocalization module started: map_file={self.config.map_file!r}  "
+            f"loaded_map.frame_id={self._premap.frame_id!r}"
         )
 
     @rpc
@@ -212,14 +211,18 @@ class RelocalizationModule(Module):
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
         """Throttled warning that a sparse submap starved the RANSAC search (RANSAC-only)."""
+        if self._has_enough_points(msg):
+            return
         now = time.monotonic()
         if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
             logger.warning(
-                "ransac reloc skipped",
-                n_pts=len(msg),
-                min_local_points=self._ransac_min_local_points,
+                f"relocalize skipped: n_pts={len(msg)} < "
+                f"min_local_points={self._ransac_min_local_points}"
             )
             self._last_skip_log = now
+
+    def _has_enough_points(self, msg: PointCloud2) -> bool:
+        return len(msg) >= self._ransac_min_local_points
 
     def _maybe_log_wall_skip(self, n_pts: int, reason: str) -> None:
         """Throttled warning that the judge refused a fire for too little wall evidence; shares the RANSAC-skip throttle timer -- both are 'cloud too sparse this fire'."""
@@ -303,7 +306,7 @@ class RelocalizationModule(Module):
                 self._last_ransac_fired_s is None
                 or now - self._last_ransac_fired_s >= self._ransac_interval_s
             )
-            if time_due and len(msg) >= self._ransac_min_local_points:
+            if time_due and self._has_enough_points(msg):
                 self._last_ransac_fired_s = now
                 self._fire(self._ransac_prior, msg)
             elif time_due:
@@ -315,10 +318,7 @@ class RelocalizationModule(Module):
             self._fire(self._fiducial_prior, msg)
 
     def _try_relocalize(self, msg: PointCloud2, priors: list[RelocPrior]) -> Transform | None:
-        if self._premap is None:
-            raise RuntimeError(
-                "_try_relocalize before start() loaded premap; call start() with map_file set"
-            )
+        assert self._premap is not None
         if not priors:
             return None  # every prior disabled (or fiducial-only with no marker map yet)
         t0 = time.monotonic()
@@ -405,7 +405,9 @@ class RelocalizationModule(Module):
         self._last_fix_map_T_world = T
         self._last_fix_ts_s = now_s
 
-        # relocalize() returns map_T_world (scan_in_map = T @ scan_raw). We publish the world->map TF, so invert to world_T_map here.
+        # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
+        # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
+        # so inverse the transform T here to get map_in_scan_frame
         T_inv = np.linalg.inv(T)
         new_tf = Transform(
             translation=Vector3(*T_inv[:3, 3]),
@@ -417,24 +419,25 @@ class RelocalizationModule(Module):
             entry = self._eval_tally.setdefault(gate_source, SourceTally())
             entry.accepts += 1
             entry.fitnesses.append(round(fitness, 3))
-            logger.info(
-                "relocalize accepted",
-                **source_kw,
-                fitness=round(fitness, 3),
-                time_cost_s=round(dt, 1),
-                n_pts=n_pts,
-                reloc_t_m=T[:3, 3].round(3).tolist(),
-                tf_from=FRAME_WORLD,
-                tf_to=FRAME_MAP,
-                published_t_m=T_inv[:3, 3].round(3).tolist(),
-            )
-        else:
-            logger.info(
-                "relocalize accepted",
-                **source_kw,
-                fitness=round(fitness, 3),
-                time_cost_s=round(dt, 1),
-            )
+        # The published pose rides on --eval only: the quiet line is the fix plus its health.
+        pose_kw: dict[str, Any] = (
+            {
+                "n_pts": n_pts,
+                "reloc_t_m": T[:3, 3].round(3).tolist(),
+                "tf_from": FRAME_WORLD,
+                "tf_to": FRAME_MAP,
+                "published_t_m": T_inv[:3, 3].round(3).tolist(),
+            }
+            if self.config.verbose_eval_logging
+            else {}
+        )
+        logger.info(
+            "relocalize accepted",
+            **source_kw,
+            fitness=round(fitness, 3),
+            time_cost_s=round(dt, 1),
+            **pose_kw,
+        )
         return new_tf
 
     def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
@@ -450,6 +453,7 @@ class RelocalizationModule(Module):
         if self._premap is None:
             return
         if tf is None:
+            # self.merged_map.publish(local)
             # costmap fallbacks to local map, skip publishing
             return
         premap_in_world = self._premap.transform(tf)

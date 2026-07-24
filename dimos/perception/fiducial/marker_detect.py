@@ -86,7 +86,7 @@ def detect_markers_in_image(
     for corner_set, mid_arr in zip(corners, ids, strict=True):
         mid = int(mid_arr[0])
         # gate the IPPE mirror-flip at the source; see marker_pose.ambiguity_gated_pose
-        gated = ambiguity_gated_pose(
+        pose = ambiguity_gated_pose(
             corner_set,
             marker_length_m,
             camera_matrix,
@@ -94,9 +94,10 @@ def detect_markers_in_image(
             distortion_model=camera_info.distortion_model,
             ambiguity_ratio_min=ambiguity_ratio_min,
         )
-        if gated is None:
+        if pose is None:
             continue
-        optical_T_marker, _reproj_px = gated
+
+        optical_T_marker, _reproj_px = pose
         rvec = cv2.Rodrigues(optical_T_marker[:3, :3])[0]
         tvec = optical_T_marker[:3, 3].reshape(3, 1)
         t_optical_marker = rvec_tvec_to_transform(

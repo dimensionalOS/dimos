@@ -121,9 +121,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             ),
         )
         # tap yields every observation unchanged, so `detections` stays byte-identical and OpenCV runs once per frame -- a second .observable() would re-subscribe and re-detect
-        return markers.tap(self._aggregate).transform(
-            MarkersPerFrame(frame_id=self.config.world_frame)
-        )
+        markers = markers.tap(self._aggregate)
+        return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
@@ -131,8 +130,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             return
         if not self._warned_distortion_model:
             logger.warning(
-                "unsupported distortion_model, using D as-is",
-                distortion_model=camera_info.distortion_model,
+                "MarkerDetectionStreamModule: distortion_model=%r may be unsupported; "
+                "using D as-is.",
+                camera_info.distortion_model,
             )
             self._warned_distortion_model = True
 
@@ -142,9 +142,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = (
-            image.ts if image.ts else time.time()
-        )  # fallback: unstamped frame -> wallclock so TF lookup has a time_point
+        ts = getattr(image, "ts", None) or time.time()
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tf.get(
             self.config.world_frame,
@@ -154,10 +152,10 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
         )
         if t_world_optical is None:
             logger.debug(
-                "no TF for frame; skipping frame",
-                world_frame=self.config.world_frame,
-                optical_frame=optical,
-                ts=round(ts, 3),
+                "MarkerDetectionStreamModule: no TF %s -> %s at ts=%s",
+                self.config.world_frame,
+                optical,
+                ts,
             )
             return
 
@@ -181,9 +179,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
         if len(self.inputs) != 1 or len(self.outputs) != 2:
             raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and two Out ports "
-                f"(detections + aggregated_detections), found "
-                f"{len(self.inputs)} In and {len(self.outputs)} Out"
+                f"{self.__class__.__name__} must have exactly one In and two Out ports, "
+                f"found {len(self.inputs)} In and {len(self.outputs)} Out"
             )
 
         store = self.register_disposable(NullStore())

@@ -12,7 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ArUco / AprilTag detection as memory2 transforms: one world-frame :class:`Detection3DMarker` per marker, plus smoothing helpers, ``MarkersPerFrame`` and :class:`AggregateTagBursts` (per-glimpse gates + one aggregated pose per tag visit); aggregation core from jnav, dimos PR #2587."""
+"""ArUco / AprilTag detection as memory2 transforms.
+
+Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`
+and emits one :class:`Detection3DMarker` observation per detected marker, with
+``.pose`` composed into world frame from the upstream observation's camera pose.
+This module also keeps marker smoothing helpers and ``MarkersPerFrame``, which
+collapses marker fan-out back into one ``Detection3DArray`` per source image.
+The companion module :class:`MarkerTfModule` remains the right choice for live
+TF publication.
+
+Skips frames where the upstream observation has no ``.pose`` (debug log):
+without a camera-in-world pose, we can't honor the "always world-frame"
+output contract.
+
+:class:`AggregateTagBursts` taps that marker stream to gate each glimpse and
+publish one robustly-aggregated pose per tag visit (aggregation core from jnav,
+dimos PR #2587).
+"""
 
 from __future__ import annotations
 
@@ -99,7 +116,14 @@ def _pose_tuple_to_transform(
 def _average_marker_pose(
     buffer: TimestampedBufferCollection[Detection3DMarker],
 ) -> tuple[Vector3, Quaternion]:
-    """Mean translation; sign-aligned linear quaternion mean (small-angle Markley approximation https://ntrs.nasa.gov/citations/20070017872; flip any q whose dot vs the first is negative)."""
+    """Mean translation; quaternion mean with hemisphere alignment.
+
+    Quaternions q and -q encode the same rotation, so naive averaging can
+    cancel. We pick the first sample as a hemisphere reference and flip the
+    sign of any sample whose dot product against it is negative before
+    summing. For closely-spaced rotations within a short window this is
+    indistinguishable from a proper SLERP-style average.
+    """
     items = list(buffer)
     n = len(items)
     cx = sum(d.center.x for d in items) / n
@@ -151,6 +175,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.ambiguity_ratio_min = ambiguity_ratio_min
         self._detector = create_aruco_detector(aruco_dictionary)
         self._camera_info_key: tuple[Any, ...] | None = None
+        self._resolved_camera_info: CameraInfo | None = None
         self._cam_mtx: np.ndarray | None = None
         self._dist: np.ndarray | None = None
         # Per marker_id sliding-window buffer of raw detections, used to emit
@@ -172,6 +197,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         if key != self._camera_info_key:
             self._cam_mtx, self._dist = camera_info_to_cv_matrices(info)
             self._detector = create_aruco_detector(self.aruco_dictionary)
+            self._resolved_camera_info = info
             self._camera_info_key = key
         return info
 
@@ -181,15 +207,15 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         for obs in upstream:
             pose_tuple = obs.pose_tuple
             if pose_tuple is None:
-                logger.debug("marker frame skipped: no camera-in-world pose", obs_id=obs.id)
+                logger.debug("DetectMarkers: obs %s has no .pose; skipping", obs.id)
                 continue
 
             info = self._resolve_camera_info()
             if info is None:
-                logger.debug("marker frame skipped: no CameraInfo", obs_id=obs.id)
+                logger.debug("DetectMarkers: no CameraInfo for obs %s; skipping", obs.id)
                 continue
-            assert self._cam_mtx is not None, "camera matrix unset despite resolved CameraInfo"
-            assert self._dist is not None, "dist coeffs unset despite resolved CameraInfo"
+            assert self._cam_mtx is not None
+            assert self._dist is not None
 
             image = obs.data
             image_size_mismatch = (
@@ -199,11 +225,11 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
             )
             if image_size_mismatch:
                 logger.debug(
-                    "marker frame skipped: image size != CameraInfo",
-                    img_w=image.width,
-                    img_h=image.height,
-                    info_w=info.width,
-                    info_h=info.height,
+                    "DetectMarkers: image %sx%s != CameraInfo %sx%s; skip",
+                    image.width,
+                    image.height,
+                    info.width,
+                    info.height,
                 )
                 continue
 
@@ -265,13 +291,18 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
                 yielded_det = det
                 if self.smoothing_window > 0:
-                    # Emit the windowed-mean pose so each detection refines the same marker's estimate.
+                    # Buffer raw detections per marker_id over a sliding
+                    # window; emit the windowed-mean pose so each successive
+                    # detection refines the same marker's estimate instead
+                    # of producing a fresh independent observation.
                     buf = self._buffers.setdefault(
                         mid, TimestampedBufferCollection(self.smoothing_window)
                     )
                     buf.add(det)
                     avg_center, avg_orient = _average_marker_pose(buf)
-                    # Drop `transform`: the averaged pose spans many frames, no single camera transform holds.
+                    # Drop `transform` (camera-in-world): the averaged pose is
+                    # built from many frames, so any single camera transform is
+                    # inconsistent with center/orientation.
                     yielded_det = dataclasses.replace(
                         det, center=avg_center, orientation=avg_orient, transform=None
                     )
@@ -293,7 +324,16 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
 
 class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
-    """Collapse marker fan-out back into one Detection3DArray per image frame; ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for empty frames and tags each marker with the source image + frame marker count, so this transformer emits without waiting for a later timestamp."""
+    """Collapse marker fan-out back into one Detection3DArray per image frame.
+
+    ``DetectMarkers`` normally emits one observation per decoded marker. For
+    live LCM semantics, downstream consumers need a single array for each
+    processed image, including empty arrays for frames where no marker decoded.
+    ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
+    those empty frames and tags every marker observation with the source image
+    and frame marker count so this transformer can emit without waiting for a
+    later timestamp.
+    """
 
     def __init__(self, frame_id: str = "world") -> None:
         self.frame_id = frame_id
@@ -374,10 +414,18 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     def _source_pose(
         obs: Observation[Detection3DMarker | None],
         detections: list[Detection3DMarker],
-    ) -> Transform | Pose | None:
-        # both branches are re-coerced to the storage 7-tuple by ``derive(pose=)`` (Transform.translation/rotation and Pose.position/orientation -> 7-tuple)
+    ) -> Any | None:
         if detections and detections[0].transform is not None:
-            return detections[0].transform
+            transform = detections[0].transform
+            return (
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z,
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+                transform.rotation.w,
+            )
         return obs.pose
 
 
