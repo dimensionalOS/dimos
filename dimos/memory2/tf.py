@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TF service backed by a recorded ``tf`` stream."""
+"""TF lookups backed by a recorded ``tf`` stream."""
 
 from __future__ import annotations
 
@@ -21,32 +21,27 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory2.stream import Stream
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import MultiTBuffer, TFConfig, TFSpec
+from dimos.protocol.tf.tf import MultiTBuffer
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.protocol.tf.tf import TFLookup
 
 
-class StreamTFConfig(TFConfig):
-    stream: Stream[TFMessage] | None = (
-        None  # Required field but needs default for config inheritance
-    )
-    cache_span: float = 300.0
-
-
-class StreamTF(MultiTBuffer, TFSpec):
-    config: StreamTFConfig
-
-    def __init__(self, stream: Stream[TFMessage] | None = None, **kwargs: Any) -> None:
-        if stream is not None:
-            kwargs["stream"] = stream
-        TFSpec.__init__(self, **kwargs)
+class StreamTF(MultiTBuffer):
+    def __init__(
+        self,
+        stream: Stream[TFMessage] | None = None,
+        cache_span: float = 300.0,
+        default_tolerance: float = 10.0,
+    ) -> None:
         MultiTBuffer.__init__(self, buffer_size=math.inf)
 
-        if self.config.stream is None:
+        if stream is None:
             raise ValueError("Stream configuration is missing")
-        self.stream = self.config.stream
+        self.stream = stream
+        self.cache_span = cache_span
+        self.default_tolerance = default_tolerance
 
         self._covered: tuple[float, float] | None = None
 
@@ -57,9 +52,6 @@ class StreamTF(MultiTBuffer, TFSpec):
         return cls(store.stream(stream, TFMessage))
 
     def publish(self, *args: Transform) -> None:
-        raise NotImplementedError("StreamTF is a read-only replay service.")
-
-    def publish_static(self, *args: Transform) -> None:
         raise NotImplementedError("StreamTF is a read-only replay service.")
 
     def _load(self, lo: float, hi: float) -> None:
@@ -76,7 +68,7 @@ class StreamTF(MultiTBuffer, TFSpec):
                     return
                 self.buffers.clear()
                 self._covered = None
-            self._load(lo, hi + self.config.cache_span)
+            self._load(lo, hi + self.cache_span)
 
     def get(
         self,
@@ -93,7 +85,7 @@ class StreamTF(MultiTBuffer, TFSpec):
             tp = last.ts if last is not None else None
 
         if tp is not None:
-            back = time_tolerance if time_tolerance is not None else self.config.buffer_size
+            back = time_tolerance if time_tolerance is not None else self.default_tolerance
             fwd = time_tolerance if time_tolerance is not None else forward_tolerance
             self._ensure(tp - back, tp + fwd)
 

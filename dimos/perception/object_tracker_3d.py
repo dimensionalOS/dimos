@@ -30,10 +30,10 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.object_tracker_2d import ObjectTracker2D
-from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
@@ -54,6 +54,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
     # Additional outputs (2D tracker already has detection2darray and tracked_overlay)
     detection3darray: Out[Detection3DArray]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """
@@ -68,9 +69,6 @@ class ObjectTracker3D(ObjectTracker2D):
         self.camera_intrinsics = None
         self._latest_depth_frame: np.ndarray | None = None
         self._latest_camera_info: CameraInfo | None = None
-
-        # TF publisher for tracked object
-        self.tf = TF()
 
         # Store latest 3D detection
         self._latest_detection3d: Detection3DArray | None = None
@@ -247,7 +245,7 @@ class ObjectTracker3D(ObjectTracker2D):
             child_frame_id="tracked_object",
             ts=header.ts,
         )
-        self.tf.publish(tracked_object_tf)
+        self.tf.publish(TFMessage(tracked_object_tf))
 
         return detection3darray
 

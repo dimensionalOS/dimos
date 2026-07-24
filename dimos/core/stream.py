@@ -218,6 +218,49 @@ class RemoteOut(RemoteStream[T]):
         return self.transport.subscribe(cb, self)
 
 
+class IO(Stream[T], ObservableMixin[T]):
+    """Bidirectional stream: publishes to and subscribes on the same topic.
+
+    An IO port sees the whole topic, including its own publishes (delivered
+    back through transport loopback).
+    """
+
+    _transport: Transport  # type: ignore[type-arg]
+
+    @property
+    def transport(self) -> Transport[T]:
+        return self._transport
+
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        self._transport = value
+
+    @property
+    def state(self) -> State:
+        return State.UNBOUND if self.owner is None else State.READY
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        if self.owner is None or not hasattr(self.owner, "ref"):
+            raise ValueError("Cannot serialise IO without an owner ref")
+        return (RemoteIO, (self.type, self.name, self.owner.ref, self._transport))
+
+    def publish(self, msg: T) -> None:
+        self._transport.broadcast(self, msg)  # type: ignore[arg-type]
+
+    # returns unsubscribe function
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
+
+
+# representation of an IO port outside of the module
+class RemoteIO(RemoteStream[T]):
+    def publish(self, msg: T) -> None:
+        self.transport.broadcast(self, msg)  # type: ignore[arg-type]
+
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
+
+
 # representation of Input
 # as views from inside of the module
 class In(Stream[T], ObservableMixin[T]):

@@ -29,6 +29,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -40,6 +41,7 @@ from dimos.perception.detection.type.detection3d.object import (
     aggregate_pointclouds,
     to_detection3d_array,
 )
+from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -53,6 +55,7 @@ class ObjectSceneRegistrationModule(Module):
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
+    tf: In[TFMessage]
 
     detections_2d: Out[Detection2DArray]
     detections_3d: Out[Detection3DArray]
@@ -61,6 +64,7 @@ class ObjectSceneRegistrationModule(Module):
 
     _detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
+    _tf: TF | None = None
     _object_db: ObjectDB
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
@@ -93,6 +97,8 @@ class ObjectSceneRegistrationModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+
+        self._tf = TF(self.tf)
 
         if self._prompt_mode == YoloePromptMode.LRPC:
             model_name = "yoloe-11l-seg-pf.pt"
@@ -330,12 +336,16 @@ class ObjectSceneRegistrationModule(Module):
         # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
         if self._target_frame != color_image.frame_id:
-            camera_transform = self.tf.get(
-                self._target_frame,
-                color_image.frame_id,
-                color_image.ts,
-                0.1,
-                forward_tolerance=0.2,
+            camera_transform = (
+                self._tf.get(
+                    self._target_frame,
+                    color_image.frame_id,
+                    color_image.ts,
+                    0.1,
+                    forward_tolerance=0.2,
+                )
+                if self._tf
+                else None
             )
             if camera_transform is None:
                 logger.info("Failed to lookup transform from camera frame to target frame")

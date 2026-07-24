@@ -34,12 +34,10 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     ZenohQoS,
 )
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
-from dimos.protocol.tf.tf import LCMTF, ZenohTF
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
     from dimos.protocol.rpc.spec import RPCSpec
-    from dimos.protocol.tf.tf import TFSpec
 
 
 def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
@@ -140,8 +138,3 @@ def apply_transport_arg(argv: list[str], *, g: GlobalConfig = global_config) -> 
 def rpc_backend(g: GlobalConfig = global_config) -> type[RPCSpec]:
     """Return the RPC class (`LCMRPC` or `ZenohRPC`) for the active backend."""
     return ZenohRPC if g.transport == "zenoh" else LCMRPC
-
-
-def tf_backend(g: GlobalConfig = global_config) -> type[TFSpec]:
-    """Return the TF class (`LCMTF` or `ZenohTF`) for the active backend."""
-    return ZenohTF if g.transport == "zenoh" else LCMTF

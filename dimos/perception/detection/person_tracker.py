@@ -26,8 +26,10 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
@@ -36,6 +38,8 @@ class PersonTracker(Module):
     detections: In[Detection2DArray]
     color_image: In[Image]
     target: Out[PoseStamped]
+    tf: In[TFMessage]
+    _tf: TF | None = None
 
     camera_info: CameraInfo
 
@@ -96,6 +100,7 @@ class PersonTracker(Module):
 
     @rpc
     def start(self) -> None:
+        self._tf = TF(self.tf)
         self.detections_stream().subscribe(self.track)
 
     @rpc
@@ -115,7 +120,9 @@ class PersonTracker(Module):
             frame_id="camera_link",
         )
 
-        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 5.0)
+        tf_world_to_camera = (
+            self._tf.get("world", "camera_link", detections2D.ts, 5.0) if self._tf else None
+        )
         if not tf_world_to_camera:
             return
 

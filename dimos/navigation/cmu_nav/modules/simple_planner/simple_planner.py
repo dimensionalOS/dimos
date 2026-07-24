@@ -36,7 +36,9 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -329,6 +331,9 @@ class SimplePlanner(Module):
     way_point: Out[PointStamped]
     goal_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
+    tf: In[TFMessage]
+
+    _tf: TF | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -373,6 +378,7 @@ class SimplePlanner(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._tf = TF(self.tf)
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
         self.register_disposable(
@@ -416,12 +422,15 @@ class SimplePlanner(Module):
 
         Returns True if a pose was obtained from any chain.
         """
-        tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
+        tf_view = self._tf
+        if tf_view is None:
+            return False
+        tf = resolve_tf_chain(tf_view, list(self._tf_pose_queries))
         if tf is None:
             now = time.monotonic()
             if now - self._last_tf_warn > _TF_WARN_THROTTLE:
                 self._last_tf_warn = now
-                buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
+                buffers = list(tf_view.buffers.keys())
                 logger.warning(
                     "TF lookup failed — no robot pose available",
                     tried=[(p, c) for p, c in self._tf_pose_queries],

@@ -30,6 +30,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,11 +52,14 @@ class DroneCameraModule(Module):
 
     # Inputs
     video: In[Image]
+    tf: In[TFMessage]
 
     # Outputs
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     camera_pose: Out[PoseStamped]
+
+    _tf: TF | None = None
 
     def __init__(
         self,
@@ -97,6 +102,7 @@ class DroneCameraModule(Module):
             return
 
         self._running = True
+        self._tf = TF(self.tf)
         self._stop_processing.clear()
         self._processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
         self._processing_thread.start()
@@ -195,8 +201,10 @@ class DroneCameraModule(Module):
 
     def _publish_camera_pose(self, header: Header) -> None:
         """Publish camera pose from TF."""
+        if self._tf is None:
+            return
         try:
-            transform = self.tf.get(
+            transform = self._tf.get(
                 parent_frame=self.world_frame_id,
                 child_frame=self.camera_frame_id,
                 time_point=header.ts,

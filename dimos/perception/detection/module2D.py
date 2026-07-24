@@ -21,16 +21,18 @@ from reactivex.subject import Subject
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.protocol.tf.tf import TF
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -53,6 +55,7 @@ class Detection2DModule(Module):
     detector: Detector
 
     color_image: In[Image]
+    tf: IO[TFMessage]
 
     detections: Out[Detection2DArray]
     detected_image_0: Out[Image]
@@ -60,6 +63,7 @@ class Detection2DModule(Module):
     detected_image_2: Out[Image]
 
     cnt: int = 0
+    _tf: TF | None = None
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -87,7 +91,9 @@ class Detection2DModule(Module):
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def track(self, detections: ImageDetections2D) -> None:
-        sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
+        if self._tf is None:
+            return
+        sensor_frame = self._tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
             return
@@ -125,10 +131,11 @@ class Detection2DModule(Module):
             )
 
         self.previous_detection_count = current_count
-        self.tf.publish(*transforms)
+        self._tf.publish(*transforms)
 
     @rpc
     def start(self) -> None:
+        self._tf = TF(self.tf)
         # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(

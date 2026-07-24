@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import pickle
+import time
 from types import MappingProxyType
 from typing import Protocol
 
@@ -40,9 +41,11 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.core.transport import CloudflareTransport
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -886,3 +889,89 @@ def test_spec_config_kwarg_reaches_provider_config() -> None:
     bp = Blueprint(blueprints=(), transport_map=MappingProxyType({("s", bytes): spec}))
     t = _materialize_transports(bp, {})[("s", bytes)]
     assert t._config.robot_type == "go2"
+
+
+class IoTfPublisher(Module):
+    tf: Out[TFMessage]
+
+    @rpc
+    def send(self, child: str) -> None:
+        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+
+
+class IoTfEcho(Module):
+    tf: IO[TFMessage]
+    _seen: list[str] | None = None
+
+    @rpc
+    def start(self) -> None:
+        self._seen = []
+        super().start()
+
+    async def handle_tf(self, msg: TFMessage) -> None:
+        assert self._seen is not None
+        self._seen.extend(t.child_frame_id for t in msg.transforms)
+
+    @rpc
+    def send(self, child: str) -> None:
+        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+
+    @rpc
+    def seen(self) -> list[str]:
+        return list(self._seen or [])
+
+
+class IoTfConsumer(Module):
+    tf: In[TFMessage]
+    _seen: list[str] | None = None
+
+    @rpc
+    def start(self) -> None:
+        self._seen = []
+        super().start()
+
+    async def handle_tf(self, msg: TFMessage) -> None:
+        assert self._seen is not None
+        self._seen.extend(t.child_frame_id for t in msg.transforms)
+
+    @rpc
+    def seen(self) -> list[str]:
+        return list(self._seen or [])
+
+
+def _wait_until(pred, timeout: float = 10.0):  # type: ignore[no-untyped-def]
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pred():
+            return
+        time.sleep(0.05)
+    raise AssertionError("condition not met within timeout")
+
+
+def test_io_port_autoconnects_and_flows_both_ways() -> None:
+    """An IO port shares the topic with same-named In/Out ports: it hears the
+    publisher, its own publishes reach the consumer, and loopback feeds it back
+    its own messages."""
+    blueprint_set = autoconnect(
+        IoTfPublisher.blueprint(), IoTfEcho.blueprint(), IoTfConsumer.blueprint()
+    )
+
+    coordinator = ModuleCoordinator.build(blueprint_set, _BUILD_WITHOUT_RERUN.copy())
+    try:
+        publisher = coordinator.get_instance(IoTfPublisher)
+        echo = coordinator.get_instance(IoTfEcho)
+        consumer = coordinator.get_instance(IoTfConsumer)
+
+        assert publisher.tf.transport.topic == echo.tf.transport.topic
+        assert echo.tf.transport.topic == consumer.tf.transport.topic
+        assert "tf" in str(echo.tf.transport.topic)
+
+        publisher.send("from_pub")
+        _wait_until(lambda: "from_pub" in echo.seen())
+        _wait_until(lambda: "from_pub" in consumer.seen())
+
+        echo.send("from_echo")
+        _wait_until(lambda: "from_echo" in consumer.seen())
+        _wait_until(lambda: "from_echo" in echo.seen())
+    finally:
+        coordinator.stop()

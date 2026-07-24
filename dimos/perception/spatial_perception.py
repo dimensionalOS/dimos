@@ -32,9 +32,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.image_embedding import ImageEmbeddingProvider
 from dimos.perception.spatial_vector_db import SpatialVectorDB
 from dimos.perception.visual_memory import VisualMemory
+from dimos.protocol.tf.tf import TF
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
@@ -81,6 +83,8 @@ class SpatialMemory(Module):
 
     # LCM inputs
     color_image: In[Image]
+    tf: In[TFMessage]
+    _tf: TF | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -184,6 +188,8 @@ class SpatialMemory(Module):
     def start(self) -> None:
         super().start()
 
+        self._tf = TF(self.tf)
+
         # Subscribe to LCM streams
         def set_video(image_msg: Image) -> None:
             # Convert Image message to numpy array
@@ -213,7 +219,7 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        tf = self.tf.get("world", "base_link")
+        tf = self._tf.get("world", "base_link") if self._tf else None
 
         if tf is None:
             return
@@ -502,7 +508,7 @@ class SpatialMemory(Module):
         Returns:
             True if successfully added, False otherwise
         """
-        tf = self.tf.get("world", "base_link")
+        tf = self._tf.get("world", "base_link") if self._tf else None
         if not tf:
             logger.error("No position available for robot location")
             return False
