@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RelocEval -- the in-process collector ``dimos run --eval`` attaches, plus the
-pure analysis it shares with the offline held-out driver. Trajectory/coverage/counts
-come from the real ``/tf`` + ``/odom`` streams; the run log is a supplement carrying
-each accept's winning prior, fitness, and the per-cycle census."""
+"""RelocEval -- the in-process collector ``dimos run --eval`` attaches, plus the pure
+analysis it drives. Trajectory/coverage/counts come from the real ``/tf`` + ``/odom``
+streams; the run log is a supplement carrying each accept's winning prior, fitness, and
+the per-cycle census."""
 
 from __future__ import annotations
 
@@ -245,19 +245,17 @@ def resolve_run_log(run_log_file: str | None) -> Path | None:
 
 
 # --------------------------------------------------------------------------- #
-# Fixes + stats (shared by the Module and the offline driver)
+# Fixes + stats
 # --------------------------------------------------------------------------- #
 @dataclass
 class Fix:
-    """One accepted relocalization, in ONE timebase (wall for the Module, recording
-    seconds for the offline driver -- always the same clock as the odom it scores against)."""
+    """One accepted relocalization, timestamped in wall seconds -- the same clock as
+    the odom it is scored against."""
 
     ts: float
     world_map_fix: np.ndarray | None  # 4x4 world_T_map (None if rotation not captured)
     source: str
     fitness: float
-    err_t_m: float | None = None
-    success: bool | None = None
 
 
 @dataclass
@@ -265,16 +263,12 @@ class SourceRow:
     source: str
     won: int
     pct_traj: float
-    med_err_m: float | None
     med_fit: float | None
-    n_success: int | None
-    n_judged: int | None
     # Per-source activity from the run-log events -- independent of the /tf join, so
     # these never degrade to ``unknown`` the way a join-labelled fix's source can.
     proposed: int = 0  # cycles this source put >=1 candidate forward (census PRESENCE)
     accepted: int = 0  # `relocalize accepted` log lines this source won
     rejected: int | None = None  # `relocalize rejected` lines; None = no source parsed
-    n_false: int | None = None  # accepts beyond the held-out gate (a wrong accept); None = no truth
 
 
 @dataclass
@@ -287,8 +281,6 @@ class EvalStats:
     fiducial_proposed_cycles: int | None
     census_cycles: int | None
     fiducial_won: int
-    mode: str
-    held_out_note: str
 
 
 def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
@@ -367,8 +359,6 @@ def compute_stats(
     census: list[dict[str, int]],
     n_rejects: int | None,
     *,
-    mode: str,
-    held_out_note: str,
     accept_sources: list[str] | None = None,
     reject_sources: list[str] | None = None,
 ) -> EvalStats:
@@ -378,9 +368,9 @@ def compute_stats(
         odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world (LIO/odom) frame,
             or an empty array. A wrong-width array raises rather than mis-indexing.
         accept_sources: the source of every ``relocalize accepted`` log line. None ->
-            fall back to the joined fixes' sources (what the held-out driver wants).
+            fall back to the joined fixes' sources.
         reject_sources: the source of every reject. None -> not parsed, so per-source
-            ``rej`` is held out (``-``), not 0.
+            ``rej`` renders ``-``, not 0.
     """
     odom_txyz = np.asarray(odom_txyz, dtype=float)
     if odom_txyz.size and (odom_txyz.ndim != 2 or odom_txyz.shape[1] != 4):
@@ -417,23 +407,15 @@ def compute_stats(
     for s in (*SOURCES, *extra):
         s_fixes = [f for f in fixes if f.source == s]
         traj = sum(1 for a in active_src if a == s)
-        judged = [f for f in s_fixes if f.success is not None]
-        n_success = sum(1 for f in judged if f.success) if judged else None
-        n_judged = len(judged) if judged else None
         rows.append(
             SourceRow(
                 source=s,
                 won=len(s_fixes),
                 pct_traj=(100.0 * traj / n_covered) if n_covered else 0.0,
-                med_err_m=_median([f.err_t_m for f in s_fixes if f.err_t_m is not None]),
                 med_fit=_median([f.fitness for f in s_fixes if not np.isnan(f.fitness)]),
-                n_success=n_success,
-                n_judged=n_judged,
                 proposed=proposed_by.get(s, 0),
                 accepted=accepted_by.get(s, 0),
                 rejected=None if rejected_by is None else rejected_by.get(s, 0),
-                # FALSE reuses the held-out accuracy gate (Fix.success): a judged accept that failed it.
-                n_false=sum(1 for f in judged if f.success is False) if judged else None,
             )
         )
 
@@ -452,8 +434,6 @@ def compute_stats(
         ),
         census_cycles=len(census) if census else None,
         fiducial_won=sum(1 for f in fixes if f.source == "fiducial"),
-        mode=mode,
-        held_out_note=held_out_note,
     )
 
 
@@ -470,32 +450,20 @@ def _count_cell(x: int | None) -> str:
 
 
 def format_report(stats: EvalStats, *, title: str) -> str:
-    """The per-source table, a TOTAL row, then the prior-activity line, overall, and
-    the held-out note. ``false`` and ``med_err`` are dropped in live mode (no truth)."""
-    truth = stats.mode == "held_out"
-    header = ["source", "prop", "acc", "rej", "false", "%traj", "med_err", "med_fit"]
-    keep = [True, True, True, True, truth, True, truth, True]
-    header = [h for h, k in zip(header, keep, strict=True) if k]
-
-    def _row_cells(
-        source: str, prop: str, acc: str, rej: str, false: str, traj: str, err: str, fit: str
-    ) -> list[str]:
-        cells = [source, prop, acc, rej, false, traj, err, fit]
-        return [c for c, k in zip(cells, keep, strict=True) if k]
+    """The per-source table, a TOTAL row, then the prior-activity line and overall."""
+    header = ["source", "prop", "acc", "rej", "%traj", "med_fit"]
 
     body: list[list[str]] = [header]
     for r in stats.rows:
         body.append(
-            _row_cells(
+            [
                 r.source,
                 str(r.proposed),
                 str(r.accepted),
                 _count_cell(r.rejected),
-                _count_cell(r.n_false),
                 _fmt(r.pct_traj, 1, "%"),
-                _fmt(r.med_err_m, 3, "m"),
                 _fmt(r.med_fit, 3),
-            )
+            ]
         )
     # TOTAL: the count columns sum; medians and %traj do not aggregate, so they blank.
     total_rej = (
@@ -503,21 +471,18 @@ def format_report(stats: EvalStats, *, title: str) -> str:
         if any(r.rejected is None for r in stats.rows)
         else sum(r.rejected or 0 for r in stats.rows)
     )
-    false_vals = [r.n_false for r in stats.rows if r.n_false is not None]
-    total_row = _row_cells(
+    total_row = [
         "TOTAL",
         str(sum(r.proposed for r in stats.rows)),
         str(sum(r.accepted for r in stats.rows)),
         _count_cell(total_rej),
-        _count_cell(sum(false_vals) if false_vals else None),
         "",
         "",
-        "",
-    )
+    ]
 
     widths = [max(len(row[i]) for row in (*body, total_row)) for i in range(len(header))]
     sep = "  ".join("-" * widths[j] for j in range(len(header)))
-    lines = [f"=== RelocEval: {title} [{stats.mode}] ==="]
+    lines = [f"=== RelocEval: {title} ==="]
     for i, row in enumerate(body):
         lines.append("  ".join(c.ljust(widths[j]) for j, c in enumerate(row)))
         if i == 0:
@@ -536,7 +501,6 @@ def format_report(stats: EvalStats, *, title: str) -> str:
         f"overall: accepts={stats.accepts} rejects={stats.rejects if stats.rejects is not None else '-'} "
         f"coverage={stats.coverage_pct:.1f}% first-fix={_fmt(stats.first_fix_s, 1, 's')}"
     )
-    lines.append(stats.held_out_note)
     return "\n".join(lines)
 
 
@@ -550,8 +514,7 @@ class EvalConfig(ModuleConfig):
 
 class RelocEval(Module):
     """In-process collector: subscribes to ``/tf`` + ``/odom`` and at stop() prints the
-    per-source reloc table. Always "live" (no PGO truth). Best-effort: a finalize failure
-    may not crash the run."""
+    per-source reloc table. Best-effort: a finalize failure may not crash the run."""
 
     config: EvalConfig
 
@@ -621,10 +584,6 @@ class RelocEval(Module):
         fixes = label_fixes_from_log(tf_fixes, health)
 
         odom = np.array(self._odom, dtype=float) if self._odom else np.empty((0, 4), dtype=float)
-        note = (
-            "live capture: no PGO truth in-process -> med_err/false omitted; the "
-            "scored held-out accuracy comes from the offline held-out driver."
-        )
         # accept_sources from the LOG accepts (not the /tf join): every accept names
         # its prior, so ACCEPTED per source is exact even where a join failed.
         n_rejects = None if reject_sources is None else len(reject_sources)
@@ -633,8 +592,6 @@ class RelocEval(Module):
             odom,
             census,
             n_rejects,
-            mode="live",
-            held_out_note=note,
             accept_sources=[h.source for h in health],
             reject_sources=reject_sources,
         )
