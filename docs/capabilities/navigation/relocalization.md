@@ -100,9 +100,9 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
 
 ```
 Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
-relocalize skipped: n_pts=37770 < min_local_points=50000
-relocalize rejected fitness=0.433 source=ransac threshold=0.6
-relocalize accepted fitness=0.657 time_cost_s=3.0
+relocalize skipped: sparse submap n_pts=37770 min_local_points=50000
+relocalize rejected source=ransac fitness=0.433 threshold=0.6
+relocalize accepted source=ransac fitness=0.657 time_cost_s=3.0
 ```
 
 `relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. `threshold=` is the proposing prior's own `fitness_threshold`. Once `relocalize accepted` lines appear at info level, the `world → map` TF is live.

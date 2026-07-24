@@ -36,7 +36,7 @@ RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # voxel for the final ICP refinement
 RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
-# Min wall points per cloud (post fine-voxel downsample) for the wall-only rerank. ARBITRARY/UNTUNED: inherited from the old silent-fallback check.
+# Min wall points per cloud (post fine-voxel downsample) for the wall-only rerank; ARBITRARY/UNTUNED.
 MIN_WALL_POINTS = 100
 
 
@@ -198,7 +198,7 @@ def refine_candidates(
     )
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
-    # Gravity filter. An all-tilted pool is REFUSED, not resurrected -- a tilted winner is a rotationally-symmetric-floor mis-solve, not a valid pose.
+    # A tilted winner is a rotationally-symmetric-floor mis-solve, so refuse the whole pool.
     upright = [T for T in candidates if _gravity_tilt_deg(T) <= gravity_tilt_max_deg]
     if not upright:
         raise NoUprightCandidateError(
@@ -225,7 +225,7 @@ def refine_candidates(
     tgt_walls = _wall_subset(tgt_fine)
     n_src_walls, n_tgt_walls = len(src_walls.points), len(tgt_walls.points)
     if n_src_walls < MIN_WALL_POINTS or n_tgt_walls < MIN_WALL_POINTS:
-        # No silent full-cloud fallback: floors-only scoring is rotation-blind.
+        # floors-only scoring is rotation-blind, so there is nothing to fall back to
         raise InsufficientWallEvidenceError(
             f"insufficient wall evidence: submap walls={n_src_walls}, "
             f"map walls={n_tgt_walls} < {MIN_WALL_POINTS} — skipping solve"

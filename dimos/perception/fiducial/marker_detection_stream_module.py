@@ -70,7 +70,7 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     ambiguity_ratio_min: float = Field(
         2.0, ge=1.0
     )  # 1.0 = off; runner-up reproj must be >=2x the best -- a planar tag has two poses fitting the same four corners, and the wrong one flips orientation ~180 deg
-    # per-glimpse gates + aggregation for aggregated_detections; first pose only after min_observations * quality_window_s (1.0 s at defaults) -- the floor latency of a fix
+    # per-glimpse gates + aggregation for aggregated_detections; first pose only after (min_observations - 1) * quality_window_s (1.0 s at defaults) -- the floor latency of a fix
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
@@ -119,7 +119,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                 )
             ),
         )
-        # tap yields every observation unchanged, so `detections` stays byte-identical and OpenCV runs once per frame -- a second .observable() would re-subscribe and re-detect
+        # tap yields every observation unchanged, so OpenCV runs once per frame
         markers = markers.tap(self._aggregate)
         return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
 

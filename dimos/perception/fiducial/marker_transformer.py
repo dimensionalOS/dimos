@@ -53,6 +53,7 @@ from dimos.perception.detection.type.detection3d.imageDetections3D import ImageD
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.apriltag_aggregation import (
     AggregationConfig,
+    Pose7,
     TagAggregator,
     TagEstimate,
     TagObservation,
@@ -430,7 +431,7 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
 
 
 class AggregateTagBursts:
-    """Gate each tag glimpse, then publish ONE robustly-aggregated pose per tag VISIT; a ``Stream.tap`` between ``DetectMarkers`` and ``MarkersPerFrame`` that yields nothing (so ``detections`` stays byte-identical) -- the only live spot where the gate inputs (corners_px, reproj, camera transform) still exist, edge-triggered per (marker, visit)."""
+    """Gate each tag glimpse and publish ONE robustly-aggregated pose per tag visit, edge-triggered."""
 
     def __init__(
         self,
@@ -444,12 +445,26 @@ class AggregateTagBursts:
         # markers whose CURRENT burst already published; a marker leaves the set once its window thins under min_observations (left view > time_window_s), re-arming the edge
         self._burst_counted: set[int] = set()
 
+    @staticmethod
+    def _camera_relative_quality(
+        det: Detection3DMarker, world_T_marker: Pose7
+    ) -> tuple[float | None, float | None]:
+        """``(distance_m, view_angle_deg)`` of this glimpse, or ``(None, None)`` when no camera transform rode along."""
+        if det.transform is None:
+            # smoothing_window > 0 emits an averaged pose with transform=None, so the two camera-relative gates go quiet
+            return None, None
+        # det.transform IS world_T_optical; this inverse exactly undoes the compose that built world_T_marker.
+        optical_T_marker = np.linalg.inv(det.transform.to_matrix()) @ matrix_from_pose7(
+            world_T_marker
+        )
+        return view_quality(pose7_from_matrix(optical_T_marker))
+
     def __call__(self, obs: Observation[Detection3DMarker | None]) -> None:
         det = obs.data
         if det is None:
             return  # DetectMarkers(emit_empty_frames=True) sentinel: a tag-free frame
 
-        world_T_marker = (
+        world_T_marker: Pose7 = (
             det.center.x,
             det.center.y,
             det.center.z,
@@ -458,16 +473,7 @@ class AggregateTagBursts:
             det.orientation.z,
             det.orientation.w,
         )
-        distance_m: float | None = None
-        view_angle_deg: float | None = None
-        if det.transform is not None:
-            # det.transform IS world_T_optical; this inverse exactly undoes the compose that built world_T_marker.
-            optical_T_marker = np.linalg.inv(det.transform.to_matrix()) @ matrix_from_pose7(
-                world_T_marker
-            )
-            distance_m, view_angle_deg = view_quality(pose7_from_matrix(optical_T_marker))
-        # else: smoothing_window > 0 emits an averaged pose with transform=None, so the two camera-relative gates go quiet and only reproj / tag_px bite (default 0.0, off)
-
+        distance_m, view_angle_deg = self._camera_relative_quality(det, world_T_marker)
         reason = self._aggregator.observe(
             TagObservation(
                 ts=obs.ts,
@@ -509,7 +515,7 @@ class AggregateTagBursts:
             Pose(position=aggregated.center, orientation=aggregated.orientation),
             tag_covariance(estimate.pose, scale),
         )
-        # covariance is NOT divided by n: PnP errors within one visit share a viewpoint and are correlated, so 1/n would read optimistic to a downstream landmark factor
+        # one visit shares a viewpoint, so its PnP errors are correlated and the covariance carries no 1/n
         logger.info(
             "tag burst aggregated",
             marker_id=det.marker_id,

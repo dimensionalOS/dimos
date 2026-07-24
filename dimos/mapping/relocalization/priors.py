@@ -25,7 +25,6 @@ from typing import Annotated, Any, Literal, Protocol
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import Field
-import yaml
 
 from dimos.mapping.relocalization.relocalize import (
     GRAVITY_TILT_MAX_DEG,
@@ -45,7 +44,7 @@ class PriorConfigBase(BaseConfig):
     """Fields every prior shares: the on/off toggle plus its accept bar."""
 
     enabled: bool = True
-    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) this prior's fix must clear.
+    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) this prior's fix must clear. 0.6 because the trial's office survey produced sub-0.6 fixes that were meters off while still scoring as "fit".
     fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
@@ -125,10 +124,8 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
 
 
 def load_marker_map(path: str | Path) -> dict[int, Transform]:
-    """``marker_id -> map_T_marker`` from a survey JSON or YAML."""
-    path = Path(path)
-    text = path.read_text()
-    data = (json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)) or {}
+    """``marker_id -> map_T_marker`` from a survey JSON (the format ``write_marker_map`` emits)."""
+    data = json.loads(Path(path).read_text()) or {}
     return {
         int(marker_id): _validated_entry(int(marker_id), entry)
         for marker_id, entry in (data.get("markers", {}) or {}).items()

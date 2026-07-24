@@ -41,6 +41,9 @@ _HUBER_ITERATIONS = 5  # IRLS weights settle within ~5 iters at huber_delta_m sc
 # Reference geometry where tag_noise_scale == 1.0 (pose carries unscaled covariance).
 REF_DISTANCE_M = 0.4  # camera->tag range a close, in-gate glimpse sits at
 REF_REPROJ_PX = 1.0  # RMS corner misfit of a sharp glimpse
+MIN_SCALE_DISTANCE_M = 0.2  # m; nearer than this the range term stops shrinking variance
+MIN_SCALE_REPROJ_PX = 0.5  # px; sharper than this the reproj term stops shrinking variance
+MIN_TAG_NOISE_SCALE = 0.25  # dimensionless floor, so no read claims near-zero variance
 
 
 @dataclass(frozen=True)
@@ -74,10 +77,8 @@ class TagObservation:
 class TagEstimate:
     """One robust aggregated pose for a marker over a cluster/window of glimpses."""
 
-    marker_id: int
     pose: Pose7  # aggregated 7-vec, obs' frame
     n_observations: int
-    ts: float  # latest contributing glimpse's timestamp
     # Cluster MEDIANS, not the last glimpse's -- health of the whole cluster's pose.
     distance_m: float | None = None
     reproj_px: float | None = None
@@ -111,7 +112,7 @@ def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[flo
     translation = np.array(optical_T_marker[:3], dtype=np.float64)
     distance_m = float(np.linalg.norm(translation))
     normal = Rotation.from_quat(optical_T_marker[3:7]).as_matrix()[:, 2]
-    line_of_sight = translation / (distance_m + 1e-9)
+    line_of_sight = translation / (distance_m + 1e-9)  # m; guards zero range
     cos_angle = abs(float(np.dot(line_of_sight, normal)))
     view_angle_deg = math.degrees(math.acos(min(1.0, cos_angle)))
     return distance_m, view_angle_deg
@@ -127,20 +128,22 @@ def tag_side_px(corners_px: np.ndarray) -> float:
 
 
 def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
-    """Dimensionless variance inflation for one aggregated tag pose (jnav tag_noise); ~quadratic in range x reproj_px, inner-clamped (0.2 m / 0.5 px) and floored at 0.25 so no read claims near-zero variance; a ``None`` input reads as the reference (neutral)."""
+    """Dimensionless variance inflation for one aggregated tag pose (jnav tag_noise), quadratic in range x reproj_px; a ``None`` input reads as the reference."""
     distance_m = REF_DISTANCE_M if distance_m is None else distance_m
     reproj_px = REF_REPROJ_PX if reproj_px is None else reproj_px
-    return max(
-        (max(distance_m, 0.2) / REF_DISTANCE_M) ** 2 * (max(reproj_px, 0.5) / REF_REPROJ_PX) ** 2,
-        0.25,
-    )
+    range_term = (max(distance_m, MIN_SCALE_DISTANCE_M) / REF_DISTANCE_M) ** 2
+    reproj_term = (max(reproj_px, MIN_SCALE_REPROJ_PX) / REF_REPROJ_PX) ** 2
+    return max(range_term * reproj_term, MIN_TAG_NOISE_SCALE)
 
 
 def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.ndarray:
-    """6x6 ROS-order covariance (m^2 / rad^2) for an aggregated tag pose, in the pose's frame; ROS is TRANSLATION-first so the diag blocks are SWAPPED vs jnav's rotation-first GTSAM ``Pose3`` (both built in tag frame, rotated by R); trans 5 cm in-plane / 50 cm along normal (PnP's weak axis), rot 11.5 deg in-plane (mirror axes) / 2.9 deg spin."""
+    """6x6 covariance for an aggregated tag pose, built in the tag frame and rotated into the pose's frame."""
     R = Rotation.from_quat(pose[3:7]).as_matrix()
     covariance = np.zeros((6, 6))
+    # ROS is TRANSLATION-first, so these blocks sit swapped vs jnav's rotation-first GTSAM Pose3.
+    # m^2: 5 cm in-plane, 50 cm along the tag normal (PnP's weak axis)
     covariance[:3, :3] = R @ np.diag([0.0025, 0.0025, 0.25]) @ R.T
+    # rad^2: 11.5 deg about the mirror axes, 2.9 deg spin
     covariance[3:, 3:] = R @ np.diag([0.04, 0.04, 0.0025]) @ R.T
     return covariance * scale
 
@@ -289,10 +292,8 @@ class TagAggregator:
             buf, self._config.rotation_weight_m_per_rad, self._config.huber_delta_m
         )
         return TagEstimate(
-            marker_id=marker_id,
             pose=pose,
             n_observations=len(buf),
-            ts=max(o.ts for o in buf),
             distance_m=_median_present([o.distance_m for o in buf]),
             reproj_px=_median_present([o.reproj_px for o in buf]),
         )
