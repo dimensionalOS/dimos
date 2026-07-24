@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Spawn the Deno relay as a child process (used by tests and the smoke demo;
-T2 grows this into the RelayBridge module's managed relay process)."""
+"""Spawn the Deno relay as a child process (the RelayBridgeModule's managed
+relay in --local-relay mode; also used by tests and the smoke demo)."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from pathlib import Path
 import queue
 import subprocess
 import threading
+import time
 from typing import IO
 
 from dimos.utils.deno import ensure_deno
@@ -34,6 +35,32 @@ from dimos.web.relay_bridge.locate import find_web_dir, relay_run_cmd
 logger = setup_logger()
 
 _STDERR_TAIL_LINES = 60
+
+
+def kill_stale_port_holder(port: int) -> None:
+    """Kill whatever still listens on `port` (a relay left by a crashed run).
+
+    Loud on purpose: with the default port this can hit another dimos run's
+    relay if two run on one machine (accepted for local single-robot dev).
+    """
+    try:
+        # LISTEN-state only: a plain :port match also lists processes merely
+        # connected to the port (a browser tab on the debug page) and would
+        # SIGTERM them along with the stale relay.
+        result = subprocess.run(
+            ["lsof", "-ti", f"TCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        pids = result.stdout.strip()
+        if pids:
+            for pid in pids.splitlines():
+                logger.warning(f"killing stale process {pid} holding port {port}")
+                subprocess.run(["kill", pid], timeout=5)
+            time.sleep(0.5)
+    except Exception as e:
+        logger.warning(f"failed to check/kill port {port}: {e}")
 
 
 @dataclass
@@ -98,6 +125,19 @@ class RelayProcess:
             ) from None
         logger.info(f"relay ready: {self.info}")
         return self.info
+
+    def poll(self) -> int | None:
+        """Child exit code; None while running (or after stop()/before start())."""
+        return None if self._process is None else self._process.poll()
+
+    def is_running(self) -> bool:
+        """True while a started child is alive.
+
+        False before start(), after stop(), and after a FAILED start() - which
+        is why respawn gates must use this rather than `poll() is not None`:
+        a failed start leaves no process, and poll() reads None forever.
+        """
+        return self._process is not None and self._process.poll() is None
 
     def stop(self) -> None:
         if self._process is None:

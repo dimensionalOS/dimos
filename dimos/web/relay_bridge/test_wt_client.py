@@ -23,8 +23,14 @@ import asyncio
 import pytest
 
 from dimos.web.relay_bridge.protocol import (
+    ChannelSpec,
     DataFrame,
     FrameHeader,
+    Msg,
+    ProtocolError,
+    RobotInfo,
+    RobotManifest,
+    Subs,
     encode_data_frame,
 )
 from dimos.web.relay_bridge.wt_client import RelayClient
@@ -35,8 +41,10 @@ class StubSession:
 
     def __init__(self) -> None:
         self.frames: asyncio.Queue[DataFrame] = asyncio.Queue()
+        self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue()
         self.closed = asyncio.Event()
         self.frames_dropped = 0
+        self.control_dropped = 0
         self._next_id = 100
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
@@ -144,3 +152,66 @@ async def test_frames_drains_buffer_then_ends_on_close() -> None:
         seen.append(frame.header.seq)
     assert seen == [1, 2]
     assert client.is_closed
+
+
+async def test_control_messages_drain_then_end_on_close() -> None:
+    session = StubSession()
+    client = _client(session)
+    session.control_msgs.put_nowait(Subs(chs=["cam"], n=1))
+    session.control_msgs.put_nowait(Subs(chs=[], n=2))
+    session.closed.set()  # closed, but buffered snapshots must still drain
+
+    seen = [msg async for msg in client.control_messages()]
+    assert seen == [Subs(chs=["cam"], n=1), Subs(chs=[], n=2)]
+
+
+async def test_control_messages_wakes_on_late_push() -> None:
+    session = StubSession()
+    client = _client(session)
+
+    async def push_later() -> None:
+        await asyncio.sleep(0.02)
+        session.control_msgs.put_nowait(Subs(chs=["odom"], n=7))
+        await asyncio.sleep(0.02)
+        session.closed.set()
+
+    pusher = asyncio.ensure_future(push_later())
+    seen = [msg async for msg in client.control_messages()]
+    await pusher
+    assert seen == [Subs(chs=["odom"], n=7)]
+
+
+async def test_hello_oversized_datagram_refused() -> None:
+    # An unsendable datagram wedges aioquic's whole datagram queue, so an
+    # oversized hello must be refused before anything is queued. StubSession
+    # has no send_msg/welcomed: a guard placed after the first send would fail
+    # this test with AttributeError instead.
+    client = _client(StubSession())
+    manifest = RobotManifest(
+        channels=[
+            ChannelSpec(ch=f"channel_{i}", encoding="jpeg.v1", delivery="latest", maxHz=15.0)
+            for i in range(40)
+        ]
+    )
+    with pytest.raises(ProtocolError, match="hello datagram"):
+        await client.hello(robot=RobotInfo(id="r1", name="r1", model="test"), manifest=manifest)
+
+
+class FakeCtx:
+    def __init__(self) -> None:
+        self.exits = 0
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.exits += 1
+        await asyncio.sleep(0.01)
+
+
+async def test_close_is_idempotent_and_concurrent_safe() -> None:
+    # Supervisor, watchdog, and teardown can all close the same client; a
+    # second __aexit__ entering the connect context manager while the first
+    # is still awaiting inside it would raise. Only the first may run.
+    ctx = FakeCtx()
+    client = RelayClient("https://127.0.0.1:1", "robot", StubSession(), ctx=ctx)
+    await asyncio.gather(client.close(), client.close())
+    await client.close()
+    assert ctx.exits == 1

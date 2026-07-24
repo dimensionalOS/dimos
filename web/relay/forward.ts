@@ -1,9 +1,11 @@
-// Robot->viewer forwarding: per-(viewer, channel) delivery policies over a
-// transport-blind ViewerSink, so the policy logic is unit-testable without
-// QUIC. The relay never parses payloads; it routes on the frame header only.
+// Robot->viewer forwarding primitives: per-(viewer, channel) delivery
+// policies over a transport-blind ViewerSink (unit-testable without QUIC),
+// plus the raw-QUIC robot stream readers. Routing lives in registry.ts; the
+// relay never parses payloads, only frame headers.
 import {
   concatBytes,
   type Delivery,
+  type FrameHeader,
   frameHeaderFromUnknown,
   peekDataFrameLengths,
 } from "@dimos/shared";
@@ -23,7 +25,7 @@ export interface ViewerSink {
   kick(reason: string): void;
 }
 
-interface ChannelPolicy {
+export interface ChannelPolicy {
   readonly delivery: Delivery;
   sent: number;
   dropped: number;
@@ -118,91 +120,19 @@ export class ReliableChannel implements ChannelPolicy {
   }
 }
 
-export interface ViewerHandle {
-  id: number;
-  sink: ViewerSink;
-  channels: Map<string, ChannelPolicy>;
-}
-
-interface ChannelInStats {
-  delivery: Delivery;
-  framesIn: number;
-  bytesIn: number;
-}
-
-/** Routes robot frames to every viewer through its per-channel policy. */
-export class Forwarder {
-  #viewers = new Set<ViewerHandle>();
-  #channelsIn = new Map<string, ChannelInStats>();
-  #nextViewerId = 1;
-  #framesDropped = 0;
-
-  addViewer(sink: ViewerSink): ViewerHandle {
-    const handle: ViewerHandle = { id: this.#nextViewerId++, sink, channels: new Map() };
-    this.#viewers.add(handle);
-    return handle;
-  }
-
-  removeViewer(handle: ViewerHandle): void {
-    this.#viewers.delete(handle);
-  }
-
-  get viewerCount(): number {
-    return this.#viewers.size;
-  }
-
-  /** Route one robot data frame (raw bytes, already length-complete). */
-  onRobotFrame(bytes: Uint8Array): void {
-    const lens = peekDataFrameLengths(bytes);
-    if (lens === null) return;
-    let header: ReturnType<typeof frameHeaderFromUnknown> = null;
-    try {
-      header = frameHeaderFromUnknown(
-        JSON.parse(headerDecoder.decode(bytes.subarray(8, 8 + lens.headerLen))),
-      );
-    } catch {
-      // bad UTF-8 or bad JSON: dropped below
-    }
-    if (header === null) {
-      this.#framesDropped++;
-      console.log("[relay] dropping robot frame with invalid header");
-      return;
-    }
-    const { ch, delivery } = header;
-
-    const stats = this.#channelsIn.get(ch) ?? { delivery, framesIn: 0, bytesIn: 0 };
-    stats.delivery = delivery;
-    stats.framesIn++;
-    stats.bytesIn += bytes.byteLength;
-    this.#channelsIn.set(ch, stats);
-
-    for (const viewer of this.#viewers) {
-      let policy = viewer.channels.get(ch);
-      if (policy === undefined || policy.delivery !== delivery) {
-        policy = delivery === "reliable"
-          ? new ReliableChannel(viewer.sink)
-          : new LatestChannel(viewer.sink);
-        viewer.channels.set(ch, policy);
-      }
-      policy.offer(bytes);
-    }
-  }
-
-  stats(): unknown {
-    return {
-      viewers: this.#viewers.size,
-      framesDropped: this.#framesDropped,
-      channels: Object.fromEntries(this.#channelsIn),
-      perViewer: [...this.#viewers].map((v) => ({
-        id: v.id,
-        channels: Object.fromEntries(
-          [...v.channels].map(([ch, p]) => [
-            ch,
-            { sent: p.sent, dropped: p.dropped, queued: p.queued() },
-          ]),
-        ),
-      })),
-    };
+/**
+ * Header of a length-complete robot data frame (raw bytes), or null if the
+ * header is truncated, malformed, or not valid UTF-8.
+ */
+export function parseRobotFrameHeader(bytes: Uint8Array): FrameHeader | null {
+  const lens = peekDataFrameLengths(bytes);
+  if (lens === null) return null;
+  try {
+    return frameHeaderFromUnknown(
+      JSON.parse(headerDecoder.decode(bytes.subarray(8, 8 + lens.headerLen))),
+    );
+  } catch {
+    return null; // bad UTF-8 or bad JSON
   }
 }
 

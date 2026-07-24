@@ -1,28 +1,17 @@
 // The DimOS relay: QUIC/WebTransport listener (robot + viewer sessions) plus
 // a plain-HTTP side (static files, /api/info, /api/stats). Payload-blind:
-// all forwarding decisions come from frame headers (see forward.ts).
-//
-// Leg asymmetry, forced by upstream bugs (see web/README.md):
-// - Robot (aioquic): control = datagrams; data = one-shot bidi streams the
-//   relay never writes on (send half aborted with RESET, never FIN).
-// - Viewer (browser): control = viewer-opened bidi stream; data = relay-
-//   opened uni streams.
-import {
-  ControlFrameReader,
-  decodeDatagram,
-  encodeControlFrame,
-  encodeDatagram,
-  type Msg,
-  PROTOCOL_VERSION,
-} from "@dimos/shared";
+// all forwarding decisions come from frame headers and robot manifests.
+// Session/transport handling lives in session.ts, registration + routing in
+// registry.ts; this file owns the listeners and process-level wiring.
+import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath } from "node:url";
 import { makeEphemeralCert } from "./cert.ts";
-import {
-  Forwarder,
-  readDataFrameBytes,
-  readWebTransportPreamble,
-  type ViewerSink,
-} from "./forward.ts";
+import { Registry } from "./registry.ts";
+import { RobotSession, ViewerSession } from "./session.ts";
+
+// Subs snapshots ride lossy datagrams; this resend interval is the loss- and
+// reorder-healing mechanism (bridges ignore stale `n`).
+const SNAPSHOT_RESEND_MS = 2_000;
 
 export interface RelayOptions {
   /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
@@ -83,183 +72,18 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   const wtUrl = `https://${urlHost}:${quicPort}`;
 
-  const forwarder = new Forwarder();
+  const registry = new Registry();
   const sessions = new Set<WebTransport>();
-  let robot: WebTransport | null = null;
+  let nextViewerId = 1;
 
   function track(wt: WebTransport): void {
     sessions.add(wt);
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  function sendControl(writer: WritableStreamDefaultWriter<Uint8Array>, msg: Msg): void {
-    writer.write(encodeControlFrame(msg)).catch(() => {});
-  }
-
-  function closeAfterFlush(wt: WebTransport, reason: string): void {
-    // Session close discards queued stream/datagram data, so give a just-sent
-    // reply (e.g. the version_mismatch error) a moment to reach the wire.
-    setTimeout(() => {
-      try {
-        wt.close({ closeCode: 1, reason });
-      } catch {
-        // already gone
-      }
-    }, 250);
-  }
-
-  function sendDatagram(writer: WritableStreamDefaultWriter<Uint8Array>, msg: Msg): void {
-    writer.write(encodeDatagram(msg)).catch(() => {});
-  }
-
-  /** Replies to hello/ping; returns false if the session must close (bad version). */
-  function handleControlMsg(msg: Msg, reply: (msg: Msg) => void): boolean {
-    if (msg.t === "hello") {
-      if (msg.v !== PROTOCOL_VERSION) {
-        reply({
-          t: "error",
-          code: "version_mismatch",
-          message: `protocol v${PROTOCOL_VERSION} required, got v${msg.v}`,
-        });
-        return false;
-      }
-      reply({ t: "welcome", v: PROTOCOL_VERSION });
-    } else if (msg.t === "ping") {
-      reply({ t: "pong", n: msg.n, ts: msg.ts });
-    }
-    return true;
-  }
-
-  function handleRobot(wt: WebTransport, conn: Deno.QuicConn): void {
-    if (robot) {
-      // Takeover: a restarted robot process must reattach without operator help.
-      console.log("[relay] robot takeover: closing previous robot session");
-      try {
-        robot.close({ closeCode: 0, reason: "replaced by new robot" });
-      } catch {
-        // already gone
-      }
-    }
-    robot = wt;
-    console.log("[relay] robot connected");
-    wt.closed
-      .catch(() => {})
-      .finally(() => {
-        if (robot === wt) robot = null;
-        console.log("[relay] robot disconnected");
-      });
-
-    const dgWriter = wt.datagrams.writable.getWriter();
-    (async () => {
-      // Robot-leg control rides datagrams: aioquic dies if the relay writes
-      // on robot-opened bidi streams, so hello/welcome/ping/pong live here.
-      for await (const dg of wt.datagrams.readable) {
-        const msg = decodeDatagram(dg);
-        if (msg === null) continue;
-        if (!handleControlMsg(msg, (m) => sendDatagram(dgWriter, m))) {
-          closeAfterFlush(wt, "version mismatch");
-          return;
-        }
-      }
-    })().catch(() => {});
-
-    (async () => {
-      // Data frames arrive on one-shot bidi streams (Deno never delivers
-      // incoming uni payloads), accepted at the QUIC level rather than via
-      // wt.incomingBidirectionalStreams: a reset racing that iterator's
-      // internal preamble read errors it permanently and would silently end
-      // this loop, while the raw accept only fails with the connection.
-      // Abort our send half: RESET is invisible to aioquic's h3 layer and
-      // releases stream credit; a FIN would kill it.
-      for await (const bidi of conn.incomingBidirectionalStreams) {
-        bidi.writable.abort().catch(() => {});
-        (async () => {
-          await readWebTransportPreamble(bidi.readable);
-          forwarder.onRobotFrame(await readDataFrameBytes(bidi.readable));
-        })().catch(() => {
-          // reset before/mid-frame (stale latest-wins write): drop the partial
-        });
-      }
-    })().catch((e) => {
-      console.log("[relay] robot stream loop ended:", (e as Error)?.message ?? e);
-    });
-  }
-
-  function handleViewer(wt: WebTransport): void {
-    let sendOrder = 1;
-    const sink: ViewerSink = {
-      async sendFrame(bytes: Uint8Array): Promise<void> {
-        // waitUntilAvailable: a slow page exhausts stream credit; without it
-        // this throws and we would drop a live viewer. Decreasing sendOrder
-        // keeps stream completions FIFO on the wire (quinn round-robins
-        // otherwise and frames complete in ~1 s waves).
-        const stream = await wt.createUnidirectionalStream({
-          waitUntilAvailable: true,
-          sendOrder: -(sendOrder++),
-        });
-        const writer = stream.getWriter();
-        await writer.write(bytes);
-        await writer.close();
-      },
-      kick(reason: string): void {
-        console.log(`[relay] kicking viewer: ${reason}`);
-        try {
-          wt.close({ closeCode: 1, reason });
-        } catch {
-          // already gone
-        }
-      },
-    };
-    const handle = forwarder.addViewer(sink);
-    console.log(`[relay] viewer ${handle.id} connected (${forwarder.viewerCount} total)`);
-    wt.closed
-      .catch(() => {})
-      .finally(() => {
-        forwarder.removeViewer(handle);
-        console.log(`[relay] viewer ${handle.id} disconnected`);
-      });
-
-    (async () => {
-      // Browser-leg control: viewer-opened bidi stream, replies on the same
-      // stream. Deno may write on viewer-initiated streams (browsers are not
-      // aioquic). wt.incomingBidirectionalStreams is safe here: unlike the
-      // robot leg, viewers never reset a stream racing its acceptance.
-      for await (const bidi of wt.incomingBidirectionalStreams) {
-        (async () => {
-          const writer = bidi.writable.getWriter();
-          const frames = new ControlFrameReader();
-          for await (const chunk of bidi.readable) {
-            for (const msg of frames.push(chunk)) {
-              if (!handleControlMsg(msg, (m) => sendControl(writer, m))) {
-                closeAfterFlush(wt, "version mismatch");
-                return;
-              }
-            }
-          }
-          writer.releaseLock();
-        })().catch((e) =>
-          console.log("[relay] viewer control stream ended:", (e as Error)?.message ?? e)
-        );
-      }
-    })().catch(() => {});
-
-    const dgWriter = wt.datagrams.writable.getWriter();
-    (async () => {
-      // Datagram control for viewers too: browsers use the bidi stream above,
-      // but the Python test viewer cannot receive replies on its own bidi
-      // streams (aioquic), so hello/ping work over datagrams on both legs.
-      // The relay answers pings itself (RTT works with no robot connected);
-      // teleop routing arrives in T6.
-      for await (const dg of wt.datagrams.readable) {
-        const msg = decodeDatagram(dg);
-        if (msg === null) continue;
-        if (!handleControlMsg(msg, (m) => sendDatagram(dgWriter, m))) {
-          closeAfterFlush(wt, "version mismatch");
-          return;
-        }
-      }
-    })().catch(() => {});
-  }
+  const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
+  // A pending resend must not keep the Deno process alive after shutdown().
+  Deno.unrefTimer(resendTimer);
 
   (async () => {
     for await (const incoming of listener) {
@@ -269,8 +93,8 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         await wt.ready;
         track(wt);
         const path = new URL(wt.url).pathname;
-        if (path === "/robot") handleRobot(wt, conn);
-        else handleViewer(wt);
+        if (path === "/robot") new RobotSession(wt, conn, registry).start();
+        else new ViewerSession(wt, nextViewerId++, registry).start();
       })().catch((e) => console.log("[relay] accept failed:", (e as Error)?.message ?? e));
     }
   })().catch(() => {
@@ -297,7 +121,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       });
     }
     if (url.pathname === "/api/stats") {
-      return Response.json({ robot: robot !== null, ...(forwarder.stats() as object) });
+      return Response.json(registry.stats());
     }
     const name = url.pathname === "/" ? "debug.html" : url.pathname.slice(1);
     // Resolve the request to a real path and confirm it stays under the static
@@ -333,6 +157,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
+      clearInterval(resendTimer);
       for (const wt of sessions) {
         try {
           wt.close({ closeCode: 0, reason: "relay shutdown" });

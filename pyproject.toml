@@ -528,6 +528,9 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
+# Wire-protocol mirror: model field names are the wire names (camelCase,
+# pinned to protocol.ts by the golden fixtures).
+"dimos/web/relay_bridge/protocol.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
