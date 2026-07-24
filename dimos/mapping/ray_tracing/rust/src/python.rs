@@ -109,6 +109,7 @@ impl VoxelRayMapper {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance_s: 0.1,
         };
         config
             .validate()

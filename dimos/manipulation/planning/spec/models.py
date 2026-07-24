@@ -109,15 +109,18 @@ class Obstacle:
 
     Attributes:
         name: Unique name for the obstacle
-        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH)
+        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH, OCTREE)
         pose: Pose of the obstacle in world frame
         dimensions: Type-specific dimensions:
             - BOX: (width, height, depth)
             - SPHERE: (radius,)
             - CYLINDER: (radius, height)
-            - MESH: Not used
+            - MESH/OCTREE: Not used
         color: RGBA color tuple (0-1 range)
         mesh_path: Path to mesh file (for MESH type)
+        points: Non-empty Nx3 point array for OCTREE obstacles. Points are in
+            the obstacle-local frame and are placed using ``pose``.
+        octree_resolution: Positive voxel edge length for OCTREE obstacles.
     """
 
     name: str
@@ -126,6 +129,8 @@ class Obstacle:
     dimensions: tuple[float, ...] = ()
     color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
+    points: NDArray[np.float64] | None = None
+    octree_resolution: float | None = None
 
 
 @dataclass

@@ -50,6 +50,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.model_parser import parse_model
 from dimos.utils.logging_config import setup_logger
 
@@ -97,6 +98,12 @@ REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
+PLANNING_OBSTACLE_POINT_CAP = 20_000
+PLANNING_SNAPSHOT_POINT_CAP = 20_000
+PLANNING_SNAPSHOT_MIN_UPDATE_INTERVAL_S = 0.5
+PLANNING_SNAPSHOT_PATH = "/planning/collision_snapshot"
+PLANNING_SNAPSHOT_COLOR = (30, 144, 255)
+PLANNING_COLLISION_OBSTACLE_NAME = "planning-collision"
 OBSTACLE_NAMESPACE = "/manipulation/obstacles"
 OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
@@ -147,6 +154,9 @@ class ViserManipulationScene:
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
         self._obstacle_warning_handle: Any | None = None
+        self._planning_snapshot_handle: Any | None = None
+        self._planning_snapshot_last_ts: float | None = None
+        self._planning_snapshot_last_update_time = 0.0
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -167,6 +177,12 @@ class ViserManipulationScene:
             if self._closed:
                 return
             self.remove_vis_obstacle(obstacle_id)
+            if (
+                obstacle.name == PLANNING_COLLISION_OBSTACLE_NAME
+                and obstacle.obstacle_type == ObstacleType.OCTREE
+            ):
+                self._obstacles[obstacle_id] = replace(deepcopy(obstacle), name=obstacle_id)
+                return
             self._obstacle_render_failures.pop(obstacle_id, None)
             position, wxyz = self._obstacle_pose(obstacle)
             color, opacity = self._obstacle_appearance(obstacle)
@@ -225,6 +241,20 @@ class ViserManipulationScene:
                             position,
                             wxyz,
                             self._obstacles_visible,
+                        )
+                    )
+                elif obstacle.obstacle_type == ObstacleType.OCTREE:
+                    if obstacle.points is None or obstacle.octree_resolution is None:
+                        raise ValueError("OCTREE obstacle requires points and octree_resolution")
+                    handles.append(
+                        scene.add_point_cloud(
+                            path,
+                            points=np.asarray(obstacle.points)[:PLANNING_OBSTACLE_POINT_CAP],
+                            colors=color,
+                            point_size=float(obstacle.octree_resolution),
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
                         )
                     )
                 else:
@@ -287,6 +317,46 @@ class ViserManipulationScene:
         with self._scene_lock:
             for obstacle_id in list(self._obstacle_handles):
                 self.remove_vis_obstacle(obstacle_id)
+
+    def update_planning_collision_snapshot(self, cloud: PointCloud2 | None) -> None:
+        """Render the latest staged snapshot without waiting for planning commit."""
+        if cloud is None:
+            return
+        points = np.asarray(cloud.points_f32(), dtype=np.float32).reshape((-1, 3))
+        if len(points) > PLANNING_SNAPSHOT_POINT_CAP:
+            stride = int(np.ceil(len(points) / PLANNING_SNAPSHOT_POINT_CAP))
+            points = points[::stride]
+        with self._scene_lock:
+            if len(points) == 0:
+                self._remove_planning_collision_snapshot()
+                self._planning_snapshot_last_ts = cloud.ts
+                return
+            if self._planning_snapshot_last_ts == cloud.ts:
+                return
+            now = time.monotonic()
+            if (
+                self._planning_snapshot_handle is not None
+                and now - self._planning_snapshot_last_update_time
+                < PLANNING_SNAPSHOT_MIN_UPDATE_INTERVAL_S
+            ):
+                return
+            if self._planning_snapshot_handle is None:
+                self._planning_snapshot_handle = self.server.scene.add_point_cloud(
+                    PLANNING_SNAPSHOT_PATH,
+                    points=points,
+                    colors=PLANNING_SNAPSHOT_COLOR,
+                    point_size=0.02,
+                    point_shape="circle",
+                )
+            else:
+                self._planning_snapshot_handle.points = points
+            self._planning_snapshot_last_ts = cloud.ts
+            self._planning_snapshot_last_update_time = now
+
+    def _remove_planning_collision_snapshot(self) -> None:
+        if self._planning_snapshot_handle is not None:
+            self._remove_scene_handle(self._planning_snapshot_handle)
+            self._planning_snapshot_handle = None
 
     def show_obstacle_warning(self, message: str) -> None:
         """Expose a persistent renderer warning in the frontend when available."""
@@ -659,6 +729,7 @@ class ViserManipulationScene:
                 return
             self._closed = True
             self.cancel_preview_animation()
+            self._remove_planning_collision_snapshot()
             for handles in self._obstacle_handles.values():
                 for handle in handles:
                     self._remove_scene_handle(handle)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import ANY, MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -60,6 +61,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
@@ -1028,6 +1030,20 @@ class TestPlanningDiagnostics:
         assert retry_epoch is not None
         assert module._state == ManipulationState.PLANNING
         assert module.get_error() == ""
+
+
+class TestPlanningCollisionSnapshots:
+    """Test planning-module collision snapshot integration."""
+
+    def test_invalid_snapshot_does_not_change_committed_state(self) -> None:
+        module = _make_module()
+        module._on_planning_voxel_map(PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]])))
+        assert module.committed_planning_collision_snapshot() is None
+
+        module._on_planning_voxel_map(
+            PointCloud2.from_numpy(np.array([[2.0, 0.0, 0.0]]), frame_id="camera")
+        )
+        assert module.committed_planning_collision_snapshot() is None
 
 
 class TestExecute:
