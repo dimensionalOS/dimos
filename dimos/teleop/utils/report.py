@@ -15,19 +15,10 @@
 
 """Transport-stats report from a recorded teleop ``.db``.
 
-Reads the streams a ``TeleopRecorder`` writes (twist, poses, buttons, video
-stats, robot_telemetry) and emits ``report.json`` next to it. Command-link
-latency is read straight off the robot's recorded ``robot_telemetry`` frames.
-The math (percentiles, rate, jitter, stalls) is the same one the live HUD
-uses — both go through ``stream_stats``.
-
-JSON (not markdown) so two runs are diffable, regression-gateable in CI, and
-plottable — the summary dicts are emitted verbatim.
-
-Importable from ``TeleopRecorder.stop()`` (post-hoc on the run's own .db) or
-runnable standalone over an old recording::
-
-    python -m dimos.teleop.utils.report <path/to/recording.db>
+Reads the streams a ``TeleopRecorder`` writes and emits ``report_<ts>.json``
+next to it (JSON so runs are diffable / CI-gateable). Same percentile math as
+the live HUD (``stream_stats``). Called from ``TeleopRecorder.stop()`` or
+standalone: ``python -m dimos.teleop.utils.report <recording.db>``.
 """
 
 from __future__ import annotations
@@ -114,12 +105,7 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
 
 
 def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
-    """Pull every known teleop stream out of *store*, decoded to typed msgs.
-
-    Streams not in this recording yield empty lists. Each list is ordered by
-    insertion (which equals arrival order, the recorder writes synchronously
-    in the message-arrival thread).
-    """
+    """Every known teleop stream, decoded; absent streams yield empty lists."""
     available = set(store.list_streams())
     out: dict[str, list[Any]] = {}
     for name, msg_type in _STREAM_TYPES.items():
@@ -132,12 +118,8 @@ def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
 
 
 def _read_telemetry(store: SqliteStore) -> list[dict[str, Any]]:
-    """Decode the recorded ``robot_telemetry`` JSON frames (raw bytes stream).
-
-    Each frame carries the robot's own live cmd-link stats (``cmd``: latency /
-    jitter / rate, already computed by ``LiveStreamStats``) plus soc/state, so
-    the report reads latency straight off these instead of recomputing it.
-    """
+    """Recorded ``robot_telemetry`` JSON frames — the robot's own live cmd-link
+    stats plus soc/state, read as-is instead of recomputed."""
     if "robot_telemetry" not in set(store.list_streams()):
         return []
     frames: list[dict[str, Any]] = []
@@ -162,14 +144,8 @@ def _run_duration(records: dict[str, list[Any]]) -> float:
 
 
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
-    """Stats for one twist/pose/buttons stream.
-
-    Rate/jitter come from each message's ``.ts`` (sender stamp, clock-sync
-    calibrated). Command-link latency is reported separately from the recorded
-    ``robot_telemetry`` stream (see ``_summarize_telemetry``).
-
-    Buttons lacks ``.ts``, so rate/jitter are ``None``.
-    """
+    """Stats for one twist/pose/buttons stream, from each message's ``.ts``
+    (sender stamp). Buttons lacks ``.ts``, so its rate/jitter are ``None``."""
     count = len(records)
     tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
 
@@ -193,9 +169,8 @@ def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
 def _summarize_telemetry(frames: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Aggregate recorded ``robot_telemetry`` frames, or None if none recorded.
 
-    Latency/jitter/rate come straight off the robot's own live ``cmd`` stats
-    (``LiveStreamStats`` snapshots, arrival-time minus send-stamp) — no
-    recomputation. soc is summarized as the run's min/last.
+    Latency/jitter/rate come straight off the robot's recorded ``cmd`` stats;
+    soc is summarized as the run's min/last.
     """
     if not frames:
         return None
@@ -219,11 +194,7 @@ def _summarize_telemetry(frames: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _summarize_video(samples: list[VideoStats]) -> dict[str, Any] | None:
-    """Aggregate per-sample VideoStats into report figures, or None.
-
-    fps/kbps/loss/jbuf/decode → p50+p95 percentiles. Resolution → modal WxH.
-    dropped/freezes → run totals (the operator's monotonic counters).
-    """
+    """Percentiles per metric, modal resolution, run-total dropped/freezes."""
     if not samples:
         return None
 

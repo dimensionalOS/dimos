@@ -46,15 +46,13 @@ logger = setup_logger()
 _ALLOWED_SPORT_NAMES = frozenset(
     {"StandDown", "RecoveryStand", "Sit", "Hello", "Stretch", "Damp", "FrontPounce", "FrontJump"}
 )
-# Sorted so dict order is hash-seed independent: tests parametrize over this
-# dict, and unstable order breaks pytest-xdist collection across workers.
+# Sorted so dict order is hash-seed independent (pytest-xdist parametrizes over this).
 ALLOWED_SPORT_CMDS: dict[str, int] = {n: SPORT_CMD[n] for n in sorted(_ALLOWED_SPORT_NAMES)}
 _POSTURE_SPORT_CMDS = frozenset({"StandDown", "RecoveryStand", "Sit", "Damp"})
 _ACROBATIC_SPORT_CMDS = frozenset({"FrontPounce", "FrontJump"})
 
 
 def _all_finite(t: Twist) -> bool:
-    """True when every linear/angular component is finite (no NaN/inf)."""
     return all(
         math.isfinite(v)
         for v in (t.linear.x, t.linear.y, t.linear.z, t.angular.x, t.angular.y, t.angular.z)
@@ -70,7 +68,6 @@ class Go2CommandConfig(ModuleConfig):
     damp_on_operator_lost: bool = False
     max_nav_goal_m: float = 100.0
     allow_acrobatics: bool = False
-    # Robot-side drive clamps (untrusted operator; browser scaling isn't a boundary).
     max_linear_mps: float = 1.5
     max_angular_rps: float = 2.0
 
@@ -93,7 +90,6 @@ class Go2CommandModule(Module):
     stop_movement: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
-        """Init command state (executor, safety epoch, posture, drive timers)."""
         super().__init__(**kwargs)
         self._estopped = False
         self._cmd = SerializedCommandExecutor(
@@ -104,11 +100,10 @@ class Go2CommandModule(Module):
         self._light = 0.0
         self._posture = "StandReady"
         self._last_cmd_ts = 0.0
-        self._last_cmd_nonzero = False  # was the last forwarded drive frame moving?
+        self._last_cmd_nonzero = False
 
     @rpc
     def start(self) -> None:
-        """Wire state_json/drive/nav subscriptions; start the command executor."""
         super().start()
         self._cmd.start()
         self.register_disposable(Disposable(self.state_json.subscribe(self._on_state_json)))
@@ -117,12 +112,10 @@ class Go2CommandModule(Module):
 
     @rpc
     def stop(self) -> None:
-        """Shut the executor."""
         self._cmd.stop()
         super().stop()
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
-        """Publish a cmd_ack on the broker-back channel."""
         try:
             self.cmd_ack.publish(json.dumps({"type": "cmd_ack", "nonce": nonce, "ok": ok}).encode())
         except Exception:
@@ -131,7 +124,7 @@ class Go2CommandModule(Module):
     # ─── inbound command dispatch (state_json over transport) ─────────
 
     def _on_state_json(self, data: Any) -> None:
-        """Dispatch command/estop kinds; ignore stats kinds (stats module owns)."""
+        """Dispatch command/estop kinds; stats kinds are the stats module's."""
         if isinstance(data, str):
             data = data.encode()
         if not data.startswith(b"{"):
@@ -165,8 +158,7 @@ class Go2CommandModule(Module):
     # ─── E-STOP + operator-loss ───────────────────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
-        """Latch E-STOP (drive filter reads the latch → stops tele_cmd_vel
-        instantly), bump safety epoch, urgently Damp via go2 RPC."""
+        """Latch (drive filter reads it), bump epoch, urgently Damp."""
         self._estopped = True
         self._cmd.bump_safety_epoch()
         logger.warning("E-STOP latched by operator")
@@ -189,7 +181,7 @@ class Go2CommandModule(Module):
         self._cancel_nav()
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
-        self._publish_robot_state()  # clear estopped:true in the UI immediately
+        self._publish_robot_state()
         self._send_ack(nonce, True)
 
     def _on_operator_lost(self) -> None:
@@ -241,8 +233,7 @@ class Go2CommandModule(Module):
         self._cmd.submit(f"sport_cmd {name}", nonce, task, urgent=(name == "Damp"))
 
     def _stand_ready_task(self, epoch: int) -> bool:
-        """Standup → RecoveryStand → BalanceStand → joystick via go2 RPC, aborts
-        if E-STOP / operator-lost fires after submission (epoch-fenced)."""
+        """Standup sequence; epoch-fenced so E-STOP / operator-loss aborts it."""
 
         def _step(label: str, ok: object) -> bool:
             if not ok:
@@ -275,8 +266,7 @@ class Go2CommandModule(Module):
         return True
 
     def _handle_set_mode(self, msg: dict[str, Any]) -> None:
-        """Speed mode. normal/high are browser-side scale only; only the rage
-        boundary toggles firmware."""
+        """normal/high are browser-side scale only; only the rage boundary touches firmware."""
         mode = msg.get("mode")
         nonce = msg.get("nonce")
         if mode not in ("normal", "high", "rage"):
@@ -308,7 +298,6 @@ class Go2CommandModule(Module):
         self._cmd.submit(f"set_mode {mode}", nonce, task)
 
     def _handle_obstacle_avoidance(self, msg: dict[str, Any]) -> None:
-        """Toggle the Go2's onboard obstacle avoidance on/off."""
         enabled = bool(msg.get("enabled"))
         nonce = msg.get("nonce")
 
@@ -353,7 +342,6 @@ class Go2CommandModule(Module):
     # ─── click-to-navigate ────────────────────────────────────────────
 
     def _handle_nav_goal(self, msg: dict[str, Any]) -> None:
-        """Operator map click → PoseStamped goal for the planner."""
         nonce = msg.get("nonce")
         if self._estopped:
             logger.warning("nav_goal rejected: E-STOP latched")
@@ -383,13 +371,11 @@ class Go2CommandModule(Module):
         self._send_ack(nonce, True)
 
     def _handle_nav_cancel(self, nonce: Any) -> None:
-        """Operator cancel-plan button → stop the planner."""
         self._cancel_nav()
         logger.info("nav_cancel: plan cancelled by operator")
         self._send_ack(nonce, True)
 
     def _cancel_nav(self) -> None:
-        """Tell the planner to stop (publish stop_movement)."""
         try:
             msg = Bool()
             msg.data = True
@@ -400,11 +386,9 @@ class Go2CommandModule(Module):
     # ─── manual drive guard (stream filter → tele_cmd_vel, NOT RPC) ────
 
     def _on_cmd_vel_in(self, twist: TwistStamped) -> None:
-        """Guard raw operator drive — E-STOP gate, stale/future/out-of-order
-        drop — then republish on tele_cmd_vel to MovementManager, which
-        arbitrates it against the planner and owns the driver's cmd_vel."""
+        """Guard raw operator drive, republish on tele_cmd_vel for MovementManager."""
         if self._estopped:
-            return  # latched: no motion until estop_clear
+            return
         ts = float(twist.ts)
         if not math.isfinite(ts):
             # NaN ts passes every comparison below and would poison _last_cmd_ts.
@@ -418,8 +402,6 @@ class Go2CommandModule(Module):
             return
         self._last_cmd_ts = ts
 
-        # Untrusted operator: reject non-finite and clamp to the Go2 envelope
-        # (driver only reads linear.x/linear.y/angular.z).
         if not _all_finite(twist):
             logger.warning("dropping non-finite cmd_vel")
             return
@@ -433,10 +415,9 @@ class Go2CommandModule(Module):
         # zero only as the release edge (prev frame moving), then stay silent.
         moving = not twist.is_zero()
         if not moving and not self._last_cmd_nonzero:
-            return  # idle joystick — don't preempt nav
+            return
         self._last_cmd_nonzero = moving
 
-        # Strip the header (MovementManager wants a plain Twist).
         self.tele_cmd_vel.publish(Twist(linear=twist.linear, angular=twist.angular))
 
     # ─── robot-authoritative state → stats module ─────────────────────
@@ -451,7 +432,6 @@ class Go2CommandModule(Module):
         }
 
     def _publish_robot_state(self) -> None:
-        """Push posture/rage/obstacle/light/estopped on robot_state."""
         try:
             self.robot_state.publish(json.dumps(self._robot_state()).encode())
         except Exception:

@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic teleop stream recorder, shared across all teleop variants.
+"""Generic teleop stream recorder (quest, phone, hosted).
 
-One recorder for quest, phone, and hosted teleop. It declares the *superset*
-of teleop output ports; autoconnect wires whichever the composed blueprint
-actually produces (VR controller poses + buttons for arm teleop, or
-``cmd_vel_stamped`` for mobile-base/keyboard teleop). Ports the blueprint
-doesn't drive simply stay empty in the DB.
-
-Compose at the CLI::
+Declares the *superset* of teleop output ports; autoconnect wires whichever the
+composed blueprint produces, the rest stay empty in the DB. Compose at the CLI::
 
     dimos run teleop-quest-xarm7          teleop-recorder
     dimos run teleop-hosted-go2-transport teleop-recorder
@@ -50,22 +45,15 @@ class TeleopRecorderConfig(RecorderConfig):
 
 
 class TeleopRecorder(Recorder):
-    """Records teleop streams to a .db + (optionally) a transport-stats report.
-
-    Superset of ports across arm (pose + buttons), mobile-base
-    (``cmd_vel_stamped``), and hosted-teleop stats (``video_stats``,
-    ``robot_telemetry``). Unconnected ports stay empty in the DB. Each run lands
-    in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
-    so runs don't clobber. On stop, if ``generate_report=True``, also writes
-    ``report_<ts>.json`` next to the .db.
-    """
+    """Records teleop streams to a per-run timestamped .db; on stop, if
+    ``generate_report=True``, writes ``report_<ts>.json`` next to it."""
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
     teleop_buttons: In[Buttons]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
-    robot_telemetry: In[bytes]  # hosted-teleop periodic telemetry (cmd stats + soc + state)
+    robot_telemetry: In[bytes]
     config: TeleopRecorderConfig
     # Per-run path (stem + timestamp), held here so we don't mutate config.
     _db_path: Path | None = None
