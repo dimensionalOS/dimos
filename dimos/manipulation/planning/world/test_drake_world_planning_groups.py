@@ -169,12 +169,69 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     )
     unnamed = replace(obstacle, name="")
 
+    operations = [
+        lambda: world.add_obstacle(obstacle),
+        lambda: world.remove_obstacle("box"),
+        lambda: world.update_obstacle(obstacle),
+        lambda: world.update_obstacle_pose("box", obstacle.pose),
+        world.clear_obstacles,
+        world.get_obstacles,
+    ]
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="finalized"):
+            operation()
+    world.finalize()
     assert world.add_obstacle(unnamed) is None
     assert world.add_obstacle(obstacle) == "box"
+    original_geometry_id = world._obstacles["box"].geometry_id
     assert world.add_obstacle(obstacle) is None
-    world.finalize()
     assert world.remove_obstacle("missing") is False
+    assert world.update_obstacle(replace(obstacle, name="missing")) is False
     assert world.update_obstacle_pose("missing", obstacle.pose) is False
+    moved_pose = PoseStamped(position=[1.0, 2.0, 3.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    assert world.update_obstacle_pose("box", moved_pose)
+    assert world._obstacles["box"].geometry_id != original_geometry_id
+    assert world.get_obstacles()[0].pose.position.x == pytest.approx(1.0)
+
+    replacement = replace(
+        obstacle,
+        obstacle_type=ObstacleType.SPHERE,
+        dimensions=(0.5,),
+        color=(0.0, 1.0, 0.0, 1.0),
+    )
+    assert world.update_obstacle(replacement)
+    replacement.dimensions = (9.0,)
+    retrieved = world.get_obstacles()[0]
+    retrieved.dimensions = (8.0,)
+    assert world.get_obstacles()[0].dimensions == (0.5,)
+
+
+@requires_drake
+def test_drake_obstacle_replacement_failure_invalidates_world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    world = DrakeWorld()
+    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.finalize()
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    world.add_obstacle(obstacle)
+    monkeypatch.setattr(
+        world,
+        "_add_obstacle_to_scene_graph",
+        lambda *_args: (_ for _ in ()).throw(ValueError("native replacement failed")),
+    )
+
+    with pytest.raises(ValueError, match="native replacement failed"):
+        world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0)))
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.get_obstacles()
 
 
 @requires_drake

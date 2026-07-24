@@ -201,7 +201,7 @@ class CollisionObjectMessage:
         primitive_type: "box", "sphere", or "cylinder" (for add/update)
         pose: Pose of the obstacle (for add/update)
         dimensions: Type-specific dimensions (for add/update)
-        color: RGBA color tuple
+        color: RGBA color tuple. ``None`` means the field was omitted.
     """
 
     id: str
@@ -209,4 +209,4 @@ class CollisionObjectMessage:
     primitive_type: str | None = None
     pose: PoseStamped | None = None
     dimensions: tuple[float, ...] | None = None
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] | None = None

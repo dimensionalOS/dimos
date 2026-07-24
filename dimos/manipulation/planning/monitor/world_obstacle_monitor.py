@@ -26,6 +26,7 @@ Example:
 
 from __future__ import annotations
 
+from dataclasses import replace
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -184,17 +185,39 @@ class WorldObstacleMonitor:
                 logger.error(f"Obstacle callback error: {e}")
 
     def _update_collision_object(self, msg: CollisionObjectMessage) -> None:
-        """Update a collision object pose."""
+        """Route a pose-only update or a complete obstacle replacement."""
+        has_replacement_fields = (
+            msg.primitive_type is not None or msg.dimensions is not None or msg.color is not None
+        )
+
         if msg.id not in self._collision_objects:
-            # Treat as add if doesn't exist
-            self._add_collision_object(msg)
+            if has_replacement_fields and self._msg_to_obstacle(msg) is not None:
+                self._add_collision_object(msg)
+            else:
+                logger.warning(
+                    "Cannot update unknown collision object '%s' without a complete "
+                    "obstacle description",
+                    msg.id,
+                )
             return
 
         obstacle_id = self._collision_objects[msg.id]
-
-        if msg.pose is not None:
-            self._parent.update_obstacle_pose(obstacle_id, msg.pose)
-            logger.debug(f"Updated collision object '{msg.id}' pose")
+        if has_replacement_fields:
+            replacement = self._msg_to_obstacle(msg)
+            if replacement is None:
+                logger.warning("Rejected incomplete collision object replacement for '%s'", msg.id)
+                return
+            replacement = replace(replacement, name=obstacle_id)
+            if not self._parent.update_obstacle(replacement):
+                return
+            logger.debug("Replaced collision object '%s'", msg.id)
+        elif msg.pose is not None:
+            if not self._parent.update_obstacle_pose(obstacle_id, msg.pose):
+                return
+            logger.debug("Updated collision object '%s' pose", msg.id)
+        else:
+            logger.warning("Collision object update for '%s' contains no changes", msg.id)
+            return
 
         # Notify callbacks
         for callback in self._obstacle_callbacks:
@@ -224,7 +247,7 @@ class WorldObstacleMonitor:
             obstacle_type=obstacle_type,
             pose=msg.pose,
             dimensions=msg.dimensions,
-            color=msg.color,
+            color=msg.color or (0.8, 0.2, 0.2, 0.8),
         )
 
     def on_detections(self, detections: list[Detection3D]) -> None:

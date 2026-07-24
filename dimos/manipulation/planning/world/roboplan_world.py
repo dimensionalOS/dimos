@@ -22,9 +22,11 @@ the optional dependency installed.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import tempfile
+from threading import RLock
 import time
 from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
@@ -103,6 +105,8 @@ class RoboPlanWorld:
         self._obstacles: dict[str, Obstacle] = {}
         self._robot_counter = 0
         self._finalized = False
+        self._usable = True
+        self._lock = RLock()
         self._live_context = RoboPlanContext()
         self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
 
@@ -156,41 +160,81 @@ class RoboPlanWorld:
 
     def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add a supported obstacle to the RoboPlan scene."""
-        obstacle_id = obstacle.name
-        if not obstacle_id:
-            return None
-        if obstacle_id in self._obstacles:
-            return None
-        self._add_obstacle_to_scene(obstacle, obstacle_id)
-        self._obstacles[obstacle_id] = obstacle
-        return obstacle_id
+        with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle, allow_empty_name=True)
+            obstacle_id = obstacle.name
+            if not obstacle_id:
+                return None
+            if obstacle_id in self._obstacles:
+                return None
+            snapshot = deepcopy(obstacle)
+            self._add_obstacle_to_scene(snapshot, obstacle_id)
+            self._obstacles[obstacle_id] = snapshot
+            return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.removeGeometry(obstacle_id)
-        del self._obstacles[obstacle_id]
-        return True
+        with self._lock:
+            self._require_finalized()
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            scene.removeGeometry(obstacle_id)
+            del self._obstacles[obstacle_id]
+            return True
+
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Atomically replace a complete obstacle."""
+        with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle)
+            snapshot = deepcopy(obstacle)
+            obstacle_id = snapshot.name
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            try:
+                scene.removeGeometry(obstacle_id)
+                self._add_obstacle_to_scene(snapshot, obstacle_id)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = snapshot
+            return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update an obstacle pose and invalidate collision scratch."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
-        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
-        return True
+        """Atomically update only an obstacle pose."""
+        with self._lock:
+            self._require_finalized()
+            matrix = pose_to_matrix(pose)
+            if not np.isfinite(matrix).all():
+                raise ValueError("Obstacle pose must contain only finite values")
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            try:
+                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, matrix)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = replace(
+                self._obstacles[obstacle_id], pose=deepcopy(pose)
+            )
+            return True
 
     def clear_obstacles(self) -> None:
         """Remove all tracked obstacles."""
-        for obstacle_id in list(self._obstacles.keys()):
-            self.remove_obstacle(obstacle_id)
+        with self._lock:
+            self._require_finalized()
+            for obstacle_id in list(self._obstacles.keys()):
+                self.remove_obstacle(obstacle_id)
 
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently tracked by DimOS."""
-        return list(self._obstacles.values())
+        with self._lock:
+            self._require_finalized()
+            return deepcopy(list(self._obstacles.values()))
 
     # Lifecycle
 
@@ -200,8 +244,10 @@ class RoboPlanWorld:
         RoboPlan Python bindings construct a query-ready Scene directly; v0.4.0
         exposes no Scene.finalize() lifecycle method.
         """
-        self._require_scene()
-        self._finalized = True
+        with self._lock:
+            self._require_usable()
+            self._require_scene()
+            self._finalized = True
 
     @property
     def is_finalized(self) -> bool:
@@ -212,23 +258,29 @@ class RoboPlanWorld:
 
     def get_live_context(self) -> RoboPlanContext:
         """Get the live context that mirrors robot state."""
-        self._require_finalized()
-        return self._live_context
+        with self._lock:
+            self._require_finalized()
+            return self._live_context
 
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(
+                q_by_robot={
+                    robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()
+                }
+            )
         yield ctx
 
     def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
+        with self._lock:
+            self._require_usable()
+            self.set_joint_state(self._live_context, robot_id, joint_state)
 
     # State Operations
 
@@ -236,26 +288,30 @@ class RoboPlanWorld:
         self, ctx: RoboPlanContext, robot_id: WorldRobotID, joint_state: JointState
     ) -> None:
         """Set robot joint state in a context."""
-        self._require_finalized()
-        ctx.q_by_robot[robot_id] = self._joint_state_to_q(robot_id, joint_state)
+        with self._lock:
+            self._require_finalized()
+            ctx.q_by_robot[robot_id] = self._joint_state_to_q(robot_id, joint_state)
 
     def get_joint_state(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> JointState:
         """Get robot joint state from a context."""
-        robot = self._get_robot(robot_id)
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            q = np.zeros(len(robot.config.joint_names), dtype=np.float64)
-        return JointState(name=robot.config.joint_names, position=q.astype(float).tolist())
+        with self._lock:
+            self._require_finalized()
+            robot = self._get_robot(robot_id)
+            q = ctx.q_by_robot.get(robot_id)
+            if q is None:
+                q = np.zeros(len(robot.config.joint_names), dtype=np.float64)
+            return JointState(name=robot.config.joint_names, position=q.astype(float).tolist())
 
     # Collision Checking
 
     def is_collision_free(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> bool:
         """Check if the robot configuration in a context is collision-free."""
-        self._require_finalized()
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
-        return not self._has_collisions(robot_id, q)
+        with self._lock:
+            self._require_finalized()
+            q = ctx.q_by_robot.get(robot_id)
+            if q is None:
+                raise KeyError(f"Robot '{robot_id}' not found in context")
+            return not self._has_collisions(robot_id, q)
 
     def get_min_distance(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance.
@@ -263,7 +319,9 @@ class RoboPlanWorld:
         RoboPlan signed-distance semantics are not verified yet, so do not return
         a misleading approximation.
         """
-        raise NotImplementedError("RoboPlanWorld.get_min_distance is not implemented")
+        with self._lock:
+            self._require_finalized()
+            raise NotImplementedError("RoboPlanWorld.get_min_distance is not implemented")
 
     def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check a joint state using a scratch collision context."""
@@ -279,10 +337,11 @@ class RoboPlanWorld:
         step_size: float = 0.05,
     ) -> bool:
         """Check if an interpolated edge is collision-free."""
-        self._require_finalized()
-        q_start = self._joint_state_to_q(robot_id, start)
-        q_end = self._joint_state_to_q(robot_id, end)
-        return not self._call_path_collision_checker(robot_id, q_start, q_end, step_size)
+        with self._lock:
+            self._require_finalized()
+            q_start = self._joint_state_to_q(robot_id, start)
+            q_end = self._joint_state_to_q(robot_id, end)
+            return not self._call_path_collision_checker(robot_id, q_start, q_end, step_size)
 
     # Forward Kinematics
 
@@ -316,12 +375,14 @@ class RoboPlanWorld:
         self, ctx: RoboPlanContext, robot_id: WorldRobotID, link_name: str
     ) -> NDArray[np.float64]:
         """Get link pose as a 4x4 homogeneous transform."""
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
-        return np.asarray(result, dtype=np.float64)
+        with self._lock:
+            self._require_finalized()
+            q = ctx.q_by_robot.get(robot_id)
+            if q is None:
+                raise KeyError(f"Robot '{robot_id}' not found in context")
+            scene = self._require_scene()
+            result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
+            return np.asarray(result, dtype=np.float64)
 
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
@@ -335,37 +396,41 @@ class RoboPlanWorld:
         self, ctx: RoboPlanContext, group_id: PlanningGroupID
     ) -> NDArray[np.float64]:
         """Get planning-group Jacobian projected to group-local joint order."""
-        group = self._planning_group_from_id(group_id)
-        if group.tip_link is None:
-            raise ValueError(f"Planning group '{group_id}' has no tip link")
-        robot_id = self._robot_id_for_group(group_id)
-        robot = self._get_robot(robot_id)
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.computeFrameJacobian(self._to_scene_q(robot_id, q), group.tip_link, True)
-        arr = np.asarray(result, dtype=np.float64)
-        if arr.shape[0] != 6:
-            raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
-        scene_joint_order = self._query_scene_joint_order(scene, robot.config)
-        if scene_joint_order is not None and arr.shape[1] == len(scene_joint_order):
-            missing = [name for name in group.local_joint_names if name not in scene_joint_order]
-            if missing:
-                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
-            indices = [scene_joint_order.index(name) for name in group.local_joint_names]
-            return arr[:, indices]
-        if arr.shape[1] == len(robot.config.joint_names):
-            missing = [
-                name for name in group.local_joint_names if name not in robot.config.joint_names
-            ]
-            if missing:
-                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
-            indices = [robot.config.joint_names.index(name) for name in group.local_joint_names]
-            return arr[:, indices]
-        raise ValueError(
-            f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
-        )
+        with self._lock:
+            self._require_finalized()
+            group = self._planning_group_from_id(group_id)
+            if group.tip_link is None:
+                raise ValueError(f"Planning group '{group_id}' has no tip link")
+            robot_id = self._robot_id_for_group(group_id)
+            robot = self._get_robot(robot_id)
+            q = ctx.q_by_robot.get(robot_id)
+            if q is None:
+                raise KeyError(f"Robot '{robot_id}' not found in context")
+            scene = self._require_scene()
+            result = scene.computeFrameJacobian(self._to_scene_q(robot_id, q), group.tip_link, True)
+            arr = np.asarray(result, dtype=np.float64)
+            if arr.shape[0] != 6:
+                raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
+            scene_joint_order = self._query_scene_joint_order(scene, robot.config)
+            if scene_joint_order is not None and arr.shape[1] == len(scene_joint_order):
+                missing = [
+                    name for name in group.local_joint_names if name not in scene_joint_order
+                ]
+                if missing:
+                    raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
+                indices = [scene_joint_order.index(name) for name in group.local_joint_names]
+                return arr[:, indices]
+            if arr.shape[1] == len(robot.config.joint_names):
+                missing = [
+                    name for name in group.local_joint_names if name not in robot.config.joint_names
+                ]
+                if missing:
+                    raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
+                indices = [robot.config.joint_names.index(name) for name in group.local_joint_names]
+                return arr[:, indices]
+            raise ValueError(
+                f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
+            )
 
     # PlannerSpec for native RoboPlan planning
 
@@ -387,7 +452,9 @@ class RoboPlanWorld:
         q_start = self._joint_state_to_q(robot_id, start)
         q_goal = self._joint_state_to_q(robot_id, goal)
         try:
-            path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
+            with self._lock:
+                self._require_finalized()
+                path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
         except ValueError as exc:
             # _run_native_rrt raises ValueError for the known "no path" case; let any
             # unexpected error propagate instead of swallowing its traceback.
@@ -459,14 +526,16 @@ class RoboPlanWorld:
         q_start = np.asarray(normalized_start.position, dtype=np.float64)
         q_goal = np.asarray(normalized_goal.position, dtype=np.float64)
         try:
-            path_arrays = self._run_native_rrt(
-                robot_id,
-                q_start,
-                q_goal,
-                timeout,
-                group_name=group.group_name,
-                joint_names=list(group.local_joint_names),
-            )
+            with self._lock:
+                self._require_finalized()
+                path_arrays = self._run_native_rrt(
+                    robot_id,
+                    q_start,
+                    q_goal,
+                    timeout,
+                    group_name=group.group_name,
+                    joint_names=list(group.local_joint_names),
+                )
         except ValueError as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -714,8 +783,13 @@ class RoboPlanWorld:
         )
 
     def _require_finalized(self) -> None:
+        self._require_usable()
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
+
+    def _require_usable(self) -> None:
+        if not self._usable:
+            raise RuntimeError("Planning world is invalid and must be reconstructed")
 
     def _require_scene(self) -> roboplan_core.Scene:
         if self._scene is None:
@@ -801,6 +875,31 @@ class RoboPlanWorld:
             )
             return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+
+    def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
+        if not obstacle.name and not allow_empty_name:
+            raise ValueError("Obstacle name must be non-empty")
+        expected_dimensions = {
+            ObstacleType.BOX: 3,
+            ObstacleType.SPHERE: 1,
+            ObstacleType.CYLINDER: 2,
+        }
+        if obstacle.obstacle_type in expected_dimensions:
+            self._require_dimensions(obstacle, expected_dimensions[obstacle.obstacle_type])
+            dimensions = np.asarray(obstacle.dimensions, dtype=np.float64)
+            if not np.isfinite(dimensions).all() or np.any(dimensions <= 0.0):
+                raise ValueError("Obstacle dimensions must be finite and positive")
+        elif obstacle.obstacle_type == ObstacleType.MESH:
+            if not obstacle.mesh_path:
+                raise ValueError("MESH obstacle requires mesh_path")
+        else:
+            raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+        color = np.asarray(obstacle.color, dtype=np.float64)
+        if color.shape != (4,) or not np.isfinite(color).all():
+            raise ValueError("Obstacle color must contain four finite values")
+        matrix = pose_to_matrix(obstacle.pose)
+        if not np.isfinite(matrix).all():
+            raise ValueError("Obstacle pose must contain only finite values")
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:

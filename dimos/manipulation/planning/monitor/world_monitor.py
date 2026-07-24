@@ -161,7 +161,18 @@ class WorldMonitor:
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         """Update an obstacle through the authoritative planning-world mutation path."""
         with self._lock:
-            return self._world.update_obstacle_pose(obstacle_id, pose)
+            updated = self._world.update_obstacle_pose(obstacle_id, pose)
+            if updated and self._visualization is not None:
+                self._visualization.update_vis_obstacle_pose(obstacle_id, pose)
+            return updated
+
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Replace an obstacle and then forward the accepted value to visualization."""
+        with self._lock:
+            updated = self._world.update_obstacle(obstacle)
+            if updated and self._visualization is not None:
+                self._visualization.update_vis_obstacle(obstacle)
+            return updated
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""

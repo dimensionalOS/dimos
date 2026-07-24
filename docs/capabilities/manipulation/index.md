@@ -238,6 +238,16 @@ kinematics behavior. Meshcat preview and publishing are exposed separately
 through `VisualizationSpec`, so non-visual planning paths do not require a
 visualization backend.
 
+All `WorldSpec` obstacle operations are runtime operations and require the
+world to be finalized first. `update_obstacle(obstacle)` replaces the complete
+obstacle identified by `obstacle.name`; callers must provide every geometry and
+appearance field. `update_obstacle_pose(name, pose)` is the pose-only fast path
+and preserves the other fields. Each update is serialized with native scene
+queries, so collision checking sees either the old obstacle or the new one,
+never the remove/add intermediate state. This boundary applies to each native
+operation, not to an entire generic planning run; RoboPlan's opaque native
+planner is locked for its whole native call.
+
 ## Blueprints
 
 | Blueprint | Description |

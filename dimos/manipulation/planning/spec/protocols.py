@@ -91,8 +91,12 @@ class WorldSpec(Protocol):
         """Remove an obstacle. Returns True if removed."""
         ...
 
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Replace the complete obstacle identified by obstacle.name."""
+        ...
+
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update obstacle pose. Returns True if updated."""
+        """Update only an obstacle pose. Returns True if updated."""
         ...
 
     def clear_obstacles(self) -> None:
@@ -200,6 +204,14 @@ class VisualizationSpec(Protocol):
 
     def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         """Render or otherwise accept an obstacle added to the planning world."""
+        ...
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Replace a complete obstacle representation."""
+        ...
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Update only an obstacle representation's pose."""
         ...
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:

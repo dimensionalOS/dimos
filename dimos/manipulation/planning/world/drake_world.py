@@ -19,7 +19,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock, current_thread
 from typing import TYPE_CHECKING, Any
@@ -170,6 +171,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         self._time_step = time_step
         self._enable_viz = enable_viz
         self._lock = RLock()
+        self._usable = True
 
         # Build Drake diagram
         self._builder = DiagramBuilder()
@@ -470,6 +472,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add an obstacle to the world."""
         with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle, allow_empty_name=True)
             # Use obstacle's name as ID (allows external ID management)
             obstacle_id = obstacle.name
             if not obstacle_id:
@@ -480,23 +484,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
                 return None
 
+            snapshot = deepcopy(obstacle)
             try:
-                if not self._finalized:
-                    geometry_id = self._add_obstacle_to_plant(obstacle, obstacle_id)
-                    self._obstacles[obstacle_id] = _ObstacleData(
-                        obstacle_id=obstacle_id,
-                        obstacle=obstacle,
-                        geometry_id=geometry_id,
-                        source_id=self._plant.get_source_id(),
-                    )
-                else:
-                    geometry_id = self._add_obstacle_to_scene_graph(obstacle, obstacle_id)
-                    self._obstacles[obstacle_id] = _ObstacleData(
-                        obstacle_id=obstacle_id,
-                        obstacle=obstacle,
-                        geometry_id=geometry_id,
-                        source_id=self._obstacle_source_id,
-                    )
+                geometry_id = self._add_obstacle_to_scene_graph(snapshot, obstacle_id)
+                self._obstacles[obstacle_id] = _ObstacleData(
+                    obstacle_id=obstacle_id,
+                    obstacle=snapshot,
+                    geometry_id=geometry_id,
+                    source_id=self._obstacle_source_id,
+                )
                 logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
             except RuntimeError as e:
                 # Handle case where geometry name already exists in SceneGraph
@@ -625,53 +621,106 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         else:
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
+    def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
+        if not obstacle.name and not allow_empty_name:
+            raise ValueError("Obstacle name must be non-empty")
+        expected_dimensions = {
+            ObstacleType.BOX: 3,
+            ObstacleType.SPHERE: 1,
+            ObstacleType.CYLINDER: 2,
+        }
+        if obstacle.obstacle_type in expected_dimensions:
+            expected = expected_dimensions[obstacle.obstacle_type]
+            if len(obstacle.dimensions) != expected:
+                raise ValueError(
+                    f"{obstacle.obstacle_type.name} obstacle requires {expected} dimensions, "
+                    f"got {len(obstacle.dimensions)}"
+                )
+            dimensions = np.asarray(obstacle.dimensions, dtype=np.float64)
+            if not np.isfinite(dimensions).all() or np.any(dimensions <= 0.0):
+                raise ValueError("Obstacle dimensions must be finite and positive")
+        elif obstacle.obstacle_type == ObstacleType.MESH:
+            if not obstacle.mesh_path:
+                raise ValueError("MESH obstacle requires mesh_path")
+        else:
+            raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+        color = np.asarray(obstacle.color, dtype=np.float64)
+        if color.shape != (4,) or not np.isfinite(color).all():
+            raise ValueError("Obstacle color must contain four finite values")
+        transform = Transform(
+            translation=obstacle.pose.position,
+            rotation=obstacle.pose.orientation,
+        ).to_matrix()
+        if not np.isfinite(transform).all():
+            raise ValueError("Obstacle pose must contain only finite values")
+
+    def _remove_obstacle_geometry(self, obstacle_data: _ObstacleData) -> None:
+        self._scene_graph.RemoveGeometry(
+            obstacle_data.source_id,
+            obstacle_data.geometry_id,
+        )
+        if self._meshcat is not None:
+            self._meshcat.Delete(f"obstacles/{obstacle_data.obstacle_id}")
+
+    def _replace_obstacle_locked(self, obstacle: Obstacle) -> None:
+        obstacle_id = obstacle.name
+        previous = self._obstacles[obstacle_id]
+        try:
+            self._remove_obstacle_geometry(previous)
+            geometry_id = self._add_obstacle_to_scene_graph(obstacle, obstacle_id)
+        except Exception:
+            self._usable = False
+            raise
+        self._obstacles[obstacle_id] = _ObstacleData(
+            obstacle_id=obstacle_id,
+            obstacle=obstacle,
+            geometry_id=geometry_id,
+            source_id=self._obstacle_source_id,
+        )
+
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle by ID."""
         with self._lock:
+            self._require_finalized()
             if obstacle_id not in self._obstacles:
                 return False
 
             obstacle_data = self._obstacles[obstacle_id]
-
-            if self._finalized and self._scene_graph_context is not None:
-                self._scene_graph.RemoveGeometry(
-                    obstacle_data.source_id,
-                    obstacle_data.geometry_id,
-                )
-
-            # Also remove from Meshcat
-            if self._meshcat is not None:
-                path = f"obstacles/{obstacle_id}"
-                self._meshcat.Delete(path)
-
+            self._remove_obstacle_geometry(obstacle_data)
             del self._obstacles[obstacle_id]
             logger.debug(f"Removed obstacle '{obstacle_id}'")
             return True
 
-    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update obstacle pose."""
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Atomically replace a complete obstacle."""
         with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle)
+            snapshot = deepcopy(obstacle)
+            if snapshot.name not in self._obstacles:
+                return False
+            self._replace_obstacle_locked(snapshot)
+            return True
+
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Atomically update only an obstacle pose."""
+        replacement_pose = deepcopy(pose)
+        with self._lock:
+            self._require_finalized()
             if obstacle_id not in self._obstacles:
                 return False
-
-            # Store PoseStamped directly
-            self._obstacles[obstacle_id].obstacle.pose = pose
-
-            # Update Meshcat visualization
-            if self._meshcat is not None:
-                path = f"obstacles/{obstacle_id}"
-                transform = self._pose_to_rigid_transform(pose)
-                self._meshcat.SetTransform(path, transform)
-
-            # Note: SceneGraph geometry pose is fixed after registration
-            # Meshcat is updated for visualization, but collision checking
-            # uses the original pose. For dynamic obstacles, remove and re-add.
-
+            replacement = replace(
+                self._obstacles[obstacle_id].obstacle,
+                pose=replacement_pose,
+            )
+            self._validate_obstacle(replacement)
+            self._replace_obstacle_locked(replacement)
             return True
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
         with self._lock:
+            self._require_finalized()
             obstacle_ids = list(self._obstacles.keys())
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
@@ -679,7 +728,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently in the world."""
         with self._lock:
-            return [data.obstacle for data in self._obstacles.values()]
+            self._require_finalized()
+            return deepcopy([data.obstacle for data in self._obstacles.values()])
 
     # Preview Robot Setup
 
@@ -719,6 +769,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             return
 
         with self._lock:
+            self._require_usable()
             # Finalize plant
             self._plant.Finalize()
 
@@ -802,6 +853,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         """Check if world is finalized."""
         return self._finalized
 
+    def _require_usable(self) -> None:
+        if not self._usable:
+            raise RuntimeError("Planning world is invalid and must be reconstructed")
+
+    def _require_finalized(self) -> None:
+        self._require_usable()
+        if not self._finalized:
+            raise RuntimeError("World must be finalized first")
+
     def _setup_collision_filters(self) -> None:
         """Filter collisions between adjacent links and user-specified pairs."""
         for robot_data in self._robots.values():
@@ -842,20 +902,19 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         WARNING: Not thread-safe for reads during writes.
         Use scratch_context() for planning operations.
         """
-        if not self._finalized or self._live_context is None:
-            raise RuntimeError("World must be finalized first")
-        return self._live_context
+        with self._lock:
+            self._require_finalized()
+            assert self._live_context is not None
+            return self._live_context
 
     @contextmanager
     def scratch_context(self) -> Generator[Context, None, None]:
         """Thread-safe context for planning. Copies current robot states for inter-robot collision checking."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
-
-        ctx = self._diagram.CreateDefaultContext()
-
-        # Copy live robot states so inter-robot collision checking works
         with self._lock:
+            self._require_finalized()
+            ctx = self._diagram.CreateDefaultContext()
+
+            # Copy live robot states so inter-robot collision checking works
             if self._plant_context is not None:
                 plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
                 for robot_data in self._robots.values():
@@ -880,6 +939,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         positions = self._joint_state_to_q(robot_id, joint_state)
 
         with self._lock:
+            self._require_usable()
             self._set_positions_internal(self._plant_context, robot_id, positions)
 
             # NOTE: ForcedPublish is intentionally NOT called here.
@@ -892,14 +952,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         self, ctx: Context, robot_id: WorldRobotID, joint_state: JointState
     ) -> None:
         """Set robot joint state in given context."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
-
-        positions = self._joint_state_to_q(robot_id, joint_state)
-
-        # Get plant context from diagram context
-        plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
-        self._set_positions_internal(plant_ctx, robot_id, positions)
+        with self._lock:
+            self._require_finalized()
+            positions = self._joint_state_to_q(robot_id, joint_state)
+            plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
+            self._set_positions_internal(plant_ctx, robot_id, positions)
 
     def _set_positions_internal(
         self, plant_ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
@@ -940,48 +997,38 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def get_joint_state(self, ctx: Context, robot_id: WorldRobotID) -> JointState:
         """Get robot joint state from given context."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
-
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-
-        robot_data = self._robots[robot_id]
-        plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
-        full_positions = self._plant.GetPositions(plant_ctx)
-
-        positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
-        return JointState(name=robot_data.config.joint_names, position=positions)
+        with self._lock:
+            self._require_finalized()
+            if robot_id not in self._robots:
+                raise KeyError(f"Robot '{robot_id}' not found")
+            robot_data = self._robots[robot_id]
+            plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
+            full_positions = self._plant.GetPositions(plant_ctx)
+            positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
+            return JointState(name=robot_data.config.joint_names, position=positions)
 
     # Collision Checking (context-based)
 
     def is_collision_free(self, ctx: Context, robot_id: WorldRobotID) -> bool:
         """Check if current configuration in context is collision-free."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
-
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-
-        scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
-        query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
-
-        return not query_object.HasCollisions()
+        with self._lock:
+            self._require_finalized()
+            if robot_id not in self._robots:
+                raise KeyError(f"Robot '{robot_id}' not found")
+            scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
+            query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
+            return not query_object.HasCollisions()
 
     def get_min_distance(self, ctx: Context, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance (positive = clearance, negative = penetration)."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
-
-        scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
-        query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
-
-        signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()
-
-        if not signed_distance_pairs:
-            return float("inf")
-
-        return float(min(pair.distance for pair in signed_distance_pairs))
+        with self._lock:
+            self._require_finalized()
+            scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
+            query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
+            signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()
+            if not signed_distance_pairs:
+                return float("inf")
+            return float(min(pair.distance for pair in signed_distance_pairs))
 
     # Collision Checking (context-free, for planning)
 
@@ -990,9 +1037,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         This is a convenience method for planners that don't need to manage contexts.
         """
-        with self.scratch_context() as ctx:
-            self.set_joint_state(ctx, robot_id, joint_state)
-            return self.is_collision_free(ctx, robot_id)
+        with self._lock:
+            self._require_finalized()
+            with self.scratch_context() as ctx:
+                self.set_joint_state(ctx, robot_id, joint_state)
+                return self.is_collision_free(ctx, robot_id)
 
     def check_edge_collision_free(
         self,
@@ -1007,28 +1056,23 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         each configuration for collisions. This is more efficient than checking
         each configuration separately as it uses a single scratch context.
         """
-        # Extract positions as numpy arrays for interpolation
-        q_start = np.array(start.position, dtype=np.float64)
-        q_end = np.array(end.position, dtype=np.float64)
-
-        # Compute number of steps needed
-        dist = float(np.linalg.norm(q_end - q_start))
-        if dist < 1e-8:
-            return self.check_config_collision_free(robot_id, start)
-
-        n_steps = max(2, int(np.ceil(dist / step_size)) + 1)
-
-        with self.scratch_context() as ctx:
-            for i in range(n_steps):
-                t = i / (n_steps - 1)
-                q = q_start + t * (q_end - q_start)
-                # Create interpolated JointState
-                interp_state = JointState(name=start.name, position=q.tolist())
-                self.set_joint_state(ctx, robot_id, interp_state)
-                if not self.is_collision_free(ctx, robot_id):
-                    return False
-
-        return True
+        with self._lock:
+            self._require_finalized()
+            q_start = np.array(start.position, dtype=np.float64)
+            q_end = np.array(end.position, dtype=np.float64)
+            dist = float(np.linalg.norm(q_end - q_start))
+            if dist < 1e-8:
+                return self.check_config_collision_free(robot_id, start)
+            n_steps = max(2, int(np.ceil(dist / step_size)) + 1)
+            with self.scratch_context() as ctx:
+                for i in range(n_steps):
+                    t = i / (n_steps - 1)
+                    q = q_start + t * (q_end - q_start)
+                    interp_state = JointState(name=start.name, position=q.tolist())
+                    self.set_joint_state(ctx, robot_id, interp_state)
+                    if not self.is_collision_free(ctx, robot_id):
+                        return False
+            return True
 
     # Forward Kinematics (context-based)
 
@@ -1046,9 +1090,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def get_group_ee_pose(self, ctx: Context, group_id: PlanningGroupID) -> PoseStamped:
         """Get planning-group tip pose."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
+        with self._lock:
+            self._require_finalized()
+            return self._get_group_ee_pose(ctx, group_id)
 
+    def _get_group_ee_pose(self, ctx: Context, group_id: PlanningGroupID) -> PoseStamped:
         group = self._planning_group_from_id(group_id)
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
@@ -1072,9 +1118,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         self, ctx: Context, robot_id: WorldRobotID, link_name: str
     ) -> NDArray[np.float64]:
         """Get link pose as 4x4 transform."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
+        with self._lock:
+            self._require_finalized()
+            return self._get_link_pose(ctx, robot_id, link_name)
 
+    def _get_link_pose(
+        self, ctx: Context, robot_id: WorldRobotID, link_name: str
+    ) -> NDArray[np.float64]:
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
 
@@ -1108,9 +1158,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def get_group_jacobian(self, ctx: Context, group_id: PlanningGroupID) -> NDArray[np.float64]:
         """Get geometric Jacobian (6 x group joints) in group-local order."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
+        with self._lock:
+            self._require_finalized()
+            return self._get_group_jacobian(ctx, group_id)
 
+    def _get_group_jacobian(self, ctx: Context, group_id: PlanningGroupID) -> NDArray[np.float64]:
         group = self._planning_group_from_id(group_id)
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
@@ -1165,6 +1217,14 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
         return None
 
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle replacement."""
+        return None
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle pose updates."""
+        return None
+
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
         return None
@@ -1181,13 +1241,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def _publish_visualization(self, ctx: Context | None = None) -> None:
         """Publish current state to visualization."""
-        if self._meshcat_visualizer is None or self._meshcat is None:
-            return
-        if ctx is None:
-            ctx = self._live_context
-        if ctx is not None:
-            viz_ctx = self._diagram.GetSubsystemContext(self._meshcat_visualizer, ctx)
-            self._meshcat.forced_publish(self._meshcat_visualizer, viz_ctx)
+        with self._lock:
+            self._require_finalized()
+            if self._meshcat_visualizer is None or self._meshcat is None:
+                return
+            if ctx is None:
+                ctx = self._live_context
+            if ctx is not None:
+                viz_ctx = self._diagram.GetSubsystemContext(self._meshcat_visualizer, ctx)
+                self._meshcat.forced_publish(self._meshcat_visualizer, viz_ctx)
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Receive pushed state frame; embedded Meshcat uses Drake live context."""

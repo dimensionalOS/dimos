@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from copy import deepcopy
+from dataclasses import replace
 from enum import StrEnum
 import hashlib
 import math
@@ -45,6 +47,7 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_URDF_INSTALL_HINT,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.model_parser import parse_model
 from dimos.utils.logging_config import setup_logger
@@ -138,8 +141,11 @@ class ViserManipulationScene:
         self._collision_fallback_urdfs: dict[str, ViserUrdf] = {}
         self._robot_display_mode = RobotDisplayMode.VISUAL
         self._obstacle_handles: dict[str, list[Any]] = {}
+        self._obstacles: dict[str, Obstacle] = {}
+        self._obstacle_render_failures: dict[str, Exception] = {}
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
+        self._obstacle_warning_handle: Any | None = None
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -160,6 +166,7 @@ class ViserManipulationScene:
             if self._closed:
                 return
             self.remove_vis_obstacle(obstacle_id)
+            self._obstacle_render_failures.pop(obstacle_id, None)
             position, wxyz = self._obstacle_pose(obstacle)
             color, opacity = self._obstacle_appearance(obstacle)
             path = f"{OBSTACLE_NAMESPACE}/{obstacle_id}"
@@ -222,6 +229,7 @@ class ViserManipulationScene:
                 else:
                     raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
             except Exception as error:
+                self._obstacle_render_failures[obstacle_id] = error
                 logger.warning(
                     "Could not render obstacle %s; using proxy", obstacle_id, exc_info=True
                 )
@@ -245,18 +253,51 @@ class ViserManipulationScene:
                     )
                 )
             self._obstacle_handles[obstacle_id] = handles
+            self._obstacles[obstacle_id] = replace(deepcopy(obstacle), name=obstacle_id)
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Replace an obstacle representation while holding the renderer lock."""
+        with self._scene_lock:
+            self.add_vis_obstacle(obstacle.name, obstacle)
+            failure = self._obstacle_render_failures.get(obstacle.name)
+            if failure is not None:
+                raise RuntimeError(
+                    f"renderer used a proxy for obstacle '{obstacle.name}'"
+                ) from failure
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Move one obstacle while preserving its stored render properties."""
+        with self._scene_lock:
+            obstacle = self._obstacles.get(obstacle_id)
+            if obstacle is None:
+                return
+            self.update_vis_obstacle(replace(obstacle, pose=deepcopy(pose)))
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Remove every scene entity belonging to an obstacle ID."""
         with self._scene_lock:
             for handle in self._obstacle_handles.pop(obstacle_id, []):
                 self._remove_scene_handle(handle)
+            self._obstacles.pop(obstacle_id, None)
+            self._obstacle_render_failures.pop(obstacle_id, None)
 
     def clear_vis_obstacles(self) -> None:
         """Remove every obstacle entity while retaining the robot scene."""
         with self._scene_lock:
             for obstacle_id in list(self._obstacle_handles):
                 self.remove_vis_obstacle(obstacle_id)
+
+    def show_obstacle_warning(self, message: str) -> None:
+        """Expose a persistent renderer warning in the frontend when available."""
+        with self._scene_lock:
+            try:
+                if self._obstacle_warning_handle is None:
+                    self._obstacle_warning_handle = self.server.gui.add_markdown(message)
+                    self._obstacle_gui_handles.append(self._obstacle_warning_handle)
+                else:
+                    self._obstacle_warning_handle.content = message
+            except Exception:
+                logger.warning("Could not display obstacle warning in Viser", exc_info=True)
 
     def _ensure_obstacle_control(self) -> None:
         try:
@@ -621,6 +662,8 @@ class ViserManipulationScene:
                 for handle in handles:
                     self._remove_scene_handle(handle)
             self._obstacle_handles.clear()
+            self._obstacles.clear()
+            self._obstacle_render_failures.clear()
             for key in list(self._handles):
                 self._remove_handle(key)
             if self._grid_handle is not None:

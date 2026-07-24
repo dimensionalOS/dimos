@@ -55,6 +55,7 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -167,6 +168,48 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is not None:
             self._scene.add_vis_obstacle(obstacle_id, obstacle)
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Replace an obstacle representation without affecting planning state."""
+        if self._closed:
+            return
+        try:
+            self._ensure_started()
+            if self._scene is None:
+                return
+            self._scene.update_vis_obstacle(obstacle)
+        except Exception as error:
+            logger.warning(
+                "Obstacle visualization update failed for '%s': %s",
+                obstacle.name,
+                error,
+                exc_info=True,
+            )
+            if self._scene is not None:
+                self._scene.show_obstacle_warning(
+                    f"⚠️ Obstacle visualization is stale for `{obstacle.name}`: {error}"
+                )
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Move an obstacle representation without affecting planning state."""
+        if self._closed:
+            return
+        try:
+            self._ensure_started()
+            if self._scene is None:
+                return
+            self._scene.update_vis_obstacle_pose(obstacle_id, pose)
+        except Exception as error:
+            logger.warning(
+                "Obstacle pose visualization update failed for '%s': %s",
+                obstacle_id,
+                error,
+                exc_info=True,
+            )
+            if self._scene is not None:
+                self._scene.show_obstacle_warning(
+                    f"⚠️ Obstacle visualization is stale for `{obstacle_id}`: {error}"
+                )
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Remove an obstacle representation."""

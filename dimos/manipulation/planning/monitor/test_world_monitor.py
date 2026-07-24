@@ -26,8 +26,10 @@ from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     CollisionObjectMessage,
+    Obstacle,
     PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
@@ -93,6 +95,10 @@ class FakeWorld:
         return "obstacle-1"
 
     def remove_obstacle(self, obstacle_id):
+        return True
+
+    def update_obstacle(self, obstacle):
+        self.calls.append(("update_obstacle", obstacle))
         return True
 
     def update_obstacle_pose(self, obstacle_id, pose):
@@ -201,6 +207,12 @@ class FakeViz:
 
     def add_vis_obstacle(self, obstacle_id: str, obstacle: object) -> None:
         self.calls.append(("add_vis_obstacle", obstacle_id, obstacle))
+
+    def update_vis_obstacle(self, obstacle: object) -> None:
+        self.calls.append(("update_vis_obstacle", obstacle))
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        self.calls.append(("update_vis_obstacle_pose", obstacle_id, pose))
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         self.calls.append(("remove_vis_obstacle", obstacle_id))
@@ -596,7 +608,8 @@ def test_world_monitor_obstacle_mutations_cover_failure_and_visualization_errors
 
 def test_world_monitor_updates_obstacle_pose_with_backend_result(mocker: MockerFixture) -> None:
     world = FakeWorld()
-    monitor = world_monitor_module.WorldMonitor(world=world)  # type: ignore[arg-type]
+    viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
     pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
     update = mocker.patch.object(world, "update_obstacle_pose", side_effect=[True, False])
 
@@ -606,6 +619,76 @@ def test_world_monitor_updates_obstacle_pose_with_backend_result(mocker: MockerF
         mocker.call("obstacle-id", pose),
         mocker.call("obstacle-id", pose),
     ]
+    assert viz.calls == [("update_vis_obstacle_pose", "obstacle-id", pose)]
+
+
+def test_world_monitor_forwards_only_successful_complete_updates(
+    mocker: MockerFixture,
+) -> None:
+    world = FakeWorld()
+    viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    update = mocker.patch.object(world, "update_obstacle", side_effect=[True, False])
+
+    assert monitor.update_obstacle(obstacle) is True
+    assert monitor.update_obstacle(obstacle) is False
+    assert update.call_count == 2
+    assert viz.calls == [("update_vis_obstacle", obstacle)]
+
+
+def test_obstacle_monitor_routes_complete_and_rejects_incomplete_updates(
+    mocker: MockerFixture,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    add = mocker.patch.object(parent, "add_obstacle", return_value="world-id")
+    full_update = mocker.patch.object(parent, "update_obstacle", return_value=True)
+    pose_update = mocker.patch.object(parent, "update_obstacle_pose", return_value=True)
+    parent.start_obstacle_monitor()
+    monitor = parent.obstacle_monitor
+    assert monitor is not None
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+
+    monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="add",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 1.0, 1.0),
+        )
+    )
+    monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="update",
+            primitive_type="sphere",
+            pose=pose,
+            dimensions=(0.4,),
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+    )
+    monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="update",
+            pose=pose,
+            dimensions=(2.0, 2.0, 2.0),
+        )
+    )
+    monitor.on_collision_object(CollisionObjectMessage(id="unknown", operation="update", pose=pose))
+
+    add.assert_called_once()
+    replacement = full_update.call_args.args[0]
+    assert replacement.name == "world-id"
+    assert replacement.obstacle_type == ObstacleType.SPHERE
+    assert replacement.dimensions == (0.4,)
+    pose_update.assert_not_called()
 
 
 def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_error(
