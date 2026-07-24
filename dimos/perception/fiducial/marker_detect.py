@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import cv2
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -26,10 +27,10 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import (
+    ambiguity_gated_pose,
     camera_info_to_cv_matrices,
     camera_optical_frame_id,
     create_aruco_detector,
-    estimate_marker_pose,
     marker_corners_to_bbox,
     marker_reprojection_error,
     rvec_tvec_to_transform,
@@ -44,6 +45,7 @@ def detect_markers_in_image(
     marker_length_m: float,
     aruco_dictionary: str,
     world_frame: str = "world",
+    ambiguity_ratio_min: float = 1.0,  # runner-up/best reproj to keep a view; 1.0 = gate off
     detector: Any | None = None,
     camera_matrix: np.ndarray | None = None,
     dist_coeffs: np.ndarray | None = None,
@@ -83,17 +85,20 @@ def detect_markers_in_image(
 
     for corner_set, mid_arr in zip(corners, ids, strict=True):
         mid = int(mid_arr[0])
-        pose = estimate_marker_pose(
+        # gate the IPPE mirror-flip at the source; see marker_pose.ambiguity_gated_pose
+        gated = ambiguity_gated_pose(
             corner_set,
             marker_length_m,
             camera_matrix,
             dist_coeffs,
             distortion_model=camera_info.distortion_model,
+            ambiguity_ratio_min=ambiguity_ratio_min,
         )
-        if pose is None:
+        if gated is None:
             continue
-
-        rvec, tvec = pose
+        optical_T_marker, _reproj_px = gated
+        rvec = cv2.Rodrigues(optical_T_marker[:3, :3])[0]
+        tvec = optical_T_marker[:3, 3].reshape(3, 1)
         t_optical_marker = rvec_tvec_to_transform(
             rvec,
             tvec,

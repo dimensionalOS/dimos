@@ -26,7 +26,7 @@ import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
@@ -293,9 +293,18 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
             d = d.setdefault(p, {})
         d[parts[-1]] = v
 
-    # We don't need this config, but this atleast validates the user input first.
-    # This will help catch misspellings and similar mistakes.
-    config(**kwargs)
+    # Validate the -o/env/config overlay early to catch misspellings and bad
+    # values. This overlay is PARTIAL: it layers over each module's blueprint
+    # preset (merged at deploy in _merge_config_kwargs), so a required field absent
+    # here is normal -- the preset fills it. Tolerate "missing" errors; still raise
+    # on unknown keys (typos) and type errors. Without this, a partial -o on a
+    # module whose config has a required field (e.g. relocalizationmodule.priors)
+    # would be rejected before the preset is ever merged in.
+    try:
+        config(**kwargs)
+    except ValidationError as exc:
+        if any(err["type"] != "missing" for err in exc.errors()):
+            raise
 
     return kwargs  # type: ignore[no-any-return]
 
@@ -306,6 +315,11 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    eval_reloc: bool = typer.Option(
+        False,
+        "--eval",
+        help="Turn the relocalization module's verbose accept trace on",
+    ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
@@ -357,6 +371,21 @@ def run(
             get_module_by_name_or_exit(name).blueprints[0].module for name in disable
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    if eval_reloc:
+        # --eval turns the relocalization module's own verbose accept trace on: each
+        # accepted fix logs source + fitness + published pose. Guarded on the module
+        # being present because blueprint.config() is extra="forbid" -- an unconditional
+        # override would hard-fail --eval on a stack with no relocalization. An explicit
+        # -o still wins; config_key(b.name) so a namespaced instance resolves.
+        from dimos.core.coordination.blueprints import config_key
+        from dimos.mapping.relocalization.module import RelocalizationModule
+
+        for b in blueprint.blueprints:
+            if b.module is RelocalizationModule:
+                key = f"{config_key(b.name)}.verbose_eval_logging"
+                if not any(arg.startswith(f"{key}=") for arg in blueprint_args):
+                    blueprint_args = [*blueprint_args, f"{key}=true"]
 
     if show_help:
         print("Blueprint arguments:")

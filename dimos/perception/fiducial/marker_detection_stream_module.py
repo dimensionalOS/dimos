@@ -17,6 +17,8 @@
 The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
 ``Detection3DArray`` per processed frame for LCM consumers.
+
+A second output, ``aggregated_detections``, carries one gated, robustly-aggregated pose per tag visit, with covariance and score. See ``AggregateTagBursts``.
 """
 
 from __future__ import annotations
@@ -38,8 +40,13 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
+from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
-from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
+from dimos.perception.fiducial.marker_transformer import (
+    AggregateTagBursts,
+    DetectMarkers,
+    MarkersPerFrame,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -60,6 +67,11 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
     camera_info: CameraInfo | None = None
+    ambiguity_ratio_min: float = Field(
+        2.0, ge=1.0
+    )  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
+    # per-glimpse gates + aggregation for aggregated_detections; first pose only after min_observations * quality_window_s (1.0 s at defaults) -- the floor latency of a fix
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
@@ -69,10 +81,17 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     color_image: In[Image]
     detections: Out[Detection3DArray]
+    # One gated, aggregated pose per (marker, visit), not a per-frame mirror; same message type.
+    aggregated_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._warned_distortion_model = False
+        self._aggregate = AggregateTagBursts(
+            self.aggregated_detections.publish,
+            self.config.aggregation,
+            self.config.world_frame,
+        )
 
     def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
         result: Stream[Any] = stream.transform(
@@ -95,11 +114,15 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                     aruco_dictionary=self.config.aruco_dictionary,
                     world_frame=self.config.world_frame,
                     smoothing_window=self.config.smoothing_window,
+                    ambiguity_ratio_min=self.config.ambiguity_ratio_min,
                     emit_empty_frames=True,
                 )
             ),
         )
-        return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
+        # tap yields every observation unchanged, so `detections` stays byte-identical and OpenCV runs once per frame -- a second .observable() would re-subscribe and re-detect
+        return markers.tap(self._aggregate).transform(
+            MarkersPerFrame(frame_id=self.config.world_frame)
+        )
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
@@ -107,9 +130,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             return
         if not self._warned_distortion_model:
             logger.warning(
-                "MarkerDetectionStreamModule: distortion_model=%r may be unsupported; "
-                "using D as-is.",
-                camera_info.distortion_model,
+                "unsupported distortion_model, using D as-is",
+                distortion_model=camera_info.distortion_model,
             )
             self._warned_distortion_model = True
 
@@ -119,7 +141,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = getattr(image, "ts", None) or time.time()
+        ts = (
+            image.ts if image.ts else time.time()
+        )  # fallback: unstamped frame -> wallclock so TF lookup has a time_point
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tf.get(
             self.config.world_frame,
@@ -129,10 +153,10 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
         )
         if t_world_optical is None:
             logger.debug(
-                "MarkerDetectionStreamModule: no TF %s -> %s at ts=%s",
-                self.config.world_frame,
-                optical,
-                ts,
+                "no TF for frame; skipping frame",
+                world_frame=self.config.world_frame,
+                optical_frame=optical,
+                ts=round(ts, 3),
             )
             return
 
@@ -154,10 +178,11 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     def start(self) -> None:
         Module.start(self)
 
-        if len(self.inputs) != 1 or len(self.outputs) != 1:
+        if len(self.inputs) != 1 or len(self.outputs) != 2:
             raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
-                f"found {len(self.inputs)} In and {len(self.outputs)} Out"
+                f"{self.__class__.__name__} must have exactly one In and two Out ports "
+                f"(detections + aggregated_detections), found "
+                f"{len(self.inputs)} In and {len(self.outputs)} Out"
             )
 
         store = self.register_disposable(NullStore())
@@ -171,6 +196,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             lambda image: self._append_image_with_pose(stream, image)
         )
         self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
+        # Only `detections` is wired here; `aggregated_detections` publishes from the tap in pipeline().
         self.register_disposable(
             stream_to_port(self._apply_pipeline(stream.live()), self.detections)
         )
