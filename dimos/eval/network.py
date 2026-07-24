@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Network-degradation eval for DimOS transports.
-
-Answers the FDE question "does a blueprint's transport hold up over a degraded
-robot<->basestation link?" by replaying the pubsub throughput benchmark under a
-matrix of tc netem impairment profiles (added latency, jitter, packet loss,
-bandwidth cap) and grading loss/latency against a budget.
+"""Network-degradation eval for DimOS.
 
 Design:
 * Transports come from the same registry the transport benchmark uses and every
@@ -28,8 +23,7 @@ Design:
 * NetworkEvalResult embeds a HardwareProfile and serializes to JSON, so a
   cross-board/cross-link comparison is just "run it, diff the JSON".
 
-Requirements for netem profiles: Linux + root + tc (iproute2). A baseline-only
-run needs none of these and works on any OS.
+Requirements for netem profiles: Linux + root + tc (iproute2).
 """
 
 from __future__ import annotations
@@ -57,11 +51,6 @@ SAME_HOST: frozenset[str] = frozenset(
 
 def _build_networked_cases() -> list[Any]:
     """Build transport cases directly from transport implementations.
-
-    Avoids importing testdata.py which has a top-level ``import pytest`` and
-    therefore cannot be imported in a runtime (non-dev) installation.
-    Each entry is a SimpleNamespace with ``.pubsub_context``, ``.msg_gen``,
-    and ``.display_name``.
     """
     from contextlib import contextmanager
     from types import SimpleNamespace
