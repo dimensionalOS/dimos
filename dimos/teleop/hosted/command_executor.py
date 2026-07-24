@@ -176,7 +176,8 @@ class SerializedCommandExecutor:
             if nonce is not None and not urgent:
                 with self._lock:
                     self._nonce_results[nonce] = (ok, time.monotonic())
-            self._send_ack(nonce, ok)
+            if nonce is not None:
+                self._send_ack(nonce, ok)
 
         if urgent:
 

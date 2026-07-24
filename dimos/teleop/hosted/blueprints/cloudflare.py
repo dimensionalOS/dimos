@@ -85,7 +85,7 @@ teleop_hosted_go2_transport = (
     .transports(
         {
             # inbound operator planes
-            ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("cmd_vel_in", TwistStamped): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.GO2
             ),  # → stats + command
@@ -132,7 +132,7 @@ teleop_hosted_go2_multicam = (
     .transports(
         {
             # inbound operator planes
-            ("cmd_vel_in", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("cmd_vel_in", TwistStamped): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
             ("state_json", bytes): CloudflareTransport.spec(
                 "state_reliable", robot_type=RobotType.GO2
             ),  # → stats + command

@@ -36,6 +36,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.logging_config import setup_logger
@@ -79,20 +80,17 @@ class Go2CommandModule(Module):
 
     config: Go2CommandConfig
 
-    # RPC ref to the driver (framework injects an RPCClient) for discrete commands.
     go2: GO2Connection
 
-    state_json: In[bytes]  # broker state_reliable (also read by stats mod)
-    cmd_ack: Out[bytes]  # → state_reliable_back (command acks)
+    state_json: In[bytes]
+    cmd_ack: Out[bytes]
 
-    # Manual drive: raw operator cmd_vel IN, guarded, republished as tele_cmd_vel
-    # to MovementManager (which arbitrates manual vs nav and owns cmd_vel).
-    cmd_vel_in: In[Twist]  # raw operator drive (broker cmd_unreliable)
-    tele_cmd_vel: Out[Twist]  # guarded manual drive → MovementManager
+    cmd_vel_in: In[TwistStamped]
+    tele_cmd_vel: Out[Twist]
 
-    goal_request: Out[PoseStamped]  # click-to-nav goal → planner
-    robot_state: Out[bytes]  # posture/rage/battery → stats module telemetry
-    stop_movement: Out[Bool]  # cancel the planner (on E-STOP / operator-lost)
+    goal_request: Out[PoseStamped]
+    robot_state: Out[bytes]
+    stop_movement: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         """Init command state (executor, safety epoch, posture, drive timers)."""
@@ -401,7 +399,7 @@ class Go2CommandModule(Module):
 
     # ─── manual drive guard (stream filter → tele_cmd_vel, NOT RPC) ────
 
-    def _on_cmd_vel_in(self, twist: Twist) -> None:
+    def _on_cmd_vel_in(self, twist: TwistStamped) -> None:
         """Guard raw operator drive — E-STOP gate, stale/future/out-of-order
         drop — then republish on tele_cmd_vel to MovementManager, which
         arbitrates it against the planner and owns the driver's cmd_vel."""

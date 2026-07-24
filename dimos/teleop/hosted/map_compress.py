@@ -167,7 +167,6 @@ class MapCompressModule(Module):
         blocks = trimmed.reshape(new_h, factor, new_w, factor)
         # Sink unknown below every known value for the max, then map it back.
         as_int = blocks.astype(np.int16)
-        as_int[as_int < 0] = -1
         known = np.where(as_int < 0, -1000, as_int)
         reduced = known.max(axis=(1, 3))
         reduced[reduced == -1000] = -1

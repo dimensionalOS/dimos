@@ -51,8 +51,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Streams the recorder declares + the dimos msg type to decode each as. Order
-# here drives the order in the report.
+# Streams the recorder declares + the dimos msg type to decode each as.
+# (Report order is alphabetical — the writer uses sort_keys.)
 _STREAM_TYPES = {
     "cmd_vel_stamped": TwistStamped,
     "left_controller_output": PoseStamped,
@@ -87,7 +87,8 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
     # Per-message-stream → summary stats. video_stats is a separate shape.
     twist_streams = {n: r for n, r in records.items() if n != "video_stats" and r}
     summaries = {name: _summary(rs, stall_factor=3.0) for name, rs in twist_streams.items()}
-    active = {n: s for n, s in summaries.items() if s.get("rate_hz")}
+    # Filter on count, not rate_hz — Buttons has no ts (rate_hz None) and would vanish.
+    active = {n: s for n, s in summaries.items() if s.get("count")}
     video_summary = _summarize_video(records.get("video_stats", []))
     telemetry_summary = _summarize_telemetry(telemetry)
 
@@ -142,9 +143,11 @@ def _read_telemetry(store: SqliteStore) -> list[dict[str, Any]]:
     frames: list[dict[str, Any]] = []
     for obs in store.stream("robot_telemetry", bytes):
         try:
-            frames.append(json.loads(obs.data))
+            frame = json.loads(obs.data)
         except (ValueError, TypeError):
             continue
+        if isinstance(frame, dict):
+            frames.append(frame)
     return frames
 
 

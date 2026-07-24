@@ -123,6 +123,12 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_stale_warn = now
                 logger.warning("dropping stale pose: age=%.2fs — operator link lagging", age)
             return
+        if age < 0:  # future-stamped: don't advance the watermark (would freeze the hand)
+            now = time.monotonic()
+            if now - self._last_future_warn >= 1.0:
+                self._last_future_warn = now
+                logger.warning("dropping future-stamped pose — operator clock sync likely off")
+            return
         if ts <= self._last_pose_ts[hand]:
             return
         self._last_pose_ts[hand] = ts

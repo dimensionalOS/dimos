@@ -52,9 +52,6 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
             task_names={"right": "teleop_xarm"},
             control_loop_hz=50.0,
             cmd_stale_after_sec=0.5,
-            linear_scale=1.0,
-            angular_scale=1.0,
-            video_jpeg_quality=80,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
@@ -131,12 +128,19 @@ def test_stale_pose_dropped(module: ArmCommandModule) -> None:
 
 
 def test_out_of_order_pose_dropped(module: ArmCommandModule) -> None:
-    t = time.time()
+    t = time.time() - 0.2
     module._on_cmd_raw(_pose_bytes("right", ts=t))
     module._on_cmd_raw(_pose_bytes("right", ts=t - 0.1))
     accepted = module._current_poses[Hand.RIGHT]
     module._on_cmd_raw(_pose_bytes("right", ts=t + 0.1))
     assert module._current_poses[Hand.RIGHT] is not accepted
+
+
+def test_future_stamped_pose_dropped(module: ArmCommandModule) -> None:
+    module._on_cmd_raw(_pose_bytes("right", ts=time.time() + 5.0))
+    assert module._current_poses[Hand.RIGHT] is None
+    module._on_cmd_raw(_pose_bytes("right"))
+    assert module._current_poses[Hand.RIGHT] is not None
 
 
 def test_pose_watermark_is_per_hand(module: ArmCommandModule) -> None:

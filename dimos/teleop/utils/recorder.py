@@ -57,7 +57,7 @@ class TeleopRecorder(Recorder):
     ``robot_telemetry``). Unconnected ports stay empty in the DB. Each run lands
     in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
     so runs don't clobber. On stop, if ``generate_report=True``, also writes
-    ``report.json`` next to the .db.
+    ``report_<ts>.json`` next to the .db.
     """
 
     left_controller_output: In[PoseStamped]
@@ -72,6 +72,9 @@ class TeleopRecorder(Recorder):
 
     @rpc
     def start(self) -> None:
+        if self.config.g.replay:
+            super().start()
+            return
         base = Path(self.config.db_path)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")

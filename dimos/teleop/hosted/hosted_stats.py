@@ -25,8 +25,9 @@ Owns the operator↔robot state plane that is NOT robot-command-specific:
   ``robot_telemetry`` (local LCM) so the recorder can capture it — the broker
   channel is outbound-only and can't be tapped locally.
 
-Robot-authoritative UI state (posture/rage/battery) arrives on ``robot_state``
-from the command module, so telemetry reflects reality.
+Robot-authoritative UI state (posture/rage/estop) arrives on ``robot_state``
+from the command module, so telemetry reflects reality; battery SOC is polled
+from the driver directly in the telemetry loop.
 """
 
 from __future__ import annotations
@@ -60,7 +61,8 @@ class HostedStatsModule(Module):
     config: HostedStatsConfig
 
     # RPC ref to the driver, for battery SOC pulled in the telemetry loop.
-    go2: GO2Connection
+    # Optional: the xarm blueprints have no GO2Connection — soc stays None there.
+    go2: GO2Connection | None
 
     state_json: In[bytes]  # broker state_reliable (fanned; also read by command mod)
     cmd_raw: In[bytes]  # cmd_unreliable stats tap
@@ -94,6 +96,8 @@ class HostedStatsModule(Module):
         self._stop_event.set()
         if self._telemetry_thread is not None:
             self._telemetry_thread.join(timeout=2.0)
+            if self._telemetry_thread.is_alive():
+                logger.warning("telemetry thread did not stop within 2s")
             self._telemetry_thread = None
         super().stop()
 
@@ -128,8 +132,9 @@ class HostedStatsModule(Module):
     def _on_cmd_raw(self, data: Any) -> None:
         """Tap raw cmd_vel for latency/rate stats and re-publish it as
         TwistStamped over LCM for the recorder (no 2nd CF session). This is the
-        full unguarded operator stream — the complete drive trace, unlike the
-        E-STOP/stale-filtered subset Go2CommandModule forwards to the driver."""
+        full unguarded operator stream, before any E-STOP/stale filtering by the
+        command module. Only TwistStamped decodes, so on the arm blueprints the
+        stats cover just the twist-jog subset."""
         if isinstance(data, str):
             data = data.encode()
         try:
@@ -146,16 +151,18 @@ class HostedStatsModule(Module):
         try:
             self._latest_state = json.loads(data)
         except (ValueError, TypeError):
-            logger.debug("robot_state: malformed, keeping previous")
+            logger.warning("robot_state: malformed, keeping previous")
 
     # ─── telemetry (robot → operator) ─────────────────────────────────
 
     def _telemetry_payload(self) -> dict[str, Any]:
         """One robot_telemetry frame: cmd stats + latest robot_state + battery."""
-        try:
-            soc = self.go2.battery_soc()
-        except Exception:
-            soc = None
+        soc = None
+        if self.go2 is not None:
+            try:
+                soc = self.go2.battery_soc()
+            except Exception:
+                pass
         return {
             "type": "robot_telemetry",
             "cmd": self._cmd_stats.snapshot(),
@@ -171,13 +178,13 @@ class HostedStatsModule(Module):
             while not self._stop_event.is_set():
                 data = json.dumps(self._telemetry_payload()).encode()
                 try:
-                    self.telemetry_out.publish(data)  # → operator (broker)
                     self.robot_telemetry.publish(data)  # → recorder (local LCM)
+                    self.telemetry_out.publish(data)  # → operator (broker)
                     warned = False
                 except Exception:
                     if not warned:
                         warned = True
-                        logger.debug("telemetry publish failing", exc_info=True)
+                        logger.warning("telemetry publish failing", exc_info=True)
                 self._stop_event.wait(interval)
 
         self._telemetry_thread = threading.Thread(

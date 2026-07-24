@@ -179,3 +179,10 @@ def test_set_cam_selection_ignores_foreign_frames(payload: bytes) -> None:
         mux._cam_selected = ["cam2"]
     mux._set_cam_selection(payload)
     assert mux._cam_selected == ["cam2"]  # unchanged
+
+
+def test_latency_stamp_fits_640_width() -> None:
+    mux = _make(["cam1"], latency_stamp=True)
+    _feed(mux, "cam1", _img(640, 480))
+    out = mux._composite()
+    assert out is not None and out.data.shape[:2] == (480 + 16, 640)
