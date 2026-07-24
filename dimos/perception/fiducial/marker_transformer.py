@@ -516,7 +516,7 @@ class AggregateTagBursts:
             tag_covariance(estimate.pose, scale),
         )
         # one visit shares a viewpoint, so its PnP errors are correlated and the covariance carries no 1/n
-        logger.info(
+        logger.debug(
             "tag burst aggregated",
             marker_id=det.marker_id,
             n_obs=estimate.n_observations,

@@ -222,10 +222,12 @@ class RelocalizationModule(Module):
         )
 
     def _throttled_warn(self, event: str, **kw: Any) -> None:
-        """Warn that this fire was refused, at most once per SKIP_LOG_INTERVAL_S across every refusal."""
+        """Report that this fire was refused, at most once per SKIP_LOG_INTERVAL_S across every refusal."""
         now = time.monotonic()
         if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
-            logger.warning(event, **kw)
+            # Refusals are the steady state while the submap fills, so they surface only under --eval; the console otherwise carries accepted fixes alone.
+            log = logger.warning if self.config.verbose_eval_logging else logger.debug
+            log(event, **kw)
             self._last_skip_log = now
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
