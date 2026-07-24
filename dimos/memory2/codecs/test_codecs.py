@@ -134,7 +134,11 @@ def _jpeg_case() -> Case | None:
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.utils.data import get_data
 
-    db_path = get_data("go2_short.db")
+    try:
+        db_path = get_data("go2_short.db")
+    except RuntimeError:
+        # 84MB LFS pull — refused by the CI LFS guard on standard runners
+        return None
 
     with SqliteStore(path=str(db_path)) as store:
         video = store.stream("color_image", Image)
