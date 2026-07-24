@@ -219,7 +219,9 @@ class WorldObstacleMonitor:
             logger.warning("Collision object update for '%s' contains no changes", msg.id)
             return
 
-        # Notify callbacks
+        # Keep the legacy callback payload unchanged: updates report None.
+        # Before adding consumers, define separate full-replacement and pose-only
+        # callback semantics instead of inferring them from this payload.
         for callback in self._obstacle_callbacks:
             try:
                 callback("update", obstacle_id, None)
@@ -422,8 +424,8 @@ class WorldObstacleMonitor:
         """Add callback for obstacle changes.
 
         Args:
-            callback: Function called with (operation, obstacle_id, obstacle)
-                     where operation is "add", "update", or "remove"
+            callback: Function called with (operation, obstacle_id, obstacle).
+                Add passes the obstacle; update and remove currently pass None.
         """
         self._obstacle_callbacks.append(callback)
 
