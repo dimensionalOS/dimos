@@ -1,0 +1,30 @@
+# release.yml is dispatch-only, so changes to it (including dependabot bumps of
+# pypa/cibuildwheel) merge without ever being executed. This smoke-builds one wheel
+# at PR time so release-build breakage surfaces before release day.
+name: release-build-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-build-check.yml
+      - pyproject.toml
+
+permissions: {}
+
+jobs:
+  build-one-wheel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Keep in sync with the build-wheels env in release.yml
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_TEST_COMMAND: "python -c 'from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp'"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build one wheel
+        uses: pypa/cibuildwheel@v4.1.0
+        with:
+          only: cp312-manylinux_x86_64
