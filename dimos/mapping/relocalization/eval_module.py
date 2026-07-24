@@ -30,13 +30,6 @@ by -- and the per-cycle census. An operating run logs one QUIET accept line inst
 (source/fitness/time_cost_s, no position); the parsers read it too, but such
 a line cannot be joined to a fix, so its source degrades to ``unknown``.
 
-HOW MUCH IT CORRECTS. Accuracy says whether a fix is right; ``CorrectionStats`` says
-how much work it did -- the jump in the ROBOT's believed map-frame position between
-consecutive accepts, and that jump per metre driven between them (the LIO drift rate
-relocalization is removing). Measured at the robot, never at the map origin: the
-fix's own translation is the map origin, which barely moves between accepts and would
-report a flatteringly-near-zero correction.
-
 WHERE EACH PRIOR WINS. Under ``--eval`` the Module also draws every accept into the
 run's rerun viewer as it lands -- ``world/eval/accepted``, one point per accepted fix
 at the robot's position in the premap's map frame, coloured by the winning prior
@@ -91,10 +84,6 @@ SOURCE_COLORS: dict[str, str] = {
 }
 _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same accept
 _TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
-# Correction-per-metre needs a real baseline: the go2 walks ~0.5 m/s against a ~2 s
-# accept cadence, so 5 cm between two accepts means the robot stood still and the
-# ratio would be odom noise in the denominator. Report the magnitude, no rate.
-_MIN_TRAVEL_M = 0.05
 
 # The live rerun overlay (see accepted_points_in_map / RelocEval._log_accepted).
 # "world/" is the bridge's entity_prefix, so the overlay sits under the same
@@ -392,50 +381,6 @@ class SourceRow:
 
 
 @dataclass
-class Correction:
-    """How much ONE accepted fix moved the robot's believed map-frame pose, and how
-    far the robot drove to earn that correction."""
-
-    ts: float
-    source: str  # the winning prior of the NEW fix -- the one that did the correcting
-    magnitude_m: float
-    dyaw_deg: float  # |yaw| change between the two corrections
-    dist_travelled_m: float
-    rate_m_per_m: float | None  # None while stationary (see _MIN_TRAVEL_M)
-
-
-@dataclass
-class CorrectionSourceRow:
-    source: str
-    n: int
-    med_magnitude_m: float | None
-    med_rate_m_per_m: float | None
-
-
-@dataclass
-class CorrectionStats:
-    """Run-level correction magnitude. ``first`` (acquisition -- correcting from no
-    fix at all) is kept out of every aggregate below: it measures how far off the
-    robot started, not the drift rate the run is removing."""
-
-    first: Correction | None
-    per_fix: list[Correction]  # drift corrections only; ``first`` is NOT in here
-    med_magnitude_m: float | None
-    p90_magnitude_m: float | None
-    med_dyaw_deg: float | None
-    med_rate_m_per_m: float | None
-    total_correction_m: float
-    total_distance_m: float  # driven between the first and the last accepted fix
-    rows: list[CorrectionSourceRow]
-
-    @property
-    def rate_m_per_m(self) -> float | None:
-        if self.total_distance_m < _MIN_TRAVEL_M:
-            return None
-        return self.total_correction_m / self.total_distance_m
-
-
-@dataclass
 class EvalStats:
     rows: list[SourceRow]
     accepts: int
@@ -447,7 +392,6 @@ class EvalStats:
     fiducial_won: int
     mode: str
     held_out_note: str
-    corrections: CorrectionStats | None = None
 
 
 def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
@@ -521,130 +465,6 @@ def label_fixes_from_log(
     return fixes
 
 
-def _yaw_deg(rot: np.ndarray) -> float:
-    """Yaw (deg) about the gravity axis of a gravity-aligned rotation, wrapped to
-    (-180, 180] by atan2. Both frames here come from the LIO's gravity-aligned world,
-    so roll/pitch of a correction are ~0 and yaw is the whole story."""
-    return float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))
-
-
-def correction_at_robot(
-    world_map_old: np.ndarray | None, world_map_new: np.ndarray, p_world_m: np.ndarray
-) -> tuple[float, float]:
-    """``(magnitude_m, |dyaw| deg)`` -- how far the ROBOT's believed map-frame
-    position jumped when ``world_map_new`` replaced ``world_map_old``.
-
-    FRAME, and why it is the load-bearing line here: a published fix is
-    ``world_T_map`` (module.py inverts relocalize()'s map_T_world before publishing
-    world->map on /tf), so the robot's map-frame belief is
-    ``p_map = inv(fix) @ p_world`` -- the same ``map_T_world = inv(fix)`` mapping
-    plot_trajectory and accepted_points_in_map use. Using the fix directly instead
-    yields a plausible-looking number that is simply a different quantity.
-
-    Evaluated AT THE ROBOT, never at the map origin: ``fix[:3, 3]`` is where the map
-    origin sits in world, which two consecutive accepts barely move, so differencing
-    it reports a near-zero correction no matter how large the real one was.
-
-    ``world_map_old=None`` means the FIRST fix -- no world->map had been published, so
-    the robot had no map-frame belief at all; identity is the convention for "no
-    correction yet", which makes this the acquisition offset, not a drift correction.
-
-    Args:
-        world_map_old: 4x4 world_T_map of the previous accept, or None for the first.
-        world_map_new: 4x4 world_T_map of this accept.
-        p_world_m: (3,) robot position in the world (LIO/odom) frame at the new fix.
-    """
-    map_T_world_new = np.linalg.inv(world_map_new)
-    map_T_world_old = np.eye(4) if world_map_old is None else np.linalg.inv(world_map_old)
-    p_h = np.array([*np.asarray(p_world_m, dtype=float)[:3], 1.0])
-    jump = (map_T_world_new @ p_h)[:3] - (map_T_world_old @ p_h)[:3]
-    r_rel = map_T_world_old[:3, :3].T @ map_T_world_new[:3, :3]
-    return float(np.linalg.norm(jump)), abs(_yaw_deg(r_rel))
-
-
-def _path_distance_m(odom_xyz: np.ndarray, i_from: int, i_to: int) -> float:
-    """Path length (m) integrated over odom samples ``i_from..i_to`` inclusive. The
-    straight-line distance would undercount a curved or doubled-back leg, and it is
-    driven distance -- not displacement -- that LIO drift accumulates over."""
-    if i_to <= i_from:
-        return 0.0
-    steps = np.diff(odom_xyz[i_from : i_to + 1], axis=0)
-    return float(np.linalg.norm(steps, axis=1).sum())
-
-
-def _correction_rows(fixes_sorted: list[Fix], odom_txyz: np.ndarray) -> list[Correction]:
-    """One Correction per accepted fix, in time order; row 0 is the acquisition fix.
-    The robot position at an accept is the nearest odom sample (odom runs 10-50 Hz
-    against a ~2 s accept cadence), and the same sample indices bound the leg the
-    distance is integrated over, so magnitude and denominator share one convention."""
-    usable: list[tuple[Fix, np.ndarray]] = [
-        (f, f.world_map_fix) for f in fixes_sorted if f.world_map_fix is not None
-    ]
-    if not usable or odom_txyz.size == 0:
-        return []
-    odom_ts, odom_xyz = odom_txyz[:, 0], odom_txyz[:, 1:4]
-    idx = [int(np.argmin(np.abs(odom_ts - f.ts))) for f, _ in usable]
-    rows: list[Correction] = []
-    for k, (f, mat) in enumerate(usable):
-        prev = usable[k - 1][1] if k else None
-        magnitude_m, dyaw_deg = correction_at_robot(prev, mat, odom_xyz[idx[k]])
-        dist_m = _path_distance_m(odom_xyz, idx[k - 1], idx[k]) if k else 0.0
-        rows.append(
-            Correction(
-                ts=f.ts,
-                source=f.source,
-                magnitude_m=magnitude_m,
-                dyaw_deg=dyaw_deg,
-                dist_travelled_m=dist_m,
-                rate_m_per_m=(magnitude_m / dist_m) if dist_m >= _MIN_TRAVEL_M else None,
-            )
-        )
-    return rows
-
-
-def compute_correction_stats(
-    fixes_sorted: list[Fix], odom_txyz: np.ndarray
-) -> CorrectionStats | None:
-    """Aggregate correction magnitude + correction-per-metre over a run's accepts.
-
-    None when there is nothing honest to report (no accepted fix carrying a pose, or
-    no odom -- with no robot position there is no place to evaluate the jump).
-
-    Args:
-        fixes_sorted: accepted fixes, ascending ts.
-        odom_txyz: (N, 4) [ts, x, y, z] robot positions in world, same clock as fixes.
-    """
-    rows = _correction_rows(fixes_sorted, odom_txyz)
-    if not rows:
-        return None
-    first, rest = rows[0], rows[1:]
-    mags = [c.magnitude_m for c in rest]
-    rates = [c.rate_m_per_m for c in rest if c.rate_m_per_m is not None]
-    present = [s for s in SOURCES if any(c.source == s for c in rest)]
-    present += sorted({c.source for c in rest} - set(SOURCES))
-    return CorrectionStats(
-        first=first,
-        per_fix=rest,
-        med_magnitude_m=_median(mags),
-        p90_magnitude_m=float(np.percentile(mags, 90)) if mags else None,
-        med_dyaw_deg=_median([c.dyaw_deg for c in rest]),
-        med_rate_m_per_m=_median(rates),
-        total_correction_m=float(sum(mags)),
-        total_distance_m=float(sum(c.dist_travelled_m for c in rest)),
-        rows=[
-            CorrectionSourceRow(
-                source=s,
-                n=sum(1 for c in rest if c.source == s),
-                med_magnitude_m=_median([c.magnitude_m for c in rest if c.source == s]),
-                med_rate_m_per_m=_median(
-                    [c.rate_m_per_m for c in rest if c.source == s and c.rate_m_per_m is not None]
-                ),
-            )
-            for s in present
-        ],
-    )
-
-
 def _active_index(fix_ts_sorted: np.ndarray, sample_ts: np.ndarray) -> np.ndarray:
     """Index of the most-recent fix at/before each sample; -1 where uncovered."""
     return np.searchsorted(fix_ts_sorted, sample_ts, side="right") - 1
@@ -669,9 +489,9 @@ def compute_stats(
 
     Args:
         odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world (LIO/odom) frame,
-            or an empty array. The POSITIONS are required, not just the timestamps:
-            correction magnitude is evaluated at the robot. A wrong-width array raises
-            rather than being indexed as if [ts, x, y] were [ts, x, y, z].
+            or an empty array. Stats read only the timestamps, but the SAME array flows
+            on to plot_trajectory / accepted_points_in_map, which need the positions, so
+            a wrong-width array raises here rather than being silently mis-indexed.
         accept_sources: the source of every ``relocalize accepted`` log line (the
             ACCEPTED-per-source count, straight from the log so a /tf join failure does
             not lose it). None -> fall back to the joined fixes' sources, which is what
@@ -707,7 +527,7 @@ def compute_stats(
     rejected_by = Counter(reject_sources) if reject_sources is not None else None
     # SOURCES first (always shown, even at zero), then any other source that appears in
     # the census / accepts / rejects / joined fixes -- a new prior, or ``unknown`` from a
-    # join failure or a source-less verbose reject. Same ordering as compute_correction_stats.
+    # join failure or a source-less verbose reject.
     extra = sorted(
         (set(proposed_by) | set(acc_src) | set(reject_sources or []) | {f.source for f in fixes})
         - set(SOURCES)
@@ -755,7 +575,6 @@ def compute_stats(
         fiducial_won=sum(1 for f in fixes if f.source == "fiducial"),
         mode=mode,
         held_out_note=held_out_note,
-        corrections=compute_correction_stats(fixes_sorted, odom_txyz),
     )
 
 
@@ -766,34 +585,6 @@ def _fmt(x: float | None, nd: int, suffix: str = "") -> str:
     return "-" if x is None else f"{x:.{nd}f}{suffix}"
 
 
-def _format_corrections(cs: CorrectionStats | None) -> list[str]:
-    """The correction block: one summary line, the acquisition fix on its own, then
-    per-source. Three lines, not a per-fix dump -- the per-fix rows are in the json."""
-    if cs is None:
-        return ["correction: - (no accepted fix with odom to measure a jump at)"]
-    first = (
-        "  first fix: -"
-        if cs.first is None
-        else f"  first fix: {cs.first.magnitude_m:.3f}m {cs.first.dyaw_deg:.1f}deg "
-        f"({cs.first.source}, acquisition -- excluded above)"
-    )
-    if not cs.per_fix:
-        return ["correction: - (only the acquisition fix; no second accept to compare)", first]
-    by_source = "  ".join(
-        f"{r.source} {_fmt(r.med_magnitude_m, 3, 'm')} {_fmt(r.med_rate_m_per_m, 4, 'm/m')} "
-        f"(n={r.n})"
-        for r in cs.rows
-    )
-    return [
-        f"correction (at the robot, n={len(cs.per_fix)}): med={_fmt(cs.med_magnitude_m, 3, 'm')} "
-        f"p90={_fmt(cs.p90_magnitude_m, 3, 'm')} med_yaw={_fmt(cs.med_dyaw_deg, 1, 'deg')} "
-        f"med_rate={_fmt(cs.med_rate_m_per_m, 4, 'm/m')}; total {cs.total_correction_m:.3f}m "
-        f"over {cs.total_distance_m:.2f}m driven ({_fmt(cs.rate_m_per_m, 4, 'm/m')})",
-        first,
-        f"  by source: {by_source}",
-    ]
-
-
 def _count_cell(x: int | None) -> str:
     """A count cell: the number, or ``-`` when the datum was not derivable (no truth
     for FALSE, no parsed reject source for REJECTED). Never a fabricated 0."""
@@ -802,8 +593,8 @@ def _count_cell(x: int | None) -> str:
 
 def format_report(stats: EvalStats, *, title: str) -> str:
     """The per-source table [source | prop | acc | rej | (false) | %traj | (med_err) |
-    med_fit], a TOTAL row, then the prior-activity line, overall, corrections, and the
-    held-out note. ``false`` and ``med_err`` are dropped in live mode (no in-process
+    med_fit], a TOTAL row, then the prior-activity line, overall, and the held-out
+    note. ``false`` and ``med_err`` are dropped in live mode (no in-process
     truth). Columns:
 
       prop  -- cycles this source put >=1 candidate forward (run-log census presence)
@@ -879,53 +670,8 @@ def format_report(stats: EvalStats, *, title: str) -> str:
         f"overall: accepts={stats.accepts} rejects={stats.rejects if stats.rejects is not None else '-'} "
         f"coverage={stats.coverage_pct:.1f}% first-fix={_fmt(stats.first_fix_s, 1, 's')}"
     )
-    lines.extend(_format_corrections(stats.corrections))
     lines.append(stats.held_out_note)
     return "\n".join(lines)
-
-
-def _correction_to_dict(c: Correction) -> dict[str, Any]:
-    return {
-        "ts": round(c.ts, 3),
-        "source": c.source,
-        "magnitude_m": round(c.magnitude_m, 4),
-        "dyaw_deg": round(c.dyaw_deg, 3),
-        "dist_travelled_m": round(c.dist_travelled_m, 4),
-        "rate_m_per_m": None if c.rate_m_per_m is None else round(c.rate_m_per_m, 5),
-    }
-
-
-def _round(x: float | None, nd: int) -> float | None:
-    return None if x is None else round(x, nd)
-
-
-def corrections_to_dict(cs: CorrectionStats | None) -> dict[str, Any] | None:
-    """The machine-readable form, per-fix rows included -- these are the numbers a
-    trend tracker diffs across runs, so they ship in full even though the printed
-    report shows only the summary."""
-    if cs is None:
-        return None
-    return {
-        "n": len(cs.per_fix),
-        "med_magnitude_m": _round(cs.med_magnitude_m, 4),
-        "p90_magnitude_m": _round(cs.p90_magnitude_m, 4),
-        "med_dyaw_deg": _round(cs.med_dyaw_deg, 3),
-        "med_rate_m_per_m": _round(cs.med_rate_m_per_m, 5),
-        "total_correction_m": round(cs.total_correction_m, 4),
-        "total_distance_m": round(cs.total_distance_m, 4),
-        "rate_m_per_m": _round(cs.rate_m_per_m, 5),
-        "first_fix": None if cs.first is None else _correction_to_dict(cs.first),
-        "per_source": [
-            {
-                "source": r.source,
-                "n": r.n,
-                "med_magnitude_m": _round(r.med_magnitude_m, 4),
-                "med_rate_m_per_m": _round(r.med_rate_m_per_m, 5),
-            }
-            for r in cs.rows
-        ],
-        "per_fix": [_correction_to_dict(c) for c in cs.per_fix],
-    }
 
 
 def stats_to_dict(stats: EvalStats, *, title: str) -> dict[str, Any]:
@@ -957,7 +703,6 @@ def stats_to_dict(stats: EvalStats, *, title: str) -> dict[str, Any]:
             }
             for r in stats.rows
         ],
-        "correction": corrections_to_dict(stats.corrections),
         "held_out_note": stats.held_out_note,
     }
 
@@ -1120,8 +865,7 @@ def write_report(
     *,
     title: str,
 ) -> dict[str, Path]:
-    """Print the table + correction block, then write ``<key>.eval.json`` and
-    ``<key>.trajectory.png``.
+    """Print the table, then write ``<key>.eval.json`` and ``<key>.trajectory.png``.
 
     Args:
         odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world frame; the plot
