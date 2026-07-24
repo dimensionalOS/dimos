@@ -18,6 +18,7 @@ from dimos.benchmark.spatial.pi_baseline.broker import (
     PostImagePolicyViolationError,
     PreImagePolicyViolationError,
 )
+from dimos.benchmark.spatial.pi_baseline.podman import PodmanInfrastructureError
 from dimos.benchmark.spatial.pi_baseline.transaction import AnswerTransaction
 
 
@@ -71,6 +72,38 @@ def test_dispatch_routes_valid_pre_image_tools_before_barrier(tmp_path: Path) ->
     assert broker.dispatch("sandbox_exec", {"command": "printf"})["exit_code"] == 7
     image = broker.dispatch("read_generated_image", {"path": "ok.png"})
     assert image["mime"] == "image/png"
+
+
+def test_sandbox_infrastructure_failure_is_recorded_and_blocks_later_dispatch(
+    tmp_path: Path,
+) -> None:
+    class FailedCase(_Case):
+        def exec(
+            self, command: str, *, controller_deadline: float | None = None
+        ) -> subprocess.CompletedProcess[str]:
+            del command, controller_deadline
+            raise PodmanInfrastructureError("exec", 125)
+
+    broker = CaseBroker(
+        "case",
+        FailedCase(tmp_path),
+        AnswerTransaction("instance", AnswerType.BOOLEAN),
+        "visualization-forbidden",
+    )
+    with pytest.raises(PodmanInfrastructureError) as raised:
+        broker.dispatch("sandbox_exec", {"command": "safe"})
+    assert raised.value.reason == "container_runtime_failed"
+    assert broker.audit[-1] == {
+        "tool": "sandbox_exec",
+        "case_id": "case",
+        "command": "safe",
+        "outcome": "error",
+        "reason": "container_runtime_failed",
+    }
+    with pytest.raises(PodmanInfrastructureError):
+        broker.dispatch("sandbox_exec", {"command": "later"})
+    with pytest.raises(PodmanInfrastructureError):
+        broker.dispatch("submit_answer", {"answer": True})
 
 
 def test_encouraged_state_table_two_sandboxes_then_image_then_submit(tmp_path: Path) -> None:

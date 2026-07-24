@@ -16,10 +16,10 @@ from dimos.benchmark.spatial.pi_baseline.broker import CaseBroker, PostImagePoli
 import dimos.benchmark.spatial.pi_baseline.controller as controller_module
 from dimos.benchmark.spatial.pi_baseline.controller import (
     TOOLS,
-    AdapterCleanupError,
     AdapterController,
     AdapterRunError,
 )
+from dimos.benchmark.spatial.pi_baseline.lifecycle_audit import LifecycleAuditRecord
 from dimos.benchmark.spatial.pi_baseline.prompts import (
     build_prompt_pair,
     make_parity_manifest,
@@ -35,10 +35,68 @@ def _operation_pair() -> tuple[threading.Event, threading.Lock]:
     return threading.Event(), threading.Lock()
 
 
+def _session_evidence() -> dict[str, object]:
+    return {
+        "state": "complete",
+        "persisted": True,
+        "relative_path": "pi-session/session.jsonl",
+        "system_prompt": {
+            "relative_path": "pi-prompt/system.txt",
+            "byte_count": 1,
+            "sha256": "a" * 64,
+        },
+        "initial_prompt": {
+            "relative_path": "pi-prompt/initial.txt",
+            "byte_count": 2,
+            "sha256": "b" * 64,
+        },
+    }
+
+
+_AUDIT_FIELDS = frozenset(LifecycleAuditRecord.__dataclass_fields__)
+
+
+def _audit(tmp_path: Path) -> tuple[bytes, list[dict[str, object]]]:
+    path = tmp_path / "adapter-lifecycle-audit.v1.jsonl"
+    assert path.is_file()
+    assert path.stat().st_mode & 0o077 == 0
+    payload = path.read_bytes()
+    assert len(payload) <= 2048 * 2048
+    records = [json.loads(line) for line in payload.splitlines()]
+    assert records
+    assert all(set(record) <= _AUDIT_FIELDS for record in records)
+    assert [record["sequence"] for record in records] == list(range(1, len(records) + 1))
+    assert all(record["schema_version"] == "1.0" for record in records)
+    return payload, records
+
+
 def _adapter_command(tmp_path: Path) -> tuple[str, str]:
     adapter = tmp_path / "adapter.js"
     adapter.touch()
     return ("/usr/bin/node", str(adapter))
+
+
+def test_api_key_environment_excludes_oauth_and_ambient_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("OPENAI_API_KEY=file-key\nUNRELATED=private\n", encoding="utf-8")
+    dotenv.chmod(0o600)
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-key")
+    controller = AdapterController(
+        _adapter_command(tmp_path),
+        dotenv,
+        tmp_path / "transcript",
+        auth_mode="openai-api-key",
+    )
+
+    env = controller._adapter_environment()
+
+    assert env["OPENAI_API_KEY"] == "file-key"
+    assert env["PI_SPATIAL_AUTH_MODE"] == "openai-api-key"
+    assert "PI_SPATIAL_AUTH_PATH" not in env
+    assert "UNRELATED" not in env
+    controller.close()
 
 
 class _Process:
@@ -114,6 +172,21 @@ def test_post_image_policy_is_terminal_not_a_failed_tool_reply(
             },
             broker,
             Event(),
+        )
+    with pytest.raises(ValueError, match="transcript"):
+        AdapterController._validate_transcript(
+            {"version": 2, "type": "transcript", "event": "turn_end", "thinkingLevel": "medium"}
+        )
+    with pytest.raises(ValueError, match="run_complete"):
+        AdapterController._validate_run_complete(
+            {
+                "version": 2,
+                "type": "run_complete",
+                "id": "run",
+                "ok": True,
+                "thinkingLevel": "medium",
+            },
+            "run",
         )
     controller.close()
 
@@ -274,7 +347,7 @@ def test_controller_runs_closed_dialogue_and_rejects_case_mismatch(
             "id": "run",
             "tools": ["sandbox_exec", "read_generated_image", "submit_answer"],
         },
-        {"version": 2, "type": "transcript", "event": "turn_end"},
+        {"version": 2, "type": "transcript", "event": "turn_end", "delta": "DELTA_SENTINEL"},
         {
             "version": 2,
             "type": "tool_call",
@@ -282,7 +355,14 @@ def test_controller_runs_closed_dialogue_and_rejects_case_mismatch(
             "tool": "submit_answer",
             "params": {"answer": True},
         },
-        {"version": 2, "type": "run_complete", "id": "run", "ok": True, "reason": "submitted"},
+        {
+            "version": 2,
+            "type": "run_complete",
+            "id": "run",
+            "ok": True,
+            "reason": "submitted",
+            "session_evidence": _session_evidence(),
+        },
     ]
     process = _Process(frames)
     captured: dict[str, object] = {}
@@ -298,12 +378,12 @@ def test_controller_runs_closed_dialogue_and_rejects_case_mismatch(
         AnswerTransaction("instance", AnswerType.BOOLEAN),
         "visualization-forbidden",
     )
-    transcript = tmp_path / "transcript.ndjson"
+    transcript = tmp_path / "adapter.transcript.ndjson"
     run_start = {
         "version": 2,
         "type": "run_start",
         "id": "run",
-        "prompt": "offline",
+        "prompt": "PROMPT_SENTINEL",
         "budget": {"maxTurns": 2, "maxToolCalls": 2, "timeoutMs": 1000},
         "config": {
             "promptMode": "visualization_forbidden",
@@ -329,9 +409,33 @@ def test_controller_runs_closed_dialogue_and_rejects_case_mismatch(
         "result": '{"accepted":true,"instance_id":"instance","answer_type":"boolean"}',
     }
     assert captured["env"]["PI_SPATIAL_AUTH_PATH"] == str(tmp_path / "private-auth")
-    assert "private-auth" not in transcript.read_text()
-    transcript_text = transcript.read_text()
-    assert "continuation_requested" not in transcript_text
+    assert captured["env"]["PI_SPATIAL_AUTH_MODE"] == "codex-oauth"
+    assert "OPENAI_API_KEY" not in captured["env"]
+    assert captured["env"]["PI_SPATIAL_SESSION_DIR"] == "pi-session"
+    assert captured["cwd"] == f"/proc/self/fd/{captured['pass_fds'][0]}"
+    assert terminal.session_evidence.relative_path == "pi-session/session.jsonl"
+    audit_bytes, audit_records = _audit(tmp_path)
+    assert not transcript.exists()
+    assert b"PROMPT_SENTINEL" not in audit_bytes
+    assert b"DELTA_SENTINEL" not in audit_bytes
+    assert b"ARGS_SENTINEL" not in audit_bytes
+    assert b"private-auth" not in audit_bytes
+    assert any(
+        record.get("frame_type") == "tool_call"
+        and record.get("tool") == "submit_answer"
+        and record.get("call_id") == "tool-1"
+        for record in audit_records
+    )
+    assert any(
+        record.get("frame_type") == "tool_reply" and record.get("reply_ok") is True
+        for record in audit_records
+    )
+    assert any(
+        record.get("frame_type") == "run_complete"
+        and record.get("terminal_category") == "submitted"
+        and record.get("session_state") == "complete"
+        for record in audit_records
+    )
     assert broker.transaction.prediction is not None
 
     mismatch = _Process(
@@ -372,6 +476,7 @@ def test_terminal_failure_retains_only_allowlisted_reason(
                 "ok": False,
                 "reason": reason,
                 "error": "secret/path",
+                "session_evidence": _session_evidence(),
             },
         ]
     )
@@ -410,7 +515,10 @@ def test_terminal_failure_retains_only_allowlisted_reason(
         ).run("run", broker, start, *_operation_pair())
     assert raised.value.terminal_reason == reason
     assert (tmp_path / "transcript.stderr.log").stat().st_size <= 128
-    assert "secret/path" not in (tmp_path / "transcript").read_text()
+    audit_bytes, audit_records = _audit(tmp_path)
+    assert not (tmp_path / "adapter.transcript.ndjson").exists()
+    assert b"secret/path" not in audit_bytes
+    assert any(record.get("terminal_category") == reason for record in audit_records)
 
 
 def test_transcript_symlink_in_pinned_leaf_fails_closed(
@@ -420,7 +528,8 @@ def test_transcript_symlink_in_pinned_leaf_fails_closed(
     escaped.write_bytes(b"must remain unchanged")
     transcript_root = tmp_path / "private"
     transcript_root.mkdir()
-    (transcript_root / "adapter.transcript.ndjson").symlink_to(escaped)
+    transcript_root.chmod(0o700)
+    (transcript_root / "adapter-lifecycle-audit.v1.jsonl").symlink_to(escaped)
     process = _Process([{"version": 2, "type": "run_started", "id": "run", "tools": list(TOOLS)}])
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
     pinned = PinnedDirectory.open(transcript_root)
@@ -431,12 +540,12 @@ def test_transcript_symlink_in_pinned_leaf_fails_closed(
             AnswerTransaction("instance", AnswerType.BOOLEAN),
             "visualization-forbidden",
         )
-        with pytest.raises(OSError):
+        with pytest.raises(AdapterRunError, match="adapter_eof"):
             AdapterController(_adapter_command(tmp_path), tmp_path / "auth", pinned).run(
                 "run", broker, _minimal_start(), *_operation_pair()
             )
         assert escaped.read_bytes() == b"must remain unchanged"
-        assert (transcript_root / "adapter.transcript.ndjson").is_symlink()
+        assert (transcript_root / "adapter-lifecycle-audit.v1.jsonl").is_symlink()
     finally:
         pinned.close()
 
@@ -572,7 +681,7 @@ def test_cleanup_failure_still_waits_and_closes_owned_transcript_fd(
         _adapter_command(tmp_path), tmp_path / "auth", tmp_path / "transcript"
     )
     owned_fd = controller.transcript_root.fd
-    with pytest.raises(AdapterCleanupError, match="cleanup failed"):
+    with pytest.raises(ValueError, match="missing run_started"):
         controller.run(
             "run",
             CaseBroker(
@@ -601,9 +710,10 @@ def test_cleanup_preserves_caller_owned_transcript_fd(
     )
     private = tmp_path / "private"
     private.mkdir()
+    private.chmod(0o700)
     pinned = PinnedDirectory.open(private)
     try:
-        with pytest.raises(AdapterCleanupError):
+        with pytest.raises(ValueError, match="missing run_started"):
             AdapterController(_adapter_command(tmp_path), tmp_path / "auth", pinned).run(
                 "run",
                 CaseBroker(
@@ -662,21 +772,21 @@ def test_peer_frames_reject_adapter_only_metadata() -> None:
             },
             "run",
         )
-    with pytest.raises(ValueError, match="transcript"):
-        AdapterController._validate_transcript(
-            {"version": 2, "type": "transcript", "event": "turn_end", "thinkingLevel": "medium"}
-        )
-    with pytest.raises(ValueError, match="run_complete"):
-        AdapterController._validate_run_complete(
-            {
-                "version": 2,
-                "type": "run_complete",
-                "id": "run",
-                "ok": True,
-                "thinkingLevel": "medium",
-            },
-            "run",
-        )
+
+
+def test_session_evidence_states_and_paths_are_strict() -> None:
+    frame = {
+        "version": 2,
+        "type": "run_complete",
+        "id": "run",
+        "ok": False,
+        "reason": "session_error",
+        "session_evidence": {"state": "unavailable", "persisted": False},
+    }
+    assert AdapterController._validate_run_complete(frame, "run").state == "unavailable"
+    frame["session_evidence"] = {**_session_evidence(), "relative_path": "../escape"}
+    with pytest.raises(ValueError, match="session evidence"):
+        AdapterController._validate_run_complete(frame, "run")
 
 
 def test_integer_answer_type_matches_corpus_wire_value() -> None:
@@ -763,7 +873,14 @@ def test_controller_rejects_premature_successful_completion(
     process = _Process(
         [
             {"version": 2, "type": "run_started", "id": "run", "tools": list(TOOLS)},
-            {"version": 2, "type": "run_complete", "id": "run", "ok": True, "reason": "submitted"},
+            {
+                "version": 2,
+                "type": "run_complete",
+                "id": "run",
+                "ok": True,
+                "reason": "submitted",
+                "session_evidence": _session_evidence(),
+            },
         ]
     )
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
@@ -777,6 +894,49 @@ def test_controller_rejects_premature_successful_completion(
         AdapterController(
             _adapter_command(tmp_path), tmp_path / "auth", tmp_path / "transcript"
         ).run("run", broker, _minimal_start(), *_operation_pair())
+
+
+def test_transcript_volume_does_not_exhaust_lifecycle_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frames: list[dict[str, object]] = [
+        {"version": 2, "type": "run_started", "id": "run", "tools": list(TOOLS)},
+        *[
+            {"version": 2, "type": "transcript", "event": "message_update", "delta": "x"}
+            for _ in range(2049)
+        ],
+        {
+            "version": 2,
+            "type": "tool_call",
+            "id": "tool-1",
+            "tool": "submit_answer",
+            "params": {"answer": True},
+        },
+        {
+            "version": 2,
+            "type": "run_complete",
+            "id": "run",
+            "ok": True,
+            "reason": "submitted",
+            "session_evidence": _session_evidence(),
+        },
+    ]
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: _Process(frames))
+    broker = CaseBroker(
+        "case",
+        _Case(tmp_path),
+        AnswerTransaction("instance", AnswerType.BOOLEAN),
+        "visualization-forbidden",
+    )
+
+    terminal = AdapterController(
+        _adapter_command(tmp_path), tmp_path / "auth", tmp_path / "transcript"
+    ).run("run", broker, _minimal_start(), *_operation_pair())
+
+    assert terminal.ok
+    _, records = _audit(tmp_path)
+    assert all(record["frame_type"] != "transcript" for record in records)
+    assert any(record["frame_type"] == "run_complete" for record in records)
 
 
 def test_controller_accepts_exhausted_budget_as_failed_terminal(
@@ -793,6 +953,7 @@ def test_controller_accepts_exhausted_budget_as_failed_terminal(
                 "ok": False,
                 "reason": "max_turns",
                 "error": "private",
+                "session_evidence": _session_evidence(),
             },
         ]
     )
@@ -807,4 +968,7 @@ def test_controller_accepts_exhausted_budget_as_failed_terminal(
         AdapterController(
             _adapter_command(tmp_path), tmp_path / "auth", tmp_path / "transcript"
         ).run("run", broker, _minimal_start(), *_operation_pair())
-    assert "private" not in (tmp_path / "transcript").read_text()
+    audit_bytes, audit_records = _audit(tmp_path)
+    assert not (tmp_path / "adapter.transcript.ndjson").exists()
+    assert b"private" not in audit_bytes
+    assert any(record.get("terminal_category") == "max_turns" for record in audit_records)

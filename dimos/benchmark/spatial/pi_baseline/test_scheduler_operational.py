@@ -175,6 +175,34 @@ def test_operational_snapshot_dump_is_fixed_schema() -> None:
     }
 
 
+def test_operational_snapshot_serializes_container_runtime_failure() -> None:
+    event = OperationalEvent(
+        kind="finished",
+        occurred_at=datetime.now(timezone.utc),
+        message="container_runtime_failed",
+        payload={"status": "failed"},
+    )
+    assert event.model_dump(mode="json")["message"] == "container_runtime_failed"
+
+    snapshot = OperationalSnapshot(
+        experiment_id="experiment",
+        workers=1,
+        observation="reconciled",
+        counts=OperationalCount(
+            pending=0, running=0, succeeded=0, failed=1, interrupted=0, cancelled=0
+        ),
+        jobs=1,
+        active=0,
+        failures=(
+            OperationalFailure(job_id="job-1", state="failed", reason="container_runtime_failed"),
+        ),
+    )
+
+    assert snapshot.model_dump(mode="json")["failures"] == [
+        {"job_id": "job-1", "state": "failed", "reason": "container_runtime_failed"}
+    ]
+
+
 @pytest.mark.parametrize(
     ("status", "reason", "expected"),
     [
@@ -188,6 +216,7 @@ def test_operational_snapshot_dump_is_fixed_schema() -> None:
         ("interrupted", "coordinator_restart", "coordinator_restart"),
         ("interrupted", "missing_terminal_outcome", "missing_terminal_outcome"),
         ("failed", "container_cleanup_failed", "container_cleanup_failed"),
+        ("failed", "container_runtime_failed", "container_runtime_failed"),
     ],
 )
 def test_failure_reason_mapping(status: str, reason: str, expected: str) -> None:

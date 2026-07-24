@@ -1,42 +1,93 @@
-ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+ARG BASE_IMAGE
 ARG RUNNER_UID=1000
 ARG RUNNER_GID=1000
-ARG UV_VERSION=0.6.14
+ARG UV_VERSION=0.11.24
+ARG SOURCE_REVISION=unknown
+ARG DIMOS_VERSION=unknown
+ARG WHEEL_FILENAME=unknown
+ARG SDIST_SHA256=unknown
+ARG BUILDER_IMAGE=unknown
+ARG BUILDER_ID=unknown
+ARG BUILDER_EPHEMERAL=false
+ARG BUILDER_VERIFIER_SHA256=unknown
+ARG WHEEL_SHA256=unknown
+ARG REQUIREMENTS_SHA256=unknown
+ARG LOCK_SHA256=unknown
+ARG TARGET_ARCH=unknown
+ARG SOURCE_TREE_IDENTITY=unknown
+ARG WORKING_TREE_IDENTITY=
+ARG SOURCE_PAYLOAD_IDENTITY=unknown
+ARG PUBLISHABLE=false
+ARG DIRTY=false
 
-# Keep the image useful with a read-only root filesystem at runtime.  Runtime
-# state belongs in /tmp or in the explicitly mounted /work directory.
-RUN apt-get update \
-    && apt-get install --no-install-recommends --yes \
-        bash \
-        ca-certificates \
-        coreutils \
-        file \
-        findutils \
-        git \
-        grep \
-        gzip \
-        jq \
-        procps \
-        sed \
-        tar \
+LABEL org.opencontainers.image.title="dimos spatial runner" \
+      org.opencontainers.image.description="Artifact-only, bare Dimos runtime" \
+      org.opencontainers.image.source="https://github.com/dimensionalOS/dimos" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.version="${DIMOS_VERSION}" \
+      io.dimos.wheel-sha256="${WHEEL_SHA256}" \
+      io.dimos.sdist-sha256="${SDIST_SHA256}" \
+      io.dimos.builder="false" \
+      io.dimos.builder-ref="${BUILDER_IMAGE}" \
+      io.dimos.builder-id="${BUILDER_ID}" \
+      io.dimos.builder-ephemeral="${BUILDER_EPHEMERAL}" \
+      io.dimos.builder-verifier-sha256="${BUILDER_VERIFIER_SHA256}" \
+      io.dimos.base-image="${BASE_IMAGE}" \
+      io.dimos.requirements-sha256="${REQUIREMENTS_SHA256}" \
+      io.dimos.lock-sha256="${LOCK_SHA256}" \
+      io.dimos.python="3.12" \
+      io.dimos.architecture="${TARGET_ARCH}" \
+      io.dimos.uv-version="${UV_VERSION}" \
+      io.dimos.source-tree-identity="${SOURCE_TREE_IDENTITY}" \
+      io.dimos.head-tree-identity="${SOURCE_TREE_IDENTITY}" \
+      io.dimos.working-tree-identity="${WORKING_TREE_IDENTITY}" \
+      io.dimos.source-payload-identity="${SOURCE_PAYLOAD_IDENTITY}" \
+      io.dimos.publishable="${PUBLISHABLE}" \
+      io.dimos.dirty="${DIRTY}"
+
+RUN apt-get update && apt-get install --no-install-recommends --yes \
+        bash ca-certificates coreutils file findutils git grep gzip jq procps sed tar libegl1 libgcc-s1 libgl1 libglib2.0-0 libgomp1 libstdc++6 libturbojpeg0 libx11-6 \
     && python -m pip install --no-cache-dir "uv==${UV_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
+COPY requirements.lock /tmp/requirements.lock
+COPY dimos-*.whl /tmp/
+COPY build-manifest.v1.json /tmp/build-manifest.v1.json
+
+# Stable base/spatial import gate; optional perception/model stacks are intentionally absent.
+# dimos.benchmark.spatial.models is intentionally not imported: its package
+# initializer pulls optional model dependencies. The A* extension above is the
+# stable spatial runtime gate.
+
+RUN test "$(sha256sum "/tmp/${WHEEL_FILENAME}" | cut -d' ' -f1)" = "${WHEEL_SHA256}" \
+    && test "$(sha256sum /tmp/requirements.lock | cut -d' ' -f1)" = "${REQUIREMENTS_SHA256}" \
+    && python -c 'import json, os; m=json.load(open("/tmp/build-manifest.v1.json")); assert m["wheel_sha256"] == os.environ["WHEEL_SHA256"]; assert m["requirements_sha256"] == os.environ["REQUIREMENTS_SHA256"]' \
+    && uv pip install --system --no-deps --require-hashes --requirement /tmp/requirements.lock \
+    && test -f "/tmp/${WHEEL_FILENAME}" \
+    && uv pip install --system --no-deps "/tmp/${WHEEL_FILENAME}" \
+    && uv pip check --system \
+    && install --directory --mode=0755 /usr/local/share/dimos-spatial-runner \
+    && install --mode=0444 /tmp/build-manifest.v1.json /usr/local/share/dimos-spatial-runner/build-manifest.v1.json \
+    && DIMOS_VERSION="${DIMOS_VERSION}" WHEEL_FILENAME="${WHEEL_FILENAME}" TARGET_ARCH="${TARGET_ARCH}" WHEEL_SHA256="${WHEEL_SHA256}" SDIST_SHA256="${SDIST_SHA256}" REQUIREMENTS_SHA256="${REQUIREMENTS_SHA256}" LOCK_SHA256="${LOCK_SHA256}" SOURCE_TREE_IDENTITY="${SOURCE_TREE_IDENTITY}" SOURCE_PAYLOAD_IDENTITY="${SOURCE_PAYLOAD_IDENTITY}" PUBLISHABLE="${PUBLISHABLE}" DIRTY="${DIRTY}" python -c 'import importlib.metadata as m, json, os; assert m.version("dimos") == os.environ["DIMOS_VERSION"]; manifest=json.load(open("/usr/local/share/dimos-spatial-runner/build-manifest.v1.json")); assert manifest["dimos_version"] == os.environ["DIMOS_VERSION"]; assert manifest["wheel_filename"] == os.environ["WHEEL_FILENAME"]; assert manifest["architecture"] == os.environ["TARGET_ARCH"]; assert manifest["wheel_sha256"] == os.environ["WHEEL_SHA256"]; assert manifest["sdist_sha256"] == os.environ["SDIST_SHA256"]; assert manifest["source_payload_identity"] == os.environ["SOURCE_PAYLOAD_IDENTITY"]; assert manifest["requirements_sha256"] == os.environ["REQUIREMENTS_SHA256"]; assert manifest["lock_sha256"] == os.environ["LOCK_SHA256"]; assert manifest["source_tree_identity"] == os.environ["SOURCE_TREE_IDENTITY"]; assert str(manifest["publishable"]).lower() == os.environ["PUBLISHABLE"]; assert str(manifest["dirty"]).lower() == os.environ["DIRTY"]; import dimos, dimos.navigation.replanning_a_star.min_cost_astar_ext, numpy, scipy, cv2, open3d, pinocchio, rerun; from turbojpeg import TurboJPEG; TurboJPEG(); assert not getattr(dimos, "__file__", "").startswith(("/work", "/agent")); assert m.distribution("dimos").locate_file(".").as_posix().startswith("/usr/local"); print("dimos runtime imports OK")' \
+    && rm -f "/tmp/${WHEEL_FILENAME}" \
+    && rm -rf /tmp/requirements.lock /tmp/build-manifest.v1.json /root/.cache/uv /root/.cache/pip
+
 RUN groupadd --gid "${RUNNER_GID}" runner \
-    && useradd --uid "${RUNNER_UID}" --gid "${RUNNER_GID}" \
-        --create-home --shell /bin/bash runner \
-    && install --directory --owner="${RUNNER_UID}" --group="${RUNNER_GID}" \
-        --mode=0755 /work
+    && useradd --uid "${RUNNER_UID}" --gid "${RUNNER_GID}" --create-home --shell /bin/bash runner \
+    && install --directory --owner="${RUNNER_UID}" --group="${RUNNER_GID}" --mode=0755 /agent /work
 
 ENV HOME=/home/runner \
-    TMPDIR=/tmp \
-    UV_CACHE_DIR=/tmp/uv-cache \
+    VIRTUAL_ENV=/agent/venv \
+    PATH=/agent/venv/bin:${PATH} \
+    TMPDIR=/agent/tmp \
+    UV_CACHE_DIR=/agent/cache/uv \
+    PIP_CACHE_DIR=/agent/cache/pip \
+    PYTHONNOUSERSITE=1 \
     UV_LINK_MODE=copy
 
 WORKDIR /work
 USER runner
-
-# Keep the default harmless; the host adapter supplies the workload command.
 CMD ["bash"]

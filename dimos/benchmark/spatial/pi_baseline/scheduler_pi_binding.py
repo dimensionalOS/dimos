@@ -17,6 +17,7 @@ from pydantic import Field, model_validator
 from dimos.benchmark.spatial.models import AnswerType, SpatialModel
 from dimos.benchmark.spatial.pi_baseline.config import (
     AuditNetworkPolicy,
+    AuthMode,
     Budgets,
     ImplementationDigests,
     ModelConfig,
@@ -527,6 +528,7 @@ class PiRuntimeBindings(SpatialModel):
     """Execution-time paths and credentials, deliberately absent from snapshots."""
 
     auth_file: Path
+    auth_mode: AuthMode = "codex-oauth"
     corpus_root: Path
     oracle_root: Path
     private_root: Path
@@ -549,11 +551,17 @@ def reconstruct_config(
         if mode == "visualization-forbidden"
         else "visualization-forbidden"
     )
+    authentication = (
+        {"codex_oauth_auth_path": str(bindings.auth_file)}
+        if bindings.auth_mode == "codex-oauth"
+        else {"openai_api_key_env_path": str(bindings.auth_file)}
+    )
     return PiBaselineConfig.model_validate(
         {
             "model": snapshot.model.model_dump(mode="json"),
             "node_adapter_command": list(snapshot.node_adapter_command),
-            "codex_oauth_auth_path": str(bindings.auth_file),
+            "auth_mode": bindings.auth_mode,
+            **authentication,
             "runner_image": snapshot.runner_image,
             "rootless_podman_required": True,
             "resource_limits": snapshot.resource_limits.model_dump(mode="json"),

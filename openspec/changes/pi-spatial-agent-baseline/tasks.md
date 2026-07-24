@@ -30,7 +30,7 @@
 
 ## 3. Rootless Container and Proxy Runtime
 
-- [ ] 3.1 Verify rootless Podman availability on the host and implement fresh per-case/mode rootless Podman container creation with a pinned image, explicit resource limits, read-only `/input`, writable isolated `/work`, and unique runtime identifiers; fail closed at run time if any prerequisite or isolation check fails.
+- [ ] 3.1 Verify rootless Podman availability on the host and implement fresh per-case/mode rootless Podman container creation with a pinned image, explicit image-entrypoint override, explicit resource limits, read-only `/input`, writable isolated `/work`, and unique runtime identifiers; verify post-start running and exec readiness plus pre/post-exec liveness, and fail closed with terminal `container_runtime_failed` if any prerequisite, readiness, liveness, or isolation check fails.
 - [ ] 3.2 Ensure the container has no host filesystem or container-runtime socket, LCM endpoint, DimOS module reference, OAuth credential, private scorer endpoint, or ambient benchmark directory.
 - [ ] 3.3 Permit general outbound network access and `uv`/Python dependency installation; do not enforce a package-index destination allowlist.
 - [ ] 3.4 Preserve Pi transcripts, tool traces, sandbox command audits, dependency declarations/resolutions, and observable network-oriented commands/configuration for post-run review; flag such observations heuristically and document that auditing cannot prove no online access.
@@ -72,7 +72,7 @@
 ## 7. Unit, Integration, and Security Tests
 
 - [ ] 7.1 Add unit tests for manifest resolution, exact public staging, hash/provenance records, private-material rejection, prompt configuration, tool binding, typed submission, ledger keys, and gate state transitions.
-- [ ] 7.2 Add container integration tests proving rootless Podman execution, run-time fail-closed validation, read-only `/input`, writable `/work`, fresh per-run state, absent host mounts/sockets/credentials, and unconditional teardown.
+- [ ] 7.2 Add container integration tests proving rootless Podman execution with an explicit image-entrypoint override, post-start running/exec readiness, pre/post-exec liveness, terminal `container_runtime_failed` classification for container death/control-plane errors, read-only `/input`, writable `/work`, fresh per-run state, absent host mounts/sockets/credentials, and unconditional teardown.
 - [ ] 7.3 Add network-audit tests proving general outbound access and allowed package installation, preservation of command/network observations, heuristic flagging of observable network-oriented activity, and documentation that auditing cannot prove no online access.
 - [ ] 7.4 Add tool security tests proving no host tools or private lookups are exposed, `read_generated_image` rejects paths outside `/work` or invalid/oversized PNGs, returns bounded native image blocks without paths/URLs, and case/run mismatches are rejected.
 - [ ] 7.5 Add privacy tests proving oracle answers, private scores, credentials, and scorer endpoints do not appear in staging, container files, tool responses, transcripts, or exported public artifacts.

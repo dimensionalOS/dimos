@@ -13,7 +13,11 @@ from dimos.benchmark.spatial.pi_baseline.config import (
 
 def valid_payload(auth_path: Path) -> dict[str, object]:
     return {
-        "model": {"provider": "openai-codex", "model_id": "gpt-5.6-luna", "thinking_level": "medium"},
+        "model": {
+            "provider": "openai-codex",
+            "model_id": "gpt-5.6-luna",
+            "thinking_level": "medium",
+        },
         "node_adapter_command": ["/usr/bin/node", str(auth_path.parent / "adapter.js")],
         "codex_oauth_auth_path": str(auth_path),
         "runner_image": "registry.example/pi@sha256:" + "a" * 64,
@@ -71,8 +75,100 @@ def test_config_loads_without_external_calls(tmp_path: Path) -> None:
     assert load_config(config_path).model.thinking_level == "medium"
 
 
-@pytest.mark.parametrize("command", [["node", "adapter.js"], ["/usr/bin/npm", "run", "adapter"], ["/usr/bin/node", "adapter.js", "--extra"]])
-def test_adapter_command_rejects_wrappers_relative_files_and_extra_argv(command: list[str], tmp_path: Path) -> None:
+def test_api_key_mode_loads_only_private_dotenv_source(tmp_path: Path) -> None:
+    auth = tmp_path / ".env"
+    auth.write_text("OPENAI_API_KEY=test-key\nUNRELATED=value\n", encoding="utf-8")
+    auth.chmod(0o600)
+    (tmp_path / "adapter.js").write_text("", encoding="utf-8")
+    payload = valid_payload(auth)
+    payload.pop("codex_oauth_auth_path")
+    payload.update(
+        {
+            "auth_mode": "openai-api-key",
+            "openai_api_key_env_path": str(auth),
+            "model": {
+                "provider": "openai",
+                "model_id": "gpt-5.6-luna",
+                "thinking_level": "medium",
+            },
+        }
+    )
+
+    config = PiBaselineConfig.model_validate(payload)
+
+    assert config.auth_mode == "openai-api-key"
+    assert config.auth_path == auth
+    assert config.codex_oauth_auth_path is None
+
+
+@pytest.mark.parametrize("contents", ["UNRELATED=value\n", "OPENAI_API_KEY=\n"])
+def test_api_key_mode_rejects_missing_key_or_public_file(tmp_path: Path, contents: str) -> None:
+    auth = tmp_path / ".env"
+    auth.write_text(contents, encoding="utf-8")
+    auth.chmod(0o600)
+    (tmp_path / "adapter.js").write_text("", encoding="utf-8")
+    payload = valid_payload(auth)
+    payload.pop("codex_oauth_auth_path")
+    payload.update(
+        {
+            "auth_mode": "openai-api-key",
+            "openai_api_key_env_path": str(auth),
+            "model": {
+                "provider": "openai",
+                "model_id": "gpt-5.6-luna",
+                "thinking_level": "medium",
+            },
+        }
+    )
+    with pytest.raises(ValidationError):
+        PiBaselineConfig.model_validate(payload)
+
+    auth.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+    auth.chmod(0o644)
+    with pytest.raises(ValidationError):
+        PiBaselineConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "provider"),
+    [("codex-oauth", "openai"), ("openai-api-key", "openai-codex")],
+)
+def test_auth_mode_rejects_mismatched_model_provider(
+    tmp_path: Path, auth_mode: str, provider: str
+) -> None:
+    auth = tmp_path / (".env" if auth_mode == "openai-api-key" else "oauth.json")
+    auth.write_text(
+        "OPENAI_API_KEY=test-key\n" if auth_mode == "openai-api-key" else "{}",
+        encoding="utf-8",
+    )
+    auth.chmod(0o600)
+    (tmp_path / "adapter.js").write_text("", encoding="utf-8")
+    payload = valid_payload(auth)
+    payload["auth_mode"] = auth_mode
+    payload["model"] = {
+        "provider": provider,
+        "model_id": "gpt-5.6-luna",
+        "thinking_level": "medium",
+    }
+    if auth_mode == "openai-api-key":
+        payload.pop("codex_oauth_auth_path")
+        payload["openai_api_key_env_path"] = str(auth)
+
+    with pytest.raises(ValidationError):
+        PiBaselineConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["node", "adapter.js"],
+        ["/usr/bin/npm", "run", "adapter"],
+        ["/usr/bin/node", "adapter.js", "--extra"],
+    ],
+)
+def test_adapter_command_rejects_wrappers_relative_files_and_extra_argv(
+    command: list[str], tmp_path: Path
+) -> None:
     adapter = tmp_path / "adapter.js"
     adapter.write_text("", encoding="utf-8")
     if command == ["/usr/bin/node", "adapter.js", "--extra"]:
@@ -84,14 +180,29 @@ def test_adapter_command_rejects_wrappers_relative_files_and_extra_argv(command:
 def test_adapter_command_accepts_only_exact_direct_invocation(tmp_path: Path) -> None:
     adapter = tmp_path / "adapter.js"
     adapter.write_text("", encoding="utf-8")
-    assert validate_node_adapter_command(["/usr/bin/node", str(adapter)]) == ["/usr/bin/node", str(adapter)]
+    assert validate_node_adapter_command(["/usr/bin/node", str(adapter)]) == [
+        "/usr/bin/node",
+        str(adapter),
+    ]
 
 
 @pytest.mark.parametrize(
     "change",
     [
-        {"model": {"provider": "openai-codex", "model_id": "gpt-5.6-luna-medium", "thinking_level": "medium"}},
-        {"model": {"provider": "openai-codex", "model_id": "gpt-5.6-luna", "thinking_level": "high"}},
+        {
+            "model": {
+                "provider": "openai-codex",
+                "model_id": "gpt-5.6-luna-medium",
+                "thinking_level": "medium",
+            }
+        },
+        {
+            "model": {
+                "provider": "openai-codex",
+                "model_id": "gpt-5.6-luna",
+                "thinking_level": "high",
+            }
+        },
         {"codex_oauth_auth_path": "/does/not/exist"},
         {"runner_image": "registry.example/pi:latest"},
         {"prompt_modes": ["unsupported"]},

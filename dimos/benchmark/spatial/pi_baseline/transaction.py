@@ -27,7 +27,7 @@ class AnswerTransaction:
         instance_id: str,
         answer_type: AnswerType,
         private: PinnedDirectory | Path | None = None,
-        filename: str = "prediction.v1.json",
+        filename: str = "prediction.provisional.v1.json",
     ) -> None:
         self.instance_id = instance_id
         self.answer_type = answer_type
@@ -81,7 +81,9 @@ class AnswerTransaction:
                     dir_fd=self.private.fd,
                 )
             except FileExistsError:
-                descriptor = os.open(self.filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self.private.fd)
+                descriptor = os.open(
+                    self.filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self.private.fd
+                )
                 try:
                     self._prediction = Prediction.model_validate_json(_read_fd(descriptor))
                 finally:
@@ -107,6 +109,11 @@ class AnswerTransaction:
     @property
     def prediction(self) -> Prediction | None:
         return self._prediction
+
+    @property
+    def provisional_filename(self) -> str:
+        """Return the private, pre-commit answer filename."""
+        return self.filename
 
     def close(self) -> None:
         if self._owned_private:

@@ -27,11 +27,27 @@ class ContainerCleanupError(RuntimeError):
     reason = "container_cleanup_failed"
 
 
+class PodmanInfrastructureError(RuntimeError):
+    """A Podman control-plane or container-lifecycle failure.
+
+    Only the operation and bounded return code are retained deliberately.
+    """
+
+    reason = "container_runtime_failed"
+
+    def __init__(self, operation: PodmanOperation, returncode: int | None = None) -> None:
+        self.operation = operation
+        self.returncode = returncode
+        super().__init__(self.reason)
+
+
 PodmanOperation = Literal[
     "info",
     "run",
     "create",
     "start",
+    "inspect",
+    "readiness",
     "exec",
     "logs",
     "remove",
@@ -47,6 +63,8 @@ _PODMAN_OPERATIONS = frozenset(
         "run",
         "create",
         "start",
+        "inspect",
+        "readiness",
         "exec",
         "logs",
         "remove",
@@ -103,6 +121,99 @@ _CLEANUP_TIMEOUT_SECONDS = 30.0
 _CLEANUP_COMMAND_TIMEOUT_SECONDS = 10.0
 
 
+def _memory_megabytes(value: str) -> float:
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kmgt]?)b?\s*", value.lower())
+    if match is None:
+        raise ValueError("invalid memory limit")
+    amount = float(match.group(1))
+    multiplier = {"": 1 / (1024 * 1024), "k": 1 / 1024, "m": 1, "g": 1024, "t": 1024 * 1024}[
+        match.group(2)
+    ]
+    return amount * multiplier
+
+
+def _readiness_script() -> str:
+    """Return a quiet, semantic image contract probe."""
+    return """set -eu
+export PATH=/agent/venv/bin:$PATH
+python - <<'PY'
+import importlib.metadata
+import os
+from pathlib import Path
+import subprocess
+import sys
+import sysconfig
+import re
+
+def unescape_mountinfo(value):
+    # mountinfo uses octal escapes for whitespace, backslashes, and tabs.
+    return re.sub(r'\\\\([0-7]{3})', lambda match: chr(int(match.group(1), 8)), value)
+
+def mount_options(mountpoint):
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        before, separator, _after = line.partition(' - ')
+        if not separator:
+            continue
+        fields = before.split()
+        if len(fields) >= 6 and unescape_mountinfo(fields[4]) == mountpoint:
+            return set(fields[5].split(','))
+    raise AssertionError('mountpoint is absent: ' + mountpoint)
+
+def mount_type(mountpoint):
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        before, separator, after = line.partition(' - ')
+        if not separator:
+            continue
+        fields = before.split()
+        if len(fields) >= 6 and unescape_mountinfo(fields[4]) == mountpoint:
+            return after.split()[0]
+    raise AssertionError('mountpoint is absent: ' + mountpoint)
+
+assert 'ro' in mount_options('/') and 'rw' not in mount_options('/')
+assert 'ro' in mount_options('/input') and 'rw' not in mount_options('/input')
+assert 'rw' in mount_options('/work') and 'ro' not in mount_options('/work')
+assert 'rw' in mount_options('/agent') and 'ro' not in mount_options('/agent')
+assert mount_type('/agent') == 'tmpfs'
+agent_stat = Path('/agent').stat()
+assert agent_stat.st_uid == 0 and agent_stat.st_gid == 0
+assert agent_stat.st_mode & 0o1777 == 0o1777
+
+assert os.getuid() == 1000 and os.getgid() == 1000
+status = Path('/proc/self/status').read_text()
+assert next(line for line in status.splitlines() if line.startswith('Uid:')).split()[1] == '1000'
+assert next(line for line in status.splitlines() if line.startswith('Gid:')).split()[1] == '1000'
+assert next(line for line in status.splitlines() if line.startswith('CapEff:')).split()[1] == '0' * 16
+assert next(line for line in status.splitlines() if line.startswith('NoNewPrivs:')).split()[1] == '1'
+for private in (Path('/agent/venv'), Path('/agent/tmp'), Path('/agent/cache'),
+                Path('/agent/cache/uv'), Path('/agent/cache/pip')):
+    private_stat = private.stat()
+    assert private_stat.st_uid == 1000 and private_stat.st_gid == 1000
+    assert private_stat.st_mode & 0o777 == 0o700
+assert not any(Path('/work').iterdir())
+work = Path('/work/.pi_probe')
+work.write_text('x')
+work.unlink()
+agent = Path('/agent/.pi_probe.py')
+agent.write_text('#!/agent/venv/bin/python\\nraise SystemExit(0)\\n')
+agent.chmod(0o755)
+assert subprocess.run([str(agent)], check=False, capture_output=True).returncode == 0
+assert sys.version_info[:2] == (3, 12)
+assert sys.prefix == '/agent/venv' and sys.base_prefix != sys.prefix
+assert any('/site-packages' in path and '/agent/venv' not in path for path in sys.path)
+distribution = importlib.metadata.distribution('dimos')
+assert distribution.version
+import dimos.core.module
+module_file = dimos.core.module.__file__
+assert module_file is not None
+origin = str(Path(module_file).resolve())
+global_site = Path(sysconfig.get_path('purelib', vars={'base': '/usr/local', 'platbase': '/usr/local'})).resolve()
+assert Path(origin).is_relative_to(global_site)
+assert subprocess.run(['python', '-m', 'pip', '--version'], check=False, capture_output=True).returncode == 0
+assert subprocess.run(['uv', '--version'], check=False, capture_output=True).returncode == 0
+print('READY')
+PY"""
+
+
 @dataclass(frozen=True)
 class PodmanLimits:
     """Hard limits applied to one baseline invocation."""
@@ -112,6 +223,13 @@ class PodmanLimits:
     cpus: str = "2"
     pids: int = 512
     output_bytes: int = 1_048_576
+    agent_environment_mb: int = 512
+
+    def __post_init__(self) -> None:
+        if self.agent_environment_mb <= 0:
+            raise ValueError("agent_environment_mb must be positive")
+        if self.agent_environment_mb > _memory_megabytes(self.memory):
+            raise ValueError("agent_environment_mb must not exceed memory")
 
 
 @dataclass(frozen=True)
@@ -161,17 +279,20 @@ class RootlessPodman:
             "--name",
             name,
             "--read-only",
-            "--userns=keep-id",
+            "--userns=keep-id:uid=1000,gid=1000",
             "--ipc=private",
             "--uts=private",
             "--pid=private",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
+            "--http-proxy=false",
             f"--memory={limits.memory}",
             f"--cpus={limits.cpus}",
             f"--pids-limit={limits.pids}",
             "--tmpfs",
             "/tmp:rw,size=64m,mode=1777",
+            "--tmpfs",
+            f"/agent:rw,size={limits.agent_environment_mb}m,mode=1777,exec,nosuid,nodev",
             "--volume",
             f"{request.topology.input.path}:/input:ro,rprivate",
             "--volume",
@@ -272,6 +393,11 @@ class RootlessPodman:
             raise PodmanSecurityError("timeout and output bound must be positive")
         if request.limits.pids <= 0:
             raise PodmanSecurityError("pids limit must be positive")
+        try:
+            if request.limits.agent_environment_mb > _memory_megabytes(request.limits.memory):
+                raise PodmanSecurityError("agent environment exceeds memory limit")
+        except ValueError as error:
+            raise PodmanSecurityError("memory limit is invalid") from error
 
 
 class PersistentPodmanCase:
@@ -308,17 +434,42 @@ class PersistentPodmanCase:
                 operation="create",
             )
             _check_cancel(self.cancel_requested)
-            _run_command(
-                [self.adapter.executable, "start", self.name],
-                check=True,
-                timeout=self.request.limits.timeout_seconds,
-                cancel_requested=self.cancel_requested,
-                operation="start",
-            )
+            try:
+                _run_command(
+                    [self.adapter.executable, "start", self.name],
+                    check=True,
+                    timeout=self.request.limits.timeout_seconds,
+                    cancel_requested=self.cancel_requested,
+                    operation="start",
+                )
+                self._require_running("inspect")
+                self._bootstrap_agent_environment()
+                self._readiness_probe()
+            except (PodmanTimeoutError, subprocess.CalledProcessError, OSError) as error:
+                self._poisoned = True
+                try:
+                    self.close()
+                except BaseException:
+                    pass
+                code = (
+                    error.returncode if isinstance(error, subprocess.CalledProcessError) else None
+                )
+                raise PodmanInfrastructureError("readiness", code) from None
             self._started = True
             return self
-        except BaseException:
-            self.close()
+        except BaseException as error:
+            if isinstance(error, PodmanInfrastructureError):
+                self._poisoned = True
+            try:
+                self.close()
+            except BaseException:
+                pass
+            if isinstance(error, subprocess.CalledProcessError):
+                self._poisoned = True
+                raise PodmanInfrastructureError("create", error.returncode) from None
+            if isinstance(error, OSError):
+                self._poisoned = True
+                raise PodmanInfrastructureError("create") from None
             raise
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
@@ -335,25 +486,86 @@ class PersistentPodmanCase:
             "--name",
             self.name,
             "--read-only",
-            "--userns=keep-id",
+            "--userns=keep-id:uid=1000,gid=1000",
             "--ipc=private",
             "--uts=private",
             "--pid=private",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
+            "--http-proxy=false",
             f"--memory={limits.memory}",
             f"--cpus={limits.cpus}",
             f"--pids-limit={limits.pids}",
             "--tmpfs",
             "/tmp:rw,size=64m,mode=1777",
+            "--tmpfs",
+            f"/agent:rw,size={limits.agent_environment_mb}m,mode=1777,exec,nosuid,nodev",
             "--volume",
             f"{request.topology.input.path}:/input:ro,rprivate",
             "--volume",
             f"{request.topology.workspace.path}:/work:rw,rprivate",
+            "--entrypoint",
+            "/bin/sh",
             request.image,
-            "sleep",
-            "infinity",
+            "-c",
+            "exec sleep infinity",
         ]
+
+    def _require_running(self, operation: PodmanOperation = "inspect") -> None:
+        try:
+            result = _run_command(
+                [self.adapter.executable, "inspect", "--format", "{{.State.Running}}", self.name],
+                check=False,
+                timeout=10.0,
+                cancel_requested=self.cancel_requested,
+                operation=operation,
+            )
+        except (subprocess.CalledProcessError, OSError) as error:
+            raise PodmanInfrastructureError(operation, getattr(error, "returncode", None)) from None
+        if result.returncode != 0 or result.stdout.strip() != "true":
+            raise PodmanInfrastructureError(operation, result.returncode)
+
+    def _readiness_probe(self) -> None:
+        probe = _readiness_script()
+        try:
+            result = _run_command(
+                [self.adapter.executable, "exec", self.name, "sh", "-c", probe],
+                check=False,
+                timeout=10.0,
+                cancel_requested=self.cancel_requested,
+                operation="readiness",
+            )
+        except (PodmanTimeoutError, subprocess.CalledProcessError, OSError) as error:
+            raise PodmanInfrastructureError(
+                "readiness", getattr(error, "returncode", None)
+            ) from None
+        if result.returncode != 0 or result.stdout.strip() != "READY" or result.stderr:
+            raise PodmanInfrastructureError("readiness", result.returncode)
+
+    def _bootstrap_agent_environment(self) -> None:
+        try:
+            result = _run_command(
+                [
+                    self.adapter.executable,
+                    "exec",
+                    self.name,
+                    "sh",
+                    "-c",
+                    "umask 077 && python -m venv --system-site-packages /agent/venv "
+                    "&& mkdir -p /agent/tmp /agent/cache/uv /agent/cache/pip "
+                    "&& chmod 700 /agent/venv /agent/tmp /agent/cache /agent/cache/uv /agent/cache/pip",
+                ],
+                check=False,
+                timeout=10.0,
+                cancel_requested=self.cancel_requested,
+                operation="readiness",
+            )
+        except (PodmanTimeoutError, subprocess.CalledProcessError, OSError) as error:
+            raise PodmanInfrastructureError(
+                "readiness", getattr(error, "returncode", None)
+            ) from None
+        if result.returncode != 0 or result.stdout or result.stderr:
+            raise PodmanInfrastructureError("readiness", result.returncode)
 
     def exec(
         self, command: str, *, controller_deadline: float | None = None
@@ -363,28 +575,46 @@ class PersistentPodmanCase:
         if not self._started or self._closed:
             raise RuntimeError("persistent Podman case is not running")
         try:
-            result = _run_command(
-                [
-                    self.adapter.executable,
-                    "exec",
-                    "--workdir",
-                    "/work",
-                    self.name,
-                    "sh",
-                    "-lc",
-                    command,
-                ],
-                check=False,
-                timeout=self.request.limits.timeout_seconds,
-                controller_deadline=controller_deadline,
-                capture_limit=self.request.limits.output_bytes,
-                cancel_requested=self.cancel_requested,
-                operation="exec",
-            )
+            self._require_running()
+            try:
+                result = _run_command(
+                    [
+                        self.adapter.executable,
+                        "exec",
+                        "--workdir",
+                        "/work",
+                        self.name,
+                        "sh",
+                        "-c",
+                        command,
+                    ],
+                    check=False,
+                    timeout=self.request.limits.timeout_seconds,
+                    controller_deadline=controller_deadline,
+                    capture_limit=self.request.limits.output_bytes,
+                    cancel_requested=self.cancel_requested,
+                    operation="exec",
+                )
+            except OSError as error:
+                if isinstance(error, PodmanTimeoutError):
+                    raise
+                raise PodmanInfrastructureError(
+                    "exec", getattr(error, "returncode", None)
+                ) from None
+            if result.returncode == 125:
+                raise PodmanInfrastructureError("exec", 125)
+            self._require_running()
             return self.adapter._bounded(result, self.request.limits.output_bytes)
         except PodmanTimeoutError:
             self._poisoned = True
             self.close()
+            raise
+        except PodmanInfrastructureError:
+            self._poisoned = True
+            try:
+                self.close()
+            except BaseException:
+                pass
             raise
 
     def logs(self) -> PodmanCompletedProcess:
@@ -441,6 +671,7 @@ class PersistentPodmanCase:
             raise ContainerCleanupError(
                 "failed to remove container (container_cleanup_failed)"
             ) from None
+        self._started = False
 
 
 def _check_cancel(cancel_requested: Event) -> None:
@@ -469,6 +700,8 @@ def _run_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     stdout_capture = _Capture(capture_limit)
     stderr_capture = _Capture(capture_limit)

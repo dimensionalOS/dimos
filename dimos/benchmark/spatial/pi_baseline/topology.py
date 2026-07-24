@@ -54,10 +54,19 @@ class PinnedDirectory:
         if "/" in name or name in ("", ".", ".."):
             raise TopologyError("invalid descriptor-relative child name")
         try:
-            os.mkdir(name, dir_fd=self.fd)
+            os.mkdir(name, mode=0o700, dir_fd=self.fd)
         except FileExistsError:
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self.fd)
-            os.close(child)
+            try:
+                info = os.fstat(child)
+                if (
+                    not stat.S_ISDIR(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700
+                ):
+                    raise TopologyError(f"owned child is not a private directory: {name}")
+            finally:
+                os.close(child)
 
     def write_bytes(self, name: str, data: bytes) -> None:
         if "/" in name or name in ("", ".", ".."):

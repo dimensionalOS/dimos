@@ -5,16 +5,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import json
+import os
 from pathlib import Path
 import re
+import stat
 from typing import Literal
 
+from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
 
 from dimos.benchmark.spatial.models import SpatialModel
 
 PromptMode = Literal["visualization-forbidden", "visualization-encouraged"]
 ThinkingLevel = Literal["medium"]
+AuthMode = Literal["codex-oauth", "openai-api-key"]
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
 _DIGEST_PATTERN = r"^.+@sha256:[0-9a-f]{64}$"
 
@@ -26,8 +30,12 @@ def validate_node_adapter_command(command: Sequence[str]) -> list[str]:
     command parser: there is no supported wrapper, package manager, runtime
     flag, or additional argv in the Pi protocol.
     """
-    if len(command) != 2 or any(not isinstance(argument, str) or not argument for argument in command):
-        raise ValueError("Pi adapter command must be [absolute node executable, absolute adapter file]")
+    if len(command) != 2 or any(
+        not isinstance(argument, str) or not argument for argument in command
+    ):
+        raise ValueError(
+            "Pi adapter command must be [absolute node executable, absolute adapter file]"
+        )
     executable, adapter = (Path(argument) for argument in command)
     if not executable.is_absolute() or executable.name not in {"node", "nodejs"}:
         raise ValueError("Pi adapter executable must be an approved absolute Node executable")
@@ -39,7 +47,7 @@ def validate_node_adapter_command(command: Sequence[str]) -> list[str]:
 
 
 class ModelConfig(SpatialModel):
-    provider: Literal["openai-codex"]
+    provider: Literal["openai-codex", "openai"]
     model_id: Literal["gpt-5.6-luna"]
     thinking_level: ThinkingLevel
 
@@ -47,8 +55,15 @@ class ModelConfig(SpatialModel):
 class ResourceLimits(SpatialModel):
     cpu_cores: float = Field(gt=0)
     memory_mb: int = Field(gt=0)
+    agent_environment_mb: int = Field(default=512, gt=0)
     pids: int = Field(gt=0)
     timeout_seconds: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_agent_environment(self) -> ResourceLimits:
+        if self.agent_environment_mb > self.memory_mb:
+            raise ValueError("agent_environment_mb must not exceed memory_mb")
+        return self
 
 
 class AuditNetworkPolicy(SpatialModel):
@@ -86,7 +101,9 @@ class PiBaselineConfig(SpatialModel):
 
     model: ModelConfig
     node_adapter_command: list[str] = Field(min_length=2, max_length=2)
-    codex_oauth_auth_path: str = Field(min_length=1)
+    auth_mode: AuthMode = "codex-oauth"
+    codex_oauth_auth_path: str | None = Field(default=None, min_length=1)
+    openai_api_key_env_path: str | None = Field(default=None, min_length=1)
     runner_image: str = Field(pattern=_DIGEST_PATTERN)
     rootless_podman_required: Literal[True]
     resource_limits: ResourceLimits
@@ -110,12 +127,14 @@ class PiBaselineConfig(SpatialModel):
     def validate_node_command(cls, value: list[str]) -> list[str]:
         return validate_node_adapter_command(value)
 
-    @field_validator("codex_oauth_auth_path")
+    @field_validator("codex_oauth_auth_path", "openai_api_key_env_path")
     @classmethod
-    def validate_auth_path(cls, value: str) -> str:
+    def validate_auth_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         path = Path(value).expanduser()
         if not path.is_file():
-            raise ValueError("codex OAuth auth path must point to an existing file")
+            raise ValueError("authentication path must point to an existing file")
         return str(path)
 
     @field_validator("output_root")
@@ -150,10 +169,47 @@ class PiBaselineConfig(SpatialModel):
     def validate_selection_identity(self) -> PiBaselineConfig:
         if self.selection.model_dump() != self.fixed_smoke_identity.model_dump():
             raise ValueError("selection and fixed_smoke_identity must identify the same case")
+        if self.auth_mode == "codex-oauth":
+            if self.model.provider != "openai-codex":
+                raise ValueError("Codex OAuth requires the openai-codex provider")
+            if self.codex_oauth_auth_path is None or self.openai_api_key_env_path is not None:
+                raise ValueError("Codex OAuth requires only codex_oauth_auth_path")
+        else:
+            if self.model.provider != "openai":
+                raise ValueError("OpenAI API-key auth requires the openai provider")
+            if self.openai_api_key_env_path is None or self.codex_oauth_auth_path is not None:
+                raise ValueError("OpenAI API-key auth requires only openai_api_key_env_path")
+            load_openai_api_key(Path(self.openai_api_key_env_path))
         return self
+
+    @property
+    def auth_path(self) -> Path:
+        value = (
+            self.codex_oauth_auth_path
+            if self.auth_mode == "codex-oauth"
+            else self.openai_api_key_env_path
+        )
+        if value is None:
+            raise ValueError("authentication path is unavailable")
+        return Path(value)
 
 
 BaselineConfig = PiBaselineConfig
+
+
+def load_openai_api_key(path: Path) -> str:
+    """Read one API key from a private dotenv file without mutating the environment."""
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ValueError("API-key dotenv file must be owner-only regular file")
+    value = dotenv_values(path).get("OPENAI_API_KEY")
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ValueError("OPENAI_API_KEY is missing from the dotenv file")
+    return value
 
 
 def validate_identifier(value: str) -> str:

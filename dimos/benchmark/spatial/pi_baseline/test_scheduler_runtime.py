@@ -48,6 +48,33 @@ def test_post_image_policy_outcome_persists_finished_event_and_projection(tmp_pa
     assert finished[0].message == "post_image_policy_violation"
 
 
+def test_container_runtime_failure_persists_terminal_outcome_and_finished_event(tmp_path) -> None:
+    runtime = make_runtime(
+        tmp_path,
+        FakeExecutor(TerminalOutcome(status="failed", reason="container_runtime_failed")),
+        workers=1,
+        case_count=1,
+    )
+    result = runtime.run()[0]
+
+    assert result.state == "failed"
+    assert result.outcome == TerminalOutcome(status="failed", reason="container_runtime_failed")
+    assert result.latest_attempt_id is not None
+    context = AttemptContext(
+        identity=result.identity,
+        attempt_id=result.latest_attempt_id,
+        attempt_number=1,
+        directory_name=result.latest_attempt_id,
+    )
+    assert runtime.store.read_outcome(context) == result.outcome
+    finished = [event for event in runtime.store.events(context) if event.kind == "finished"]
+    assert [(event.message, event.payload) for event in finished] == [
+        ("container_runtime_failed", {"status": "failed"})
+    ]
+    restarted = SchedulerRuntime(runtime.store, FakeExecutor(), prerequisite=lambda: True)
+    assert restarted.recover()[0].outcome == result.outcome
+
+
 def make_plan(workers: int = 2, case_count: int = 4) -> ExperimentPlan:
     return expand_plan(
         "experiment",

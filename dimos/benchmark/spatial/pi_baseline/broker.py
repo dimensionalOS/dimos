@@ -18,7 +18,10 @@ import zlib
 from PIL import Image
 
 from dimos.benchmark.spatial.pi_baseline.config import PromptMode
-from dimos.benchmark.spatial.pi_baseline.podman import PersistentPodmanCase
+from dimos.benchmark.spatial.pi_baseline.podman import (
+    PersistentPodmanCase,
+    PodmanInfrastructureError,
+)
 from dimos.benchmark.spatial.pi_baseline.scheduler_models import (
     ImageFailureCategory,
     PolicyFailureKind,
@@ -110,6 +113,7 @@ class CaseBroker:
         self._submission_attempted = False
         self._accepted_submission = False
         self._audit: list[dict[str, object]] = []
+        self._infrastructure_error: PodmanInfrastructureError | None = None
 
     @property
     def audit(self) -> tuple[dict[str, object], ...]:
@@ -143,13 +147,15 @@ class CaseBroker:
             raise ValueError("command is empty or exceeds the configured bound")
         try:
             result = self.case.exec(command, controller_deadline=controller_deadline)
-        except Exception:
+        except PodmanInfrastructureError as error:
+            self._infrastructure_error = error
             self._audit.append(
                 {
                     "tool": "sandbox_exec",
                     "case_id": self.case_id,
                     "command": _safe_command(command),
                     "outcome": "error",
+                    "reason": error.reason,
                 }
             )
             raise
@@ -220,6 +226,7 @@ class CaseBroker:
         )
 
     def submit_answer(self, answer: bool | int) -> AnswerReceipt:
+        self._raise_infrastructure_failure()
         if self.prompt_mode == "visualization-encouraged" and not self._successful_image_read:
             self._audit.append(
                 {
@@ -313,6 +320,7 @@ class CaseBroker:
             "read_generated_image": self.read_generated_image,
             "submit_answer": self.submit_answer,
         }
+        self._raise_infrastructure_failure()
         if tool not in routes:
             raise ValueError(f"unknown tool: {tool}")
         if self._accepted_submission:
@@ -431,6 +439,10 @@ class CaseBroker:
             if self.prompt_mode == "visualization-encouraged" and self._submission_attempted:
                 raise PostImagePolicyViolationError(POST_IMAGE_POLICY_ERROR) from None
             raise error
+
+    def _raise_infrastructure_failure(self) -> None:
+        if self._infrastructure_error is not None:
+            raise self._infrastructure_error
 
 
 def _png_dimensions(data: bytes) -> tuple[int, int]:

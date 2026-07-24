@@ -80,6 +80,34 @@ _Avoid_: worker-only separation, permission flag, hidden oracle module
 An immutable record of canonical per-case agent submissions and their run provenance, maintained separately from private score records.
 _Avoid_: chat log, live score feed, mutable result cache
 
+**Pi agent session**:
+The native, versioned Pi conversation tree for one benchmark attempt, including Pi-managed user, assistant, and tool messages together with session branches and state changes. Scheduler, container, policy, prediction, and scoring records belong to benchmark-attempt evidence rather than the Pi agent session.
+_Avoid_: full agent session, benchmark execution log, scheduler event journal
+
+**Pi-session verification run**:
+One benchmark attempt that reaches an accepted prediction and normal scoring while retaining a valid Pi agent session that Pi's inspection tooling can render. Agreement between the prediction and the reference answer is measured but is not a pass condition for this verification run.
+_Avoid_: accuracy gate, artifact-only smoke test, successful-answer benchmark
+
+**Session-gated result publication**:
+An evaluation policy where a provisional prediction and score become canonical benchmark records only after the associated Pi agent session passes retention and inspection checks. Failed session evidence discards provisional result staging rather than retracting immutable published records.
+_Avoid_: deleting committed results, post-publication score retraction, evidence warning only
+
+**Pi session review derivative**:
+A disposable human-readable rendering generated from a retained Pi agent session by the pinned Pi inspection tooling. It may verify inspectability but is not canonical evidence and can be regenerated without changing the retained session.
+_Avoid_: canonical HTML transcript, retained benchmark result, custom conversation format
+
+**Pi session context evidence**:
+Private benchmark evidence containing the exact system and initial instructions supplied to a Pi agent session when those instructions are not guaranteed to appear in Pi's native session format. It is linked to the native session and attempt by immutable identity and content digests without being injected into the conversation tree.
+_Avoid_: prompt digest without retained text, synthetic Pi message, public prompt artifact
+
+**Partial Pi agent session**:
+A valid native Pi session prefix retained from an attempt that did not satisfy session-gated result publication. It is private diagnostic evidence and does not qualify the attempt as a Pi-session verification run.
+_Avoid_: complete Pi agent session, invalid transcript, published benchmark result
+
+## Native-session evidence reference
+
+Native Pi session, v3 JSONL, session receipt, prompt context evidence, pinned Pi export, and disposable HTML use the compatibility contract in [ADR 0003](docs/adr/0003-native-pi-session-evidence.md). This glossary does not duplicate that API, schema, lifecycle, or upgrade policy.
+
 **Planning group**:
 A named subset of a robot model's joints and frames that can be selected as a planning unit.
 _Avoid_: move group, joint group

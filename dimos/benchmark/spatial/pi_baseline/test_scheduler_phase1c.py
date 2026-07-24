@@ -51,6 +51,48 @@ def _tree_snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
+def _podman_popen(command: list[str], markers: list[str]):
+    """Model the completed Podman commands used by scheduler cleanup."""
+
+    class PodmanProcess:
+        def __init__(self) -> None:
+            self.stdout = None
+            self.stderr = None
+            if command[1:3] == ["container", "exists"]:
+                self.returncode = 1
+                markers.append("container_absence_verified")
+            else:
+                self.returncode = 0
+                if len(command) > 1 and command[1] == "rm":
+                    markers.append("container_removed")
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def communicate(self) -> tuple[str, str]:
+            if len(command) > 1 and command[1] == "inspect":
+                return ("true\n", "")
+            if len(command) > 1 and command[1] == "info":
+                return ("true", "")
+            if len(command) > 1 and command[1] == "exec":
+                if "print('READY')" in command[-1]:
+                    return ("READY\n", "")
+                return ("", "")
+            return ("", "")
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return self.returncode
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    return PodmanProcess()
+
+
 def test_create_experiment_publishes_to_explicit_root(tmp_path: Path) -> None:
     spec, experiment = _definition_spec(tmp_path)
     create_experiment(experiment, spec, workers=1, sample=None, shard=0, shards=1)
@@ -92,12 +134,12 @@ def test_factory_run_uses_typed_host_and_isolates_multi_job_state(
     assert all("/attempt-1/public" in config.output_root for config in configs)
     assert len({config.output_root for config in configs}) == 2
     assert len({config.private_root for config in configs}) == 2
-    assert {Path(config.output_root, "marker").read_text(encoding="utf-8") for config in configs} == {
-        config.run_id for config in configs
-    }
-    assert {Path(config.private_root, "marker").read_text(encoding="utf-8") for config in configs} == {
-        config.run_id for config in configs
-    }
+    assert {
+        Path(config.output_root, "marker").read_text(encoding="utf-8") for config in configs
+    } == {config.run_id for config in configs}
+    assert {
+        Path(config.private_root, "marker").read_text(encoding="utf-8") for config in configs
+    } == {config.run_id for config in configs}
     assert not (bindings.ledger_path.parent / "ledger.jsonl").exists()
 
 
@@ -108,9 +150,13 @@ def test_factory_resume_and_retry_use_reconciled_immutable_outcomes(
     monkeypatch.setattr(
         PiSchedulerExecutor,
         "run",
-        lambda self, case, condition, context, emit, cancel_requested, publication_lock: TerminalOutcome(
-            status="succeeded", reason="completed"
-        ),
+        lambda self,
+        case,
+        condition,
+        context,
+        emit,
+        cancel_requested,
+        publication_lock: TerminalOutcome(status="succeeded", reason="completed"),
     )
     first = execute_pi_operation(runtime, bindings, "run", host_prerequisite=lambda: True)
     assert first and first[0].state == "succeeded"
@@ -132,9 +178,14 @@ def test_factory_resume_and_retry_use_reconciled_immutable_outcomes(
         monkeypatch.setattr(
             PiSchedulerExecutor,
             "run",
-            lambda self, case, condition, context, emit, cancel_requested, publication_lock, status=status: TerminalOutcome(
-                status=status, reason=status
-            ),
+            lambda self,
+            case,
+            condition,
+            context,
+            emit,
+            cancel_requested,
+            publication_lock,
+            status=status: TerminalOutcome(status=status, reason=status),
         )
         initial = execute_pi_operation(runtime, bindings, "run", host_prerequisite=lambda: True)[0]
         summary_path = runtime.store.root / "jobs" / f"{initial.identity.job_id}.json"
@@ -187,7 +238,15 @@ def test_scheduler_cleanup_order_persists_one_interrupted_outcome_last(
 
     class NodeProcess:
         def __init__(self) -> None:
-            self.stdin = type("Stdin", (), {"write": lambda self, _: None, "flush": lambda self: None, "close": lambda self: None})()
+            self.stdin = type(
+                "Stdin",
+                (),
+                {
+                    "write": lambda self, _: None,
+                    "flush": lambda self: None,
+                    "close": lambda self: None,
+                },
+            )()
             self.stdout = Stream("stdout")
             self.stderr = Stream("stderr")
             self.returncode: int | None = None
@@ -208,41 +267,18 @@ def test_scheduler_cleanup_order_persists_one_interrupted_outcome_last(
             self.returncode = 0
             return 0
 
-    class PodmanProcess:
-        returncode = 0
-
-        def __init__(self) -> None:
-            self.stdout = None
-            self.stderr = None
-
-        def poll(self) -> int:
-            return 0
-
-        def communicate(self) -> tuple[str, str]:
-            return "true", ""
-
-        def wait(self, timeout: float | None = None) -> int:
-            del timeout
-            return 0
-
-        def terminate(self) -> None:
-            pass
-
-        def kill(self) -> None:
-            pass
-
     def popen(command, **_kwargs):
-        return NodeProcess() if command[0] != "podman" else PodmanProcess()
-
-    def run(command, **_kwargs):
-        if "exists" in command:
-            markers.append("container_absence_verified")
-            return subprocess.CompletedProcess(command, 1, "", "")
-        markers.append("container_removed")
-        return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] != "podman" or command[1:2] == ["run"]:
+            return NodeProcess()
+        if (
+            command[1:2] == ["exec"]
+            and "python -m venv" not in command[-1]
+            and "print('READY')" not in command[-1]
+        ):
+            return NodeProcess()
+        return _podman_popen(command, markers)
 
     monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setattr(subprocess, "run", run)
     operation_result: list[object] = []
     errors: list[BaseException] = []
     original_write = runtime.store.write_outcome
@@ -257,6 +293,7 @@ def test_scheduler_cleanup_order_persists_one_interrupted_outcome_last(
         return original_write(context, outcome)
 
     monkeypatch.setattr(runtime.store, "write_outcome", write_outcome)
+
     def operate() -> None:
         try:
             operation_result.append(
@@ -336,7 +373,15 @@ def test_stubborn_reader_cleanup_is_failed_and_never_interrupted(
 
     class NodeProcess:
         def __init__(self) -> None:
-            self.stdin = type("Stdin", (), {"write": lambda self, _: None, "flush": lambda self: None, "close": lambda self: None})()
+            self.stdin = type(
+                "Stdin",
+                (),
+                {
+                    "write": lambda self, _: None,
+                    "flush": lambda self: None,
+                    "close": lambda self: None,
+                },
+            )()
             self.stdout = Stream("stdout", stubborn=True)
             self.stderr = Stream("stderr")
             self.returncode: int | None = None
@@ -357,41 +402,18 @@ def test_stubborn_reader_cleanup_is_failed_and_never_interrupted(
             self.returncode = 0
             return 0
 
-    class PodmanProcess:
-        returncode = 0
-
-        def __init__(self) -> None:
-            self.stdout = None
-            self.stderr = None
-
-        def poll(self) -> int:
-            return 0
-
-        def communicate(self) -> tuple[str, str]:
-            return "true", ""
-
-        def wait(self, timeout: float | None = None) -> int:
-            del timeout
-            return 0
-
-        def terminate(self) -> None:
-            pass
-
-        def kill(self) -> None:
-            pass
-
     def popen(command, **_kwargs):
-        return NodeProcess() if command[0] != "podman" else PodmanProcess()
-
-    def run(command, **_kwargs):
-        if "exists" in command:
-            markers.append("container_absence_verified")
-            return subprocess.CompletedProcess(command, 1, "", "")
-        markers.append("container_removed")
-        return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] != "podman" or command[1:2] == ["run"]:
+            return NodeProcess()
+        if (
+            command[1:2] == ["exec"]
+            and "python -m venv" not in command[-1]
+            and "print('READY')" not in command[-1]
+        ):
+            return NodeProcess()
+        return _podman_popen(command, markers)
 
     monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setattr(subprocess, "run", run)
     operation_result: list[object] = []
     errors: list[BaseException] = []
     original_write = runtime.store.write_outcome
@@ -402,6 +424,7 @@ def test_stubborn_reader_cleanup_is_failed_and_never_interrupted(
         return original_write(context, outcome)
 
     monkeypatch.setattr(runtime.store, "write_outcome", write_outcome)
+
     def operate() -> None:
         try:
             operation_result.append(
@@ -428,7 +451,9 @@ def test_stubborn_reader_cleanup_is_failed_and_never_interrupted(
     finished = [event for event in events if event["kind"] == "finished"]
     assert len(finished) == 1 and finished[0]["message"] == "executor_failed"
     assert not any(event["message"] == "executor_interrupted" for event in finished)
-    assert markers.index("container_absence_verified") < markers.index("scheduler_outcome_persisted")
+    assert markers.index("container_absence_verified") < markers.index(
+        "scheduler_outcome_persisted"
+    )
     release_stubborn.set()
     # The stubborn reader is intentionally released only after persistence assertions.
     assert stubborn_thread is not None
@@ -454,13 +479,17 @@ def test_factory_public_material_drift_is_state_free(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
     before_experiment = _tree_snapshot(experiment)
     before_private = _tree_snapshot(bindings.private_root)
-    with pytest.raises(ValueError, match="selected public input drift|staging inventory drift|release"):
+    with pytest.raises(
+        ValueError, match="selected public input drift|staging inventory drift|release"
+    ):
         execute_pi_operation(runtime, bindings, "run", host_prerequisite=lambda: True)
     assert _tree_snapshot(experiment) == before_experiment
     assert _tree_snapshot(bindings.private_root) == before_private
 
 
-def test_factory_private_drift_rejection_is_state_free(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_factory_private_drift_rejection_is_state_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runtime, experiment, bindings = _preflight_fixture(tmp_path)
     from dimos.benchmark.spatial.pi_baseline import cli_support
 

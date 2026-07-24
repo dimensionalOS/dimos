@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import shutil
 import threading
+from typing import cast
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -23,6 +24,7 @@ from .scheduler_models import (
     JobIdentity,
     JobSummary,
     NamedCondition,
+    OperationalCode,
     OperationalEvent,
     OperationalFailure,
     TerminalOutcome,
@@ -326,7 +328,7 @@ class SchedulerRuntime:
                         OperationalEvent(
                             kind="finished",
                             occurred_at=datetime.now(timezone.utc),
-                            message=outcome.reason,
+                            message=cast("OperationalCode", outcome.reason),
                             payload={"status": outcome.status},
                             policy_telemetry=outcome.policy_telemetry,
                         ),
@@ -370,6 +372,7 @@ class SchedulerRuntime:
     def _safe_outcome(self, outcome: TerminalOutcome) -> TerminalOutcome:
         if outcome.status == "failed" and outcome.reason in {
             "container_cleanup_failed",
+            "container_runtime_failed",
             "post_image_policy_violation",
             "pre_image_policy_violation",
         }:

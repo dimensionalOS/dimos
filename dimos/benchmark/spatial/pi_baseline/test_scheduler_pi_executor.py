@@ -39,7 +39,11 @@ from dimos.benchmark.spatial.pi_baseline.cli_support import (
 from dimos.benchmark.spatial.pi_baseline.config import PiBaselineConfig, PromptMode
 from dimos.benchmark.spatial.pi_baseline.controller import AdapterCleanupError, AdapterRunError
 from dimos.benchmark.spatial.pi_baseline.gate import ArtifactReference, SmokeRunEvidence
-from dimos.benchmark.spatial.pi_baseline.podman import ContainerCleanupError, PodmanTimeoutError
+from dimos.benchmark.spatial.pi_baseline.podman import (
+    ContainerCleanupError,
+    PodmanInfrastructureError,
+    PodmanTimeoutError,
+)
 import dimos.benchmark.spatial.pi_baseline.projection as projection_module
 from dimos.benchmark.spatial.pi_baseline.projection import (
     DescriptorMismatchError,
@@ -945,6 +949,22 @@ def test_generic_runner_failure_retains_redacted_private_record(
     assert sentinel not in record_path.read_text(encoding="utf-8")
     assert sentinel not in outcome.model_dump_json()
     assert sentinel not in repr(events)
+
+
+def test_podman_infrastructure_failure_has_container_runtime_reason(tmp_path: Path) -> None:
+    def failing_runner(
+        config: PiBaselineConfig,
+        mode: PromptMode,
+        cancel_requested: Event,
+        publication_lock: Lock,
+    ) -> ConditionRun:
+        raise PodmanInfrastructureError("run")
+
+    outcome = _executor(tmp_path, failing_runner).run(
+        _case(_selection()), _condition(), _context(), lambda _: None, *_operation_pair()
+    )
+
+    assert outcome == TerminalOutcome(status="failed", reason="container_runtime_failed")
 
 
 @pytest.mark.parametrize(

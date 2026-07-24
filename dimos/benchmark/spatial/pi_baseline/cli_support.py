@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Literal, cast
 from uuid import uuid4
 
 from dimos.benchmark.spatial.models import AnswerType, SpatialModel
-from dimos.benchmark.spatial.pi_baseline.config import PiBaselineConfig, load_config
+from dimos.benchmark.spatial.pi_baseline.config import AuthMode, PiBaselineConfig, load_config
+from dimos.benchmark.spatial.pi_baseline.evidence import (
+    EvidenceIdentityContext,
+    load_committed_result,
+)
 from dimos.benchmark.spatial.pi_baseline.prompts import build_prompt_pair
 from dimos.benchmark.spatial.pi_baseline.scheduler_executor import ExecutionInterrupted
 from dimos.benchmark.spatial.pi_baseline.scheduler_models import (
@@ -43,6 +47,7 @@ from dimos.benchmark.spatial.pi_baseline.scheduler_pi_binding import (
 from dimos.benchmark.spatial.pi_baseline.scheduler_pi_executor import (
     PiCasePayload,
     PiConditionPayload,
+    _condition_run_id,
 )
 from dimos.benchmark.spatial.pi_baseline.scheduler_plan import (
     expand_plan,
@@ -392,6 +397,7 @@ def runtime_bindings(
     corpus_root: Path,
     oracle_root: Path,
     auth_file: Path,
+    auth_mode: AuthMode = "codex-oauth",
     ledger_path: Path,
     public_root: Path,
 ) -> PiRuntimeBindings:
@@ -401,6 +407,7 @@ def runtime_bindings(
         raise ValueError("corpus and oracle roots must be existing directories")
     return PiRuntimeBindings(
         auth_file=auth_file,
+        auth_mode=auth_mode,
         corpus_root=corpus_root,
         oracle_root=oracle_root,
         private_root=private_root,
@@ -672,6 +679,94 @@ def execute_pi_operation(
         raise ValueError(f"unknown Pi operation: {operation}")
 
 
+def execute_pi_precursor(
+    runtime: SchedulerRuntime,
+    bindings: PiRuntimeBindings,
+    *,
+    host_prerequisite: Callable[[], bool | None],
+    job_id_value: str | None = None,
+) -> tuple[JobSummary, ...]:
+    """Execute exactly one eligible visualization-forbidden precursor job."""
+    from dimos.benchmark.spatial.pi_baseline.scheduler_pi_executor import PiSchedulerExecutor
+
+    with runtime.store.coordinator_lease() as capability:
+        result = validate_pi_definition(runtime.store.root, bindings)
+        runtime.manifest, runtime.plan = result.manifest, result.plan
+        runtime.executor = PiSchedulerExecutor(
+            result.snapshot,
+            bindings,
+            manifest_executor_fingerprint=result.manifest.executor_fingerprint,
+            admission_context=result.admission_context,
+        )
+        try:
+            available = host_prerequisite()
+        except ExecutionInterrupted:
+            raise
+        except Exception as error:
+            raise RuntimeError("Pi host prerequisite failed") from error
+        if available is False:
+            raise RuntimeError("Pi host prerequisite is unavailable")
+        current = private_binding_digest(
+            result.manifest_digest, result.snapshot, bindings.oracle_root
+        )
+        if current != result.private_binding_digest:
+            raise ValueError("private binding changed after Pi preflight")
+        bind_private_tree(
+            bindings.private_root,
+            result.manifest.experiment_id,
+            result.manifest_digest,
+            current,
+            store=runtime.store,
+            capability=capability,
+        )
+        runtime._reload_reconcile_locked()
+        candidate_job_ids: tuple[str, ...]
+        if job_id_value is not None:
+            summary = runtime._summaries.get(job_id_value)
+            if summary is None or summary.state != "pending":
+                raise ValueError("precursor job is not eligible")
+            candidate_job_ids = (job_id_value,)
+        else:
+            candidate_job_ids = tuple(
+                summary.identity.job_id
+                for summary in runtime._summaries.values()
+                if summary.state == "pending"
+                and any(
+                    item.case_id == summary.identity.case_id
+                    and item.condition_name == summary.identity.condition_name
+                    for item in runtime.plan.jobs
+                )
+                and any(
+                    item.name == summary.identity.condition_name
+                    and PiConditionPayload.model_validate(item.payload).prompt_mode
+                    == "visualization-forbidden"
+                    for item in runtime.plan.conditions
+                )
+            )
+            if len(candidate_job_ids) != 1:
+                raise ValueError("precursor requires exactly one eligible pending job")
+
+        selected_job = candidate_job_ids[0]
+        summary = runtime._summaries[selected_job]
+        plan_job = next(
+            (item for item in runtime.plan.jobs if item.case_id == summary.identity.case_id),
+            None,
+        )
+        if plan_job is None or plan_job.condition_name != summary.identity.condition_name:
+            raise ValueError("precursor job is not in the immutable plan")
+        condition = next(
+            (item for item in runtime.plan.conditions if item.name == plan_job.condition_name),
+            None,
+        )
+        if (
+            condition is None
+            or PiConditionPayload.model_validate(condition.payload).prompt_mode
+            != "visualization-forbidden"
+        ):
+            raise ValueError("precursor requires visualization-forbidden")
+        return runtime._execute((selected_job,), allowed_states={"pending"}, capability=capability)
+
+
 def write_review(
     private_root: Path,
     experiment_dir: Path,
@@ -696,8 +791,10 @@ def write_report(
     private_root: Path,
     review_path: Path,
     summaries: tuple[JobSummary, ...],
+    *,
+    public_root: Path | None = None,
 ) -> tuple[Path, str]:
-    manifest, plan, _, _ = load_definition(experiment_dir)
+    manifest, plan, snapshot, store = load_definition(experiment_dir)
     review = ReviewDecision.model_validate_json(review_path.read_text(encoding="utf-8"))
     manifest_digest = _canonical_file_digest(experiment_dir / "manifest.json")
     if review.experiment_id != manifest.experiment_id or review.manifest_digest != manifest_digest:
@@ -709,12 +806,15 @@ def write_report(
         for summary in summaries
     ):
         raise ValueError("report requires all jobs to be terminal")
-    score_records: list[dict[str, object]] = []
-    score_root = private_root / manifest.experiment_id
-    for path in sorted(score_root.rglob("score.v1.json")):
-        value = _load_json(path)
-        value["artifact_sha256"] = hash_file_sha256(path)
-        score_records.append(value)
+    score_records = _committed_report_records(
+        manifest,
+        plan,
+        snapshot,
+        store,
+        summaries,
+        private_root,
+        public_root or private_root,
+    )
     report = ReportRecord(
         experiment_id=manifest.experiment_id,
         manifest_digest=manifest_digest,
@@ -724,6 +824,140 @@ def write_report(
     path = private_root / manifest.experiment_id / "report.v1.json"
     _write_immutable(path, cast("JsonValue", report.model_dump(mode="json")))
     return path, hash_file_sha256(path)
+
+
+def _committed_report_records(
+    manifest: ExperimentManifest,
+    plan: ExperimentPlan,
+    snapshot: PiExecutionSnapshot,
+    store: FilesystemExperimentStore,
+    summaries: tuple[JobSummary, ...],
+    private_root: Path,
+    public_root: Path,
+) -> list[dict[str, object]]:
+    """Return only results admitted by the immutable evidence commit marker."""
+    records: list[dict[str, object]] = []
+    for summary in sorted(summaries, key=lambda item: item.identity.job_id):
+        if summary.state != "succeeded" or summary.latest_attempt_id is None:
+            continue
+        attempts = store.observe_attempts_read_only(manifest.experiment_id, summary.identity.job_id)
+        attempt = next(
+            (
+                item
+                for item in attempts
+                if item.context.attempt_id == summary.latest_attempt_id
+                and item.outcome is not None
+                and item.outcome.status == "succeeded"
+            ),
+            None,
+        )
+        if attempt is None:
+            continue
+        try:
+            # The plan and the scheduler's job identity are authoritative.  In
+            # particular, do not let an attempt descriptor choose a different
+            # job, condition, or experiment (or consequently a different
+            # production evidence namespace).
+            if (
+                attempt.context.identity != summary.identity
+                or attempt.context.identity.experiment_id != manifest.experiment_id
+                or attempt.case.case_id != summary.identity.case_id
+                or getattr(attempt.condition, "name", summary.identity.condition_name)
+                != summary.identity.condition_name
+            ):
+                continue
+            plan_job = next(
+                item
+                for item in plan.jobs
+                if item.case_id == summary.identity.case_id
+                and item.condition_name == summary.identity.condition_name
+            )
+            plan_condition = next(
+                item for item in plan.conditions if item.name == plan_job.condition_name
+            )
+            condition = PiConditionPayload.model_validate(plan_condition.payload)
+            # Keep the mode bound to the condition used by the scheduler, not
+            # to an arbitrary attempt payload.
+            if attempt.condition != plan_condition:
+                continue
+            selected = next(
+                item for item in snapshot.selected_inputs if item.case_id == attempt.case.case_id
+            )
+            if selected.case_id != summary.identity.case_id:
+                continue
+            condition_run_id = _condition_run_id(attempt.context)
+            namespace = (
+                manifest.experiment_id,
+                summary.identity.job_id,
+                attempt.context.attempt_id,
+            )
+            public = public_root.joinpath(
+                *namespace, "public", condition_run_id, condition.prompt_mode, "evidence"
+            )
+            private = private_root.joinpath(
+                *namespace, "private", condition_run_id, condition.prompt_mode
+            )
+            if _report_namespace_has_symlink(public_root, public) or _report_namespace_has_symlink(
+                private_root, private
+            ):
+                continue
+            for field in ("public_root", "private_root", "public_path", "private_path"):
+                authoritative = getattr(attempt.outcome, field, None)
+                if authoritative is not None and Path(authoritative) != (
+                    public if field.startswith("public") else private
+                ):
+                    raise ValueError("attempt outcome evidence root is not authoritative")
+            provenance = public / "provenance.v1.json"
+            if (
+                provenance.is_symlink()
+                or hash_file_sha256(provenance) != selected.provenance_sha256
+            ):
+                continue
+            provenance_value = _load_json(provenance)
+            release_id = provenance_value.get("release_id")
+            if not isinstance(release_id, str) or not release_id:
+                continue
+            expected = EvidenceIdentityContext(
+                run_id=condition_run_id,
+                case_id=attempt.case.case_id,
+                mode=condition.prompt_mode,
+                release_id=release_id,
+                scorer_revision=snapshot.scorer_revision,
+            )
+            committed = load_committed_result(
+                public,
+                private,
+                expected_identity=expected,
+            )
+            if committed is None:
+                continue
+            marker = private / "evidence-manifest.v1.json"
+            records.append(
+                {
+                    "job_id": summary.identity.job_id,
+                    "attempt_id": attempt.context.attempt_id,
+                    "committed_manifest_sha256": hash_file_sha256(marker),
+                    "prediction": committed.prediction.model_dump(mode="json"),
+                    "score": committed.score.model_dump(mode="json"),
+                }
+            )
+        except (OSError, StopIteration, TypeError, ValueError):
+            continue
+    return records
+
+
+def _report_namespace_has_symlink(root: Path, path: Path) -> bool:
+    """Reject redirection inside a derived evidence namespace."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    for component in relative.parts:
+        current /= component
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _write_immutable(path: Path, value: JsonValue) -> None:

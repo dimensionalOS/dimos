@@ -7,6 +7,17 @@ The evaluation environment SHALL expose only custom tools bound to the staged ca
 - **WHEN** an agent begins a case run
 - **THEN** its available tool surface contains only the configured custom case-bound tools and no host Pi tools
 
+### Requirement: Sandbox failure classification
+A nonzero exit from an inner command executed successfully inside a live, ready sandbox SHALL remain a recoverable inner-command result for the caller to handle. Container death, loss of running or exec readiness, and container-runtime or control-plane errors SHALL be terminal sandbox infrastructure failures classified as `container_runtime_failed`; they SHALL not be converted into an inner-command nonzero or accepted precursor result.
+
+#### Scenario: Distinguish command failure from sandbox failure
+- **WHEN** an inner command returns nonzero while pre- and post-exec liveness checks pass
+- **THEN** the broker returns a recoverable command result
+
+#### Scenario: Terminate on sandbox failure
+- **WHEN** the container dies or a runtime/control-plane error prevents a pre- or post-exec liveness/readiness check
+- **THEN** the broker records terminal `container_runtime_failed` and does not return a recoverable command result
+
 ### Requirement: Immutable typed answer submission
 The tool surface SHALL include one immutable, typed `submit_answer` tool. It SHALL accept the typed answer for the staged question, SHALL permit submission without mutation of the case, and SHALL provide no correctness feedback.
 

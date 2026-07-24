@@ -9,7 +9,10 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
+import stat
 import subprocess
+import sys
 import threading
 import time
 from typing import TextIO, cast
@@ -21,7 +24,16 @@ from dimos.benchmark.spatial.pi_baseline.broker import (
     PostImagePolicyViolationError,
     PreImagePolicyViolationError,
 )
-from dimos.benchmark.spatial.pi_baseline.config import validate_node_adapter_command
+from dimos.benchmark.spatial.pi_baseline.config import (
+    AuthMode,
+    load_openai_api_key,
+    validate_node_adapter_command,
+)
+from dimos.benchmark.spatial.pi_baseline.lifecycle_audit import (
+    AuditDirection,
+    LifecycleAuditRecord,
+    bounded_audit,
+)
 from dimos.benchmark.spatial.pi_baseline.scheduler_executor import ExecutionInterrupted
 from dimos.benchmark.spatial.pi_baseline.scheduler_models import (
     PreImagePolicyTelemetry,
@@ -41,6 +53,23 @@ TERMINAL_REASONS = (
     "pre_image_policy_violation",
 )
 FAILED_TERMINAL_REASONS = frozenset(TERMINAL_REASONS[1:])
+SESSION_RELATIVE_PATH = re.compile(r"pi-session/[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl\Z")
+
+
+@dataclass(frozen=True)
+class SessionPromptEvidence:
+    relative_path: str
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class SessionEvidence:
+    state: str
+    persisted: bool
+    relative_path: str | None
+    system_prompt: SessionPromptEvidence | None
+    initial_prompt: SessionPromptEvidence | None
 
 
 @dataclass(frozen=True)
@@ -49,6 +78,7 @@ class AdapterTerminalResult:
     ok: bool
     tool_replies: tuple[dict[str, object], ...]
     stderr_log: Path
+    session_evidence: SessionEvidence
 
 
 class AdapterRunError(RuntimeError):
@@ -60,12 +90,14 @@ class AdapterRunError(RuntimeError):
         *,
         terminal_reason: str | None = None,
         policy_telemetry: PreImagePolicyTelemetry | None = None,
+        session_evidence: SessionEvidence | None = None,
     ) -> None:
         super().__init__(code)
         self.terminal_reason = (
             terminal_reason if terminal_reason in FAILED_TERMINAL_REASONS else None
         )
         self.policy_telemetry = policy_telemetry
+        self.session_evidence = session_evidence
 
 
 class AdapterCleanupError(AdapterRunError):
@@ -79,6 +111,7 @@ class AdapterController:
         auth_path: Path,
         transcript: PinnedDirectory | Path,
         *,
+        auth_mode: AuthMode = "codex-oauth",
         max_frame_bytes: int = 64 * 1024,
         max_stderr_bytes: int = 64 * 1024,
         terminate_grace_seconds: float = 1.0,
@@ -87,23 +120,49 @@ class AdapterController:
             raise ValueError("adapter command and bounds are required")
         self.command = tuple(validate_node_adapter_command(command))
         self.auth_path = auth_path
+        self.auth_mode = auth_mode
         if isinstance(transcript, PinnedDirectory):
             self.transcript_root = transcript
             self._owns_transcript_root = False
-            self.transcript_name = "adapter.transcript.ndjson"
+            self.audit_name = "adapter-lifecycle-audit.v1.jsonl"
             self.stderr_name = "adapter.transcript.stderr.log"
         else:
             self.transcript_root = PinnedDirectory.open(transcript.parent, create=False)
             self._owns_transcript_root = True
-            self.transcript_name = transcript.name
+            self.audit_name = "adapter-lifecycle-audit.v1.jsonl"
             self.stderr_name = transcript.name + ".stderr.log"
-        self.transcript = self.transcript_root.path / self.transcript_name
+        self.audit = self.transcript_root.path / self.audit_name
         self.stderr_log = self.transcript_root.path / self.stderr_name
         self.max_frame_bytes = max_frame_bytes
         self.max_stderr_bytes = max_stderr_bytes
         self.terminate_grace_seconds = terminate_grace_seconds
-        self._transcript_records: list[bytes] = []
+        self._audit_records: list[LifecycleAuditRecord] = []
+        self._audit_sequence = 0
+        self.max_audit_records = 2048
         self._stderr_bytes = b""
+        self._ensure_private_root()
+
+    def _ensure_private_root(self) -> None:
+        self.transcript_root.verify()
+        info = os.fstat(self.transcript_root.fd)
+        if (
+            info.st_uid != os.getuid()
+            or not stat.S_ISDIR(info.st_mode)
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ValueError("adapter transcript root is not private")
+
+    def _adapter_environment(self) -> dict[str, str]:
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "PI_SPATIAL_AUTH_MODE": self.auth_mode,
+            "PI_SPATIAL_SESSION_DIR": "pi-session",
+        }
+        if self.auth_mode == "codex-oauth":
+            env["PI_SPATIAL_AUTH_PATH"] = str(self.auth_path)
+        else:
+            env["OPENAI_API_KEY"] = load_openai_api_key(self.auth_path)
+        return env
 
     def run(
         self,
@@ -122,7 +181,8 @@ class AdapterController:
             if broker.prompt_mode != expected_mode:
                 raise ValueError("prompt mode does not match broker policy")
             deadline = time.monotonic() + start["budget"]["timeoutMs"] / 1000.0  # type: ignore[index]
-            env = {"PATH": os.environ.get("PATH", ""), "PI_SPATIAL_AUTH_PATH": str(self.auth_path)}
+            env = self._adapter_environment()
+            self._ensure_private_root()
             process = subprocess.Popen(
                 self.command,
                 stdin=subprocess.PIPE,
@@ -130,7 +190,13 @@ class AdapterController:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                # The fd is the trust boundary.  Passing it explicitly keeps
+                # /proc/self/fd/N valid through the child launch even if the
+                # descriptive pathname is replaced between checks.
+                cwd=f"/proc/self/fd/{self.transcript_root.fd}",
+                pass_fds=(self.transcript_root.fd,),
             )
+            self._ensure_private_root()
             assert (
                 process.stdin is not None
                 and process.stdout is not None
@@ -140,7 +206,7 @@ class AdapterController:
             if process is not None:
                 cleanup_error = self._cleanup_process(process, None, None)
                 if cleanup_error is not None:
-                    raise cleanup_error from error
+                    error.add_note(f"adapter cleanup supplemental failure: {cleanup_error}")
             else:
                 self.close()
             raise
@@ -161,18 +227,23 @@ class AdapterController:
         except BaseException as error:
             cleanup_error = self._cleanup_process(process, stdout_thread, stderr_thread)
             if cleanup_error is not None:
-                raise cleanup_error from error
+                error.add_note(f"adapter cleanup supplemental failure: {cleanup_error}")
             raise
         responses: list[dict[str, object]] = []
         started = False
         completed = False
+        session_evidence: SessionEvidence | None = None
         try:
             self._send(stdin, start)
             while True:
                 _check_cancel(cancel_requested)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise AdapterRunError("adapter_host_deadline")
+                    raise AdapterRunError(
+                        "adapter_host_deadline",
+                        terminal_reason="timeout",
+                        session_evidence=session_evidence,
+                    )
                 try:
                     raw = frames.get(timeout=min(remaining, 0.1))
                 except queue.Empty:
@@ -214,20 +285,13 @@ class AdapterController:
                     if frame["tool"] == "read_generated_image" and response["ok"]:
                         broker.commit_image_read(delivered=True)
                     responses.append(response)
-                    if (
-                        frame["tool"] == "submit_answer"
-                        and response["ok"]
-                        and broker.submission_accepted()
-                        and broker.prompt_mode == "visualization-encouraged"
-                    ):
-                        return AdapterTerminalResult(
-                            run_id, True, tuple(responses), self.stderr_log
-                        )
                 elif frame_type == "run_complete":
-                    self._validate_run_complete(frame, run_id)
+                    session_evidence = self._validate_run_complete(frame, run_id)
                     completed = True
                     if frame["reason"] == "submitted" and broker.transaction.prediction is None:
-                        raise AdapterRunError("adapter_submitted_without_answer")
+                        raise AdapterRunError(
+                            "adapter_submitted_without_answer", session_evidence=session_evidence
+                        )
                     if not frame["ok"]:
                         if (
                             broker.prompt_mode == "visualization-encouraged"
@@ -239,6 +303,7 @@ class AdapterController:
                                 policy_telemetry=broker.policy_telemetry(
                                     "prompt_returned_without_image"
                                 ),
+                                session_evidence=session_evidence,
                             )
                         if (
                             broker.prompt_mode == "visualization-encouraged"
@@ -251,6 +316,7 @@ class AdapterController:
                                 policy_telemetry=broker.policy_telemetry(
                                     "budget_exhausted_before_image"
                                 ),
+                                session_evidence=session_evidence,
                             )
                         if (
                             broker.prompt_mode == "visualization-encouraged"
@@ -260,21 +326,32 @@ class AdapterController:
                             raise AdapterRunError(
                                 "post_image_policy_violation",
                                 terminal_reason="post_image_policy_violation",
+                                session_evidence=session_evidence,
                             )
                         raise AdapterRunError(
                             "adapter_run_failed",
                             terminal_reason=cast("str", frame["reason"]),
+                            session_evidence=session_evidence,
                         )
                     break
                 elif frame_type == "protocol_error":
-                    raise AdapterRunError("adapter_protocol_error")
+                    raise AdapterRunError(
+                        "adapter_protocol_error",
+                        terminal_reason="protocol_error",
+                        session_evidence=session_evidence,
+                    )
                 else:
                     raise ValueError("unknown adapter frame type")
             if not started:
                 raise ValueError("missing run_started frame")
             if not completed:
-                raise AdapterRunError("adapter_eof_before_complete")
-            return AdapterTerminalResult(run_id, True, tuple(responses), self.stderr_log)
+                raise AdapterRunError(
+                    "adapter_eof_before_complete", session_evidence=session_evidence
+                )
+            assert session_evidence is not None
+            return AdapterTerminalResult(
+                run_id, True, tuple(responses), self.stderr_log, session_evidence
+            )
         except Exception as error:
             if (
                 broker.prompt_mode == "visualization-encouraged"
@@ -286,6 +363,7 @@ class AdapterController:
                     "pre_image_policy_violation",
                     terminal_reason="pre_image_policy_violation",
                     policy_telemetry=broker.policy_telemetry("budget_exhausted_before_image"),
+                    session_evidence=session_evidence,
                 ) from None
             if (
                 broker.prompt_mode == "visualization-encouraged"
@@ -294,10 +372,13 @@ class AdapterController:
                 and error.terminal_reason in {"max_turns", "max_tool_calls"}
             ):
                 raise AdapterRunError(
-                    "post_image_policy_violation", terminal_reason="post_image_policy_violation"
+                    "post_image_policy_violation",
+                    terminal_reason="post_image_policy_violation",
+                    session_evidence=session_evidence,
                 ) from None
             raise
         finally:
+            primary_error = sys.exc_info()[1]
             close_error: BaseException | None = None
             try:
                 stdin.close()
@@ -310,20 +391,26 @@ class AdapterController:
                 if cleanup_error is None:
                     cleanup_error = AdapterCleanupError("adapter stdin cleanup failed")
                     cleanup_error.__cause__ = close_error
-            if cleanup_error is not None:
+            persistence_error: BaseException | None = None
+            try:
+                if self._audit_records:
+                    self.transcript_root.write_bytes(
+                        self.audit_name, bounded_audit(self._audit_records, self.max_audit_records)
+                    )
+                self.transcript_root.write_bytes(self.stderr_name, self._stderr_bytes)
+            except BaseException as error:
+                persistence_error = error
+            finally:
                 try:
                     self.close()
                 except BaseException as error:
-                    cleanup_error.__cause__ = error
-                raise cleanup_error
-            try:
-                if self._transcript_records:
-                    self.transcript_root.write_bytes(
-                        self.transcript_name, b"".join(self._transcript_records)
-                    )
-                self.transcript_root.write_bytes(self.stderr_name, self._stderr_bytes)
-            finally:
-                self.close()
+                    if persistence_error is None:
+                        persistence_error = error
+            supplemental = cleanup_error or persistence_error
+            if supplemental is not None and primary_error is not None:
+                primary_error.add_note(f"adapter cleanup supplemental failure: {supplemental}")
+            elif supplemental is not None:
+                raise supplemental
 
     def _cleanup_process(
         self,
@@ -505,20 +592,81 @@ class AdapterController:
         stream.flush()
 
     def _record_outbound(self, frame: dict[str, object]) -> None:
-        self._append_transcript({"direction": "out", "frame": frame})
+        self._append_audit("out", frame)
 
     def _record_inbound(self, frame: object) -> None:
-        if (
-            isinstance(frame, dict)
-            and frame.get("type") in {"run_complete", "protocol_error"}
-            and "error" in frame
-        ):
-            frame = {**frame, "error": "adapter_reported_error"}
-        self._append_transcript({"direction": "in", "frame": frame})
+        self._append_audit("in", frame)
 
-    def _append_transcript(self, value: dict[str, object]) -> None:
-        payload = json.dumps(value, separators=(",", ":")).encode() + b"\n"
-        self._transcript_records.append(payload)
+    def _append_audit(self, direction: AuditDirection, frame: object) -> None:
+        """Project control frames into the bounded lifecycle-audit vocabulary.
+
+        Transcript deltas are validated by the protocol loop and retained in the
+        native Pi session. Recording each streamed delta here duplicates that
+        evidence and lets ordinary model output exhaust the lifecycle bound
+        before a terminal control frame can be recorded.
+        """
+        if isinstance(frame, dict) and frame.get("type") == "transcript":
+            return
+        self._audit_sequence += 1
+        if not isinstance(frame, dict):
+            frame_type = "invalid"
+            record = LifecycleAuditRecord("1.0", self._audit_sequence, direction, frame_type)
+        else:
+            frame_data = cast("dict[str, object]", frame)
+            raw_frame_type = frame_data.get("type")
+            frame_type = raw_frame_type if isinstance(raw_frame_type, str) else "invalid"
+            raw_id = frame_data.get("id")
+            raw_tool = frame_data.get("tool")
+            raw_ok = frame_data.get("ok")
+            raw_reason = frame_data.get("reason")
+            run_id = (
+                raw_id
+                if frame_type in {"run_start", "run_started", "run_complete"}
+                and isinstance(raw_id, str)
+                else None
+            )
+            tool = raw_tool if frame_type == "tool_call" and isinstance(raw_tool, str) else None
+            call_id = (
+                raw_id
+                if frame_type in {"tool_call", "tool_reply"} and isinstance(raw_id, str)
+                else None
+            )
+            reply_ok = raw_ok if frame_type == "tool_reply" and isinstance(raw_ok, bool) else None
+            terminal = (
+                raw_reason if frame_type == "run_complete" and isinstance(raw_reason, str) else None
+            )
+            session: dict[str, object] = (
+                cast("dict[str, object]", frame_data.get("session_evidence"))
+                if frame_type == "run_complete"
+                and isinstance(frame_data.get("session_evidence"), dict)
+                else {}
+            )
+            record = LifecycleAuditRecord(
+                "1.0",
+                self._audit_sequence,
+                direction,
+                frame_type,
+                run_id=run_id,
+                tool=tool,
+                call_id=call_id,
+                reply_ok=reply_ok,
+                terminal_category=terminal,
+                reason_code=terminal,
+                session_state=cast("str", session["state"])
+                if isinstance(session.get("state"), str)
+                else None,
+                session_persisted=cast("bool", session["persisted"])
+                if isinstance(session.get("persisted"), bool)
+                else None,
+                session_byte_count=_session_total(session),
+                system_prompt_byte_count=_session_count(session, "system_prompt"),
+                initial_prompt_byte_count=_session_count(session, "initial_prompt"),
+                system_prompt_sha256=_session_hash(session, "system_prompt"),
+                initial_prompt_sha256=_session_hash(session, "initial_prompt"),
+            )
+        if len(self._audit_records) >= self.max_audit_records:
+            raise ValueError("adapter lifecycle audit exceeds record bound")
+        self._audit_records.append(record)
 
     @staticmethod
     def _validate_run_start(run_id: str, frame: dict[str, object]) -> dict[str, object]:
@@ -596,8 +744,8 @@ class AdapterController:
             raise ValueError("invalid transcript frame")
 
     @staticmethod
-    def _validate_run_complete(frame: dict[str, object], run_id: str) -> None:
-        required = {"version", "type", "id", "ok", "reason"}
+    def _validate_run_complete(frame: dict[str, object], run_id: str) -> SessionEvidence:
+        required = {"version", "type", "id", "ok", "reason", "session_evidence"}
         if (
             (set(frame) != required and set(frame) != required | {"error"})
             or frame.get("version") != PROTOCOL_VERSION
@@ -609,6 +757,87 @@ class AdapterController:
             or frame.get("ok") is not (frame.get("reason") == "submitted")
         ):
             raise ValueError("invalid run_complete frame")
+        raw = frame["session_evidence"]
+        if (
+            not isinstance(raw, dict)
+            or not set(raw)
+            <= {"state", "persisted", "relative_path", "system_prompt", "initial_prompt"}
+            or not {"state", "persisted"} <= set(raw)
+        ):
+            raise ValueError("invalid session evidence")
+        state, persisted = raw["state"], raw["persisted"]
+        relative_path, prompt = raw.get("relative_path"), raw.get("system_prompt")
+        initial = raw.get("initial_prompt")
+        if (
+            ("relative_path" in raw and relative_path is None)
+            or ("system_prompt" in raw and prompt is None)
+            or ("initial_prompt" in raw and initial is None)
+        ):
+            raise ValueError("invalid session evidence")
+        if state not in {"complete", "partial", "unavailable"} or not isinstance(persisted, bool):
+            raise ValueError("invalid session evidence")
+        if relative_path is not None and (
+            not isinstance(relative_path, str)
+            or SESSION_RELATIVE_PATH.fullmatch(relative_path) is None
+        ):
+            raise ValueError("invalid session evidence")
+        parsed_prompt: SessionPromptEvidence | None = None
+        if prompt is not None:
+            if not isinstance(prompt, dict) or set(prompt) != {
+                "relative_path",
+                "byte_count",
+                "sha256",
+            }:
+                raise ValueError("invalid session evidence")
+            prompt_path = prompt["relative_path"]
+            if prompt_path != "pi-prompt/system.txt":
+                raise ValueError("invalid session evidence")
+            if (
+                not isinstance(prompt["byte_count"], int)
+                or isinstance(prompt["byte_count"], bool)
+                or prompt["byte_count"] < 0
+                or not isinstance(prompt["sha256"], str)
+                or not _is_sha256(prompt["sha256"])
+            ):
+                raise ValueError("invalid session evidence")
+            parsed_prompt = SessionPromptEvidence(
+                prompt_path, prompt["byte_count"], prompt["sha256"]
+            )
+        parsed_initial: SessionPromptEvidence | None = None
+        if initial is not None:
+            if (
+                not isinstance(initial, dict)
+                or set(initial) != {"relative_path", "byte_count", "sha256"}
+                or initial["relative_path"] != "pi-prompt/initial.txt"
+            ):
+                raise ValueError("invalid session evidence")
+            if (
+                not isinstance(initial["byte_count"], int)
+                or isinstance(initial["byte_count"], bool)
+                or initial["byte_count"] < 0
+                or not isinstance(initial["sha256"], str)
+                or not _is_sha256(initial["sha256"])
+            ):
+                raise ValueError("invalid session evidence")
+            parsed_initial = SessionPromptEvidence(
+                initial["relative_path"], initial["byte_count"], initial["sha256"]
+            )
+        if state in {"complete", "partial"}:
+            if (
+                not persisted
+                or relative_path is None
+                or parsed_prompt is None
+                or parsed_initial is None
+            ):
+                raise ValueError("invalid session evidence")
+        elif (
+            persisted
+            or relative_path is not None
+            or parsed_prompt is not None
+            or parsed_initial is not None
+        ):
+            raise ValueError("invalid session evidence")
+        return SessionEvidence(state, persisted, relative_path, parsed_prompt, parsed_initial)
 
 
 def _queue_lines(stream: TextIO, output: queue.Queue[str | None]) -> None:
@@ -709,3 +938,31 @@ def _is_digest(value: str) -> bool:
         and len(digest) == 64
         and all(character in "0123456789abcdef" for character in digest)
     )
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _session_count(session: dict[str, object], name: str) -> int | None:
+    value = session.get(name)
+    if not isinstance(value, dict):
+        return None
+    count = value.get("byte_count")
+    return count if type(count) is int and 0 <= count <= 16 * 1024 * 1024 else None
+
+
+def _session_total(session: dict[str, object]) -> int | None:
+    counts = [_session_count(session, name) for name in ("system_prompt", "initial_prompt")]
+    if any(count is None for count in counts):
+        return None
+    total = sum(cast("int", count) for count in counts)
+    return total if total <= 32 * 1024 * 1024 else None
+
+
+def _session_hash(session: dict[str, object], name: str) -> str | None:
+    value = session.get(name)
+    if not isinstance(value, dict):
+        return None
+    digest = value.get("sha256")
+    return digest if isinstance(digest, str) and _is_sha256(digest) else None

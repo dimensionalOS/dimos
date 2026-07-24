@@ -15,6 +15,7 @@ from rich.console import Console
 from .cli_support import (
     create_experiment,
     execute_pi_operation,
+    execute_pi_precursor,
     load_definition,
     retain_private_diagnostic,
     runtime_bindings,
@@ -26,6 +27,7 @@ from .scheduler_executor import EventSink, ExecutionInterrupted
 from .scheduler_models import (
     AttemptContext,
     ExpandedCase,
+    JobSummary,
     NamedCondition,
     OperationalSnapshot,
     TerminalOutcome,
@@ -61,6 +63,11 @@ def _runtime_arguments(parser: argparse.ArgumentParser, *, required: bool = True
     parser.add_argument("--corpus-root", type=Path, required=required)
     parser.add_argument("--oracle-root", type=Path, required=required)
     parser.add_argument("--auth-file", type=Path, required=required)
+    parser.add_argument(
+        "--auth-mode",
+        choices=("codex-oauth", "openai-api-key"),
+        default="codex-oauth",
+    )
     parser.add_argument("--ledger-path", type=Path, required=required)
     parser.add_argument("--public-root", type=Path, required=required)
     parser.add_argument(
@@ -93,6 +100,13 @@ def _parser() -> argparse.ArgumentParser:
         command = experiment_sub.add_parser(name)
         command.add_argument("experiment_dir", type=Path)
         _runtime_arguments(command)
+
+    precursor = experiment_sub.add_parser(
+        "precursor", help="run exactly one visualization-forbidden precursor job"
+    )
+    precursor.add_argument("experiment_dir", type=Path)
+    precursor.add_argument("--job")
+    _runtime_arguments(precursor)
 
     retry = experiment_sub.add_parser("retry")
     retry.add_argument("experiment_dir", type=Path)
@@ -136,6 +150,7 @@ def _build_runtime(
         corpus_root=args.corpus_root.expanduser().resolve(),
         oracle_root=args.oracle_root.expanduser().resolve(),
         auth_file=args.auth_file.expanduser().resolve(),
+        auth_mode=args.auth_mode,
         ledger_path=args.ledger_path.expanduser().resolve(),
         public_root=args.public_root.expanduser().resolve(),
     )
@@ -201,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.experiment_command in {"review", "report"}:
             print("pi-baseline: operation unavailable", file=sys.stderr)
             return 1
-        if args.experiment_command not in {"run", "resume", "retry", "status"}:
+        if args.experiment_command not in {"run", "resume", "retry", "precursor", "status"}:
             print("pi-baseline: operation unavailable", file=sys.stderr)
             return 1
 
@@ -229,19 +244,27 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(signal.SIGINT, on_sigint)
         operation_error: BaseException | None = None
         snapshot = None
-        results = ()
+        results: tuple[JobSummary, ...] = ()
 
         try:
             try:
                 assert bindings is not None
-                results = execute_pi_operation(
-                    active_runtime,
-                    bindings,
-                    cast("Literal['run', 'resume', 'retry']", args.experiment_command),
-                    host_prerequisite=lambda: _host_prerequisite(active_runtime),
-                    job_id_value=getattr(args, "job", None),
-                    reason=getattr(args, "reason", None),
-                )
+                if args.experiment_command == "precursor":
+                    results = execute_pi_precursor(
+                        active_runtime,
+                        bindings,
+                        host_prerequisite=lambda: _host_prerequisite(active_runtime),
+                        job_id_value=args.job,
+                    )
+                else:
+                    results = execute_pi_operation(
+                        active_runtime,
+                        bindings,
+                        cast("Literal['run', 'resume', 'retry']", args.experiment_command),
+                        host_prerequisite=lambda: _host_prerequisite(active_runtime),
+                        job_id_value=getattr(args, "job", None),
+                        reason=getattr(args, "reason", None),
+                    )
             except ExecutionInterrupted as error:
                 if not interrupted:
                     operation_error = error

@@ -20,7 +20,11 @@ from dimos.benchmark.spatial.pi_baseline.config import (
     PublicSelection,
 )
 from dimos.benchmark.spatial.pi_baseline.controller import AdapterCleanupError, AdapterRunError
-from dimos.benchmark.spatial.pi_baseline.podman import ContainerCleanupError, PodmanSecurityError
+from dimos.benchmark.spatial.pi_baseline.podman import (
+    ContainerCleanupError,
+    PodmanInfrastructureError,
+    PodmanSecurityError,
+)
 from dimos.benchmark.spatial.pi_baseline.projection import DescriptorMismatchError
 from dimos.benchmark.spatial.pi_baseline.runner import ConditionRun, run_condition
 from dimos.benchmark.spatial.pi_baseline.scheduler_executor import (
@@ -206,6 +210,8 @@ def _failure_reason(error: Exception) -> str:
         # Preserve the established public cleanup code; never expose the
         # controller's process/path details.
         return ContainerCleanupError.reason
+    if isinstance(error, PodmanInfrastructureError):
+        return PodmanInfrastructureError.reason
     if isinstance(error, AdapterRunError):
         if error.terminal_reason in {
             "post_image_policy_violation",

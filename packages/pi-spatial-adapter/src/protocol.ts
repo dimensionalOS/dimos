@@ -34,11 +34,27 @@ export type RunStart = Static<typeof RunStartSchema>;
 export type ToolReply = Static<typeof ToolReplySchema>;
 export type InboundFrame = RunStart | ToolReply;
 
+export type SessionEvidenceFrame = {
+  state: "complete" | "partial" | "unavailable";
+  persisted: boolean;
+  relative_path?: string;
+  system_prompt?: {
+    relative_path: "pi-prompt/system.txt";
+    byte_count: number;
+    sha256: string;
+  };
+  initial_prompt?: {
+    relative_path: "pi-prompt/initial.txt";
+    byte_count: number;
+    sha256: string;
+  };
+};
+
 export type OutboundFrame =
   | { version: 2; type: "run_started"; id: string; tools: readonly string[] }
   | { version: 2; type: "tool_call"; id: string; tool: string; params: Record<string, unknown> }
   | { version: 2; type: "transcript"; event: string; delta?: string }
-  | { version: 2; type: "run_complete"; id: string; ok: boolean; reason: "submitted" | "max_turns" | "max_tool_calls" | "timeout" | "session_error" | "protocol_error" | "pre_image_policy_violation" | "post_image_policy_violation"; error?: string }
+  | { version: 2; type: "run_complete"; id: string; ok: boolean; reason: "submitted" | "max_turns" | "max_tool_calls" | "timeout" | "session_error" | "protocol_error" | "pre_image_policy_violation" | "post_image_policy_violation"; session_evidence: SessionEvidenceFrame }
   | { version: 2; type: "protocol_error"; error: string };
 
 function record(value: unknown): value is Record<string, unknown> {

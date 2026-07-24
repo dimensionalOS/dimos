@@ -34,12 +34,12 @@ def test_prediction_symlink_in_pinned_private_leaf_fails_closed(tmp_path) -> Non
     escaped.write_bytes(b"must remain unchanged")
     private = PinnedDirectory.open(private_path)
     try:
-        (private_path / "prediction.v1.json").symlink_to(escaped)
+        (private_path / "prediction.provisional.v1.json").symlink_to(escaped)
 
         with pytest.raises(OSError):
             AnswerTransaction("instance-1", AnswerType.BOOLEAN, private)
 
         assert escaped.read_bytes() == b"must remain unchanged"
-        assert (private_path / "prediction.v1.json").is_symlink()
+        assert (private_path / "prediction.provisional.v1.json").is_symlink()
     finally:
         private.close()
