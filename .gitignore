@@ -45,6 +45,7 @@ node_modules
 # Ignore build artifacts
 dist/
 build/
+/.artifacts/
 
 # Rust build artifacts
 **/target/
