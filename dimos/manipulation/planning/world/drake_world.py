@@ -467,16 +467,18 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add an obstacle to the world."""
         with self._lock:
             # Use obstacle's name as ID (allows external ID management)
             obstacle_id = obstacle.name
+            if not obstacle_id:
+                return None
 
             # Check for duplicate in our tracking
             if obstacle_id in self._obstacles:
                 logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
-                return obstacle_id
+                return None
 
             try:
                 if not self._finalized:
@@ -495,13 +497,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                         geometry_id=geometry_id,
                         source_id=self._obstacle_source_id,
                     )
-
                 logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
             except RuntimeError as e:
                 # Handle case where geometry name already exists in SceneGraph
                 # (can happen with concurrent access)
                 if "already been used" in str(e):
                     logger.debug(f"Obstacle '{obstacle_id}' already in SceneGraph, skipping")
+                    return None
                 else:
                     raise
 
@@ -1157,6 +1159,18 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def initialize(self, session: VisualizationSession) -> None:
         """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
+        return None
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def clear_vis_obstacles(self) -> None:
+        """Embedded Meshcat observes native WorldSpec obstacle mutations."""
         return None
 
     def get_visualization_url(self) -> str | None:

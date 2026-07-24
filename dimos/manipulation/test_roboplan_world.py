@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 from pathlib import Path
 import sys
@@ -430,8 +431,30 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     )
     assert world.get_obstacles()[0].pose is updated_pose
     np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
+    assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("box")
     assert world.get_obstacles() == []
+
+
+def test_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    unnamed = Obstacle(
+        name="",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    named = replace(unnamed, name="world-owned")
+
+    assert world.add_obstacle(unnamed) is None
+    assert world.add_obstacle(named) == "world-owned"
+    assert world.add_obstacle(named) is None
+    assert world.remove_obstacle("missing") is False
+    assert world.update_obstacle_pose("missing", named.pose) is False
 
 
 def test_collision_config_and_edge_checks(
