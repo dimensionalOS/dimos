@@ -66,6 +66,7 @@ SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved f
 # Jump guard, TRACKING only: largest per-second step from the previous accepted fix. T is world->map, so between accepts it moves only by the drift the fix corrects; this refuses the mirror-flipped fix that lands a room over. Floored at one second's worth below so back-to-back priors keep a real budget.
 MAX_JUMP_M_PER_S = 5.0  # m/s, scaled by time since the last accept
 MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s, same time-scaled budget
+ANCHOR_AGREE_M = 0.5  # m; two fixes this close describe the same pose -- well inside one second of the jump budget above, well outside marker-pose noise
 
 
 class Config(ModuleConfig):
@@ -77,6 +78,12 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     # Max z-axis tilt (deg) a candidate may keep at the judge's gravity gate; matches relocalize.py's GRAVITY_TILT_MAX_DEG, so unchanged unless overridden.
     gravity_tilt_max_deg: float = Field(default=10.0, ge=0.0)
+    # The first fix becomes the yardstick every later fix is judged against, so it clears a higher bar than tracking's per-prior one.
+    acquire_fitness_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Independent fixes that must agree within ANCHOR_AGREE_M before the anchor locks; 1 = anchor on the first fix.
+    acquire_corroboration: int = Field(default=2, ge=1)
+    # Consecutive jump-rejects agreeing with each other -> the anchor is the outlier, not the fixes.
+    reacquire_after_rejects: int = Field(default=4, ge=1)
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
@@ -115,9 +122,12 @@ class RelocalizationModule(Module):
         self._ransac_min_local_points = ransac_entry.min_local_points
         # Built in start() once the marker map is loaded (needs map_T_marker).
         self._fiducial_prior: FiducialPrior | None = None
-        # Previous ACCEPTED fix (map_T_world) and when, for the gross-jump guard. None until the first accept, which is what leaves acquisition unguarded.
+        # Previous ACCEPTED fix (map_T_world) and when, for the gross-jump guard. None until the anchor locks -- until then corroboration stands in for the guard, which has nothing to measure against.
         self._last_fix_map_T_world: np.ndarray | None = None
         self._last_fix_ts_s = 0.0
+        # map_T_world fixes corroborating an anchor: those buffered before it locks, and the consecutive jump-rejects that would replace it. Any accept clears both.
+        self._acquire_fixes: list[np.ndarray] = []
+        self._reject_fixes: list[np.ndarray] = []
         # Latest global_map, so a completed tag burst is judged the instant it lands. Sound because the stream ACCUMULATES in the world frame: the previous cloud scores wall fitness as well as the newest, and the tag candidate needs no lidar at all.
         self._last_local_map: PointCloud2 | None = None
         # One monotonic timebase for every prior trigger, injectable so a test can drive the triggers without sleeping (FiducialPrior takes the same seam).
@@ -317,28 +327,49 @@ class RelocalizationModule(Module):
             self._fire(self._fiducial_prior, msg)
 
     def _try_relocalize(self, msg: PointCloud2, prior: RelocPrior) -> Transform | None:
-        assert self._premap is not None
+        """Solve, gate on fitness, lock the anchor or guard the step from it, publish."""
         t0 = time.monotonic()
+        solved = self._solve(msg, prior)
+        if solved is None:
+            return None
+        map_T_world, fitness = solved
+        dt, n_pts = time.monotonic() - t0, len(msg)
+        if not self._fitness_ok(prior, fitness, dt, n_pts):
+            return None
+        anchor_map_T_world = self._last_fix_map_T_world
+        if anchor_map_T_world is None:
+            if not self._anchor_locked(map_T_world):
+                return None
+        elif not self._jump_ok(map_T_world, anchor_map_T_world, prior.name):
+            return None
+        return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
+
+    def _solo_ransac(self, prior: RelocPrior) -> bool:
+        """True when RANSAC is the only enabled prior."""
         # Plain relocalize() is reserved for the lidar-only MODULE, where the SOLVE is the pre-prior path bit-for-bit and the accept line carries no source=. Once a tag prior is configured every fire goes through the judge instead, so both sources are counted.
-        solo_ransac = len(self._enabled_prior_objects()) == 1 and isinstance(prior, RansacPrior)
+        return len(self._enabled_prior_objects()) == 1 and isinstance(prior, RansacPrior)
+
+    def _run_prior(self, msg: PointCloud2, prior: RelocPrior) -> tuple[np.ndarray, float] | None:
+        """Solve this prior's one fix: the pre-prior lidar-only path when RANSAC is alone, else the judged pool."""
+        assert self._premap is not None
+        if self._solo_ransac(prior):
+            return _relocalize(
+                self._premap.pointcloud,
+                msg.pointcloud,
+                gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
+            )
+        # None here is the double-fire race: the other thread's propose() drained the pending tag fix first and already published it -- benign no-op.
+        return relocalize_with_prior(
+            self._premap.pointcloud,
+            msg.pointcloud,
+            prior,
+            gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
+        )
+
+    def _solve(self, msg: PointCloud2, prior: RelocPrior) -> tuple[np.ndarray, float] | None:
+        """Run the solve, turning each judged refusal into a None sentinel."""
         try:
-            if solo_ransac:
-                T, fitness = _relocalize(
-                    self._premap.pointcloud,
-                    msg.pointcloud,
-                    gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
-                )
-            else:
-                result = relocalize_with_prior(
-                    self._premap.pointcloud,
-                    msg.pointcloud,
-                    prior,
-                    gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
-                )
-                if result is None:
-                    # Double-fire race: the other thread's propose() drained the pending tag fix first and already published it -- benign no-op.
-                    return None
-                T, fitness = result
+            return self._run_prior(msg, prior)
         except InsufficientWallEvidenceError as e:
             # Too few wall points to judge the pool (a sparse acquisition cloud a tag burst is allowed to fire on): drop the unjudged fix -- a pose scored against <100 walls isn't trustworthy, and the tag is re-seen as the robot moves into structure.
             self._maybe_log_wall_skip(len(msg), str(e))
@@ -353,88 +384,141 @@ class RelocalizationModule(Module):
         except Exception:
             logger.exception("relocalize() failed")
             return None
-        dt = time.monotonic() - t0
-        n_pts = len(msg)
-        # source= emission: ACCEPT names the prior that WON (omitted on the single-source path, which the parsers read as ransac); REJECT names the prior whose BAR refused the fix, so --eval can bucket rejects by source instead of "unknown".
-        source_kw: dict[str, str] = {} if solo_ransac else {"source": prior.name}
 
-        # The fix is gated on ITS OWN prior's bar.
-        gate_source = prior.name
-        threshold = self._accept_threshold[gate_source]
-        if fitness < threshold:
-            if self.config.verbose_eval_logging:
-                self._eval_tally.setdefault(gate_source, SourceTally()).rejects += 1
-            # threshold= IS the reason: this is the only reject path, and the operator's next move is to compare the two numbers.
-            extra: dict[str, Any] = (
-                {"time_cost_s": round(dt, 1), "n_pts": n_pts}
-                if self.config.verbose_eval_logging
-                else {}
-            )
-            logger.warning(
-                "relocalize rejected",
-                source=gate_source,
-                fitness=round(fitness, 3),
-                threshold=threshold,
-                **extra,
-            )
-            return None
-
-        # Jump guard, TRACKING only: a fix stepping further from the previous one than the budgets above allow is a mis-localization, not a drift correction. No previous fix means acquisition, which is never blocked. Both terms are on map_T_world.
-        now_s = self._now_fn()
-        if self._last_fix_map_T_world is not None:
-            dt_s = now_s - self._last_fix_ts_s
-            # Floored at one second's worth: two priors fire back to back may disagree by a normal correction, and a budget shrinking with the gap would refuse exactly the cross-source fix the fiducial preset exists to publish.
-            budget_s = max(dt_s, 1.0)
-            jump_m = float(np.linalg.norm(T[:3, 3] - self._last_fix_map_T_world[:3, 3]))
-            rot_rel = self._last_fix_map_T_world[:3, :3].T @ T[:3, :3]
-            # Yaw is the whole story: the judge's gravity gate already holds tilt under GRAVITY_TILT_MAX_DEG, so a flip between two accepted fixes is about z.
-            yaw_deg = abs(float(np.degrees(np.arctan2(rot_rel[1, 0], rot_rel[0, 0]))))
-            if jump_m > MAX_JUMP_M_PER_S * budget_s or yaw_deg > MAX_JUMP_YAW_DEG_PER_S * budget_s:
-                logger.warning(
-                    "relocalize jump rejected",
-                    source=gate_source,
-                    jump_m=round(jump_m, 2),
-                    yaw_deg=round(yaw_deg, 1),
-                    dt_s=round(dt_s, 2),
-                )
-                return None
-        self._last_fix_map_T_world = T
-        self._last_fix_ts_s = now_s
-
-        # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
-        # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
-        # so inverse the transform T here to get map_in_scan_frame
-        T_inv = np.linalg.inv(T)
-        new_tf = Transform(
-            translation=Vector3(*T_inv[:3, 3]),
-            rotation=Quaternion.from_rotation_matrix(T_inv[:3, :3]),
-            frame_id=FRAME_WORLD,
-            child_frame_id=FRAME_MAP,
+    def _fitness_ok(self, prior: RelocPrior, fitness: float, dt: float, n_pts: int) -> bool:
+        """Gate the fix on its own prior's bar, or on the higher acquire bar while there is no anchor."""
+        threshold = (
+            self.config.acquire_fitness_threshold
+            if self._last_fix_map_T_world is None
+            else self._accept_threshold[prior.name]
         )
+        if fitness >= threshold:
+            return True
         if self.config.verbose_eval_logging:
-            entry = self._eval_tally.setdefault(gate_source, SourceTally())
-            entry.accepts += 1
-            entry.fitnesses.append(round(fitness, 3))
-        # The published pose rides on --eval only: the quiet line is the fix plus its health.
-        pose_kw: dict[str, Any] = (
-            {
-                "n_pts": n_pts,
-                "reloc_t_m": T[:3, 3].round(3).tolist(),
-                "tf_from": FRAME_WORLD,
-                "tf_to": FRAME_MAP,
-                "published_t_m": T_inv[:3, 3].round(3).tolist(),
-            }
+            self._eval_tally.setdefault(prior.name, SourceTally()).rejects += 1
+        # threshold= IS the reason: this is the only fitness reject path, and the operator's next move is to compare the two numbers.
+        extra: dict[str, Any] = (
+            {"time_cost_s": round(dt, 1), "n_pts": n_pts}
             if self.config.verbose_eval_logging
             else {}
         )
+        logger.warning(
+            "relocalize rejected",
+            source=prior.name,
+            fitness=round(fitness, 3),
+            threshold=threshold,
+            **extra,
+        )
+        return False
+
+    @staticmethod
+    def _buffer_fix(buffer: list[np.ndarray], map_T_world: np.ndarray) -> None:
+        """Append the fix to a corroboration buffer; one that disagrees restarts the buffer from itself."""
+        # Agreement is tested against EVERY buffered fix, so a surviving buffer is mutually agreeing by induction -- a chain of fixes each drifting ANCHOR_AGREE_M from the last never corroborates.
+        if all(
+            float(np.linalg.norm(map_T_world[:3, 3] - buffered[:3, 3])) <= ANCHOR_AGREE_M
+            for buffered in buffer
+        ):
+            buffer.append(map_T_world)
+        else:
+            buffer[:] = [map_T_world]
+
+    def _anchor_locked(self, map_T_world: np.ndarray) -> bool:
+        """Buffer an acquisition fix; the anchor locks once acquire_corroboration of them agree."""
+        # Publishing nothing until then is the point: fitness is an OVERLAP ratio, so a room-symmetric or mirrored pose scores as well as the truth, and a wrong anchor becomes the yardstick for its own correction.
+        self._buffer_fix(self._acquire_fixes, map_T_world)
+        return len(self._acquire_fixes) >= self.config.acquire_corroboration
+
+    def _jump_ok(
+        self, map_T_world: np.ndarray, anchor_map_T_world: np.ndarray, source: str
+    ) -> bool:
+        """Refuse a fix stepping further from the anchor than the per-second budgets allow."""
+        dt_s = self._now_fn() - self._last_fix_ts_s
+        # Floored at one second's worth: two priors fire back to back may disagree by a normal correction, and a budget shrinking with the gap would refuse exactly the cross-source fix the fiducial preset exists to publish.
+        budget_s = max(dt_s, 1.0)
+        jump_m = float(np.linalg.norm(map_T_world[:3, 3] - anchor_map_T_world[:3, 3]))
+        rot_rel = anchor_map_T_world[:3, :3].T @ map_T_world[:3, :3]
+        # Yaw is the whole story: the judge's gravity gate already holds tilt under GRAVITY_TILT_MAX_DEG, so a flip between two accepted fixes is about z.
+        yaw_deg = abs(float(np.degrees(np.arctan2(rot_rel[1, 0], rot_rel[0, 0]))))
+        if jump_m <= MAX_JUMP_M_PER_S * budget_s and yaw_deg <= MAX_JUMP_YAW_DEG_PER_S * budget_s:
+            return True
+        logger.warning(
+            "relocalize jump rejected",
+            source=source,
+            jump_m=round(jump_m, 2),
+            yaw_deg=round(yaw_deg, 1),
+            dt_s=round(dt_s, 2),
+        )
+        return self._reacquire(map_T_world, source)
+
+    def _reacquire(self, map_T_world: np.ndarray, source: str) -> bool:
+        """Adopt a jump-rejected fix once reacquire_after_rejects of them agree."""
+        # Every accept re-arms the budget at its floor, so without this escape a wrong-but-self-consistent anchor refuses its own correction forever: fixes that keep agreeing with each other and not with the anchor make the ANCHOR the outlier.
+        self._buffer_fix(self._reject_fixes, map_T_world)
+        if len(self._reject_fixes) < self.config.reacquire_after_rejects:
+            return False
+        logger.warning(
+            "relocalize re-acquiring anchor", source=source, n_fixes=len(self._reject_fixes)
+        )
+        return True
+
+    def _publish_fix(
+        self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, dt: float, n_pts: int
+    ) -> Transform:
+        """Adopt the fix as the anchor, clear both corroboration buffers, return the world->map TF."""
+        self._last_fix_map_T_world = map_T_world
+        self._last_fix_ts_s = self._now_fn()
+        self._acquire_fixes.clear()
+        self._reject_fixes.clear()
+        # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
+        # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
+        # so inverse the transform T here to get map_in_scan_frame
+        world_T_map = np.linalg.inv(map_T_world)
+        self._log_accept(prior, fitness, dt, n_pts, map_T_world, world_T_map)
+        return Transform(
+            translation=Vector3(*world_T_map[:3, 3]),
+            rotation=Quaternion.from_rotation_matrix(world_T_map[:3, :3]),
+            frame_id=FRAME_WORLD,
+            child_frame_id=FRAME_MAP,
+        )
+
+    def _log_accept(
+        self,
+        prior: RelocPrior,
+        fitness: float,
+        dt: float,
+        n_pts: int,
+        map_T_world: np.ndarray,
+        world_T_map: np.ndarray,
+    ) -> None:
+        """One accept line: the fix plus its health, with pose and timing under --eval."""
+        if self.config.verbose_eval_logging:
+            entry = self._eval_tally.setdefault(prior.name, SourceTally())
+            entry.accepts += 1
+            entry.fitnesses.append(round(fitness, 3))
+        # source= emission: ACCEPT names the prior that WON (omitted on the single-source path, which the parsers read as ransac); REJECT names the prior whose BAR refused the fix, so --eval can bucket rejects by source instead of "unknown".
+        source_kw: dict[str, str] = {} if self._solo_ransac(prior) else {"source": prior.name}
         logger.info(
             "relocalize accepted",
             **source_kw,
             fitness=round(fitness, 3),
             time_cost_s=round(dt, 1),
-            **pose_kw,
+            **self._pose_kw(n_pts, map_T_world, world_T_map),
         )
-        return new_tf
+
+    def _pose_kw(
+        self, n_pts: int, map_T_world: np.ndarray, world_T_map: np.ndarray
+    ) -> dict[str, Any]:
+        """The published pose rides on --eval only: the quiet line is the fix plus its health."""
+        if not self.config.verbose_eval_logging:
+            return {}
+        return {
+            "n_pts": n_pts,
+            "reloc_t_m": map_T_world[:3, 3].round(3).tolist(),
+            "tf_from": FRAME_WORLD,
+            "tf_to": FRAME_MAP,
+            "published_t_m": world_T_map[:3, 3].round(3).tolist(),
+        }
 
     def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
         _, tf = pair
