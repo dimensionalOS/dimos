@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DimOS Studio</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <strong>DimOS Studio</strong>
+        <span>Go2 Agent 开发工作台</span>
+      </div>
+      <div class="safety"><span id="lock-dot"></span><span id="lock-label">运动已锁定</span></div>
+    </header>
+
+    <nav>
+      <button class="tab active" data-page="robot">机器人</button>
+      <button class="tab" data-page="agent">Agent</button>
+      <button class="tab" data-page="skill">Skill 开发</button>
+      <button class="tab" data-page="settings">模型与参数</button>
+      <button class="tab" data-page="logs">日志</button>
+    </nav>
+
+    <main>
+      <section id="page-robot" class="page active">
+        <h1>连接与启动</h1>
+        <div class="grid two">
+          <article>
+            <h2>Go2 连接</h2>
+            <label>机器狗 IP <input id="robot-ip" /></label>
+            <label>Teleop 中显示的名字 <input id="robot-name" /></label>
+            <label>信令端口 <input id="signal-port" type="number" /></label>
+            <div class="actions">
+              <button id="discover-robot" class="primary">自动发现机器狗</button>
+              <button id="save-connection">保存</button>
+              <button id="check-robot">检测端口</button>
+            </div>
+            <pre id="robot-result">尚未检测</pre>
+          </article>
+          <article>
+            <h2>官方 Hosted Teleop（推荐）</h2>
+            <div id="runtime-status" class="status">检查中…</div>
+            <p>这会恢复昨天使用的官方摄像头、地图、摇杆和急停页面。</p>
+            <label>Dimensional Teleop 密钥
+              <input id="teleop-key" type="password" autocomplete="off" placeholder="dtk_..." />
+            </label>
+            <div id="teleop-key-status" class="status">检查密钥中…</div>
+            <button id="save-teleop-key">安全保存到 macOS 钥匙串</button>
+            <label>启动确认
+              <input id="teleop-confirmation" placeholder="输入 START TELEOP" />
+            </label>
+            <div class="actions">
+              <button id="start-hosted-teleop" class="danger">启动官方遥控连接</button>
+              <a class="button-link primary" href="https://teleop.dimensionalos.com/" target="_blank" rel="noreferrer">打开官方遥控台</a>
+              <button id="stop-runtime">停止连接</button>
+            </div>
+            <p class="warning">启动后允许真人通过官方页面遥控，但不会自动站立。先确认机器狗周围无人、无台阶，再在官方页面操作。</p>
+          </article>
+        </div>
+
+        <article class="secondary-runtime">
+          <h2>开发与调试运行</h2>
+          <p>下面是自定义 Agent/Skill 的调试入口，不是官方遥控页面。</p>
+          <div class="actions">
+              <button id="connect-hardware-readonly" class="primary">连接真实 Go2（运动锁定）</button>
+              <button id="start-sim" class="primary">启动仿真</button>
+          </div>
+          <p>“连接真实 Go2（运动锁定）”只读取相机、雷达和状态，拒绝运动命令，也不会自动站立。</p>
+          <details>
+            <summary>高级：启动自定义 Agent 的真实运动</summary>
+            <p class="warning">必须先关闭运动锁，再输入 START GO2。这与上面的真人 Teleop 是两条不同链路。</p>
+            <input id="hardware-confirmation" placeholder="输入 START GO2" />
+            <button id="start-hardware" class="danger">启动自定义 Agent</button>
+          </details>
+          <div class="links">
+            <a href="http://127.0.0.1:7779/command-center" target="_blank">自定义 Agent 命令页</a>
+            <a href="http://127.0.0.1:7779" target="_blank">Rerun 调试页</a>
+          </div>
+        </article>
+      </section>
+
+      <section id="page-agent" class="page">
+        <h1>给 Agent 下任务</h1>
+        <article>
+          <label>任务
+            <textarea id="agent-message" rows="5" placeholder="例如：观察前方环境，发现障碍就停下并告诉我。"></textarea>
+          </label>
+          <div class="actions">
+            <button id="send-agent" class="primary">发送给 Agent</button>
+            <button id="load-tools">查看可用技能</button>
+          </div>
+          <pre id="agent-result">DimOS Agent 启动后才能发送。</pre>
+        </article>
+      </section>
+
+      <section id="page-skill" class="page">
+        <h1>Skill 开发</h1>
+        <p>这里编辑的是已接入 DimOS 的外部 Blueprint。保存后重启 DimOS 即可加载。</p>
+        <div id="skill-path" class="path"></div>
+        <textarea id="skill-source" class="code" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="reload-skill">重新读取</button>
+          <button id="save-skill" class="primary">验证并保存</button>
+        </div>
+        <pre id="skill-result"></pre>
+      </section>
+
+      <section id="page-settings" class="page">
+        <h1>模型与参数</h1>
+        <article class="form">
+          <label>Blueprint <input id="blueprint" /></label>
+          <label>Agent 模型 <input id="agent-model" /></label>
+          <label>视觉模型
+            <select id="detection-model">
+              <option value="moondream">moondream</option>
+              <option value="qwen">qwen</option>
+            </select>
+          </label>
+          <label>导航速度倍率（0.1–1.0） <input id="navigation-speed-scale" type="number" min="0.1" max="1" step="0.05" /></label>
+          <label class="check"><input id="obstacle-avoidance" type="checkbox" /> 开启避障</label>
+          <label class="check danger-text"><input id="movement-locked" type="checkbox" /> 运动锁（强烈建议保持开启）</label>
+          <label>Agent 系统提示词
+            <textarea id="system-prompt" rows="7"></textarea>
+          </label>
+          <button id="save-settings" class="primary">保存参数</button>
+          <pre id="settings-result"></pre>
+        </article>
+      </section>
+
+      <section id="page-logs" class="page">
+        <h1>运行日志</h1>
+        <button id="refresh-logs">刷新</button>
+        <pre id="runtime-logs" class="logs">暂无日志</pre>
+      </section>
+    </main>
+
+    <div id="toast" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

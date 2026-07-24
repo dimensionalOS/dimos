@@ -25,6 +25,7 @@ from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
+from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -67,6 +68,10 @@ class ConnectionConfig(ModuleConfig):
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
+    # Read-only sessions keep sensor streams but reject every motion command.
+    movement_enabled: bool = True
+    # Existing behavior is preserved by default. Studio read-only sessions disable this.
+    auto_stand: bool = True
     velocity_api: bool = False
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
@@ -338,11 +343,18 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
 
-        self.standup()
-        time.sleep(3)
-        self.connection.balance_stand()
+        if self.config.auto_stand and self.config.movement_enabled:
+            self.standup()
+            time.sleep(3)
+            self.connection.balance_stand()
+        else:
+            logger.info(
+                "Go2 connected without changing posture",
+                movement_enabled=self.config.movement_enabled,
+                auto_stand=self.config.auto_stand,
+            )
 
-        if self.config.mode == Go2Mode.RAGE:
+        if self.config.mode == Go2Mode.RAGE and self.config.movement_enabled:
             self.connection.set_rage_mode(True)
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
@@ -350,10 +362,11 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def stop(self) -> None:
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
-        try:
-            self.liedown()
-        except Exception:
-            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
+        if self.config.auto_stand and self.config.movement_enabled:
+            try:
+                self.liedown()
+            except Exception:
+                logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
         if self.connection:
             try:
@@ -407,21 +420,33 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked move command because movement is disabled")
+            return False
         return self.connection.move(twist, duration)
 
     @rpc
     def standup(self) -> bool:
         """Make the robot stand up."""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked standup because movement is disabled")
+            return False
         return self.connection.standup()
 
     @rpc
     def liedown(self) -> bool:
         """Make the robot lie down."""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked liedown because movement is disabled")
+            return False
         return self.connection.liedown()
 
     @rpc
     def balance_stand(self) -> bool:
         """Enter BalanceStand: neutral state for switching locomotion modes"""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked balance stand because movement is disabled")
+            return False
         return self.connection.balance_stand()
 
     @rpc
@@ -430,6 +455,9 @@ class GO2Connection(Module, Camera, Pointcloud):
         On the WebRTC backend this re-establishes the BalanceStand
         precondition before toggling; sim backends are no-ops.
         """
+        if not self.config.movement_enabled:
+            logger.warning("Blocked rage mode because movement is disabled")
+            return False
         result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode", enabled=enable)
         return result
@@ -437,6 +465,9 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def sport_command(self, api_id: int) -> bool:
         """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked sport command because movement is disabled", api_id=api_id)
+            return False
         return self.connection.sport_command(api_id)
 
     @rpc
@@ -452,6 +483,9 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def switch_joystick(self, enable: bool = True) -> bool:
         """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
+        if not self.config.movement_enabled:
+            logger.warning("Blocked joystick switch because movement is disabled")
+            return False
         return self.connection.switch_joystick(enable)
 
     @rpc
@@ -490,6 +524,14 @@ class GO2Connection(Module, Camera, Pointcloud):
         Returns:
             The result of the publish request
         """
+        blocked_topics = {
+            RTC_TOPIC["MOTION_SWITCHER"],
+            RTC_TOPIC["SPORT_MOD"],
+            RTC_TOPIC["WIRELESS_CONTROLLER"],
+        }
+        if not self.config.movement_enabled and topic in blocked_topics:
+            logger.warning("Blocked motion publish because movement is disabled", topic=topic)
+            return {"status": "blocked", "message": "Movement is disabled by DimOS Studio"}
         return self.connection.publish_request(topic, data)
 
     @skill

@@ -1,0 +1,136 @@
+"""Tests for the safe, local DimOS Studio API."""
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
+
+from dimos.web.studio.app import create_app
+from dimos.web.studio.service import StudioService, validate_skill_source
+
+VALID_SKILL = """\
+from dimos.agents.annotation import skill
+from dimos.core.module import Module
+
+class TestSkills(Module):
+    @skill
+    def hello(self, name: str) -> str:
+        \"\"\"Say hello without moving a robot.\"\"\"
+        return f"hello {name}"
+"""
+
+
+def test_validate_skill_source() -> None:
+    result = validate_skill_source(VALID_SKILL)
+    assert result == {"valid": True, "errors": [], "skills": ["hello"]}
+
+
+def test_reject_skill_without_annotations() -> None:
+    result = validate_skill_source(VALID_SKILL.replace("name: str", "name").replace(" -> str", ""))
+    assert result["valid"] is False
+    assert len(result["errors"]) == 2
+
+
+def test_studio_settings_and_skill_round_trip(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    app = create_app(tmp_path / "settings.json", skill_path)
+    client = TestClient(app)
+
+    assert client.get("/api/health").json()["ok"] is True
+    settings = client.get("/api/settings").json()
+    settings["agent_model"] = "ollama:qwen3:8b"
+    assert client.put("/api/settings", json=settings).status_code == 200
+    assert client.get("/api/settings").json()["agent_model"] == "ollama:qwen3:8b"
+
+    skill = client.get("/api/skill").json()
+    assert skill["skills"] == ["hello"]
+    assert client.put("/api/skill", json={"source": skill["source"]}).status_code == 200
+
+
+def test_hardware_start_requires_unlock_and_confirmation(tmp_path: Path) -> None:
+    service = StudioService(
+        settings_path=tmp_path / "settings.json",
+        skill_path=tmp_path / "skills.py",
+    )
+    service.save_settings(service.load_settings())
+
+    try:
+        service.start_runtime("hardware", "START GO2")
+    except ValueError as exc:
+        assert "运动锁" in str(exc)
+    else:
+        raise AssertionError("hardware start must stay locked by default")
+
+
+def test_command_preview_applies_model_and_speed_settings(tmp_path: Path) -> None:
+    service = StudioService(
+        settings_path=tmp_path / "settings.json",
+        skill_path=tmp_path / "skills.py",
+    )
+    settings = service.load_settings().model_copy(
+        update={"agent_model": "ollama:qwen3:8b", "navigation_speed_scale": 0.25}
+    )
+    service.save_settings(settings)
+
+    command = service.command_preview("simulation")
+
+    assert command[:3] == [service._dimos_executable(), "--simulation", "mujoco"]
+    assert command[command.index("--nerf-speed") + 1] == "0.25"
+    assert "mcpclient.model=ollama:qwen3:8b" in command
+
+
+def test_readonly_hardware_command_disables_motion(tmp_path: Path) -> None:
+    service = StudioService(
+        settings_path=tmp_path / "settings.json",
+        skill_path=tmp_path / "skills.py",
+    )
+
+    command = service.command_preview("hardware_readonly")
+
+    assert "--simulation" not in command
+    assert "go2connection.movement_enabled=false" in command
+    assert "go2connection.auto_stand=false" in command
+
+
+def test_parse_go2_discovery_output() -> None:
+    output = """\
+SOURCE NAME           IP              MAC                 SERIAL
+LAN    -              30.201.217.128  -                   B42D1000PC4C1M86
+"""
+
+    robots = StudioService._parse_discovery_output(output)
+
+    assert robots == [
+        {
+            "source": "LAN",
+            "name": "",
+            "ip": "30.201.217.128",
+            "mac": "",
+            "serial": "B42D1000PC4C1M86",
+        }
+    ]
+
+
+def test_hosted_teleop_uses_keychain_key_only_in_environment(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    service = StudioService(
+        settings_path=tmp_path / "settings.json",
+        skill_path=tmp_path / "skills.py",
+    )
+    settings = service.load_settings().model_copy(
+        update={"robot_ip": "30.201.217.128", "robot_name": "Go2_Test"}
+    )
+    monkeypatch.setattr(service, "_load_teleop_key", lambda: "dtk_test_secret")
+
+    command = service._build_command(settings, "hosted_teleop")
+    environment = service._build_environment(settings, "hosted_teleop")
+
+    assert "teleop-hosted-go2-transport" in command
+    assert "go2connection.auto_stand=false" in command
+    assert all("dtk_test_secret" not in argument for argument in command)
+    assert environment["TRANSPORTS__BROKER__API_KEY"] == "dtk_test_secret"
+    assert environment["TRANSPORTS__BROKER__ROBOT_NAME"] == "Go2_Test"
+    assert "30.201.217.128" in environment["NO_PROXY"].split(",")
