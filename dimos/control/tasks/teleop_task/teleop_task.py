@@ -94,6 +94,13 @@ class TeleopIKTaskConfig:
     max_target_rot_deg: float | None = None  # chase-window rotation about the current EE
     joint_limit_margin_deg: float = 0.0  # keep commands this far inside the URDF limits
     orientation_weight: float = 1.0  # below 1.0, position wins over orientation in the solve
+    posture_weight: float | None = None  # pink only: null-space pull toward the warm-start pose
+    # Fixed tool point expressed in the ee_joint frame (e.g. the grasp center
+    # past a gripper). The anchor, chase window and lag telemetry all work at
+    # this point and solve targets convert back to the ee_joint frame, so both
+    # solvers run unchanged. Without it the controlled point is the ee_joint
+    # origin and any orientation drift sweeps the physical tool sideways.
+    tool_offset_m: tuple[float, float, float] | None = None
     rotation_frame: Literal["world", "local"] = "world"  # local: delta composes in the EE frame
     solver: Literal["dls", "pink"] = "dls"  # pink needs the manipulation extra; falls back to dls
     hand: Literal["left", "right"] | None = None
@@ -162,10 +169,13 @@ class TeleopIKTask(BaseControlTask):
                     PinkTeleopIKConfig,
                 )
 
+                pink_config = PinkTeleopIKConfig(orientation_cost=config.orientation_weight)
+                if config.posture_weight is not None:
+                    pink_config.posture_cost = config.posture_weight
                 self._ik = PinkTeleopIK.from_model_path(
                     config.model_path,
                     config.ee_joint_id,
-                    PinkTeleopIKConfig(orientation_cost=config.orientation_weight),
+                    pink_config,
                 )
             except ImportError as exc:
                 logger.warning(
@@ -185,6 +195,12 @@ class TeleopIKTask(BaseControlTask):
                 f"TeleopIKTask {name}: model DOF ({self._ik.nq}) != "
                 f"joint_names count ({self._num_joints})"
             )
+
+        self._tool_offset: pinocchio.SE3 | None = None
+        self._tool_offset_inv: pinocchio.SE3 | None = None
+        if config.tool_offset_m is not None:
+            self._tool_offset = pinocchio.SE3(np.eye(3), np.array(config.tool_offset_m))
+            self._tool_offset_inv = self._tool_offset.inverse()
 
         # Thread-safe target state
         self._lock = threading.Lock()
@@ -271,7 +287,7 @@ class TeleopIKTask(BaseControlTask):
                     f"TeleopIKTask {self._name}: cannot capture initial pose, joint state unavailable"
                 )
                 return None
-            initial_pose = self._ik.forward_kinematics(q_current)
+            initial_pose = self._tool_fk(q_current)
             with self._lock:
                 self._initial_ee_pose = initial_pose
 
@@ -304,7 +320,7 @@ class TeleopIKTask(BaseControlTask):
         # windowed solve still exceeds the gate (near singularities the
         # joint-space cost of a window-sized step varies widely), retry with a
         # progressively smaller window instead of giving up.
-        ee_now = self._ik.forward_kinematics(q_current)
+        ee_now = self._tool_fk(q_current)
         raw_lag = float(np.linalg.norm(target_pose.translation - ee_now.translation))
         solve_t0 = time.perf_counter()
 
@@ -321,7 +337,10 @@ class TeleopIKTask(BaseControlTask):
             candidate_target = target_pose
             if windowed:
                 candidate_target = self._windowed_target(q_current, target_pose, scale)
-            q_candidate, converged, final_error = self._ik.solve(candidate_target, q_current)
+            solve_target = candidate_target
+            if self._tool_offset_inv is not None:
+                solve_target = candidate_target * self._tool_offset_inv
+            q_candidate, converged, final_error = self._ik.solve(solve_target, q_current)
             if not converged:
                 logger.debug(
                     f"TeleopIKTask {self._name}: IK did not converge "
@@ -396,7 +415,7 @@ class TeleopIKTask(BaseControlTask):
         scale: float,
     ) -> pinocchio.SE3:
         """Clamp the target into the chase window around the current EE pose."""
-        ee_now = self._ik.forward_kinematics(q_current)
+        ee_now = self._tool_fk(q_current)
         position = target_pose.translation
         rotation = target_pose.rotation
         if self._config.max_target_offset_m is not None:
@@ -412,6 +431,13 @@ class TeleopIKTask(BaseControlTask):
             if angle > max_angle:
                 rotation = ee_now.rotation @ pinocchio.exp3(w * (max_angle / angle))
         return pinocchio.SE3(rotation, position)
+
+    def _tool_fk(self, q: NDArray[np.floating[Any]]) -> pinocchio.SE3:
+        """Pose of the controlled point: the tool point if configured, else the ee_joint."""
+        pose = self._ik.forward_kinematics(q)
+        if self._tool_offset is not None:
+            pose = pose * self._tool_offset
+        return pose
 
     def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
         """Get current joint positions from coordinator state."""
@@ -503,6 +529,8 @@ class TeleopIKTaskParams(BaseConfig):
     max_target_rot_deg: float | None = None
     joint_limit_margin_deg: float = 0.0
     orientation_weight: float = 1.0
+    posture_weight: float | None = None
+    tool_offset_m: tuple[float, float, float] | None = None
     rotation_frame: Literal["world", "local"] = "world"
     solver: Literal["dls", "pink"] = "dls"
     hand: Literal["left", "right"] | None = None
@@ -527,6 +555,8 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             max_target_rot_deg=params.max_target_rot_deg,
             joint_limit_margin_deg=params.joint_limit_margin_deg,
             orientation_weight=params.orientation_weight,
+            posture_weight=params.posture_weight,
+            tool_offset_m=params.tool_offset_m,
             rotation_frame=params.rotation_frame,
             solver=params.solver,
             hand=params.hand,

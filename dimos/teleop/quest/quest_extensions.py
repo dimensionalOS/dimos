@@ -303,6 +303,12 @@ class R1LiteQuestTeleopConfig(VideoArmTeleopConfig):
     deadzone: float = 0.1
     joy_timeout: float = 0.5  # seconds without Joy before a controller stops driving
     motion_gain: float = 1.0  # scales hand position deltas; >1 = arm covers more than the hand
+    # Soft radial deadband on the raw hand delta, applied before gain: motion
+    # under this radius is ignored and larger motion is shortened by it, so
+    # there is no jump at the threshold. Isolates wrist rotation (the
+    # controller's tracked origin sweeps an arc when the wrist rolls) and
+    # absorbs hand tremor while holding.
+    position_deadband_m: float = 0.0
     # The WebXR frame's forward is wherever the operator faces; the arm frame
     # is the robot's forward. Facing the robot means 180.
     operator_yaw_deg: float = 0.0
@@ -372,10 +378,19 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
         initial = self._initial_poses.get(hand)
         if current is None or initial is None:
             return None
+        dx = current.position.x - initial.position.x
+        dy = current.position.y - initial.position.y
+        dz = current.position.z - initial.position.z
+        deadband = self.config.position_deadband_m
+        if deadband > 0.0:
+            norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if norm <= deadband:
+                dx = dy = dz = 0.0
+            else:
+                shrink = (norm - deadband) / norm
+                dx, dy, dz = dx * shrink, dy * shrink, dz * shrink
         gain = self.config.motion_gain
-        dx = (current.position.x - initial.position.x) * gain
-        dy = (current.position.y - initial.position.y) * gain
-        dz = (current.position.z - initial.position.z) * gain
+        dx, dy, dz = dx * gain, dy * gain, dz * gain
         yaw = math.radians(self.config.operator_yaw_deg)
         if yaw:
             cos_y, sin_y = math.cos(yaw), math.sin(yaw)

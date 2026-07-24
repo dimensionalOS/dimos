@@ -290,6 +290,29 @@ def test_local_rotation_uses_hand_frame_delta() -> None:
     )
 
 
+def test_position_deadband_zeroes_small_deltas() -> None:
+    m = _module(position_deadband_m=0.02)
+    m._is_engaged[Hand.LEFT] = True
+    m._initial_poses[Hand.LEFT] = PoseStamped()
+    m._current_poses[Hand.LEFT] = PoseStamped(position=[0.01, 0.01, 0.0])
+    out = m._get_output_pose(Hand.LEFT)
+    assert out.position.x == 0.0
+    assert out.position.y == 0.0
+    assert out.position.z == 0.0
+
+
+def test_position_deadband_is_soft_and_applies_before_gain() -> None:
+    # Soft: motion just past the threshold produces a small output, not a jump
+    # of threshold size. Before gain: the band is in physical hand units.
+    m = _module(position_deadband_m=0.02, motion_gain=2.0)
+    m._is_engaged[Hand.LEFT] = True
+    m._initial_poses[Hand.LEFT] = PoseStamped()
+    m._current_poses[Hand.LEFT] = PoseStamped(position=[0.05, 0.0, 0.0])
+    out = m._get_output_pose(Hand.LEFT)
+    assert out.position.x == pytest.approx((0.05 - 0.02) * 2.0)
+    assert out.position.y == 0.0
+
+
 def test_motion_gain_scales_position_delta_only() -> None:
     m = _module(motion_gain=1.3)
     m._is_engaged[Hand.LEFT] = True
@@ -401,7 +424,65 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
             assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
             assert tasks[name].params["rotation_frame"] == "local"
-            assert tasks[name].params["orientation_weight"] == 0.2
+            assert tasks[name].params["orientation_weight"] == 1.0
+            assert tasks[name].params["posture_weight"] == 0.05
+            assert tasks[name].params["tool_offset_m"] == (0.17, 0.0, 0.0)
+
+
+def test_module_local_rotation_pairs_with_task_rotation_frame() -> None:
+    # The module publishes the orientation delta in the hand's own frame and
+    # the task composes it in the gripper frame; mismatched pairing garbles
+    # wrist rotation. Pin both blueprints to the paired configuration.
+    for blueprint in (r1lite_quest_teleop, r1lite_quest_teleop_sim):
+        kwargs = next(
+            atom.kwargs for atom in blueprint.blueprints if atom.module is R1LiteQuestTeleopModule
+        )
+        assert kwargs["local_rotation"] is True
+        tasks = {t.name: t for t in _coordinator_tasks(blueprint)}
+        for name in ("teleop_left_arm", "teleop_right_arm"):
+            assert tasks[name].params["rotation_frame"] == "local"
+
+
+def test_hardware_blueprint_sets_position_deadband() -> None:
+    kwargs = next(
+        atom.kwargs
+        for atom in r1lite_quest_teleop.blueprints
+        if atom.module is R1LiteQuestTeleopModule
+    )
+    assert kwargs["position_deadband_m"] == 0.02
+
+
+def test_teleop_task_controls_the_tool_point() -> None:
+    # The gripper's grasp center sits well past the last joint; controlling
+    # the joint-6 origin with orientation loose lets wrist swings sweep the
+    # physical tool sideways. The task must anchor, window and solve for the
+    # offset tool point.
+    import numpy as np
+    import pinocchio
+
+    from dimos.control.tasks.teleop_task.teleop_task import TeleopIKTask, TeleopIKTaskConfig
+    from dimos.manipulation.planning.kinematics.pinocchio_ik import PinocchioIK
+
+    offset = (0.17, 0.0, 0.0)
+    task = TeleopIKTask(
+        "tool_point_test",
+        TeleopIKTaskConfig(
+            joint_names=R1LITE_LEFT_ARM_JOINTS,
+            model_path=R1LITE_LEFT_ARM_MODEL,
+            ee_joint_id=6,
+            hand="left",
+            solver="dls",
+            tool_offset_m=offset,
+        ),
+    )
+    ik = PinocchioIK.from_model_path(R1LITE_LEFT_ARM_MODEL, ee_joint_id=6)
+    q = np.array([0.3, -0.5, 0.4, 0.2, -0.3, 0.1])
+    wrist = ik.forward_kinematics(q)
+    tool = task._tool_fk(q)
+    expected = wrist * pinocchio.SE3(np.eye(3), np.array(offset))
+    assert np.allclose(tool.translation, expected.translation)
+    assert np.allclose(tool.rotation, wrist.rotation)
+    assert np.linalg.norm(tool.translation - wrist.translation) == pytest.approx(0.17)
 
 
 def test_teleop_chases_through_folded_home_and_teleports() -> None:

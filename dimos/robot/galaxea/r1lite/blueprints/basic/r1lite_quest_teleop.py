@@ -80,7 +80,18 @@ _ARM_IK_LIMITS = {
     # orientation_weight becomes the FrameTask orientation cost. Falls back to
     # dls automatically where the manipulation extra is absent.
     "solver": "pink",
-    "orientation_weight": 0.2,
+    # Hold the hand orientation as firmly as position. At 0.2 the solver
+    # reached position targets by swinging the free wrist, and with the tool
+    # point 17 cm out every swing threw the gripper tip sideways: commanded
+    # translation surfaced as wrist yaw and rolls dragged the whole arm.
+    "orientation_weight": 1.0,
+    # Null-space anchor strong enough to stop base/elbow drift during pure
+    # translation, weak enough to never fight the frame task.
+    "posture_weight": 0.05,
+    # Grasp center between the fingertips, in the joint-6 frame: 0.08165 to
+    # the gripper mount + 0.0369 to the finger base (robot URDF) + ~0.05 to
+    # mid-finger. Control the point the operator watches, not the wrist.
+    "tool_offset_m": (0.17, 0.0, 0.0),
     "rotation_frame": "local",
     # Ride through pose-stream gaps instead of cycling deactivate/reactivate;
     # catch-up stays bounded by the chase window either way.
@@ -123,7 +134,17 @@ r1lite_quest_teleop = autoconnect(
     # Headset video off: JPEG encode starved the module loop on hardware and
     # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
     # video_enabled back on once the encode is off the critical path.
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, video_enabled=False, motion_gain=1.3),
+    # local_rotation must pair with rotation_frame "local" on the tasks: the
+    # module publishes the orientation delta in the hand's own frame and the
+    # task composes it in the gripper frame. Mismatched pairing garbles wrist
+    # rotation (world-frame delta composed as if hand-local).
+    R1LiteQuestTeleopModule.blueprint(
+        task_names=_TASK_NAMES,
+        video_enabled=False,
+        motion_gain=1.3,
+        local_rotation=True,
+        position_deadband_m=0.02,
+    ),
     # tracking_speed is the actual arm speed (the vendor tracker follows each
     # target at this rate); 0.5 measured as the dominant slowness. Teleop-only
     # override, next ladder step is 1.0 after hardware feel check.
@@ -178,7 +199,7 @@ def _sim_arm_model(side: str, y_offset: float) -> RobotModelConfig:
 
 
 r1lite_quest_teleop_sim = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES),
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=True),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
         tasks=[*r1lite_standard_tasks(), *_teleop_tasks()],
