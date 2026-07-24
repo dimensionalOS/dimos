@@ -63,6 +63,8 @@ Before running tests it calls `bin/build-test-natives`, which builds any missing
 
 This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
+This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
+
 When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 
 ```bash

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
@@ -24,7 +25,11 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
-from dimos.mapping.occupancy.path_resampling import smooth_resample_path
+from dimos.mapping.occupancy.path_resampling import (
+    ConstrainedPathSmoothingConfig,
+    constrained_smooth_resample_path,
+    smooth_resample_path,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -35,7 +40,6 @@ from dimos.navigation.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.replanning_a_star.local_planner import LocalPlanner, StopMessage
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
-from dimos.navigation.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.replanning_a_star.replan_limiter import ReplanLimiter
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -43,8 +47,28 @@ from dimos.utils.trigonometry import angle_diff
 logger = setup_logger()
 
 
+def _has_stuck_path_progress(
+    *,
+    elapsed_s: float,
+    path_progress_delta_m: float,
+    command_linear_x_m_s: float,
+    goal_distance_m: float,
+    window_s: float,
+    min_path_progress_m: float,
+    min_command_linear_m_s: float,
+    goal_exclusion_m: float,
+) -> bool:
+    return (
+        elapsed_s >= window_s
+        and path_progress_delta_m < min_path_progress_m
+        and command_linear_x_m_s > min_command_linear_m_s
+        and goal_distance_m > goal_exclusion_m
+    )
+
+
 class GlobalPlanner(Resource):
     path: Subject[Path]
+    raw_path: Subject[Path]
     goal_reached: Subject[Bool]
 
     _current_odom: PoseStamped | None = None
@@ -56,7 +80,6 @@ class GlobalPlanner(Resource):
     _navigation_map: NavigationMap
     _navigation_map_near: NavigationMap
     _local_planner: LocalPlanner
-    _position_tracker: PositionTracker
     _replan_limiter: ReplanLimiter
     _disposables: CompositeDisposable
     _stop_planner: Event
@@ -64,32 +87,71 @@ class GlobalPlanner(Resource):
     _replan_reason: StopMessage | None
     _lock: RLock
     _safe_goal_clearance: float
+    _path_length_weight: float
+    _path_cell_cost_weight: float
+    _publish_raw_path: bool
+    _constrained_path_smoothing_enabled: bool
+    _path_smoothing_performance_logging_enabled: bool
+    _path_smoothing_config: ConstrainedPathSmoothingConfig
 
     _safe_goal_tolerance: float = 4.0
     _goal_tolerance: float = 0.2
     _rotation_tolerance: float = math.radians(15)
     _replan_goal_tolerance: float = 0.5
     _stuck_time_window: float = 8.0
-    _stuck_threshold: float = 0.4
+    _stuck_min_path_progress: float = 0.2
+    _stuck_min_command_linear: float = 0.1
     _max_path_deviation: float = 0.9
     _replanning_enabled: bool = True
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(
+        self,
+        global_config: GlobalConfig,
+        *,
+        path_length_weight: float = 1.0,
+        path_cell_cost_weight: float = 3.0,
+        publish_raw_path: bool = False,
+        constrained_path_smoothing_enabled: bool = False,
+        path_smoothing_performance_logging_enabled: bool = False,
+        path_smoothing_iterations: int = 40,
+        path_smoothing_data_weight: float = 0.02,
+        path_smoothing_smoothness_weight: float = 0.45,
+        path_smoothing_max_deviation_m: float = 0.1,
+        path_smoothing_collision_sample_spacing_m: float = 0.05,
+        path_smoothing_max_cost_increase: float = 2.0,
+        path_smoothing_backtracking_factor: float = 0.5,
+        path_smoothing_max_backtracking_steps: int = 3,
+        path_resample_spacing_m: float = 0.1,
+    ) -> None:
         self.path = Subject()
+        self.raw_path = Subject()
         self.goal_reached = Subject()
 
         self._global_config = global_config
+        self._path_length_weight = path_length_weight
+        self._path_cell_cost_weight = path_cell_cost_weight
+        self._publish_raw_path = publish_raw_path
+        self._constrained_path_smoothing_enabled = constrained_path_smoothing_enabled
+        self._path_smoothing_performance_logging_enabled = (
+            path_smoothing_performance_logging_enabled
+        )
+        self._path_smoothing_config = ConstrainedPathSmoothingConfig(
+            spacing_m=path_resample_spacing_m,
+            max_iterations=path_smoothing_iterations,
+            data_weight=path_smoothing_data_weight,
+            smoothness_weight=path_smoothing_smoothness_weight,
+            max_deviation_m=path_smoothing_max_deviation_m,
+            collision_sample_spacing_m=path_smoothing_collision_sample_spacing_m,
+            max_cost_increase=path_smoothing_max_cost_increase,
+            backtracking_factor=path_smoothing_backtracking_factor,
+            max_backtracking_steps=path_smoothing_max_backtracking_steps,
+        )
         self._navigation_map = NavigationMap(self._global_config, "voronoi")
         self._navigation_map_near = NavigationMap(self._global_config, "gradient")
         self._local_planner = LocalPlanner(
             self._global_config, self._navigation_map, self._goal_tolerance
         )
 
-        stuck_threshold = self._stuck_threshold
-        if global_config.simulation:
-            stuck_threshold = 1.0
-
-        self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
         self._replan_limiter = ReplanLimiter()
         self._disposables = CompositeDisposable()
         self._stop_planner = Event()
@@ -125,7 +187,6 @@ class GlobalPlanner(Resource):
             self._current_odom = msg
 
         self._local_planner.handle_odom(msg)
-        self._position_tracker.add_position(msg)
 
     def handle_global_costmap(self, msg: OccupancyGrid) -> None:
         self._navigation_map.update(msg)
@@ -156,14 +217,14 @@ class GlobalPlanner(Resource):
         logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
 
         with self._lock:
-            self._position_tracker.reset_data()
-
             if not but_will_try_again:
                 self._current_goal = None
                 self._goal_reached = arrived
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
+        if self._publish_raw_path:
+            self.raw_path.on_next(Path())
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
@@ -192,7 +253,9 @@ class GlobalPlanner(Resource):
         """Monitor if the robot is stuck, veers off track, or stopped navigating."""
 
         last_id = -1
-        last_stuck_check = time.perf_counter()
+        last_progress_m: float | None = None
+        max_progress_m: float | None = None
+        last_progress_time = time.perf_counter()
 
         while not self._stop_planner.is_set():
             # Wait for either timeout or replan signal from local planner.
@@ -210,7 +273,6 @@ class GlobalPlanner(Resource):
 
                 if reason is not None:
                     self._handle_stop_message(reason)
-                    last_stuck_check = time.perf_counter()
                     continue
 
             with self._lock:
@@ -240,23 +302,56 @@ class GlobalPlanner(Resource):
                     threshold=self._max_path_deviation,
                 )
                 self._replan_path()
-                last_stuck_check = time.perf_counter()
                 continue
 
-            _, new_id = self._local_planner.get_unique_state()
+            local_state, new_id = self._local_planner.get_unique_state()
 
             if new_id != last_id:
                 last_id = new_id
-                last_stuck_check = time.perf_counter()
+                last_progress_m = None
+                max_progress_m = None
+                last_progress_time = time.perf_counter()
                 continue
 
-            if (
-                time.perf_counter() - last_stuck_check > self._stuck_time_window
-                and self._position_tracker.is_stuck()
+            if local_state != "path_following":
+                continue
+
+            path_progress_m = self._local_planner.get_path_progress_m()
+            if path_progress_m is None:
+                continue
+
+            now = time.perf_counter()
+            if max_progress_m is None:
+                max_progress_m = path_progress_m
+                last_progress_m = path_progress_m
+                last_progress_time = now
+                continue
+
+            max_progress_m = max(max_progress_m, path_progress_m)
+            assert last_progress_m is not None
+            progress_delta_m = max_progress_m - last_progress_m
+            if progress_delta_m >= self._stuck_min_path_progress:
+                last_progress_m = max_progress_m
+                last_progress_time = now
+                continue
+
+            if _has_stuck_path_progress(
+                elapsed_s=now - last_progress_time,
+                path_progress_delta_m=progress_delta_m,
+                command_linear_x_m_s=self._local_planner.get_last_command_linear_x_m_s(),
+                goal_distance_m=current_goal.position.distance(current_odom.position),
+                window_s=self._stuck_time_window,
+                min_path_progress_m=self._stuck_min_path_progress,
+                min_command_linear_m_s=self._stuck_min_command_linear,
+                goal_exclusion_m=self._replan_goal_tolerance,
             ):
-                logger.info("Robot is stuck. Replanning.")
+                logger.info(
+                    "Robot is stuck. Replanning.",
+                    replan_attempt=self._replan_limiter.get_attempt(),
+                    path_progress_delta_m=round(progress_delta_m, 3),
+                    **self._local_planner.get_stuck_diagnostics(),
+                )
                 self._replan_path()
-                last_stuck_check = time.perf_counter()
 
     def _on_stopped_navigating(self, stop_message: StopMessage) -> None:
         with self._lock:
@@ -331,22 +426,61 @@ class GlobalPlanner(Resource):
             self.cancel_goal()
             return
 
-        path = self._find_wide_path(safe_goal, current_odom.position)
+        found_path = self._find_wide_path(safe_goal, current_odom.position)
 
-        if not path:
+        if not found_path:
             logger.warning(
                 "No path found to the goal.", x=round(safe_goal.x, 3), y=round(safe_goal.y, 3)
             )
             self.cancel_goal()
             return
 
-        resampled_path = smooth_resample_path(path, current_goal, 0.1)
+        path, costmap = found_path
+        # Keep the grid path visible for diagnostics; only the resampled path
+        # is consumed by LocalPlanner and sent to the movement stack.
+        smoothing_timing: dict[str, float | int] | None = None
+        if self._publish_raw_path:
+            self.raw_path.on_next(path)
+        if self._constrained_path_smoothing_enabled:
+            if self._path_smoothing_performance_logging_enabled:
+                smoothing_timing = {}
+            resampled_path = constrained_smooth_resample_path(
+                path,
+                current_goal,
+                costmap,
+                self._path_smoothing_config,
+                smoothing_timing,
+            )
+        else:
+            resampled_path = smooth_resample_path(
+                path,
+                current_goal,
+                self._path_smoothing_config.spacing_m,
+            )
 
-        self.path.on_next(resampled_path)
+        if smoothing_timing is None:
+            self.path.on_next(resampled_path)
+            self._local_planner.start_planning(resampled_path)
+        else:
+            path_publish_started = time.perf_counter()
+            self.path.on_next(resampled_path)
+            smoothing_timing["path_publish_ms"] = (
+                time.perf_counter() - path_publish_started
+            ) * 1000
 
-        self._local_planner.start_planning(resampled_path)
+            handoff_started = time.perf_counter()
+            self._local_planner.start_planning(resampled_path)
+            smoothing_timing["local_planner_handoff_ms"] = (
+                time.perf_counter() - handoff_started
+            ) * 1000
+            logger.info(
+                "Path smoothing performance.",
+                smoothing_timing=json.dumps(smoothing_timing, separators=(",", ":")),
+            )
 
-    def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
+    def _find_wide_path(
+        self, goal: Vector3, robot_pos: Vector3
+    ) -> tuple[Path, OccupancyGrid] | None:
         #        sizes_to_try: list[float] = [2.2, 1.7, 1.3, 1]
         sizes_to_try: list[float] = [1.1]
 
@@ -354,11 +488,16 @@ class GlobalPlanner(Resource):
             distance = robot_pos.distance(goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
-            self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
-            path = min_cost_astar(costmap, goal, robot_pos)
+            path = min_cost_astar(
+                costmap,
+                goal,
+                robot_pos,
+                distance_weight=self._path_length_weight,
+                cell_cost_weight=self._path_cell_cost_weight,
+            )
             if path and path.poses:
                 logger.info(f"Found path {size}x robot width.")
-                return path
+                return path, costmap
 
         return None
 

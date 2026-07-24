@@ -374,7 +374,10 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             # Always use the same transport backend as the host.
             host_config = kwargs.get("g")
             if host_config is not None:
-                global_config.update(transport=host_config.transport)
+                global_config.update(
+                    transport=host_config.transport,
+                    zenoh_connect=host_config.zenoh_connect,
+                )
 
             state.instances[module_id] = module_class(**kwargs)
 

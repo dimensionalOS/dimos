@@ -18,8 +18,10 @@ import json
 import threading
 from typing import Any
 
+from pydantic import Field
 import zenoh
 
+from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -30,8 +32,8 @@ logger = setup_logger()
 
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
-    connect: list[str] = []
-    listen: list[str] = []
+    connect: list[str] = Field(default_factory=list)
+    listen: list[str] = Field(default_factory=list)
 
     @property
     def session_key(self) -> str:
@@ -76,6 +78,8 @@ class ZenohService(Service):
     def __init__(self, *, session_pool: ZenohSessionPool | None = None, **kwargs: Any) -> None:
         # session_pool is keyword-only so it never reaches the pydantic config
         # (which is extra="forbid"). It rides the same **kwargs path as mode/connect/listen.
+        if "connect" not in kwargs and global_config.zenoh_connect:
+            kwargs["connect"] = [global_config.zenoh_connect]
         super().__init__(**kwargs)
         self._session_pool = session_pool or default_session_pool
         self._session: zenoh.Session | None = None

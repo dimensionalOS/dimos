@@ -760,9 +760,13 @@ jobs:
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
-  # and cancels the whole workflow run.
+  # and cancels the whole workflow run. Fork PR tokens are read-only even
+  # when a job requests `actions: write`, so they cannot cancel upstream runs.
   fail-fast:
-    if: failure()
+    if: >-
+      failure() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     needs: [tests]
     runs-on: ubuntu-latest
     permissions:

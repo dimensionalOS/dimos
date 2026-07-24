@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 try:
-    from dimos_voxel_ray_tracing import (  # noqa: F401  (re-exported)
+    from dimos_voxel_ray_tracing import (
         VoxelRayMapper,
         local_bounds,
     )
@@ -26,3 +26,5 @@ except ImportError as e:
         "dimos_voxel_ray_tracing is not built. Run: "
         "uv run maturin develop --uv -m dimos/mapping/ray_tracing/rust/Cargo.toml"
     ) from e
+
+__all__ = ["VoxelRayMapper", "local_bounds"]

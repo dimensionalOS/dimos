@@ -33,9 +33,6 @@ __pycache__
 
 .bash_history
 
-# Ignore all test data directories but allow compressed files
-/data/*
-!/data/.lfs/
 
 # node env (used by devcontainers cli)
 node_modules
@@ -45,7 +42,6 @@ node_modules
 # Ignore build artifacts
 dist/
 build/
-
 # Rust build artifacts
 **/target/
 **/*.rs.bk

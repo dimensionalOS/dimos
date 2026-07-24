@@ -50,6 +50,8 @@ class PController:
         self._global_config = global_config
         self._speed = speed
         self._control_frequency = control_frequency
+        if global_config.robot_model == "m20":
+            self._min_angular_velocity = 0.6
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array([current_odom.position.x, current_odom.position.y])

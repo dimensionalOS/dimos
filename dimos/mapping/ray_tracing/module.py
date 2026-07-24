@@ -37,6 +37,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Proportion of points that are ray traced
     # Higher subsample means less tracing
     ray_subsample: int = 1
+    # Input cloud points are already expressed in the odometry/world frame.
+    registered_clouds: bool = False
     # Extend rays past the end point to clear shadows
     shadow_depth: float = 0.1
     # Ignore voxels within this range of points for ray tracing clearing
@@ -59,7 +61,12 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
-    """Rust voxel-map module with raycast clearing of dynamic objects."""
+    """Rust voxel-map module with raycast clearing of dynamic objects.
+
+    region_bounds describes the cylinder local_map covers, packed into a
+    PoseStamped. Position holds the center. Orientation holds radius, z_min,
+    z_max, and zero. It shares the local_map stamp.
+    """
 
     config: RayTracingVoxelMapConfig
 

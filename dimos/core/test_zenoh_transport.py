@@ -234,12 +234,26 @@ def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
     assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
 
 
+def test_zenoh_transport_pickle_preserves_connect_endpoint() -> None:
+    endpoint = "tcp/10.21.31.103:7447"
+    t = ZenohTransport("dimos/camera/color", Image, connect=[endpoint])
+    t2 = pickle.loads(pickle.dumps(t))
+    assert t2.zenoh.config.connect == [endpoint]
+
+
 def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:
     t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
     t2 = pickle.loads(pickle.dumps(t))
     assert type(t2) is pZenohTransport
     assert t2.topic == "dimos/human_input"
     assert t2._zenoh_topic == t._zenoh_topic
+
+
+def test_pzenoh_transport_pickle_preserves_connect_endpoint() -> None:
+    endpoint = "tcp/10.21.31.103:7447"
+    t = pZenohTransport("dimos/human_input", connect=[endpoint])
+    t2 = pickle.loads(pickle.dumps(t))
+    assert t2.zenoh.config.connect == [endpoint]
 
 
 def test_coerce_lcm_to_zenoh_typed(use_zenoh) -> None:

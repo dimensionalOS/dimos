@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.core.global_config import global_config
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
 
@@ -31,6 +32,19 @@ def test_different_modes_produce_different_keys() -> None:
     peer = ZenohConfig(mode="peer")
     client = ZenohConfig(mode="client")
     assert peer.session_key != client.session_key
+
+
+def test_service_uses_global_connect_endpoint(monkeypatch, session_pool) -> None:
+    endpoint = "tcp/10.21.31.103:7447"
+    monkeypatch.setattr(global_config, "zenoh_connect", endpoint)
+    svc = ZenohService(session_pool=session_pool)
+    assert svc.config.connect == [endpoint]
+
+
+def test_explicit_connect_overrides_global_endpoint(monkeypatch, session_pool) -> None:
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/10.21.31.103:7447")
+    svc = ZenohService(connect=["tcp/127.0.0.1:7447"], session_pool=session_pool)
+    assert svc.config.connect == ["tcp/127.0.0.1:7447"]
 
 
 def test_start_creates_session(session_pool) -> None:

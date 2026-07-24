@@ -56,6 +56,21 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
     assert [r.tags["frame_count"] for r in results] == [3, 6, 7]
 
 
+def test_negative_emit_every_is_rejected() -> None:
+    with pytest.raises(ValueError, match="emit_every"):
+        RayTraceMap(emit_every=-1)
+
+
+def test_pose_propagates_to_emitted_obs() -> None:
+    pose = (1.5, -2.0, 0.5)
+    obs = _obs(_cube(), ts=1.0, pose=pose)
+
+    [emitted] = list(RayTraceMap()(iter([obs])))
+
+    assert emitted.pose_tuple is not None
+    assert emitted.pose_tuple[:3] == pose
+
+
 def test_poseless_obs_are_skipped() -> None:
     points = _cube()
     poseless = Observation(id=1, ts=0.0, pose=None, _data=PointCloud2.from_numpy(points))
