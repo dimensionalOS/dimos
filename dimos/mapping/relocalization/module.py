@@ -349,15 +349,7 @@ class RelocalizationModule(Module):
         return objects
 
     def _on_local_map(self, msg: PointCloud2) -> None:
-        """Poll the RANSAC prior on the module's timer, and on cold start fire a pending
-        fiducial fix.
-
-        RANSAC lives on THIS path because it GENERATES its candidates from the cloud in
-        hand; the fiducial reaches here only when its burst beat the first cached cloud.
-        ``min_local_points`` gates the RANSAC prior ONLY -- a tag burst fires below the
-        floor, and a starved RANSAC cycle leaves the timer unmoved so it re-fires on the
-        next dense frame.
-        """
+        """Poll the RANSAC prior on the module's timer; on cold start fire a pending fiducial fix."""
         self._last_local_map = msg  # what a burst-triggered fire judges against
         now = self._now_fn()
         # _ransac_prior is always constructed, so gate it on the enabled set (the toggle);

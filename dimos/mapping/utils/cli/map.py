@@ -26,9 +26,8 @@ import rerun as rr
 import rerun.blueprint as rrb
 import typer
 
-# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d) are
-# deferred into the function bodies below so that `dimos --help` — which imports this
-# module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
+# Heavy dimos imports (torch, transformers, open3d) are deferred into the function
+# bodies so `dimos --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory2.stream import Stream
@@ -38,9 +37,7 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 PATH_THICKNESS = 0.01
-# Pin pattern (from dimos/memory2/vis/space/rerun.py): thin vertical line
-# from each marker with the label floating at the top so multi-marker
-# labels never overlap the boxes.
+# Pin stem length (dimos/memory2/vis/space/rerun.py): floats the label above the box so labels never overlap.
 MARKER_STEM = 1.0
 
 # Conventional world frames tried in order when --frame isn't given.
@@ -121,15 +118,7 @@ def _accumulate(
     carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
-    """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame.
-
-    ``register`` maps each observation to the transform lifting its cloud into
-    the world frame; ``None`` means no transform is available and the frame is
-    skipped. With ``register=None`` all clouds are assumed world-registered.
-
-    Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
-    Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
-    """
+    """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame; returns the final PointCloud2 (None if empty)."""
     from dimos.mapping.voxels import VoxelMapTransformer
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
@@ -188,11 +177,7 @@ def _log_reconstruction(
     aggregated_markers: dict[int, _Pose7] | None = None,
     bottom_cutoff: float | None = None,
 ) -> None:
-    """Log maps, paths, the PGO graph, and markers to the active rerun recording.
-
-    ``aggregated_markers`` (marker_id -> map_T_tag) draws one aggregated box per id
-    alongside the per-track boxes, as a separately-toggleable entity.
-    """
+    """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
     from dimos.memory2.vis.color import Color
     from dimos.msgs.geometry_msgs.Transform import Transform
 
@@ -274,8 +259,7 @@ def _log_reconstruction(
         )
 
         if graph is not None:
-            # PGO-correct each raw marker pose: lift it from world_raw into
-            # world_corrected so it lines up with pgo_map.
+            # PGO-correct each raw marker pose so it lines up with pgo_map.
             pgo_centers: list[tuple[float, float, float]] = []
             pgo_quats: list[tuple[float, float, float, float]] = []
             for d in marker_dets:
@@ -342,13 +326,7 @@ def _aggregate_marker_map(
     dets: list[Observation[Any]],
     graph: PoseGraph | None,
 ) -> dict[int, tuple[_Pose7, int]]:
-    """Aggregate every detection of each marker_id into ONE ``map_T_tag`` pose.
-
-    Detections are PGO-corrected (``graph.correct``; raw world when ``graph=None``),
-    grouped by marker_id, and reduced to one robust pose by the Huber-IRLS +
-    Markley-quaternion estimator (``apriltag_aggregation.robust_cluster_pose``).
-    Returns ``marker_id -> (map_T_tag 7-vec, n_detections_aggregated)``.
-    """
+    """Aggregate every detection of each marker_id into ONE ``map_T_tag`` pose via the Huber-IRLS + Markley-quaternion ``robust_cluster_pose``; returns marker_id -> (7-vec, n_detections)."""
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.perception.fiducial.apriltag_aggregation import (
         DEFAULT_HUBER_DELTA_M,
@@ -389,11 +367,7 @@ def _aggregate_marker_map(
 def _write_marker_map(
     path: Path, aggregated: dict[int, tuple[_Pose7, int]], *, source: str
 ) -> None:
-    """Serialize the aggregated marker locations to a ``map_T_tag`` marker-map JSON.
-
-    Schema is what ``fiducial_relocalization.load_marker_map`` reads: translation (m),
-    rotation xyzw, in the map frame. ``meta`` is provenance the loader ignores.
-    """
+    """Serialize aggregated marker locations to the ``map_T_tag`` JSON that ``fiducial_relocalization.load_marker_map`` reads (translation m, rotation xyzw, map frame)."""
     markers = {
         str(marker_id): {
             "translation": [pose[0], pose[1], pose[2]],
@@ -555,11 +529,8 @@ def main(
 
     total = lidar.count()
 
-    # Register clouds into the world frame via the dataset's tf stream. Clouds
-    # already stamped with the world frame pass through verbatim; sensor-frame
-    # clouds with no tf lookup are dropped. Stored per-frame poses are never
-    # used for registration — only as trajectory metadata (dedup/path) when
-    # the tf stream can't provide a position.
+    # Register clouds into the world frame via the tf stream. Stored per-frame poses
+    # are never used for registration, only as trajectory metadata (dedup/path).
     from dimos.memory2.tf import StreamTF
 
     tf_buf = StreamTF.from_store(store)
@@ -581,13 +552,11 @@ def main(
     if world is None:
         world = "world"  # empty lidar stream; the frame is moot
 
-    # Registration: sensor-frame clouds get a per-frame tf lookup lifting them
-    # into the world frame (frames with no tf answer are dropped); clouds
-    # already stamped with the world frame accumulate verbatim (register=None).
+    # Sensor-frame clouds get a per-frame tf lookup (no answer -> dropped); clouds
+    # already in the world frame accumulate verbatim (register=None).
     register: Callable[[Observation[Any]], Transform | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
-        # Fail fast when registration is impossible: probe the first cloud's
-        # timestamp (unbounded tolerance — "possible at all", not "in range").
+        # Fail fast: probe the first cloud (unbounded tolerance -- "possible at all", not "in range").
         probe = (
             tf_buf.get(world, cloud_frame, time_point=first_obs.ts) if tf_buf is not None else None
         )
@@ -617,24 +586,20 @@ def main(
                 return None
             return (tf.translation.x, tf.translation.y, tf.translation.z)
         pose = obs.pose
-        # Reject placeholder poses: zero translation OR uninitialized rotation.
-        # Same condition as pgo_keyframes so dedup and PGO see the same frames.
+        # Reject placeholder poses (same condition as pgo_keyframes so dedup and PGO see the same frames).
         if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
             return (pose.position.x, pose.position.y, pose.position.z)
         return None
 
-    # Spatial dedup: bucket frames by 3D cell using the trajectory position,
-    # keep the latest per cell. Shared by raw and PGO rebuilds. Doesn't touch
-    # obs.data so it stays cheap (no pointcloud loading). With pgo_tol<=0 the
-    # bucketing is disabled and every positioned frame is kept (keyed by index).
+    # Spatial dedup: bucket frames by 3D cell (trajectory position), keep the latest per
+    # cell; cheap since it never touches obs.data. pgo_tol<=0 disables it (keep all, keyed by index).
     seen: dict[Any, tuple[Observation[Any], tuple[float, float, float]]] = {}
     for i, obs in enumerate(lidar):
         pos = _position(obs)
         if pos is None:
             continue
         if pgo_tol > 0:
-            # math.floor so negative coords bucket consistently; int() truncates
-            # toward zero and silently folds -0.5 and 0.5 into the same cell.
+            # math.floor so negative coords bucket consistently (int() would fold -0.5 and 0.5 together).
             key: Any = (
                 math.floor(pos[0] / pgo_tol),
                 math.floor(pos[1] / pgo_tol),
@@ -716,11 +681,9 @@ def main(
     marker_dets: list[Observation[Any]] = []
     aggregated_markers: dict[int, tuple[_Pose7, int]] = {}
     if markers:
-        # Image observations in dimos recordings are stamped with
-        # frame_id="camera_optical", so obs.pose is already optical-in-world
-        # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
-        # --image-pose, swap that stored pose for a different source (e.g.
-        # fastlio_odometry), composing the base→optical mount onto it first.
+        # color_image is stamped frame_id="camera_optical", so obs.pose is already
+        # optical-in-world. --image-pose swaps it for another source (e.g. fastlio_odometry),
+        # composing the base->optical mount onto it first.
         color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:
@@ -736,18 +699,15 @@ def main(
             camera_info=cam_info,
             marker_length_m=marker_size,
             smoothing_window=marker_smoothing,
-            # The survey PRODUCES the map_T_tag every fiducial fix inherits, so an
-            # ungated mirror-ambiguous survey pose is confidently wrong (tens of deg,
-            # see loop_closure/eval.py). Gate it with the SAME IPPE ambiguity floor the
-            # live detector runs -- read off its config so the two cannot drift, since
-            # DetectMarkers' own default is 1.0 = gate off.
+            # The survey PRODUCES the map_T_tag every fiducial fix inherits, so gate
+            # mirror-ambiguous IPPE poses with the SAME floor the live detector uses
+            # (read off its config so they can't drift; DetectMarkers' own default 1.0 = off).
             ambiguity_ratio_min=MarkerDetectionStreamModuleConfig.model_fields[
                 "ambiguity_ratio_min"
             ].default,
         )
-        # Keep the sharpest frame per --marker-quality-window window, then
-        # drop frames where the robot was moving (linear + rotational) faster
-        # than the limits. Defaults match replay_marker.py so positions agree.
+        # Keep the sharpest frame per window, then drop fast-moving frames (linear +
+        # rotational). Defaults match replay_marker.py so positions agree.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
                 QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
@@ -761,8 +721,7 @@ def main(
                 )
             all_dets = pipeline.transform(xf).to_list()
         if marker_smoothing > 0:
-            # Keep only the latest emission per track_id — that's the most
-            # averaged pose, drawn once per tracked marker session.
+            # Keep only the latest emission per track_id -- the most averaged pose.
             by_track: dict[int, Observation[Any]] = {}
             for d in all_dets:
                 by_track[d.data.track_id] = d
@@ -775,8 +734,7 @@ def main(
             f"across {len(unique_ids)} unique ids {unique_ids}"
         )
         if export:
-            # Write the aggregated marker map (one map_T_tag pose per marker_id)
-            # alongside the exported premap, sharing its stem.
+            # Write the aggregated marker map alongside the exported premap, sharing its stem.
             marker_map_path = Path.cwd() / f"{db_path.stem}.marker_map.json"
             if all_dets:
                 aggregated_markers = _aggregate_marker_map(all_dets, graph)

@@ -22,8 +22,8 @@ import open3d as o3d  # type: ignore[import-untyped]
 
 _reg = o3d.pipelines.registration
 
-# (voxel_size, total RANSAC runs at that scale). 0.8m is the coarsest, cheapest
-# scale; it provides anchor candidates that don't need as many restarts.
+# (voxel_size m, RANSAC runs at that scale); 0.8m is the coarsest/cheapest anchor
+# scale, needing fewer restarts.
 SCALE_PLAN: list[tuple[float, int]] = [
     (0.2, 8),
     (0.3, 8),
@@ -62,10 +62,8 @@ def _preprocess(
     return down, fpfh
 
 
-# Per-process cache of the global map's downsampled cloud + FPFH features and the
-# fine-voxel cloud. A worker reuses one global map across all its frames, so the
-# first call pays the cost and the rest get it free. Allowed per program.md:
-# caching FPFH across calls is fine within one run (fresh state per process).
+# Per-process cache of the global map's downsampled cloud + FPFH features; a worker
+# reuses one global map across all its frames, so the first call pays and the rest are free.
 _GLOBAL_CACHE: dict[tuple[str, float, int], Any] = {}
 
 
@@ -139,10 +137,9 @@ def generate_ransac_candidates(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
 ) -> list[np.ndarray]:
-    """Multi-scale x multi-restart FPFH+RANSAC candidate transforms placing
-    ``local_map`` into ``global_map``, plus their centroid-aware 180° yaw flips:
-    the raw, unranked proposal pool for ``refine_candidates``.
-    """
+    """Multi-scale x multi-restart FPFH+RANSAC candidate transforms placing ``local_map``
+    into ``global_map``, plus centroid-aware 180° yaw flips: the unranked pool for
+    ``refine_candidates``."""
     # Fine downsample of local_map, used only for the yaw-flip centroid below.
     src_fine_pts = np.asarray(local_map.voxel_down_sample(FINE_VOXEL).points)
 
@@ -151,16 +148,13 @@ def generate_ransac_candidates(
         src_down, src_fpfh = _preprocess(local_map, vs)
         tgt_down, tgt_fpfh = _global_preprocess(global_map, vs)
         for _ in range(n_runs):
-            # Successive calls advance Open3D's RNG state (seeded per-frame in
-            # run.py), so each restart explores a different sample sequence.
+            # Successive calls advance Open3D's per-frame-seeded RNG, so each restart differs.
             result = _ransac(src_down, tgt_down, src_fpfh, tgt_fpfh, vs)
             candidates.append(np.asarray(result.transformation))
 
-    # Centroid-aware yaw flip: for every candidate add the variant rotated 180°
-    # around the cloud's OWN xy-centroid, not body origin. A naive `T @ Rz_180`
-    # rotates about body origin and flings the cloud across the world when lidar
-    # coverage isn't centered on the robot; rotating about the centroid keeps it in
-    # place -- "same place, opposite heading" for an indoor submap.
+    # Centroid-aware yaw flip: add each candidate rotated 180° about the cloud's OWN
+    # xy-centroid, not body origin -- a naive `T @ Rz_180` about body origin flings the
+    # cloud across the world when lidar coverage isn't robot-centered ("same place, opposite heading").
     c_body = np.array([src_fine_pts[:, 0].mean(), src_fine_pts[:, 1].mean(), 0.0])
     rz180 = np.diag([-1.0, -1.0, 1.0])
     t_body_flip = np.eye(4)
@@ -175,13 +169,9 @@ def refine_candidates(
     candidates: list[np.ndarray],
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float, int]:
-    """Judge a pool of candidate local_map->global_map transforms and refine the
-    winner: gravity-filter, rerank by WALL-only fine-scale inlier ratio, wall ICP
-    polish, then final full-cloud ICP.
-
-    Returns ``(T, fitness, winning_index)``; ``winning_index`` is the position in
-    ``candidates`` that survived, so callers pooling priors can attribute the win.
-    """
+    """Judge a pool of candidate local_map->global_map transforms and refine the winner:
+    gravity-filter, rerank by WALL-only fine inlier ratio, wall ICP polish, final full-cloud
+    ICP. Returns ``(T, fitness, winning_index)`` -- the index lets pooled-prior callers attribute the win."""
     # Fine downsample once — used for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
     src_fine.estimate_normals(
@@ -189,8 +179,8 @@ def refine_candidates(
     )
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
-    # Gravity filter. An all-tilted pool is REFUSED, not resurrected: a tilted winner
-    # is a rotationally-symmetric-floor mis-solve, not a valid pose.
+    # Gravity filter. An all-tilted pool is REFUSED, not resurrected -- a tilted winner is
+    # a rotationally-symmetric-floor mis-solve, not a valid pose.
     indexed = list(enumerate(candidates))
     upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= gravity_tilt_max_deg]
     if not upright:
@@ -200,8 +190,8 @@ def refine_candidates(
         )
     pool = upright
 
-    # WALL-ONLY clouds for scoring + polish; the FULL clouds drive the final
-    # refinement, preserving the gravity anchor and inlier density in the output.
+    # WALL-ONLY clouds score + polish; the FULL clouds drive the final refinement,
+    # preserving the gravity anchor and inlier density in the output.
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
     n_src_walls, n_tgt_walls = len(src_walls.points), len(tgt_walls.points)
@@ -219,10 +209,9 @@ def refine_candidates(
 
     top_k = sorted(pool, key=fine_fitness, reverse=True)[:10]
 
-    # Stage 2: moderate-distance ICP on each top-10, on WALL clouds -- wall
-    # correspondences drive yaw and xy, so the winner is the one whose walls align,
-    # not whose floors agree. Tukey biweight M-estimator down-weights far
-    # correspondences so a few gross outliers can't drag the fit. https://www.open3d.org/docs/latest/tutorial/pipelines/robust_kinematics.html
+    # Stage 2: moderate-distance ICP on each top-10, on WALL clouds so wall correspondences
+    # (not floors) drive yaw+xy. Tukey biweight down-weights far correspondences so gross
+    # outliers can't drag the fit. https://www.open3d.org/docs/latest/tutorial/pipelines/robust_kinematics.html
     tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
     polished: list[tuple[int, float, np.ndarray]] = []
     for i, T0 in top_k:
@@ -254,11 +243,8 @@ def relocalize(
     local_map: o3d.geometry.PointCloud,
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float]:
-    """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
-
-    RANSAC candidate generation feeding the shared judge (``refine_candidates``).
-    module.py's ``_relocalize`` relies on this (T, fitness) signature.
-    """
+    """Estimate the 4x4 transform placing ``local_map`` into ``global_map`` via RANSAC +
+    the shared judge. module.py's ``_relocalize`` relies on this (T, fitness) signature."""
     candidates = generate_ransac_candidates(global_map, local_map)
     T, fitness, _winning_index = refine_candidates(
         global_map,

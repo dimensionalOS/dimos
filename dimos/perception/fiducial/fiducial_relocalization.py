@@ -31,11 +31,8 @@ MAP_FRAME = "map"
 
 
 def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
-    """Validate one survey entry into a ``map_T_marker`` Transform.
-
-    Fail loudly here: a short translation list silently zero-fills and a zero-norm quaternion
-    only crashes later, in ``Quaternion.inverse()`` — or worse, corrupts a published pose.
-    """
+    """Validate one survey entry into a ``map_T_marker`` Transform, failing loudly: a short
+    translation zero-fills and a zero-norm quaternion only crashes (or corrupts a pose) later."""
     translation, rotation = entry["translation"], entry["rotation"]
     if not isinstance(translation, (list, tuple)) or len(translation) != 3:
         raise ValueError(f"marker {marker_id}: translation must be [x, y, z], got {translation!r}")

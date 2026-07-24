@@ -14,11 +14,7 @@
 # limitations under the License.
 
 """Pluggable relocalization priors: candidate proposers feeding the shared
-fine-ICP judge in relocalize.py (``refine_candidates``). A prior only proposes;
-its trigger lives with its nature -- RANSAC is polled by the module on a timer,
-the fiducial is event-driven off a tag burst. Every candidate is accepted only by
-surviving the wall-only fine-fitness rerank, never by its source's confidence.
-"""
+fine-ICP judge in relocalize.py (``refine_candidates``)."""
 
 from __future__ import annotations
 
@@ -38,21 +34,20 @@ from dimos.mapping.relocalization.relocalize import (
 from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
 from dimos.protocol.service.spec import BaseConfig
 
-# s between RANSAC fires. One FPFH+RANSAC search costs seconds of CPU (4.4-23 s
+# s between RANSAC fires; one FPFH+RANSAC search costs seconds of CPU (4.4-23 s
 # measured on the trial's go2/Orin recordings), so the sweep is paced, not per-frame.
 DEFAULT_RANSAC_INTERVAL_S = 2.0
 
 
-# Prior configs: one pydantic config per prior, keyed by a Literal ``type`` into a
-# discriminated union. Pattern from dimos/manipulation/planning/kinematics/config.py:26-57.
+# One pydantic config per prior, keyed by a Literal ``type`` into a discriminated
+# union. Pattern from dimos/manipulation/planning/kinematics/config.py:26-57.
 
 
 class PriorConfigBase(BaseConfig):
     """Fields every prior shares: the on/off toggle plus its accept bar."""
 
     enabled: bool = True
-    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) this prior's fix
-    # must clear to be accepted.
+    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) this prior's fix must clear.
     fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
@@ -61,12 +56,10 @@ class RansacPriorConfig(PriorConfigBase):
     relocalize.py, this entry owns the accept bar, cadence and geometry floor."""
 
     type: Literal["ransac"] = "ransac"
-    # s between RANSAC fires -- this prior's trigger; a global search has no event to
-    # wait for, so it paces itself.
+    # s between RANSAC fires; a global search waits on no event, so it paces itself.
     interval_s: float = Field(default=DEFAULT_RANSAC_INTERVAL_S, gt=0.0)
-    # Min local-map points (post VoxelGridMapper) this search needs before it fires:
-    # below this FPFH matching + the wall-only rerank have too little geometry, so a
-    # sparse frame is skipped and retried on the next dense frame.
+    # Min local-map points (post VoxelGridMapper) before this search fires; below this
+    # FPFH matching + the wall-only rerank have too little geometry, so the frame is skipped.
     min_local_points: int = Field(default=50_000, ge=0)
 
 
@@ -79,7 +72,6 @@ class FiducialPriorConfig(PriorConfigBase):
     # resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
     # Tag geometry/family/aggregation knobs the DETECTOR needs; none is read here.
-    # Blueprints thread all three into MarkerDetectionStreamModule.
     marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
@@ -102,11 +94,8 @@ class Candidate:
 
 
 class RelocPrior(Protocol):
-    """A relocalization candidate proposer. The module owns the trigger.
-
-    Implementations must not self-select a winner (``refine_candidates``'s job);
-    returning zero candidates is a valid, expected response.
-    """
+    """A relocalization candidate proposer; the module owns the trigger. A prior must not
+    self-select a winner (``refine_candidates``'s job); zero candidates is a valid response."""
 
     name: str
 
@@ -118,9 +107,8 @@ class RelocPrior(Protocol):
 
 
 class RansacPrior:
-    """Wraps relocalize.py's FPFH+RANSAC global search. A pure candidate source: the
-    module polls it on a paced interval (a global search waits on no event, so the pace
-    bounds its cost) and owns that timer state."""
+    """Wraps relocalize.py's FPFH+RANSAC global search; a pure candidate source the
+    module polls on a paced interval (the pace bounds an eventless search's cost)."""
 
     name = "ransac"
 
@@ -134,15 +122,8 @@ class RansacPrior:
 
 
 class FiducialPrior:
-    """Aggregated fiducial tag poses -> ONE world->map candidate per tag.
-
-    ``observe()`` composes an aggregated ``world_T_marker`` with the surveyed marker
-    map; ``propose()`` hands each composed fix to the judge. Frame convention: a
-    candidate's ``T`` is map_T_world = ``map_T_marker @ inv(world_T_marker_aggregated)``,
-    the same local_map(world)->global_map(map) direction RANSAC uses. A composed fix
-    stays pending until ``propose()`` consumes it; ``has_pending`` reports readiness so
-    the module fires this event prior on the burst edge.
-    """
+    """Aggregated fiducial tag poses -> ONE map_T_world candidate per tag,
+    ``map_T_marker @ inv(world_T_marker_aggregated)`` (local_map->global_map, as RANSAC)."""
 
     name = "fiducial"
 
@@ -151,14 +132,12 @@ class FiducialPrior:
         self._map_T_marker = marker_map
         # marker_id -> map_T_world (4x4) awaiting its ONE trip past the judge.
         self._pending: dict[int, np.ndarray] = {}
-        # observe() and propose() run on different transport threads (module.py::_fire),
-        # so the sighting that reads self._pending and the drain that replaces it are
-        # one critical section -- see propose() for what tears without it.
+        # observe() and propose() run on different transport threads; the lock makes the
+        # read-modify-write of _pending one critical section -- see propose() for the tear.
         self._pending_lock = threading.Lock()
 
     def observe(self, marker_id: int, world_T_marker_aggregated: np.ndarray) -> str | None:
-        """Take ONE aggregated tag pose from the detector's ``aggregated_detections`` stream
-        and compose this tag's world->map fix. Returns ``unmapped_id`` or ``None``."""
+        """Compose this tag's map_T_world fix from one aggregated pose; returns ``unmapped_id`` or ``None``."""
         map_T_marker = self._map_T_marker.get(marker_id)
         if map_T_marker is None:
             return "unmapped_id"
@@ -176,29 +155,18 @@ class FiducialPrior:
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
-        # Consume on use: a fix is drained the one time it reaches the judge. Re-offering
-        # it on a later fire hands the judge the SAME measurement against a world that has
-        # drifted further since, so it can only score worse than it did when fresh.
-        # The swap takes the lock because the swap alone is not enough: a store in
-        # observe() reads self._pending and writes it as two steps, and a detections
-        # thread preempted between them still holds the dict this fire is draining:
-        #
-        #     observe:  d = self._pending ....................... d[id] = fix
-        #     propose:                     self._pending = {}; iterate d
-        #                                                              ^ RuntimeError
-        #
-        # "dictionary changed size during iteration" -- which _try_relocalize's
-        # boundary except swallows, dropping the cycle. Under the lock a sighting
-        # either lands before the swap or waits and goes out on the next fire.
+        # Consume on use: re-offering a drained fix later scores worse (world has drifted).
+        # Swap under the lock: observe()'s read-modify-write of _pending would otherwise tear
+        # here -- "dict changed size during iteration", swallowed by _try_relocalize as a
+        # dropped cycle. Under the lock a sighting lands before the swap or waits for the next.
         with self._pending_lock:
             pending, self._pending = self._pending, {}
         return [Candidate(T=fix_T, source=self.name) for fix_T in pending.values()]
 
 
 class EmptyProposalError(ValueError):
-    """No prior proposed any candidate this fire. Benign race artifact (two threads
-    see the fiducial trigger due, the loser drains an empty _pending); treated as a
-    no-op, not a crash."""
+    """No prior proposed any candidate this fire; a benign race artifact (the loser of two
+    threads drains an empty _pending), treated as a no-op, not a crash."""
 
 
 def relocalize_with_priors(
@@ -208,10 +176,8 @@ def relocalize_with_priors(
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float, str]:
     """Gather candidates from the priors this fire runs, judge them through the shared
-    fine-ICP tail (``refine_candidates``), report which won. ``gravity_tilt_max_deg``
-    threads to the judge's gravity gate. Returns ``(T, fitness, winning_source)``; raises
-    ``EmptyProposalError`` if every prior proposed zero candidates (a benign race).
-    """
+    fine-ICP tail, report the winning source. Returns ``(T, fitness, winning_source)``;
+    raises ``EmptyProposalError`` if every prior proposed zero candidates (a benign race)."""
     all_transforms: list[np.ndarray] = []
     sources: list[str] = []
     for prior in priors:
