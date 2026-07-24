@@ -17,14 +17,13 @@ mount) and visualize the optimized pose graph in Rerun.
 
 GO2Connection streams the onboard lidar already accumulated in the odom/world
 frame plus the robot pose as a PoseStamped. The PGO instead wants a raw
-sensor-frame scan plus a nav_msgs Odometry, so SensorFrameLidarBridge sits in
-between: it subtracts the pose from every point (world -> base_link) and re-emits
-the scan as `lidar` alongside an `odometry`. The PGO consumes both and emits a
-loop-closed `pose_graph` (Graph3D), which the Rerun bridge renders as nodes
-(keyframes) + edges (odom backbone in green, loop closures in yellow).
+sensor-frame scan plus a nav_msgs Odometry, so NormalizeGo2Lidar sits in
+between: it takes the onboard `lidar`, subtracts the pose from every point
+(world -> base_link) and re-emits the scan as `cloud` alongside an `odometry`.
+The PGO consumes both and emits a loop-closed `pose_graph` (Graph3D), which the
+Rerun bridge renders as nodes (keyframes) + edges (odom backbone in green, loop
+closures in yellow).
 
-The onboard `lidar` Out is remapped to `world_lidar` so it feeds the bridge
-rather than colliding with the bridge's own base_link `lidar` Out into the PGO.
 For the Mid-360 + Point-LIO rig instead, see `unitree_go2_mid360_pgo`.
 
 Run on the dog:
@@ -37,7 +36,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import PGO
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.go2.sensor_frame_lidar_bridge import SensorFrameLidarBridge
+from dimos.robot.unitree.go2.normalize_go2_lidar import NormalizeGo2Lidar
 from dimos.visualization.rerun.bridge import RerunMulti
 from dimos.visualization.vis_module import vis_module
 
@@ -53,9 +52,18 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 
 
 unitree_go2_pgo = autoconnect(
-    GO2Connection.blueprint().remappings([(GO2Connection, "lidar", "world_lidar")]),
-    SensorFrameLidarBridge.blueprint(),
-    PGO.blueprint(),
+    GO2Connection.blueprint(),
+    NormalizeGo2Lidar.blueprint(),
+    PGO.blueprint(
+        # Tuned for the Go2's short-range onboard L1 lidar (~2.5 m). The ring
+        # range auto-scales from the cloud extent (module default), so the short
+        # lidar gets real radial discrimination instead of collapsing into one
+        # ring; the robust kernel contains the false closures the sparse lidar
+        # still produces instead of letting one blow up the graph.
+        loop_robust_kernel=True,
+        scan_context_match_threshold=0.35,
+        min_descriptor_std=0.1,
+    ),
     vis_module(
         "rerun",
         rerun_config={"visual_override": {_POSE_GRAPH_PATH: _render_pose_graph}},

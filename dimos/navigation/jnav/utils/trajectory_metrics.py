@@ -31,9 +31,19 @@ from dimos.navigation.jnav.utils.voxel_map import VoxelMap
 
 # (ts, x, y, z, qx, qy, qz, qw) per keyframe
 GraphPose = tuple[float, float, float, float, float, float, float, float]
-# time -> nearest pose: 3-vec [x,y,z] (PoseLookup) or 7-vec +quat (PoseLookup7)
+# time -> nearest pose: 3-vec [x,y,z] (PoseLookup) or 7-vec +quat (PoseQuatLookup)
 PoseLookup = Callable[[float], "np.ndarray | None"]
-PoseLookup7 = Callable[[float], "np.ndarray | None"]
+PoseQuatLookup = Callable[[float], "np.ndarray | None"]
+# time -> nearest keyframe's drift correction (R_delta, t_delta)
+DeltaLookup = Callable[[float], "tuple[np.ndarray, np.ndarray] | None"]
+
+
+def matrix_from_pose(pose: np.ndarray) -> np.ndarray:
+    """4x4 homogeneous transform from a [x, y, z, qx, qy, qz, qw] pose."""
+    matrix = np.eye(4)
+    matrix[:3, :3] = Rotation.from_quat(pose[3:7]).as_matrix()
+    matrix[:3, 3] = pose[:3]
+    return matrix
 
 
 def nearest_index(times: np.ndarray, timestamp: float) -> int:
@@ -139,7 +149,7 @@ def drifted_lookup(
     return lookup
 
 
-def pose7_lookup(times: np.ndarray, poses: np.ndarray, tolerance: float) -> PoseLookup7:
+def pose_lookup(times: np.ndarray, poses: np.ndarray, tolerance: float) -> PoseQuatLookup:
     """time -> nearest [x,y,z,qx,qy,qz,qw], or None past the tolerance."""
 
     def lookup(timestamp: float) -> np.ndarray | None:
@@ -153,9 +163,7 @@ def pose7_lookup(times: np.ndarray, poses: np.ndarray, tolerance: float) -> Pose
     return lookup
 
 
-def drift_delta_lookup(
-    graph: list[GraphPose], raw_lookup: PoseLookup7
-) -> Callable[[float], tuple[np.ndarray, np.ndarray] | None]:
+def drift_delta_lookup(graph: list[GraphPose], raw_lookup: PoseQuatLookup) -> DeltaLookup:
     """time -> nearest keyframe's drift correction (R_delta, t_delta).
 
     The delta is computed at the KEYFRAME's own timestamp —
@@ -186,6 +194,25 @@ def drift_delta_lookup(
         return rotations[index], translations[index]
 
     return lookup
+
+
+def deform_path(
+    times: np.ndarray, poses: np.ndarray, delta_lookup: DeltaLookup
+) -> tuple[np.ndarray, np.ndarray]:
+    """Raw odom trajectory + its plain-stretch corrected counterpart (Nx3 each)."""
+    raw_path = poses[:, :3].astype(np.float64)
+    corrected_points = []
+    kept_raw = []
+    for timestamp, position in zip(times, raw_path, strict=True):
+        delta = delta_lookup(float(timestamp))
+        if delta is None:
+            continue
+        rotation_delta, translation_delta = delta
+        corrected_points.append(rotation_delta @ position + translation_delta)
+        kept_raw.append(position)
+    if not corrected_points:
+        return raw_path, np.empty((0, 3))
+    return np.array(kept_raw), np.array(corrected_points)
 
 
 def rigid_align_rmse(source: np.ndarray, target: np.ndarray) -> float:
@@ -253,7 +280,7 @@ def trajectory_recovery_error(
 
 def lidar_voxel_agreement(
     scans: Iterable[tuple[float, np.ndarray]],
-    raw_lookup: PoseLookup7,
+    raw_lookup: PoseQuatLookup,
     graph: list[GraphPose],
     *,
     voxel_size: float = VOXEL_SIZE_M,

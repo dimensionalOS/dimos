@@ -16,9 +16,10 @@
 Point-LIO and visualize the optimized pose graph in Rerun.
 
 Point-LIO reads the Mid-360 and publishes a registered `lidar` (PointCloud2) plus
-`odometry` (Odometry); the PGO consumes both and emits a loop-closed `pose_graph`
-(Graph3D). The Rerun bridge renders that graph as nodes (keyframes) + edges (odom
-backbone in green, loop closures in yellow) via `Graph3D.to_rerun_multi`.
+`odometry` (Odometry); its `lidar` is remapped to the PGO's `cloud` In. The PGO
+consumes both and emits a loop-closed `pose_graph` (Graph3D). The Rerun bridge
+renders that graph as nodes (keyframes) + edges (odom backbone in green, loop
+closures in yellow) via `Graph3D.to_rerun_multi`.
 
 This is a passive observer rig — drive the dog however you like (Go2 app / a
 teleop blueprint) and watch the graph build and snap on loop closure. It needs
@@ -52,7 +53,7 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 
 
 unitree_go2_mid360_pgo = autoconnect(
-    PointLio.blueprint(),
+    PointLio.blueprint().remappings([(PointLio, "lidar", "cloud")]),
     PGO.blueprint(),
     vis_module(
         "rerun",

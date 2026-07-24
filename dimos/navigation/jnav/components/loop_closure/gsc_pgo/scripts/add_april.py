@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dimos.navigation.jnav.utils import recording_db
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.navigation.jnav.utils.apriltags import (
     VISIT_GAP_S,
     ensure_april_streams,
@@ -170,7 +170,8 @@ def main() -> None:
     db_path = recording_path if recording_path.name == "mem2.db" else recording_path / "mem2.db"
     if not db_path.exists():
         parser.error(f"no mem2.db at {db_path}")
-    store = recording_db.store(db_path)
+    store = SqliteStore(path=db_path, must_exist=True)
+    store.start()
     summary_path = args.output.expanduser() if args.output else (db_path.parent / SUMMARY_NAME)
     print(f"=== {db_path.parent.name} ===")
 
@@ -178,6 +179,7 @@ def main() -> None:
         result = summarize(store)
         _update_summary_json(summary_path, result=result)
         print(f"   updated {summary_path} april_tags.result")
+        store.stop()
         return
 
     # Rebuild both streams and overwrite filter_parameters + result.
@@ -216,6 +218,7 @@ def main() -> None:
     print(
         f"   updated {summary_path} april_tags (filter_parameters + result); dynamic={dynamic_tags}"
     )
+    store.stop()
 
 
 if __name__ == "__main__":

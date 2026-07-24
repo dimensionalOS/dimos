@@ -23,7 +23,7 @@ from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
 
 class LoopClosure(Protocol):
     # frame:sensor_link
-    lidar: In[PointCloud2]
+    cloud: In[PointCloud2]
     odometry: In[Odometry]
 
     corrected_odometry: Out[Odometry]

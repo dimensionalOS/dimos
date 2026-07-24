@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Republish the Go2's onboard lidar in the sensor (base_link) frame.
+"""Normalize the Go2's onboard lidar into a raw sensor-frame cloud.
 
 The onboard Go2 accumulates its lidar in the odom/world frame and reports its
 pose as a PoseStamped. The jnav PGO instead wants a raw sensor-frame scan plus a
@@ -34,20 +34,20 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
-class SensorFrameLidarBridgeConfig(ModuleConfig):
+class NormalizeGo2LidarConfig(ModuleConfig):
     # Sensor frame the scan is re-expressed in (child of the odom frame).
     base_frame_id: str = "base_link"
     # Fixed parent frame the odom pose lives in.
     odom_frame_id: str = "world"
 
 
-class SensorFrameLidarBridge(Module):
-    world_lidar: In[PointCloud2]
+class NormalizeGo2Lidar(Module):
+    lidar: In[PointCloud2]
     odom: In[PoseStamped]
-    lidar: Out[PointCloud2]
+    cloud: Out[PointCloud2]
     odometry: Out[Odometry]
 
-    config: SensorFrameLidarBridgeConfig
+    config: NormalizeGo2LidarConfig
 
     _latest_odom: PoseStamped | None = None
 
@@ -55,11 +55,11 @@ class SensorFrameLidarBridge(Module):
         self._latest_odom = odom
         self.odometry.publish(self._to_odometry(odom))
 
-    async def handle_world_lidar(self, cloud: PointCloud2) -> None:
+    async def handle_lidar(self, world_cloud: PointCloud2) -> None:
         odom = self._latest_odom
         if odom is None:
             return
-        self.lidar.publish(self._to_sensor_frame(cloud, odom))
+        self.cloud.publish(self._to_sensor_frame(world_cloud, odom))
 
     def _to_odometry(self, odom: PoseStamped) -> Odometry:
         return Odometry(

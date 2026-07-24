@@ -650,6 +650,8 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "gtsam",
+    "gtsam.*",
     "h5py",
     "h5py.*",
     "mcap",
@@ -724,8 +726,10 @@ module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-# untyped analysis scripts (gtsam/open3d/cv2/scipy lack type stubs)
-module = ["dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.*"]
+# untyped analysis scripts (heavy gtsam/open3d/cv2 glue, not worth full typing)
+module = [
+    "dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.*",
+]
 ignore_errors = true
 
 [tool.pytest.ini_options]

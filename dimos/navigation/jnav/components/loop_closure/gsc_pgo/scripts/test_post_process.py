@@ -18,10 +18,12 @@ import numpy as np
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.make_rrd import (
     pose3_from_xyzquat,
 )
-from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.post_process import (
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.artifacts import (
+    interpolate_correction,
+)
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.offline_pgo import (
     best_factor_per_keyframe_marker,
     count_visits,
-    interpolate_correction,
     select_keyframes,
 )
 from dimos.navigation.jnav.utils.apriltags import filter_glimpses, glimpse_passes

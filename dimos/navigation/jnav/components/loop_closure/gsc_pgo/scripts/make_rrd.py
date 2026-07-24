@@ -30,7 +30,7 @@ from gtsam import Point3, Pose3, Rot3
 import numpy as np
 import rerun as rr
 
-from dimos.navigation.jnav.utils import recording_db as rdb
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.navigation.jnav.utils.apriltags import filter_glimpses, read_raw_tag_stream
 from dimos.navigation.jnav.utils.trajectory_metrics import nearest_index
 
@@ -122,7 +122,7 @@ def gradient_trajectory(positions, base_color):
     return segments, (full * (TRAJECTORY_DARK + (1.0 - TRAJECTORY_DARK) * t)).astype(np.uint8)
 
 
-def pose3_from_xyzquat(xyzquat):
+def pose3_from_xyzquat(xyzquat: np.ndarray) -> Pose3:
     """(x, y, z, qx, qy, qz, qw) -> Pose3."""
     return Pose3(
         Rot3.Quaternion(xyzquat[6], xyzquat[3], xyzquat[4], xyzquat[5]),
@@ -131,17 +131,18 @@ def pose3_from_xyzquat(xyzquat):
 
 
 def build(
-    rec,
-    lidar_stream="pointlio_lidar",
-    odom_stream="pointlio_odometry",
-    tag_stream="raw_april_tags",
-    out_name="corrected_compare.rrd",
-):
+    rec: str | Path,
+    lidar_stream: str = "pointlio_lidar",
+    odom_stream: str = "pointlio_odometry",
+    tag_stream: str = "raw_april_tags",
+    out_name: str = "corrected_compare.rrd",
+) -> Path:
     rec_path = Path(rec).expanduser()
     db_path = rec_path / "mem2.db" if rec_path.is_dir() else rec_path
     recording_dir = db_path.parent
     out_path = recording_dir / out_name
-    store = rdb.store(db_path)
+    store = SqliteStore(path=db_path, must_exist=True)
+    store.start()
     intrinsics_path = recording_dir / "camera_intrinsics.json"
     base_to_optical = (
         pose3_from_xyzquat(
@@ -167,11 +168,29 @@ def build(
         )
         return all_points[unique_indices]
 
+    def odom_samples(stream_name):
+        rows = []
+        for observation in store.stream(stream_name).order_by("ts"):
+            pose = observation.data.pose.pose
+            rows.append(
+                (
+                    float(observation.ts),
+                    pose.position.x,
+                    pose.position.y,
+                    pose.position.z,
+                    pose.orientation.x,
+                    pose.orientation.y,
+                    pose.orientation.z,
+                    pose.orientation.w,
+                )
+            )
+        return np.asarray(rows, dtype=np.float64).reshape(-1, 8)
+
     def traj(stream_name):
-        return rdb.odometry_rows(db_path, stream_name)[:, 1:4].astype(np.float32)
+        return odom_samples(stream_name)[:, 1:4].astype(np.float32)
 
     def landmarks(gt_odom):
-        odom_rows = rdb.odometry_rows(db_path, gt_odom)
+        odom_rows = odom_samples(gt_odom)
         detections = filter_glimpses(
             read_raw_tag_stream(store, tag_stream), exclude_tags=(), **LANDMARK_GATES
         )
@@ -274,6 +293,7 @@ def build(
                 static=True,
             )
             print(f"  logged {len(marker_ids)} landmarks")
+    store.stop()
     print("wrote", out_path)
     return out_path
 

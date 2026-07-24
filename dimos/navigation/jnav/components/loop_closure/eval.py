@@ -12,50 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evaluate a loop-closure module against a recording.
+"""Loop-closure evaluation by physical self-consistency (no world frame).
 
-The raw-baseline robot trajectory is the odometry the module is actually fed
-(``--odom-stream``, e.g. ``fastlio_odometry``), read straight from its stored
-poses. Scoring never consults a separate "answer key" (the tf tree, pointlio, or
-any other odom source): every metric is the SAME odometry with vs without the
-module's correction, so a positive score means the module improved the map it was
-given rather than measuring the gap between two unrelated trajectories.
+A recording carries sensor data, one algorithm's odometry, and the static tf
+tree — but no global pose and no ground truth. The only physical anchor is that
+an AprilTag is the same physical object every time it is seen. So evaluation
+asks a single question: does the module's correction make the recording more
+self-consistent than the raw odometry it was fed?
 
-Two ground-truth-free scores, before vs after correction:
-  * April-tag agreement — a fixed tag re-seen along the run should map to one
-    world position; the spread of its per-visit robot positions measures drift.
-    A tag sighting is placed at the robot's baseline pose nearest its time.
-  * Lidar-voxel agreement — re-anchoring the registered scans onto the
-    corrected trajectory should collapse double walls, so the corrected map
-    should occupy FEWER voxels than the raw one.
+The raw baseline is the odometry stream the module is actually fed
+(``--odom-stream``), read as the map<-base_link pose over time. The module is
+replayed on that odometry + lidar and hands back its optimized keyframe graph.
+The corrected trajectory is the raw odometry warped by the module's own
+per-keyframe deformation (Δ_i = corrected_i ∘ raw_i⁻¹, interpolated between
+keyframes — "plain stretch"), so raw and corrected differ only by what the
+module changed.
 
-Pipeline:
-  1. April tags: read the db's `april_tags` stream (ts + marker_id only), or
-     detect them with sane defaults (medoid, blur/reproj/size/distance gates).
-  2. Raw agreement over the raw odometry.
-  3. Replay lidar + odom through the module (loaded dynamically from
-     --module-path/--module-name), capture its optimized pose graph.
-  4. Corrected agreement + voxel agreement, written to
-     eval_results/<recording>__<module>/summary.json (and an eval.rrd with the
-     raw + corrected trajectories when --with-rrd true).
+Two agreement scores, raw vs corrected:
+  * AprilTag spread — each tag is placed in the map by real camera geometry
+    (map<-base_link(t) ∘ base_link<-camera_optical ∘ camera_optical<-tag), NOT a
+    robot-position proxy. A fixed tag re-seen along the run should map to ONE
+    map position; the spread of its per-visit placements measures drift. Tags in
+    ``--dynamic-tags`` are held out (they move, so their spread is not drift).
+  * Lidar-voxel agreement — re-anchoring the registered scans onto the corrected
+    trajectory should collapse doubled walls, so the corrected map occupies
+    fewer voxels.
 
-Usage:
-    uv run python dimos/navigation/jnav/components/loop_closure/eval.py \\
-        --db-path ~/datasets/RECORDINGS_DIR/2026-06-04_12-56pm-PST/mem2.db \\
-        --odom-stream fastlio_odometry \\
-        --camera-stream color_image \\
-        --camera-intrinsics-json-path \\
-            ~/datasets/RECORDINGS_DIR/2026-06-04_12-56pm-PST/camera_intrinsics.json \\
-        --module-path dimos/navigation/jnav/components/loop_closure/gsc_pgo/module.py \\
-        --module-name PGO \\
-        --pgo-config-json '{"use_scan_context": true}' \\
-        --with-rrd true
+Also writes a top-down before/after map PNG so the correction can be eyeballed
+(contraction-gaming and tf-chain errors are obvious to the eye, invisible to a
+scalar).
 """
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable, Iterator
 import json
 from pathlib import Path
 import time
@@ -63,88 +53,78 @@ from typing import Any
 
 import numpy as np
 
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy import (
+    normalize_go2_legacy,
+)
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay import run_module_graph
-from dimos.navigation.jnav.utils.apriltags import (
-    VISIT_GAP_S,
-    AgreementReport,
-    agreement_improvement,
-    agreement_report,
-    detect_apriltags,
-    load_intrinsics_json,
-    load_or_detect_sightings,
-    paired_tag_visit_positions,
+from dimos.navigation.jnav.components.loop_closure.utils import (
+    MAP_MAX_SCANS,
+    accumulate_maps,
+    load_tag_detections,
+    registered_scans,
+    report_dict,
+    score_tags,
+    write_isometric_png,
+    write_topdown_png,
 )
 from dimos.navigation.jnav.utils.module_loading import (
     filter_config_for_module,
     load_module_class,
 )
-from dimos.navigation.jnav.utils.recording_db import (
-    ODOM_MATCH_TOLERANCE_S,
-    iterate_stream,
-    list_streams,
-    payload_pose,
-    store,
-    stream_count,
-)
+from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 from dimos.navigation.jnav.utils.trajectory_metrics import (
-    drifted_lookup,
-    graph_lookup,
-    has_drift,
+    deform_path,
+    drift_delta_lookup,
     lidar_voxel_agreement,
-    pose7_lookup,
-    trajectory_lookup,
-    trajectory_recovery_error,
-    write_trajectory_rrd,
+    pose_lookup,
 )
 
 RESULTS_DIR = Path(__file__).resolve().parent / "eval_results"
-APRIL_TAGS_STREAM = "april_tags"
-
-# Cap replayed scans fed to voxel agreement so the map fits in memory.
-VOXEL_MAX_SCANS = 300
-
-# Bump to invalidate every cached cell (scoring/replay semantics changed).
-# v3: raw baseline is the fed odom stream's stored poses again (reverting the v2
-# tf baseline). The tf tree's world->base_link is built by add_tf from whatever
-# odom it prefers (pointlio), which diverges from the fastlio the benchmark feeds
-# the module, so v2 scored the correction against an unrelated trajectory.
-EVAL_VERSION = 3
+DEFAULT_TAG_FRAME = "camera_optical"
+DEFAULT_BASE_FRAME = "base_link"
+DEFAULT_WORLD_FRAME = "world"
 
 
-def cell_fingerprint(
+def evaluate(
     db_path: Path,
-    pgo_config: dict[str, Any],
-    lidar_stream: str,
+    *,
     odom_stream: str,
-    drift_per_sec: list[float] | None = None,
+    lidar_stream: str,
+    camera_stream: str | None,
+    intrinsics_json: Path | None,
+    module_path: Path,
+    module_name: str,
+    pgo_config: dict[str, Any],
+    dynamic_tags: set[int],
+    tag_frame: str,
+    odom_parent: str,
+    odom_child: str,
+    recording_name: str | None,
 ) -> dict[str, Any]:
-    """Identity of a completed cell — the driver re-runs only when this changes
-    (db edited, config changed, streams changed, drift changed, or version)."""
-    stat = db_path.stat()
-    return {
-        "db_bytes": stat.st_size,
-        "db_mtime": int(stat.st_mtime),
-        "pgo_config": pgo_config,
-        "lidar_stream": lidar_stream,
-        "odom_stream": odom_stream,
-        "drift_per_sec": list(drift_per_sec or [0.0, 0.0, 0.0]),
-        "version": EVAL_VERSION,
-    }
+    store = SqliteStore(path=db_path, must_exist=True)
+    store.start()
+    # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
+    odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
+        store, f"{odom_parent}:{odom_child}", odom_stream, lidar_stream
+    )
+    odom_parent, _, odom_child = odom_tf.partition(":")
+    streams = store.list_streams()
+    for required in (odom_stream, lidar_stream, "tf"):
+        if required not in streams:
+            raise SystemExit(f"no stream {required!r} in {db_path} (have: {streams})")
 
+    recording_name = recording_name or db_path.parent.name
+    module_class = load_module_class(module_path, module_name)
+    pgo_config = filter_config_for_module(module_class, pgo_config)
 
-def odom_pose_samples(db_path: Path, odom_stream: str) -> tuple[np.ndarray, np.ndarray]:
-    """Robot trajectory straight from the fed odom stream's stored poses.
-
-    This is the raw baseline the module's correction is scored against: the SAME
-    odometry with vs without loop closure. Handles both the ``Odometry`` and
-    ``PoseStamped`` payload shapes found in recordings."""
-    times: list[float] = []
-    poses: list[list[float]] = []
-    for timestamp, payload in iterate_stream(db_path, odom_stream):
-        pose = payload_pose(payload)
-        times.append(timestamp)
-        poses.append(
-            [
+    odom_row_list: list[tuple[float, float, float, float, float, float, float, float]] = []
+    for observation in store.stream(odom_stream, Odometry).order_by("ts"):
+        pose = observation.data.pose.pose
+        odom_row_list.append(
+            (
+                float(observation.ts),
                 pose.position.x,
                 pose.position.y,
                 pose.position.z,
@@ -152,108 +132,24 @@ def odom_pose_samples(db_path: Path, odom_stream: str) -> tuple[np.ndarray, np.n
                 pose.orientation.y,
                 pose.orientation.z,
                 pose.orientation.w,
-            ]
-        )
-    if not times:
-        raise SystemExit(f"{db_path}: odom stream {odom_stream!r} produced no poses")
-    return (
-        np.asarray(times, dtype=np.float64),
-        np.asarray(poses, dtype=np.float64).reshape(-1, 7),
-    )
-
-
-def _report_dict(report: AgreementReport) -> dict[str, Any]:
-    return {
-        "mean_spread_m": report.mean_spread,
-        "total_observations": report.total_observations,
-        "per_tag": [
-            {"tag_id": tag.tag_id, "observations": tag.observations, "spread_m": tag.spread}
-            for tag in report.per_tag
-        ],
-    }
-
-
-def evaluate(
-    db_path: Path,
-    *,
-    odom_stream: str,
-    camera_stream: str | None,
-    intrinsics_json: Path | None,
-    module_path: Path,
-    module_name: str,
-    pgo_config: dict[str, Any],
-    with_rrd: bool,
-    lidar_stream: str,
-    lockstep: bool = True,
-    results_suffix: str = "",
-    recording_name: str | None = None,
-    drift_per_sec: list[float] | None = None,
-    ignore_tags: set[int] | None = None,
-) -> dict[str, Any]:
-    streams = list_streams(db_path)
-    for required in (odom_stream, lidar_stream):
-        if required not in streams:
-            raise SystemExit(f"no stream {required!r} in {db_path} (have: {streams})")
-
-    module_class = load_module_class(module_path, module_name)
-    pgo_config = filter_config_for_module(module_class, pgo_config)
-
-    # Artificial drift: the module is fed odom+lidar with a constant-velocity
-    # world offset added at each time; the raw-baseline scoring must apply the
-    # SAME offset so it compares against what the module actually saw.
-    drift_per_sec = drift_per_sec or [0.0, 0.0, 0.0]
-    drift_t0 = 0.0
-    if has_drift(drift_per_sec):
-        first_odom = next(iterate_stream(db_path, odom_stream), None)
-        if first_odom is None:
-            raise SystemExit(f"{db_path}: {odom_stream!r} is empty — cannot anchor drift start")
-        drift_t0 = first_odom[0]
-
-    # April-tag agreement needs a camera + intrinsics; voxel agreement does not.
-    # Datasets without either (kitti-360, bare lidar recordings) still score on
-    # voxel agreement alone, so the same harness fills every table cell.
-    sightings: dict[int, list[float]] = {}
-    tag_source = "none"
-    have_camera = camera_stream is not None and camera_stream in streams
-    if have_camera and intrinsics_json is not None and intrinsics_json.exists():
-        assert camera_stream is not None  # narrowed by have_camera
-        camera = camera_stream
-        intrinsics_config = load_intrinsics_json(intrinsics_json)
-        db_store = store(db_path)
-        stored_stream: Iterable[Any] = (
-            db_store.stream(APRIL_TAGS_STREAM)
-            if APRIL_TAGS_STREAM in db_store.list_streams()
-            else []
-        )
-        stored = ((int(obs.tags["marker_id"]), float(obs.ts)) for obs in stored_stream)
-
-        def detect() -> Iterator[tuple[int, float]]:
-            detections = detect_apriltags(
-                db_store,
-                intrinsics_config["intrinsics"],
-                intrinsics_config["distortion"],
-                image_stream=camera,
-                stream_name=APRIL_TAGS_STREAM,
-                marker_length=intrinsics_config.get("marker_length", 0.10),
-                dictionary=intrinsics_config.get("dictionary", "DICT_APRILTAG_36h11"),
             )
-            return ((int(d["marker_id"]), float(d["ts"])) for d in detections)
+        )
+    odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
+    if not len(odom_rows):
+        raise SystemExit(f"odom stream {odom_stream!r} produced no poses in {db_path}")
+    lidar_count = int(store.stream(lidar_stream).count())
+    raw_times, raw_poses = odom_rows[:, 0], odom_rows[:, 1:]
+    tf = RecordingTF.from_store(store)
+    if tf is None:
+        raise SystemExit(f"no 'tf' stream in {db_path}")
+    tf.override_edge(odom_parent, odom_child, raw_times, raw_poses)
 
-        sightings, tag_source = load_or_detect_sightings(stored, detect)
-    # Drop dynamic/unreliable tags (e.g. a tag on a moving object) so their
-    # motion isn't mistaken for trajectory drift. huge_loop_realsense tag #17 is
-    # dynamic; all others are static.
-    if ignore_tags:
-        dropped = sorted(tag_id for tag_id in sightings if tag_id in ignore_tags)
-        for tag_id in dropped:
-            del sightings[tag_id]
-        if dropped:
-            print(f"ignoring tags {dropped} (declared dynamic/unreliable)")
-    n_sightings = sum(len(times) for times in sightings.values())
-    if sightings:
-        print(f"april tags ({tag_source}): {n_sightings} sightings across ids {sorted(sightings)}")
-    else:
-        print("no April tags (camera/intrinsics absent or none detected) — voxel agreement only")
+    probe_ts = float(raw_times[len(raw_times) // 2])
+    tags_reachable = tf.get(odom_parent, tag_frame, probe_ts) is not None
+    if not tags_reachable and camera_stream is not None:
+        raise SystemExit(f"no tf path {odom_parent} <- {tag_frame} (frames: {sorted(tf.frames)})")
+
+    detections = load_tag_detections(db_path, camera_stream, intrinsics_json, streams, dynamic_tags)
 
     started = time.monotonic()
     graph, closures, replay_stats = run_module_graph(
@@ -262,138 +158,94 @@ def evaluate(
         pgo_config,
         lidar_stream=lidar_stream,
         odom_stream=odom_stream,
-        lockstep=lockstep,
-        drift_per_sec=drift_per_sec,
-        drift_t0=drift_t0,
     )
     runtime_s = time.monotonic() - started
     if not graph:
         raise SystemExit(f"{module_name} produced an empty pose graph")
 
-    # Raw-baseline trajectory: the fed odom stream's own poses (fastlio, etc.).
-    # The correction is scored against the SAME odometry it was built from — no
-    # tf tree / pointlio / other odom "answer key" (see odom_pose_samples).
-    raw_times, raw_poses7 = odom_pose_samples(db_path, odom_stream)
-    print(f"raw baseline from odom stream {odom_stream!r} ({len(raw_times)} samples)")
-    raw_xyz_base = trajectory_lookup(raw_times, raw_poses7[:, :3], ODOM_MATCH_TOLERANCE_S)
-    raw_pose7_base = pose7_lookup(raw_times, raw_poses7, ODOM_MATCH_TOLERANCE_S)
+    raw_pose = pose_lookup(raw_times, raw_poses, tolerance=float("inf"))
+    delta_lookup = drift_delta_lookup(list(graph), raw_pose)
 
-    # The module solved on drifted input, so its graph lives in the drifted
-    # world; the raw baselines must be drifted to match (see drift_per_sec).
-    raw_xyz_lookup = drifted_lookup(raw_xyz_base, drift_per_sec, drift_t0)
-    raw_pose7_lookup = drifted_lookup(raw_pose7_base, drift_per_sec, drift_t0)
+    raw_report, corrected_report, improvement, raw_tag_medians, corrected_tag_medians = score_tags(
+        detections, tf, odom_parent, tag_frame, delta_lookup
+    )
 
-    xyz_graph = [(node[0], node[1], node[2], node[3]) for node in graph]
-    if sightings:
-        raw_tag_positions, corrected_tag_positions = paired_tag_visit_positions(
-            sightings,
-            raw_xyz_lookup,
-            graph_lookup(xyz_graph),
-            gap_s=VISIT_GAP_S,
-        )
-        raw_report = agreement_report(raw_tag_positions)
-        corrected_report = agreement_report(corrected_tag_positions)
-        improvement: float | None = agreement_improvement(raw_report, corrected_report)
-    else:
-        raw_report = agreement_report({})
-        corrected_report = agreement_report({})
-        improvement = None  # no tags — tag agreement is N/A for this cell
-
-    voxel_stride = max(1, -(-stream_count(db_path, lidar_stream) // VOXEL_MAX_SCANS))
+    scan_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
+    raw_map, corrected_map = accumulate_maps(
+        registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+        delta_lookup,
+    )
     voxel = lidar_voxel_agreement(
-        (
-            (timestamp, cloud.points_f32())
-            for timestamp, cloud in iterate_stream(db_path, lidar_stream, stride=voxel_stride)
-        ),
-        raw_pose7_lookup,
-        graph,
-        drift_per_sec=drift_per_sec,
-        drift_t0=drift_t0,
+        registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+        raw_pose,
+        list(graph),
     )
+    store.stop()
 
-    # Drift-recovery ATE: corrected trajectory vs the UN-drifted ground truth
-    # (the odom before drift was injected). Only meaningful with --drift-per-sec;
-    # the right metric where tag/voxel agreement is weak (e.g. KITTI's long loop).
-    trajectory = trajectory_recovery_error(graph, raw_xyz_base, drift_per_sec, drift_t0)
-    if trajectory is not None:
-        print(
-            f"  drift recovery:    {trajectory['drifted_ate_m']:.2f}"
-            f" -> {trajectory['corrected_ate_m']:.2f} m ATE"
-            f" ({trajectory['trajectory_improvement']:+.3f})"
-        )
+    raw_path, corrected_path = deform_path(raw_times, raw_poses, delta_lookup)
 
-    # Key by package + class — several loop-closure modules are all named PGO.
-    # results_suffix (dot-joined, NOT "__" which delimits the recording name)
-    # separates runs that differ in inputs, e.g. fastlio vs pointlio odometry.
-    module_package = module_class.__module__.rsplit(".", 2)[-2]
-    module_key = f"{module_package}.{module_name}" + (
-        f".{results_suffix}" if results_suffix else ""
-    )
-    # db.parent.name is the recording dir for go2; LFS dbs (hk_village) sit
-    # directly in data/, so an explicit recording_name avoids cell collisions.
-    out_dir = RESULTS_DIR / f"{recording_name or db_path.parent.name}__{module_key}"
+    out_dir = RESULTS_DIR / f"{recording_name}__{module_name}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    rrd_path = out_dir / "eval.rrd"
-    if with_rrd:
-        write_trajectory_rrd(rrd_path, raw_poses7[:, :3], graph)
+    png_path = out_dir / "topdown_before_after.png"
+    write_topdown_png(
+        png_path,
+        raw_map,
+        corrected_map,
+        raw_tag_medians,
+        corrected_tag_medians,
+        raw_path,
+        corrected_path,
+        recording_name,
+    )
+    iso_png_path = out_dir / "isometric_before_after.png"
+    write_isometric_png(
+        iso_png_path, raw_map, corrected_map, raw_path, corrected_path, recording_name
+    )
 
     summary = {
         "db": str(db_path),
         "odom_stream": odom_stream,
-        "camera_stream": camera_stream,
         "lidar_stream": lidar_stream,
+        "camera_stream": camera_stream,
         "module": {"path": str(module_path), "name": module_name},
         "pgo_config": pgo_config,
-        "drift_per_sec": list(drift_per_sec),
-        "fingerprint": cell_fingerprint(
-            db_path, pgo_config, lidar_stream, odom_stream, drift_per_sec
-        ),
+        "dynamic_tags": sorted(dynamic_tags),
         "replay": replay_stats,
-        "pose_source": "odom",
-        "april_tags": {
-            "source": tag_source,
-            "sightings": n_sightings,
-            "ids": sorted(sightings),
-        },
         "scores": {
-            "raw_spread_m": raw_report.mean_spread if sightings else None,
-            "corrected_spread_m": corrected_report.mean_spread if sightings else None,
+            "raw_spread_m": raw_report.mean_spread if detections else None,
+            "corrected_spread_m": corrected_report.mean_spread if detections else None,
             "tag_improvement": improvement,
             "voxel_improvement": voxel.get("improvement"),
-            "trajectory_improvement": trajectory["trajectory_improvement"] if trajectory else None,
-            "drifted_ate_m": trajectory["drifted_ate_m"] if trajectory else None,
-            "corrected_ate_m": trajectory["corrected_ate_m"] if trajectory else None,
             "closures": closures,
             "keyframes": len(graph),
             "runtime_s": round(runtime_s, 1),
         },
-        "raw_agreement": _report_dict(raw_report),
-        "corrected_agreement": _report_dict(corrected_report),
+        "raw_agreement": report_dict(raw_report),
+        "corrected_agreement": report_dict(corrected_report),
         "voxel_agreement": voxel,
-        "rrd": str(rrd_path) if with_rrd else None,
+        "raw_path": raw_path.tolist(),
+        "corrected_path": corrected_path.tolist(),
+        "topdown_png": str(png_path),
+        "isometric_png": str(iso_png_path),
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
     print(f"\nresults -> {out_dir / 'summary.json'}")
-    if sightings:
+    if detections:
         print(
-            f"  tag spread:        {raw_report.mean_spread:.3f}"
-            f" -> {corrected_report.mean_spread:.3f} m"
+            f"  tag spread:      {raw_report.mean_spread:.3f}"
+            f" -> {corrected_report.mean_spread:.3f} m ({improvement:+.3f})"
         )
-        print(f"  tag improvement:   {improvement:+.3f} (1.0 = perfect)")
     else:
-        print("  tag improvement:   n/a (no tags)")
+        print("  tag spread:      n/a (no tags)")
     if voxel.get("status") == "ok":
         print(
-            f"  voxel agreement:   {voxel['raw_voxels']} -> {voxel['corrected_voxels']} voxels"
-            f" ({voxel['improvement']:+.3f}, {voxel['scans_used']} scans @ {voxel['voxel_size_m']}m)"
+            f"  voxel agreement: {voxel['raw_voxels']} -> {voxel['corrected_voxels']} voxels"
+            f" ({voxel['improvement']:+.3f}, {voxel['scans_used']} scans)"
         )
-    else:
-        print(f"  voxel agreement:   {voxel.get('status')}")
-    print(f"  closures:          {closures}, keyframes: {len(graph)}")
-    if with_rrd:
-        print(f"  rrd:               {rrd_path}")
+    print(f"  closures: {closures}, keyframes: {len(graph)}")
+    print(f"  top-down map:    {png_path}")
     return summary
 
 
@@ -401,66 +253,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--odom-stream", required=True)
-    parser.add_argument(
-        "--camera-stream", default=None, help="omit for tagless datasets (voxel agreement only)"
-    )
-    parser.add_argument(
-        "--camera-intrinsics-json-path",
-        type=Path,
-        default=None,
-        help="omit for tagless datasets (voxel agreement only)",
-    )
+    parser.add_argument("--lidar-stream", default="fastlio_lidar")
+    parser.add_argument("--camera-stream", default="color_image")
+    parser.add_argument("--camera-intrinsics-json-path", type=Path, default=None)
     parser.add_argument("--module-path", type=Path, required=True)
     parser.add_argument("--module-name", required=True)
+    parser.add_argument("--pgo-config-json", default=None)
     parser.add_argument(
-        "--pgo-config-json",
-        help="inline JSON of module config overrides (default: scan_context variant)",
-    )
-    parser.add_argument("--with-rrd", default="false", choices=["true", "false"])
-    parser.add_argument(
-        "--lidar-stream",
-        default="fastlio_lidar",
-        help="lidar stream replayed into the module alongside the odometry",
-    )
-    parser.add_argument(
-        "--lockstep",
-        default="true",
-        choices=["true", "false"],
-        help="pace scans on corrected_odometry acks (machine-independent); false = fixed-rate",
-    )
-    parser.add_argument(
-        "--results-suffix",
+        "--dynamic-tags",
         default="",
-        help="extra results-dir key for runs with different inputs (e.g. pointlio)",
+        help="comma-separated tag ids to hold OUT of agreement (moving tags). e.g. '17'",
     )
+    parser.add_argument("--tag-frame", default=DEFAULT_TAG_FRAME)
     parser.add_argument(
-        "--recording-name",
-        default=None,
-        help="results-dir recording key (default: db parent dir name)",
+        "--odom-tf",
+        default=f"{DEFAULT_WORLD_FRAME}:{DEFAULT_BASE_FRAME}",
+        help="parent:child frame edge the odom stream publishes, e.g. 'world:l1_link'. "
+        "Lidar scans resolve through the tf tree with this dynamic edge added.",
     )
-    parser.add_argument(
-        "--drift-per-sec",
-        default=None,
-        help="inject odom drift as a constant world velocity 'x,y,z' in m/s "
-        "(offset = this * (t - t0), added to odom+lidar). e.g. '0.01,0,0'",
-    )
-    parser.add_argument(
-        "--ignore-tags",
-        default=None,
-        help="comma-separated April-tag ids to drop from scoring (dynamic/unreliable "
-        "tags whose motion would look like drift). e.g. '17'",
-    )
+    parser.add_argument("--recording-name", default=None)
     args = parser.parse_args()
-
-    drift_per_sec = (
-        [float(v) for v in args.drift_per_sec.split(",")] if args.drift_per_sec else None
-    )
-    if drift_per_sec is not None and len(drift_per_sec) != 3:
-        raise SystemExit(f"--drift-per-sec must be 'x,y,z', got {args.drift_per_sec!r}")
-
-    ignore_tags = (
-        {int(tag_id) for tag_id in args.ignore_tags.split(",")} if args.ignore_tags else None
-    )
 
     db_path = args.db_path.expanduser()
     if not db_path.exists():
@@ -468,28 +280,28 @@ def main() -> None:
     intrinsics_json = (
         args.camera_intrinsics_json_path.expanduser()
         if args.camera_intrinsics_json_path is not None
-        else None
+        else db_path.parent / "camera_intrinsics.json"
     )
-    if intrinsics_json is not None and not intrinsics_json.exists():
-        raise SystemExit(f"no such intrinsics json: {intrinsics_json}")
-
+    dynamic_tags = {int(tag) for tag in args.dynamic_tags.split(",") if tag.strip()}
     pgo_config = json.loads(args.pgo_config_json) if args.pgo_config_json else {}
+    odom_parent, _, odom_child = args.odom_tf.partition(":")
+    if not odom_parent or not odom_child:
+        raise SystemExit(f"--odom-tf must be 'parent:child', got {args.odom_tf!r}")
 
     evaluate(
         db_path,
         odom_stream=args.odom_stream,
+        lidar_stream=args.lidar_stream,
         camera_stream=args.camera_stream,
-        intrinsics_json=intrinsics_json,
+        intrinsics_json=intrinsics_json if intrinsics_json.exists() else None,
         module_path=args.module_path,
         module_name=args.module_name,
         pgo_config=pgo_config,
-        with_rrd=args.with_rrd == "true",
-        lidar_stream=args.lidar_stream,
-        lockstep=args.lockstep == "true",
-        results_suffix=args.results_suffix,
+        dynamic_tags=dynamic_tags,
+        tag_frame=args.tag_frame,
+        odom_parent=odom_parent,
+        odom_child=odom_child,
         recording_name=args.recording_name,
-        drift_per_sec=drift_per_sec,
-        ignore_tags=ignore_tags,
     )
 
 

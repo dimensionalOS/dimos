@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import suppress
+from itertools import islice
 import json
 from pathlib import Path
 import tempfile
@@ -37,21 +38,19 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
-from dimos.navigation.jnav.utils.recording_db import (
-    MAX_REPLAY_ODOM,
-    MAX_REPLAY_SCANS,
-    REPLAY_DRAIN_MARGIN_S,
-    REPLAY_PUBLISH_HZ,
-    iterate_stream,
-    payload_pose,
-    stream_count,
-)
 from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose, has_drift
+
+# Fixed-rate replay pacing + sizing caps.
+REPLAY_PUBLISH_HZ = 50.0
+REPLAY_DRAIN_MARGIN_S = 30.0
+MAX_REPLAY_SCANS = 4000
+MAX_REPLAY_ODOM = 16000
 
 # Run cap scales with the workload: a per-scan budget (well above any sane
 # processing time, below the 30s ack timeout) plus fixed startup overhead.
@@ -148,7 +147,7 @@ class LockstepReplay(Module):
 
     config: LockstepReplayConfig
 
-    lidar: Out[PointCloud2]
+    cloud: Out[PointCloud2]
     odometry: Out[Odometry]
     corrected_odometry: In[Odometry]
 
@@ -161,14 +160,20 @@ class LockstepReplay(Module):
 
     def _load(self) -> list[tuple[float, str, Any]]:
         merged: list[tuple[float, str, Any]] = []
-        for timestamp, pose in iterate_stream(
-            self.config.db, self.config.odometry_stream, stride=self.config.odometry_stride
+        store = SqliteStore(path=self.config.db, must_exist=True)
+        store.start()
+        for observation in islice(
+            store.stream(self.config.odometry_stream, Odometry),
+            0,
+            None,
+            self.config.odometry_stride,
         ):
-            merged.append((timestamp, "odom", pose))
-        for timestamp, cloud in iterate_stream(
-            self.config.db, self.config.lidar_stream, stride=self.config.lidar_stride
+            merged.append((float(observation.ts), "odom", observation.data))
+        for lidar_observation in islice(
+            store.stream(self.config.lidar_stream, PointCloud2), 0, None, self.config.lidar_stride
         ):
-            merged.append((timestamp, "lidar", cloud))
+            merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
+        store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 
@@ -192,7 +197,7 @@ class LockstepReplay(Module):
         skipped_scan_ts: list[float] = []
         for timestamp, kind, payload in messages:
             if kind == "odom":
-                pose = payload_pose(payload)
+                pose = payload.pose.pose
                 if apply_drift:
                     offset = drift * (timestamp - t0)
                     pose = Pose(
@@ -220,9 +225,12 @@ class LockstepReplay(Module):
                 continue
 
             points = payload.points_f32()
+            frame_id = payload.frame_id or "map"
             if apply_drift:
                 points = points + (drift * (timestamp - t0)).astype(np.float32)
-            self.lidar.publish(PointCloud2.from_numpy(points, frame_id="map", timestamp=timestamp))
+            self.cloud.publish(
+                PointCloud2.from_numpy(points, frame_id=frame_id, timestamp=timestamp)
+            )
             scans_sent += 1
             try:
                 await asyncio.wait_for(self._ack_event.wait(), timeout=self.config.ack_timeout_s)
@@ -269,7 +277,7 @@ class RateReplay(Module):
 
     config: RateReplayConfig
 
-    lidar: Out[PointCloud2]
+    cloud: Out[PointCloud2]
     odometry: Out[Odometry]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -278,14 +286,20 @@ class RateReplay(Module):
 
     def _load(self) -> list[tuple[float, str, Any]]:
         merged: list[tuple[float, str, Any]] = []
-        for timestamp, pose in iterate_stream(
-            self.config.db, self.config.odometry_stream, stride=self.config.odometry_stride
+        store = SqliteStore(path=self.config.db, must_exist=True)
+        store.start()
+        for observation in islice(
+            store.stream(self.config.odometry_stream, Odometry),
+            0,
+            None,
+            self.config.odometry_stride,
         ):
-            merged.append((timestamp, "odom", pose))
-        for timestamp, cloud in iterate_stream(
-            self.config.db, self.config.lidar_stream, stride=self.config.lidar_stride
+            merged.append((float(observation.ts), "odom", observation.data))
+        for lidar_observation in islice(
+            store.stream(self.config.lidar_stream, PointCloud2), 0, None, self.config.lidar_stride
         ):
-            merged.append((timestamp, "lidar", cloud))
+            merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
+        store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 
@@ -306,13 +320,15 @@ class RateReplay(Module):
                         ts=timestamp,
                         frame_id="map",
                         child_frame_id="base_link",
-                        pose=payload_pose(payload),
+                        pose=payload.pose.pose,
                     )
                 )
             else:
-                self.lidar.publish(
+                self.cloud.publish(
                     PointCloud2.from_numpy(
-                        payload.points_f32(), frame_id="map", timestamp=timestamp
+                        payload.points_f32(),
+                        frame_id=payload.frame_id or "map",
+                        timestamp=timestamp,
                     )
                 )
             await asyncio.sleep(period)
@@ -343,10 +359,15 @@ def run_module_graph(
     done_path = Path(tempfile.gettempdir()) / f"jnav_lc_eval_done_{db_path.parent.name}.json"
     done_path.unlink(missing_ok=True)
     Path(str(done_path) + ".progress").unlink(missing_ok=True)
-    lidar_stride = max(1, -(-stream_count(db_path, lidar_stream) // MAX_REPLAY_SCANS))
-    odometry_stride = max(1, -(-stream_count(db_path, odom_stream) // MAX_REPLAY_ODOM))
-    n_messages = stream_count(db_path, odom_stream) // odometry_stride
-    n_messages += stream_count(db_path, lidar_stream) // lidar_stride
+    counts_store = SqliteStore(path=db_path, must_exist=True)
+    counts_store.start()
+    lidar_count = int(counts_store.stream(lidar_stream).count())
+    odom_count = int(counts_store.stream(odom_stream).count())
+    counts_store.stop()
+    lidar_stride = max(1, -(-lidar_count // MAX_REPLAY_SCANS))
+    odometry_stride = max(1, -(-odom_count // MAX_REPLAY_ODOM))
+    n_messages = odom_count // odometry_stride
+    n_messages += lidar_count // lidar_stride
 
     if lockstep:
         replay_blueprint = LockstepReplay.blueprint(
@@ -384,7 +405,7 @@ def run_module_graph(
     try:
         if lockstep:
             # Per-frame budget: the cap scales with how many scans are fed.
-            n_scans = stream_count(db_path, lidar_stream) // lidar_stride
+            n_scans = lidar_count // lidar_stride
             max_run_s = n_scans * LOCKSTEP_PER_SCAN_BUDGET_S + LOCKSTEP_BASE_OVERHEAD_S
             started = time.monotonic()
             while not done_path.exists():
