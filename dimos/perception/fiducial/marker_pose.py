@@ -73,9 +73,8 @@ def _solve_pnp_inputs(
     dist_coeffs: np.ndarray,
     distortion_model: str | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(image_points, solve_dist)`` for solvePnP, undistorting fisheye
-    corners into pinhole-equivalent pixels (shared by the single- and
-    multi-candidate estimators)."""
+    """Return ``(image_points, solve_dist)`` for solvePnP, undistorting fisheye corners
+    into pinhole-equivalent pixels (shared by the single- and multi-candidate estimators)."""
     img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
     if is_fisheye_model(distortion_model):
         d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
@@ -128,13 +127,10 @@ def estimate_marker_pose_candidates(
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Return every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric``.
 
-    A planar square has two IPPE solutions (Collins & Bartoli 2014,
-    https://link.springer.com/article/10.1007/s11263-014-0725-5); at weak
-    perspective the *wrong* mirror pose can reproject as well as the right one,
-    which :func:`estimate_marker_pose` (best-solution-only) silently hides.
-    Callers that must not trust a flipped pose compare the candidates'
-    reprojection errors (see :func:`ambiguity_gated_pose`).
-    Non-finite solver output (observed on degenerate corner input) is dropped.
+    A planar square has two IPPE mirror solutions (Collins & Bartoli 2014
+    https://link.springer.com/article/10.1007/s11263-014-0725-5) that
+    :func:`estimate_marker_pose` hides; :func:`ambiguity_gated_pose` compares their
+    reproj errors. Non-finite solver output (degenerate corners) is dropped.
     """
     obj = _aruco_marker_object_points(marker_length_m)
     img, solve_dist = _solve_pnp_inputs(corners_px, camera_matrix, dist_coeffs, distortion_model)
@@ -161,15 +157,11 @@ def ambiguity_gated_pose(
     distortion_model: str | None = None,
     ambiguity_ratio_min: float,
 ) -> tuple[np.ndarray, float] | None:
-    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, gated on
-    the IPPE mirror ambiguity.
+    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, gated on the IPPE
+    mirror ambiguity (Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5).
 
-    A planar square yields two IPPE poses (Collins & Bartoli 2014,
-    https://link.springer.com/article/10.1007/s11263-014-0725-5); at weak
-    perspective the flipped mirror pose can reproject nearly as well as the true
-    one, so a pose whose runner-up reprojection error is within
-    ``ambiguity_ratio_min`` x the best is untrustworthy and rejected. Returns
-    ``None`` when the solver produced nothing or the view is mirror-ambiguous.
+    Rejects (returns ``None``) when the runner-up pose's reproj error is within
+    ``ambiguity_ratio_min`` x the best -- the mirror explains the pixels nearly as well.
     """
     candidates = estimate_marker_pose_candidates(
         corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model

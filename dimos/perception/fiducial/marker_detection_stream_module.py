@@ -71,9 +71,8 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     ambiguity_ratio_min: float = Field(
         2.0, ge=1.0
     )  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
-    # Per-glimpse gates + aggregation for aggregated_detections. quality_window_s paces it:
-    # first aggregated pose only after min_observations * quality_window_s (1.0 s at defaults)
-    # -- the floor latency of a fiducial fix.
+    # Per-glimpse gates + aggregation for aggregated_detections; first pose only after
+    # min_observations * quality_window_s (1.0 s at defaults) -- the floor latency of a fix.
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
@@ -122,9 +121,8 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                 )
             ),
         )
-        # tap yields every observation unchanged, so `detections` below is byte-
-        # identical and OpenCV still runs once per frame -- a second .observable() on
-        # a derived stream would open a second subscription and re-detect everything.
+        # tap yields every observation unchanged, so `detections` stays byte-identical and
+        # OpenCV runs once per frame -- a second .observable() would re-subscribe and re-detect.
         return markers.tap(self._aggregate).transform(
             MarkersPerFrame(frame_id=self.config.world_frame)
         )

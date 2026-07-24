@@ -109,11 +109,8 @@ def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
 
 
 def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[float, float]:
-    """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
-
-    view_angle is line-of-sight vs the tag normal (0 == head-on); camera-relative
-    only (world_T_marker distance would be from world origin, useless as a gate).
-    """
+    """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame
+    (view_angle is line-of-sight vs the tag normal, 0 == head-on; camera-relative for the gate)."""
     translation = np.array(optical_T_marker[:3], dtype=np.float64)
     distance_m = float(np.linalg.norm(translation))
     normal = Rotation.from_quat(optical_T_marker[3:7]).as_matrix()[:, 2]
@@ -124,27 +121,18 @@ def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[flo
 
 
 def tag_side_px(corners_px: np.ndarray) -> float:
-    """Tag side length in pixels: sqrt of the corner quad's image area (shoelace).
-
-    Shoelace matches ``cv2.contourArea`` for a simple quad and keeps this core OpenCV-free.
-    """
+    """Tag side length in pixels: sqrt of the corner quad's image area (shoelace)."""
     quad = np.asarray(corners_px, dtype=np.float64).reshape(4, 2)
     x, y = quad[:, 0], quad[:, 1]
+    # shoelace: matches cv2.contourArea for a simple quad, keeps this core OpenCV-free
     area = 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
     return math.sqrt(area)
 
 
 def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
-    """Dimensionless variance inflation for one aggregated tag pose.
-
-    Planar-PnP pose error grows ~quadratically with range and reproj_px is a
-    direct misfit proxy, so a far/blurry glimpse contributes almost nothing while
-    a close, sharp one dominates. The inner clamps (0.2 m, 0.5 px) stop a
-    suspiciously-perfect read claiming near-zero variance, and the 0.25 floor caps
-    how confident any tag may get. Ported unchanged from jnav's PGO tag factors
-    (post_process.py::tag_noise) so one convention exists.
-    A ``None`` input reads as the reference, i.e. that term is neutral.
-    """
+    """Dimensionless variance inflation for one aggregated tag pose (jnav tag_noise);
+    ~quadratic in range x reproj_px, inner-clamped (0.2 m / 0.5 px) and floored at 0.25 so
+    no read claims near-zero variance. A ``None`` input reads as the reference (neutral)."""
     distance_m = REF_DISTANCE_M if distance_m is None else distance_m
     reproj_px = REF_REPROJ_PX if reproj_px is None else reproj_px
     return max(
@@ -156,17 +144,10 @@ def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
 def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.ndarray:
     """6x6 ROS-order covariance (m^2 / rad^2) for an aggregated tag pose, in the pose's frame.
 
-    ROS ``geometry_msgs/PoseWithCovariance`` is row-major
-    ``(x, y, z, rot_x, rot_y, rot_z)`` -- TRANSLATION FIRST. jnav's ``tag_noise``
-    writes the GTSAM ``Pose3`` tangent order (rotation first), so the two blocks
-    are SWAPPED relative to that source; the diagonals themselves are its. Both
-    blocks are built in the TAG frame and rotated into the pose's frame by R.
-
-    Translation diag: 0.0025 m^2 (5 cm) in the tag plane, 0.25 m^2 (50 cm) along
-    the tag normal -- range is planar PnP's weak axis. Rotation diag: 0.04 rad^2
-    (11.5 deg) about the tag's in-plane axes (the mirror-ambiguity axes),
-    0.0025 rad^2 (2.9 deg) about the normal (in-plane spin, pinned by the
-    corner ordering).
+    ROS order is TRANSLATION-first, so the two diag blocks are SWAPPED vs jnav's
+    rotation-first GTSAM ``Pose3`` source; both are built in the tag frame, rotated by R.
+    Trans: 5 cm in-plane, 50 cm along the normal (PnP's weak axis); rot: 11.5 deg in-plane
+    (mirror axes), 2.9 deg spin.
     """
     R = Rotation.from_quat(pose[3:7]).as_matrix()
     covariance = np.zeros((6, 6))
@@ -233,27 +214,21 @@ def robust_cluster_pose(
     rotation_weight_m_per_rad: float,
     huber_delta_m: float,
 ) -> tuple[float, float, float, float, float, float, float]:
-    """Cluster representative: the medoid refined by Huber-weighted IRLS --
-    weighted-mean translation + Markley quaternion eigen-mean. Re-weighting each
-    iteration keeps down-weighting a lingering bad glimpse (e.g. a mirror-flip
-    PnP solution the ambiguity gate missed).
-    Markley quaternion averaging: https://ntrs.nasa.gov/citations/20070017872
-    """
+    """Cluster representative: the medoid refined by Huber-weighted IRLS -- weighted-mean
+    translation + Markley quaternion eigen-mean https://ntrs.nasa.gov/citations/20070017872."""
     medoid = cluster_medoid(cluster, rotation_weight_m_per_rad)
     if len(cluster) < 2:
         return medoid.pose
     poses = np.array([obs.pose for obs in cluster], dtype=np.float64)
     translations, quaternions = poses[:, :3], poses[:, 3:7]
-    # Sign-align quaternions to the medoid hemisphere: q and -q are the same
-    # rotation, so averaging without this can cancel to garbage.
+    # Sign-align to the medoid hemisphere: q and -q are one rotation, else the mean cancels.
     reference = np.array(medoid.pose[3:7], dtype=np.float64)
     signs = np.sign(quaternions @ reference)
     signs[signs == 0] = 1.0
     quaternions = quaternions * signs[:, None]
     estimate_translation = np.array(medoid.pose[:3], dtype=np.float64)
     estimate_quaternion = reference.copy()
-    # delta in radians so the rotation residual shares the translation delta's
-    # robustness scale (pose_distance weights 1 rad ~ rotation_weight m).
+    # delta in radians so the rotation residual shares the translation delta's robustness scale.
     delta_rad = huber_delta_m / max(rotation_weight_m_per_rad, 1e-9)
     for _ in range(_HUBER_ITERATIONS):
         weights_t = _huber_weights(
@@ -297,8 +272,7 @@ class TagAggregator:
             return reason
         buf = self._by_marker[obs.marker_id]
         buf.append(obs)
-        # Purge relative to this marker's newest glimpse, not wall time: a marker
-        # that left view keeps its window until it returns (then stale glimpses drop).
+        # Purge relative to this marker's newest glimpse, not wall time, so a paused marker keeps its window.
         newest = obs.ts
         self._by_marker[obs.marker_id] = [
             o for o in buf if newest - o.ts <= self._config.time_window_s
