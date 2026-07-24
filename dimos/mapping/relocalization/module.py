@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -63,10 +64,7 @@ MAP_SUFFIX = ".pc2.lcm"
 # Suffixes load_marker_map parses; a bare name gets the .json default (see _start_fiducial_prior).
 MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
 SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
-# Jump guard, TRACKING only: largest per-second step from the previous accepted fix. T is world->map, so between accepts it moves only by the drift the fix corrects; this refuses the mirror-flipped fix that lands a room over. Floored at one second's worth below so back-to-back priors keep a real budget.
-MAX_JUMP_M_PER_S = 5.0  # m/s, scaled by time since the last accept
-MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s, same time-scaled budget
-ANCHOR_AGREE_M = 0.5  # m; two fixes this close describe the same pose -- well inside one second of the jump budget above, well outside marker-pose noise
+ANCHOR_AGREE_M = 0.5  # m; two fixes this close describe the same pose -- well outside marker-pose noise, well inside the room-scale offset a mirrored candidate lands at
 
 
 class Config(ModuleConfig):
@@ -78,12 +76,10 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     # Max z-axis tilt (deg) a candidate may keep at the judge's gravity gate; matches relocalize.py's GRAVITY_TILT_MAX_DEG, so unchanged unless overridden.
     gravity_tilt_max_deg: float = Field(default=10.0, ge=0.0)
-    # The first fix becomes the yardstick every later fix is judged against, so it clears a higher bar than tracking's per-prior one.
+    # Nothing publishes until the anchor locks, so an acquisition fix clears a higher bar than tracking's per-prior one.
     acquire_fitness_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     # Independent fixes that must agree within ANCHOR_AGREE_M before the anchor locks; 1 = anchor on the first fix.
     acquire_corroboration: int = Field(default=2, ge=1)
-    # Consecutive jump-rejects agreeing with each other -> the anchor is the outlier, not the fixes.
-    reacquire_after_rejects: int = Field(default=4, ge=1)
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
@@ -122,12 +118,11 @@ class RelocalizationModule(Module):
         self._ransac_min_local_points = ransac_entry.min_local_points
         # Built in start() once the marker map is loaded (needs map_T_marker).
         self._fiducial_prior: FiducialPrior | None = None
-        # Previous ACCEPTED fix (map_T_world) and when, for the gross-jump guard. None until the anchor locks -- until then corroboration stands in for the guard, which has nothing to measure against.
-        self._last_fix_map_T_world: np.ndarray | None = None
-        self._last_fix_ts_s = 0.0
-        # map_T_world fixes corroborating an anchor: those buffered before it locks, and the consecutive jump-rejects that would replace it. Any accept clears both.
+        # map_T_world fixes corroborating the anchor, and whether it has locked; the first accept clears the buffer.
         self._acquire_fixes: list[np.ndarray] = []
-        self._reject_fixes: list[np.ndarray] = []
+        self._anchor_locked = False
+        # Both _fire paths reach the accept path on different threads -- the backpressure worker and the detection transport -- so the buffer append and the flag set are ONE critical section; see _try_relocalize, where the solve stays outside it.
+        self._anchor_lock = threading.Lock()
         # Latest global_map, so a completed tag burst is judged the instant it lands. Sound because the stream ACCUMULATES in the world frame: the previous cloud scores wall fitness as well as the newest, and the tag candidate needs no lidar at all.
         self._last_local_map: PointCloud2 | None = None
         # One monotonic timebase for every prior trigger, injectable so a test can drive the triggers without sleeping (FiducialPrior takes the same seam).
@@ -334,22 +329,19 @@ class RelocalizationModule(Module):
             self._fire(self._fiducial_prior, msg)
 
     def _try_relocalize(self, msg: PointCloud2, prior: RelocPrior) -> Transform | None:
-        """Solve, gate on fitness, lock the anchor or guard the step from it, publish."""
+        """Solve, gate on fitness, corroborate an acquisition fix, publish."""
         t0 = time.monotonic()
-        solved = self._solve(msg, prior)
+        solved = self._solve(msg, prior)  # ICP runs for seconds: it stays outside _anchor_lock
         if solved is None:
             return None
         map_T_world, fitness = solved
         dt, n_pts = time.monotonic() - t0, len(msg)
         if not self._fitness_ok(prior, fitness, dt, n_pts):
             return None
-        anchor_map_T_world = self._last_fix_map_T_world
-        if anchor_map_T_world is None:
-            if not self._anchor_locked(map_T_world):
+        with self._anchor_lock:
+            if self._acquiring and not self._corroborated(map_T_world):
                 return None
-        elif not self._jump_ok(map_T_world, anchor_map_T_world, prior.name):
-            return None
-        return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
+            return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
 
     def _solo_ransac(self, prior: RelocPrior) -> bool:
         """True when RANSAC is the only enabled prior."""
@@ -392,11 +384,16 @@ class RelocalizationModule(Module):
             logger.exception("relocalize() failed")
             return None
 
+    @property
+    def _acquiring(self) -> bool:
+        """No anchor yet: higher fitness bar, corroboration required, nothing published."""
+        return not self._anchor_locked
+
     def _fitness_ok(self, prior: RelocPrior, fitness: float, dt: float, n_pts: int) -> bool:
         """Gate the fix on its own prior's bar, or on the higher acquire bar while there is no anchor."""
         threshold = (
             self.config.acquire_fitness_threshold
-            if self._last_fix_map_T_world is None
+            if self._acquiring
             else self._accept_threshold[prior.name]
         )
         if fitness >= threshold:
@@ -418,65 +415,29 @@ class RelocalizationModule(Module):
         )
         return False
 
-    @staticmethod
-    def _buffer_fix(buffer: list[np.ndarray], map_T_world: np.ndarray) -> None:
-        """Append the fix to a corroboration buffer; one that disagrees restarts the buffer from itself."""
+    def _buffer_fix(self, map_T_world: np.ndarray) -> None:
+        """Append the fix to the corroboration buffer; one that disagrees restarts it from itself."""
         # Agreement is tested against EVERY buffered fix, so a surviving buffer is mutually agreeing by induction -- a chain of fixes each drifting ANCHOR_AGREE_M from the last never corroborates.
         if all(
             float(np.linalg.norm(map_T_world[:3, 3] - buffered[:3, 3])) <= ANCHOR_AGREE_M
-            for buffered in buffer
+            for buffered in self._acquire_fixes
         ):
-            buffer.append(map_T_world)
+            self._acquire_fixes.append(map_T_world)
         else:
-            buffer[:] = [map_T_world]
+            self._acquire_fixes[:] = [map_T_world]
 
-    def _anchor_locked(self, map_T_world: np.ndarray) -> bool:
-        """Buffer an acquisition fix; the anchor locks once acquire_corroboration of them agree."""
-        # Publishing nothing until then is the point: fitness is an OVERLAP ratio, so a room-symmetric or mirrored pose scores as well as the truth, and a wrong anchor becomes the yardstick for its own correction.
-        self._buffer_fix(self._acquire_fixes, map_T_world)
+    def _corroborated(self, map_T_world: np.ndarray) -> bool:
+        """Buffer an acquisition fix; True once acquire_corroboration of them agree."""
+        # Publishing nothing until then is the point: fitness is an OVERLAP ratio, so a room-symmetric or mirrored pose scores as well as the truth, and one such score would otherwise be the first pose the stack steers on.
+        self._buffer_fix(map_T_world)
         return len(self._acquire_fixes) >= self.config.acquire_corroboration
-
-    def _jump_ok(
-        self, map_T_world: np.ndarray, anchor_map_T_world: np.ndarray, source: str
-    ) -> bool:
-        """Refuse a fix stepping further from the anchor than the per-second budgets allow."""
-        dt_s = self._now_fn() - self._last_fix_ts_s
-        # Floored at one second's worth: two priors fire back to back may disagree by a normal correction, and a budget shrinking with the gap would refuse exactly the cross-source fix the fiducial preset exists to publish.
-        budget_s = max(dt_s, 1.0)
-        jump_m = float(np.linalg.norm(map_T_world[:3, 3] - anchor_map_T_world[:3, 3]))
-        rot_rel = anchor_map_T_world[:3, :3].T @ map_T_world[:3, :3]
-        # Yaw is the whole story: the judge's gravity gate already holds tilt under GRAVITY_TILT_MAX_DEG, so a flip between two accepted fixes is about z.
-        yaw_deg = abs(float(np.degrees(np.arctan2(rot_rel[1, 0], rot_rel[0, 0]))))
-        if jump_m <= MAX_JUMP_M_PER_S * budget_s and yaw_deg <= MAX_JUMP_YAW_DEG_PER_S * budget_s:
-            return True
-        logger.warning(
-            "relocalize jump rejected",
-            source=source,
-            jump_m=round(jump_m, 2),
-            yaw_deg=round(yaw_deg, 1),
-            dt_s=round(dt_s, 2),
-        )
-        return self._reacquire(map_T_world, source)
-
-    def _reacquire(self, map_T_world: np.ndarray, source: str) -> bool:
-        """Adopt a jump-rejected fix once reacquire_after_rejects of them agree."""
-        # Every accept re-arms the budget at its floor, so without this escape a wrong-but-self-consistent anchor refuses its own correction forever: fixes that keep agreeing with each other and not with the anchor make the ANCHOR the outlier.
-        self._buffer_fix(self._reject_fixes, map_T_world)
-        if len(self._reject_fixes) < self.config.reacquire_after_rejects:
-            return False
-        logger.warning(
-            "relocalize re-acquiring anchor", source=source, n_fixes=len(self._reject_fixes)
-        )
-        return True
 
     def _publish_fix(
         self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, dt: float, n_pts: int
     ) -> Transform:
-        """Adopt the fix as the anchor, clear both corroboration buffers, return the world->map TF."""
-        self._last_fix_map_T_world = map_T_world
-        self._last_fix_ts_s = self._now_fn()
+        """Lock the anchor, clear the corroboration buffer, return the world->map TF."""
+        self._anchor_locked = True
         self._acquire_fixes.clear()
-        self._reject_fixes.clear()
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
         # so inverse the transform T here to get map_in_scan_frame
