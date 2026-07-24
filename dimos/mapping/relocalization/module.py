@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 from pathlib import Path
-import threading
 import time
 from typing import Any
 
@@ -64,7 +63,6 @@ MAP_SUFFIX = ".pc2.lcm"
 # Suffixes load_marker_map parses; a bare name gets the .json default (see _start_fiducial_prior).
 MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
 SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
-ANCHOR_AGREE_M = 0.5  # m; two fixes this close describe the same pose -- well outside marker-pose noise, well inside the room-scale offset a mirrored candidate lands at
 
 
 class Config(ModuleConfig):
@@ -76,10 +74,6 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     # Max z-axis tilt (deg) a candidate may keep at the judge's gravity gate; matches relocalize.py's GRAVITY_TILT_MAX_DEG, so unchanged unless overridden.
     gravity_tilt_max_deg: float = Field(default=10.0, ge=0.0)
-    # Nothing publishes until the anchor locks, so an acquisition fix clears a higher bar than tracking's per-prior one.
-    acquire_fitness_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    # Independent fixes that must agree within ANCHOR_AGREE_M before the anchor locks; 1 = anchor on the first fix.
-    acquire_corroboration: int = Field(default=2, ge=1)
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
@@ -118,11 +112,6 @@ class RelocalizationModule(Module):
         self._ransac_min_local_points = ransac_entry.min_local_points
         # Built in start() once the marker map is loaded (needs map_T_marker).
         self._fiducial_prior: FiducialPrior | None = None
-        # map_T_world fixes corroborating the anchor, and whether it has locked; the first accept clears the buffer.
-        self._acquire_fixes: list[np.ndarray] = []
-        self._anchor_locked = False
-        # Both _fire paths reach the accept path on different threads -- the backpressure worker and the detection transport -- so the buffer append and the flag set are ONE critical section; see _try_relocalize, where the solve stays outside it.
-        self._anchor_lock = threading.Lock()
         # Latest global_map, so a completed tag burst is judged the instant it lands. Sound because the stream ACCUMULATES in the world frame: the previous cloud scores wall fitness as well as the newest, and the tag candidate needs no lidar at all.
         self._last_local_map: PointCloud2 | None = None
         # One monotonic timebase for every prior trigger, injectable so a test can drive the triggers without sleeping (FiducialPrior takes the same seam).
@@ -329,19 +318,16 @@ class RelocalizationModule(Module):
             self._fire(self._fiducial_prior, msg)
 
     def _try_relocalize(self, msg: PointCloud2, prior: RelocPrior) -> Transform | None:
-        """Solve, gate on fitness, corroborate an acquisition fix, publish."""
+        """Solve, gate on fitness, publish."""
         t0 = time.monotonic()
-        solved = self._solve(msg, prior)  # ICP runs for seconds: it stays outside _anchor_lock
+        solved = self._solve(msg, prior)
         if solved is None:
             return None
         map_T_world, fitness = solved
         dt, n_pts = time.monotonic() - t0, len(msg)
         if not self._fitness_ok(prior, fitness, dt, n_pts):
             return None
-        with self._anchor_lock:
-            if self._acquiring and not self._corroborated(map_T_world):
-                return None
-            return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
+        return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
 
     def _solo_ransac(self, prior: RelocPrior) -> bool:
         """True when RANSAC is the only enabled prior."""
@@ -384,18 +370,9 @@ class RelocalizationModule(Module):
             logger.exception("relocalize() failed")
             return None
 
-    @property
-    def _acquiring(self) -> bool:
-        """No anchor yet: higher fitness bar, corroboration required, nothing published."""
-        return not self._anchor_locked
-
     def _fitness_ok(self, prior: RelocPrior, fitness: float, dt: float, n_pts: int) -> bool:
-        """Gate the fix on its own prior's bar, or on the higher acquire bar while there is no anchor."""
-        threshold = (
-            self.config.acquire_fitness_threshold
-            if self._acquiring
-            else self._accept_threshold[prior.name]
-        )
+        """Gate the fix on its own prior's bar."""
+        threshold = self._accept_threshold[prior.name]
         if fitness >= threshold:
             return True
         if self.config.verbose_eval_logging:
@@ -415,29 +392,10 @@ class RelocalizationModule(Module):
         )
         return False
 
-    def _buffer_fix(self, map_T_world: np.ndarray) -> None:
-        """Append the fix to the corroboration buffer; one that disagrees restarts it from itself."""
-        # Agreement is tested against EVERY buffered fix, so a surviving buffer is mutually agreeing by induction -- a chain of fixes each drifting ANCHOR_AGREE_M from the last never corroborates.
-        if all(
-            float(np.linalg.norm(map_T_world[:3, 3] - buffered[:3, 3])) <= ANCHOR_AGREE_M
-            for buffered in self._acquire_fixes
-        ):
-            self._acquire_fixes.append(map_T_world)
-        else:
-            self._acquire_fixes[:] = [map_T_world]
-
-    def _corroborated(self, map_T_world: np.ndarray) -> bool:
-        """Buffer an acquisition fix; True once acquire_corroboration of them agree."""
-        # Publishing nothing until then is the point: fitness is an OVERLAP ratio, so a room-symmetric or mirrored pose scores as well as the truth, and one such score would otherwise be the first pose the stack steers on.
-        self._buffer_fix(map_T_world)
-        return len(self._acquire_fixes) >= self.config.acquire_corroboration
-
     def _publish_fix(
         self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, dt: float, n_pts: int
     ) -> Transform:
-        """Lock the anchor, clear the corroboration buffer, return the world->map TF."""
-        self._anchor_locked = True
-        self._acquire_fixes.clear()
+        """Return the accepted fix as the world->map TF."""
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
         # so inverse the transform T here to get map_in_scan_frame
