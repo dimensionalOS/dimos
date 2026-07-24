@@ -246,6 +246,50 @@ def test_on_joy_bytes_rejects_malformed_without_stamping() -> None:
     assert m._joy_rx_ts[Hand.LEFT] == 0.0
 
 
+def test_operator_yaw_180_flips_planar_deltas() -> None:
+    m = _module(operator_yaw_deg=180.0)
+    m._is_engaged[Hand.LEFT] = True
+    m._initial_poses[Hand.LEFT] = PoseStamped()
+    m._current_poses[Hand.LEFT] = PoseStamped(position=[0.10, 0.05, 0.20])
+    out = m._get_output_pose(Hand.LEFT)
+    assert out.position.x == pytest.approx(-0.10)
+    assert out.position.y == pytest.approx(-0.05)
+    assert out.position.z == pytest.approx(0.20)
+
+
+def test_local_rotation_uses_hand_frame_delta() -> None:
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    m = _module(local_rotation=True)
+    m._is_engaged[Hand.LEFT] = True
+    initial = PoseStamped(orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 1.0)))
+    current = PoseStamped(
+        orientation=initial.orientation * Quaternion.from_euler(Vector3(0.5, 0.0, 0.0))
+    )
+    m._initial_poses[Hand.LEFT] = initial
+    m._current_poses[Hand.LEFT] = current
+    out = m._get_output_pose(Hand.LEFT)
+    expected = initial.orientation.inverse() * current.orientation
+    got = out.orientation
+    assert (
+        abs(
+            abs(
+                sum(
+                    a * b
+                    for a, b in zip(
+                        (got.x, got.y, got.z, got.w),
+                        (expected.x, expected.y, expected.z, expected.w),
+                        strict=False,
+                    )
+                )
+            )
+            - 1.0
+        )
+        < 1e-6
+    )
+
+
 def test_motion_gain_scales_position_delta_only() -> None:
     m = _module(motion_gain=1.3)
     m._is_engaged[Hand.LEFT] = True
@@ -356,6 +400,7 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
             assert tasks[name].params["max_target_offset_m"] == 0.08
             assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
+            assert tasks[name].params["rotation_frame"] == "local"
             assert tasks[name].params["orientation_weight"] == 0.2
 
 

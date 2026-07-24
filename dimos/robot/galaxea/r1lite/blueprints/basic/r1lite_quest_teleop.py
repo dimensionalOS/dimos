@@ -81,6 +81,7 @@ _ARM_IK_LIMITS = {
     # dls automatically where the manipulation extra is absent.
     "solver": "pink",
     "orientation_weight": 0.2,
+    "rotation_frame": "local",
     # Ride through pose-stream gaps instead of cycling deactivate/reactivate;
     # catch-up stays bounded by the chase window either way.
     "timeout": 1.5,

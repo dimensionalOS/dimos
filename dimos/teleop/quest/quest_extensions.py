@@ -23,6 +23,7 @@ Available subclasses:
 """
 
 import asyncio
+import math
 import time
 from typing import Any
 
@@ -302,6 +303,13 @@ class R1LiteQuestTeleopConfig(VideoArmTeleopConfig):
     deadzone: float = 0.1
     joy_timeout: float = 0.5  # seconds without Joy before a controller stops driving
     motion_gain: float = 1.0  # scales hand position deltas; >1 = arm covers more than the hand
+    # The WebXR frame's forward is wherever the operator faces; the arm frame
+    # is the robot's forward. Facing the robot means 180.
+    operator_yaw_deg: float = 0.0
+    # Compose wrist rotation in the hand's own frame (twist about the hand
+    # axis maps to twist about the gripper axis, independent of heading).
+    # Requires rotation_frame "local" on the teleop tasks.
+    local_rotation: bool = False
     gripper_open: float = 100.0
     gripper_closed: float = 0.0
 
@@ -360,14 +368,27 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
         super().stop()
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
-        pose = super()._get_output_pose(hand)
-        if pose is None or self.config.motion_gain == 1.0:
-            return pose
+        current = self._current_poses.get(hand)
+        initial = self._initial_poses.get(hand)
+        if current is None or initial is None:
+            return None
+        gain = self.config.motion_gain
+        dx = (current.position.x - initial.position.x) * gain
+        dy = (current.position.y - initial.position.y) * gain
+        dz = (current.position.z - initial.position.z) * gain
+        yaw = math.radians(self.config.operator_yaw_deg)
+        if yaw:
+            cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+            dx, dy = cos_y * dx - sin_y * dy, sin_y * dx + cos_y * dy
+        if self.config.local_rotation:
+            orientation = initial.orientation.inverse() * current.orientation
+        else:
+            orientation = current.orientation * initial.orientation.inverse()
         return PoseStamped(
-            position=pose.position * self.config.motion_gain,
-            orientation=pose.orientation,
-            ts=pose.ts,
-            frame_id=pose.frame_id,
+            position=Vector3(dx, dy, dz),
+            orientation=orientation,
+            ts=current.ts,
+            frame_id=current.frame_id,
         )
 
     def _on_joy_bytes(self, data: bytes) -> None:

@@ -94,6 +94,7 @@ class TeleopIKTaskConfig:
     max_target_rot_deg: float | None = None  # chase-window rotation about the current EE
     joint_limit_margin_deg: float = 0.0  # keep commands this far inside the URDF limits
     orientation_weight: float = 1.0  # below 1.0, position wins over orientation in the solve
+    rotation_frame: Literal["world", "local"] = "world"  # local: delta composes in the EE frame
     solver: Literal["dls", "pink"] = "dls"  # pink needs the manipulation extra; falls back to dls
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
@@ -278,8 +279,14 @@ class TeleopIKTask(BaseControlTask):
         with self._lock:
             if self._initial_ee_pose is None:
                 return None
+            if self._config.rotation_frame == "local":
+                # Delta arrives in the hand's own frame; compose in the EE
+                # frame so a hand twist maps to the same gripper-local twist.
+                target_rotation = self._initial_ee_pose.rotation @ delta_se3.rotation
+            else:
+                target_rotation = delta_se3.rotation @ self._initial_ee_pose.rotation
             target_pose = pinocchio.SE3(
-                delta_se3.rotation @ self._initial_ee_pose.rotation,
+                target_rotation,
                 self._initial_ee_pose.translation + delta_se3.translation,
             )
 
@@ -496,6 +503,7 @@ class TeleopIKTaskParams(BaseConfig):
     max_target_rot_deg: float | None = None
     joint_limit_margin_deg: float = 0.0
     orientation_weight: float = 1.0
+    rotation_frame: Literal["world", "local"] = "world"
     solver: Literal["dls", "pink"] = "dls"
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
@@ -519,6 +527,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             max_target_rot_deg=params.max_target_rot_deg,
             joint_limit_margin_deg=params.joint_limit_margin_deg,
             orientation_weight=params.orientation_weight,
+            rotation_frame=params.rotation_frame,
             solver=params.solver,
             hand=params.hand,
             gripper_joint=params.gripper_joint,
