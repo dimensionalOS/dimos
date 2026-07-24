@@ -372,11 +372,7 @@ def run(
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     if eval_reloc:
-        # --eval turns the relocalization module's own verbose accept trace on: each
-        # accepted fix logs source + fitness + published pose. Guarded on the module
-        # being present because blueprint.config() is extra="forbid" -- an unconditional
-        # override would hard-fail --eval on a stack with no relocalization. An explicit
-        # -o still wins; config_key(b.name) so a namespaced instance resolves.
+        # Guarded on the module being present: config is extra="forbid", so overriding a stack without relocalization would hard-fail --eval.
         from dimos.core.coordination.blueprints import config_key
         from dimos.mapping.relocalization.module import RelocalizationModule
 
