@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 import reactivex as rx
 from reactivex import Subject, combine_latest, operators as ops
 
@@ -77,8 +77,38 @@ class Config(ModuleConfig):
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
-    # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). Both on by default, so a blueprint declares nothing; `--disable MarkerDetectionStreamModule` leaves RANSAC alone.
-    priors: list[PriorConfig] = [RansacPriorConfig(), FiducialPriorConfig()]
+    # The prior pool keyed by `type`, so every knob is `-o relocalizationmodule.priors.<key>.<field>`: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). Both on by default, so a blueprint declares nothing; `--disable MarkerDetectionStreamModule` leaves RANSAC alone.
+    priors: dict[str, PriorConfig] = {
+        "ransac": RansacPriorConfig(),
+        "fiducial": FiducialPriorConfig(),
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _type_from_key(cls, data: Any) -> Any:
+        """Fill each prior's discriminator from its key so a partial `-o` override validates."""
+        priors = data.get("priors") if isinstance(data, dict) else None
+        for key, entry in (priors or {}).items():
+            if isinstance(entry, dict):
+                entry.setdefault("type", key)
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tag_priors_by_key(cls, data: Any) -> Any:
+        """Overlay the given prior entries onto the default pool, each tagged with its key."""
+        overlay = data.get("priors") if isinstance(data, dict) else None
+        if not isinstance(overlay, dict):
+            return data
+        # A dotted `-o` arrives as one bare entry: the key supplies the `type` discriminator it cannot carry, and the default pool the priors it did not name.
+        pool: dict[str, Any] = {
+            key: entry.model_copy(deep=True)
+            for key, entry in cls.model_fields["priors"].default.items()
+        }
+        pool.update(
+            {k: {**v, "type": k} if isinstance(v, dict) else v for k, v in overlay.items()}
+        )
+        return {**data, "priors": pool}
 
 
 class RelocalizationModule(Module):
@@ -97,13 +127,13 @@ class RelocalizationModule(Module):
         self._world_to_map: Subject[Transform | None] = Subject()
         # Prior objects are built ONCE, not per frame: the fiducial holds pending-fix state across bursts that a fresh instance would reset. The RANSAC prior is a pure source; the module owns its poll timer (below).
         ransac_entry = next(
-            (p for p in self.config.priors if isinstance(p, RansacPriorConfig)),
+            (p for p in self.config.priors.values() if isinstance(p, RansacPriorConfig)),
             RansacPriorConfig(),
         )
         self._ransac_prior = RansacPrior()
         # Per-source accept gate {prior name: min wall fitness}. Key = the entry's `type` discriminator, which equals the ``name`` of the prior it builds.
         self._accept_threshold: dict[str, float] = {
-            p.type: p.fitness_threshold for p in self.config.priors
+            p.type: p.fitness_threshold for p in self.config.priors.values()
         }
         # RANSAC poll timer (the prior is a pure source): its interval and last fire. None == never fired, so the first dense-enough frame relocalizes immediately.
         self._ransac_interval_s = ransac_entry.interval_s
@@ -162,7 +192,7 @@ class RelocalizationModule(Module):
         logger.info(
             "relocalize priors",
             live=live,
-            inert=[p.type for p in self.config.priors if p.type not in live],
+            inert=[p.type for p in self.config.priors.values() if p.type not in live],
         )
 
     @rpc
@@ -174,7 +204,7 @@ class RelocalizationModule(Module):
 
     def _fiducial_config(self) -> FiducialPriorConfig | None:
         """The first enabled fiducial entry, or None -- one detector feeds one prior."""
-        for prior_config in self.config.priors:
+        for prior_config in self.config.priors.values():
             if isinstance(prior_config, FiducialPriorConfig) and prior_config.enabled:
                 return prior_config
         return None
@@ -285,7 +315,7 @@ class RelocalizationModule(Module):
     def _enabled_prior_objects(self) -> list[RelocPrior]:
         """The candidate PROPOSERS for enabled entries."""
         objects: list[RelocPrior] = []
-        for prior_config in self.config.priors:
+        for prior_config in self.config.priors.values():
             if not prior_config.enabled:
                 continue
             if isinstance(prior_config, RansacPriorConfig):
