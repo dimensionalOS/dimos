@@ -551,6 +551,35 @@ if WEBRTC_AVAILABLE:
         )
     )
 
+    # Real-SCTP loopback: full aiortc stack (DTLS, SCTP, localhost UDP), still
+    # keyless. This row is the actual WebRTC link ceiling; read the in-memory
+    # WebrtcLoopback row above as pure stack overhead.
+    from dimos.protocol.pubsub.impl.webrtc.providers.loopback import (
+        MAX_MSG_SIZE as SCTP_MAX_MSG_SIZE,
+        LoopbackConfig,
+    )
+
+    @contextmanager
+    def webrtc_sctp_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
+        pubsub = WebRTCPubSub(provider=LoopbackConfig().provider())
+        pubsub.start()
+        try:
+            yield pubsub
+        finally:
+            pubsub.stop()
+
+    def webrtc_sctp_msggen(size: int) -> tuple[str, bytes]:
+        if size > SCTP_MAX_MSG_SIZE:
+            pytest.skip(f"{size}B exceeds the negotiated SCTP message limit")
+        return ("benchmark/webrtc_sctp", make_data_bytes(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=webrtc_sctp_pubsub_channel,
+            msg_gen=webrtc_sctp_msggen,
+        )
+    )
+
 
 if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
 

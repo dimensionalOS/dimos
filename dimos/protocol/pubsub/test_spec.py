@@ -169,6 +169,27 @@ testdata.append(
 )
 
 
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
+
+if WEBRTC_AVAILABLE:
+    from dimos.protocol.pubsub.impl.webrtc.providers.loopback import LoopbackConfig
+
+    @contextmanager
+    def webrtc_sctp_context() -> Generator[WebRTCPubSub, None, None]:
+        pubsub = WebRTCPubSub(provider=LoopbackConfig().provider())
+        pubsub.start()
+        yield pubsub
+        pubsub.stop()
+
+    testdata.append(
+        (
+            webrtc_sctp_context,
+            "test/sctp_topic",
+            [b"webrtc_sctp_value1", b"webrtc_sctp_value2", b"webrtc_sctp_value3"],
+        )
+    )
+
+
 @contextmanager
 def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
     pool = ZenohSessionPool()
