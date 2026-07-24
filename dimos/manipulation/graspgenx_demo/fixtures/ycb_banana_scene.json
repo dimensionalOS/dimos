@@ -1,0 +1,80 @@
+{
+  "source": {
+    "path": "assets/sample_data/object_mesh/banana.obj",
+    "repository": "https://github.com/NVlabs/GraspGenX",
+    "commit": "b9429097728cb1c430dd78b92edf17ba318aad03",
+    "asset": "assets/sample_data/object_mesh/banana.obj",
+    "source_obj_sha256": "701947c1f376efdd82de92758f80ca61e823301848efbfd9d645a62053055494",
+    "license": "Apache-2.0",
+    "license_evidence": "The GraspGenX repository LICENSE at the recorded commit governs this source OBJ; no additional legal claim is made here."
+  },
+  "sampling": {
+    "method": "area-weighted barycentric sampling over OBJ triangular faces",
+    "seed": 20260723,
+    "algorithm": "numpy.random.default_rng",
+    "surface_points": 3500
+  },
+  "original_units": "metres",
+  "original_vertex_bounds": {
+    "min": [
+      -0.054444,
+      -0.089206,
+      -0.018335
+    ],
+    "max": [
+      0.054444,
+      0.089206,
+      0.018335
+    ]
+  },
+  "transform": {
+    "frame": "world",
+    "rotation": "identity",
+    "scale": 1.0,
+    "translation_m": [
+      0.3,
+      0.2,
+      0.16
+    ]
+  },
+  "counts": {
+    "banana": 3500,
+    "table": 256,
+    "distractor": 48,
+    "total": 3804
+  },
+  "frame": "world",
+  "timestamp": 1700000000.25,
+  "labels": {
+    "encoding": {
+      "0": "banana",
+      "1": "table",
+      "2": "distractor"
+    },
+    "regions": {
+      "banana": "source OBJ surface after transform",
+      "table": "recorded fixed plane z=0.035m",
+      "distractor": "recorded fixed ring near x=0.47m"
+    }
+  },
+  "roi": {
+    "min": [
+      0.18,
+      0.08,
+      0.1
+    ],
+    "max": [
+      0.42,
+      0.32,
+      0.24
+    ],
+    "inclusive": true,
+    "intent": "contains every banana point and no table/distractor point"
+  },
+  "final_sha256": "e9f5e2a0bc82d47035c1c4627c634b2814dd9d18b97137fdf1282d4c610a396b",
+  "bounds": {
+    "min": [0.05, 0.02, 0.035],
+    "max": [0.55, 0.48, 0.17832091]
+  },
+  "storage": "NPZ compressed; runtime loads bytes only and never samples/downloads"
+}

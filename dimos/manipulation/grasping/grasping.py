@@ -25,7 +25,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.legacy_grasp_gen_spec import LegacyGraspGenSpec
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.perception.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
@@ -43,7 +43,7 @@ class GraspingModule(Module):
     grasps: Out[PoseArray]
 
     _scene_registration: ObjectSceneRegistrationSpec
-    _grasp_gen: GraspGenSpec
+    _grasp_gen: LegacyGraspGenSpec
 
     @rpc
     def start(self) -> None:

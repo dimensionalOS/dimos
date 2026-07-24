@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Hydrate GraspGenX fixture for sdist
+        run: git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
@@ -120,6 +122,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Hydrate GraspGenX fixture for wheel
+        run: git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.1.0
       - name: Attestation
