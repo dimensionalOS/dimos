@@ -94,7 +94,7 @@ def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
     module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
     try:
         assert set(module.inputs) == {"color_image"}
-        assert set(module.outputs) == {"detections"}
+        assert set(module.outputs) == {"detections", "aggregated_detections"}
     finally:
         module.stop()
 

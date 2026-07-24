@@ -107,6 +107,95 @@ def estimate_marker_pose(
     return rvec, tvec
 
 
+def estimate_marker_pose_candidates(
+    corners_px: np.ndarray,
+    marker_length_m: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    *,
+    distortion_model: str | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric`` -- the two IPPE mirror solutions ``estimate_marker_pose`` hides, non-finite solver output dropped."""
+    obj = _aruco_marker_object_points(marker_length_m)
+    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
+    solve_dist = dist_coeffs
+    if is_fisheye_model(distortion_model):
+        d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+        if d_flat.size < 4:
+            raise ValueError(
+                f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
+                f"got {d_flat.size}. Check CameraInfo.D."
+            )
+        d_fisheye = d_flat[:4].reshape(4, 1)
+        img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
+        solve_dist = np.zeros((0, 1), dtype=np.float64)
+    n_solutions, rvecs, tvecs, _errors = cv2.solvePnPGeneric(
+        obj,
+        img,
+        camera_matrix,
+        solve_dist,
+        flags=cv2.SOLVEPNP_IPPE_SQUARE,
+    )
+    return [
+        (rvecs[i], tvecs[i])
+        for i in range(n_solutions)
+        if np.all(np.isfinite(rvecs[i])) and np.all(np.isfinite(tvecs[i]))
+    ]
+
+
+def _by_reprojection_error(
+    candidates: list[tuple[np.ndarray, np.ndarray]],
+    corners_px: np.ndarray,
+    marker_length_m: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    distortion_model: str | None,
+) -> list[tuple[float, np.ndarray, np.ndarray]]:
+    """``(rms_reproj_px, rvec, tvec)`` per candidate, best fit first."""
+    scored = [
+        (
+            marker_reprojection_error(
+                corners_px,
+                marker_length_m,
+                camera_matrix,
+                dist_coeffs,
+                rvec,
+                tvec,
+                distortion_model=distortion_model,
+            ),
+            rvec,
+            tvec,
+        )
+        for rvec, tvec in candidates
+    ]
+    return sorted(scored, key=lambda item: item[0])
+
+
+def ambiguity_gated_pose(
+    corners_px: np.ndarray,
+    marker_length_m: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    *,
+    distortion_model: str | None = None,
+    ambiguity_ratio_min: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Best ``(rvec, tvec)`` for ``camera_optical <- marker``, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (the mirror solution explains the pixels nearly as well)."""
+    candidates = estimate_marker_pose_candidates(
+        corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
+    )
+    if not candidates:
+        return None
+    scored = _by_reprojection_error(
+        candidates, corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model
+    )
+    error, rvec, tvec = scored[0]
+    # error > 1e-12 px guards the ratio div-by-zero when the best pose fits the corners exactly
+    if len(scored) > 1 and error > 1e-12 and scored[1][0] / error < ambiguity_ratio_min:
+        return None  # IPPE planar mirror ambiguity https://doi.org/10.1007/s11263-014-0725-5
+    return rvec, tvec
+
+
 def rvec_tvec_to_transform(
     rvec: np.ndarray,
     tvec: np.ndarray,

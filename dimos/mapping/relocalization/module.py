@@ -12,22 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import time
 from typing import Any
 
 import numpy as np
+from pydantic import model_validator
 import reactivex as rx
 from reactivex import Subject, combine_latest, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
+from dimos.mapping.relocalization.eval import SourceTally, format_eval_summary
+from dimos.mapping.relocalization.priors import (
+    FiducialPrior,
+    FiducialPriorConfig,
+    PriorConfig,
+    RansacPrior,
+    RansacPriorConfig,
+    RelocPrior,
+    load_marker_map,
+    relocalize_with_prior,
+)
+from dimos.mapping.relocalization.relocalize import (
+    InsufficientWallEvidenceError,
+    NoUprightCandidateError,
+)
 from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.fiducial.apriltag_aggregation import matrix_from_pose7
+from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -38,9 +58,9 @@ FRAME_MAP = "map"
 FRAME_WORLD = "world"
 
 PUBLISH_INTERVAL = 2.0  # for loaded_map + TF
-RELOC_INTERVAL = 2.0
-MIN_LOCAL_POINTS = 50_000
 MAP_SUFFIX = ".pc2.lcm"
+MARKER_MAP_SUFFIX = ".json"  # what write_marker_map emits and load_marker_map parses
+SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
 
 
 class Config(ModuleConfig):
@@ -48,13 +68,35 @@ class Config(ModuleConfig):
         None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
     )
     publish_loaded_map: bool = False
-    fitness_threshold: float = 0.45
     use_carving: bool = True
+    # True (`--eval`): raise the throttled refusal lines to warning and tally accepts/rejects per prior for the summary at stop().
+    verbose_eval_logging: bool = False
+    # The prior pool keyed by `type`, so every knob is `-o relocalizationmodule.priors.<key>.<field>`: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). Both on by default, so a blueprint declares nothing; `--disable marker-detection-stream-module` leaves RANSAC alone.
+    priors: dict[str, PriorConfig] = {
+        "ransac": RansacPriorConfig(),
+        "fiducial": FiducialPriorConfig(),
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tag_priors_by_key(cls, data: Any) -> Any:
+        """Overlay the given prior entries onto the default pool, each tagged with its key."""
+        overlay = data.get("priors") if isinstance(data, dict) else None
+        if not isinstance(overlay, dict):
+            return data
+        # A dotted `-o` arrives as one bare entry: the key supplies the `type` discriminator it cannot carry, and the default pool the priors it did not name.
+        pool: dict[str, Any] = {
+            key: entry.model_copy(deep=True)
+            for key, entry in cls.model_fields["priors"].default.items()
+        }
+        pool.update({k: {**v, "type": k} if isinstance(v, dict) else v for k, v in overlay.items()})
+        return {**data, "priors": pool}
 
 
 class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
+    aggregated_detections: In[Detection3DArray]  # the detector's per-burst aggregated tag poses
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
 
@@ -62,7 +104,28 @@ class RelocalizationModule(Module):
         super().__init__(**kwargs)
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
+        # Per-source accept/reject tally, filled only under verbose_eval_logging (--eval) and rendered once at stop(). The module already owns the accept/reject data.
+        self._eval_tally: dict[str, SourceTally] = {}
         self._world_to_map: Subject[Transform | None] = Subject()
+        # Prior objects are built ONCE, not per frame: the fiducial holds pending-fix state across bursts that a fresh instance would reset. The RANSAC prior is a pure source; the module owns its poll timer (below).
+        ransac_entry = next(
+            (p for p in self.config.priors.values() if isinstance(p, RansacPriorConfig)),
+            RansacPriorConfig(),
+        )
+        self._ransac_prior = RansacPrior()
+        # Per-source accept gate {prior name: min wall fitness}. Key = the entry's `type` discriminator, which equals the ``name`` of the prior it builds.
+        self._accept_threshold: dict[str, float] = {
+            p.type: p.fitness_threshold for p in self.config.priors.values()
+        }
+        # RANSAC poll timer (the prior is a pure source): its interval and last fire. None == never fired, so the first dense-enough frame relocalizes immediately.
+        self._ransac_interval_s = ransac_entry.interval_s
+        self._last_ransac_fired_s: float | None = None
+        # RANSAC-only point floor (a fiducial burst fires regardless); read from the ransac entry, or the default when no ransac entry is enabled (then unused).
+        self._ransac_min_local_points = ransac_entry.min_local_points
+        # Built in start() once the marker map is loaded (needs map_T_marker).
+        self._fiducial_prior: FiducialPrior | None = None
+        # Latest global_map, so a completed tag burst is judged the instant it lands. Sound because the stream ACCUMULATES in the world frame: the previous cloud scores wall fitness as well as the newest, and the tag candidate needs no lidar at all.
+        self._last_local_map: PointCloud2 | None = None
 
     @rpc
     def start(self) -> None:
@@ -76,16 +139,11 @@ class RelocalizationModule(Module):
         self._premap = PointCloud2.lcm_decode(path.read_bytes())
         self._premap.frame_id = FRAME_MAP
 
+        # Trigger accounting runs on the backpressure worker thread only, so a frame coalesced away cannot drop a burst edge.
         self.register_disposable(
             backpressure(
-                self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
-                    ops.throttle_first(RELOC_INTERVAL),
-                    ops.do_action(self._maybe_log_skip),
-                    ops.filter(self._has_enough_points),
-                )
-            )
-            .pipe(ops.map(self._try_relocalize))
-            .subscribe(self._publish_tf)
+                self.global_map.observable()  # type: ignore[no-untyped-call]
+            ).subscribe(self._on_local_map)
         )
 
         self.register_disposable(
@@ -103,64 +161,249 @@ class RelocalizationModule(Module):
             .subscribe(self._publish_periodic)
         )
 
+        self._start_fiducial_prior()
+
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
             f"loaded_map.frame_id={self._premap.frame_id!r}"
         )
+        # Both priors default on and the blueprint names none, so this is where an operator sees what actually came up: an enabled fiducial entry with no marker map is inert.
+        live = [prior.name for prior in self._enabled_prior_objects()]
+        logger.info(
+            "relocalize priors",
+            live=live,
+            inert=[p.type for p in self.config.priors.values() if p.type not in live],
+        )
 
-    def _maybe_log_skip(self, msg: PointCloud2) -> None:
-        if self._has_enough_points(msg):
+    @rpc
+    def stop(self) -> None:
+        # Emit the per-source accept/reject table once, at shutdown, from the tally the fire path filled -- the module owns the data, so no log parsing.
+        if self.config.verbose_eval_logging and self._eval_tally:
+            logger.info("relocalize eval summary", table=format_eval_summary(self._eval_tally))
+        super().stop()
+
+    def _fiducial_config(self) -> FiducialPriorConfig | None:
+        """The first enabled fiducial entry, or None -- one detector feeds one prior."""
+        for prior_config in self.config.priors.values():
+            if isinstance(prior_config, FiducialPriorConfig) and prior_config.enabled:
+                return prior_config
+        return None
+
+    def _start_fiducial_prior(self) -> None:
+        """Load the marker map, build the FiducialPrior, route sightings into it."""
+        fiducial = self._fiducial_config()
+        if fiducial is None:
             return
-        now = time.monotonic()
-        if now - self._last_skip_log > 5.0:
+        marker_map_file = fiducial.marker_map_file
+        if not marker_map_file:
             logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} < MIN_LOCAL_POINTS={MIN_LOCAL_POINTS}"
+                "relocalize: fiducial prior enabled but no marker_map_file; fiducial prior disabled"
             )
+            return
+        # A bare name gets the default suffix; a name that already carries it keeps it (resolve_named_path would otherwise look up "<survey>.json.json").
+        suffix = "" if Path(marker_map_file).suffix == MARKER_MAP_SUFFIX else MARKER_MAP_SUFFIX
+        marker_map = {
+            marker_id: transform.to_matrix()
+            for marker_id, transform in load_marker_map(
+                resolve_named_path(marker_map_file, suffix)
+            ).items()
+        }
+        self._fiducial_prior = FiducialPrior(marker_map)
+        self.register_disposable(
+            self.aggregated_detections.observable().subscribe(self._on_aggregated_detections)  # type: ignore[no-untyped-call]
+        )
+        logger.info(
+            "fiducial prior enabled",
+            marker_map_file=marker_map_file,
+            n_markers=len(marker_map),
+        )
+
+    def _throttled_warn(self, event: str, **kw: Any) -> None:
+        """Report that this fire was refused, at most once per SKIP_LOG_INTERVAL_S across every refusal."""
+        now = time.monotonic()
+        if now - self._last_skip_log > SKIP_LOG_INTERVAL_S:
+            # Refusals are the steady state while the submap fills, so they surface only under --eval; the console otherwise carries accepted fixes alone.
+            log = logger.warning if self.config.verbose_eval_logging else logger.debug
+            log(event, **kw)
             self._last_skip_log = now
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= MIN_LOCAL_POINTS
+        return len(msg) >= self._ransac_min_local_points
 
     def _publish_tf(self, tf: Transform | None) -> None:
         if tf is None:
             return
         self._world_to_map.on_next(tf)
 
-    def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
-        assert self._premap is not None
+    def _on_aggregated_detections(self, msg: Detection3DArray) -> None:
+        """Compose each aggregated tag pose into this tag's world->map fix, then fire."""
+        if self._fiducial_prior is None:
+            return
+        for detection in msg.detections[: msg.detections_length]:
+            marker_id = self._marker_id_from_detection(detection)
+            if marker_id is None:
+                continue
+            center = detection.bbox.center  # world_T_marker_aggregated (frame_id == world)
+            world_T_marker_aggregated = matrix_from_pose7(
+                (
+                    center.position.x,
+                    center.position.y,
+                    center.position.z,
+                    center.orientation.x,
+                    center.orientation.y,
+                    center.orientation.z,
+                    center.orientation.w,
+                )
+            )
+            self._fiducial_prior.observe(marker_id, world_T_marker_aggregated)
+        # Fire HERE, not at the next cloud: the tag candidate is composed from the marker alone, so waiting on lidar is dead time on acquisition. No cloud yet -> pending stays and _on_local_map fires it on the first frame.
+        cloud = self._last_local_map
+        if cloud is not None and self._fiducial_prior.has_pending:
+            self._fire(self._fiducial_prior, cloud)
+
+    def _fire(self, prior: RelocPrior, local_map: PointCloud2) -> None:
+        """Run this prior's ONE relocalization and publish the resulting TF."""
+        self._publish_tf(self._try_relocalize(local_map, prior))
+
+    @staticmethod
+    def _marker_id_from_detection(detection: Detection3D) -> int | None:
+        """Numeric marker id off the wire, via the same parse MarkerTfModule publishes TF from."""
+        raw = MarkerTfModule._marker_id_from_detection(detection)
+        return int(raw) if raw is not None and raw.isdigit() else None
+
+    def _enabled_prior_objects(self) -> list[RelocPrior]:
+        """The candidate PROPOSERS for enabled entries."""
+        objects: list[RelocPrior] = []
+        for prior_config in self.config.priors.values():
+            if not prior_config.enabled:
+                continue
+            if isinstance(prior_config, RansacPriorConfig):
+                objects.append(self._ransac_prior)
+            elif isinstance(prior_config, FiducialPriorConfig) and self._fiducial_prior is not None:
+                objects.append(self._fiducial_prior)
+        return objects
+
+    def _on_local_map(self, msg: PointCloud2) -> None:
+        """Poll the RANSAC prior on the module's timer; on cold start fire a pending fiducial fix."""
+        self._last_local_map = msg  # what a burst-triggered fire judges against
+        now = time.monotonic()
+        # _ransac_prior is always constructed, so gate it on the enabled set (the toggle); _fiducial_prior is None unless its enabled entry loaded a marker map.
+        enabled = self._enabled_prior_objects()
+
+        if self._ransac_prior in enabled:
+            time_due = (
+                self._last_ransac_fired_s is None
+                or now - self._last_ransac_fired_s >= self._ransac_interval_s
+            )
+            if time_due and self._has_enough_points(msg):
+                self._last_ransac_fired_s = now
+                self._fire(self._ransac_prior, msg)
+            elif time_due:
+                # Starved: log, leave the timer so the trigger stands and fires next dense frame.
+                self._throttled_warn(
+                    "relocalize skipped: sparse submap",
+                    n_pts=len(msg),
+                    min_local_points=self._ransac_min_local_points,
+                )
+
+        if self._fiducial_prior is not None and self._fiducial_prior.has_pending:
+            # Cold start: a burst arrived before any cloud was cached; fire it on the first cloud.
+            self._fire(self._fiducial_prior, msg)
+
+    def _try_relocalize(self, msg: PointCloud2, prior: RelocPrior) -> Transform | None:
+        """Solve, gate on fitness, publish."""
         t0 = time.monotonic()
+        solved = self._solve(msg, prior)
+        if solved is None:
+            return None
+        map_T_world, fitness = solved
+        dt = time.monotonic() - t0
+        n_pts = len(msg)
+        if not self._fitness_ok(prior, fitness, dt, n_pts):
+            return None
+        return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
+
+    def _solve(self, msg: PointCloud2, prior: RelocPrior) -> tuple[np.ndarray, float] | None:
+        """Judge this prior's candidates, turning each refusal into a None sentinel."""
+        assert self._premap is not None, "start() loads the premap before any fire"
         try:
-            T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
+            # None here is the double-fire race: the other thread's propose() drained the pending tag fix first and already published it -- benign no-op.
+            return relocalize_with_prior(self._premap.pointcloud, msg.pointcloud, prior)
+        except InsufficientWallEvidenceError as e:
+            # Too few wall points to judge the pool (a sparse acquisition cloud a tag burst is allowed to fire on): drop the unjudged fix -- a pose scored against <100 walls isn't trustworthy, and the tag is re-seen as the robot moves into structure.
+            self._throttled_warn(
+                "relocalize skipped: insufficient wall evidence", n_pts=len(msg), reason=str(e)
+            )
+            return None
+        except NoUprightCandidateError:
+            # Every candidate tilted past the gravity gate: a real rejection, so the fix is consumed (re-judging a tilted pose only re-rejects it).
+            self._throttled_warn(
+                "relocalize rejected: every candidate tilted past the gravity gate"
+            )
+            return None
         except Exception:
             logger.exception("relocalize() failed")
             return None
-        dt = time.monotonic() - t0
-        n_pts = len(msg)
 
-        if fitness < self.config.fitness_threshold:
-            logger.warning(
-                f"relocalize rejected: fitness={fitness:.3f} < threshold={self.config.fitness_threshold} "
-                f"time_cost={dt:.1f}s n_pts={n_pts}"
-            )
-            return None
+    def _fitness_ok(self, prior: RelocPrior, fitness: float, dt: float, n_pts: int) -> bool:
+        """Gate the fix on its own prior's bar."""
+        threshold = self._accept_threshold[prior.name]
+        if fitness >= threshold:
+            return True
+        if self.config.verbose_eval_logging:
+            self._eval_tally.setdefault(prior.name, SourceTally()).rejects += 1
+        # threshold= IS the reason: this is the only fitness reject path, and the operator's next move is to compare the two numbers.
+        extra: dict[str, Any] = (
+            {"time_cost_s": round(dt, 1), "n_pts": n_pts}
+            if self.config.verbose_eval_logging
+            else {}
+        )
+        logger.warning(
+            "relocalize rejected",
+            source=prior.name,
+            fitness=round(fitness, 3),
+            threshold=threshold,
+            **extra,
+        )
+        return False
 
+    def _publish_fix(
+        self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, dt: float, n_pts: int
+    ) -> Transform:
+        """Return the accepted fix as the world->map TF."""
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
         # so inverse the transform T here to get map_in_scan_frame
-        T_inv = np.linalg.inv(T)
-        new_tf = Transform(
-            translation=Vector3(*T_inv[:3, 3]),
-            rotation=Quaternion.from_rotation_matrix(T_inv[:3, :3]),
+        world_T_map = np.linalg.inv(map_T_world)
+        self._log_accept(prior, fitness, dt, n_pts, map_T_world, world_T_map)
+        return Transform(
+            translation=Vector3(*world_T_map[:3, 3]),
+            rotation=Quaternion.from_rotation_matrix(world_T_map[:3, :3]),
             frame_id=FRAME_WORLD,
             child_frame_id=FRAME_MAP,
         )
+
+    def _log_accept(
+        self,
+        prior: RelocPrior,
+        fitness: float,
+        dt: float,
+        n_pts: int,
+        map_T_world: np.ndarray,
+        world_T_map: np.ndarray,
+    ) -> None:
+        """One accept line: the published fix, its health, and which prior won."""
+        if self.config.verbose_eval_logging:
+            entry = self._eval_tally.setdefault(prior.name, SourceTally())
+            entry.accepts += 1
+            entry.fitnesses.append(round(fitness, 3))
         logger.info(
             f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
-            f"reloc_t={T[:3, 3].round(3).tolist()} "
+            f"reloc_t={map_T_world[:3, 3].round(3).tolist()} "
             f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
-            f"published_t={T_inv[:3, 3].round(3).tolist()} "
+            f"published_t={world_T_map[:3, 3].round(3).tolist()} "
+            f"source={prior.name} "
         )
-        return new_tf
 
     def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
         _, tf = pair

@@ -308,6 +308,11 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    eval_reloc: bool = typer.Option(
+        False,
+        "--eval",
+        help="Raise the relocalization refusal lines to warning and print a per-prior summary at stop",
+    ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
@@ -359,6 +364,17 @@ def run(
             get_module_by_name_or_exit(name).blueprints[0].module for name in disable
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    if eval_reloc:
+        # Guarded on the module being present: config is extra="forbid", so overriding a stack without relocalization would hard-fail --eval.
+        from dimos.core.coordination.blueprints import config_key
+        from dimos.mapping.relocalization.module import RelocalizationModule
+
+        for b in blueprint.blueprints:
+            if b.module is RelocalizationModule:
+                key = f"{config_key(b.name)}.verbose_eval_logging"
+                if not any(arg.startswith(f"{key}=") for arg in blueprint_args):
+                    blueprint_args = [*blueprint_args, f"{key}=true"]
 
     if show_help:
         print("Blueprint arguments:")

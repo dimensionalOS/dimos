@@ -25,6 +25,10 @@ TF publication.
 Skips frames where the upstream observation has no ``.pose`` (debug log):
 without a camera-in-world pose, we can't honor the "always world-frame"
 output contract.
+
+:class:`AggregateTagBursts` taps that marker stream to gate each glimpse and
+publish one robustly-aggregated pose per tag visit (aggregation core from jnav,
+dimos PR #2587).
 """
 
 from __future__ import annotations
@@ -37,6 +41,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.memory2.transform import Transformer
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -45,6 +51,17 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
+from dimos.perception.fiducial.apriltag_aggregation import (
+    AggregationConfig,
+    Pose7,
+    TagAggregator,
+    TagEstimate,
+    TagObservation,
+    camera_relative_quality,
+    tag_covariance,
+    tag_noise_scale,
+    tag_side_px,
+)
 from dimos.perception.fiducial.marker_detect import (
     detect_markers_in_image as _detect_markers_in_image,
 )
@@ -142,6 +159,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         world_frame: str = "world",
         smoothing_window: float = 0.0,
         emit_empty_frames: bool = False,
+        ambiguity_ratio_min: float = 1.0,
     ) -> None:
         if marker_length_m <= 0:
             raise ValueError(f"marker_length_m must be > 0, got {marker_length_m}")
@@ -153,6 +171,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.world_frame = world_frame
         self.smoothing_window = smoothing_window
         self.emit_empty_frames = emit_empty_frames
+        self.ambiguity_ratio_min = ambiguity_ratio_min
         self._detector = create_aruco_detector(aruco_dictionary)
         self._camera_info_key: tuple[Any, ...] | None = None
         self._resolved_camera_info: CameraInfo | None = None
@@ -228,6 +247,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 marker_length_m=self.marker_length_m,
                 aruco_dictionary=self.aruco_dictionary,
                 world_frame=self.world_frame,
+                ambiguity_ratio_min=self.ambiguity_ratio_min,
                 detector=self._detector,
                 camera_matrix=self._cam_mtx,
                 dist_coeffs=self._dist,
@@ -406,3 +426,86 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
                 transform.rotation.w,
             )
         return obs.pose
+
+
+class AggregateTagBursts:
+    """Gate each tag glimpse and publish ONE robustly-aggregated pose per tag visit, edge-triggered."""
+
+    def __init__(
+        self,
+        publish: Callable[[Detection3DArray], Any],
+        config: AggregationConfig,
+        world_frame: str = "world",
+    ) -> None:
+        self._publish = publish
+        self._world_frame = world_frame
+        self._aggregator = TagAggregator(config)
+        # markers whose CURRENT burst already published; a marker leaves the set once its window thins under min_observations (left view > time_window_s), re-arming the edge
+        self._burst_counted: set[int] = set()
+
+    def __call__(self, obs: Observation[Detection3DMarker | None]) -> None:
+        det = obs.data
+        if det is None:
+            return  # DetectMarkers(emit_empty_frames=True) sentinel: a tag-free frame
+
+        world_T_marker: Pose7 = (
+            det.center.x,
+            det.center.y,
+            det.center.z,
+            det.orientation.x,
+            det.orientation.y,
+            det.orientation.z,
+            det.orientation.w,
+        )
+        distance_m, view_angle_deg = camera_relative_quality(det, world_T_marker)
+        reason = self._aggregator.observe(
+            TagObservation(
+                ts=obs.ts,
+                marker_id=det.marker_id,
+                pose=world_T_marker,
+                distance_m=distance_m,
+                view_angle_deg=view_angle_deg,
+                reproj_px=det.reprojection_error,
+                tag_px=tag_side_px(det.corners_px),
+            )
+        )
+        if reason is not None:
+            return
+        estimate = self._aggregator.robust_estimate(det.marker_id)
+        if estimate is None:
+            self._burst_counted.discard(det.marker_id)  # window thinned -> re-arm the edge
+            return
+        if det.marker_id in self._burst_counted:
+            return  # same burst still satisfied: publishing per frame would fire ~2x/s
+        self._burst_counted.add(det.marker_id)
+        self._publish(self._aggregated_array(det, estimate))
+
+    def _aggregated_array(self, det: Detection3DMarker, estimate: TagEstimate) -> Detection3DArray:
+        """One-detection array with this tag's aggregated world_T_marker; covariance and score are the same number twice, so they cannot disagree."""
+        scale = tag_noise_scale(estimate.distance_m, estimate.reproj_px)
+        x, y, z, qx, qy, qz, qw = estimate.pose
+        aggregated = dataclasses.replace(
+            det,
+            center=Vector3(x, y, z),
+            orientation=Quaternion(qx, qy, qz, qw),
+            transform=None,  # aggregated across many frames: no ONE camera transform holds
+            confidence=min(1.0, 1.0 / scale),  # -> hypothesis.score, dimensionless 0-1
+        )
+        msg = ImageDetections3D(det.image, [aggregated]).to_ros_detection3d_array(
+            frame_id=self._world_frame
+        )
+        # ASSIGN, never mutate: the generated LCM constructor shares ONE default PoseWithCovariance across all hypotheses, so writing .covariance would stamp every detection in the process (same hazard as detection3d/bbox.py)
+        msg.detections[0].results[0].pose = PoseWithCovariance(
+            Pose(position=aggregated.center, orientation=aggregated.orientation),
+            tag_covariance(estimate.pose, scale),
+        )
+        # one visit shares a viewpoint, so its PnP errors are correlated and the covariance carries no 1/n
+        logger.debug(
+            "tag burst aggregated",
+            marker_id=det.marker_id,
+            n_obs=estimate.n_observations,
+            distance_m=None if estimate.distance_m is None else round(estimate.distance_m, 2),
+            reproj_px=None if estimate.reproj_px is None else round(estimate.reproj_px, 2),
+            score=round(aggregated.confidence, 2),
+        )
+        return msg

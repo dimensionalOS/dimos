@@ -36,6 +36,16 @@ RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # voxel for the final ICP refinement
 RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
+# Min wall points per cloud (post fine-voxel downsample) for the wall-only rerank; ARBITRARY/UNTUNED.
+MIN_WALL_POINTS = 100
+
+
+class InsufficientWallEvidenceError(ValueError):
+    """Too few wall points for the wall-only rerank to discriminate yaw (flat floors are rotationally symmetric); refuse rather than degrade."""
+
+
+class NoUprightCandidateError(ValueError):
+    """Every candidate tilts past ``GRAVITY_TILT_MAX_DEG``; no valid winner, so refuse rather than admit a gravity-violating pose."""
 
 
 def _preprocess(
@@ -131,13 +141,15 @@ def relocalize(
     rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
     """
-    # Fine downsample once — used for both candidate scoring and the final ICP.
-    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
-    src_fine.estimate_normals(
-        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
-    )
-    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+    candidates = generate_ransac_candidates(global_map, local_map)
+    return refine_candidates(global_map, local_map, candidates)
 
+
+def generate_ransac_candidates(
+    global_map: o3d.geometry.PointCloud,
+    local_map: o3d.geometry.PointCloud,
+) -> list[np.ndarray]:
+    """Multi-scale x multi-restart FPFH+RANSAC transforms placing ``local_map`` into ``global_map``, plus centroid-aware 180° yaw flips: the unranked pool for ``refine_candidates``."""
     candidates: list[np.ndarray] = []  # 4x4 transforms
     for vs, n_runs in SCALE_PLAN:
         src_down, src_fpfh = _preprocess(local_map, vs)
@@ -155,17 +167,37 @@ def relocalize(
     # Rotating around the cloud centroid keeps the flipped cloud in the same
     # approximate world location — the right reading of "same place, opposite
     # heading" for an indoor submap.
-    src_pts = np.asarray(src_fine.points)
+    src_pts = np.asarray(local_map.voxel_down_sample(FINE_VOXEL).points)
     c_body = np.array([src_pts[:, 0].mean(), src_pts[:, 1].mean(), 0.0])
     rz180 = np.diag([-1.0, -1.0, 1.0])
     t_body_flip = np.eye(4)
     t_body_flip[:3, :3] = rz180
     t_body_flip[:3, 3] = c_body - rz180 @ c_body  # = (2*Cx, 2*Cy, 0)
     candidates = candidates + [T @ t_body_flip for T in candidates]
+    return candidates
 
-    # Gravity filter; fall back to all if everything is tilted (degenerate clouds).
+
+def refine_candidates(
+    global_map: o3d.geometry.PointCloud,
+    local_map: o3d.geometry.PointCloud,
+    candidates: list[np.ndarray],
+) -> tuple[np.ndarray, float]:
+    """Judge a pool of candidate local_map->global_map transforms and refine the winner (gravity-filter, WALL-only rerank, wall ICP polish, final full-cloud ICP)."""
+    # Fine downsample once — used for both candidate scoring and the final ICP.
+    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
+    src_fine.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
+    )
+    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+
+    # A tilted winner is a rotationally-symmetric-floor mis-solve, so refuse the whole pool.
     upright = [T for T in candidates if _gravity_tilt_deg(T) <= GRAVITY_TILT_MAX_DEG]
-    pool = upright if upright else candidates
+    if not upright:
+        raise NoUprightCandidateError(
+            f"no candidate within the gravity gate: {len(candidates)} candidate(s), "
+            f"none within {GRAVITY_TILT_MAX_DEG} deg -- refusing"
+        )
+    pool = upright
 
     # Build WALL-ONLY clouds for scoring + polish. Floor/ceiling points have
     # vertical normals; they fit equally well in any yaw rotation (flat planes
@@ -176,8 +208,6 @@ def relocalize(
     def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
         nrm = np.asarray(cloud.normals)
         mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
-        if mask.sum() < 100:
-            return cloud  # too sparse -> fall back to full cloud
         sub = o3d.geometry.PointCloud()
         sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
         sub.normals = o3d.utility.Vector3dVector(nrm[mask])
@@ -185,6 +215,13 @@ def relocalize(
 
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
+    n_src_walls, n_tgt_walls = len(src_walls.points), len(tgt_walls.points)
+    if n_src_walls < MIN_WALL_POINTS or n_tgt_walls < MIN_WALL_POINTS:
+        # floors-only scoring is rotation-blind, so there is nothing to fall back to
+        raise InsufficientWallEvidenceError(
+            f"insufficient wall evidence: submap walls={n_src_walls}, "
+            f"map walls={n_tgt_walls} < {MIN_WALL_POINTS} — skipping solve"
+        )
 
     # Stage 1: rank all candidates by WALL-only fine-scale fitness.
     def fine_fitness(T: np.ndarray) -> float:

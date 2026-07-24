@@ -94,10 +94,15 @@ unitree_go2_markers = (
     .global_config(n_workers=11, robot_model="unitree_go2")
 )
 
+# Both priors default on: RANSAC on its timer, fiducial on the tag-burst edge, one judge.
 unitree_go2_relocalization = autoconnect(
     unitree_go2,
+    MarkerDetectionStreamModule.blueprint(
+        marker_length_m=0.10,
+        camera_info=GO2Connection.camera_info_static,
+    ),
     RelocalizationModule.blueprint(),
-).global_config(n_workers=11)
+).global_config(n_workers=12)
 
 unitree_go2_memory = autoconnect(
     unitree_go2,
