@@ -90,49 +90,23 @@ unitree_go2_markers = (
                 "/marker_detection/detections",
                 Detection3DArray,
             ),
-            ("aggregated_detections", MarkerDetectionStreamModule): LCMTransport(
-                "/marker_detection/aggregated_detections",
-                Detection3DArray,
-            ),
         }
     )
     .global_config(n_workers=11, robot_model="unitree_go2")
 )
 
-# lidar-only reloc: RANSAC alone. Set the map with -o relocalizationmodule.map_file=...
-unitree_go2_relocalization_lidar = autoconnect(
-    unitree_go2,
-    RelocalizationModule.blueprint(priors=[RansacPriorConfig(interval_s=2.0)]),
-).global_config(n_workers=11)
-
-# lidar + fiducial: independent triggers (interval / burst edge), one judge. The
-# FiducialPriorConfig is the single source of the fiducial family -- its
-# aruco_dictionary threads into the detector.
-_lidar_fiducial_prior = FiducialPriorConfig(marker_length_m=0.10)
-unitree_go2_relocalization_lidar_fiducial = autoconnect(
+# Both priors declared: RANSAC on its timer, fiducial on the tag-burst edge, one judge.
+# Toggle a prior with -o, or run lidar-only with --disable MarkerDetectionStreamModule.
+_fiducial = FiducialPriorConfig(marker_length_m=0.10)
+unitree_go2_relocalization = autoconnect(
     unitree_go2,
     MarkerDetectionStreamModule.blueprint(
-        marker_length_m=_lidar_fiducial_prior.marker_length_m,
+        marker_length_m=_fiducial.marker_length_m,
         camera_info=GO2Connection.camera_info_static,
-        aruco_dictionary=_lidar_fiducial_prior.aruco_dictionary,
-        aggregation=_lidar_fiducial_prior.aggregation,
+        aruco_dictionary=_fiducial.aruco_dictionary,
+        aggregation=_fiducial.aggregation,
     ),
-    RelocalizationModule.blueprint(
-        priors=[RansacPriorConfig(interval_s=2.0), _lidar_fiducial_prior]
-    ),
-).global_config(n_workers=12, robot_model="unitree_go2")
-
-# fiducial-only: the fiducial prior is the sole proposer, so no periodic timer at all.
-_fiducial_only_prior = FiducialPriorConfig(marker_length_m=0.10)
-unitree_go2_relocalization_fiducial = autoconnect(
-    unitree_go2,
-    MarkerDetectionStreamModule.blueprint(
-        marker_length_m=_fiducial_only_prior.marker_length_m,
-        camera_info=GO2Connection.camera_info_static,
-        aruco_dictionary=_fiducial_only_prior.aruco_dictionary,
-        aggregation=_fiducial_only_prior.aggregation,
-    ),
-    RelocalizationModule.blueprint(priors=[_fiducial_only_prior]),
+    RelocalizationModule.blueprint(priors=[RansacPriorConfig(interval_s=2.0), _fiducial]),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
 unitree_go2_memory = autoconnect(

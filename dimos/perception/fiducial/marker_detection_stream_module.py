@@ -82,6 +82,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     color_image: In[Image]
     detections: Out[Detection3DArray]
     # One gated, aggregated pose per (marker, visit), not a per-frame mirror; same message type.
+    # No transport override: autoconnect wires it. An explicit LCMTransport is only needed when a consumer is a cpp/rust or external (non-blueprint) module.
     aggregated_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:

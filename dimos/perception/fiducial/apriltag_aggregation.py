@@ -23,6 +23,9 @@ import math
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+# Frame-invariant marker pose 7-vector: (x, y, z, qx, qy, qz, qw), meters + xyzw.
+Pose7 = tuple[float, float, float, float, float, float, float]
+
 # Per-glimpse gate thresholds (see gate_reason).
 DEFAULT_MAX_DISTANCE_M = 1.0  # camera->tag range past which perspective is too weak
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # line-of-sight vs tag normal; grazing views mis-solve
@@ -60,7 +63,7 @@ class TagObservation:
 
     ts: float
     marker_id: int
-    pose: tuple[float, float, float, float, float, float, float]
+    pose: Pose7
     distance_m: float | None = None
     view_angle_deg: float | None = None
     reproj_px: float | None = None
@@ -72,7 +75,7 @@ class TagEstimate:
     """One robust aggregated pose for a marker over a cluster/window of glimpses."""
 
     marker_id: int
-    pose: tuple[float, float, float, float, float, float, float]  # aggregated 7-vec, obs' frame
+    pose: Pose7  # aggregated 7-vec, obs' frame
     n_observations: int
     ts: float  # latest contributing glimpse's timestamp
     # Cluster MEDIANS, not the last glimpse's -- health of the whole cluster's pose.
@@ -80,7 +83,7 @@ class TagEstimate:
     reproj_px: float | None = None
 
 
-def pose7_from_matrix(matrix: np.ndarray) -> tuple[float, float, float, float, float, float, float]:
+def pose7_from_matrix(matrix: np.ndarray) -> Pose7:
     """4x4 homogeneous transform -> ``(x, y, z, qx, qy, qz, qw)``."""
     translation = matrix[:3, 3]
     quaternion = Rotation.from_matrix(matrix[:3, :3]).as_quat()  # x, y, z, w
@@ -195,7 +198,7 @@ def robust_cluster_pose(
     cluster: list[TagObservation],
     rotation_weight_m_per_rad: float,
     huber_delta_m: float,
-) -> tuple[float, float, float, float, float, float, float]:
+) -> Pose7:
     """Cluster representative: the medoid refined by Huber-weighted IRLS -- weighted-mean translation + Markley quaternion eigen-mean https://ntrs.nasa.gov/citations/20070017872."""
     medoid = cluster_medoid(cluster, rotation_weight_m_per_rad)
     if len(cluster) < 2:
@@ -242,7 +245,7 @@ def aggregate_by_marker_id(
     observations: list[TagObservation],
     rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
     huber_delta_m: float = DEFAULT_HUBER_DELTA_M,
-) -> dict[int, tuple[tuple[float, ...], int]]:
+) -> dict[int, tuple[Pose7, int]]:
     """Batch: group observations by marker_id and fuse each group to one robust pose; id -> (7-vec, n)."""
     by_id: dict[int, list[TagObservation]] = defaultdict(list)
     for obs in observations:

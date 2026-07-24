@@ -36,7 +36,7 @@ from dimos.mapping.relocalization.relocalize import (
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
+from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, Pose7
 from dimos.protocol.service.spec import BaseConfig
 
 # s between RANSAC fires; one FPFH+RANSAC search costs seconds of CPU (4.4-23 s on the trial's go2/Orin recordings), so the sweep is paced, not per-frame.
@@ -153,9 +153,7 @@ def load_marker_map(path: str | Path) -> dict[int, Transform]:
     }
 
 
-def write_marker_map(
-    path: Path, aggregated: dict[int, tuple[tuple[float, ...], int]], *, source: str
-) -> None:
+def write_marker_map(path: Path, aggregated: dict[int, tuple[Pose7, int]], *, source: str) -> None:
     """Serialize aggregated ``map_T_tag`` poses to the JSON ``load_marker_map`` reads."""
     doc = {
         "meta": {

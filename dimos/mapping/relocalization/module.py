@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import Field
 import reactivex as rx
 from reactivex import Subject, combine_latest, operators as ops
 
@@ -68,25 +68,6 @@ SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved f
 MAX_JUMP_M_PER_S = 5.0  # m/s; 10 m at the 2 s RANSAC interval
 MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s; 90 deg at the 2 s RANSAC interval
 
-# Keys that moved onto the prior entries. extra="forbid" already raises, but the redirect message says where the knob went instead of "extra inputs not permitted".
-_MOVED_TO_PRIORS = {
-    "reloc_interval_s": (
-        "reloc_interval_s moved onto the ransac prior entry; set "
-        "priors=[RansacPriorConfig(interval_s=...)] instead -- the ransac "
-        "poll cadence is now per prior"
-    ),
-    "fitness_threshold": (
-        "fitness_threshold moved onto each prior entry; set e.g. "
-        "priors=[RansacPriorConfig(fitness_threshold=...)] -- the accept "
-        "bar is now per prior"
-    ),
-    "min_local_points": (
-        "min_local_points moved onto the ransac prior entry; set "
-        "priors=[RansacPriorConfig(min_local_points=...)] -- only the "
-        "RANSAC search is gated on submap density"
-    ),
-}
-
 
 class Config(ModuleConfig):
     map_file: str | None = (
@@ -95,7 +76,6 @@ class Config(ModuleConfig):
     # Operator -o override for the fiducial marker map (a dotted -o can't index the priors list); wins over the blueprint entry in _start_fiducial_prior. None -> use the entry's own.
     marker_map_file: str | None = None
     publish_loaded_map: bool = False
-    # fitness_threshold and min_local_points moved onto the prior entries; see _MOVED_TO_PRIORS.
     # Max z-axis tilt (deg) a candidate may keep at the judge's gravity gate; matches relocalize.py's GRAVITY_TILT_MAX_DEG, so unchanged unless overridden.
     gravity_tilt_max_deg: float = Field(default=10.0, ge=0.0)
     use_carving: bool = True
@@ -103,15 +83,6 @@ class Config(ModuleConfig):
     verbose_eval_logging: bool = False
     # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). REQUIRED, no default -- a blueprint must state it, so there is no silent reloc behavior.
     priors: list[PriorConfig]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_moved_fields(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            for key, message in _MOVED_TO_PRIORS.items():
-                if key in data:
-                    raise ValueError(message)
-        return data
 
 
 class RelocalizationModule(Module):
