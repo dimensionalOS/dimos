@@ -529,10 +529,18 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Point uv at the persistent cache volume
+        # HOME in container jobs is an ephemeral /github/home, so uv's default
+        # cache would be dropped after every run. /root/.cache is bind-mounted
+        # from the runner host (see container.volumes above), so downloaded
+        # wheels survive between jobs.
+        if: matrix.os == 'Linux'
+        run: echo "UV_CACHE_DIR=/root/.cache/uv" >> "$GITHUB_ENV"
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk above, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -643,6 +651,17 @@ jobs:
           df -h /nix || true
           nix-collect-garbage --delete-older-than 3d
           df -h /nix || true
+      - name: Prune the persistent uv cache
+        # Same story as /nix above: lock bumps accumulate superseded wheels
+        # forever. Drop unreachable objects each run; past 10 GB, `--ci` also
+        # evicts pre-built wheels (re-downloaded on the next run) while keeping
+        # the expensive wheels built from source. uv has nothing age-based.
+        if: ${{ always() && matrix.os == 'Linux' }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 10240 ]; then uv cache prune --ci; fi
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -686,7 +705,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -757,6 +777,15 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Prune the persistent uv cache
+        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
+        # default with `uv cache dir`.
+        if: always()
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 10240 ]; then uv cache prune --ci; fi
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
