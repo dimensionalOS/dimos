@@ -92,11 +92,15 @@ _ARM_IK_LIMITS = {
     # the gripper mount + 0.0369 to the finger base (robot URDF) + ~0.05 to
     # mid-finger. Control the point the operator watches, not the wrist.
     "tool_offset_m": (0.17, 0.0, 0.0),
-    # Absolute: gripper attitude follows hand attitude through a session-fixed
-    # alignment captured on the first engage. Delta modes re-anchor on the EE
-    # every engage, so residual orientation error accumulated across a session
-    # (the wrist ratcheted into odd attitudes and re-engaging kept it there).
-    "rotation_frame": "absolute",
+    # Delta in the hand's own frame, re-anchored each engage. The absolute
+    # attitude mode was tried and reverted on hardware: this arm has no
+    # spherical wrist, so position plus full attitude is frequently infeasible
+    # (chronic 15-45 degree rotation lag, engage-time slews) where delta only
+    # ever asks for locally feasible changes. Delta's known cost is that
+    # orientation error left at release re-anchors and can accumulate across
+    # a session; the recovery path for that is the ready-pose behavior, not
+    # the continuous mapping.
+    "rotation_frame": "local",
     # Hand tremor passes straight into the wrist without an angular deadband;
     # soft, so deliberate rotation follows shortened by the band.
     "rotation_deadband_deg": 4.0,
@@ -141,15 +145,15 @@ r1lite_quest_teleop = autoconnect(
     # Headset video off: JPEG encode starved the module loop on hardware and
     # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
     # video_enabled back on once the encode is off the critical path.
-    # absolute_orientation must pair with rotation_frame "absolute" on the
-    # tasks: the module publishes the hand's current orientation and the task
-    # maps it through the session alignment. Mismatched pairing garbles wrist
+    # local_rotation must pair with rotation_frame "local" on the tasks: the
+    # module publishes the orientation delta in the hand's own frame and the
+    # task composes it in the gripper frame. Mismatched pairing garbles wrist
     # rotation.
     R1LiteQuestTeleopModule.blueprint(
         task_names=_TASK_NAMES,
         video_enabled=False,
         motion_gain=1.3,
-        absolute_orientation=True,
+        local_rotation=True,
         position_deadband_m=0.02,
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows each
@@ -206,7 +210,7 @@ def _sim_arm_model(side: str, y_offset: float) -> RobotModelConfig:
 
 
 r1lite_quest_teleop_sim = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, absolute_orientation=True),
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=True),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
         tasks=[*r1lite_standard_tasks(), *_teleop_tasks()],

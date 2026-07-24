@@ -494,24 +494,27 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
             assert tasks[name].params["max_target_offset_m"] == 0.08
             assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
-            assert tasks[name].params["rotation_frame"] == "absolute"
+            assert tasks[name].params["rotation_frame"] == "local"
             assert tasks[name].params["orientation_weight"] == 1.0
             assert tasks[name].params["posture_weight"] == 0.05
             assert tasks[name].params["tool_offset_m"] == (0.17, 0.0, 0.0)
 
 
 def test_module_orientation_output_pairs_with_task_rotation_frame() -> None:
-    # The module publishes the hand's current orientation and the task maps it
-    # through the session alignment; mismatched pairing garbles wrist
-    # rotation. Pin both blueprints to the paired configuration.
+    # The module publishes the orientation delta in the hand's own frame and
+    # the task composes it in the gripper frame; mismatched pairing garbles
+    # wrist rotation. Pin both blueprints to the paired configuration. The
+    # absolute mode was hardware-tried and reverted (infeasible attitude
+    # demands on a non-spherical wrist); delta local is the deliberate choice.
     for blueprint in (r1lite_quest_teleop, r1lite_quest_teleop_sim):
         kwargs = next(
             atom.kwargs for atom in blueprint.blueprints if atom.module is R1LiteQuestTeleopModule
         )
-        assert kwargs["absolute_orientation"] is True
+        assert kwargs["local_rotation"] is True
+        assert "absolute_orientation" not in kwargs
         tasks = {t.name: t for t in _coordinator_tasks(blueprint)}
         for name in ("teleop_left_arm", "teleop_right_arm"):
-            assert tasks[name].params["rotation_frame"] == "absolute"
+            assert tasks[name].params["rotation_frame"] == "local"
             assert tasks[name].params["rotation_deadband_deg"] == 4.0
 
 
