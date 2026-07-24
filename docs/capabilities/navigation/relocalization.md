@@ -105,7 +105,7 @@ relocalize rejected source=ransac fitness=0.433 threshold=0.6
 relocalize accepted source=ransac fitness=0.657 time_cost_s=3.0
 ```
 
-`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. `threshold=` is the proposing prior's own `fitness_threshold`. Once `relocalize accepted` lines appear at info level, the `world → map` TF is live.
+`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. `threshold=` is the proposing prior's own `fitness_threshold`. Add `--eval` to `dimos run` to raise the skipped and rejected lines to warning level. Once `relocalize accepted` lines appear at info level, the `world → map` TF is live.
 
 You can replay a different `.db` from the same physical space against the same premap to test generalization.
 
