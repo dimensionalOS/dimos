@@ -85,16 +85,6 @@ class Config(ModuleConfig):
 
     @model_validator(mode="before")
     @classmethod
-    def _type_from_key(cls, data: Any) -> Any:
-        """Fill each prior's discriminator from its key so a partial `-o` override validates."""
-        priors = data.get("priors") if isinstance(data, dict) else None
-        for key, entry in (priors or {}).items():
-            if isinstance(entry, dict):
-                entry.setdefault("type", key)
-        return data
-
-    @model_validator(mode="before")
-    @classmethod
     def _tag_priors_by_key(cls, data: Any) -> Any:
         """Overlay the given prior entries onto the default pool, each tagged with its key."""
         overlay = data.get("priors") if isinstance(data, dict) else None
@@ -105,9 +95,7 @@ class Config(ModuleConfig):
             key: entry.model_copy(deep=True)
             for key, entry in cls.model_fields["priors"].default.items()
         }
-        pool.update(
-            {k: {**v, "type": k} if isinstance(v, dict) else v for k, v in overlay.items()}
-        )
+        pool.update({k: {**v, "type": k} if isinstance(v, dict) else v for k, v in overlay.items()})
         return {**data, "priors": pool}
 
 
