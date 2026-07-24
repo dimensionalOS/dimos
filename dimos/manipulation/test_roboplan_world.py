@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import sys
+import threading
 from types import ModuleType
 from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
@@ -590,6 +591,55 @@ def test_failed_obstacle_add_rolls_back_and_can_be_retried(
     assert world.add_obstacle(obstacle) == "retryable"
     assert world.get_obstacles() == [obstacle]
     assert add_box.call_count == 2
+
+
+def test_concurrent_remove_waits_for_obstacle_add(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="concurrent",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    backend_add_started = threading.Event()
+    allow_backend_add = threading.Event()
+    native_add = FakeScene.addBoxGeometry
+
+    def blocking_add(*args: Any, **kwargs: Any) -> None:
+        backend_add_started.set()
+        assert allow_backend_add.wait(timeout=1.0)
+        native_add(*args, **kwargs)
+
+    mocker.patch.object(
+        FakeScene,
+        "addBoxGeometry",
+        autospec=True,
+        side_effect=blocking_add,
+    )
+    added: list[str] = []
+    removed: list[bool] = []
+    add_thread = threading.Thread(target=lambda: added.append(world.add_obstacle(obstacle)))
+    remove_thread = threading.Thread(
+        target=lambda: removed.append(world.remove_obstacle(obstacle.name))
+    )
+
+    add_thread.start()
+    assert backend_add_started.wait(timeout=1.0)
+    remove_thread.start()
+    allow_backend_add.set()
+    add_thread.join(timeout=1.0)
+    remove_thread.join(timeout=1.0)
+
+    assert not add_thread.is_alive()
+    assert not remove_thread.is_alive()
+    assert added == ["concurrent"]
+    assert removed == [True]
+    assert world.get_obstacles() == []
+    assert "concurrent" not in world._scene.geometry
 
 
 def test_collision_config_and_edge_checks(

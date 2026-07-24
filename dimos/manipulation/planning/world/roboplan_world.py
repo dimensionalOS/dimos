@@ -155,70 +155,76 @@ class RoboPlanWorld:
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add a supported obstacle to the RoboPlan scene."""
-        obstacle_id = obstacle.name
-        if obstacle_id in self._obstacles:
+        with self._lock:
+            obstacle_id = obstacle.name
+            if obstacle_id in self._obstacles:
+                return obstacle_id
+            if self._finalized:
+                self._add_obstacle_to_scene(obstacle, obstacle_id)
+            self._obstacles[obstacle_id] = obstacle
             return obstacle_id
-        if self._finalized:
-            self._add_obstacle_to_scene(obstacle, obstacle_id)
-        self._obstacles[obstacle_id] = obstacle
-        return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
-        if obstacle_id not in self._obstacles:
-            return False
-        if self._finalized:
-            self._require_scene().removeGeometry(obstacle_id)
-        del self._obstacles[obstacle_id]
-        return True
+        with self._lock:
+            if obstacle_id not in self._obstacles:
+                return False
+            if self._finalized:
+                self._require_scene().removeGeometry(obstacle_id)
+            del self._obstacles[obstacle_id]
+            return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         """Update an obstacle pose and invalidate collision scratch."""
-        if obstacle_id not in self._obstacles:
-            return False
-        if self._finalized:
-            self._require_scene().updateGeometryPlacement(
-                obstacle_id, _WORLD_FRAME, pose_to_matrix(pose)
-            )
-        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
-        return True
+        with self._lock:
+            if obstacle_id not in self._obstacles:
+                return False
+            if self._finalized:
+                self._require_scene().updateGeometryPlacement(
+                    obstacle_id, _WORLD_FRAME, pose_to_matrix(pose)
+                )
+            self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
+            return True
 
     def clear_obstacles(self) -> None:
         """Remove all tracked obstacles."""
-        for obstacle_id in list(self._obstacles.keys()):
-            self.remove_obstacle(obstacle_id)
+        with self._lock:
+            for obstacle_id in list(self._obstacles.keys()):
+                self.remove_obstacle(obstacle_id)
 
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently tracked by DimOS."""
-        return list(self._obstacles.values())
+        with self._lock:
+            return list(self._obstacles.values())
 
     # Lifecycle
 
     def finalize(self) -> None:
         """Build one immutable robot model and materialize pending obstacles."""
-        if self._finalized:
-            return
-        model = build_roboplan_model(
-            list(self._robots.values()),
-            self._planning_groups,
-            roboplan_core.Scene,
-        )
-        self._model = model
-        self._scene = model.scene
-        try:
-            for robot in self._robots.values():
-                group = self._legacy_group(robot.config.name)
-                lower, upper = self._extract_joint_limits(robot.config, group)
-                robot.lower_limits = lower
-                robot.upper_limits = upper
-            for obstacle_id, obstacle in self._obstacles.items():
-                self._add_obstacle_to_scene(obstacle, obstacle_id)
-        except BaseException:
-            self._scene = None
-            self._model = None
-            model.owner.cleanup()
-            raise
-        self._finalized = True
+        with self._lock:
+            if self._finalized:
+                return
+            model = build_roboplan_model(
+                list(self._robots.values()),
+                self._planning_groups,
+                roboplan_core.Scene,
+            )
+            self._model = model
+            self._scene = model.scene
+            try:
+                for robot in self._robots.values():
+                    group = self._legacy_group(robot.config.name)
+                    lower, upper = self._extract_joint_limits(robot.config, group)
+                    robot.lower_limits = lower
+                    robot.upper_limits = upper
+                for obstacle_id, obstacle in self._obstacles.items():
+                    self._add_obstacle_to_scene(obstacle, obstacle_id)
+            except BaseException:
+                self._scene = None
+                self._model = None
+                model.owner.cleanup()
+                raise
+            self._finalized = True
 
     @property
     def is_finalized(self) -> bool:
