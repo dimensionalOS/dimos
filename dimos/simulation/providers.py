@@ -33,10 +33,40 @@ class SimulationRequest:
 
 
 @dataclass(frozen=True)
+class SimulationDeviceEndpoint:
+    device_id: str
+    protocol: str
+    host_address: str
+    device_address: str
+
+    def __post_init__(self) -> None:
+        if not all(
+            value.strip()
+            for value in (
+                self.device_id,
+                self.protocol,
+                self.host_address,
+                self.device_address,
+            )
+        ):
+            raise ValueError("simulation device endpoint fields must not be empty")
+
+
+@dataclass(frozen=True)
 class SimulationBinding:
     backend: Blueprint
     adapter_type: str
     adapter_address: str | Path
+    devices: tuple[SimulationDeviceEndpoint, ...] = ()
+
+    def require_device(self, device_id: str) -> SimulationDeviceEndpoint:
+        matches = tuple(device for device in self.devices if device.device_id == device_id)
+        if len(matches) != 1:
+            raise ValueError(
+                f"simulation binding requires exactly one {device_id!r} device, "
+                f"found {len(matches)}"
+            )
+        return matches[0]
 
 
 @runtime_checkable
