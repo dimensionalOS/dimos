@@ -24,6 +24,14 @@ recursive-exclude dimos/web/websocket_vis/node_modules *
 recursive-exclude dimos/web/dimos_interface *
 recursive-include dimos/web/dimos_interface/api *.py *.html
 
+# Deno relay sources (repo-root web/): shipped inside the wheel by the
+# build_py hook in setup.py (copied to dimos/web/relay_bridge/_relay_dist).
+# The graft keeps them in the sdist so sdist->wheel builds (uv build, pip)
+# can reproduce that copy.
+graft web
+prune web/cockpit/node_modules
+prune web/cockpit/dist
+
 # Exclude development files
 exclude .gitignore
 exclude .gitattributes
