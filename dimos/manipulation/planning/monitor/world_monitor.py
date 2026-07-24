@@ -115,19 +115,6 @@ class WorldMonitor:
                 planning_groups=tuple(self._planning_groups.list()),
             )
 
-    def initialize_visualization(self, operator: object | None = None) -> None:
-        """Initialize attached visualization with immutable startup metadata."""
-        visualization = self._visualization
-        if visualization is None:
-            return
-        visualization.initialize(
-            VisualizationSession(scene=self.planning_scene_info(), operator=operator)
-        )
-
-    def sync_visualization_scene(self) -> None:
-        """Compatibility wrapper for initializing visualization metadata."""
-        self.initialize_visualization()
-
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
         with self._lock:
@@ -148,19 +135,45 @@ class WorldMonitor:
     # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle. Returns obstacle_id."""
+        """Add an obstacle and visualize it only when the world accepts it."""
         with self._lock:
-            return self._world.add_obstacle(obstacle)
+            obstacle_id = self._world.add_obstacle(obstacle)
+            if not obstacle_id:
+                return ""
+            if self._visualization is not None:
+                try:
+                    self._visualization.add_vis_obstacle(obstacle_id, obstacle)
+                except Exception:
+                    logger.exception("Obstacle visualization add failed for '%s'", obstacle_id)
+            return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle."""
         with self._lock:
-            return self._world.remove_obstacle(obstacle_id)
+            removed = self._world.remove_obstacle(obstacle_id)
+            if removed and self._visualization is not None:
+                try:
+                    self._visualization.remove_vis_obstacle(obstacle_id)
+                except Exception:
+                    logger.exception("Obstacle visualization remove failed for '%s'", obstacle_id)
+            return removed
+
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Update an obstacle through the authoritative planning-world mutation path."""
+        with self._lock:
+            return self._world.update_obstacle_pose(obstacle_id, pose)
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
         with self._lock:
             self._world.clear_obstacles()
+            if self._obstacle_monitor is not None:
+                self._obstacle_monitor.clear_tracking()
+            if self._visualization is not None:
+                try:
+                    self._visualization.clear_vis_obstacles()
+                except Exception:
+                    logger.exception("Obstacle visualization clear failed")
 
     # Monitor Control
 
@@ -209,8 +222,7 @@ class WorldMonitor:
                 return
 
             self._obstacle_monitor = WorldObstacleMonitor(
-                world=self._world,
-                lock=self._lock,
+                parent=self,
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")
@@ -523,11 +535,28 @@ class WorldMonitor:
 
     # Lifecycle
 
-    def finalize(self) -> None:
-        """Finalize world. Must be called before collision checking."""
+    def finalize(
+        self, visualization: VisualizationSpec | None = None, *, operator: object | None = None
+    ) -> None:
+        """Finalize the world and initialize visualization before later mutations."""
+        session: VisualizationSession | None = None
+        attached_visualization: VisualizationSpec | None = None
         with self._lock:
             self._world.finalize()
+            if visualization is not None:
+                self._visualization = visualization
+            attached_visualization = self._visualization
+            if attached_visualization is not None:
+                session = VisualizationSession(
+                    scene=PlanningSceneInfo(
+                        robots=dict(self._robot_configs),
+                        planning_groups=tuple(self._planning_groups.list()),
+                    ),
+                    operator=operator,
+                )
             logger.info("World finalized")
+        if attached_visualization is not None and session is not None:
+            attached_visualization.initialize(session)
 
     @property
     def is_finalized(self) -> bool:
@@ -650,10 +679,6 @@ class WorldMonitor:
     def visualization(self) -> VisualizationSpec | None:
         """Get optional visualization backend."""
         return self._visualization
-
-    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
-        """Set optional visualization backend after monitor construction."""
-        self._visualization = visualization
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

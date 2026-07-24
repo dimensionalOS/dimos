@@ -233,6 +233,7 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
+    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
 
 perception = [
@@ -333,7 +334,7 @@ dds = [
 webrtc = [
     # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
     "aiortc>=1.14.0",
-    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
 ]
 
 base = [

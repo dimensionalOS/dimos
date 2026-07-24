@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,8 @@ import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -147,6 +150,31 @@ def test_drake_config_group_helpers_validate_duplicate_and_ambiguous_groups(
         DrakeWorld._primary_pose_group_id_for_config(ambiguous)
     with pytest.raises(KeyError, match="Unknown planning group ID"):
         DrakeWorld._planning_group_from_config(ambiguous, "arm/missing")
+
+
+@requires_drake
+def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    world = DrakeWorld()
+    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    unnamed = replace(obstacle, name="")
+
+    assert world.add_obstacle(unnamed) is None
+    assert world.add_obstacle(obstacle) == "box"
+    assert world.add_obstacle(obstacle) is None
+    world.finalize()
+    assert world.remove_obstacle("missing") is False
+    assert world.update_obstacle_pose("missing", obstacle.pose) is False
 
 
 @requires_drake

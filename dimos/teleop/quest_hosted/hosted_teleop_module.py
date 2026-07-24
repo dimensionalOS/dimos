@@ -32,6 +32,7 @@ import time
 from typing import Any
 import warnings
 
+import aiohttp
 from aiortc import (
     RTCBundlePolicy,
     RTCConfiguration,
@@ -42,7 +43,6 @@ from aiortc import (
 )
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped, TwistStamped as LCMTwistStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-import httpx
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -122,7 +122,7 @@ class HostedTeleopModule(Module):
         self._lock = threading.RLock()
 
         self._pc: RTCPeerConnection | None = None
-        self._http: httpx.AsyncClient | None = None
+        self._http: aiohttp.ClientSession | None = None
         self._session_id: str | None = None
 
         # All three datachannels are negotiated; SCTP ids come from the broker
@@ -184,7 +184,7 @@ class HostedTeleopModule(Module):
         self._video_track = CameraVideoTrack(asyncio.get_running_loop())
         unsub = self.color_image.subscribe(self._video_track.set_latest)
         self.register_disposable(Disposable(unsub))
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
 
         ice_servers = [RTCIceServer(urls=u) for u in self.config.stun_urls]
         for url in self.config.turn_urls or []:
@@ -243,16 +243,16 @@ class HostedTeleopModule(Module):
             "robot_name": self.config.robot_name,
             "sdp_offer": self._pc.localDescription.sdp,
         }
-        resp = await self._http.post(url, json=body, headers=self._auth_headers())
-        if resp.status_code >= 400:
-            # raise_for_status drops the body; surface the broker's JSON detail.
-            logger.error(
-                "Broker POST /sessions -> %s: %s",
-                resp.status_code,
-                resp.text[:1000],
-            )
-        resp.raise_for_status()
-        data = resp.json()
+        async with self._http.post(url, json=body, headers=self._auth_headers()) as resp:
+            if not resp.ok:
+                # raise_for_status drops the body; surface the broker's JSON detail.
+                logger.error(
+                    "Broker POST /sessions -> %s: %s",
+                    resp.status,
+                    (await resp.text())[:1000],
+                )
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
         self._session_id = data["session_id"]
 
         answer_sdp = propagate_bundle_candidates(data["sdp_answer"])
@@ -267,7 +267,8 @@ class HostedTeleopModule(Module):
         if self._http is not None and self._session_id is not None:
             try:
                 url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions/{self._session_id}"
-                await self._http.delete(url, headers=self._auth_headers())
+                async with self._http.delete(url, headers=self._auth_headers()) as resp:
+                    await resp.read()
             except Exception:
                 logger.exception("Failed to deregister with broker")
         self._close_cmd_channel()
@@ -280,7 +281,7 @@ class HostedTeleopModule(Module):
             await self._pc.close()
             self._pc = None
         if self._http is not None:
-            await self._http.aclose()
+            await self._http.close()
             self._http = None
         self._session_id = None
 
@@ -351,14 +352,15 @@ class HostedTeleopModule(Module):
             return
         url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions/{self._session_id}/heartbeat"
         try:
-            resp = await self._http.post(url, json={}, headers=self._auth_headers())
-            resp.raise_for_status()
+            async with self._http.post(url, json={}, headers=self._auth_headers()) as resp:
+                resp.raise_for_status()
+                body = await resp.text()
         except Exception as e:
             logger.warning(f"Heartbeat POST failed: {e}")
             return
 
         try:
-            data = resp.json()
+            data = json.loads(body)
         except json.JSONDecodeError:
             logger.warning("Heartbeat response was not valid JSON")
             return
