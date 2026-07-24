@@ -190,9 +190,8 @@ def _log_reconstruction(
 ) -> None:
     """Log maps, paths, the PGO graph, and markers to the active rerun recording.
 
-    ``aggregated_markers`` (marker_id -> aggregated map_T_tag), when present, draws ONE
-    aggregated box per id at ``world/pgo_map/markers_aggregated`` alongside — not instead
-    of — the per-track boxes, so the operator can toggle between the two views.
+    ``aggregated_markers`` (marker_id -> map_T_tag) draws one aggregated box per id
+    alongside the per-track boxes, as a separately-toggleable entity.
     """
     from dimos.memory2.vis.color import Color
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -310,8 +309,7 @@ def _log_reconstruction(
             )
 
         if aggregated_markers:
-            # One robustly-aggregated box per marker_id (the marker map), same box size
-            # as the per-track boxes; a distinct entity the operator toggles on.
+            # One aggregated box per marker_id, same box size as the per-track boxes.
             aggregated_ids = sorted(aggregated_markers)
             n_aggregated = len(aggregated_ids)
             aggregated_centers = [
@@ -346,13 +344,10 @@ def _aggregate_marker_map(
 ) -> dict[int, tuple[_Pose7, int]]:
     """Aggregate every detection of each marker_id into ONE ``map_T_tag`` pose.
 
-    Each detection's raw world pose is PGO-corrected (``graph.correct``) into the
-    corrected world frame, grouped by marker_id, then reduced to a single robust
-    pose by the verified Huber-IRLS + Markley-quaternion estimator
-    (``apriltag_aggregation.robust_cluster_pose``) — so a mirror-flip or grazing
-    glimpse loses influence instead of dragging the mean. With ``graph=None`` (no
-    PGO) the raw world poses are aggregated directly. Returns
-    ``marker_id -> (map_T_tag 7-vec, n_detections_aggregated)``, one entry per id.
+    Detections are PGO-corrected (``graph.correct``; raw world when ``graph=None``),
+    grouped by marker_id, and reduced to one robust pose by the Huber-IRLS +
+    Markley-quaternion estimator (``apriltag_aggregation.robust_cluster_pose``).
+    Returns ``marker_id -> (map_T_tag 7-vec, n_detections_aggregated)``.
     """
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.perception.fiducial.apriltag_aggregation import (
@@ -396,9 +391,8 @@ def _write_marker_map(
 ) -> None:
     """Serialize the aggregated marker locations to a ``map_T_tag`` marker-map JSON.
 
-    Schema is exactly what ``fiducial_relocalization.load_marker_map`` reads:
-    translation in meters, rotation xyzw, in the map frame. ``meta`` is provenance
-    the loader ignores (it reads only ``markers``).
+    Schema is what ``fiducial_relocalization.load_marker_map`` reads: translation (m),
+    rotation xyzw, in the map frame. ``meta`` is provenance the loader ignores.
     """
     markers = {
         str(marker_id): {

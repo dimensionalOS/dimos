@@ -33,29 +33,17 @@ RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # m, voxel for the final ICP refinement
 RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
-# Minimum wall points (per cloud, post fine-voxel downsample) to attempt the
-# wall-only rerank. ARBITRARY / UNTUNED: inherited verbatim from the old
-# silent-fallback check; never observed to fire in offline replay of the
-# hk_village1..6 recordings, so it has never been calibrated against real
-# sparse-wall data.
+# Min wall points (per cloud, post fine-voxel downsample) to attempt the wall-only
+# rerank. ARBITRARY / UNTUNED: inherited from the old silent-fallback check.
 MIN_WALL_POINTS = 100
 
 
 class InsufficientWallEvidenceError(ValueError):
-    """Too few wall (horizontal-normal) points for the wall-only rerank to mean
-    anything. Floors/ceilings are rotationally symmetric, so full-cloud scoring
-    would be rotation-blind -- a 180-deg flip scores as well as the truth. Refuse
-    loudly rather than degrade; ``_try_relocalize`` catches, logs, and skips."""
+    """Too few wall points for the wall-only rerank to discriminate yaw (flat floors are rotationally symmetric); refuse rather than degrade."""
 
 
 class NoUprightCandidateError(ValueError):
-    """Every candidate's z-axis tilts past ``gravity_tilt_max_deg``. Floors/ceilings
-    are rotationally symmetric, so a tilted candidate can still score well on walls
-    yet be a mis-solve -- there is no valid winner to return. Refuse rather than admit
-    a gravity-violating pose; ``_try_relocalize`` catches this and skips (no fix
-    published). A single-candidate prior fire (a fiducial pool of one) whose lone
-    candidate is tilted lands here, the case the old all-tilted fallback wrongly let
-    through."""
+    """Every candidate tilts past ``gravity_tilt_max_deg``; no valid winner, so refuse rather than admit a gravity-violating pose."""
 
 
 def _preprocess(
@@ -138,13 +126,7 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
 
 
 def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-    """Roughly-horizontal-normal subset. Floor/ceiling points have vertical
-    normals; they fit equally well in any yaw rotation (flat planes are
-    rotationally symmetric), so a 180°-flipped candidate can hide its wall
-    misalignment behind perfect floor alignment if they're left in.
-
-    Returns the subset unconditionally, even when it is tiny/empty; the
-    sparse-wall refusal (MIN_WALL_POINTS) lives in ``refine_candidates``."""
+    """Roughly-horizontal-normal subset (walls); excludes floor/ceiling points whose vertical normals fit any yaw and mask a 180° flip."""
     nrm = np.asarray(cloud.normals)
     mask = np.abs(nrm[:, 2]) < 0.7  # |n_z|<0.7 => normal within ~44 deg of horizontal
     sub = o3d.geometry.PointCloud()
@@ -158,13 +140,10 @@ def generate_ransac_candidates(
     local_map: o3d.geometry.PointCloud,
 ) -> list[np.ndarray]:
     """Multi-scale x multi-restart FPFH+RANSAC candidate transforms placing
-    ``local_map`` into ``global_map``, plus their centroid-aware 180° yaw
-    flips. This is the RANSAC relocalization prior's raw proposal pool --
-    unfiltered, unranked, un-refined; ``refine_candidates`` is the judge.
+    ``local_map`` into ``global_map``, plus their centroid-aware 180° yaw flips:
+    the raw, unranked proposal pool for ``refine_candidates``.
     """
     # Fine downsample of local_map, used only for the yaw-flip centroid below.
-    # refine_candidates recomputes this for its own scoring -- cheap and
-    # deterministic, so it costs nothing observable but keeps the contract clean.
     src_fine_pts = np.asarray(local_map.voxel_down_sample(FINE_VOXEL).points)
 
     candidates: list[np.ndarray] = []  # 4x4 transforms
@@ -197,15 +176,11 @@ def refine_candidates(
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float, int]:
     """Judge a pool of candidate local_map->global_map transforms and refine the
-    winner. The single referee every prior's candidates go through: gravity-filter,
-    rerank by WALL-only fine-scale inlier ratio, per-candidate wall ICP polish, then
-    final full-cloud ICP. No source is trusted -- a candidate wins by fitness or not
-    at all. The rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
-    5m-off candidate has ~0 inliers even when its proposer reported it fit.
+    winner: gravity-filter, rerank by WALL-only fine-scale inlier ratio, wall ICP
+    polish, then final full-cloud ICP.
 
-    Returns ``(T, fitness, winning_index)``, ``winning_index`` being the position in
-    ``candidates`` that survived to the final polish -- callers pooling multiple
-    priors use it to attribute which prior won.
+    Returns ``(T, fitness, winning_index)``; ``winning_index`` is the position in
+    ``candidates`` that survived, so callers pooling priors can attribute the win.
     """
     # Fine downsample once — used for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
@@ -214,11 +189,8 @@ def refine_candidates(
     )
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
-    # Gravity filter. An all-tilted pool is REFUSED, never resurrected: a tilted
-    # winner is a rotationally-symmetric-floor mis-solve, not a valid pose, so
-    # admitting one (the old ``else indexed`` fallback) let a lone tilted candidate
-    # sail through the gate. Every shipped fire pools ONE source, so this global gate
-    # IS the per-source gate.
+    # Gravity filter. An all-tilted pool is REFUSED, not resurrected: a tilted winner
+    # is a rotationally-symmetric-floor mis-solve, not a valid pose.
     indexed = list(enumerate(candidates))
     upright = [item for item in indexed if _gravity_tilt_deg(item[1]) <= gravity_tilt_max_deg]
     if not upright:
@@ -286,10 +258,6 @@ def relocalize(
 
     RANSAC candidate generation feeding the shared judge (``refine_candidates``).
     module.py's ``_relocalize`` relies on this (T, fitness) signature.
-    ``gravity_tilt_max_deg`` defaults to the module constant, so callers that don't
-    override it get today's behavior.
-    (#2137's offline eval entrypoint shares only the (global_map, local_map)
-    convention; it returns the bare 4x4, not this tuple.)
     """
     candidates = generate_ransac_candidates(global_map, local_map)
     T, fitness, _winning_index = refine_candidates(

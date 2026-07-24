@@ -13,34 +13,9 @@
 # limitations under the License.
 
 """RelocEval -- the in-process collector ``dimos run --eval`` attaches, plus the
-pure analysis it shares with the offline held-out driver.
-
-WHAT IT MEASURES. A run publishes world->map fixes to ``/tf`` as the robot drives.
-RelocEval listens on the real streams (``/tf`` for the transform, ``/odom`` for the
-path), so trajectory, fix count, coverage and first-fix all come from the streams --
-LIVE and under ``--replay`` alike. The run log is a SUPPLEMENT only: each accept's
-WINNING PRIOR and fitness (the TF carries neither) plus the per-cycle proposal
-census live there. Without it, trajectory + counts still stand; per-source labels
-degrade to ``unknown``.
-
-That supplement needs the module's VERBOSE trace
-(``relocalizationmodule.verbose_eval_logging=true``), which is what carries
-``published_t_m`` -- the translation this collector joins a log line to its /tf fix
-by -- and the per-cycle census. An operating run logs one QUIET accept line instead
-(source/fitness/time_cost_s, no position); the parsers read it too, but such
-a line cannot be joined to a fix, so its source degrades to ``unknown``.
-
-WHERE EACH PRIOR WINS. Under ``--eval`` the Module also draws every accept into the
-run's rerun viewer as it lands -- ``world/eval/accepted``, one point per accepted fix
-at the robot's position in the premap's map frame, coloured by the winning prior
-(``accepted_points_in_map``). The spatial answer the table cannot give; a no-op when
-no viewer is up.
-
-The Module always runs "live" (no in-process truth -> med_err/success omitted); the
-offline driver runs "held_out" (columns shown, Umeyama-aligned or ``-``). Both
-render through the SAME ``format_report``/``plot_trajectory``/``write_report``, so
-the two paths cannot drift.
-"""
+pure analysis it shares with the offline held-out driver. Trajectory/coverage/counts
+come from the real ``/tf`` + ``/odom`` streams; the run log is a supplement carrying
+each accept's winning prior, fitness, and the per-cycle census."""
 
 from __future__ import annotations
 
@@ -73,10 +48,8 @@ TF_TOPIC = "/tf"  # RelocalizationModule republishes world->map here (LCMTF -> /
 ODOM_TOPIC = "/odom"  # recording-timestamped PoseStamped, preserved through replay
 
 SOURCES: tuple[str, ...] = ("ransac", "fiducial")
-# ONE palette for both renderers (trajectory PNG + the rerun overlay), so the two
-# can never disagree about which prior a colour means. unknown is a dim RED, not a
-# muted grey: an unlabelled fix is a JOIN FAILURE, and it must read as one rather
-# than hide next to a real source.
+# ONE palette for both renderers (trajectory PNG + the rerun overlay); unknown is a
+# dim RED because an unlabelled fix is a JOIN FAILURE and must read as one.
 SOURCE_COLORS: dict[str, str] = {
     "ransac": "#2b6cb0",  # blue
     "fiducial": "#dd6b20",  # orange
@@ -85,47 +58,20 @@ SOURCE_COLORS: dict[str, str] = {
 _TF_DEDUP_EPS_M = 1e-4  # two world->map translations within this are the same accept
 _TF_DEDUP_EPS_RAD = 1e-4  # ...and within this rotation (a yaw-only fix keeps the origin)
 
-# The live rerun overlay (see accepted_points_in_map / RelocEval._log_accepted).
-# "world/" is the bridge's entity_prefix, so the overlay sits under the same
-# Spatial3DView origin as every other run entity.
+# The live rerun overlay. "world/" is the bridge's entity_prefix, so the overlay
+# sits under the same Spatial3DView origin as every other run entity.
 RERUN_ACCEPTED_ENTITY = "world/eval/accepted"
-# The premap is logged with frame_id "map" (module.py) and the bridge parents that
-# entity to tf#/map, so the overlay names the same frame to land on top of it.
+# The premap is logged with frame_id "map" and the bridge parents it to tf#/map, so
+# the overlay names the same frame to land on top of it.
 RERUN_ACCEPTED_PARENT_FRAME = "tf#/map"
 RERUN_ACCEPTED_RADIUS_M = 0.25  # premap voxels draw at ~0.025 m radius; 10x reads over them
 _RERUN_PROBE_TIMEOUT_S = 0.2  # the bridge's proxy is local -- it answers or it is not up
 
 
 # --------------------------------------------------------------------------- #
-# Log parsing (supplement) -- ONE key-based parser for BOTH renderings the same
-# structlog call produces: main.jsonl's JSON object (what resolve_run_log picks by
-# default) and the console line a tee'd `.replay_run.log` holds. Both carry the
-# module's kwarg NAMES, so a record reads the same either way and downstream code
-# never learns which file it came from. What the emitters actually write:
-#
-#   module.py:_try_relocalize accept, VERBOSE (verbose_eval_logging=True)
-#     jsonl   {"source": "fiducial", "fitness": 0.87, "published_t_m": [1.234, -0.5,
-#              0.02], ..., "event": "relocalize accepted", "level": "info", ...}
-#     console `08:34:01.794 [inf][...module.py] relocalize accepted fitness=0.87
-#              n_pts=55828 published_t_m=[1.234, -0.5, 0.02] ... source=fiducial ...`
-#   module.py:_try_relocalize accept, QUIET (the operating default)
-#     console `... relocalize accepted fitness=0.873 source=fiducial time_cost_s=1.4`
-#   module.py reject          -> event "relocalize rejected"
-#   priors.py census          -> event "relocalize candidates", counts a dict;
-#                                console renders it as a python repr,
-#                                `counts={'ransac': 34, 'fiducial': 2}`.
-#                                VERBOSE only -- a quiet run emits no census.
-#
-# AND the LEGACY rendering, from before the emitters moved to structlog kwargs --
-# one f-string per record, bare key names:
-#
-#   `relocalize: fitness=0.756 time_cost=13.0s n_pts=89003 reloc_t=[...]
-#    TF 'world' -> 'map' published_t=[-8.849, -1.587, 0.073] source=ransac`
-#   census: `relocalize candidates: fiducial=1 ransac=34`
-#
-# Every archived capture is in that format, so dropping it does not fail -- it
-# returns [] and the census reads as "the fiducial prior never proposed". Same
-# two formats, same key-anchored approach, as trial/harness/reloc_log.py.
+# Log parsing (supplement) -- ONE key-based parser for BOTH renderings the structlog
+# call produces (main.jsonl JSON object + tee'd console line) AND the LEGACY f-string
+# format from before the emitters moved to structlog kwargs.
 #
 # Key-anchored and never positional: the legacy line puts `source=` LAST, so a
 # regex that assumed field order would miss it and every accept would fall back to
@@ -158,10 +104,7 @@ _LEGACY_COUNT_RE = re.compile(r"\b([a-z_]+)=(\d+)")  # legacy census: `ransac=34
 @dataclass
 class HealthLine:
     """One accepted relocalize, parsed from a ``relocalize accepted`` log record.
-
-    ``published_t_m`` is the VERBOSE trace's field and the key every fix is joined by,
-    so a QUIET line parses to a positionless HealthLine: its fitness and winning prior
-    are still real, there is simply nowhere to attach them (see label_fixes_from_log)."""
+    A QUIET line has no ``published_t_m`` -> positionless (nothing to join by)."""
 
     source: str
     fitness: float
@@ -188,9 +131,8 @@ def _console_fields(text: str) -> dict[str, Any]:
     if counts is not None:
         fields["counts"] = {k: int(n) for k, n in _COUNT_RE.findall(counts.group(1))}
     elif _EVENT_CENSUS in text:
-        # Legacy census: the counts ARE the kwargs -- `relocalize candidates:
-        # ransac=34 fiducial=2`. Read only the tail, so nothing before the event
-        # name (a timestamp, a pid) can be mistaken for a proposal count.
+        # Legacy census: the counts ARE the kwargs. Read only the tail, so nothing
+        # before the event name (a timestamp, a pid) is mistaken for a count.
         legacy = _LEGACY_COUNT_RE.findall(text.split(_EVENT_CENSUS, 1)[1])
         if legacy:
             fields["counts"] = {k: int(n) for k, n in legacy}
@@ -198,9 +140,7 @@ def _console_fields(text: str) -> dict[str, Any]:
 
 
 def _event_of(text: str, obj: dict[str, Any] | None) -> str | None:
-    """Which record this line is, in either format and either rendering. jsonl
-    states it in ``event``; a console line renders the event verbatim into the
-    message, and a LEGACY jsonl line carries the whole f-string as its event."""
+    """Which record this line is, in either format and either rendering."""
     if obj is not None:
         ev = obj.get("event")
         if not isinstance(ev, str):
@@ -213,14 +153,9 @@ def _event_of(text: str, obj: dict[str, Any] | None) -> str | None:
 
 
 def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
-    """``(event, kwargs)`` for one relocalize log line in EITHER rendering and
-    EITHER wire format, or None when the line is none of them (another module's
-    log, a banner, a blank).
-
-    Console matches and jsonl keys are merged, jsonl winning: a current jsonl
-    record carries its kwargs as real typed values, while a legacy jsonl record
-    hides them inside the ``event`` f-string, where the same key-anchored regexes
-    find them (JSON escaping leaves `key=value` untouched)."""
+    """``(event, kwargs)`` for one relocalize log line in either rendering and wire
+    format, or None when the line is none of them. Console matches and jsonl keys are
+    merged, jsonl winning."""
     text = _ANSI_RE.sub("", line).strip()
     obj: dict[str, Any] | None = None
     if text.startswith("{"):
@@ -242,14 +177,8 @@ def _parse_line(line: str) -> tuple[str, dict[str, Any]] | None:
 
 def parse_health_lines(log_text: str) -> list[HealthLine]:
     """Every accepted fix (source + fitness, plus the published translation when the
-    line carries one). ``source`` is absent on the single-source RANSAC path --
-    module.py tags a winner only when the multi-prior judge ran -- so it defaults to
-    ransac there.
-
-    A QUIET accept has no ``published_t_m``; it still yields a HealthLine, positionless.
-    Dropping it instead would make a quiet run's log indistinguishable from a log the
-    parser cannot read at all -- both empty, no warning, and every count silently zero.
-    ``fitness`` is the one required field: it is what makes a line an accept."""
+    line carries one). ``source`` defaults to ransac on the single-source path;
+    ``fitness`` is the one required field -- it is what makes a line an accept."""
     out: list[HealthLine] = []
     for raw in log_text.splitlines():
         record = _parse_line(raw)
@@ -290,12 +219,8 @@ def parse_census(log_text: str) -> list[dict[str, int]]:
 
 def parse_reject_lines(log_text: str) -> list[str]:
     """The refused source of every ``relocalize rejected`` record -- ``unknown`` when
-    the line named none. Its length is the reject count.
-
-    Every live reject names it: module.py wires ``source=`` into BOTH branches (quiet
-    and verbose) and onto the solo RANSAC path too, because the line prints that
-    prior's own ``threshold=``. Only the legacy f-string format predates the field, so
-    an archived capture buckets to ``unknown`` rather than fabricating a prior."""
+    the line named none (only the legacy format predates the field). Length is the
+    reject count."""
     out: list[str] = []
     for raw in log_text.splitlines():
         record = _parse_line(raw)
@@ -307,15 +232,8 @@ def parse_reject_lines(log_text: str) -> list[str]:
 
 def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], list[str]]:
     """Every relocalize record in a run log FILE: ``(accepts, census, reject_sources)``.
-    ``reject_sources`` is one entry per reject (its winning source, or ``unknown``); its
-    length is the reject count.
-
-    A log the parser reads NOTHING out of is announced, because downstream it is
-    indistinguishable from a real measurement: no census reads as "the fiducial
-    prior never proposed", and every fix falls back to ``unknown``. That is not
-    hypothetical -- dropping the legacy f-string format silently turned a 24/28
-    fiducial-proposal census into ``null`` on every archived capture, with no
-    error anywhere. Zero records means the parser or the log is wrong; say so.
+    A log the parser reads NOTHING out of is warned, because downstream it is
+    indistinguishable from a real measurement (empty census reads as "never proposed").
     """
     text = path.read_text(errors="replace")
     health = parse_health_lines(text)
@@ -332,8 +250,8 @@ def parse_run_log(path: Path) -> tuple[list[HealthLine], list[dict[str, int]], l
 
 
 def resolve_run_log(run_log_file: str | None) -> Path | None:
-    """The active run's log: an explicit override, else this run's main.jsonl
-    (set_run_log_dir wires every worker to it). None if neither resolves."""
+    """The active run's log: an explicit override, else this run's main.jsonl.
+    None if neither resolves."""
     if run_log_file:
         p = Path(run_log_file)
         return p if p.exists() else None
@@ -351,8 +269,7 @@ def resolve_run_log(run_log_file: str | None) -> Path | None:
 @dataclass
 class Fix:
     """One accepted relocalization, in ONE timebase (wall for the Module, recording
-    seconds for the offline driver -- always the same clock as the odom samples it
-    is scored against)."""
+    seconds for the offline driver -- always the same clock as the odom it scores against)."""
 
     ts: float
     world_map_fix: np.ndarray | None  # 4x4 world_T_map (None if rotation not captured)
@@ -371,9 +288,8 @@ class SourceRow:
     med_fit: float | None
     n_success: int | None
     n_judged: int | None
-    # Per-source activity read straight from the run-log census + accept + reject
-    # events -- independent of the /tf join, so these never degrade to ``unknown``
-    # the way a join-labelled fix's source can.
+    # Per-source activity from the run-log events -- independent of the /tf join, so
+    # these never degrade to ``unknown`` the way a join-labelled fix's source can.
     proposed: int = 0  # cycles this source put >=1 candidate forward (census PRESENCE)
     accepted: int = 0  # `relocalize accepted` log lines this source won
     rejected: int | None = None  # `relocalize rejected` lines; None = no source parsed
@@ -395,8 +311,7 @@ class EvalStats:
 
 
 def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
-    """Geodesic angle (rad) between two rotations: the residual rotation's angle,
-    ||log(Ra^T Rb)||. arccos clamped for numerical safety."""
+    """Geodesic angle (rad) between two rotations: ||log(Ra^T Rb)||, arccos clamped."""
     r_rel = rot_a.T @ rot_b
     cos = (float(np.trace(r_rel)) - 1.0) / 2.0
     return float(np.arccos(max(-1.0, min(1.0, cos))))
@@ -405,12 +320,9 @@ def _rot_angle_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
 def dedup_tf_fixes(
     tf_samples: list[tuple[float, np.ndarray]],
 ) -> list[tuple[float, np.ndarray]]:
-    """Collapse republished world->map TFs (every PUBLISH_INTERVAL_S) to distinct
-    accepts. Each accept publishes a new pose that then repeats until the next, so a
-    change beyond _TF_DEDUP_EPS_M OR _TF_DEDUP_EPS_RAD starts a new fix -- recovering
-    the accept sequence from the stream alone (no log). Rotation is part of the key:
-    a yaw-only correction (e.g. a symmetric-scene flip) keeps the origin, so on
-    translation alone it would be silently dropped."""
+    """Collapse republished world->map TFs to distinct accepts: a change beyond
+    _TF_DEDUP_EPS_M OR _TF_DEDUP_EPS_RAD starts a new fix. Rotation is part of the key
+    because a yaw-only correction keeps the origin and would else be dropped."""
     fixes: list[tuple[float, np.ndarray]] = []
     last_t: np.ndarray | None = None
     last_r: np.ndarray | None = None
@@ -431,14 +343,8 @@ def label_fixes_from_log(
 ) -> list[Fix]:
     """Attach (source, fitness) from health lines to stream-derived TF fixes by
     nearest published translation (<=2 cm), the same join replay_bench uses. Each
-    health line is a distinct accept, so it is consumed once: two accepts from
-    different priors within 2 cm cannot both claim the same line, and equal-distance
-    lines resolve to the earliest (log order) -- a later tie never overwrites.
-    Unmatched fixes keep source ``unknown`` -- the trajectory still stands.
-
-    A positionless (QUIET) health line carries no join key, so it labels nothing and
-    every fix in a quiet run reads ``unknown`` -- which is what ``--eval`` turning the
-    verbose trace on exists to prevent."""
+    health line is consumed once (ties resolve to earliest in log order); unmatched
+    fixes keep source ``unknown``. A positionless (QUIET) line labels nothing."""
     fixes: list[Fix] = []
     used: set[int] = set()
     for wall, mat in tf_fixes:
@@ -489,15 +395,11 @@ def compute_stats(
 
     Args:
         odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world (LIO/odom) frame,
-            or an empty array. Stats read only the timestamps, but the SAME array flows
-            on to plot_trajectory / accepted_points_in_map, which need the positions, so
-            a wrong-width array raises here rather than being silently mis-indexed.
-        accept_sources: the source of every ``relocalize accepted`` log line (the
-            ACCEPTED-per-source count, straight from the log so a /tf join failure does
-            not lose it). None -> fall back to the joined fixes' sources, which is what
-            the held-out driver wants (its fixes ARE the pipeline's published accepts).
-        reject_sources: the source of every reject (``parse_reject_lines``). None -> the
-            run log was not parsed, so per-source ``rej`` is held out (``-``), not 0.
+            or an empty array. A wrong-width array raises rather than mis-indexing.
+        accept_sources: the source of every ``relocalize accepted`` log line. None ->
+            fall back to the joined fixes' sources (what the held-out driver wants).
+        reject_sources: the source of every reject. None -> not parsed, so per-source
+            ``rej`` is held out (``-``), not 0.
     """
     odom_txyz = np.asarray(odom_txyz, dtype=float)
     if odom_txyz.size and (odom_txyz.ndim != 2 or odom_txyz.shape[1] != 4):
@@ -515,19 +417,16 @@ def compute_stats(
     else:
         active_src, n_covered = [], 0
 
-    # PROPOSED is per-CYCLE PRESENCE, not candidate count: one source can offer many
-    # candidates in a cycle, so counting candidates would reward a chatty prior. The
-    # question the table answers is "in how many relocalize cycles did this source put
-    # a candidate forward" -- the same convention as fiducial_proposed_cycles below.
+    # PROPOSED is per-CYCLE PRESENCE, not candidate count: counting candidates would
+    # reward a chatty prior. Same convention as fiducial_proposed_cycles below.
     proposed_by = {
         s: sum(1 for c in census if c.get(s, 0) > 0) for s in {k for c in census for k in c}
     }
     acc_src = accept_sources if accept_sources is not None else [f.source for f in fixes]
     accepted_by = Counter(acc_src)
     rejected_by = Counter(reject_sources) if reject_sources is not None else None
-    # SOURCES first (always shown, even at zero), then any other source that appears in
-    # the census / accepts / rejects / joined fixes -- a new prior, or ``unknown`` from a
-    # join failure or a source-less verbose reject.
+    # SOURCES first (always shown, even at zero), then any other source appearing in
+    # the census / accepts / rejects / joined fixes (a new prior, or ``unknown``).
     extra = sorted(
         (set(proposed_by) | set(acc_src) | set(reject_sources or []) | {f.source for f in fixes})
         - set(SOURCES)
@@ -552,8 +451,7 @@ def compute_stats(
                 proposed=proposed_by.get(s, 0),
                 accepted=accepted_by.get(s, 0),
                 rejected=None if rejected_by is None else rejected_by.get(s, 0),
-                # FALSE reuses the held-out accuracy gate already applied upstream
-                # (Fix.success = err_t_m under the held-out gate): a judged accept that failed it.
+                # FALSE reuses the held-out accuracy gate (Fix.success): a judged accept that failed it.
                 n_false=sum(1 for f in judged if f.success is False) if judged else None,
             )
         )
@@ -586,26 +484,13 @@ def _fmt(x: float | None, nd: int, suffix: str = "") -> str:
 
 
 def _count_cell(x: int | None) -> str:
-    """A count cell: the number, or ``-`` when the datum was not derivable (no truth
-    for FALSE, no parsed reject source for REJECTED). Never a fabricated 0."""
+    """A count cell: the number, or ``-`` when the datum was not derivable. Never a fabricated 0."""
     return "-" if x is None else str(x)
 
 
 def format_report(stats: EvalStats, *, title: str) -> str:
-    """The per-source table [source | prop | acc | rej | (false) | %traj | (med_err) |
-    med_fit], a TOTAL row, then the prior-activity line, overall, and the held-out
-    note. ``false`` and ``med_err`` are dropped in live mode (no in-process
-    truth). Columns:
-
-      prop  -- cycles this source put >=1 candidate forward (run-log census presence)
-      acc   -- accepts this source won and published (``relocalize accepted`` lines)
-      rej   -- rejects this source's winning candidate took (``relocalize rejected``);
-               ``-`` when the run log carried no source to attribute the reject by
-      false -- accepts whose held-out error exceeded the translation gate (a WRONG accept)
-
-    ``won``/``success`` stay in the JSON (``stats_to_dict``) for downstream readers; the
-    printed table shows ``acc``/``false``, the same quantities read straight from the log
-    and the truth gate."""
+    """The per-source table, a TOTAL row, then the prior-activity line, overall, and
+    the held-out note. ``false`` and ``med_err`` are dropped in live mode (no truth)."""
     truth = stats.mode == "held_out"
     header = ["source", "prop", "acc", "rej", "false", "%traj", "med_err", "med_fit"]
     keep = [True, True, True, True, truth, True, truth, True]
@@ -720,9 +605,8 @@ def plot_trajectory(
     *,
     title: str,
 ) -> Path:
-    """Top-down robot path in map_A frame, coloured by the winning prior of the fix
-    active at each sample, with surveyed markers as stars. odom_txy: (N,3) [ts,x,y]
-    in the world (odom) frame; each covered sample is mapped by inv(active fix)."""
+    """Top-down robot path in map_A frame, coloured by the active fix's winning prior,
+    markers as stars. odom_txy: (N,3) [ts,x,y] in world; each sample mapped by inv(fix)."""
     import matplotlib
 
     matplotlib.use("Agg")  # headless: no display on the robot / CI
@@ -803,8 +687,8 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 @dataclass
 class AcceptedPoints:
-    """The rerun overlay for a run's accepted fixes: one coloured, labelled point
-    each, in the MAP frame. Pure data -- built without rerun, logged by the Module."""
+    """The rerun overlay for a run's accepted fixes: one coloured, labelled point each,
+    in the MAP frame. Pure data -- built without rerun, logged by the Module."""
 
     positions_map_m: list[tuple[float, float, float]]
     colors_rgb: list[tuple[int, int, int]]
@@ -816,26 +700,17 @@ class AcceptedPoints:
 
 def accepted_points_in_map(fixes: list[Fix], odom_txyz: np.ndarray) -> AcceptedPoints:
     """One point per accepted fix, at the ROBOT's position when that fix landed,
-    expressed in the premap's map frame, coloured by the prior that won.
+    expressed in the premap's map frame (``map_T_world = inv(fix)``), coloured by the
+    prior that won. Same mapping plot_trajectory uses, so PNG and viewer cannot drift.
 
-    FRAME. A fix is ``world_T_map`` (module.py inverts relocalize()'s map_T_world and
-    publishes world->map on /tf), so ``map_T_world = inv(fix)`` carries a world-frame
-    (LIO/odom) point into the premap's frame. That is the frame the premap is drawn
-    in -- module.py stamps the loaded premap ``frame_id = "map"`` and the rerun bridge
-    parents that entity to ``tf#/map`` -- and it is the SAME mapping plot_trajectory
-    uses, so the PNG and the viewer cannot drift apart.
-
-    The robot's position at accept time is the odom sample nearest in the shared wall
-    clock (odom runs at ~10-50 Hz against a ~2 s accept cadence). The fix's own
-    translation is deliberately NOT used: that is the map ORIGIN in world, which
-    barely moves between accepts and would draw every prior's win in one blob.
+    The robot's position is the odom sample nearest in the shared wall clock. The
+    fix's own translation is deliberately NOT used: that is the map ORIGIN in world,
+    which barely moves between accepts and would draw every prior's win in one blob.
 
     Args:
-        fixes: accepted fixes, ``dedup_tf_fixes`` -> ``label_fixes_from_log``.
         odom_txyz: (N, 4) [wall_ts, x, y, z] robot positions in the world frame.
     Returns:
-        AcceptedPoints, 1:1 with ``fixes`` -- empty when no odom was captured (with
-        no robot position there is nowhere honest to draw a fix).
+        AcceptedPoints, 1:1 with ``fixes`` -- empty when no odom was captured.
     """
     positions: list[tuple[float, float, float]] = []
     colors: list[tuple[int, int, int]] = []
@@ -866,11 +741,7 @@ def write_report(
     title: str,
 ) -> dict[str, Path]:
     """Print the table, then write ``<key>.eval.json`` and ``<key>.trajectory.png``.
-
-    Args:
-        odom_txyz: (N, 4) [ts, x, y, z] robot positions in the world frame; the plot
-            is top-down and takes [ts, x, y].
-    """
+    ``odom_txyz``: (N, 4) [ts, x, y, z] in the world frame; the plot takes [ts, x, y]."""
     out_dir.mkdir(parents=True, exist_ok=True)
     print(format_report(stats, title=title))
     json_path = out_dir / f"{key}.eval.json"
@@ -907,21 +778,18 @@ class EvalConfig(ModuleConfig):
     out_dir: str = "out/eval"
     # Output-file key; keeps concurrent runs' artifacts from colliding.
     tag: str = "releval"
-    # Surveyed marker map (map_T_tag) to overlay on the plot; the SAME yaml/json
-    # the reloc module loads. None -> no markers drawn (stats unaffected).
+    # Surveyed marker map (map_T_tag) to overlay on the plot; the SAME yaml/json the
+    # reloc module loads. None -> no markers drawn (stats unaffected).
     marker_map_file: str | None = None
     # Run log for the census supplement. None -> this run's own main.jsonl.
     run_log_file: str | None = None
 
 
 class RelocEval(Module):
-    """In-process collector: subscribes to the real ``/tf`` + ``/odom`` streams,
-    draws each accept into rerun as it lands (``world/eval/accepted``, coloured by
-    the winning prior), and at stop() prints the per-source table + writes json + a
-    top-down trajectory PNG. Always "live" -- no in-process PGO truth, so
-    med_err/success are the offline driver's job. Best-effort: neither the overlay
-    nor a finalize failure may crash the run.
-    """
+    """In-process collector: subscribes to ``/tf`` + ``/odom``, draws each accept into
+    rerun as it lands, and at stop() prints the per-source table + writes json + a
+    trajectory PNG. Always "live" (no PGO truth). Best-effort: neither the overlay nor
+    a finalize failure may crash the run."""
 
     config: EvalConfig
 
@@ -957,8 +825,7 @@ class RelocEval(Module):
         logger.info("RelocEval collector started", tf_topic=TF_TOPIC, odom_topic=ODOM_TOPIC)
 
     def _on_odom(self, msg: PoseStamped) -> None:
-        # z is carried for the rerun overlay (a 3D point over the premap); the report
-        # and the top-down PNG use columns 0:3 only.
+        # z is carried for the rerun overlay (a 3D point); the PNG uses 0:3 only.
         self._odom.append(
             (time.time(), float(msg.position.x), float(msg.position.y), float(msg.position.z))
         )
@@ -982,9 +849,8 @@ class RelocEval(Module):
 
     def _tail_health_lines(self) -> list[HealthLine]:
         """The accepts appended to the run log since the last read. Tailing by byte
-        offset keeps the /tf callback's work bounded -- a run log grows all session,
-        and re-reading it from the top on every accept would not. A trailing partial
-        line stays unconsumed, so the accept it belongs to is not lost."""
+        offset keeps the /tf callback bounded (no re-read from top per accept); a
+        trailing partial line stays unconsumed, so its accept is not lost."""
         path = resolve_run_log(self.config.run_log_file)
         if path is None:
             return []
@@ -997,15 +863,11 @@ class RelocEval(Module):
 
     def _rerun_ready(self) -> bool:
         """True once this worker logs into the SAME rerun recording the bridge draws
-        the premap into; False -- a no-op overlay -- whenever no viewer is up
-        (``--viewer none``, headless, or a blueprint without RerunBridgeModule).
+        the premap into; False (a no-op overlay) whenever no viewer is up.
 
-        dimos starts every module worker through multiprocessing (forkserver,
-        core/coordination/python_worker.py) and rr.init derives its default recording
-        id from multiprocessing's authkey, so bridge worker and eval worker share ONE
-        recording and these points land beside the premap instead of in a second
-        recording the viewer would list separately.
-        https://rerun.io/docs/howto/logging/shared-recordings
+        rr.init derives its default recording id from multiprocessing's authkey, so
+        bridge worker and eval worker (both forkserver) share ONE recording and these
+        points land beside the premap. https://rerun.io/docs/howto/logging/shared-recordings
         """
         if self._rr_ready:
             return True
@@ -1035,10 +897,9 @@ class RelocEval(Module):
         return True
 
     def _log_accepted(self) -> None:
-        """Redraw ``world/eval/accepted`` when a NEW accept lands: every accepted fix
-        so far, one point each, coloured by the prior that won it. The full set is
-        re-logged (not appended) so a fix that was still ``unknown`` when its /tf
-        arrived gets its colour the moment its log line shows up."""
+        """Redraw ``world/eval/accepted`` when a NEW accept lands. The full set is
+        re-logged (not appended) so a fix that was ``unknown`` when its /tf arrived
+        gets its colour the moment its log line shows up."""
         tf_fixes = dedup_tf_fixes(self._world_map)
         if len(tf_fixes) <= self._n_drawn:
             return  # a republish of the accept already drawn
@@ -1056,8 +917,7 @@ class RelocEval(Module):
             rr.Points3D(
                 positions=points.positions_map_m,
                 colors=points.colors_rgb,
-                # rerun shows labels below its own instance-count threshold and on
-                # hover above it -- exactly the right behaviour for a growing set.
+                # rerun shows labels below its instance-count threshold, on hover above.
                 labels=points.labels,
                 radii=RERUN_ACCEPTED_RADIUS_M,
             ),
@@ -1104,8 +964,7 @@ class RelocEval(Module):
             "scored held-out accuracy comes from the offline held-out driver."
         )
         # accept_sources from the LOG accepts (not the /tf join): every accept names
-        # its prior, so ACCEPTED per source is exact even where a join failure would
-        # have left the fix's own source ``unknown``. n_rejects = len(reject_sources).
+        # its prior, so ACCEPTED per source is exact even where a join failed.
         n_rejects = None if reject_sources is None else len(reject_sources)
         stats = compute_stats(
             fixes,

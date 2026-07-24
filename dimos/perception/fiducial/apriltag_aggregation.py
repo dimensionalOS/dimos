@@ -14,44 +14,9 @@
 
 """Robust multi-sighting fiducial-marker pose aggregation.
 
-Time-cluster same-marker sightings, gate each glimpse independently, and reduce
-each cluster to ONE robust pose: the medoid refined by Huber-weighted IRLS
-(weighted-mean translation + Markley quaternion eigen-mean), re-weighting each
-iteration so a lingering bad glimpse keeps losing influence.
-
-The aggregated pose is a frame-agnostic 7-vector ``[x, y, z, qx, qy, qz, qw]``; the
-reloc ``FiducialPrior`` aggregates ``world_T_marker`` (frame-invariant, so cluster
-drift does not enter). Only :func:`view_quality` reads a camera-relative pose --
-the caller passes ``distance``/``view_angle`` scalars in, keeping the aggregation pose
-and the geometry-gate pose distinct.
-
-Two aggregators, ONE fusion math -- both reduce a marker's sightings through
-:func:`robust_cluster_pose`. They differ only in WHICH sightings get grouped,
-because time means different things offline and online:
-
-    OFFLINE (survey premap)                    ONLINE (live reloc)
-    map global --markers-out                   DetectMarkers stream
-      -> _aggregate_marker_map (map.py)          -> TagAggregator.robust_estimate
-      group ALL sightings of a marker_id         sliding window: only the last
-      across the whole recording                 ``time_window_s`` of sightings,
-      (one static PGO-corrected frame)           emitted at ``min_observations``
-                    |                                       |
-                    +------------------+  +-----------------+
-                                       v  v
-                       robust_cluster_pose(obs) -> one map_T_marker per id
-                       Huber-IRLS translation + Markley quaternion mean
-
-Offline the recording is PGO-corrected and complete: every sighting, minutes
-apart, lives in one static frame -- windowing would only discard good data, so
-group them all. Online the LIO frame drifts under you, so a 60 s-old sighting is
-in a frame that has since moved -- the window MUST forget. Same math, different
-scope, and the scope is the reason both exist.
-
-No up-front sharpness gate: the detector's ``QualityWindow`` already drops
-blurry frames before these post-detection observations arrive.
-
-:func:`tag_noise_scale` / :func:`tag_covariance` turn an aggregated estimate's median
-range + reprojection error into the health signal that ships with it.
+Time-cluster same-marker sightings, gate each independently, and reduce each
+cluster to one robust pose via Huber-weighted IRLS (weighted-mean translation +
+Markley quaternion eigen-mean).
 """
 
 from __future__ import annotations
@@ -63,8 +28,7 @@ import math
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-# Per-glimpse gate thresholds; a glimpse must clear every one whose input is
-# available (see gate_reason).
+# Per-glimpse gate thresholds (see gate_reason).
 DEFAULT_MAX_DISTANCE_M = 1.0  # camera->tag range past which perspective is too weak
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # line-of-sight vs tag normal; grazing views mis-solve
 DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
@@ -76,19 +40,14 @@ DEFAULT_ROTATION_WEIGHT_M_PER_RAD = 0.5  # 1 rad of rot ~ 0.5 m of trans in pose
 DEFAULT_HUBER_DELTA_M = 0.05  # residual (m) past which a sample is down-weighted
 _HUBER_ITERATIONS = 5  # IRLS weights settle within ~5 iters at huber_delta_m scale
 
-# Reference geometry of a well-posed glimpse: at exactly these values
-# tag_noise_scale is 1.0 and the aggregated pose carries its unscaled covariance.
+# Reference geometry where tag_noise_scale == 1.0 (pose carries unscaled covariance).
 REF_DISTANCE_M = 0.4  # camera->tag range a close, in-gate glimpse sits at
 REF_REPROJ_PX = 1.0  # RMS corner misfit of a sharp glimpse
 
 
 @dataclass(frozen=True)
 class AggregationConfig:
-    """Per-glimpse gate thresholds + clustering/aggregation knobs.
-
-    Frozen value type (dimos convention for pure-number tunables). Default
-    tuning is the autoresearch harness's job (#2137).
-    """
+    """Per-glimpse gate thresholds + clustering/aggregation knobs."""
 
     max_distance_m: float = DEFAULT_MAX_DISTANCE_M
     max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG
@@ -102,13 +61,7 @@ class AggregationConfig:
 
 @dataclass(frozen=True)
 class TagObservation:
-    """One gated tag glimpse feeding the aggregator.
-
-    ``pose`` is the frame-invariant aggregation pose ``(x, y, z, qx, qy, qz, qw)``
-    (``world_T_marker`` in the reloc prior). Quality fields drive the gates; a
-    ``None`` field disables ITS gate only, so a pixel-less wire-delivered
-    observation degrades gracefully.
-    """
+    """One gated tag glimpse; a ``None`` quality field disables ITS gate only."""
 
     ts: float
     marker_id: int
@@ -127,9 +80,7 @@ class TagEstimate:
     pose: tuple[float, float, float, float, float, float, float]  # aggregated 7-vec, obs' frame
     n_observations: int
     ts: float  # latest contributing glimpse's timestamp
-    # Cluster MEDIANS, not the last glimpse's: they feed tag_noise_scale, and the
-    # aggregated pose is the whole cluster's, so its health has to be the cluster's too.
-    # None when no member carried the field (a pixel-less wire observation).
+    # Cluster MEDIANS, not the last glimpse's -- health of the whole cluster's pose.
     distance_m: float | None = None
     reproj_px: float | None = None
 
@@ -160,9 +111,8 @@ def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
 def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[float, float]:
     """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame.
 
-    view_angle is line-of-sight vs the tag normal (0 == head-on). Camera-relative
-    only: on the aggregation pose (world_T_marker) distance would be from world origin,
-    meaningless as a gate.
+    view_angle is line-of-sight vs the tag normal (0 == head-on); camera-relative
+    only (world_T_marker distance would be from world origin, useless as a gate).
     """
     translation = np.array(optical_T_marker[:3], dtype=np.float64)
     distance_m = float(np.linalg.norm(translation))
@@ -176,8 +126,7 @@ def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[flo
 def tag_side_px(corners_px: np.ndarray) -> float:
     """Tag side length in pixels: sqrt of the corner quad's image area (shoelace).
 
-    Small == few tag pixels == unreliable pose. Shoelace matches
-    ``cv2.contourArea`` for a simple quad and keeps this core OpenCV-free.
+    Shoelace matches ``cv2.contourArea`` for a simple quad and keeps this core OpenCV-free.
     """
     quad = np.asarray(corners_px, dtype=np.float64).reshape(4, 2)
     x, y = quad[:, 0], quad[:, 1]
@@ -228,8 +177,7 @@ def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.nd
 
 def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
     """Rejection reason, or ``None`` if the glimpse clears every gate whose input
-    is present. A ``None`` field skips ITS gate so a pixel-less observation
-    degrades to what it CAN evaluate rather than failing shut."""
+    is present (a ``None`` field skips ITS gate rather than failing shut)."""
     if obs.reproj_px is not None and obs.reproj_px > config.max_reproj_px:
         return "reproj"
     if obs.tag_px is not None and obs.tag_px < config.min_tag_px:
@@ -253,8 +201,8 @@ def _pose_distance(
 def cluster_medoid(
     cluster: list[TagObservation], rotation_weight_m_per_rad: float
 ) -> TagObservation:
-    """The observation whose pose is most central (min total pose-distance to the
-    rest) -- a robust, outlier-resistant seed for the Huber refinement."""
+    """The observation whose pose is most central (min total pose-distance) --
+    a robust seed for the Huber refinement."""
     poses = [obs.pose for obs in cluster]
     best_index, best_cost = 0, float("inf")
     for i in range(len(poses)):
@@ -285,11 +233,10 @@ def robust_cluster_pose(
     rotation_weight_m_per_rad: float,
     huber_delta_m: float,
 ) -> tuple[float, float, float, float, float, float, float]:
-    """Cluster representative: the medoid, refined by Huber-weighted IRLS --
-    weighted-mean translation + Markley quaternion eigen-mean (largest
-    eigenvector of the sign-aligned quaternions' weighted scatter). Re-weighting
-    each iteration keeps down-weighting a lingering bad glimpse (e.g. a mirror-
-    flip PnP solution the ambiguity gate missed).
+    """Cluster representative: the medoid refined by Huber-weighted IRLS --
+    weighted-mean translation + Markley quaternion eigen-mean. Re-weighting each
+    iteration keeps down-weighting a lingering bad glimpse (e.g. a mirror-flip
+    PnP solution the ambiguity gate missed).
     Markley quaternion averaging: https://ntrs.nasa.gov/citations/20070017872
     """
     medoid = cluster_medoid(cluster, rotation_weight_m_per_rad)
@@ -330,20 +277,14 @@ def robust_cluster_pose(
 
 
 def _median_present(values: list[float | None]) -> float | None:
-    """Median over the members that carry the field; ``None`` when none do.
-    Median, not mean, so one surviving in-gate outlier cannot inflate the health
-    signal of an otherwise clean cluster."""
+    """Median over the members that carry the field, ``None`` when none do --
+    median not mean, so one in-gate outlier cannot inflate the health signal."""
     present = [v for v in values if v is not None]
     return float(np.median(present)) if present else None
 
 
 class TagAggregator:
-    """Streaming robust pose per marker over a sliding time window.
-
-    ``observe()`` gates a glimpse and appends it to its marker's window, purging
-    glimpses older than ``time_window_s`` from the newest. ``robust_estimate()``
-    Huber-aggregates once a marker has ``min_observations`` in-window.
-    """
+    """Streaming robust pose per marker over a sliding time window."""
 
     def __init__(self, config: AggregationConfig) -> None:
         self._config = config
@@ -356,9 +297,8 @@ class TagAggregator:
             return reason
         buf = self._by_marker[obs.marker_id]
         buf.append(obs)
-        # Purge relative to this marker's newest glimpse: a marker that left
-        # view keeps its window until it returns (then stale glimpses drop). The
-        # prior's own age gate, not this buffer, decides carry-forward staleness.
+        # Purge relative to this marker's newest glimpse, not wall time: a marker
+        # that left view keeps its window until it returns (then stale glimpses drop).
         newest = obs.ts
         self._by_marker[obs.marker_id] = [
             o for o in buf if newest - o.ts <= self._config.time_window_s

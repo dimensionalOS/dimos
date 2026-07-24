@@ -14,19 +14,9 @@
 
 """ArUco / AprilTag detection as memory2 transforms.
 
-Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`,
-emitting one :class:`Detection3DMarker` per marker with ``.pose`` composed into
-world frame from the upstream camera pose. Also holds the smoothing helpers,
-``MarkersPerFrame`` (collapses marker fan-out back to one ``Detection3DArray``
-per source image) and :class:`AggregateTagBursts` (the per-glimpse quality gates plus
-one robust aggregated pose per tag visit). :class:`MarkerTfModule` handles live TF
-publication.
-
-The gate + aggregation core AggregateTagBursts drives originates in the jnav
-apriltag aggregation, dimos PR #2587.
-
-Frames with no upstream ``.pose`` are skipped (debug log): without a camera-in-
-world pose we can't honor the always-world-frame output contract.
+Emits one world-frame :class:`Detection3DMarker` per marker, plus smoothing
+helpers, ``MarkersPerFrame`` and :class:`AggregateTagBursts` (per-glimpse gates +
+one aggregated pose per tag visit). Aggregation core from jnav, dimos PR #2587.
 """
 
 from __future__ import annotations
@@ -119,8 +109,7 @@ def _average_marker_pose(
     https://ntrs.nasa.gov/citations/20070017872
 
     q and -q are the same rotation, so naive averaging can cancel: flip any
-    sample whose dot against the first (hemisphere reference) is negative. For
-    closely-spaced rotations in a short window this matches a SLERP average.
+    sample whose dot against the first (hemisphere reference) is negative.
     """
     items = list(buffer)
     n = len(items)
@@ -319,8 +308,6 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     """Collapse marker fan-out back into one Detection3DArray per image frame.
 
-    ``DetectMarkers`` emits one observation per decoded marker, but live LCM
-    consumers need one array per processed image (empty ones included).
     ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
     empty frames and tags each marker with the source image + frame marker
     count, so this transformer emits without waiting for a later timestamp.
@@ -417,22 +404,13 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
 class AggregateTagBursts:
     """Gate each tag glimpse, then publish ONE robustly-aggregated pose per tag VISIT.
 
-    A ``Stream.tap`` callable sitting between ``DetectMarkers`` and
-    ``MarkersPerFrame``: it reads every ``Detection3DMarker`` and yields nothing, so
-    the per-frame ``detections`` array downstream stays byte-identical. This is the
-    only place the ``AggregationConfig`` gates CAN run live -- ``corners_px``,
-    ``reprojection_error`` and the camera transform all exist here and every one of
-    them is dropped by the wire ``Detection3DArray`` encoding a step later.
-
-    Emission is EDGE-triggered per (marker, visit): the glimpse that first brings a
-    marker's window to ``min_observations`` publishes, later glimpses of the same
-    burst do not. Upstream ``QualityWindow`` passes at most one frame per
-    ``quality_window_s`` (0.5 s default), so a level-triggered publish would fire
-    ~2x/s for one unchanged fix -- and at that rate ``min_observations=3`` means a
-    tag must hold view ~1.0 s before its first aggregated pose ships.
-
-    ``ambiguity_ratio_min`` is NOT part of this chain: the detector already gates the
-    IPPE mirror flip per view, upstream of everything here.
+    A ``Stream.tap`` callable between ``DetectMarkers`` and ``MarkersPerFrame``: it
+    yields nothing, so the downstream ``detections`` array stays byte-identical. It
+    is the only place the ``AggregationConfig`` gates CAN run live -- ``corners_px``,
+    ``reprojection_error`` and the camera transform all exist here and are dropped by
+    the wire ``Detection3DArray`` encoding a step later. Emission is EDGE-triggered
+    per (marker, visit): the glimpse that first brings a window to
+    ``min_observations`` publishes, later glimpses of the same burst do not.
     """
 
     def __init__(
@@ -499,9 +477,8 @@ class AggregateTagBursts:
         self._publish(self._aggregated_array(det, estimate))
 
     def _aggregated_array(self, det: Detection3DMarker, estimate: TagEstimate) -> Detection3DArray:
-        """One-detection array carrying this tag's aggregated world_T_marker plus its
-        health signal: the covariance and the score are the same number twice, so
-        they cannot disagree."""
+        """One-detection array with this tag's aggregated world_T_marker; covariance
+        and score are the same number twice, so they cannot disagree."""
         scale = tag_noise_scale(estimate.distance_m, estimate.reproj_px)
         x, y, z, qx, qy, qz, qw = estimate.pose
         aggregated = dataclasses.replace(

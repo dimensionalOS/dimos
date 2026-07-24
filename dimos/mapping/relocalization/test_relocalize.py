@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Crucial-invariant tests for the fiducial prior and the per-prior accept path.
+"""Invariant tests for the fiducial prior and the per-prior accept path.
 
-All inputs are CONSTRUCTED -- no scene, no replay, no hardware. Each test injects a
-known transform or monkeypatches the solve and asserts the module's compose / accept
-/ reject logic directly. The real-RANSAC + synthetic-scene judge tests are exercised
-by the offline benefit harness, not this suite.
+All inputs are CONSTRUCTED: each test injects a known transform or monkeypatches the
+solve and asserts the compose / accept / reject logic directly.
 """
 
 from __future__ import annotations
@@ -55,11 +53,8 @@ def _rigid(yaw_deg: float, t: tuple[float, float, float]) -> np.ndarray:
 
 
 def test_fiducial_composes_map_T_world_then_consumes_it_once() -> None:
-    """Invariant 6: ONE aggregated world_T_marker composes to map_T_world =
-    map_T_marker @ inv(world_T_marker), exactly (non-identity both sides, so a
-    transposed/swapped compose cannot pass). Invariant 2 (consume-on-use): that fix
-    is proposed exactly once, then the pending pool is empty -- re-offering the same
-    measurement against a drifted world could only score worse."""
+    """One aggregated world_T_marker composes to map_T_world = map_T_marker @
+    inv(world_T_marker), and the fix is proposed exactly once (consume-on-use)."""
     empty = o3d.geometry.PointCloud()
     map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
     world_T_marker = _rigid(-40.0, (1.0, 0.5, 0.8))
@@ -71,16 +66,15 @@ def test_fiducial_composes_map_T_world_then_consumes_it_once() -> None:
     candidates = prior.propose(empty, empty)
     assert len(candidates) == 1 and candidates[0].source == "fiducial"
     np.testing.assert_allclose(candidates[0].T, truth, atol=1e-12)
-    assert prior.propose(empty, empty) == []  # consumed: gone on the next fire
+    assert prior.propose(empty, empty) == []
 
 
 # --- RelocalizationModule: bare shell (no coordinator, no start() wiring) -------
 
 
 def _bare_module(config: Config) -> RelocalizationModule:
-    """A RelocalizationModule with only the attributes the pure helpers read -- no
-    coordinator, no start() wiring. _premap/_fiducial_prior default unset; a test
-    overrides whichever it needs. Mirrors __init__'s derived state."""
+    """A RelocalizationModule with only the attributes the pure helpers read; mirrors
+    __init__'s derived state. A test overrides _premap/_fiducial_prior as needed."""
     m = object.__new__(RelocalizationModule)
     m.config = config
     m._last_skip_log = 0.0
@@ -101,8 +95,7 @@ def _bare_module(config: Config) -> RelocalizationModule:
 
 
 class _StubCloud:
-    """Minimal PointCloud2 stand-in: __len__ (the point count the RANSAC floor and
-    the n_pts log field read) plus a `.pointcloud` sentinel passed to the solve."""
+    """Minimal PointCloud2 stand-in: __len__ plus a `.pointcloud` sentinel."""
 
     def __init__(self, n: int) -> None:
         self._n = n
@@ -113,9 +106,8 @@ class _StubCloud:
 
 
 class _ModuleLogRecorder:
-    """Captures module.py logger .info/.warning as (event, kwargs). The real logger
-    sets propagate=False, so caplog can't see these; monkeypatching module_mod.logger
-    is the deterministic way. An unexpected .exception (crash path) fails loudly."""
+    """Captures module.py logger .info/.warning as (event, kwargs); the real logger
+    sets propagate=False, so caplog can't see these and monkeypatching is needed."""
 
     def __init__(self) -> None:
         self.infos: list[tuple[str, dict[str, object]]] = []
@@ -128,7 +120,7 @@ class _ModuleLogRecorder:
         self.warnings.append((event, kwargs))
 
     def debug(self, event: str, *args: object, **kwargs: object) -> None:
-        pass  # benign no-op traces (e.g. the double-fire empty pool) -- not asserted on
+        pass
 
     def exception(self, msg: str, *args: object, **kwargs: object) -> None:
         raise AssertionError(f"unexpected logger.exception: {msg}")
@@ -144,10 +136,8 @@ class _ModuleLogRecorder:
 def test_accept_gate_is_per_prior(
     monkeypatch: pytest.MonkeyPatch, winning_source: str, fitness: float, accepted: bool
 ) -> None:
-    """Invariant 3: the accept gate is PER-SOURCE. A fiducial fix at 0.40 clears a
-    fiducial bar of 0.35, while a ransac fix at 0.50 fails a ransac bar of 0.55 -- the
-    SAME two fitnesses would flip under one shared module gate. The reject line names
-    the ransac bar that refused it."""
+    """The accept gate is PER-SOURCE: a fiducial fix at 0.40 clears its 0.35 bar while
+    a ransac fix at 0.50 fails its 0.55 bar -- the same fitnesses flip under one gate."""
     m = _bare_module(
         Config(
             priors=[
@@ -181,9 +171,8 @@ def test_accept_gate_is_per_prior(
 
 
 def _tracking_module(monkeypatch: pytest.MonkeyPatch, now: list[float]) -> RelocalizationModule:
-    """A module that has already ACCEPTED one fix at the identity, so the next call is
-    a tracking fix with a previous one to compare against. The clock is driven, never
-    slept, so the per-second jump budgets are exact."""
+    """A module that has already accepted one fix at the identity, so the next call is a
+    tracking fix; the clock is driven, never slept, so the jump budgets are exact."""
     m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
     m._now_fn = lambda: now[0]
@@ -206,10 +195,8 @@ def _tracking_module(monkeypatch: pytest.MonkeyPatch, now: list[float]) -> Reloc
 def test_jump_guard(
     monkeypatch: pytest.MonkeyPatch, seed_fix: bool, dt_s: float, T: np.ndarray, accepted: bool
 ) -> None:
-    """Invariant 1: the TRACKING jump guard rejects a gross mis-localization (18 m /
-    180 deg in 0.2 s, a fitness that CLEARS the accept gate), passes a normal
-    sub-metre drift correction, and never blocks the FIRST fix (acquisition is
-    unguarded -- a robot booting far from the origin must still localize)."""
+    """The tracking jump guard rejects a gross mis-localization, passes a normal
+    sub-metre drift, and never blocks the first fix (acquisition is unguarded)."""
     now = [100.0]
     if seed_fix:
         m = _tracking_module(monkeypatch, now)

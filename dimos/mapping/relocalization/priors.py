@@ -13,22 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pluggable relocalization priors -- candidate PROPOSERS feeding the shared
-fine-ICP judge in relocalize.py (``refine_candidates``). No prior is trusted:
-a candidate is accepted by surviving the wall-only fine-fitness rerank, never by
-its source's own reported confidence. Two priors live here: ``RansacPrior``
-(wrapping relocalize.py's existing multi-scale FPFH+RANSAC search) and
-``FiducialPrior`` (the detector's aggregated tag poses composed into one world->map
-candidate per tag). The same invariant binds any future prior: it
-goes through the judge on wall fitness, never bypasses it.
-
-Each prior also owns its own TRIGGER (``is_due`` / ``on_fired``), and each fire
-judges that prior's candidates ALONE. RANSAC sweeps periodically because a global
-search has no event to wait for; the fiducial prior fires on the edge of a
-completed tag burst, so a tag fix publishes at the tag's latency instead of
-waiting on a RANSAC search that costs seconds. A pool of one is the expected
-case: the judge is a validator (wall fitness, gravity tilt, wall evidence), not a
-tournament.
+"""Pluggable relocalization priors: candidate proposers feeding the shared
+fine-ICP judge in relocalize.py (``refine_candidates``). Each prior owns its own
+trigger (``is_due`` / ``on_fired``) and is accepted only by surviving the
+wall-only fine-fitness rerank, never by its source's reported confidence.
 """
 
 from __future__ import annotations
@@ -52,56 +40,38 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# s between RANSAC fires. One multi-scale FPFH+RANSAC search costs seconds of CPU
-# (4.4-23 s measured on the trial's go2/Orin recordings), so the sweep is paced
-# rather than run per frame; 2.0 is the cadence the module throttled at before the
-# trigger moved onto this prior.
+# s between RANSAC fires. One FPFH+RANSAC search costs seconds of CPU (4.4-23 s
+# measured on the trial's go2/Orin recordings), so the sweep is paced, not per-frame.
 DEFAULT_RANSAC_INTERVAL_S = 2.0
 
 
-# ---------------------------------------------------------------------------
-# Prior configs -- one pydantic config per prior, keyed by a Literal ``type``
-# into a discriminated union, so every prior is an EQUAL, toggleable entry (no
-# always-on RANSAC special case). Pattern from the per-backend kinematics configs
-# at dimos/manipulation/planning/kinematics/config.py:26-57. A blueprint is just
-# a preset of this list.
-# ---------------------------------------------------------------------------
+# Prior configs: one pydantic config per prior, keyed by a Literal ``type`` into a
+# discriminated union. Pattern from dimos/manipulation/planning/kinematics/config.py:26-57.
 
 
 class PriorConfigBase(BaseConfig):
     """Fields every prior shares: the on/off toggle plus its accept bar."""
 
     enabled: bool = True
-    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) THIS prior's
-    # fix must clear to be accepted. On the base -- like ``enabled`` -- because every
-    # prior is judged on its own bar (each fire pools one source). Both shipped priors
-    # (ransac, fiducial) override it below with the same 0.60; the base default matches
-    # so a prior that states no bar of its own inherits that same conservative floor.
+    # Per-prior accept gate: min wall fitness (dimensionless, 0-1) this prior's fix
+    # must clear to be accepted.
     fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class RansacPriorConfig(PriorConfigBase):
-    """Multi-scale FPFH+RANSAC global search (``RansacPrior``). The search knobs
-    live in relocalize.py; this entry owns the accept bar, the sweep cadence and the
-    geometry floor the search needs to be worth firing."""
+    """Multi-scale FPFH+RANSAC global search (``RansacPrior``); search knobs live in
+    relocalize.py, this entry owns the accept bar, cadence and geometry floor."""
 
     type: Literal["ransac"] = "ransac"
-    # HIGH bar (dimensionless wall fitness, 0-1). A RANSAC fix is a geometric FPFH
-    # search with nothing anchoring it but the walls it landed on, and a repeated
-    # corridor hands it a wrong-but-fitting wall that still scores respectably -- the
-    # wall overlap IS the whole evidence. 0.6 raises the old single 0.45 module gate,
-    # which was set when a lidar-only module had no second source to fall back on.
+    # HIGH bar (dimensionless wall fitness, 0-1): a RANSAC fix is anchored only by the
+    # walls it landed on. 0.6 raises the old single 0.45 lidar-only module gate.
     fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
-    # s between RANSAC fires -- this prior's trigger. Was the module's
-    # reloc_interval_s, which no longer exists: a global search has no event to
-    # wait for, so it paces itself and the tag prior fires on its own edge.
+    # s between RANSAC fires -- this prior's trigger; a global search has no event to
+    # wait for, so it paces itself.
     interval_s: float = Field(default=DEFAULT_RANSAC_INTERVAL_S, gt=0.0)
     # Min local-map points (post VoxelGridMapper) this search needs before it fires:
-    # FPFH matching + the wall-only rerank have too little geometry below this, so a
-    # sparse frame is skipped (throttled log) and the search retries on the next
-    # dense frame. RANSAC-scoped on purpose -- a fiducial fix comes from the tag, not
-    # lidar density, so a tag burst fires regardless (its wall evidence is still
-    # validated by refine_candidates' separate, much lower MIN_WALL_POINTS gate).
+    # below this FPFH matching + the wall-only rerank have too little geometry, so a
+    # sparse frame is skipped and retried on the next dense frame.
     min_local_points: int = Field(default=50_000, ge=0)
 
 
@@ -116,10 +86,8 @@ class FiducialPriorConfig(PriorConfigBase):
     # Surveyed marker map (map_T_marker per id), a .json path resolved via
     # resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
-    # Tag geometry, family and per-glimpse gate/aggregation knobs the DETECTOR needs; none
-    # of the three is read here (this prior consumes poses the detector already gated
-    # and aggregated). Blueprints thread all three into MarkerDetectionStreamModule so the
-    # fiducial family has one source of truth.
+    # Tag geometry/family/aggregation knobs the DETECTOR needs; none is read here.
+    # Blueprints thread all three into MarkerDetectionStreamModule.
     marker_length_m: float = Field(default=0.10, gt=0.0)  # physical tag edge, m
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
@@ -134,36 +102,21 @@ PriorConfig = Annotated[
 
 @dataclass
 class Candidate:
-    """One proposed local_map->global_map transform, pre-judging.
-
-    ``T`` uses relocalize()'s convention: the 4x4 mapping ``local_map`` into
-    ``global_map``'s frame. A candidate carries only WHICH transform and WHICH
-    source -- no self-reported confidence, since ``refine_candidates`` ranks purely
-    on wall-only fine-scale fitness, so a "trusted" prior still loses to one that
-    fits the walls.
-    """
+    """One proposed transform, pre-judging. ``T`` is the 4x4 mapping ``local_map``
+    into ``global_map``'s frame; no self-reported confidence (the judge ranks it)."""
 
     T: np.ndarray
     source: str
 
 
 class RelocPrior(Protocol):
-    """A relocalization candidate proposer that owns when it is asked.
+    """A relocalization candidate proposer that owns its own trigger.
 
-    Implementations MUST NOT self-select a winner -- that is
-    ``refine_candidates``'s job, always. Returning zero candidates (e.g. no
-    marker in view, no prior pose seeded yet) is a valid, expected response,
-    not an error.
-
-    ``is_due(now_s)`` is the prior's TRIGGER: True when it wants a relocalization
-    fired now. ``on_fired(now_s)`` acks the fire that answered it (restart the
-    timer, clear the edge). The module calls ``is_due`` on every enabled prior each
-    local-map frame and fires one INDEPENDENT relocalization per prior that said
-    yes, so no prior's latency is coupled to another's cost. The pair is split so
-    the module can decline a due prior (RANSAC below its min_local_points floor):
-    unacked, the trigger stands and fires at the first frame that qualifies.
-    ``now_s`` is seconds on the module's single monotonic timebase, passed in so a
-    test can drive the trigger without sleeping.
+    Implementations must not self-select a winner (``refine_candidates``'s job);
+    returning zero candidates is a valid, expected response. ``is_due(now_s)`` is the
+    trigger; ``on_fired(now_s)`` acks the fire that answered it. ``now_s`` is seconds
+    on the module's monotonic timebase, passed in so a test can drive it without
+    sleeping.
     """
 
     name: str
@@ -180,20 +133,14 @@ class RelocPrior(Protocol):
 
 
 class RansacPrior:
-    """Wraps relocalize.py's multi-scale FPFH+RANSAC global search, proposing its
-    raw candidate pool into the judge.
-
-    Trigger: a fixed interval. A global search waits on no event -- there is always
-    a scan to match -- so the only sane trigger is a paced sweep, and the pace is
-    what bounds its cost.
-    """
+    """Wraps relocalize.py's FPFH+RANSAC global search; trigger is a paced interval
+    (a global search waits on no event, so the pace bounds its cost)."""
 
     name = "ransac"
 
     def __init__(self, interval_s: float = DEFAULT_RANSAC_INTERVAL_S) -> None:
         self._interval_s = interval_s
-        # None == never fired, so the first frame with enough points relocalizes
-        # immediately -- the leading emit of the throttle this trigger replaces.
+        # None == never fired, so the first dense-enough frame relocalizes immediately.
         self._last_fired_s: float | None = None
 
     def propose(
@@ -214,25 +161,11 @@ class RansacPrior:
 class FiducialPrior:
     """Aggregated fiducial tag poses -> ONE world->map candidate per tag.
 
-    ``observe()`` takes one already-gated, already-aggregated ``world_T_marker`` from the
-    detector's ``aggregated_detections`` stream and composes it with the surveyed marker
-    map; ``propose()`` hands each composed fix to the judge. No confidence -- the
-    judge ranks it on wall fitness like every source.
-
-    Gating and aggregation live UPSTREAM, in the detector's ``AggregateTagBursts``, because
-    that is the only place ``corners_px``, the reprojection error and the camera
-    transform still exist -- the wire ``Detection3DArray`` drops all three. This
-    prior therefore does composition, nothing else.
-
-    Frame convention: a candidate's ``T`` is map_T_world =
-    ``map_T_marker @ inv(world_T_marker_aggregated)`` -- the same
-    local_map(world)->global_map(map) direction RANSAC uses.
-
-    Trigger and payload are ONE fact: a composed fix stays PENDING until
-    ``propose()`` consumes it, and pending is what ``is_due`` reports. Every arriving
-    aggregated pose is already one completed burst (``AggregateTagBursts`` publishes once per
-    marker per visit), so each tag's estimate goes past the judge exactly once and
-    the prior then goes quiet until that tag is seen again.
+    ``observe()`` composes an aggregated ``world_T_marker`` with the surveyed marker
+    map; ``propose()`` hands each composed fix to the judge. Frame convention: a
+    candidate's ``T`` is map_T_world = ``map_T_marker @ inv(world_T_marker_aggregated)``,
+    the same local_map(world)->global_map(map) direction RANSAC uses. A composed fix
+    stays pending until ``propose()`` consumes it, and pending is what ``is_due`` reports.
     """
 
     name = "fiducial"
@@ -291,11 +224,9 @@ class FiducialPrior:
 
 
 class EmptyProposalError(ValueError):
-    """No prior proposed any candidate this fire. Expected as a benign race artifact:
-    when the cloud thread and the detections thread both see the fiducial trigger due
-    before either drains _pending, the loser reaches here with an empty pool while the
-    winner already judged the fix. ``_try_relocalize`` treats it as a no-op, not a
-    crash."""
+    """No prior proposed any candidate this fire. Benign race artifact (two threads
+    see the fiducial trigger due, the loser drains an empty _pending); treated as a
+    no-op, not a crash."""
 
 
 def relocalize_with_priors(
@@ -305,20 +236,11 @@ def relocalize_with_priors(
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
     verbose_eval_logging: bool = False,
 ) -> tuple[np.ndarray, float, str]:
-    """Gather candidates from the priors this fire runs, judge them through the
-    shared fine-ICP tail (``refine_candidates``), report which candidate won.
-
-    Usually ONE prior: triggers are per prior, so this is the validator path for a
-    single source as often as it is a comparison. No source bypasses the judge -- a
-    candidate that doesn't fit the walls loses even with nothing to lose to.
-    ``gravity_tilt_max_deg`` threads to the judge's gravity gate, defaulting to the
-    module constant so behavior is unchanged unless overridden.
-    ``verbose_eval_logging`` turns the per-cycle proposal census on (``--eval``);
-    off, this path logs nothing per cycle and module.py's single accept line carries
-    the evidence.
-
-    Returns ``(T, fitness, winning_source)``. Raises ``EmptyProposalError`` if every
-    prior proposed zero candidates (a benign double-fire race, not a crash).
+    """Gather candidates from the priors this fire runs, judge them through the shared
+    fine-ICP tail (``refine_candidates``), report which won. ``gravity_tilt_max_deg``
+    threads to the judge's gravity gate; ``verbose_eval_logging`` turns the per-cycle
+    proposal census on (``--eval``). Returns ``(T, fitness, winning_source)``; raises
+    ``EmptyProposalError`` if every prior proposed zero candidates (a benign race).
     """
     all_transforms: list[np.ndarray] = []
     sources: list[str] = []
@@ -330,10 +252,7 @@ def relocalize_with_priors(
     if not all_transforms:
         raise EmptyProposalError("relocalize_with_priors: no prior proposed any candidate")
 
-    # Proposal census: which prior offered candidates this fire. A fiducial source
-    # absent here means no tag reached min_observations -- distinct from proposing
-    # then losing the judge below. Eval-only: it is one line per fire forever,
-    # which is a debugging trace, not an operating log.
+    # Proposal census (eval-only): which prior offered candidates this fire.
     if verbose_eval_logging:
         counts = {s: sources.count(s) for s in sorted(set(sources))}
         logger.info("relocalize candidates", counts=counts)

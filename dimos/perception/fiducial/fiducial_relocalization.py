@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Surveyed marker-map loading for the fiducial relocalization path.
-
-The ``map_T_marker`` poses (one per tag id) that ``FiducialPrior`` composes
-with each aggregated ``world_T_marker`` sighting into a ``world->map`` candidate.
-The per-glimpse pose solve + IPPE mirror-ambiguity gate live in
-:func:`dimos.perception.fiducial.marker_pose.ambiguity_gated_pose`; the
-robust multi-sighting aggregation lives in
-:mod:`dimos.perception.fiducial.apriltag_aggregation`.
-"""
+"""Load a surveyed marker map (``marker_id -> map_T_marker``) for the fiducial relocalization path."""
 
 from __future__ import annotations
 
@@ -39,9 +31,11 @@ MAP_FRAME = "map"
 
 
 def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
-    """Fail loudly on malformed values: a short translation list would otherwise silently
-    zero-fill (``Vector3(1.0)`` -> ``(1.0, 0.0, 0.0)``) and a zero-norm quaternion only
-    crashes much later, in ``Quaternion.inverse()`` — or worse, corrupts a published pose."""
+    """Validate one survey entry into a ``map_T_marker`` Transform.
+
+    Fail loudly here: a short translation list silently zero-fills and a zero-norm quaternion
+    only crashes later, in ``Quaternion.inverse()`` — or worse, corrupts a published pose.
+    """
     translation, rotation = entry["translation"], entry["rotation"]
     if not isinstance(translation, (list, tuple)) or len(translation) != 3:
         raise ValueError(f"marker {marker_id}: translation must be [x, y, z], got {translation!r}")
@@ -63,19 +57,7 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
 
 
 def load_marker_map(path: str | Path) -> dict[int, Transform]:
-    """``marker_id -> map_T_marker`` from a survey JSON or YAML.
-
-    Schema (``meta`` is provenance, ignored here)::
-
-        {"meta": {...},
-         "markers": {"<tag_id>": {"translation": [x, y, z],
-                                  "rotation": [qx, qy, qz, qw]}}}  # map_T_tag
-
-    A ``.yaml``/``.yml`` survey parses too (the eval overlay's loader
-    eval_module.load_markers_xyz accepts both, and the marker-map derivation
-    pipeline writes yaml); any other suffix goes through yaml.safe_load, a JSON
-    superset, so a bare-name or extensionless survey still loads.
-    """
+    """``marker_id -> map_T_marker`` from a survey JSON or YAML."""
     path = Path(path)
     text = path.read_text()
     data = (json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)) or {}

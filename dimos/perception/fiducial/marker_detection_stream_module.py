@@ -18,9 +18,8 @@ The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
 ``Detection3DArray`` per processed frame for LCM consumers.
 
-A second ``Detection3DArray`` output, ``aggregated_detections``, carries the gated and
-robustly-aggregated pose of each tag visit -- one message per (marker, visit), with a
-covariance and a score attached. See ``AggregateTagBursts``.
+A second output, ``aggregated_detections``, carries one gated, robustly-aggregated
+pose per tag visit, with covariance and score. See ``AggregateTagBursts``.
 """
 
 from __future__ import annotations
@@ -72,10 +71,9 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     ambiguity_ratio_min: float = Field(
         2.0, ge=1.0
     )  # 1.0 = off; >1 drops mirror-ambiguous views. IPPE planar mirror-ambiguity, Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5
-    # Per-glimpse gates + aggregation knobs for the aggregated_detections stream. quality_window_s
-    # paces this: at the 0.5 s default a tag must hold view min_observations * 0.5 s
-    # (1.0 s at the default 3) before its first aggregated pose publishes -- the floor
-    # latency of a fiducial fix. Retune here, not in the consumer.
+    # Per-glimpse gates + aggregation for aggregated_detections. quality_window_s paces it:
+    # first aggregated pose only after min_observations * quality_window_s (1.0 s at defaults)
+    # -- the floor latency of a fiducial fix.
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
@@ -86,8 +84,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     color_image: In[Image]
     detections: Out[Detection3DArray]
-    # One gated, robustly-aggregated pose per (marker, visit) -- NOT a per-frame mirror of
-    # ``detections``. Same message type so a consumer needs no new decoder.
+    # One gated, aggregated pose per (marker, visit), not a per-frame mirror; same message type.
     aggregated_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -204,8 +201,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             lambda image: self._append_image_with_pose(stream, image)
         )
         self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
-        # Only `detections` is wired here: `aggregated_detections` publishes from the tap
-        # inside pipeline(), which fires per burst rather than per frame.
+        # Only `detections` is wired here; `aggregated_detections` publishes from the tap in pipeline().
         self.register_disposable(
             stream_to_port(self._apply_pipeline(stream.live()), self.detections)
         )
