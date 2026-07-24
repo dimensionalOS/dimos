@@ -177,7 +177,6 @@ unitree_go2_nav_3d = autoconnect(
         ]
     ),
     PointLio.blueprint(),
-    # Publishes the rig's mount frames onto tf.
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,

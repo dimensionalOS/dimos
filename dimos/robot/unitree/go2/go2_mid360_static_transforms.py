@@ -14,9 +14,9 @@
 
 """Static mount frames for the Go2 + Mid-360 + front-camera rig.
 
-Published continuously onto tf while recording (see :class:`Go2Mid360StaticTf`) so the
-mount geometry lands in the recording's tf stream and companion streams (camera, go2
-lidar) can be anchored to ``base_link``.
+Published continuously onto tf (see :class:`Go2Mid360StaticTf`) so the mount geometry
+lands in the tf stream and companion streams (camera, go2 lidar) can be anchored to
+``base_link``.
 
 Mount geometry (measured on the physical rig)
 ---------------------------------------------
@@ -24,6 +24,11 @@ Mount geometry (measured on the physical rig)
 - front_camera -> mid360_link: lidar is 3.2cm back, 12cm up, pitched 44 deg down.
 - front_camera -> camera_optical: the standard ROS optical rotation (x-right, y-down,
   z-forward).
+
+The published tree is rooted at ``mid360_link``: Point-LIO owns the live
+``odom -> mid360_link`` edge, and the rerun bridge keys tf entities by child frame, so
+publishing the two edges above the lidar inverted keeps the static tree off the entity
+the live edge writes. The tf buffer composes either direction.
 """
 
 from __future__ import annotations
@@ -50,14 +55,9 @@ FRAMES: list[FrameSpec] = [
 ]
 
 
-def base_link_from_mid360() -> Transform:
-    """Composed base_link -> mid360_link transform from the static mount tree."""
-    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    return edges["front_camera"] + edges["mid360_link"]
-
-
 class Go2Mid360StaticTf(StaticTfPublisher):
     """Publishes the Go2/Mid-360 mount tree onto tf on a fixed interval."""
 
     def transforms(self) -> list[Transform]:
-        return frames_to_edge_transforms(FRAMES)
+        edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+        return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]

@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.constants import TF_LOOKUP_TOLERANCE_S
+from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -76,6 +76,7 @@ class BasicPathFollower(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
+        self._base_pose: OdomBasePose | None = None
         self._current_pose: PoseStamped | None = None
         self._waypoints: NDArray[np.float32] | None = None
         self._stop_event = Event()
@@ -100,18 +101,13 @@ class BasicPathFollower(Module):
         super().stop()
 
     def _on_odometry(self, msg: Odometry) -> None:
-        # Steer from the robot base pose, not the sensor frame.
-        base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
-        if base is None:
-            logger.warning(
-                "No %s -> %s transform for odometry stamp %.3f, dropping frame.",
-                msg.frame_id,
-                self.config.base_frame,
-                msg.ts,
-            )
+        if self._base_pose is None:
+            self._base_pose = OdomBasePose(self.tf, self.config.base_frame)
+        pose = self._base_pose.resolve(msg)
+        if pose is None:
             return
         with self._lock:
-            self._current_pose = base.to_pose(ts=msg.ts)
+            self._current_pose = pose
 
     def _on_path(self, path: Path) -> None:
         # The planner owns path safety: it sends the route as far as it is safe,

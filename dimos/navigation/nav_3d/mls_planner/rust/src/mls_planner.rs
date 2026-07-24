@@ -37,6 +37,11 @@ pub struct Config {
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub robot_height: f32,
+    /// Subtracted from the start pose z before snapping to a surface. For start
+    /// poses stamped at the sensor instead of the ground; 0 when the publisher
+    /// already ground-projects.
+    #[validate(range(min = 0.0))]
+    pub start_z_offset_m: f32,
     /// Ignore surface more than this far above the sensor.
     #[validate(range(min = 0.0))]
     pub max_overhead_m: f32,
@@ -572,6 +577,7 @@ mod region_tests {
             world_frame: String::new(),
             voxel_size: 0.1,
             robot_height: 0.5,
+            start_z_offset_m: 0.0,
             max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
             node_spacing_m: 1.0,

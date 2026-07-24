@@ -17,5 +17,5 @@
 # Robot footprint in meters. Length is forward x, width is left y.
 ROBOT_LENGTH = 0.6858
 ROBOT_WIDTH = 0.3175
-# Ground to the tallest point. Used for clearance and the ground projection.
+# Ground to the tallest point.
 ROBOT_HEIGHT = 0.45

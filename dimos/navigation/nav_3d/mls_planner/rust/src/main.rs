@@ -319,6 +319,7 @@ impl Worker {
         let Some(start) = *self.latest_start.lock().expect("start mutex") else {
             return;
         };
+        let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
         let goal = {
             let mut guard = self.active_goal.lock().expect("goal mutex");
             let Some(goal) = *guard else {

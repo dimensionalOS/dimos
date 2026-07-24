@@ -118,13 +118,13 @@ impl VoxelMap {
     async fn handle_lidar(&mut self, cloud: PointCloud2) {
         // De-rotate a scan from the lidar's mount frame into the robot base frame.
         if let Some(t) = self.tf.get_latest("base_link", "mid360_link") {
-            let point_in_base = t.isometry() * point_in_lidar;
+            let point_in_base = t.rotation() * point_in_lidar + t.translation();
         }
     }
 }
 ```
 
-`Tf` is a cheap-to-clone handle; the graph fills in the background as `tf` messages arrive. `get(parent, child, time, tolerance)` selects the sample nearest `time` (latest when `None`) and returns `None` when no path connects the frames or no sample falls within `tolerance` seconds. `get_latest` is the no-time shorthand. The result exposes an `nalgebra` `Isometry3<f64>` via `isometry()`, ready to apply to a point. Lookups are nearest-in-time, not interpolated.
+`Tf` is a cheap-to-clone handle; the graph fills in the background as `tf` messages arrive. `get(parent, child, time, tolerance)` selects the sample nearest `time` (latest when `None`) and returns `None` when no path connects the frames or no sample falls within `tolerance` seconds. `get_latest` is the no-time shorthand. The result exposes its `nalgebra` parts via `translation()` (a `Vector3<f64>`) and `rotation()` (a `UnitQuaternion<f64>`). Lookups are nearest-in-time, not interpolated.
 
 `publish` sends transforms onto the same `tf` topic, the counterpart to Python's `tf.publish()`. Published transforms also feed the module's own graph, so a `get` right after the publish sees them. Build the isometry from `dimos_module::nalgebra`, re-exported so the version matches the SDK's types:
 

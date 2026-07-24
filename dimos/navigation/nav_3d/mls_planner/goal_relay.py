@@ -24,7 +24,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.navigation.constants import TF_LOOKUP_TOLERANCE_S
+from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -32,17 +32,13 @@ logger = setup_logger()
 
 class GoalRelayConfig(ModuleConfig):
     base_frame: str = "base_link"
-    sensor_frame: str = "mid360_link"
-    # Lidar height above the ground while standing. Leave as None to skip the
-    # ground correction and pass odometry through unshifted.
+    # Lidar height above the ground while standing. None skips the ground
+    # correction.
     lidar_height: float | None = None
 
 
 class GoalRelay(Module):
-    """Adapt odometry and goal points to the planner's PoseStamped inputs.
-
-    Odometry is corrected to the robot base frame via tf.
-    """
+    """Adapt odometry and goal points to the planner's PoseStamped inputs."""
 
     config: GoalRelayConfig
 
@@ -54,6 +50,7 @@ class GoalRelay(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._base_pose: OdomBasePose | None = None
         self._base_height: float | None = None
 
     @rpc
@@ -63,34 +60,25 @@ class GoalRelay(Module):
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
 
     def _on_odometry(self, msg: Odometry) -> None:
-        base = self.tf.get(msg.frame_id, self.config.base_frame, msg.ts, TF_LOOKUP_TOLERANCE_S)
-        if base is None:
-            logger.warning(
-                "No %s -> %s transform for odometry stamp %.3f, dropping frame.",
-                msg.frame_id,
-                self.config.base_frame,
-                msg.ts,
-            )
+        if self._base_pose is None:
+            self._base_pose = OdomBasePose(self.tf, self.config.base_frame)
+        start = self._base_pose.resolve(msg)
+        if start is None:
             return
-        start = base.to_pose(ts=msg.ts)
         if self.config.lidar_height is not None:
-            base_height = self._base_from_ground()
+            base_height = self._resolve_base_height(msg.child_frame_id, self.config.lidar_height)
             if base_height is None:
                 return
             start.position.z -= base_height
         self.start_pose.publish(start)
 
-    def _base_from_ground(self) -> float | None:
-        if self._base_height is None and self.config.lidar_height is not None:
-            mount = self.tf.get(self.config.base_frame, self.config.sensor_frame)
-            if mount is None:
-                logger.warning(
-                    "No %s -> %s mount transform on tf, cannot ground-project the start pose.",
-                    self.config.base_frame,
-                    self.config.sensor_frame,
-                )
-            else:
-                self._base_height = self.config.lidar_height - mount.translation.z
+    def _resolve_base_height(self, sensor_frame: str, lidar_height: float) -> float | None:
+        if self._base_height is None:
+            assert self._base_pose is not None
+            leg = self._base_pose.sensor_to_base(sensor_frame)
+            if leg is None:
+                return None
+            self._base_height = base_height_above_ground(lidar_height, -leg)
         return self._base_height
 
     def _on_goal(self, point: PointStamped) -> None:

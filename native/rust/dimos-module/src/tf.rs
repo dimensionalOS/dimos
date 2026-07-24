@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use crate::module::Route;
 
 /// How many seconds of history each edge keeps.
-pub const DEFAULT_TF_BUFFER_SIZE: f64 = 10.0;
+pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
 
 fn now_secs() -> f64 {
     SystemTime::now()
@@ -65,12 +65,10 @@ impl Transform {
         }
     }
 
-    /// Translation component.
     pub fn translation(&self) -> Vector3<f64> {
         self.iso.translation.vector
     }
 
-    /// Rotation component.
     pub fn rotation(&self) -> UnitQuaternion<f64> {
         self.iso.rotation
     }
@@ -101,14 +99,14 @@ struct Sample {
 
 // One edge's time-sorted history, capped to a fixed-duration window.
 struct TBuffer {
-    buffer_size: f64,
+    window_secs: f64,
     samples: VecDeque<Sample>,
 }
 
 impl TBuffer {
-    fn new(buffer_size: f64) -> Self {
+    fn new(window_secs: f64) -> Self {
         Self {
-            buffer_size,
+            window_secs,
             samples: VecDeque::new(),
         }
     }
@@ -116,7 +114,7 @@ impl TBuffer {
     fn add(&mut self, ts: f64, iso: Isometry3<f64>) {
         let pos = self.samples.partition_point(|s| s.ts <= ts);
         self.samples.insert(pos, Sample { ts, iso });
-        self.prune(ts - self.buffer_size);
+        self.prune(ts - self.window_secs);
     }
 
     fn prune(&mut self, min_ts: f64) {
@@ -153,27 +151,47 @@ impl TBuffer {
             _ => Some(best),
         }
     }
+
+    // One transform for this edge: the latest sample, or the one nearest `time`.
+    fn sample(
+        &self,
+        parent: &str,
+        child: &str,
+        time: Option<f64>,
+        tolerance: Option<f64>,
+    ) -> Option<Transform> {
+        let s = match time {
+            None => self.last()?,
+            Some(t) => self.find_closest(t, tolerance)?,
+        };
+        Some(Transform {
+            parent: parent.to_string(),
+            child: child.to_string(),
+            ts: s.ts,
+            iso: s.iso,
+        })
+    }
 }
 
 /// The transform graph: one [`TBuffer`] per `(parent, child)` edge.
 struct MultiTBuffer {
-    buffer_size: f64,
+    window_secs: f64,
     buffers: HashMap<(String, String), TBuffer>,
 }
 
 impl MultiTBuffer {
-    fn new(buffer_size: f64) -> Self {
+    fn new(window_secs: f64) -> Self {
         Self {
-            buffer_size,
+            window_secs,
             buffers: HashMap::new(),
         }
     }
 
     fn receive(&mut self, parent: &str, child: &str, ts: f64, iso: Isometry3<f64>) {
-        let buffer_size = self.buffer_size;
+        let window_secs = self.window_secs;
         self.buffers
             .entry((parent.to_string(), child.to_string()))
-            .or_insert_with(|| TBuffer::new(buffer_size))
+            .or_insert_with(|| TBuffer::new(window_secs))
             .add(ts, iso);
     }
 
@@ -188,26 +206,6 @@ impl MultiTBuffer {
             }
         }
         out
-    }
-
-    fn sample(
-        &self,
-        buf: &TBuffer,
-        parent: &str,
-        child: &str,
-        time: Option<f64>,
-        tolerance: Option<f64>,
-    ) -> Option<Transform> {
-        let s = match time {
-            None => buf.last()?,
-            Some(t) => buf.find_closest(t, tolerance)?,
-        };
-        Some(Transform {
-            parent: parent.to_string(),
-            child: child.to_string(),
-            ts: s.ts,
-            iso: s.iso,
-        })
     }
 
     // A single forward or reverse edge. Reverse returns the inverse.
@@ -227,11 +225,11 @@ impl MultiTBuffer {
             });
         }
         if let Some(buf) = self.buffers.get(&(parent.to_string(), child.to_string())) {
-            return self.sample(buf, parent, child, time, tolerance);
+            return buf.sample(parent, child, time, tolerance);
         }
         if let Some(buf) = self.buffers.get(&(child.to_string(), parent.to_string())) {
-            return self
-                .sample(buf, child, parent, time, tolerance)
+            return buf
+                .sample(child, parent, time, tolerance)
                 .map(|t| t.inverse());
         }
         None
@@ -466,7 +464,7 @@ mod tests {
 
     #[test]
     fn direct_edge() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("base_link", "arm", 1.0, (1.0, -1.0, 0.0), 0.0);
         let t = tf.get_latest("base_link", "arm").unwrap();
         assert!((t.translation().x - 1.0).abs() < 1e-9);
@@ -477,7 +475,7 @@ mod tests {
 
     #[test]
     fn reverse_edge_returns_inverse() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("base_link", "arm", 1.0, (1.0, 2.0, 3.0), 0.0);
         let inv = tf.get_latest("arm", "base_link").unwrap();
         assert!((inv.translation().x + 1.0).abs() < 1e-9);
@@ -490,7 +488,7 @@ mod tests {
     // A 30-degree yaw then a pure translation.
     #[test]
     fn composes_ros_example_chain() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("base_link", "arm", 1.0, (1.0, -1.0, 0.0), PI / 6.0);
         h.add("arm", "end_effector", 1.0, (1.0, 1.0, 0.0), 0.0);
         let t = tf.get_latest("base_link", "end_effector").unwrap();
@@ -511,7 +509,7 @@ mod tests {
     // world->robot->sensor multi-hop composition.
     #[test]
     fn composes_multi_hop_chain() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("world", "robot", 1.0, (1.0, 2.0, 3.0), 0.0);
         h.add("robot", "sensor", 1.0, (0.5, 0.0, 0.2), PI / 2.0);
         let t = tf.get_latest("world", "sensor").unwrap();
@@ -522,14 +520,14 @@ mod tests {
 
     #[test]
     fn missing_path_returns_none() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("world", "robot", 1.0, (1.0, 0.0, 0.0), 0.0);
         assert!(tf.get_latest("world", "unconnected").is_none());
     }
 
     #[test]
     fn identity_for_same_frame() {
-        let (tf, _h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, _h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         // No query time: identity is stamped now, not the epoch.
         let t = tf.get_latest("base_link", "base_link").unwrap();
         assert!((t.translation().norm()).abs() < 1e-12);
@@ -545,7 +543,7 @@ mod tests {
 
     #[test]
     fn time_query_picks_nearest_sample() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
         h.add("a", "b", 20.0, (2.0, 0.0, 0.0), 0.0);
         let near_10 = tf.get("a", "b", Some(11.0), None).unwrap();
@@ -556,7 +554,7 @@ mod tests {
 
     #[test]
     fn time_query_outside_tolerance_returns_none() {
-        let (tf, h) = tf_with(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
         assert!(tf.get("a", "b", Some(50.0), Some(1.0)).is_none());
         assert!(tf.get("a", "b", Some(10.5), Some(1.0)).is_some());
@@ -582,7 +580,7 @@ mod tests {
         use lcm_msgs::tf2_msgs::TFMessage;
 
         let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_BUFFER_SIZE, tx);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         let msg = TFMessage {
             transforms: vec![lcm_msgs::geometry_msgs::TransformStamped {
                 header: Header {
@@ -620,7 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish_feeds_local_graph() {
-        let (tf, _rx, _h) = tf_with_publish(DEFAULT_TF_BUFFER_SIZE);
+        let (tf, _rx, _h) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
         let iso = Isometry3::from_parts(
             Translation3::new(1.0, 2.0, 3.0),
             UnitQuaternion::from_euler_angles(0.0, 0.0, PI / 2.0),
@@ -639,7 +637,7 @@ mod tests {
     // Publish on one handle, dispatch the wire bytes into another graph.
     #[tokio::test]
     async fn publish_round_trips_through_route() {
-        let (tf_out, mut rx, _h) = tf_with_publish(DEFAULT_TF_BUFFER_SIZE);
+        let (tf_out, mut rx, _h) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
         let iso = Isometry3::from_parts(
             Translation3::new(0.5, -0.5, 0.25),
             UnitQuaternion::from_euler_angles(0.0, 0.0, PI / 6.0),
@@ -651,7 +649,7 @@ mod tests {
         let bytes = rx.recv().await.unwrap();
 
         let (tx, _rx2) = mpsc::channel(8);
-        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_BUFFER_SIZE, tx);
+        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         route.try_dispatch(&bytes);
 
         let t = tf_in.get_latest("a", "b").unwrap();
@@ -673,5 +671,89 @@ mod tests {
         ));
         assert_eq!(st.header.stamp.sec, 2);
         assert_eq!(st.header.stamp.nsec, 0);
+    }
+
+    #[test]
+    fn add_out_of_order_keeps_samples_sorted() {
+        let mut buf = TBuffer::new(DEFAULT_TF_WINDOW_SECS);
+        buf.add(3.0, Isometry3::identity());
+        buf.add(1.0, Isometry3::identity());
+        buf.add(2.0, Isometry3::identity());
+        assert!((buf.last().unwrap().ts - 3.0).abs() < 1e-9);
+        let s = buf.find_closest(1.9, None).unwrap();
+        assert!((s.ts - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tie_prefers_the_later_sample() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
+        h.add("a", "b", 12.0, (2.0, 0.0, 0.0), 0.0);
+        let t = tf.get("a", "b", Some(11.0), None).unwrap();
+        assert!((t.translation().x - 2.0).abs() < 1e-9);
+    }
+
+    // Two routes to d: three hops through b, c and two through x. BFS must
+    // compose the two-hop route.
+    #[test]
+    fn bfs_takes_the_fewest_hops_on_a_branching_graph() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("a", "b", 1.0, (1.0, 0.0, 0.0), 0.0);
+        h.add("b", "c", 1.0, (1.0, 0.0, 0.0), 0.0);
+        h.add("c", "d", 1.0, (1.0, 0.0, 0.0), 0.0);
+        h.add("a", "x", 1.0, (10.0, 0.0, 0.0), 0.0);
+        h.add("x", "d", 1.0, (1.0, 0.0, 0.0), 0.0);
+        let t = tf.get_latest("a", "d").unwrap();
+        assert!(
+            (t.translation().x - 11.0).abs() < 1e-9,
+            "{}",
+            t.translation().x
+        );
+    }
+
+    // Inverse of a rotated edge is t' = -R^T t, the classic sign/order trap.
+    #[test]
+    fn reverse_edge_inverts_rotation_and_translation() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("base_link", "arm", 1.0, (1.0, 2.0, 3.0), PI / 2.0);
+        let inv = tf.get_latest("arm", "base_link").unwrap();
+        assert!(
+            (inv.translation().x + 2.0).abs() < 1e-9,
+            "{:?}",
+            inv.translation()
+        );
+        assert!((inv.translation().y - 1.0).abs() < 1e-9);
+        assert!((inv.translation().z + 3.0).abs() < 1e-9);
+        let (_, _, yaw) = inv.rotation().euler_angles();
+        assert!((yaw + PI / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn composed_chain_accumulates_rotation() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("a", "b", 1.0, (0.0, 0.0, 0.0), PI / 6.0);
+        h.add("b", "c", 1.0, (0.0, 0.0, 0.0), PI / 6.0);
+        let t = tf.get_latest("a", "c").unwrap();
+        let (_, _, yaw) = t.rotation().euler_angles();
+        assert!((yaw - PI / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dispatch_of_undecodable_bytes_leaves_the_graph_empty() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        route.try_dispatch(b"garbage");
+        assert!(tf.get_latest("a", "b").is_none());
+    }
+
+    #[tokio::test]
+    async fn publish_errors_when_the_background_task_is_gone() {
+        let (tf, rx, _h) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
+        drop(rx);
+        let err = tf
+            .publish(&[Transform::new("a", "b", 1.0, Isometry3::identity())])
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 }
