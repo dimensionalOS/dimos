@@ -957,8 +957,13 @@ def apriltag(
     marker_mm: float = typer.Option(
         0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
     ),
-    margin_cells: float = typer.Option(
-        2.0, "--margin-cells", help="[3d] Light quiet-zone border around the tag, in tag cells"
+    margin_cells: float | None = typer.Option(
+        None,
+        "--margin-cells",
+        help=(
+            "[3d] Light quiet-zone border around the tag, in tag cells "
+            "(default: 1, or 2 with --frame, whose lip laps over the edge)"
+        ),
     ),
     holes: bool = typer.Option(
         True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"

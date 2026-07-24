@@ -35,7 +35,7 @@ from dimos.utils.cli.apriltag3d import (
 )
 
 SIZE_MM = 50.0
-PLATE_MM = plate_size_mm("tag36h11", SIZE_MM, 2.0)
+PLATE_MM = plate_size_mm("tag36h11", SIZE_MM, 1.0)
 HOLE_DIA_MM = 3.4
 SPACING_MM = hole_spacing_mm(PLATE_MM, HOLE_DIA_MM)
 
@@ -182,7 +182,9 @@ def test_other_families_build(family: str) -> None:
 
 
 def test_frame_is_a_separate_part_the_tag_drops_into() -> None:
-    parts = build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0)
+    parts = build_tag_meshes(
+        "tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0, margin_cells=2.0
+    )
     assert parts.frame is not None and parts.frame.is_watertight
     # Same coordinate frame, and the pocket clears the plate rather than fouling it.
     assert trimesh.boolean.intersection([parts.base, parts.frame]).volume < 1e-6
@@ -205,11 +207,26 @@ def test_frame_is_refused_when_the_margin_cannot_spare_a_lip() -> None:
 
 
 def test_frame_hangs_flat_on_a_wall() -> None:
-    """Rope and nail live inside the recess, so the back plane stays flat against the wall."""
+    """A rope ties round two posts and loops over a nail above; the back stays flat."""
     frame = frame_solid(75.0, 3.0)
-    band_y = (75.0 / 2 + frame.bounds[1][1]) / 2
-    # Open at the back for the rope, bridged by a bar, and closed before the face.
-    rope = np.array([[x, band_y, 1.0] for x in np.linspace(-18, 18, 60)])
-    assert not frame.contains(rope).all()
-    # ...and closed again below the face, so the recess never shows from the front.
-    assert frame.contains(np.array([[0.0, band_y, z] for z in (5.0, 6.0)])).all()
+    top = frame.bounds[1][1]
+    band_y = (75.0 / 2 + top) / 2
+    post_x = (75.0 + 2 * 15.0) * 0.28 * 0.72
+
+    # Each post stands through the recess, joined to the frame only at its base...
+    posts = np.array([[sx * post_x, band_y, z] for sx in (-1, 1) for z in (0.3, 3.0)])
+    assert frame.contains(posts).all()
+    # ...with rope clearance right around it, so nothing else touches it.
+    around = np.array(
+        [[sx * post_x + dx, band_y + dy, 1.0] for sx in (-1, 1) for dx, dy in ((4.5, 0), (0, 4.5))]
+    )
+    assert not frame.contains(around).any()
+
+    # Each rope end leaves through its own door in the top edge, and the rail survives
+    # between them rather than the whole top being cut away.
+    doors = np.array([[sx * post_x, top - 0.5, 1.0] for sx in (-1, 1)])
+    assert not frame.contains(doors).any()
+    assert frame.contains(np.array([[0.0, top - 0.5, 1.0]]))[0]
+    # Nothing protrudes past the back plane, and nothing is cut through to the face.
+    assert frame.bounds[0][2] == pytest.approx(0.0)
+    assert frame.contains(np.array([[0.0, band_y, z] for z in (5.2, 6.0)])).all()

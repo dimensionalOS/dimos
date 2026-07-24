@@ -428,10 +428,11 @@ _FRAME_RABBET_MIN_MM = 1.5
 _FRAME_WIDTH_MM = 15.0
 
 # Hanging recess on the back of the top rail: how deep it cuts, how much material it must
-# leave towards the face, and the bar it bridges for the rope.
+# leave towards the face, and the tie posts standing in it.
 _HANGER_DEPTH_MM = 5.0
 _HANGER_KEEP_MM = 2.0
-_HANGER_BAR_MM = 1.6
+_HANGER_POST_R_MM = 3.0
+_HANGER_ROPE_MM = 2.5
 FRAME_COLOR = "#8A6A3B"
 
 
@@ -530,42 +531,57 @@ def frame_solid(
             parts.append(_stud(sx * land, sy * land, rosette_r * 0.6, face, face + rim_h * 1.8))
 
     solid = _union(parts)
-    recess, bars = _hanger(outer, pocket, band, face)
-    return _union([trimesh.boolean.difference([solid, recess]), *bars])
+    cuts, posts = _hanger(outer, pocket, band, face)
+    return _union([trimesh.boolean.difference([solid, *cuts]), *posts])
 
 
 def _hanger(
     outer: float, tag_pocket: float, band: float, rail_thickness: float
-) -> tuple[trimesh.Trimesh, list[trimesh.Trimesh]]:
-    """A rope recess in the back of the top rail: (material to cut, bars to put back).
+) -> tuple[list[trimesh.Trimesh], list[trimesh.Trimesh]]:
+    """A rope recess in the back of the top rail: (material to cut, posts to put back).
 
-    Both the rope and the nail head sit inside the recess, so the back stays flat against
-    the wall. That is what keeps the frame from tilting: anything proud of the back holds
-    the frame off the wall, and its mass — which sits in front of the wall plane — then
-    swings it until the centre of mass hangs under the nail.
+    The frame does not hang on the nail — a rope is tied round two posts and looped over a
+    nail above it. Each post stands free in the recess, joined to the frame only at its
+    base, so a rope can be passed right around it; the recess either side is the clearance
+    that lets it. Between the posts the recess breaks out through the top edge, and both
+    rope ends leave through there on their way up to the nail.
 
-    The rope runs along the recess, threading under a bar at each end and tying back on
-    itself. Each bar bridges the recess front-to-back, so it prints over a short span with
-    no support, and nothing is cut through to the face.
+    Nothing reaches past the back plane — posts end flush with it — so the frame still sits
+    flat on the wall. That is what keeps it from tilting: anything proud of the back holds
+    the frame off the wall, and its mass, which sits in front of the wall plane, then swings
+    it until the centre of mass hangs under the nail. Nothing is cut through to the face
+    either, so none of it shows from the front. Printed back-down, each post rises from the
+    bed and merges into the recess floor, so it needs no support.
     """
     depth = min(_HANGER_DEPTH_MM, rail_thickness - _HANGER_KEEP_MM)
-    half_x = outer * 0.25
+    half_x = outer * 0.28
     mid_y = (tag_pocket / 2 + outer / 2) / 2
-    half_y = band * 0.25
-    recess = _box(-half_x, half_x, mid_y - half_y, mid_y + half_y, -_EPS, depth)
-    bar_half = band * 0.16
-    bars = [
+    # Deep enough either side of a post to pass a rope around it.
+    half_y = _HANGER_POST_R_MM + _HANGER_ROPE_MM
+    post_x = half_x * 0.72
+    door = _HANGER_ROPE_MM
+    cuts = [_box(-half_x, half_x, mid_y - half_y, mid_y + half_y, -_EPS, depth)]
+    cuts += [
         _box(
-            sx * (half_x - band * 0.55) - bar_half,
-            sx * (half_x - band * 0.55) + bar_half,
-            mid_y - half_y - _EPS,
-            mid_y + half_y + _EPS,
-            depth - _HANGER_BAR_MM,
-            depth + _EPS,
+            sx * post_x - door,
+            sx * post_x + door,
+            mid_y + half_y - _EPS,
+            outer / 2 + _EPS,
+            -_EPS,
+            depth,
         )
         for sx in (-1, 1)
     ]
-    return recess, bars
+    posts = [
+        trimesh.creation.cylinder(
+            radius=_HANGER_POST_R_MM,
+            height=depth + _EPS,
+            sections=_HOLE_SEGMENTS,
+            transform=_at(sx * post_x, mid_y, (depth + _EPS) / 2),
+        )
+        for sx in (-1, 1)
+    ]
+    return cuts, posts
 
 
 def leg_solid(
@@ -719,7 +735,7 @@ def build_tag_meshes(
     size_mm: float = 50.0,
     thickness_mm: float = 3.0,
     marker_mm: float = 0.8,
-    margin_cells: float = 2.0,
+    margin_cells: float = 1.0,
     holes: bool = True,
     hole_dia_mm: float = 3.4,
     back_text: bool = True,
@@ -853,7 +869,7 @@ def generate_3d(
     size_mm: float = 50.0,
     thickness_mm: float = 3.0,
     marker_mm: float = 0.8,
-    margin_cells: float = 2.0,
+    margin_cells: float = 1.0,
     holes: bool = True,
     hole_dia_mm: float = 3.4,
     back_text: bool = True,

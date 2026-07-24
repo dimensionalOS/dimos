@@ -355,7 +355,7 @@ class TagRequest:
     three_d: bool = False
     thickness_mm: float = 3.0
     marker_mm: float = 0.8
-    margin_cells: float = 2.0
+    margin_cells: float | None = None
     holes: bool = True
     hole_dia_mm: float = 3.4
     back_text: bool = True
@@ -383,6 +383,18 @@ class TagRequest:
         if self.three_d:
             for color in (self.base_color, self.marker_color, self.text_color or "#000000"):
                 display_color(color)
+
+    @property
+    def margin(self) -> float:
+        """Quiet-zone width in cells, defaulting to what this build actually needs.
+
+        The detector wants one light cell around the black border and nothing more; only a
+        frame needs a second, since its lip laps over the plate edge and has to leave that
+        one cell still showing. Flanges and legs reach outward and never touch it.
+        """
+        if self.margin_cells is not None:
+            return self.margin_cells
+        return 2.0 if self.frame_mm > 0 else 1.0
 
     @property
     def mounted(self) -> bool:
@@ -421,7 +433,7 @@ class TagRequest:
             plate_size_mm,
         )
 
-        plate = plate_size_mm(self.family, self.size_mm, self.margin_cells)
+        plate = plate_size_mm(self.family, self.size_mm, self.margin)
         width, height = plate_footprint_mm(plate, self.hole_dia_mm, self.mounted)
         spacing = hole_spacing_mm(plate, self.hole_dia_mm)
         swap = self.thickness_mm - self.marker_mm
@@ -433,7 +445,7 @@ class TagRequest:
             ),
             (
                 "margin",
-                f"{self.margin_cells:g} cell(s) = {(plate - self.size_mm) / 2:g} mm quiet zone",
+                f"{self.margin:g} cell(s) = {(plate - self.size_mm) / 2:g} mm quiet zone",
             ),
             ("marker", f"top {self.marker_mm:g} mm — swap filament at z = {swap:g}"),
             (
@@ -500,7 +512,7 @@ class TagRequest:
                 size_mm=self.size_mm,
                 thickness_mm=self.thickness_mm,
                 marker_mm=self.marker_mm,
-                margin_cells=self.margin_cells,
+                margin_cells=self.margin,
                 holes=self.mounted,
                 hole_dia_mm=self.hole_dia_mm,
                 back_text=self.back_text,
