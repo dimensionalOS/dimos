@@ -1,6 +1,6 @@
 # DimOS Evaluation Suite
 
-This directory contains the Forward Deployed Engineer (FDE) hardware-benchmark utility for DimOS. It evaluates whether a given blueprint will successfully run on target hardware, and grades DimOS network transports across degraded link conditions.
+This directory contains the hardware-benchmark utility for DimOS. It evaluates whether a given blueprint will successfully run on target hardware, and grades DimOS network transports across degraded link conditions.
 
 ## What's Included
 
