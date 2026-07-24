@@ -153,6 +153,30 @@ def load_marker_map(path: str | Path) -> dict[int, Transform]:
     }
 
 
+def write_marker_map(
+    path: Path, aggregated: dict[int, tuple[tuple[float, ...], int]], *, source: str
+) -> None:
+    """Serialize aggregated ``map_T_tag`` poses to the JSON ``load_marker_map`` reads."""
+    doc = {
+        "meta": {
+            "schema": "map_T_tag",
+            "source_recording": source,
+            "n_detections_aggregated": {
+                str(mid): n for mid, (_pose, n) in sorted(aggregated.items())
+            },
+        },
+        "markers": {
+            str(marker_id): {
+                "translation": [pose[0], pose[1], pose[2]],
+                "rotation": [pose[3], pose[4], pose[5], pose[6]],
+            }
+            for marker_id, (pose, _n) in sorted(aggregated.items())
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2))
+
+
 class FiducialPrior:
     """Aggregated fiducial tag poses -> ONE map_T_world candidate per tag, ``map_T_marker @ inv(world_T_marker_aggregated)`` (local_map->global_map, as RANSAC)."""
 

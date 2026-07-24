@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable, Iterable
-import json
 import math
 from pathlib import Path
 import subprocess
@@ -321,20 +319,15 @@ def _log_reconstruction(
             )
 
 
-def _aggregate_marker_map(
+def _marker_observations(
     dets: list[Observation[Any]],
     graph: PoseGraph | None,
-) -> dict[int, tuple[_Pose7, int]]:
-    """Aggregate every detection of each marker_id into ONE ``map_T_tag`` pose via the Huber-IRLS + Markley-quaternion ``robust_cluster_pose``; returns marker_id -> (7-vec, n_detections)."""
+) -> list[Any]:
+    """PGO-correct each detection into the map frame and wrap it as a TagObservation."""
     from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.perception.fiducial.apriltag_aggregation import (
-        DEFAULT_HUBER_DELTA_M,
-        DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
-        TagObservation,
-        robust_cluster_pose,
-    )
+    from dimos.perception.fiducial.apriltag_aggregation import TagObservation
 
-    by_id: dict[int, list[TagObservation]] = defaultdict(list)
+    observations = []
     for d in dets:
         if graph is not None:
             corrected = graph.correct(
@@ -351,41 +344,8 @@ def _aggregate_marker_map(
         else:
             c, o = d.data.center, d.data.orientation
             pose7 = (c.x, c.y, c.z, o.x, o.y, o.z, o.w)
-        by_id[d.data.marker_id].append(
-            TagObservation(ts=d.ts, marker_id=d.data.marker_id, pose=pose7)
-        )
-    return {
-        marker_id: (
-            robust_cluster_pose(obs, DEFAULT_ROTATION_WEIGHT_M_PER_RAD, DEFAULT_HUBER_DELTA_M),
-            len(obs),
-        )
-        for marker_id, obs in by_id.items()
-    }
-
-
-def _write_marker_map(
-    path: Path, aggregated: dict[int, tuple[_Pose7, int]], *, source: str
-) -> None:
-    """Serialize aggregated marker locations to the ``map_T_tag`` JSON that ``relocalization.priors.load_marker_map`` reads (translation m, rotation xyzw, map frame)."""
-    markers = {
-        str(marker_id): {
-            "translation": [pose[0], pose[1], pose[2]],
-            "rotation": [pose[3], pose[4], pose[5], pose[6]],
-        }
-        for marker_id, (pose, _n) in sorted(aggregated.items())
-    }
-    doc = {
-        "meta": {
-            "schema": "map_T_tag",
-            "source_recording": source,
-            "n_detections_aggregated": {
-                str(mid): n for mid, (_pose, n) in sorted(aggregated.items())
-            },
-        },
-        "markers": markers,
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=2))
+        observations.append(TagObservation(ts=d.ts, marker_id=d.data.marker_id, pose=pose7))
+    return observations
 
 
 def main(
@@ -728,8 +688,11 @@ def main(
             # Write the aggregated marker map alongside the exported premap, sharing its stem.
             marker_map_path = Path.cwd() / f"{db_path.stem}.marker_map.json"
             if all_dets:
-                aggregated_markers = _aggregate_marker_map(all_dets, graph)
-                _write_marker_map(marker_map_path, aggregated_markers, source=db_path.name)
+                from dimos.mapping.relocalization.priors import write_marker_map
+                from dimos.perception.fiducial.apriltag_aggregation import aggregate_by_marker_id
+
+                aggregated_markers = aggregate_by_marker_id(_marker_observations(all_dets, graph))
+                write_marker_map(marker_map_path, aggregated_markers, source=db_path.name)
                 aggregated_ids = sorted(aggregated_markers)
                 print(
                     f"wrote aggregated marker locations: {len(aggregated_ids)} tags "

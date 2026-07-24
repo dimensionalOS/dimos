@@ -238,6 +238,24 @@ def _median_present(values: list[float | None]) -> float | None:
     return float(np.median(present)) if present else None
 
 
+def aggregate_by_marker_id(
+    observations: list[TagObservation],
+    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
+    huber_delta_m: float = DEFAULT_HUBER_DELTA_M,
+) -> dict[int, tuple[tuple[float, ...], int]]:
+    """Batch: group observations by marker_id and fuse each group to one robust pose; id -> (7-vec, n)."""
+    by_id: dict[int, list[TagObservation]] = defaultdict(list)
+    for obs in observations:
+        by_id[obs.marker_id].append(obs)
+    return {
+        marker_id: (
+            robust_cluster_pose(group, rotation_weight_m_per_rad, huber_delta_m),
+            len(group),
+        )
+        for marker_id, group in by_id.items()
+    }
+
+
 class TagAggregator:
     """Streaming robust pose per marker over a sliding time window."""
 
