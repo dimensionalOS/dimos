@@ -159,7 +159,7 @@ def test_fake_backend_smoke_and_yaml_round_trip(tmp_path: Path) -> None:
     assert [g["score"] for g in value["grasps"]] == [0.91, 0.73, 0.52]
 
 
-def test_runtime_logger_receives_configured_sweep_boxes(tmp_path: Path) -> None:
+def test_runtime_logger_receives_configured_grasp_envelopes(tmp_path: Path) -> None:
     from dimos.robot.manipulators.graspgenx_ycb_demo import deployment_config
 
     class Logger:
@@ -178,8 +178,11 @@ def test_runtime_logger_receives_configured_sweep_boxes(tmp_path: Path) -> None:
         gripper=deployment_config().gripper,
         logger=logger,
     )
-    assert "grasps/00/tcp/sweep/open" in logger.paths
-    assert "grasps/00/tcp/sweep/half-open" in logger.paths
+    assert logger.paths[-3:] == [
+        "grasp_candidates/rank_01",
+        "grasp_candidates/rank_02",
+        "grasp_candidates/rank_03",
+    ]
 
 
 def test_runner_roi_defaults_and_validation() -> None:

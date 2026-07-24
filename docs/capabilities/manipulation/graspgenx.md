@@ -75,12 +75,29 @@ the native viewer automatically from the CLI parent, after worker/watchdog and
 registry cleanup. This demo defaults that native launch to X11/XWayland: it removes
 `WAYLAND_DISPLAY` from the child environment and uses the existing `DISPLAY`. This is
 scoped to this demo; global DimOS viewer defaults are unchanged. The viewer remains
-open after the one-shot exits and receives the complete recording: the raw scene in grey, the cropped object in yellow, and
-the top 20 TCP candidate axes color-mapped by score. It also shows the best candidate's
-fixed deployment sweep-volume boxes (open and half-open), using the same gripper
-dimensions propagated to inference and visualization. The coordinator-owned one-shot
+open after the one-shot exits and receives the complete recording: the full raw scene in
+grey, the cropped object in yellow, and five abstract Grasp Envelope Glyphs. Each glyph
+is one non-occluding `LineStrips3D` planar fork: a 2D X-Z profile derived from the
+configured open/half-open sweep volumes and transformed by the candidate's full
+6-DoF TCP pose. Its whole fork silhouette uses a Viridis score color. The mouth
+opens toward candidate-local +Z and the span runs along local ±X; this is a profile
+of the 3D Gripper Model, not physical finger geometry or execution validity.
+The default
+blueprint shows rank 01 only (highest-score yellow); ranks 02–05 remain recorded at
+stable paths and can be added or toggled manually in Rerun. There are no physical
+meshes, fingers, axes, joints, or separate box entities. The coordinator-owned one-shot
 lifecycle runs this finite job once and exits 0 after cleanup when inference and YAML
 output succeed.
+
+Visualization is intentionally limited to five glyphs, while the YAML result remains
+unchanged and retains up to 100 ordered candidates. In Rerun, expand the
+`grasp_candidates` tree or edit the Spatial3D contents to inspect ranks 02–05.
+
+### How to read the glyph
+
+Fork mouth = candidate local +Z direction. Wider mouth = open span; narrow rear
+bridge = half-open span. This is a 2D projection/profile of the 3D Gripper Model
+and full 3D candidate pose, not physical finger geometry or execution validity.
 
 The launcher uses `posix_spawn` with a detached process group, closes inherited
 DimOS descriptors, and removes `DIMOS_RUN_ID` from the viewer environment. On

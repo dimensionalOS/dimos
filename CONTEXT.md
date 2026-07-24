@@ -24,6 +24,10 @@ _Avoid_: Grasp pose, valid grasp
 An ordered result containing Grasp Candidates expressed in the coordinate frame and timestamp of one Object Point Cloud. For the current DimOS `PointCloud2`, this means preserving `frame_id` and `ts` exactly; it does not imply preservation of a richer input `Header` object.
 _Avoid_: Pose array, grasp result
 
+**Grasp Envelope Glyph**:
+A single abstract visualization of one Grasp Candidate, derived from the Gripper Model's open and half-open sweep volumes and oriented at the candidate TCP. It does not depict a physical end effector or imply execution validity.
+_Avoid_: Gripper mesh, hand model
+
 **Executable Grasp**:
 A Grasp Candidate transformed for an End-Effector Profile and validated against robot kinematics, collision constraints, and approach feasibility.
 _Avoid_: Candidate, generated grasp

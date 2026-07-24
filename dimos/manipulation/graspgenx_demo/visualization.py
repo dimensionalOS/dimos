@@ -31,6 +31,14 @@ class SweepVolumeLike(Protocol):
     offset_half_open: tuple[float, float, float]
 
 
+FORK_STEM_INDEX = 0
+FORK_BRIDGE_INDEX = 1
+FORK_LEFT_RAIL_INDEX = 2
+FORK_RIGHT_RAIL_INDEX = 3
+FORK_STRIP_COUNT = 4
+FORK_RADIUS = 0.003
+
+
 @dataclass(frozen=True)
 class VisualizationEvent:
     path: str
@@ -55,7 +63,12 @@ def _score_colors(scores: np.ndarray) -> np.ndarray:
     if not len(scores):
         return np.empty((0, 3), dtype=np.uint8)
     low, high = float(scores.min()), float(scores.max())
-    t = (scores - low) / (high - low or 1.0)
+    if high == low:
+        # Candidates are already rank-ordered; preserve rank as the tie-breaker
+        # so rank_01 remains the highest-score glyph in the displayed scene.
+        t = np.linspace(1.0, 0.0, len(scores))
+    else:
+        t = (scores - low) / (high - low)
     # Viridis is color-blind safe and increases in perceived lightness from
     # indigo to yellow. Piecewise interpolation keeps that intended ordering
     # while producing deterministic 8-bit colors without extra dependencies.
@@ -77,7 +90,7 @@ def build_scene_event_data(
     """Build deterministic world-space events without importing Rerun."""
     raw_points, _ = raw.as_numpy()
     crop_points, _ = crop.as_numpy()
-    top = list(grasps.candidates[:20])
+    top = list(grasps.candidates[:5])
     scores = np.asarray([float(candidate.score) for candidate in top], dtype=float)
     candidate_colors = _score_colors(scores)
     events: list[VisualizationEvent] = [
@@ -91,50 +104,73 @@ def build_scene_event_data(
         translation = np.array([p.x, p.y, p.z], dtype=float)
         rotation = _rotation(q)
         rotation[np.abs(rotation) < 1e-15] = 0.0
-        events.append(
-            VisualizationEvent(
-                f"grasps/{index:02d}/tcp",
-                "transform",
-                {"translation": translation, "rotation": rotation, "score": float(candidate.score)},
-            )
+        if gripper is None:
+            continue
+        color = (
+            int(candidate_colors[index][0]),
+            int(candidate_colors[index][1]),
+            int(candidate_colors[index][2]),
+            255,
         )
-        # R is local→world, so each row in Arrows3D is one of R's columns.
         events.append(
             VisualizationEvent(
-                f"grasps/{index:02d}/axes",
-                "axes",
+                f"grasp_candidates/rank_{index + 1:02d}",
+                "glyph",
                 {
-                    "origins": np.repeat(translation[None, :], 3, axis=0),
-                    "vectors": rotation.T * 0.035,
-                    "colors": np.repeat(candidate_colors[index][None, :], 3, axis=0),
+                    "strips": _fork_strips(gripper, translation, rotation),
+                    "color": color,
+                    "radii": np.full(FORK_STRIP_COUNT, FORK_RADIUS, dtype=np.float32),
+                    "colors": np.repeat(
+                        np.asarray(color, dtype=np.uint8)[None, :], FORK_STRIP_COUNT, axis=0
+                    ),
                     "score": float(candidate.score),
                 },
             )
         )
-    if top and gripper is not None:
-        best = top[0]
-        p, q = best.pose.position, best.pose.orientation
-        translation = np.array([p.x, p.y, p.z], dtype=float)
-        rotation = _rotation(q)
-        for name, extents, offset in (
-            ("open", gripper.extents_open, gripper.offset_open),
-            ("half-open", gripper.extents_half_open, gripper.offset_half_open),
-        ):
-            offset_array = np.asarray(offset, dtype=float)
-            events.append(
-                VisualizationEvent(
-                    f"grasps/00/sweep/{name}",
-                    "box",
-                    {
-                        "center": translation + rotation @ offset_array,
-                        "local_center": offset_array,
-                        "rotation": rotation,
-                        "sizes": np.asarray(extents, dtype=float),
-                        "score": float(best.score),
-                    },
-                )
-            )
     return tuple(events)
+
+
+def _fork_strips_local(gripper: SweepVolumeLike) -> tuple[np.ndarray, ...]:
+    """Build the abstract fork in its candidate-local X-Z profile plane.
+
+    The profile is deliberately not a 3D gripper model: X is the opening
+    span, Z is the mouth direction, and Y is exactly zero everywhere. The TCP
+    itself is local origin, while configured sweep offsets locate the rear and
+    open ends of the proposal.
+    """
+    open_extents = np.asarray(gripper.extents_open, dtype=np.float64)
+    half_extents = np.asarray(gripper.extents_half_open, dtype=np.float64)
+    open_offset = np.asarray(gripper.offset_open, dtype=np.float64)
+    half_offset = np.asarray(gripper.offset_half_open, dtype=np.float64)
+
+    rear_center = np.array([half_offset[0], 0.0, half_offset[2] - half_extents[2] / 2.0])
+    open_center = np.array([open_offset[0], 0.0, open_offset[2] + open_extents[2] / 2.0])
+    if open_center[2] <= rear_center[2]:
+        raise ValueError("configured sweep profiles must open toward increasing local +Z")
+
+    rear_half_width = max(float(half_extents[0]) / 2.0, 1e-6)
+    open_half_width = max(float(open_extents[0]) / 2.0, rear_half_width)
+    rear_left = rear_center + np.array([-rear_half_width, 0.0, 0.0])
+    rear_right = rear_center + np.array([rear_half_width, 0.0, 0.0])
+    open_left = open_center + np.array([-open_half_width, 0.0, 0.0])
+    open_right = open_center + np.array([open_half_width, 0.0, 0.0])
+
+    return (
+        np.asarray([rear_center, [0.0, 0.0, 0.0]], dtype=np.float64),
+        np.asarray([rear_left, rear_right], dtype=np.float64),
+        np.asarray([rear_left, open_left], dtype=np.float64),
+        np.asarray([rear_right, open_right], dtype=np.float64),
+    )
+
+
+def _fork_strips(
+    gripper: SweepVolumeLike, translation: np.ndarray, rotation: np.ndarray
+) -> tuple[np.ndarray, ...]:
+    """Transform the planar fork by the candidate's complete rigid pose."""
+    local_strips = _fork_strips_local(gripper)
+    return tuple(
+        np.asarray((rotation @ strip.T).T + translation, dtype=np.float32) for strip in local_strips
+    )
 
 
 def log_scene(
@@ -144,8 +180,8 @@ def log_scene(
     grasps: GraspCandidateArray,
     gripper: SweepVolumeLike | None = None,
 ) -> None:
-    """Log raw scene, crop, top-20 axes, and best-candidate sweep volumes."""
-    points3d, transform3d, arrows3d, boxes3d = _archetypes()
+    """Log the scene and one abstract planar fork per top-five candidate."""
+    points3d, line_strips3d = _archetypes()
     for event in build_scene_event_data(raw, crop, grasps, gripper):
         if event.kind == "points":
             try:
@@ -154,29 +190,18 @@ def log_scene(
                 # Older Rerun bindings accept the point array positionally.
                 points = points3d(event.data["points"], colors=event.data["color"])
             logger.log(event.path, points)
-        elif event.kind == "transform":
-            logger.log(
-                event.path,
-                transform3d(translation=event.data["translation"], mat3x3=event.data["rotation"]),
-            )
-        elif event.kind == "axes":
-            logger.log(
-                event.path,
-                arrows3d(
-                    origins=event.data["origins"],
-                    vectors=event.data["vectors"],
-                    colors=event.data["colors"],
-                ),
-            )
-        elif event.kind == "box":
-            logger.log(
-                event.path.replace("grasps/00/sweep/", "grasps/00/tcp/sweep/"),
-                boxes3d(
-                    # Boxes3D expects a batch dimension even for one box.
-                    centers=np.asarray([event.data["local_center"]]),
-                    sizes=np.asarray([event.data["sizes"]]),
-                ),
-            )
+        elif event.kind == "glyph":
+            kwargs = {
+                "strips": event.data["strips"],
+                "colors": event.data["colors"],
+                "radii": event.data["radii"],
+            }
+            try:
+                glyph = line_strips3d(**kwargs)
+            except TypeError:
+                kwargs.pop("radii")
+                glyph = line_strips3d(**kwargs)
+            logger.log(event.path, glyph)
 
 
 class RerunLogger:
@@ -198,7 +223,7 @@ class RerunLogger:
             self._recording = rerun.RecordingStream("graspgenx-ycb-demo")
             # This must precede every event, including the first archetype construction.
             self._state = "saving"
-            self._recording.save(str(self.partial_path))
+            self._recording.save(str(self.partial_path), default_blueprint=_default_blueprint())
         except Exception:
             try:
                 self.partial_path.unlink(missing_ok=True)
@@ -397,6 +422,17 @@ def _launch_viewer(recording_path: Path, *, web: bool, window_backend: str) -> b
                 pass
 
 
-def _archetypes() -> tuple[Any, Any, Any, Any]:
+def _default_blueprint() -> Any:
+    rerun_blueprint = import_module("rerun.blueprint")
+    return rerun_blueprint.Blueprint(
+        rerun_blueprint.Spatial3DView(
+            origin="/",
+            contents=["/scene/**", "/grasp_candidates/rank_01"],
+            name="Scene and Best Grasp",
+        )
+    )
+
+
+def _archetypes() -> tuple[Any, Any]:
     rerun = import_module("rerun")
-    return rerun.Points3D, rerun.Transform3D, rerun.Arrows3D, rerun.Boxes3D
+    return rerun.Points3D, rerun.LineStrips3D
