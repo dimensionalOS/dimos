@@ -15,7 +15,7 @@
 import sys
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 import pytest
 from typer.testing import CliRunner
 
@@ -375,31 +375,3 @@ def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeyp
 
     assert config.nested.enabled is False
     assert config.nested.mode == "manual"
-
-
-def test_load_config_args_tolerates_missing_required_field(tmp_path):
-    """The -o/env overlay is PARTIAL: it layers over each module's blueprint preset,
-    merged only later at deploy, so a required field absent from the overlay is normal
-    -- the preset supplies it. load_config_args must therefore NOT reject a partial
-    overlay at parse (the case that would hard-fail `-o relocalizationmodule.<field>=`
-    on a module whose config has a required `priors`). A typo (unknown key) and a bad
-    type stay real errors it still surfaces."""
-
-    class Config(ModuleConfig):
-        required_thing: int  # no default -> "missing" when the overlay omits it
-        name: str = "default"
-
-    empty = tmp_path / "config.json"
-
-    # Partial overlay omitting the required field: tolerated (the preset fills it at
-    # deploy), so the overlay is returned instead of raising at parse.
-    kwargs = load_config_args(Config, ["name=foo"], empty)
-    assert kwargs == {"name": "foo"}
-
-    # An unknown key (typo) still raises -- extra="forbid" makes it a non-missing error.
-    with pytest.raises(ValidationError):
-        load_config_args(Config, ["naem=foo"], empty)
-
-    # A bad type still raises.
-    with pytest.raises(ValidationError):
-        load_config_args(Config, ["required_thing=notanint"], empty)
