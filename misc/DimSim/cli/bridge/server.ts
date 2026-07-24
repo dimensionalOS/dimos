@@ -19,6 +19,11 @@ import { MAGIC_SHORT, SHORT_HEADER_SIZE } from "../vendor/lcm/types.ts";
 import { serveDir } from "@std/http/file-server";
 import { ServerLidar } from "./lidar.ts";
 import { ServerPhysics } from "./physics.ts";
+import { applyEvalReset } from "./eval-reset.ts";
+import type {
+  EvalAbortMessage,
+  EvalResetMessage,
+} from "../../evals/protocol.ts";
 
 // Magic prefix for Rapier world snapshot (ASCII "DSSN")
 const SNAPSHOT_MAGIC = 0x4453534E;
@@ -73,6 +78,7 @@ interface ChannelState {
   serverLidar: ServerLidar | null;
   serverPhysics: ServerPhysics | null;
   embodiment: Record<string, any> | null;
+  activeEval: { runId: string; controller: WebSocket } | null;
 }
 
 export async function startBridgeServer(options: BridgeServerOptions) {
@@ -162,6 +168,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       serverLidar: null,
       serverPhysics: null,
       embodiment: null,
+      activeEval: null,
     };
 
     if (!evalOnly) {
@@ -376,6 +383,23 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         socket.onclose = () => {
           chState.controlClients.delete(socket);
           if (chState.activeControlClient === socket) chState.activeControlClient = null;
+          if (chState.activeEval?.controller === socket) {
+            const runId = chState.activeEval.runId;
+            chState.serverPhysics?.clearMotion();
+            chState.activeEval = null;
+            const abort: EvalAbortMessage = {
+              type: "evalAbort",
+              runId,
+              reason: "eval controller websocket closed",
+              failureStage: "socket",
+            };
+            const encoded = JSON.stringify(abort);
+            for (const client of chState.controlClients) {
+              if (client.readyState === WebSocket.OPEN) {
+                try { client.send(encoded); } catch { /* ignore */ }
+              }
+            }
+          }
           // quiet
         };
 
@@ -408,6 +432,43 @@ export async function startBridgeServer(options: BridgeServerOptions) {
                   console.log(`${logPrefix} teleport to (${msg.x},${msg.y},${msg.z})`);
                 }
                 return; // don't relay teleport commands
+              }
+
+              // -- Correlated eval reset: server physics is authoritative. --
+              if (msg.type === "evalReset") {
+                const ack = applyEvalReset(
+                  chState.serverPhysics,
+                  msg as EvalResetMessage,
+                );
+                if (ack.ok) {
+                  chState.activeEval = { runId: ack.runId, controller: socket };
+                  console.log(
+                    `${logPrefix} eval reset ${ack.runId} to ` +
+                    `(${ack.pose!.x},${ack.pose!.y},${ack.pose!.z}) yaw=${ack.pose!.yaw}`,
+                  );
+                }
+                try { socket.send(JSON.stringify(ack)); } catch { /* ignore */ }
+                return;
+              }
+
+              // Terminal cleanup always zeros bridge motion.  Abort is relayed
+              // so the browser can release its pending workflow promise.
+              if (msg.type === "evalAbort" || msg.type === "evalCleanup") {
+                if (
+                  !chState.activeEval ||
+                  chState.activeEval.runId === msg.runId
+                ) {
+                  chState.serverPhysics?.clearMotion();
+                  chState.activeEval = null;
+                }
+                if (msg.type === "evalCleanup") return;
+              }
+
+              if (
+                msg.type === "evalResult" &&
+                chState.activeEval?.runId === msg.runId
+              ) {
+                chState.serverPhysics?.clearMotion();
               }
 
               // Relay-only: server physics is built from the boot snapshot.

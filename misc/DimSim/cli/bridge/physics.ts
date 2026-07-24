@@ -15,6 +15,7 @@
 import { geometry_msgs, std_msgs } from "@dimos/msgs";
 
 import type { LCM } from "../vendor/lcm/lcm.ts";
+import type { EvalStartPose } from "../../evals/protocol.ts";
 
 // -- Agent dimensions (must match AiAvatar.js / engine.js) --------------------
 const DEFAULT_AGENT_RADIUS = 0.12;
@@ -313,6 +314,58 @@ export class ServerPhysics {
     this.body.setNextKinematicTranslation({ x, y, z });
     this.world.step(); // apply immediately
     // quiet
+  }
+
+  /** Clear all commanded and Rapier-side motion state. */
+  clearMotion(): void {
+    this.linX = 0;
+    this.linY = 0;
+    this.linZ = 0;
+    this.angZ = 0;
+    this.cmdVelStamp = 0;
+    this.lastStepAt = 0;
+    try {
+      this.body.setLinvel?.({ x: 0, y: 0, z: 0 }, true);
+      this.body.setAngvel?.({ x: 0, y: 0, z: 0 }, true);
+    } catch {
+      // Kinematic Rapier bodies may not expose dynamic-body velocity setters.
+    }
+  }
+
+  /**
+   * Apply an eval start pose authoritatively on the server.
+   * Coordinates are Three.js Y-up and yaw is in degrees, matching workflows.
+   */
+  resetPose(pose: EvalStartPose): EvalStartPose {
+    if (![pose.x, pose.y, pose.z, pose.yaw].every(Number.isFinite)) {
+      throw new Error("startPose requires finite x, y, z, and yaw");
+    }
+
+    this.clearMotion();
+    this.yaw = (pose.yaw * Math.PI) / 180;
+    this.body.setNextKinematicTranslation({
+      x: pose.x,
+      y: pose.y,
+      z: pose.z,
+    });
+    this.body.setNextKinematicRotation?.({
+      x: 0,
+      y: Math.sin(this.yaw / 2),
+      z: 0,
+      w: Math.cos(this.yaw / 2),
+    });
+    this.world.step();
+
+    const actual = this.body.translation();
+    const result = {
+      x: actual.x,
+      y: actual.y,
+      z: actual.z,
+      yaw: (this.yaw * 180) / Math.PI,
+    };
+    this._publishOdom(actual);
+    this.onPoseUpdate?.(actual.x, actual.y, actual.z, this.yaw);
+    return result;
   }
 
   /** Set callback for browser position sync. */
