@@ -263,6 +263,7 @@ all_modules = {
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
+    "point-lio-zenoh-relay": "dimos.robot.unitree.g1.blueprints.basic.pointlio_zenoh_relay.PointLioZenohRelay",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",

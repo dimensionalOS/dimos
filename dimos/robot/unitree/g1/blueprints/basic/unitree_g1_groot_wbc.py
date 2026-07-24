@@ -57,6 +57,9 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.blueprints.basic.groot_wbc_platform import (
     resolve_g1_groot_platform,
 )
+from dimos.robot.unitree.g1.blueprints.basic.pointlio_zenoh_relay import (
+    PointLioZenohRelay,
+)
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     g1_costmap,
@@ -81,8 +84,12 @@ _pelvis_mid360_cache: list[Any] = []
 assert G1.height_clearance is not None and G1.width_clearance is not None
 
 _platform = resolve_g1_groot_platform()
+_pointlio_transport = (
+    PointLioZenohRelay.blueprint() if global_config.transport == "zenoh" else autoconnect()
+)
 
 _navigation = autoconnect(
+    _pointlio_transport,
     PointLio.blueprint(**_platform.pointlio_config),
     RayTracingVoxelMap.blueprint(
         voxel_size=_NAV_VOXEL_RESOLUTION,
