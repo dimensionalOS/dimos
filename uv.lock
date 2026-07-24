@@ -1640,6 +1640,7 @@ all = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "lap" },
+    { name = "manifold3d" },
     { name = "matplotlib" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -1682,7 +1683,9 @@ all = [
     { name = "yourdfpy" },
 ]
 apriltag = [
+    { name = "manifold3d" },
     { name = "reportlab" },
+    { name = "trimesh" },
 ]
 base = [
     { name = "aioquic" },
@@ -2081,6 +2084,7 @@ requires-dist = [
     { name = "lazy-loader" },
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
+    { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
@@ -2140,6 +2144,7 @@ requires-dist = [
     { name = "toolz", specifier = ">=1.1.0" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
+    { name = "trimesh", marker = "extra == 'apriltag'", specifier = ">=4.0.0" },
     { name = "trimesh", marker = "extra == 'manipulation'" },
     { name = "trimesh", marker = "extra == 'scene'", specifier = ">=4.0.0" },
     { name = "typer", specifier = ">=0.19.2,<1" },

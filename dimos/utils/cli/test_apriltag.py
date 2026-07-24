@@ -16,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from dimos.utils.cli.apriltag import _grid_layout, generate_pdf, parse_id_spec
+from dimos.utils.cli.apriltag import (
+    TagRequest,
+    _grid_layout,
+    display_color,
+    generate_pdf,
+    parse_id_spec,
+)
 
 
 def test_parse_id_spec_range() -> None:
@@ -72,7 +78,7 @@ def test_grid_layout_oversize_size_yields_one_per_page() -> None:
 def test_generate_pdf_pack_writes_expected_pages(tmp_path: Path) -> None:
     out = tmp_path / "tags.pdf"
     generate_pdf(list(range(12)), out, size_mm=50.0, page_size="a4", pack=True)
-    # 12 × 50mm A4 packs to a single 3x4 page.
+    # 12 x 50mm A4 packs to a single 3x4 page.
     assert out.read_bytes()[:5] == b"%PDF-"
     assert out.stat().st_size > 0
 
@@ -123,3 +129,71 @@ def test_generate_pdf_letter_page_size(tmp_path: Path) -> None:
     out = tmp_path / "letter.pdf"
     generate_pdf([0, 1, 2], out, size_mm=50.0, page_size="letter")
     assert out.read_bytes()[:5] == b"%PDF-"
+
+
+def _request(**kwargs: object) -> TagRequest:
+    defaults: dict[str, object] = {"ids": [0], "out": Path("tags.pdf"), "id_spec": "0"}
+    return TagRequest(**{**defaults, **kwargs})  # type: ignore[arg-type]
+
+
+def test_3d_mode_collects_the_run_into_one_directory() -> None:
+    assert _request().out_dir is None
+    assert _request().pdf_path == Path("tags.pdf")
+    assert _request(three_d=True).out_dir == Path("tags")
+    assert _request(three_d=True).pdf_path == Path("tags/tags.pdf")
+
+
+def test_legs_imply_the_holes_they_bolt_through() -> None:
+    assert _request(holes=False, legs_mm=250.0).mounted
+    assert not _request(holes=False).mounted
+
+
+def test_describe_covers_the_paper_run_and_grows_for_3d() -> None:
+    assert set(dict(_request().describe())) == {"family", "ids", "size", "page", "output"}
+    rows = dict(_request(three_d=True, legs_mm=250.0).describe())
+    assert "62.5 x 62.5 x 3 mm" in rows["plate"]
+    assert "4 holes (2/side)" in rows["mounting"]
+    assert "tag center 250 mm off the floor" in rows["legs"]
+    bare = dict(_request(three_d=True, holes=False).describe())
+    assert (bare["mounting"], bare["footprint"], bare["legs"]) == (
+        "none (bare plate)",
+        "= plate",
+        "none",
+    )
+
+
+def test_render_writes_only_a_pdf_without_3d(tmp_path: Path) -> None:
+    written = _request(out=tmp_path / "tags.pdf").render()
+    assert written == [tmp_path / "tags.pdf"]
+    assert written[0].read_bytes()[:5] == b"%PDF-"
+
+
+def test_render_and_summary_cover_the_whole_3d_file_set(tmp_path: Path) -> None:
+    request = _request(out=tmp_path / "tags.pdf", three_d=True, legs_mm=250.0)
+    written = request.render()
+    assert written[0] == tmp_path / "tags" / "tags.pdf"
+    assert all(p.parent == tmp_path / "tags" for p in written)
+    assert {p.suffix for p in written[1:]} == {".stl", ".3mf"}
+    assert "leg_*_left and leg_*_right" in "\n".join(request.summary(written))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"ids": []}, "no IDs"),
+        ({"family": "bogus"}, "unsupported family"),
+        ({"page_size": "a99"}, "unsupported page_size"),
+    ],
+)
+def test_bad_input_is_rejected_before_anything_is_described(
+    kwargs: dict[str, object], match: str
+) -> None:
+    """describe() indexes ids and looks up the family, so it must not run on bad input."""
+    with pytest.raises(ValueError, match=match):
+        _request(**kwargs)
+
+
+def test_display_color_normalizes_and_rejects() -> None:
+    assert display_color("#f5f5f5") == "#F5F5F5FF"
+    with pytest.raises(ValueError, match="color must be"):
+        display_color("#fff")

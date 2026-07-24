@@ -344,6 +344,10 @@ base = [
 # All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
     "reportlab>=4.5.0",
+    # 3D-printable tag plates (--3d). manifold3d is trimesh's boolean engine; it only
+    # arrives transitively via trimesh[easy], which is excluded on linux-aarch64.
+    "trimesh>=4.0.0",
+    "manifold3d>=2.5.0",
 ]
 
 # Offline scene-package cooking + loading: USD import (usd-core), convex

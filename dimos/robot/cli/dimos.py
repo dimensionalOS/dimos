@@ -948,15 +948,84 @@ def apriltag(
             "ArUco (aruco_original, aruco_mip_36h12, aruco_{4x4,5x5,6x6,7x7}_{50,100,250,1000})"
         ),
     ),
+    three_d: bool = typer.Option(
+        False,
+        "--3d/--no-3d",
+        help="Also emit 3D-printable STL pairs + colored 3MF per tag (into a directory)",
+    ),
+    thickness_mm: float = typer.Option(3.0, "--thickness-mm", help="[3d] Plate thickness in mm"),
+    marker_mm: float = typer.Option(
+        0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
+    ),
+    margin_cells: float = typer.Option(
+        1.0,
+        "--margin-cells",
+        help="[3d] Light quiet-zone border around the tag, in tag cells",
+    ),
+    holes: bool = typer.Option(
+        True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"
+    ),
+    hole_dia_mm: float = typer.Option(
+        3.4, "--hole-dia-mm", help="[3d] Mounting hole diameter in mm (3.4 = M3 clearance)"
+    ),
+    back_text: bool = typer.Option(
+        True, "--back-text/--no-back-text", help="[3d] Engrave family + ID on the back"
+    ),
+    text_inlay: bool = typer.Option(
+        True,
+        "--text-inlay/--no-text-inlay",
+        help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
+    ),
+    legs: float = typer.Option(
+        0.0,
+        "--legs",
+        metavar="HEIGHT_MM",
+        help=(
+            "[3d] Also generate a flat-printable T-footed leg. HEIGHT_MM is floor to TAG CENTER "
+            "(the tag's pose origin). Implies --holes"
+        ),
+    ),
+    leg_thickness_mm: float = typer.Option(
+        6.0, "--leg-thickness-mm", help="[3d] Leg column thickness in mm"
+    ),
+    leg_brace: bool = typer.Option(
+        True, "--leg-brace/--no-leg-brace", help="[3d] Gusset up the back of the leg column"
+    ),
 ) -> None:
-    """Generate a printable AprilTag/ArUco PDF with calibration ruler."""
-    from dimos.utils.cli.apriltag import generate_pdf, parse_id_spec
+    """Generate a printable AprilTag/ArUco PDF, optionally with 3D-printable STLs."""
+    from dimos.utils.cli.apriltag import TagRequest, parse_id_spec
 
-    id_list = parse_id_spec(ids)
-    path = generate_pdf(
-        id_list, out, family=family, size_mm=size_mm, page_size=page_size, pack=pack
-    )
-    typer.echo(f"Wrote {len(id_list)} tag(s) to {path}")
+    try:
+        request = TagRequest(
+            ids=parse_id_spec(ids),
+            out=out,
+            id_spec=ids,
+            family=family,
+            size_mm=size_mm,
+            page_size=page_size,
+            pack=pack,
+            three_d=three_d,
+            thickness_mm=thickness_mm,
+            marker_mm=marker_mm,
+            margin_cells=margin_cells,
+            holes=holes,
+            hole_dia_mm=hole_dia_mm,
+            back_text=back_text,
+            text_inlay=text_inlay,
+            legs_mm=legs,
+            leg_thickness_mm=leg_thickness_mm,
+            leg_brace=leg_brace,
+        )
+        typer.echo("apriltag")
+        for key, value in request.describe():
+            typer.echo(f"  {key:<10} {value}")
+        typer.echo("")
+        written = request.render()
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    for line in request.summary(written):
+        typer.echo(line)
 
 
 @main.command(name="rerun-bridge")
