@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Strict config access over the config object the coordinator sends on stdin.
-// Mirrors the Rust SDK's contract: Python owns every default and always sends
-// every field, so parse<T>() requires every field to be present and rejects any
-// unknown field. The C++ side never fills anything in.
+// Python owns every default and always sends every field, so parse<T>()
+// requires every field present and rejects unknown fields.
 //
-// A config is a plain aggregate struct; parse<T>() reflects over its fields
-// with PFR (mirrors Rust's #[native_config] on a plain struct), so the struct
-// declaration is the whole contract. Any number of fields, no macros.
+// A config is a plain aggregate struct. parse<T>() reflects over its fields, so
+// the struct declaration is the whole contract.
 
 #pragma once
 
@@ -25,13 +23,29 @@
 namespace dimos::native {
 
 namespace config_detail {
-// Call config.validate() if the type defines it, otherwise do nothing.
+template <class T, class = void>
+constexpr bool has_const_validate = false;
 template <class T>
-auto validate_if_present(const T& value, int) -> decltype(value.validate()) {
-    return value.validate();
+constexpr bool has_const_validate<T, std::void_t<decltype(std::declval<const T&>().validate())>> =
+    true;
+
+template <class T, class = void>
+constexpr bool has_any_validate = false;
+template <class T>
+constexpr bool has_any_validate<T, std::void_t<decltype(std::declval<T&>().validate())>> = true;
+
+// Call config.validate() if defined. A non-const or non-void validate() is a
+// compile error, so a range check is never silently skipped.
+template <class T>
+void validate_if_present(const T& value) {
+    static_assert(has_const_validate<T> || !has_any_validate<T>,
+                  "config validate() must be const: declare 'void validate() const'");
+    if constexpr (has_const_validate<T>) {
+        static_assert(std::is_same_v<decltype(std::declval<const T&>().validate()), void>,
+                      "config validate() must return void");
+        value.validate();
+    }
 }
-template <class T>
-void validate_if_present(const T&, long) {}
 }  // namespace config_detail
 
 class Config {
@@ -71,8 +85,7 @@ public:
 
     /// Deserialize the whole config into a plain aggregate struct, enforcing
     /// the one-to-one key check (every field present, no unknowns) and the
-    /// struct's optional validate(). Python owns defaults, so a missing field
-    /// errors.
+    /// struct's optional validate(). Missing fields throws an error.
     template <class T>
     T parse() {
         static_assert(std::is_aggregate_v<T>,
@@ -94,7 +107,7 @@ public:
             consumed_.insert(key);
         });
         enforce_all_consumed();
-        config_detail::validate_if_present(out, 0);
+        config_detail::validate_if_present(out);
         return out;
     }
 

@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "livox_sdk_config.hpp"
+#include "point_cloud_utils.hpp"
 
 #include "dimos/native.hpp"
 
@@ -85,15 +86,8 @@ struct FastLio2Config {
 
 namespace {
 
-std_msgs::Header make_header(const std::string& frame_id, double ts) {
-    static std::atomic<int32_t> seq{0};
-    std_msgs::Header h;
-    h.seq = seq.fetch_add(1, std::memory_order_relaxed);
-    h.stamp.sec = static_cast<int32_t>(ts);
-    h.stamp.nsec = static_cast<int32_t>((ts - static_cast<int32_t>(ts)) * 1e9);
-    h.frame_id = frame_id;
-    return h;
-}
+using dimos::make_header;
+using dimos::make_xyzi_cloud;
 
 uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -121,7 +115,7 @@ public:
     }
 
     void setup() override {
-        // Propagates to the FAST-LIO C++ core; false -> only real errors print.
+        // Propagates to the FAST-LIO C++ core. false -> only real errors print.
         fastlio_debug = cfg_.debug;
 
         FastLioParams params;
@@ -347,7 +341,7 @@ private:
         }
 
         // Run one FAST-LIO IESKF step. Cheap when the IMU/lidar queues
-        // are empty; the heavy work happens after a feed_lidar above.
+        // are empty. The heavy work happens after a feed_lidar above.
         fast_lio_->process();
 
         // Check for new SLAM results and publish (rate-limited).
@@ -357,7 +351,7 @@ private:
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
             if (cfg_.scan_publish_en && now - last_pc_publish >= pc_interval_) {
-                // Sensor-frame cloud; register downstream via the odom pose.
+                // Sensor-frame cloud. Register downstream via the odom pose.
                 // dense_publish_en false -> FAST-LIO's IESKF-downsampled scan.
                 auto cloud = cfg_.dense_publish_en ? fast_lio_->get_body_cloud()
                                                    : fast_lio_->get_body_cloud_down();
@@ -379,32 +373,7 @@ private:
     void publish_pointcloud(const PointCloudXYZI::Ptr& cloud, double ts) {
         int num_points = static_cast<int>(cloud->size());
 
-        sensor_msgs::PointCloud2 pc;
-        pc.header = make_header(cfg_.sensor_frame_id, ts);
-        pc.height = 1;
-        pc.width = num_points;
-        pc.is_bigendian = 0;
-        pc.is_dense = 1;
-
-        pc.fields_length = 4;
-        pc.fields.resize(4);
-        auto make_field = [](const std::string& name, int32_t offset) {
-            sensor_msgs::PointField f;
-            f.name = name;
-            f.offset = offset;
-            f.datatype = sensor_msgs::PointField::FLOAT32;
-            f.count = 1;
-            return f;
-        };
-        pc.fields[0] = make_field("x", 0);
-        pc.fields[1] = make_field("y", 4);
-        pc.fields[2] = make_field("z", 8);
-        pc.fields[3] = make_field("intensity", 12);
-
-        pc.point_step = 16;  // 4 float32
-        pc.row_step = pc.point_step * num_points;
-        pc.data_length = pc.row_step;
-        pc.data.resize(pc.data_length);
+        sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
             float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);
@@ -435,7 +404,7 @@ private:
             msg.pose.covariance[i] = odom.pose.covariance[i];
         }
 
-        // Twist (zero — FAST-LIO doesn't output velocity directly)
+        // Twist (zero, FAST-LIO doesn't output velocity directly)
         msg.twist.twist.linear.x = 0;
         msg.twist.twist.linear.y = 0;
         msg.twist.twist.linear.z = 0;

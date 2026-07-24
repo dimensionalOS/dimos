@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "livox_sdk_config.hpp"
+#include "point_cloud_utils.hpp"
 
 #include "dimos/native.hpp"
 
@@ -112,15 +113,8 @@ struct PointLioConfig {
 
 namespace {
 
-std_msgs::Header make_header(const std::string& frame_id, double ts) {
-    static std::atomic<int32_t> seq{0};
-    std_msgs::Header h;
-    h.seq = seq.fetch_add(1, std::memory_order_relaxed);
-    h.stamp.sec = static_cast<int32_t>(ts);
-    h.stamp.nsec = static_cast<int32_t>((ts - static_cast<int32_t>(ts)) * 1e9);
-    h.frame_id = frame_id;
-    return h;
-}
+using dimos::make_header;
+using dimos::make_xyzi_cloud;
 
 uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -148,7 +142,7 @@ public:
     }
 
     void setup() override {
-        // Propagates to the Point-LIO core; false -> only real errors print.
+        // Propagates to the Point-LIO core. false -> only real errors print.
         pointlio_debug = cfg_.debug;
 
         PointLioParams params;
@@ -363,7 +357,7 @@ private:
             for (int j = 0; j < 9; ++j) { imu_msg->angular_velocity_covariance[j] = 0.0; }
 
             // Point-LIO expects accel in g (EKF does its own scaling). SDK
-            // already reports g, so feed raw — scaling by GRAVITY_MS2 would
+            // already reports g, so feed raw. Scaling by GRAVITY_MS2 would
             // double-scale and trip the satu_acc check at rest.
             imu_msg->linear_acceleration.x = static_cast<double>(imu_pts[i].acc_x);
             imu_msg->linear_acceleration.y = static_cast<double>(imu_pts[i].acc_y);
@@ -412,7 +406,7 @@ private:
         }
 
         // Serialize EKF access against the SDK IMU callback (on_imu) for the
-        // rest of the iteration — feed_lidar/process/get_* all touch the estimator.
+        // rest of the iteration. feed_lidar/process/get_* all touch the estimator.
         std::lock_guard<std::mutex> lio_lock(lio_mutex_);
         if (!points.empty()) {
             const size_t num_points = points.size();
@@ -480,32 +474,7 @@ private:
     void publish_pointcloud(const PointCloudXYZI::Ptr& cloud, double ts) {
         int num_points = static_cast<int>(cloud->size());
 
-        sensor_msgs::PointCloud2 pc;
-        pc.header = make_header(cfg_.sensor_frame_id, ts);
-        pc.height = 1;
-        pc.width = num_points;
-        pc.is_bigendian = 0;
-        pc.is_dense = 1;
-
-        pc.fields_length = 4;
-        pc.fields.resize(4);
-        auto make_field = [](const std::string& name, int32_t offset) {
-            sensor_msgs::PointField f;
-            f.name = name;
-            f.offset = offset;
-            f.datatype = sensor_msgs::PointField::FLOAT32;
-            f.count = 1;
-            return f;
-        };
-        pc.fields[0] = make_field("x", 0);
-        pc.fields[1] = make_field("y", 4);
-        pc.fields[2] = make_field("z", 8);
-        pc.fields[3] = make_field("intensity", 12);
-
-        pc.point_step = 16;  // 4 float32
-        pc.row_step = pc.point_step * num_points;
-        pc.data_length = pc.row_step;
-        pc.data.resize(pc.data_length);
+        sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
             float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);
@@ -564,13 +533,10 @@ private:
     uint64_t frame_start_ns_ = 0;
     bool frame_has_ts_ = false;
 
-    // Serializes all Point-LIO EKF access. The SDK delivers IMU on its own
-    // callback thread (on_imu -> feed_imu) while the main loop runs feed_lidar/
-    // process/get_* — Point-LIO's estimator is not thread-safe, so without this
-    // the two threads race on the EKF state and occasionally emit a corrupt 2nd
-    // trajectory. Distinct from pc_mutex_ (which only guards the point
-    // accumulator) so incoming point packets can still accumulate while the EKF
-    // is processing.
+    // Serializes all Point-LIO EKF access. The estimator is not thread-safe and
+    // the SDK feeds IMU from its own callback thread while the main loop runs
+    // feed_lidar/process/get_*. Distinct from pc_mutex_, which only guards the
+    // point accumulator, so packets can accumulate while the EKF is processing.
     std::mutex lio_mutex_;
 };
 

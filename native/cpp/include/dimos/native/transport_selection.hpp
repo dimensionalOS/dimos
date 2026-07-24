@@ -19,6 +19,7 @@ inline void require_supported_transport(const std::string& name) {
     if (name == "lcm") {
         return;
     }
+    // TODO: Add zenoh support here
     if (name == "zenoh") {
         throw std::runtime_error(
             "DIMOS_TRANSPORT=zenoh is not supported by the C++ native SDK (LCM only). "

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # PFR (standalone Boost.PFR): compile-time struct reflection for config
-# parsing. Header-only; nix builds inject it via FETCHCONTENT_SOURCE_DIR_PFR.
+# parsing. Header-only. nix builds inject it via FETCHCONTENT_SOURCE_DIR_PFR.
 include(FetchContent)
 FetchContent_Declare(pfr
   GIT_REPOSITORY https://github.com/apolukhin/pfr_non_boost.git

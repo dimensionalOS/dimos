@@ -167,19 +167,32 @@ def lcm_handle_loop(lcm: lcmlib.LCM, stop_event: threading.Event, timeout_ms: in
 
 @dataclass
 class NativeProcessRunner:
-    """Start and manage a native module C++ process for testing."""
+    """Start and manage a native module C++ process for testing.
+
+    stdin_config modules read their topics and config from one JSON line on
+    stdin and pick a transport from DIMOS_TRANSPORT, so a test drives them with
+    stdin_blob plus env rather than CLI args.
+    """
 
     binary_path: str
-    args: list[str]
+    args: list[str] = field(default_factory=list)
+    stdin_blob: bytes | None = None
+    env: dict[str, str] | None = None
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
 
     def start(self, capture_stderr: bool = False) -> None:
         self.process = subprocess.Popen(
             [self.binary_path, *self.args],
+            stdin=subprocess.PIPE if self.stdin_blob is not None else None,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             start_new_session=True,
+            env=self.env,
         )
+        if self.stdin_blob is not None:
+            assert self.process.stdin is not None
+            self.process.stdin.write(self.stdin_blob)
+            self.process.stdin.close()
 
     def stop(self, timeout: float = 3.0) -> None:
         if self.process is not None:

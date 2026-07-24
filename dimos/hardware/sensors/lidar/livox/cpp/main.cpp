@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "livox_sdk_config.hpp"
+#include "point_cloud_utils.hpp"
 
 #include "dimos/native.hpp"
 
@@ -53,15 +54,8 @@ struct Mid360Config {
 
 namespace {
 
-std_msgs::Header make_header(const std::string& frame_id, double ts) {
-    static std::atomic<int32_t> seq{0};
-    std_msgs::Header h;
-    h.seq = seq.fetch_add(1, std::memory_order_relaxed);
-    h.stamp.sec = static_cast<int32_t>(ts);
-    h.stamp.nsec = static_cast<int32_t>((ts - static_cast<int32_t>(ts)) * 1e9);
-    h.frame_id = frame_id;
-    return h;
-}
+using dimos::make_header;
+using dimos::make_xyzi_cloud;
 
 double packet_timestamp(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -246,32 +240,7 @@ private:
                             const std::vector<float>& intensity, double ts) {
         int num_points = static_cast<int>(xyz.size()) / 3;
 
-        sensor_msgs::PointCloud2 pc;
-        pc.header = make_header(cfg_.frame_id, ts);
-        pc.height = 1;
-        pc.width = num_points;
-        pc.is_bigendian = 0;
-        pc.is_dense = 1;
-
-        pc.fields_length = 4;
-        pc.fields.resize(4);
-        auto make_field = [](const std::string& name, int32_t offset) {
-            sensor_msgs::PointField f;
-            f.name = name;
-            f.offset = offset;
-            f.datatype = sensor_msgs::PointField::FLOAT32;
-            f.count = 1;
-            return f;
-        };
-        pc.fields[0] = make_field("x", 0);
-        pc.fields[1] = make_field("y", 4);
-        pc.fields[2] = make_field("z", 8);
-        pc.fields[3] = make_field("intensity", 12);
-
-        pc.point_step = 16;  // 4 float32
-        pc.row_step = pc.point_step * num_points;
-        pc.data_length = pc.row_step;
-        pc.data.resize(pc.data_length);
+        sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
             float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);

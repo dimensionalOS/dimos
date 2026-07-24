@@ -1,8 +1,9 @@
 // PGO native module on the dimos C++ SDK. Subscribes to registered_scan +
 // odometry, runs SimplePGO (iSAM2 + PCL ICP), and publishes corrected_odometry,
-// global_map, and the map->odom TF correction. Both handlers run serialized on
-// the dispatch thread, so a scan pairs with the latest odometry and is processed
-// inline without locks.
+// global_map, and the map->odom TF correction. Odometry and registered_scan
+// are decoded on the transport's single receive thread in arrival order, so
+// each scan is stamped with the odometry that arrived just before it, then the
+// PGO work runs on the dispatch thread.
 
 #include <atomic>
 #include <cstdint>
@@ -96,41 +97,65 @@ public:
         global_map_ = builder.output<sensor_msgs::PointCloud2>("global_map");
         pgo_tf_ = builder.output<nav_msgs::Odometry>("pgo_tf");
 
-        builder.input<nav_msgs::Odometry>("odometry", &PGO::on_odometry, this);
-        builder.input<sensor_msgs::PointCloud2>("registered_scan", &PGO::on_registered_scan, this);
+        builder.input<nav_msgs::Odometry>(
+            "odometry",
+            [this](const uint8_t* data, std::size_t len) {
+                nav_msgs::Odometry msg = dimos::native::lcm_decode<nav_msgs::Odometry>(data, len);
+                capture_odometry(msg);
+                return msg;
+            },
+            [](nav_msgs::Odometry) {});
+        builder.input<CloudWithPose>(
+            "registered_scan", &PGO::on_scan, this,
+            [this](const uint8_t* data, std::size_t len) {
+                return decode_scan(
+                    dimos::native::lcm_decode<sensor_msgs::PointCloud2>(data, len));
+            });
     }
 
 private:
-    void on_odometry(const nav_msgs::Odometry& msg) {
-        latest_r_ = Eigen::Quaterniond(msg.pose.pose.orientation.w,
-                                       msg.pose.pose.orientation.x,
-                                       msg.pose.pose.orientation.y,
-                                       msg.pose.pose.orientation.z)
-                        .toRotationMatrix();
-        latest_t_ = V3D(msg.pose.pose.position.x, msg.pose.pose.position.y,
-                        msg.pose.pose.position.z);
-        latest_time_ = msg.header.stamp.sec + msg.header.stamp.nsec / 1e9;
-        has_odom_ = true;
+    // Receive thread: record the latest odometry as each message is decoded.
+    void capture_odometry(const nav_msgs::Odometry& msg) {
+        latest_odom_.r = Eigen::Quaterniond(msg.pose.pose.orientation.w,
+                                            msg.pose.pose.orientation.x,
+                                            msg.pose.pose.orientation.y,
+                                            msg.pose.pose.orientation.z)
+                             .toRotationMatrix();
+        latest_odom_.t = V3D(msg.pose.pose.position.x, msg.pose.pose.position.y,
+                             msg.pose.pose.position.z);
+        latest_odom_.time = msg.header.stamp.sec + msg.header.stamp.nsec / 1e9;
+        latest_odom_.has = true;
     }
 
-    void on_registered_scan(const sensor_msgs::PointCloud2& msg) {
-        if (!has_odom_) {
+    // Receive thread: snapshot the odometry that arrived just before this scan.
+    // Same thread as capture_odometry, so latest_odom_ needs no lock. A null
+    // cloud (no odometry seen yet) tells on_scan to skip.
+    CloudWithPose decode_scan(const sensor_msgs::PointCloud2& msg) {
+        CloudWithPose cp;
+        if (!latest_odom_.has) {
+            return cp;
+        }
+        double ts = latest_odom_.time;
+        cp.pose.r = latest_odom_.r;
+        cp.pose.t = latest_odom_.t;
+        cp.pose.setTime(static_cast<int32_t>(ts),
+                        static_cast<uint32_t>((ts - static_cast<int32_t>(ts)) * 1e9));
+        cp.cloud = CloudType::Ptr(new CloudType);
+        smartnav::to_pcl(msg, *cp.cloud);
+        return cp;
+    }
+
+    void on_scan(const CloudWithPose& decoded) {
+        if (!decoded.cloud) {
             return;
         }
-        double ts = latest_time_;
+        double ts = decoded.pose.second;
         if (ts < last_message_time_) {  // reject out-of-order
             return;
         }
         last_message_time_ = ts;
 
-        CloudWithPose cp;
-        cp.pose.r = latest_r_;
-        cp.pose.t = latest_t_;
-        cp.pose.setTime(static_cast<int32_t>(ts),
-                        static_cast<uint32_t>((ts - static_cast<int32_t>(ts)) * 1e9));
-        cp.cloud = CloudType::Ptr(new CloudType);
-        smartnav::to_pcl(msg, *cp.cloud);
-
+        CloudWithPose cp = decoded;
         if (cfg_.unregister_input && cp.cloud && cp.cloud->size() > 0) {
             CloudType::Ptr body_cloud(new CloudType);
             M3D r_inv = cp.pose.r.transpose();
@@ -203,10 +228,16 @@ private:
     Output<sensor_msgs::PointCloud2> global_map_;
     Output<nav_msgs::Odometry> pgo_tf_;
 
-    M3D latest_r_ = M3D::Identity();
-    V3D latest_t_ = V3D::Zero();
-    double latest_time_ = 0.0;
-    bool has_odom_ = false;
+    struct StampedPose {
+        M3D r = M3D::Identity();
+        V3D t = V3D::Zero();
+        double time = 0.0;
+        bool has = false;
+    };
+    // Written by capture_odometry and read by decode_scan, both on the transport
+    // receive thread, so this needs no lock.
+    StampedPose latest_odom_;
+
     double last_message_time_ = 0.0;
     double last_global_map_time_ = 0.0;
     double global_map_interval_ = 2.0;

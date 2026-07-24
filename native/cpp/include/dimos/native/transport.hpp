@@ -18,8 +18,7 @@ namespace dimos::native {
 /// Decoding and routing happen inside the callback, never in the transport.
 using Dispatch = std::function<void(const uint8_t* data, std::size_t len)>;
 
-/// Abstract transport. Concrete transports (LCM today, Zenoh later) implement
-/// publish/subscribe. The runtime owns exactly one instance for a module's life.
+/// Abstract transport supporting publishing and subscribing to topics.
 class Transport {
 public:
     virtual ~Transport() = default;
