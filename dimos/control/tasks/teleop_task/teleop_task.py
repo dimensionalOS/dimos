@@ -101,7 +101,21 @@ class TeleopIKTaskConfig:
     # solvers run unchanged. Without it the controlled point is the ee_joint
     # origin and any orientation drift sweeps the physical tool sideways.
     tool_offset_m: tuple[float, float, float] | None = None
-    rotation_frame: Literal["world", "local"] = "world"  # local: delta composes in the EE frame
+    # world/local: the command carries a rotation delta composed onto the
+    # engage-time EE orientation. Deltas re-anchor on the EE every engage, so
+    # any orientation error left at release bakes into the next anchor and
+    # accumulates over a session (the wrist walks somewhere absurd and every
+    # re-engage keeps it there). absolute: the command carries the hand's
+    # current orientation; the first engage of the session captures a fixed
+    # hand-to-EE alignment and every later target is hand orientation through
+    # that map, so errors cannot accumulate and returning the hand to its
+    # reference attitude always returns the EE. The chase window slews any
+    # engage-time mismatch instead of jumping.
+    rotation_frame: Literal["world", "local", "absolute"] = "world"
+    # Soft angular deadband on the target rotation: changes under this angle
+    # hold the previous target, larger changes follow shortened by it, so hand
+    # tremor stops rippling the wrist while deliberate rotation passes.
+    rotation_deadband_deg: float = 0.0
     solver: Literal["dls", "pink"] = "dls"  # pink needs the manipulation extra; falls back to dls
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
@@ -212,6 +226,13 @@ class TeleopIKTask(BaseControlTask):
         self._initial_ee_pose: pinocchio.SE3 | None = None
         self._prev_primary: bool = False
 
+        # absolute rotation_frame: fixed hand-to-EE alignment captured on the
+        # session's first engage; deliberately survives disengage so re-engages
+        # cannot ratchet orientation error.
+        self._hand_alignment: NDArray[np.floating[Any]] | None = None
+        # rotation deadband reference; reset each engage
+        self._rot_deadband_ref: NDArray[np.floating[Any]] | None = None
+
         self._gripper_target: float = config.gripper_open_pos
 
         # Telemetry (TELEM lines, 1 Hz while active)
@@ -219,8 +240,11 @@ class TeleopIKTask(BaseControlTask):
         self._telem_computes = 0
         self._telem_rejects = 0
         self._telem_lag_m = 0.0
+        self._telem_rot_lag_rad = 0.0
         self._telem_solve_s = 0.0
         self._telem_scale_min = 1.0
+        self._telem_limit_margin_rad = float("inf")
+        self._telem_limit_joint = -1
 
         logger.info(
             f"TeleopIKTask {name} initialized with model: {config.model_path}, "
@@ -295,12 +319,8 @@ class TeleopIKTask(BaseControlTask):
         with self._lock:
             if self._initial_ee_pose is None:
                 return None
-            if self._config.rotation_frame == "local":
-                # Delta arrives in the hand's own frame; compose in the EE
-                # frame so a hand twist maps to the same gripper-local twist.
-                target_rotation = self._initial_ee_pose.rotation @ delta_se3.rotation
-            else:
-                target_rotation = delta_se3.rotation @ self._initial_ee_pose.rotation
+            target_rotation = self._target_rotation(delta_se3.rotation)
+            target_rotation = self._apply_rotation_deadband(target_rotation)
             target_pose = pinocchio.SE3(
                 target_rotation,
                 self._initial_ee_pose.translation + delta_se3.translation,
@@ -322,6 +342,9 @@ class TeleopIKTask(BaseControlTask):
         # progressively smaller window instead of giving up.
         ee_now = self._tool_fk(q_current)
         raw_lag = float(np.linalg.norm(target_pose.translation - ee_now.translation))
+        raw_rot_lag = float(
+            np.linalg.norm(pinocchio.log3(ee_now.rotation.T @ target_pose.rotation))
+        )
         solve_t0 = time.perf_counter()
 
         windowed = (
@@ -356,26 +379,41 @@ class TeleopIKTask(BaseControlTask):
 
         self._telem_computes += 1
         self._telem_lag_m = max(self._telem_lag_m, raw_lag)
+        self._telem_rot_lag_rad = max(self._telem_rot_lag_rad, raw_rot_lag)
         self._telem_solve_s = max(self._telem_solve_s, time.perf_counter() - solve_t0)
         if q_solution is not None:
             self._telem_scale_min = min(self._telem_scale_min, scale)
+        margins = np.minimum(
+            q_current - self._ik.model.lowerPositionLimit,
+            self._ik.model.upperPositionLimit - q_current,
+        )
+        tick_margin_joint = int(np.argmin(margins))
+        if float(margins[tick_margin_joint]) < self._telem_limit_margin_rad:
+            self._telem_limit_margin_rad = float(margins[tick_margin_joint])
+            self._telem_limit_joint = tick_margin_joint
         if state.t_now - self._telem_last_emit >= 1.0:
             logger.info(
-                "TELEM ik %s: computes_hz=%d rejects=%d hand_lag_cm=%.1f "
-                "solve_ms_max=%.1f window_scale_min=%.2f",
+                "TELEM ik %s: computes_hz=%d rejects=%d hand_lag_cm=%.1f rot_lag_deg=%.1f "
+                "solve_ms_max=%.1f window_scale_min=%.2f limit_margin_deg=%.1f(j%d)",
                 self._name,
                 self._telem_computes,
                 self._telem_rejects,
                 self._telem_lag_m * 100.0,
+                np.rad2deg(self._telem_rot_lag_rad),
                 self._telem_solve_s * 1000.0,
                 self._telem_scale_min,
+                np.rad2deg(self._telem_limit_margin_rad),
+                self._telem_limit_joint + 1,
             )
             self._telem_last_emit = state.t_now
             self._telem_computes = 0
             self._telem_rejects = 0
             self._telem_lag_m = 0.0
+            self._telem_rot_lag_rad = 0.0
             self._telem_solve_s = 0.0
             self._telem_scale_min = 1.0
+            self._telem_limit_margin_rad = float("inf")
+            self._telem_limit_joint = -1
 
         if q_solution is None:
             self._telem_rejects += 1
@@ -407,6 +445,47 @@ class TeleopIKTask(BaseControlTask):
             positions=positions,
             mode=ControlMode.SERVO_POSITION,
         )
+
+    def _target_rotation(
+        self, command_rotation: NDArray[np.floating[Any]]
+    ) -> NDArray[np.floating[Any]]:
+        """Target EE rotation from the command's rotation part. Caller holds the lock.
+
+        world/local: command_rotation is a delta composed onto the engage
+        anchor. absolute: command_rotation is the hand's current orientation;
+        target = hand @ alignment, where alignment is captured once per
+        session so hand attitude maps to EE attitude drift-free (a hand
+        rotation about a world axis rotates the EE about that same axis).
+        """
+        assert self._initial_ee_pose is not None
+        if self._config.rotation_frame == "absolute":
+            if self._hand_alignment is None:
+                self._hand_alignment = command_rotation.T @ self._initial_ee_pose.rotation
+            return command_rotation @ self._hand_alignment
+        if self._config.rotation_frame == "local":
+            # Delta arrives in the hand's own frame; compose in the EE
+            # frame so a hand twist maps to the same gripper-local twist.
+            return self._initial_ee_pose.rotation @ command_rotation
+        return command_rotation @ self._initial_ee_pose.rotation
+
+    def _apply_rotation_deadband(
+        self, target_rotation: NDArray[np.floating[Any]]
+    ) -> NDArray[np.floating[Any]]:
+        """Soft angular deadband against the previous target. Caller holds the lock."""
+        deadband = np.deg2rad(self._config.rotation_deadband_deg)
+        if deadband <= 0.0:
+            return target_rotation
+        ref = self._rot_deadband_ref
+        if ref is None:
+            self._rot_deadband_ref = target_rotation
+            return target_rotation
+        w = pinocchio.log3(ref.T @ target_rotation)
+        angle = float(np.linalg.norm(w))
+        if angle <= deadband:
+            return ref
+        out = ref @ pinocchio.exp3(w * ((angle - deadband) / angle))
+        self._rot_deadband_ref = out
+        return out
 
     def _windowed_target(
         self,
@@ -468,11 +547,13 @@ class TeleopIKTask(BaseControlTask):
             logger.info(f"TeleopIKTask {self._name}: engage")
             with self._lock:
                 self._initial_ee_pose = None
+                self._rot_deadband_ref = None
         elif not primary and self._prev_primary:
             logger.info(f"TeleopIKTask {self._name}: disengage")
             with self._lock:
                 self._target_pose = None
                 self._initial_ee_pose = None
+                self._rot_deadband_ref = None
         self._prev_primary = primary
 
         if self._config.gripper_joint:
@@ -531,7 +612,8 @@ class TeleopIKTaskParams(BaseConfig):
     orientation_weight: float = 1.0
     posture_weight: float | None = None
     tool_offset_m: tuple[float, float, float] | None = None
-    rotation_frame: Literal["world", "local"] = "world"
+    rotation_frame: Literal["world", "local", "absolute"] = "world"
+    rotation_deadband_deg: float = 0.0
     solver: Literal["dls", "pink"] = "dls"
     hand: Literal["left", "right"] | None = None
     gripper_joint: str | None = None
@@ -558,6 +640,7 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             posture_weight=params.posture_weight,
             tool_offset_m=params.tool_offset_m,
             rotation_frame=params.rotation_frame,
+            rotation_deadband_deg=params.rotation_deadband_deg,
             solver=params.solver,
             hand=params.hand,
             gripper_joint=params.gripper_joint,

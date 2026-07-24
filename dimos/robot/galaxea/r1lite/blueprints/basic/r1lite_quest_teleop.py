@@ -92,7 +92,14 @@ _ARM_IK_LIMITS = {
     # the gripper mount + 0.0369 to the finger base (robot URDF) + ~0.05 to
     # mid-finger. Control the point the operator watches, not the wrist.
     "tool_offset_m": (0.17, 0.0, 0.0),
-    "rotation_frame": "local",
+    # Absolute: gripper attitude follows hand attitude through a session-fixed
+    # alignment captured on the first engage. Delta modes re-anchor on the EE
+    # every engage, so residual orientation error accumulated across a session
+    # (the wrist ratcheted into odd attitudes and re-engaging kept it there).
+    "rotation_frame": "absolute",
+    # Hand tremor passes straight into the wrist without an angular deadband;
+    # soft, so deliberate rotation follows shortened by the band.
+    "rotation_deadband_deg": 4.0,
     # Ride through pose-stream gaps instead of cycling deactivate/reactivate;
     # catch-up stays bounded by the chase window either way.
     "timeout": 1.5,
@@ -134,15 +141,15 @@ r1lite_quest_teleop = autoconnect(
     # Headset video off: JPEG encode starved the module loop on hardware and
     # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
     # video_enabled back on once the encode is off the critical path.
-    # local_rotation must pair with rotation_frame "local" on the tasks: the
-    # module publishes the orientation delta in the hand's own frame and the
-    # task composes it in the gripper frame. Mismatched pairing garbles wrist
-    # rotation (world-frame delta composed as if hand-local).
+    # absolute_orientation must pair with rotation_frame "absolute" on the
+    # tasks: the module publishes the hand's current orientation and the task
+    # maps it through the session alignment. Mismatched pairing garbles wrist
+    # rotation.
     R1LiteQuestTeleopModule.blueprint(
         task_names=_TASK_NAMES,
         video_enabled=False,
         motion_gain=1.3,
-        local_rotation=True,
+        absolute_orientation=True,
         position_deadband_m=0.02,
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows each
@@ -199,7 +206,7 @@ def _sim_arm_model(side: str, y_offset: float) -> RobotModelConfig:
 
 
 r1lite_quest_teleop_sim = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=True),
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, absolute_orientation=True),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
         tasks=[*r1lite_standard_tasks(), *_teleop_tasks()],

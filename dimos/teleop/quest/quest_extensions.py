@@ -316,6 +316,13 @@ class R1LiteQuestTeleopConfig(VideoArmTeleopConfig):
     # axis maps to twist about the gripper axis, independent of heading).
     # Requires rotation_frame "local" on the teleop tasks.
     local_rotation: bool = False
+    # Publish the hand's current orientation instead of a delta. Requires
+    # rotation_frame "absolute" on the teleop tasks, which map hand attitude
+    # to gripper attitude through a session-fixed alignment: orientation
+    # errors cannot accumulate across engages and returning the hand to its
+    # reference attitude always returns the gripper. Takes precedence over
+    # local_rotation.
+    absolute_orientation: bool = False
     gripper_open: float = 100.0
     gripper_closed: float = 0.0
 
@@ -395,7 +402,9 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
         if yaw:
             cos_y, sin_y = math.cos(yaw), math.sin(yaw)
             dx, dy = cos_y * dx - sin_y * dy, sin_y * dx + cos_y * dy
-        if self.config.local_rotation:
+        if self.config.absolute_orientation:
+            orientation = current.orientation
+        elif self.config.local_rotation:
             orientation = initial.orientation.inverse() * current.orientation
         else:
             orientation = current.orientation * initial.orientation.inverse()

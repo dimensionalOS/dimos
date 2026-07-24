@@ -290,6 +290,77 @@ def test_local_rotation_uses_hand_frame_delta() -> None:
     )
 
 
+def test_absolute_orientation_publishes_current_hand_attitude() -> None:
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    m = _module(absolute_orientation=True)
+    m._is_engaged[Hand.LEFT] = True
+    m._initial_poses[Hand.LEFT] = PoseStamped(
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 1.0))
+    )
+    current = PoseStamped(orientation=Quaternion.from_euler(Vector3(0.5, 0.2, -0.3)))
+    m._current_poses[Hand.LEFT] = current
+    out = m._get_output_pose(Hand.LEFT)
+    assert out.orientation == current.orientation
+
+
+def _rotation_task(**config_overrides: Any) -> Any:
+    from dimos.control.tasks.teleop_task.teleop_task import TeleopIKTask, TeleopIKTaskConfig
+
+    defaults: dict[str, Any] = {
+        "joint_names": R1LITE_LEFT_ARM_JOINTS,
+        "model_path": R1LITE_LEFT_ARM_MODEL,
+        "ee_joint_id": 6,
+        "hand": "left",
+        "solver": "dls",
+    }
+    defaults.update(config_overrides)
+    return TeleopIKTask("rotation_test", TeleopIKTaskConfig(**defaults))
+
+
+def test_absolute_rotation_does_not_ratchet_across_engages() -> None:
+    # Delta modes re-anchor on the EE each engage, so orientation error left
+    # at release accumulates over a session. Absolute mode captures the
+    # hand-to-EE alignment once: after a drifted re-engage the same hand
+    # attitude still maps to the original EE attitude, and a hand rotation
+    # about a world axis rotates the target about that same axis.
+    import numpy as np
+    import pinocchio
+
+    task = _rotation_task(rotation_frame="absolute")
+    ee0 = pinocchio.exp3(np.array([0.0, 0.3, 0.1]))
+    hand0 = pinocchio.exp3(np.array([0.2, 0.0, -0.4]))
+    task._initial_ee_pose = pinocchio.SE3(ee0, np.zeros(3))
+
+    first = task._target_rotation(hand0)
+    assert np.allclose(first, ee0)
+
+    spin = pinocchio.exp3(np.array([0.0, 0.0, 0.5]))
+    assert np.allclose(task._target_rotation(spin @ hand0), spin @ ee0)
+
+    drifted = pinocchio.exp3(np.array([1.2, -0.5, 0.9]))
+    task._initial_ee_pose = pinocchio.SE3(drifted, np.zeros(3))
+    assert np.allclose(task._target_rotation(hand0), ee0)
+
+
+def test_rotation_deadband_holds_small_and_shortens_large() -> None:
+    import numpy as np
+    import pinocchio
+
+    task = _rotation_task(rotation_frame="absolute", rotation_deadband_deg=4.0)
+    ref = np.eye(3)
+    assert np.allclose(task._apply_rotation_deadband(ref), ref)
+
+    tremor = pinocchio.exp3(np.array([np.deg2rad(2.0), 0.0, 0.0]))
+    assert np.allclose(task._apply_rotation_deadband(tremor), ref)
+
+    turn = pinocchio.exp3(np.array([np.deg2rad(30.0), 0.0, 0.0]))
+    out = task._apply_rotation_deadband(turn)
+    moved = np.rad2deg(np.linalg.norm(pinocchio.log3(out)))
+    assert moved == pytest.approx(26.0, abs=0.1)
+
+
 def test_position_deadband_zeroes_small_deltas() -> None:
     m = _module(position_deadband_m=0.02)
     m._is_engaged[Hand.LEFT] = True
@@ -423,24 +494,25 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
             assert tasks[name].params["max_target_offset_m"] == 0.08
             assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
-            assert tasks[name].params["rotation_frame"] == "local"
+            assert tasks[name].params["rotation_frame"] == "absolute"
             assert tasks[name].params["orientation_weight"] == 1.0
             assert tasks[name].params["posture_weight"] == 0.05
             assert tasks[name].params["tool_offset_m"] == (0.17, 0.0, 0.0)
 
 
-def test_module_local_rotation_pairs_with_task_rotation_frame() -> None:
-    # The module publishes the orientation delta in the hand's own frame and
-    # the task composes it in the gripper frame; mismatched pairing garbles
-    # wrist rotation. Pin both blueprints to the paired configuration.
+def test_module_orientation_output_pairs_with_task_rotation_frame() -> None:
+    # The module publishes the hand's current orientation and the task maps it
+    # through the session alignment; mismatched pairing garbles wrist
+    # rotation. Pin both blueprints to the paired configuration.
     for blueprint in (r1lite_quest_teleop, r1lite_quest_teleop_sim):
         kwargs = next(
             atom.kwargs for atom in blueprint.blueprints if atom.module is R1LiteQuestTeleopModule
         )
-        assert kwargs["local_rotation"] is True
+        assert kwargs["absolute_orientation"] is True
         tasks = {t.name: t for t in _coordinator_tasks(blueprint)}
         for name in ("teleop_left_arm", "teleop_right_arm"):
-            assert tasks[name].params["rotation_frame"] == "local"
+            assert tasks[name].params["rotation_frame"] == "absolute"
+            assert tasks[name].params["rotation_deadband_deg"] == 4.0
 
 
 def test_hardware_blueprint_sets_position_deadband() -> None:
