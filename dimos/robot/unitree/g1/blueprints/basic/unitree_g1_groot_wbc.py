@@ -172,20 +172,10 @@ def _costmap(grid: Any) -> Any:
     return g1_costmap(grid, z_offset=_ground_z() + 0.02)
 
 
-def _scene_root(rr: Any) -> Any:
-    return rr.Transform3D(translation=[0.0, 0.0, _ground_z()])
-
-
 _static_entities: dict[str, Any] = {
     _RERUN_ROOT: g1_urdf_static_robot(root_path=_RERUN_ROOT),
 }
-_scene_entities = scene_package_static_entities(
-    global_config.scene_package,
-    entity_path="world/scene/visual",
-)
-if _scene_entities:
-    _static_entities["world/scene"] = _scene_root
-    _static_entities.update(_scene_entities)
+_static_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config: dict[str, Any] = {
     "blueprint": _rerun_blueprint,
