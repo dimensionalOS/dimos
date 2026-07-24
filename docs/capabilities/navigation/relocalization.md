@@ -100,12 +100,12 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
 
 ```
 Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
-relocalize skipped: n_pts=37770 < MIN_LOCAL_POINTS=50000
-relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
-relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
+relocalize skipped: n_pts=37770 < min_local_points=50000
+relocalize rejected fitness=0.433 source=ransac threshold=0.7
+relocalize accepted fitness=0.657 time_cost_s=3.0
 ```
 
-`relocalize skipped` means the live submap is still warming up- fewer than `MIN_LOCAL_POINTS` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
+`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. `threshold=` is `acquire_fitness_threshold` until the first fix locks the anchor, then the prior's own `fitness_threshold`. Once `relocalize accepted` lines appear at info level, the `world → map` TF is live.
 
 You can replay a different `.db` from the same physical space against the same premap to test generalization.
 
@@ -174,22 +174,31 @@ CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`
 | Field | Default | Description |
 |-------|---------|-------------|
 | `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
-| `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
+| `acquire_fitness_threshold` | `0.7` | Minimum ICP fitness for the first fix, before any TF is published (0 to 1) |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
 
-Constants are not overridable via CLI today:
+Not overridable via CLI. `fitness_threshold`, `min_local_points` and `interval_s` live on each `priors` entry, and `-o` cannot index a list:
 
-| Constant | Value | Role |
-|----------|-------|------|
-| `MIN_LOCAL_POINTS` | `50_000` | Minimum live map points before attempting relocalization |
-| `RELOC_INTERVAL` | `2.0` s | Throttle between relocalization attempts |
+| Setting | Value | Role |
+|---------|-------|------|
+| `fitness_threshold` | `0.6` | Minimum ICP fitness to accept a relocalization once the anchor is locked (0 to 1) |
+| `min_local_points` | `50_000` | Minimum live map points before the RANSAC prior fires |
+| `interval_s` | `2.0` s | Throttle between RANSAC prior fires |
 | `PUBLISH_INTERVAL` | `2.0` s | TF publish rate |
 
-To accept all candidates for visualization only (not for production nav):
+To accept low-fitness candidates for visualization only (not for production nav), lower both bars. The acquisition bar takes an `-o`:
 
 ```bash
--o relocalizationmodule.fitness_threshold=0.0
+-o relocalizationmodule.acquire_fitness_threshold=0.0
+```
+
+The per-prior bar does not, so set it on the blueprint entry. The list replaces the pool, so name every prior you want:
+
+```python
+from dimos.mapping.relocalization.priors import RansacPriorConfig
+
+RelocalizationModule.blueprint(priors=[RansacPriorConfig(fitness_threshold=0.0)])
 ```
 
 ## Troubleshooting
@@ -200,7 +209,7 @@ To accept all candidates for visualization only (not for production nav):
 | File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
 | Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
 | Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |
-| Nav works but map looks misaligned | Low fitness accepted in debug mode | Raise `fitness_threshold` back to default `0.45` |
+| Nav works but map looks misaligned | Low fitness accepted in debug mode | Restore `fitness_threshold` to `0.6` on the prior entry and `acquire_fitness_threshold` to `0.7` |
 | PGO map looks wrong | Bad odometry in recording | Run `dimos map replay` or `summary` and re-record with smoother motion |
 
 ## Related docs
