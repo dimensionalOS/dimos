@@ -117,12 +117,11 @@ _STROKE_CELLS = _FONT_SCALE + 2 * _FONT_DILATE
 
 
 class TagParts(NamedTuple):
-    """One tag's solids, all in a shared coordinate frame."""
+    """One tag's solids, in a shared coordinate frame: light plate, dark cells, text inlay."""
 
     base: trimesh.Trimesh
     marker: trimesh.Trimesh
     text: trimesh.Trimesh | None
-    frame: trimesh.Trimesh | None = None
 
 
 def _at(x: float, y: float, z: float) -> np.ndarray:
@@ -416,174 +415,6 @@ def _strut_yz(
     return bar
 
 
-# The tag drops into the frame from behind: the pocket is this much deeper and wider than
-# the plate, and the front lip laps this far over its edge — less if the quiet zone can't
-# spare it, but never less than _FRAME_RABBET_MIN_MM or there is nothing holding the tag.
-_FRAME_SLACK_MM = 0.3
-_FRAME_FIT_MM = 0.4
-_FRAME_RABBET_MM = 3.0
-_FRAME_RABBET_MIN_MM = 1.5
-
-# Default width of the frame band, and the color it is written into the 3MF with.
-_FRAME_WIDTH_MM = 15.0
-
-# Hanging recess on the back of the top rail: how deep it cuts, how much material it must
-# leave towards the face, and the tie posts standing in it.
-_HANGER_DEPTH_MM = 5.0
-_HANGER_KEEP_MM = 2.0
-_HANGER_POST_R_MM = 3.0
-_HANGER_ROPE_MM = 2.5
-FRAME_COLOR = "#8A6A3B"
-
-
-def _ring(
-    outer_w: float, outer_h: float, inner_w: float, inner_h: float, z0: float, z1: float
-) -> list[trimesh.Trimesh]:
-    """A rectangular ring, as the four bars that make it up."""
-    ox, oy, ix, iy = outer_w / 2, outer_h / 2, inner_w / 2, inner_h / 2
-    return [
-        _box(-ox, ox, iy, oy, z0, z1),
-        _box(-ox, ox, -oy, -iy, z0, z1),
-        _box(-ox, -ix, -iy, iy, z0, z1),
-        _box(ix, ox, -iy, iy, z0, z1),
-    ]
-
-
-def _stud(x: float, y: float, radius: float, z0: float, z1: float) -> trimesh.Trimesh:
-    """A round boss standing proud of the frame face — printable, no overhang."""
-    return trimesh.creation.cylinder(  # type: ignore[no-any-return]
-        radius=radius,
-        height=z1 - z0,
-        sections=_HOLE_SEGMENTS,
-        transform=_at(x, y, (z0 + z1) / 2),
-    )
-
-
-def _bead_run(
-    half_w: float, half_h: float, spacing: float, inset: float
-) -> list[tuple[float, float]]:
-    """Evenly spaced points along a rectangle's perimeter, leaving the corners free."""
-    points: list[tuple[float, float]] = []
-    for length, place in (
-        (2 * half_w, lambda t: [(t, half_h), (t, -half_h)]),
-        (2 * half_h, lambda t: [(half_w, t), (-half_w, t)]),
-    ):
-        span = length - 2 * inset
-        count = int(span // spacing)
-        if count < 1:
-            continue
-        step = span / count
-        for i in range(count + 1):
-            points.extend(place(-span / 2 + i * step))
-    return points
-
-
-def frame_solid(
-    plate_mm: float,
-    tag_thickness_mm: float,
-    *,
-    width_mm: float = _FRAME_WIDTH_MM,
-    face_mm: float = 3.0,
-    rabbet_mm: float = _FRAME_RABBET_MM,
-) -> trimesh.Trimesh:
-    """An ornamental picture frame the tag sits in, as a separate part to print in its own
-    material.
-
-    Modelled face-up in the tag's own coordinate frame, so the tag drops straight into the
-    pocket at z=0 and the front lip laps over its edge — meaning the 3MF shows the pair
-    assembled, and the frame still prints flat on its back with every ornament facing up.
-
-    The moulding is a raised rim at each edge of the face with a run of beads on the land
-    between them, and a two-tier rosette on each corner.
-    """
-    pocket = plate_mm + 2 * _FRAME_FIT_MM
-    lip = plate_mm - 2 * rabbet_mm
-    band = width_mm
-    outer = plate_mm + 2 * band
-    if lip <= 0:
-        raise ValueError(f"a {plate_mm:.1f} mm plate is too small to frame")
-
-    back = tag_thickness_mm + _FRAME_SLACK_MM
-    face = back + face_mm
-    # Everything on the face is proportioned off the band, so the frame scales with the tag.
-    rim = band * 0.30
-    rim_h = band * 0.14
-    bead_r = band * 0.15
-    rosette_r = band * 0.24
-
-    parts = [
-        # Pocket wall, then the front face whose inner edge laps over the tag.
-        *_ring(outer, outer, pocket, pocket, 0.0, back),
-        *_ring(outer, outer, lip, lip, back, face),
-        # A raised rim along the outer and inner edges of the face.
-        *_ring(outer, outer, outer - 2 * rim, outer - 2 * rim, face - _EPS, face + rim_h),
-        *_ring(lip + 2 * rim, lip + 2 * rim, lip, lip, face - _EPS, face + rim_h * 0.7),
-    ]
-    # Beads along the land between the rims, and a rosette on each corner.
-    land = (outer - 2 * rim + lip + 2 * rim) / 4
-    parts += [
-        _stud(x, y, bead_r, face - _EPS, face + rim_h * 0.9)
-        for x, y in _bead_run(land, land, bead_r * 3.2, rosette_r * 2.2)
-    ]
-    for sx in (-1, 1):
-        for sy in (-1, 1):
-            parts.append(_stud(sx * land, sy * land, rosette_r, face - _EPS, face + rim_h))
-            parts.append(_stud(sx * land, sy * land, rosette_r * 0.6, face, face + rim_h * 1.8))
-
-    solid = _union(parts)
-    cuts, posts = _hanger(outer, pocket, band, face)
-    return _union([trimesh.boolean.difference([solid, *cuts]), *posts])
-
-
-def _hanger(
-    outer: float, tag_pocket: float, band: float, rail_thickness: float
-) -> tuple[list[trimesh.Trimesh], list[trimesh.Trimesh]]:
-    """A rope recess in the back of the top rail: (material to cut, posts to put back).
-
-    The frame does not hang on the nail — a rope is tied round two posts and looped over a
-    nail above it. Each post stands free in the recess, joined to the frame only at its
-    base, so a rope can be passed right around it; the recess either side is the clearance
-    that lets it. Between the posts the recess breaks out through the top edge, and both
-    rope ends leave through there on their way up to the nail.
-
-    Nothing reaches past the back plane — posts end flush with it — so the frame still sits
-    flat on the wall. That is what keeps it from tilting: anything proud of the back holds
-    the frame off the wall, and its mass, which sits in front of the wall plane, then swings
-    it until the centre of mass hangs under the nail. Nothing is cut through to the face
-    either, so none of it shows from the front. Printed back-down, each post rises from the
-    bed and merges into the recess floor, so it needs no support.
-    """
-    depth = min(_HANGER_DEPTH_MM, rail_thickness - _HANGER_KEEP_MM)
-    half_x = outer * 0.28
-    mid_y = (tag_pocket / 2 + outer / 2) / 2
-    # Deep enough either side of a post to pass a rope around it.
-    half_y = _HANGER_POST_R_MM + _HANGER_ROPE_MM
-    post_x = half_x * 0.72
-    door = _HANGER_ROPE_MM
-    cuts = [_box(-half_x, half_x, mid_y - half_y, mid_y + half_y, -_EPS, depth)]
-    cuts += [
-        _box(
-            sx * post_x - door,
-            sx * post_x + door,
-            mid_y + half_y - _EPS,
-            outer / 2 + _EPS,
-            -_EPS,
-            depth,
-        )
-        for sx in (-1, 1)
-    ]
-    posts = [
-        trimesh.creation.cylinder(
-            radius=_HANGER_POST_R_MM,
-            height=depth + _EPS,
-            sections=_HOLE_SEGMENTS,
-            transform=_at(sx * post_x, mid_y, (depth + _EPS) / 2),
-        )
-        for sx in (-1, 1)
-    ]
-    return cuts, posts
-
-
 def leg_solid(
     height_mm: float,
     hole_spacing_mm: float,
@@ -741,7 +572,6 @@ def build_tag_meshes(
     back_text: bool = True,
     text_depth_mm: float = 0.6,
     text_inlay: bool = True,
-    frame_mm: float = 0.0,
     min_stroke_mm: float = 0.45,
 ) -> TagParts:
     """Build one tag's solids, all sharing one coordinate frame."""
@@ -786,24 +616,7 @@ def build_tag_meshes(
     footprint = plate_footprint_mm(plate, hole_dia_mm, holes)
     body = _rounded_plate(footprint[0], footprint[1], thickness_mm)
     base = trimesh.boolean.difference([body, *cuts])
-    ornament = None
-    if frame_mm > 0:
-        # The lip is opaque and a different color, so it eats into the quiet zone. Give it
-        # only what the margin can spare beyond the one cell the detector needs.
-        spare = margin - size_mm / n
-        if spare < _FRAME_RABBET_MIN_MM:
-            raise ValueError(
-                f"a frame needs {_FRAME_RABBET_MIN_MM:g} mm of margin beyond the tag's "
-                f"one-cell quiet zone to grip; this plate spares {spare:.1f} mm — "
-                f"raise --margin-cells (2 works for most tags)"
-            )
-        ornament = frame_solid(
-            plate,
-            thickness_mm,
-            width_mm=frame_mm,
-            rabbet_mm=min(_FRAME_RABBET_MM, spare),
-        )
-    return TagParts(base=base, marker=marker, text=text, frame=ornament)
+    return TagParts(base=base, marker=marker, text=text)
 
 
 _CONTENT_TYPES = (
@@ -874,7 +687,6 @@ def generate_3d(
     hole_dia_mm: float = 3.4,
     back_text: bool = True,
     text_inlay: bool = True,
-    frame_mm: float = 0.0,
     legs_mm: float = 0.0,
     leg_thickness_mm: float = 6.0,
     leg_brace: bool = True,
@@ -903,14 +715,11 @@ def generate_3d(
             hole_dia_mm=hole_dia_mm,
             back_text=back_text,
             text_inlay=text_inlay,
-            frame_mm=frame_mm,
         )
         stem = f"{family.lower()}_{tag_id:03d}"
         parts = [("base", tag.base, base_color), ("marker", tag.marker, marker_color)]
         if tag.text is not None:
             parts.append(("text", tag.text, text_color or marker_color))
-        if tag.frame is not None:
-            parts.append(("frame", tag.frame, FRAME_COLOR))
         for name, mesh, _color in parts:
             path = out_dir / f"{stem}_{name}.stl"
             mesh.export(path)

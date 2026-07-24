@@ -143,14 +143,6 @@ def test_3d_mode_collects_the_run_into_one_directory() -> None:
     assert _request(three_d=True).pdf_path == Path("tags/tags.pdf")
 
 
-def test_margin_defaults_to_what_the_build_needs() -> None:
-    """One cell is all the detector wants; only a frame's lip needs a second."""
-    assert _request(three_d=True).margin == 1.0
-    assert _request(three_d=True, holes=False).margin == 1.0
-    assert _request(three_d=True, frame_mm=15.0).margin == 2.0
-    assert _request(three_d=True, frame_mm=15.0, margin_cells=3.0).margin == 3.0
-
-
 def test_legs_imply_the_holes_they_bolt_through() -> None:
     assert _request(holes=False, legs_mm=250.0).mounted
     assert not _request(holes=False).mounted

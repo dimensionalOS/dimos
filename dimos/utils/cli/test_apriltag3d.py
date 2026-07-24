@@ -23,7 +23,6 @@ from dimos.utils.cli.apriltag import cell_matrix
 from dimos.utils.cli.apriltag3d import (
     TagParts,
     build_tag_meshes,
-    frame_solid,
     generate_3d,
     grid_rects,
     hole_pad_mm,
@@ -179,54 +178,3 @@ def test_generate_3d_rejects_empty_ids(tmp_path: Path) -> None:
 def test_other_families_build(family: str) -> None:
     parts = build_tag_meshes(family, 1, size_mm=60.0)
     assert parts.base.is_watertight and parts.marker.is_watertight
-
-
-def test_frame_is_a_separate_part_the_tag_drops_into() -> None:
-    parts = build_tag_meshes(
-        "tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0, margin_cells=2.0
-    )
-    assert parts.frame is not None and parts.frame.is_watertight
-    # Same coordinate frame, and the pocket clears the plate rather than fouling it.
-    assert trimesh.boolean.intersection([parts.base, parts.frame]).volume < 1e-6
-    assert parts.frame.bounds[0][2] == pytest.approx(0.0)
-
-
-def test_frame_lip_leaves_the_quiet_zone_visible() -> None:
-    """The lip is opaque and a different color, so it must not encroach on the quiet zone."""
-    frame = frame_solid(100.0, 3.0, rabbet_mm=3.0)
-    xs = np.linspace(25.0, 60.0, 1400)
-    inside = frame.contains(np.stack([xs, np.zeros(xs.size), np.full(xs.size, 5.0)], axis=1))
-    assert xs[inside][0] == pytest.approx(47.0, abs=0.1)
-
-
-def test_frame_is_refused_when_the_margin_cannot_spare_a_lip() -> None:
-    with pytest.raises(ValueError, match="raise --margin-cells"):
-        build_tag_meshes(
-            "tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0, margin_cells=1.0
-        )
-
-
-def test_frame_hangs_flat_on_a_wall() -> None:
-    """A rope ties round two posts and loops over a nail above; the back stays flat."""
-    frame = frame_solid(75.0, 3.0)
-    top = frame.bounds[1][1]
-    band_y = (75.0 / 2 + top) / 2
-    post_x = (75.0 + 2 * 15.0) * 0.28 * 0.72
-
-    # Each post stands through the recess, joined to the frame only at its base...
-    posts = np.array([[sx * post_x, band_y, z] for sx in (-1, 1) for z in (0.3, 3.0)])
-    assert frame.contains(posts).all()
-    # ...with rope clearance right around it, so nothing else touches it.
-    around = np.array(
-        [[sx * post_x + dx, band_y + dy, 1.0] for sx in (-1, 1) for dx, dy in ((4.5, 0), (0, 4.5))]
-    )
-    assert not frame.contains(around).any()
-
-    # Each rope end leaves through its own door in the top edge, and the rail survives
-    # between them rather than the whole top being cut away.
-    doors = np.array([[sx * post_x, top - 0.5, 1.0] for sx in (-1, 1)])
-    assert not frame.contains(doors).any()
-    assert frame.contains(np.array([[0.0, top - 0.5, 1.0]]))[0]
-    # Nothing protrudes past the back plane, and nothing is cut through to the face.
-    assert frame.bounds[0][2] == pytest.approx(0.0)
-    assert frame.contains(np.array([[0.0, band_y, z] for z in (5.2, 6.0)])).all()

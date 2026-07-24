@@ -355,12 +355,11 @@ class TagRequest:
     three_d: bool = False
     thickness_mm: float = 3.0
     marker_mm: float = 0.8
-    margin_cells: float | None = None
+    margin_cells: float = 1.0
     holes: bool = True
     hole_dia_mm: float = 3.4
     back_text: bool = True
     text_inlay: bool = True
-    frame_mm: float = 0.0
     legs_mm: float = 0.0
     leg_thickness_mm: float = 6.0
     leg_brace: bool = True
@@ -378,28 +377,14 @@ class TagRequest:
             raise ValueError(
                 f"unsupported page_size: {self.page_size}; choose from {sorted(_PAGE_SIZES)}"
             )
-        if self.frame_mm > 0 and self.legs_mm > 0:
-            raise ValueError("--frame and --legs are alternatives; pick one")
         if self.three_d:
             for color in (self.base_color, self.marker_color, self.text_color or "#000000"):
                 display_color(color)
 
     @property
-    def margin(self) -> float:
-        """Quiet-zone width in cells, defaulting to what this build actually needs.
-
-        The detector wants one light cell around the black border and nothing more; only a
-        frame needs a second, since its lip laps over the plate edge and has to leave that
-        one cell still showing. Flanges and legs reach outward and never touch it.
-        """
-        if self.margin_cells is not None:
-            return self.margin_cells
-        return 2.0 if self.frame_mm > 0 else 1.0
-
-    @property
     def mounted(self) -> bool:
-        """Legs bolt through the flange holes; a frame holds the tag instead of screws."""
-        return self.frame_mm <= 0 and (self.holes or self.legs_mm > 0)
+        """Legs bolt through the flange holes, so asking for legs asks for those holes."""
+        return self.holes or self.legs_mm > 0
 
     @property
     def out_dir(self) -> Path | None:
@@ -426,14 +411,9 @@ class TagRequest:
         return rows if not self.three_d else rows + self._describe_3d()
 
     def _describe_3d(self) -> list[tuple[str, str]]:
-        from dimos.utils.cli.apriltag3d import (
-            FRAME_COLOR,
-            hole_spacing_mm,
-            plate_footprint_mm,
-            plate_size_mm,
-        )
+        from dimos.utils.cli.apriltag3d import hole_spacing_mm, plate_footprint_mm, plate_size_mm
 
-        plate = plate_size_mm(self.family, self.size_mm, self.margin)
+        plate = plate_size_mm(self.family, self.size_mm, self.margin_cells)
         width, height = plate_footprint_mm(plate, self.hole_dia_mm, self.mounted)
         spacing = hole_spacing_mm(plate, self.hole_dia_mm)
         swap = self.thickness_mm - self.marker_mm
@@ -445,7 +425,7 @@ class TagRequest:
             ),
             (
                 "margin",
-                f"{self.margin:g} cell(s) = {(plate - self.size_mm) / 2:g} mm quiet zone",
+                f"{self.margin_cells:g} cell(s) = {(plate - self.size_mm) / 2:g} mm quiet zone",
             ),
             ("marker", f"top {self.marker_mm:g} mm — swap filament at z = {swap:g}"),
             (
@@ -464,12 +444,6 @@ class TagRequest:
                 else "none",
             ),
             (
-                "frame",
-                f"ornamental, {self.frame_mm:g} mm band, separate part (own material)"
-                if self.frame_mm > 0
-                else "none",
-            ),
-            (
                 "back text",
                 "family + ID + size, " + ("color inlay" if self.text_inlay else "engraved only")
                 if self.back_text
@@ -482,8 +456,7 @@ class TagRequest:
                     f", text {self.text_color or self.marker_color}"
                     if self.back_text and self.text_inlay
                     else ""
-                )
-                + (f", frame {FRAME_COLOR}" if self.frame_mm > 0 else ""),
+                ),
             ),
         ]
 
@@ -512,12 +485,11 @@ class TagRequest:
                 size_mm=self.size_mm,
                 thickness_mm=self.thickness_mm,
                 marker_mm=self.marker_mm,
-                margin_cells=self.margin,
+                margin_cells=self.margin_cells,
                 holes=self.mounted,
                 hole_dia_mm=self.hole_dia_mm,
                 back_text=self.back_text,
                 text_inlay=self.text_inlay,
-                frame_mm=self.frame_mm,
                 legs_mm=self.legs_mm,
                 leg_thickness_mm=self.leg_thickness_mm,
                 leg_brace=self.leg_brace,
@@ -539,6 +511,4 @@ class TagRequest:
         )
         if self.legs_mm > 0:
             lines.append("  Print leg_*_left and leg_*_right once each — 2 screws per leg.")
-        if self.frame_mm > 0:
-            lines.append("  The _frame part is separate — print it in its own material.")
         return lines

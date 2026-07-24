@@ -957,13 +957,10 @@ def apriltag(
     marker_mm: float = typer.Option(
         0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
     ),
-    margin_cells: float | None = typer.Option(
-        None,
+    margin_cells: float = typer.Option(
+        1.0,
         "--margin-cells",
-        help=(
-            "[3d] Light quiet-zone border around the tag, in tag cells "
-            "(default: 1, or 2 with --frame, whose lip laps over the edge)"
-        ),
+        help="[3d] Light quiet-zone border around the tag, in tag cells",
     ),
     holes: bool = typer.Option(
         True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"
@@ -978,15 +975,6 @@ def apriltag(
         True,
         "--text-inlay/--no-text-inlay",
         help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
-    ),
-    frame: float = typer.Option(
-        0.0,
-        "--frame",
-        metavar="WIDTH_MM",
-        help=(
-            "[3d] Instead of mounting holes, add an ornamental picture frame this many mm "
-            "wide, as its own part to print in another material. 15 is a good width"
-        ),
     ),
     legs: float = typer.Option(
         0.0,
@@ -1033,7 +1021,6 @@ def apriltag(
             hole_dia_mm=hole_dia_mm,
             back_text=back_text,
             text_inlay=text_inlay,
-            frame_mm=frame,
             legs_mm=legs,
             leg_thickness_mm=leg_thickness_mm,
             leg_brace=leg_brace,
