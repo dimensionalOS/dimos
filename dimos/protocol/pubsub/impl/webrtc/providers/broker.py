@@ -54,8 +54,8 @@ logger = setup_logger()
 # Default hosted-teleop broker endpoint.
 DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
 
-# Mirrors cloudflare.py — CF silently drops DataChannel messages larger than this.
-MAX_MSG_SIZE = 16 * 1024
+# Mirrors cloudflare.py — CF silently drops DataChannel messages above ~64 KB.
+MAX_MSG_SIZE = 32 * 1024
 
 if TYPE_CHECKING:
     import aiohttp

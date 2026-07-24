@@ -15,7 +15,7 @@
 """Map compressor module: OccupancyGrid → compact PNG payload for the operator.
 
 Throttles, coarsens (block-max), colorizes and PNG-encodes the costmap into a
-JSON payload under the 16 KB datachannel ceiling, plus a compact odom pose so
+JSON payload under the 32 KB datachannel budget, plus a compact odom pose so
 the operator marker moves between map frames. ``map_out`` binds to a
 ``CloudflareTransport("map_unreliable")``.
 """
@@ -50,7 +50,7 @@ class MapCompressModule(Module):
 
     config: MapCompressConfig
 
-    _MAX_MAP_BYTES = 16 * 1024  # datachannel per-message ceiling
+    _MAX_MAP_BYTES = 32 * 1024  # ~50% of CF's observed ~64 KB drop threshold
 
     global_costmap: In[OccupancyGrid]
     odom: In[PoseStamped]
@@ -74,7 +74,7 @@ class MapCompressModule(Module):
         super().stop()
 
     def _on_costmap(self, grid: OccupancyGrid) -> None:
-        """Throttle → coarsen → colorize → PNG → map_out (under the 16 KB cap)."""
+        """Throttle → coarsen → colorize → PNG → map_out (under the 32 KB cap)."""
         now = time.monotonic()
         if now - self._last_map_pub < 1.0 / self.config.map_hz:
             return

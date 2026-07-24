@@ -21,7 +21,8 @@ that all run in one worker so everything shares that single session (the
 - **`camera_mux.py`** — `CameraMuxModule`: N cameras → one composited, capped
   video track (operator-selectable views).
 - **`map_compress.py`** — `MapCompressModule`: costmap + odom → the minimap
-  datachannel (coarsened, PNG-encoded, kept under the 16 KB datachannel limit).
+  datachannel (coarsened, PNG-encoded, kept under a 32 KB budget — CF drops
+  messages above ~64 KB).
 - **`hosted_stats.py`** — `HostedStatsModule`: telemetry frame, command acks,
   and command-link latency/rate stats.
 - **`command_executor.py`** — `SerializedCommandExecutor`: serializes blocking
@@ -46,7 +47,7 @@ The operator HTML lives in the dimensional-teleop broker repo (`web/`).
    session, returns the answer + a `session_id` keyed off the robot.
 3. SDP answer's candidates are propagated across bundled m-sections (aiortc
    workaround) before `setRemoteDescription`.
-4. Heartbeat thread polls `/sessions/{id}/heartbeat`; each ack carries the SCTP
+4. A heartbeat task polls `/sessions/{id}/heartbeat`; each ack carries the SCTP
    ids the broker has assigned for `cmd_unreliable`, `state_reliable`,
    `state_reliable_back`, and `map_unreliable`. We open / re-open / close
    negotiated channels to track the broker's view (when `state_reliable` drops

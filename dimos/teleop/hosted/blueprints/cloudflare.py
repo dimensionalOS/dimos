@@ -56,7 +56,7 @@ from dimos.teleop.hosted.robot_type import RobotType
 teleop_hosted_go2_transport = (
     autoconnect(
         GO2Connection.blueprint(),
-        Go2CommandModule.blueprint(),
+        Go2CommandModule.blueprint(allow_acrobatics=True),
         CameraMuxModule.blueprint(cameras=["cam1"]),
         HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
@@ -99,7 +99,7 @@ teleop_hosted_go2_transport = (
 teleop_hosted_go2_multicam = (
     autoconnect(
         GO2Connection.blueprint(),
-        Go2CommandModule.blueprint(),
+        Go2CommandModule.blueprint(allow_acrobatics=True),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
