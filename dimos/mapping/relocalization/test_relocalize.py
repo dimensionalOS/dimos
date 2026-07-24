@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Invariant tests for the fiducial prior and the per-prior accept path.
-
-All inputs are CONSTRUCTED: each test injects a known transform or monkeypatches the
-solve and asserts the compose / accept / reject logic directly.
-"""
+"""Invariant tests for the fiducial prior and the per-prior accept path (constructed inputs)."""
 
 from __future__ import annotations
 
@@ -53,8 +49,7 @@ def _rigid(yaw_deg: float, t: tuple[float, float, float]) -> np.ndarray:
 
 
 def test_fiducial_composes_map_T_world_then_consumes_it_once() -> None:
-    """One aggregated world_T_marker composes to map_T_world = map_T_marker @
-    inv(world_T_marker), and the fix is proposed exactly once (consume-on-use)."""
+    """map_T_world = map_T_marker @ inv(world_T_marker), proposed exactly once (consume-on-use)."""
     empty = o3d.geometry.PointCloud()
     map_T_marker = _rigid(30.0, (5.0, -2.0, 0.5))
     world_T_marker = _rigid(-40.0, (1.0, 0.5, 0.8))
@@ -73,8 +68,7 @@ def test_fiducial_composes_map_T_world_then_consumes_it_once() -> None:
 
 
 def _bare_module(config: Config) -> RelocalizationModule:
-    """A RelocalizationModule with only the attributes the pure helpers read; mirrors
-    __init__'s derived state. A test overrides _premap/_fiducial_prior as needed."""
+    """A RelocalizationModule with only the attributes the pure helpers read (mirrors __init__)."""
     m = object.__new__(RelocalizationModule)
     m.config = config
     m._last_skip_log = 0.0
@@ -108,8 +102,7 @@ class _StubCloud:
 
 
 class _ModuleLogRecorder:
-    """Captures module.py logger .info/.warning as (event, kwargs); the real logger
-    sets propagate=False, so caplog can't see these and monkeypatching is needed."""
+    """Captures module.py logger .info/.warning as (event, kwargs) -- logger is propagate=False."""
 
     def __init__(self) -> None:
         self.infos: list[tuple[str, dict[str, object]]] = []
@@ -138,8 +131,7 @@ class _ModuleLogRecorder:
 def test_accept_gate_is_per_prior(
     monkeypatch: pytest.MonkeyPatch, winning_source: str, fitness: float, accepted: bool
 ) -> None:
-    """The accept gate is PER-SOURCE: a fiducial fix at 0.40 clears its 0.35 bar while
-    a ransac fix at 0.50 fails its 0.55 bar -- the same fitnesses flip under one gate."""
+    """The accept gate is PER-SOURCE: fiducial 0.40 clears its 0.35 bar, ransac 0.50 fails its 0.55."""
     m = _bare_module(
         Config(
             priors=[
@@ -173,8 +165,7 @@ def test_accept_gate_is_per_prior(
 
 
 def _tracking_module(monkeypatch: pytest.MonkeyPatch, now: list[float]) -> RelocalizationModule:
-    """A module that has already accepted one fix at the identity, so the next call is a
-    tracking fix; the clock is driven, never slept, so the jump budgets are exact."""
+    """A module that has already accepted one identity fix, so the next call is a tracking fix."""
     m = _bare_module(Config(priors=[RansacPriorConfig()]))
     m._premap = _StubCloud(10)  # type: ignore[assignment]
     m._now_fn = lambda: now[0]
@@ -197,8 +188,7 @@ def _tracking_module(monkeypatch: pytest.MonkeyPatch, now: list[float]) -> Reloc
 def test_jump_guard(
     monkeypatch: pytest.MonkeyPatch, seed_fix: bool, dt_s: float, T: np.ndarray, accepted: bool
 ) -> None:
-    """The tracking jump guard rejects a gross mis-localization, passes a normal
-    sub-metre drift, and never blocks the first fix (acquisition is unguarded)."""
+    """The tracking jump guard rejects a gross jump, passes normal drift, never blocks the first fix."""
     now = [100.0]
     if seed_fix:
         m = _tracking_module(monkeypatch, now)

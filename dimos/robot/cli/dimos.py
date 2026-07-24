@@ -319,8 +319,8 @@ def run(
         False,
         "--eval",
         help=(
-            "Attach the RelocEval collector (per-source reloc table JSON + trajectory "
-            "PNG) and turn the relocalization module's verbose trace on"
+            "Attach the RelocEval collector (per-source reloc table) and turn the "
+            "relocalization module's verbose trace on"
         ),
     ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
