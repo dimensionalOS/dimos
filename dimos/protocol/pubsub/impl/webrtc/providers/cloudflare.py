@@ -62,7 +62,7 @@ else:
 # Forces an SCTP m-line into the offer; CF-assigned channel ids start low, so
 # a high fixed id stays clear of them.
 _PLACEHOLDER_DC_ID = 100
-# CF silently drops DataChannel messages above ~64 KB (undocumented); warn at half.
+# CF silently drops DataChannel messages above ~64 KB; warn at half.
 MAX_MSG_SIZE = 32 * 1024
 
 

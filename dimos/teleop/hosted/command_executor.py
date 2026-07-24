@@ -54,8 +54,6 @@ class SerializedCommandExecutor:
         self._urgent_threads: set[threading.Thread] = set()
 
     def start(self) -> None:
-        with self._lock:
-            self._pending = 0
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="HostedCmd")
 
     def stop(self) -> None:

@@ -202,8 +202,7 @@ class BrokerProvider(AsyncProviderBase):
         # Roll back partial state on failure so a retry doesn't leak.
         try:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
-            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds —
-            # see dimos/teleop/hosted/README.md before changing.
+            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds.
             self._pc = RTCPeerConnection(
                 RTCConfiguration(
                     iceServers=await self._fetch_ice_servers(),
