@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+import json
 import os
 from pathlib import Path
 import threading
@@ -81,6 +82,13 @@ class DistortionModel(str, Enum):
 
     def to_ros_name(self) -> str:
         return "equidistant" if self is DistortionModel.fisheye else self.value
+
+
+class Board(str, Enum):
+    """Calibration target pattern."""
+
+    chessboard = "chessboard"
+    charuco = "charuco"
 
 
 app = typer.Typer(
@@ -164,6 +172,8 @@ def load_frames_from_folder(path: str) -> list[np.ndarray]:
 _CAMERACALIBRATE_WINDOW = "dimos cameracalibrate"
 _MAX_CONSECUTIVE_WEBCAM_READ_FAILURES = 30
 _OPENCV_CALIBRATION_RUNTIME_CONFIGURED = False
+_MIN_CHARUCO_CORNERS = 6  # solvePnP and the calibration solvers are ill-conditioned below this
+_COVERAGE_GRID = 6  # capture hint: image binned into GRID x GRID cells; never gates SPACE
 
 
 @dataclass(frozen=True)
@@ -334,6 +344,24 @@ def _draw_capture_status(
     cv2.putText(preview, detail, (12, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
 
+def _coverage_overlay(
+    preview: np.ndarray, corners_px: np.ndarray | None, covered: set[tuple[int, int]]
+) -> None:
+    """Coverage hint: clear cells the board has swept, outline the rest; never gates capture."""
+    grid, (h, w) = _COVERAGE_GRID, preview.shape[:2]
+    if corners_px is not None:
+        pts = np.asarray(corners_px, dtype=np.float64).reshape(-1, 2)
+        cx = np.clip(pts[:, 0] * grid / w, 0, grid - 1).astype(int)
+        cy = np.clip(pts[:, 1] * grid / h, 0, grid - 1).astype(int)
+        covered.update(zip(cx.tolist(), cy.tolist(), strict=True))
+    for gx in range(grid):
+        for gy in range(grid):
+            if (gx, gy) not in covered:
+                corner0 = (gx * w // grid, gy * h // grid)
+                corner1 = ((gx + 1) * w // grid, (gy + 1) * h // grid)
+                cv2.rectangle(preview, corner0, corner1, (0, 200, 255), 1)
+
+
 def _interactive_capture(
     next_frame: Callable[[], np.ndarray | None],
     target_count: int,
@@ -341,6 +369,7 @@ def _interactive_capture(
     rows: int,
     *,
     no_display: bool,
+    charuco_board: Any | None = None,
 ) -> _WebcamCapture:
     """Interactive chessboard preview + SPACE-accept / q-quit loop.
 
@@ -354,6 +383,7 @@ def _interactive_capture(
 
     accepted: list[np.ndarray] = []
     accepted_corners: list[np.ndarray] = []
+    covered_cells: set[tuple[int, int]] = set()
     last_detected: tuple[int, int, str] | None = None
     locked_pattern: tuple[int, int, str] | None = None
     locked_exact_probe = False
@@ -371,7 +401,15 @@ def _interactive_capture(
             else:
                 gray = frame
 
-            if locked_pattern is None:
+            if charuco_board is not None:
+                # ChArUco: geometry is fixed by the board (no pattern guessing); corners re-detected offline.
+                det = detect_charuco(gray, charuco_board)
+                detection = (
+                    _ChessboardDetection(det[1], int(det[1].shape[0]), 1, "charuco corners")
+                    if det is not None
+                    else None
+                )
+            elif locked_pattern is None:
                 candidate = pattern_candidates[pattern_candidate_index]
                 pattern_candidate_index = (pattern_candidate_index + 1) % len(pattern_candidates)
                 # Until pattern lock: one candidate per frame so we do not evaluate every pattern every frame.
@@ -420,6 +458,8 @@ def _interactive_capture(
             )
 
             if not no_display:
+                corners_seen = detection.corners if detection is not None else None
+                _coverage_overlay(preview, corners_seen, covered_cells)
                 cv2.imshow(_CAMERACALIBRATE_WINDOW, preview)
 
             key = cv2.waitKey(1) & 0xFF
@@ -453,6 +493,7 @@ def _capture_frames_from_webcam(
     rows: int,
     *,
     no_display: bool = False,
+    charuco_board: Any | None = None,
 ) -> _WebcamCapture:
     """Capture ``target_count`` BGR frames from a webcam when the board is visible.
 
@@ -490,7 +531,9 @@ def _capture_frames_from_webcam(
             consecutive_read_failures = 0
             return frame  # type: ignore[no-any-return]
 
-        return _interactive_capture(_next, target_count, cols, rows, no_display=no_display)
+        return _interactive_capture(
+            _next, target_count, cols, rows, no_display=no_display, charuco_board=charuco_board
+        )
 
     finally:
         if cap is not None:
@@ -523,6 +566,7 @@ def _capture_frames_from_topic(
     *,
     no_display: bool = False,
     timeout_sec: float = 60.0,
+    charuco_board: Any | None = None,
 ) -> _WebcamCapture:
     """Capture frames from an LCM/SHM image topic with the same interactive UX.
 
@@ -568,7 +612,9 @@ def _capture_frames_from_topic(
         return frame
 
     try:
-        return _interactive_capture(_next, target_count, cols, rows, no_display=no_display)
+        return _interactive_capture(
+            _next, target_count, cols, rows, no_display=no_display, charuco_board=charuco_board
+        )
     finally:
         # Best-effort teardown: swallow per-transport quirks so cleanup
         # never masks the original error from _interactive_capture.
@@ -797,6 +843,86 @@ def calibrate_from_frames(
     }
 
 
+def build_charuco_board(
+    dict_name: str,
+    squares_x: int,
+    squares_y: int,
+    square_size_m: float,
+    marker_size_m: float | None,
+) -> Any:
+    """Build a ``cv2.aruco.CharucoBoard`` (lengths in meters, so object points are metric)."""
+    if squares_x < 2 or squares_y < 2:
+        raise ValueError(f"charuco needs >= 2x2 squares, got {squares_x}x{squares_y}")
+    dict_id = getattr(cv2.aruco, dict_name, None)
+    if not isinstance(dict_id, int):
+        raise ValueError(f"unknown aruco dictionary {dict_name!r}; want a cv2.aruco.DICT_* name")
+    # Default marker edge 0.8 * square: the standard ChArUco print ratio.
+    marker_m = float(marker_size_m) if marker_size_m is not None else float(square_size_m) * 0.8
+    return cv2.aruco.CharucoBoard(
+        (int(squares_x), int(squares_y)),
+        float(square_size_m),
+        marker_m,
+        cv2.aruco.getPredefinedDictionary(dict_id),
+    )
+
+
+def detect_charuco(gray: np.ndarray, board: Any) -> tuple[np.ndarray, np.ndarray] | None:
+    """Detect ChArUco corners: ``(object_points_m (N, 3), corners_px (N, 1, 2))`` or ``None``."""
+    detect_board = cast(
+        "Callable[..., tuple[Any, Any, Any, Any]]", cv2.aruco.CharucoDetector(board).detectBoard
+    )
+    corners, ids, _marker_corners, _marker_ids = detect_board(_as_grayscale_uint8(gray))
+    if ids is None or corners is None or len(ids) < _MIN_CHARUCO_CORNERS:
+        return None
+    ids_flat = np.asarray(ids, dtype=np.int32).reshape(-1)
+    objp_m = np.asarray(board.getChessboardCorners(), dtype=np.float32)[ids_flat]
+    return objp_m, np.asarray(corners, dtype=np.float32).reshape(-1, 1, 2)
+
+
+def calibrate_from_frames_charuco(
+    frames: list[np.ndarray],
+    board: Any,
+    *,
+    distortion_model: DistortionModel | str = DistortionModel.plumb_bob,
+) -> CalibrationResultDict:
+    """ChArUco counterpart of ``calibrate_from_frames``: same solvers, per-view points from the board."""
+    if not frames:
+        raise ValueError("frames must be non-empty")
+    model = DistortionModel(distortion_model)
+    h0, w0 = np.asarray(frames[0]).shape[:2]
+
+    objpoints: list[np.ndarray] = []
+    imgpoints: list[np.ndarray] = []
+    for frame in frames:
+        f = np.asarray(frame)
+        if f.shape[:2] != (h0, w0):
+            raise ValueError("All frames must have the same shape.")
+        det = detect_charuco(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f, board)
+        if det is None:
+            continue
+        objp_m, corners_px = det
+        # The fisheye solver demands the explicit middle axis; cv2.calibrateCamera takes (N, 3).
+        objpoints.append(objp_m.reshape(-1, 1, 3) if model is DistortionModel.fisheye else objp_m)
+        imgpoints.append(corners_px)
+    if not objpoints:
+        raise ValueError("ChArUco board not found in any frame.")
+
+    if model is DistortionModel.fisheye:
+        rms, K, D = _calibrate_fisheye(objpoints, imgpoints, (int(w0), int(h0)))
+    else:
+        rms, K, D = _calibrate_pinhole(objpoints, imgpoints, (int(w0), int(h0)))
+    squares_x, squares_y = (int(v) for v in board.getChessboardSize())
+    return {
+        "K": K,
+        "D": D,
+        "rms": float(rms),
+        "image_size": (int(w0), int(h0)),
+        "n_used": len(objpoints),
+        "pattern_size": (squares_x, squares_y),
+        "pattern_label": "charuco squares",
+    }
+
+
 def write_preview_overlay_png(
     frames: list[np.ndarray],
     cols: int,
@@ -837,8 +963,14 @@ def run_calibration(
     target_count: int,
     no_display: bool,
     distortion_model: DistortionModel | str = DistortionModel.plumb_bob,
+    board: Board | str = Board.chessboard,
+    charuco_dict: str = "DICT_4X4_50",
+    marker_size_m: float | None = None,
 ) -> CalibrationRunResultDict:
-    """Run calibration from the requested frame source and write CameraInfo YAML."""
+    """Run calibration from the requested frame source and write CameraInfo YAML.
+
+    For ``board=charuco``, ``cols``/``rows`` are SQUARE counts (not inner corners).
+    """
     source_value = Source(source)
     model = DistortionModel(distortion_model)
     if cols < 1:
@@ -847,6 +979,11 @@ def run_calibration(
         raise ValueError("rows must be >= 1")
     if square_size_m <= 0:
         raise ValueError("square_size_m must be > 0")
+    charuco_board = (
+        build_charuco_board(charuco_dict, cols, rows, square_size_m, marker_size_m)
+        if Board(board) is Board.charuco
+        else None
+    )
 
     if source_value is Source.folder:
         if images is None:
@@ -866,6 +1003,7 @@ def run_calibration(
             rows,
             no_display=no_display,
             timeout_sec=topic_timeout_sec,
+            charuco_board=charuco_board,
         )
         frames = capture.frames
         pattern_hint = capture.pattern
@@ -877,20 +1015,25 @@ def run_calibration(
             cols,
             rows,
             no_display=no_display,
+            charuco_board=charuco_board,
         )
         frames = capture.frames
         pattern_hint = capture.pattern
         image_points_hint = capture.image_points
 
-    cal = calibrate_from_frames(
-        frames,
-        cols,
-        rows,
-        square_size_m,
-        pattern_hint=pattern_hint,
-        image_points_hint=image_points_hint,
-        distortion_model=model,
-    )
+    if charuco_board is not None:
+        # ChArUco corner counts vary per view, so the capture-time hints do not apply.
+        cal = calibrate_from_frames_charuco(frames, charuco_board, distortion_model=model)
+    else:
+        cal = calibrate_from_frames(
+            frames,
+            cols,
+            rows,
+            square_size_m,
+            pattern_hint=pattern_hint,
+            image_points_hint=image_points_hint,
+            distortion_model=model,
+        )
     result: CalibrationRunResultDict = {
         "K": cal["K"],
         "D": cal["D"],
@@ -930,6 +1073,176 @@ def run_calibration(
             )
 
     return result
+
+
+def _reproject_rms_px(
+    objp_m: np.ndarray,
+    corners_px: np.ndarray,
+    K: np.ndarray,
+    D: np.ndarray,
+    *,
+    fisheye: bool,
+) -> float | None:
+    """Per-view reprojection RMS (px) of detected corners under deployed intrinsics.
+
+    solvePnP recovers camera_T_board, cv2.projectPoints reprojects; ``None`` if solvePnP fails.
+    """
+    objp = np.asarray(objp_m, dtype=np.float64).reshape(-1, 3)
+    corners = np.asarray(corners_px, dtype=np.float64).reshape(-1, 1, 2)
+    if fisheye:
+        # No fisheye solvePnP exists: undistort corners to the ideal pinhole (P=K), solve with D=0.
+        undistorted_px = cv2.fisheye.undistortPoints(corners, K, D, R=np.eye(3), P=K)
+        ok, rvec, tvec = cv2.solvePnP(objp, undistorted_px, K, None)
+    else:
+        ok, rvec, tvec = cv2.solvePnP(objp, corners, K, D)
+    if not ok:
+        return None
+    if fisheye:
+        projected, _ = cv2.fisheye.projectPoints(
+            objp.reshape(-1, 1, 3), rvec.reshape(1, 1, 3), tvec.reshape(1, 1, 3), K, D
+        )
+    else:
+        projected, _ = cv2.projectPoints(objp, rvec, tvec, K, D)
+    residual_px = np.asarray(projected, dtype=np.float64).reshape(-1, 2) - corners.reshape(-1, 2)
+    return float(np.sqrt(np.mean(np.sum(residual_px**2, axis=1))))
+
+
+def run_check(
+    *,
+    source: Source | str,
+    device_index: int,
+    images: Path | None,
+    topic: str | None,
+    topic_timeout_sec: float,
+    cols: int,
+    rows: int,
+    square_size_m: float,
+    camera_info: Path,
+    rms_threshold_px: float,
+    out: Path | None,
+    target_count: int,
+    no_display: bool,
+    board: Board | str = Board.chessboard,
+    charuco_dict: str = "DICT_4X4_50",
+    marker_size_m: float | None = None,
+) -> dict[str, Any]:
+    """Score a deployed CameraInfo YAML on fresh frames.
+
+    Per view, solvePnP + reprojection RMS under the deployed intrinsics; when >= 3 views detect,
+    a fresh calibration in the deployed lens model measures intrinsics drift. Verdict is OK iff
+    median RMS <= ``rms_threshold_px`` and drift is small. Writes the report JSON to ``out``.
+    """
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo  # heavy (dimos_lcm); only --check
+    from dimos.perception.fiducial.marker_pose import is_fisheye_model
+
+    info = CameraInfo.from_yaml(str(camera_info))
+    K = np.asarray(info.get_K_matrix(), dtype=np.float64).reshape(3, 3)
+    D = np.asarray(info.get_D_coeffs(), dtype=np.float64).ravel()
+    fisheye = is_fisheye_model(info.distortion_model)
+    charuco_board = (
+        build_charuco_board(charuco_dict, cols, rows, square_size_m, marker_size_m)
+        if Board(board) is Board.charuco
+        else None
+    )
+
+    source_value = Source(source)
+    if source_value is Source.folder:
+        if images is None:
+            raise ValueError("--images is required when --source folder")
+        frames = load_frames_from_folder(str(images))
+    elif source_value is Source.topic:
+        if topic is None:
+            raise ValueError("--topic is required when --source topic")
+        frames = _capture_frames_from_topic(
+            topic,
+            target_count,
+            cols,
+            rows,
+            no_display=no_display,
+            timeout_sec=topic_timeout_sec,
+            charuco_board=charuco_board,
+        ).frames
+    else:
+        frames = _capture_frames_from_webcam(
+            device_index,
+            target_count,
+            cols,
+            rows,
+            no_display=no_display,
+            charuco_board=charuco_board,
+        ).frames
+
+    # Per-view (object points m, corners px) correspondences.
+    views: list[tuple[np.ndarray, np.ndarray]] = []
+    if charuco_board is not None:
+        for frame in frames:
+            f = np.asarray(frame)
+            det = detect_charuco(
+                cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f, charuco_board
+            )
+            if det is not None:
+                views.append(det)
+    else:
+        actual_cols, actual_rows, _label = _select_calibration_pattern(frames, cols, rows)
+        objp_m = np.zeros((actual_rows * actual_cols, 3), dtype=np.float32)
+        objp_m[:, :2] = np.mgrid[0:actual_cols, 0:actual_rows].T.reshape(-1, 2).astype(np.float32)
+        objp_m *= float(square_size_m)
+        for frame in frames:
+            f = np.asarray(frame)
+            corners = find_chessboard_corners(
+                cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f, actual_cols, actual_rows
+            )
+            if corners is not None:
+                views.append((objp_m, corners))
+    if not views:
+        raise ValueError("Board not detected in any frame; nothing to check.")
+
+    per_view_rms_px: list[float] = []
+    for objp_view_m, corners_px in views:
+        rms_px = _reproject_rms_px(objp_view_m, corners_px, K, D, fisheye=fisheye)
+        if rms_px is not None:
+            per_view_rms_px.append(rms_px)
+    if not per_view_rms_px:
+        raise ValueError("solvePnP failed on every view; cannot assess reprojection error.")
+    median_rms_px = float(np.median(per_view_rms_px))
+
+    # Drift: fresh solve in the deployed lens model. Diagnostic only; a solver failure
+    # never sinks the reprojection verdict.
+    drift: dict[str, Any] = {"ran": False}
+    if len(views) >= 3:  # a planar board needs >= 3 views to separate fx/fy/cx/cy from distortion
+        objpoints = [o.reshape(-1, 1, 3) if fisheye else o for o, _c in views]
+        imgpoints = [c.astype(np.float32) for _o, c in views]
+        h0, w0 = np.asarray(frames[0]).shape[:2]
+        try:
+            solver = _calibrate_fisheye if fisheye else _calibrate_pinhole
+            fresh_rms_px, K_fresh, _D_fresh = solver(objpoints, imgpoints, (int(w0), int(h0)))
+            max_rel = max(
+                abs(K[i, j] - K_fresh[i, j]) / max(abs(K_fresh[i, j]), 1e-9)
+                for i, j in ((0, 0), (1, 1), (0, 2), (1, 2))  # fx, fy, cx, cy
+            )
+            drift = {
+                "ran": True,
+                "fresh_rms_px": float(fresh_rms_px),
+                "max_rel_intrinsics_drift": float(max_rel),
+            }
+        except cv2.error as exc:
+            drift = {"ran": False, "reason": str(exc)}
+
+    drift_ok = drift.get("max_rel_intrinsics_drift", 0.0) <= 0.05  # 5% relative drift bar
+    report: dict[str, Any] = {
+        "verdict": "OK" if (median_rms_px <= rms_threshold_px and drift_ok) else "DEGRADED",
+        "camera_info": str(camera_info),
+        "distortion_model": info.distortion_model or "plumb_bob",
+        "median_reproj_rms_px": median_rms_px,
+        "p90_reproj_rms_px": float(np.percentile(per_view_rms_px, 90)),
+        "rms_threshold_px": float(rms_threshold_px),
+        "n_frames_used": len(per_view_rms_px),
+        "drift": drift,
+    }
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2))
+    return report
 
 
 @app.command()
@@ -973,10 +1286,51 @@ def calibrate(
             "fisheye lenses. Fisheye writes ROS 'equidistant' to the YAML."
         ),
     ),
+    board: Board = typer.Option(
+        Board.chessboard, "--board", help="Target; charuco takes --cols/--rows as SQUARE counts"
+    ),
+    charuco_dict: str = typer.Option(
+        "DICT_4X4_50", "--charuco-dict", help="cv2.aruco.DICT_* name for --board charuco"
+    ),
+    marker_size_m: float | None = typer.Option(
+        None, "--marker-size-m", help="ChArUco marker edge in meters (default 0.8 * square)"
+    ),
+    check: Path | None = typer.Option(
+        None, "--check", help="Deployed CameraInfo YAML to score on fresh frames (--out = JSON)"
+    ),
+    rms_threshold_px: float = typer.Option(
+        1.0, "--rms-threshold-px", help="--check: median reprojection RMS (px) pass bar"
+    ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
     if preview_out is not None and out is None:
         raise typer.BadParameter("preview output requires --out")
+
+    if check is not None:
+        try:
+            report = run_check(
+                source=source,
+                device_index=device_index,
+                images=images,
+                topic=topic,
+                topic_timeout_sec=topic_timeout_sec,
+                cols=cols,
+                rows=rows,
+                square_size_m=square_size_m,
+                camera_info=check,
+                rms_threshold_px=rms_threshold_px,
+                out=out,
+                target_count=target_count,
+                no_display=no_display,
+                board=board,
+                charuco_dict=charuco_dict,
+                marker_size_m=marker_size_m,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps(report, indent=2))
+        typer.echo(f"CALIBRATION CHECK: {report['verdict']}")
+        return
 
     try:
         result = run_calibration(
@@ -994,6 +1348,9 @@ def calibrate(
             target_count=target_count,
             no_display=no_display,
             distortion_model=distortion_model,
+            board=board,
+            charuco_dict=charuco_dict,
+            marker_size_m=marker_size_m,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc
