@@ -68,7 +68,7 @@ pub struct Config {
     /// Output/map frame (the C++ module's `frame_id`; renamed because the
     /// Python coordinator strips base-config field names — `frame_id` is one —
     /// from the stdin config dict).
-    pub world_frame: String,
+    pub map_frame: String,
     /// The corrected edge's child (odom) frame.
     pub child_frame_id: String,
     /// Robot body frame; LocationConstraints must be expressed in it.
@@ -88,6 +88,7 @@ pub struct Config {
     pub min_descriptor_std: f64,
     pub loop_min_occupancy: i32,
     pub loop_min_degeneracy: f64,
+    pub loop_max_lowe_ratio: f64,
 
     /// Transform world-frame scans to body-frame using the paired odometry.
     pub subtract_odom_from_cloud: bool,
@@ -117,22 +118,20 @@ pub struct Config {
 
     // First-keyframe absolute anchor prior (per-axis stiffness) + optional
     // per-keyframe roll/pitch prior.
-    pub anchor_rp_var: f64,
+    pub anchor_roll_pitch_var: f64,
     pub anchor_yaw_var: f64,
     pub anchor_trans_var: f64,
-    pub per_keyframe_rp_prior: bool,
-    pub per_keyframe_rp_var: f64,
+    pub per_keyframe_roll_pitch_prior: bool,
+    pub per_keyframe_roll_pitch_var: f64,
 
     // Anisotropic odometry between-factor
-    pub odom_rot_rp_var: f64,
+    pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
     pub odom_trans_xy_var: f64,
     pub odom_trans_z_var: f64,
 
     /// Bounded scan FIFO depth (<= 0 = unbounded).
     pub max_scan_queue: i32,
-
-    pub debug: bool,
 }
 
 impl Config {
@@ -150,19 +149,19 @@ impl Config {
             min_descriptor_std: self.min_descriptor_std,
             loop_min_occupancy: self.loop_min_occupancy,
             loop_min_degeneracy: self.loop_min_degeneracy,
-            debug: self.debug,
+            loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
             use_location_constraints: self.use_location_constraints,
-            odom_rot_rp_var: self.odom_rot_rp_var,
+            odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
             odom_trans_xy_var: self.odom_trans_xy_var,
             odom_trans_z_var: self.odom_trans_z_var,
-            anchor_rp_var: self.anchor_rp_var,
+            anchor_roll_pitch_var: self.anchor_roll_pitch_var,
             anchor_yaw_var: self.anchor_yaw_var,
             anchor_trans_var: self.anchor_trans_var,
-            per_keyframe_rp_prior: self.per_keyframe_rp_prior,
-            per_keyframe_rp_var: self.per_keyframe_rp_var,
+            per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
+            per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
             use_scan_context: self.use_scan_context,
             scan_context_num_rings: self.scan_context_num_rings,
             scan_context_num_sectors: self.scan_context_num_sectors,
@@ -415,10 +414,9 @@ impl Worker {
 
     fn run(self) {
         let mut pgo = GscPgo::new(self.config.pgo());
-        let frame_id = self.config.world_frame.clone();
+        let frame_id = self.config.map_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
         let body_frame = self.config.body_frame.clone();
-        let debug = self.config.debug;
 
         let publish_global_map = self.config.global_map_publish_rate > 0.0;
         let global_map_interval = if publish_global_map {
@@ -552,22 +550,6 @@ impl Worker {
                 let msg =
                     build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
-                if debug {
-                    info!(
-                        deltas = pre_poses.len(),
-                        "PGO: loop_closure_event published"
-                    );
-                }
-            }
-
-            if debug {
-                info!(
-                    keyframes = pgo.key_poses().len(),
-                    x = cloud_with_pose.pose.translation[0],
-                    y = cloud_with_pose.pose.translation[1],
-                    z = cloud_with_pose.pose.translation[2],
-                    "PGO: keyframe added"
-                );
             }
 
             self.publish_corrected(
@@ -615,10 +597,6 @@ impl Worker {
                 let msg = build_pointcloud2(&filtered, &frame_id, cur_time);
                 self.publish(&self.global_map, &msg, "_global_map");
             }
-        }
-
-        if debug {
-            info!("PGO native module shutting down");
         }
     }
 
