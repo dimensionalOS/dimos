@@ -404,7 +404,7 @@ def test_hardware_blueprint_records_sessions() -> None:
         for atom in r1lite_quest_teleop.blueprints
         if atom.module is R1LiteQuestTeleopModule
     )
-    assert kwargs["record_path"].startswith("/tmp/quest_record_")
+    assert kwargs["record_path"].startswith("logs/quest_record_")
 
 
 def test_position_deadband_zeroes_small_deltas() -> None:

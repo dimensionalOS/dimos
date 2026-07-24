@@ -157,8 +157,10 @@ r1lite_quest_teleop = autoconnect(
         position_deadband_m=0.02,
         # Every session records the raw headset stream; replay it against the
         # sim blueprint with scripts/r1lite_test/replay_quest_stream.py to
-        # iterate on mapping and tuning without hardware.
-        record_path="/tmp/quest_record_%Y%m%d_%H%M%S.jsonl",
+        # iterate on mapping and tuning without hardware. Relative to the run
+        # directory (the repo mount in the robot container), so recordings
+        # land on the host without a docker cp; logs/ is gitignored.
+        record_path="logs/quest_record_%Y%m%d_%H%M%S.jsonl",
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows each
     # target at this rate); 0.5 measured as the dominant slowness. Teleop-only
@@ -217,7 +219,7 @@ r1lite_quest_teleop_sim = autoconnect(
     R1LiteQuestTeleopModule.blueprint(
         task_names=_TASK_NAMES,
         local_rotation=True,
-        record_path="/tmp/quest_record_sim_%Y%m%d_%H%M%S.jsonl",
+        record_path="logs/quest_record_sim_%Y%m%d_%H%M%S.jsonl",
     ),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
