@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+import time
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
@@ -43,6 +44,7 @@ except ImportError as e:
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         JointPath,
         PlanningSceneInfo,
@@ -50,6 +52,9 @@ if TYPE_CHECKING:
     )
 
 logger = setup_logger()
+
+# Gripper state is a coordinator round-trip; poll it far below the render rate.
+_GRIPPER_POLL_INTERVAL = 0.2
 
 
 class ViserManipulationVisualizer:
@@ -70,6 +75,8 @@ class ViserManipulationVisualizer:
         self._adapter: InProcessViserAdapter | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
+        self._gripper_positions: dict[str, float] = {}
+        self._gripper_polled_at: dict[str, float] = {}
         self._closed = False
 
     def _ensure_started(self) -> None:
@@ -149,9 +156,31 @@ class ViserManipulationVisualizer:
             return
         for _robot_name, robot_id, _config in self._adapter.robot_items():
             current = self._adapter.get_current_joint_state(_robot_name)
-            self._scene.update_current_robot(str(robot_id), current)
+            gripper = self._gripper_position(_robot_name, _config)
+            self._scene.update_current_robot(str(robot_id), current, gripper)
         if self._gui is not None:
             self._gui.refresh()
+
+    def _gripper_position(self, robot_name: str, config: RobotModelConfig) -> float | None:
+        """Last known jaw opening, polled well below the render rate.
+
+        Unlike joint state, this is a coordinator round-trip, so it is throttled
+        and never allowed to raise: this loop also refreshes the panel controls,
+        and stalling it freezes the Plan/Preview/Execute buttons.
+        """
+        if config.gripper is None or self._adapter is None:
+            return None
+        now = time.monotonic()
+        if now - self._gripper_polled_at.get(robot_name, 0.0) >= _GRIPPER_POLL_INTERVAL:
+            self._gripper_polled_at[robot_name] = now
+            try:
+                value = self._adapter.get_gripper(robot_name)
+            except Exception:
+                logger.warning("Could not read gripper position", exc_info=True)
+                value = None
+            if value is not None:
+                self._gripper_positions[robot_name] = float(value)
+        return self._gripper_positions.get(robot_name)
 
     def show_preview(self, robot_id: WorldRobotID) -> None:
         if not self._closed:

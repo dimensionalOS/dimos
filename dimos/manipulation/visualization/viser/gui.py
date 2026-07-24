@@ -96,6 +96,7 @@ class ViserPanelGui:
         self._closed = False
         self._operation_sequence_id = 0
         self._suppress_target_callbacks = False
+        self._suppress_gripper_callbacks = False
         self._handles: dict[str, PanelHandle] = {}
         self._joint_sliders: dict[str, GuiSliderHandle[float]] = {}
         self._viewpoints: dict[str, list[float]] = {}
@@ -145,6 +146,10 @@ class ViserPanelGui:
             self.state.selected_robot = robots[0]
             self.state.target_status = TargetStatus.EMPTY
             self._build_joint_sliders()
+            # Startup auto-selects the first robot here rather than through
+            # _select_robot, so the per-robot controls must be built on this
+            # path too or they never appear.
+            self._build_gripper_controls()
         self._sync_robot_dropdown(robots)
         self._refresh_selected_robot_state()
         self._ensure_scene_controls()
@@ -195,6 +200,7 @@ class ViserPanelGui:
         clear_button.on_click(lambda _: self._submit_clear())
         self._handles["clear"] = clear_button
         self._build_joint_sliders()
+        self._build_gripper_controls()
         self._build_interaction_controls(gui)
 
     def _interaction_enabled(self) -> bool:
@@ -490,6 +496,70 @@ class ViserPanelGui:
             handle.on_update(on_update)
             self._joint_sliders[joint_name] = handle
 
+    def _build_gripper_controls(self) -> None:
+        """Jaw-opening slider for robots that declare a gripper.
+
+        The arm sliders drive planning; this one goes straight to the hardware
+        (or the sim) via ``set_gripper``, so the jaws move as soon as it moves.
+        """
+        self._clear_gripper_controls()
+        if self.state.selected_robot is None:
+            return
+        config = self.adapter.get_robot_config(self.state.selected_robot)
+        if config is None or config.gripper is None or not config.gripper_hardware_id:
+            return
+        spec = config.gripper
+        current = self.adapter.get_gripper(self.state.selected_robot)
+        lower, upper = sorted((spec.closed_pos, spec.open_pos))
+        folder = self.server.gui.add_folder("Gripper", expand_by_default=True)
+        self._handles["gripper_folder"] = folder
+        with folder:
+            slider = self.server.gui.add_slider(
+                "Opening (m)",
+                min=float(lower),
+                max=float(upper),
+                step=0.005,
+                initial_value=float(current if current is not None else spec.open_pos),
+            )
+            slider.on_update(lambda _event: self._on_gripper_slider_update())
+            self._handles["gripper_slider"] = slider
+            open_button = self.server.gui.add_button("Open")
+            open_button.on_click(lambda _event: self._command_gripper(spec.open_pos))
+            self._handles["gripper_open"] = open_button
+            close_button = self.server.gui.add_button("Close")
+            close_button.on_click(lambda _event: self._command_gripper(spec.closed_pos))
+            self._handles["gripper_close"] = close_button
+
+    def _clear_gripper_controls(self) -> None:
+        for key in ("gripper_slider", "gripper_open", "gripper_close", "gripper_folder"):
+            handle = self._handles.pop(key, None)
+            remove = getattr(handle, "remove", None)
+            if callable(remove):
+                remove()
+
+    def _on_gripper_slider_update(self) -> None:
+        if self._suppress_gripper_callbacks:
+            return
+        handle = self._handles.get("gripper_slider")
+        if handle is not None:
+            self._command_gripper(float(getattr(handle, "value", 0.0)))
+
+    def _command_gripper(self, position: float) -> None:
+        robot_name = self.state.selected_robot
+        if self._closed or robot_name is None:
+            return
+        if not self.adapter.set_gripper(position, robot_name):
+            self._set_error("Gripper command failed")
+            return
+        handle = self._handles.get("gripper_slider")
+        if handle is None:
+            return
+        self._suppress_gripper_callbacks = True
+        try:
+            self._set_optional_handle_attr(handle, "value", float(position))
+        finally:
+            self._suppress_gripper_callbacks = False
+
     def _clear_joint_sliders(self) -> None:
         for handle in self._joint_sliders.values():
             try:
@@ -516,6 +586,7 @@ class ViserPanelGui:
         self.state.feasibility.status = FeasibilityStatus.UNKNOWN
         self.state.plan_state = PanelPlanState()
         self._build_joint_sliders()
+        self._build_gripper_controls()
         self._sync_preset_dropdown()
         self.refresh()
 

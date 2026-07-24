@@ -155,6 +155,12 @@ class InProcessViserAdapter:
     def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
         return self._module.get_robot_config(robot_name)
 
+    def get_gripper(self, robot_name: RobotName) -> float | None:
+        return self._module.get_gripper(robot_name)
+
+    def set_gripper(self, position: float, robot_name: RobotName) -> bool:
+        return bool(self._module.set_gripper(position, robot_name).is_success())
+
     def get_robot_info(self, robot_name: RobotName) -> RobotInfo | None:
         info = self._module.get_robot_info(robot_name)
         if info is None:

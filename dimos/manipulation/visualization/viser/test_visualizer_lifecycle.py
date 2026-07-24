@@ -409,7 +409,12 @@ def test_visualizer_publish_preview_and_close_paths(
         ) -> None:
             calls.append(("scene", "create"))
 
-        def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
+        def update_current_robot(
+            self,
+            robot_id: str,
+            joint_state: JointState | None,
+            gripper_position: float | None = None,
+        ) -> None:
             assert joint_state == current
             calls.append(("update", robot_id))
 

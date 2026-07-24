@@ -24,6 +24,33 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
+class GripperSpec(ModuleConfig):
+    """How a robot's gripper maps between commands, URDF rendering, and the GUI.
+
+    DiMOS gripper positions are jaw openings in meters: ``open_pos`` and
+    ``closed_pos`` bound the slider and are what ``set_gripper`` takes. The URDF
+    usually drives its fingers from a single joint whose sense need not match --
+    the xArm's ``drive_joint`` grows as the jaws close -- so the two
+    ``urdf_*_value`` fields pin that joint's value at each extreme and the
+    renderer interpolates between them.
+    """
+
+    open_pos: float = 0.85
+    closed_pos: float = 0.0
+    urdf_joint: str | None = None
+    urdf_open_value: float = 0.0
+    urdf_closed_value: float = 0.85
+
+    def urdf_value(self, position: float) -> float:
+        """Map a DiMOS gripper position to the URDF joint value that renders it."""
+        span = self.open_pos - self.closed_pos
+        if span == 0.0:
+            return self.urdf_open_value
+        t = (position - self.closed_pos) / span
+        t = max(0.0, min(1.0, t))
+        return self.urdf_closed_value + t * (self.urdf_open_value - self.urdf_closed_value)
+
+
 class RobotModelConfig(ModuleConfig):
     """Configuration for adding a robot to the world.
 
@@ -72,6 +99,7 @@ class RobotModelConfig(ModuleConfig):
     joint_name_mapping: dict[str, str] = Field(default_factory=dict)
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
+    gripper: GripperSpec | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill

@@ -155,12 +155,14 @@ class _WholeBodySimHooks:
         gripper_idx: int | None = None,
         gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
         gripper_joint_range: tuple[float, float] = (0.0, 1.0),
+        gripper_position_inverted: bool = False,
     ) -> None:
         self._shm = shm
         self._dof = dof
         self._gripper_idx = gripper_idx
         self._gripper_ctrl_range = gripper_ctrl_range
         self._gripper_joint_range = gripper_joint_range
+        self._gripper_position_inverted = gripper_position_inverted
         self._latest_pd_pos_target: NDArray[np.float64] | None = None
         self._latest_pd_kp: NDArray[np.float64] | None = None
         self._latest_pd_kd: NDArray[np.float64] | None = None
@@ -223,7 +225,9 @@ class _WholeBodySimHooks:
         if self._gripper_idx is not None:
             positions = engine.joint_positions
             if self._gripper_idx < len(positions):
-                shm.write_gripper_state(positions[self._gripper_idx])
+                shm.write_gripper_state(
+                    self._joint_to_gripper_position(positions[self._gripper_idx])
+                )
 
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
@@ -232,13 +236,23 @@ class _WholeBodySimHooks:
         self._latest_pd_tau = None
 
     def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
+        """Map a DiMOS gripper position (meters, larger == more open) to MJCF ctrl."""
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
         clamped = max(jlo, min(jhi, joint_position))
         if jhi == jlo:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
+        if self._gripper_position_inverted:
+            t = 1.0 - t
         return clo + t * (chi - clo)
+
+    def _joint_to_gripper_position(self, joint_position: float) -> float:
+        """Map a raw MJCF gripper joint value back to a DiMOS gripper position."""
+        if not self._gripper_position_inverted:
+            return joint_position
+        jlo, jhi = self._gripper_joint_range
+        return jlo + jhi - max(jlo, min(jhi, joint_position))
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -262,6 +276,14 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     reset_joint_positions: list[float] | None = None
     headless: bool = False
     dof: int = 7
+    # DiMOS gripper positions are jaw openings: larger == more open (xArm
+    # hardware reports 0..0.85 for closed..open, and RobotModelConfig carries
+    # gripper_open_pos/gripper_closed_pos in the same sense). Linkage-driven
+    # MJCF grippers instead expose a *driver angle* that grows as the fingers
+    # CLOSE (xarm hand.xml: joint 0 == 93mm apart, joint 0.85 == 6mm apart).
+    # Set this for those models so commands and reported state are both
+    # expressed in the DiMOS sense.
+    gripper_position_inverted: bool = False
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -554,6 +576,7 @@ class MujocoSimModule(
             gripper_idx=self._gripper_idx,
             gripper_ctrl_range=self._gripper_ctrl_range,
             gripper_joint_range=self._gripper_joint_range,
+            gripper_position_inverted=self.config.gripper_position_inverted,
         )
         self._engine.set_step_hooks(
             before=self._sim_hooks.pre_step,

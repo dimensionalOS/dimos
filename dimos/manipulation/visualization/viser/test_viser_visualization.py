@@ -25,6 +25,7 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.planning.spec.config import GripperSpec
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser import scene as scene_module
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
@@ -64,6 +65,8 @@ class RobotConfigStub:
     home_joints: list[float] | None = None
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
+    gripper_hardware_id: str | None = None
+    gripper: GripperSpec | None = None
 
     def __post_init__(self) -> None:
         if self.joint_names is None:
@@ -794,6 +797,7 @@ def test_preview_visibility_only_affects_preview_ghost_and_close_removes_handles
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     target = scene._urdfs["robot1:target"]
@@ -823,6 +827,7 @@ def test_target_ghost_is_visible_and_tracks_current_until_target_moves_it() -> N
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     current = scene._urdfs["robot1:current"]
@@ -855,6 +860,7 @@ def test_preview_animation_uses_separate_colored_ghost_and_hides_after_playback(
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     target = scene._urdfs["robot1:target"]
@@ -1108,6 +1114,7 @@ def test_scene_display_mode_controls_only_primary_robot() -> None:
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     current = scene._urdfs["robot1:current"]
@@ -1143,6 +1150,7 @@ def test_scene_detects_collision_geometry_from_owned_model() -> None:
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
 
     scene.register_robot("robot1", config)
@@ -1169,6 +1177,7 @@ def test_scene_display_mode_falls_back_without_collision_geometry(
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     current = scene._urdfs["robot1:current"]
@@ -1193,6 +1202,7 @@ def test_scene_missing_collision_uses_magenta_visual_substitute(
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     fallback = scene._collision_fallback_urdfs["robot1"]
@@ -1226,6 +1236,7 @@ def test_scene_updates_collision_fallback_with_current_joints_across_recreation(
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     joints = FakeJointState(["joint1"], position=[0.6])
 
@@ -1265,6 +1276,7 @@ def test_scene_display_mode_survives_primary_robot_recreation() -> None:
         xacro_args={},
         auto_convert_meshes=False,
         joint_names=["joint1"],
+        gripper=None,
     )
     scene.register_robot("robot1", config)
     scene.robot_display_mode = "both"

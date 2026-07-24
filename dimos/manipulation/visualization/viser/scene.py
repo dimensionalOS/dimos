@@ -219,17 +219,24 @@ class ViserManipulationScene:
         self._handles[handle_key] = handle
         return handle
 
-    def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
+    def update_current_robot(
+        self,
+        robot_id: str,
+        joint_state: JointState | None,
+        gripper_position: float | None = None,
+    ) -> None:
         config = self._configs_by_id.get(robot_id)
         if config is None or joint_state is None:
             return
         self._ensure_robot_urdfs(robot_id, config)
+        extra = self._gripper_urdf_joints(config, gripper_position)
         current = self._urdfs.get(f"{robot_id}:current")
-        self.set_urdf_joints(current, config.joint_names, joint_state.position)
+        self.set_urdf_joints(current, config.joint_names, joint_state.position, extra)
         self.set_urdf_joints(
             self._collision_fallback_urdfs.get(robot_id),
             config.joint_names,
             joint_state.position,
+            extra,
         )
         if self._target_tracks_current.get(robot_id, True):
             self._set_target_joints(robot_id, config.joint_names, joint_state.position)
@@ -564,12 +571,26 @@ class ViserManipulationScene:
             )
         )
 
+    @staticmethod
+    def _gripper_urdf_joints(
+        config: RobotModelConfig, gripper_position: float | None
+    ) -> dict[str, float]:
+        """URDF joint values that render the gripper at ``gripper_position``."""
+        spec = config.gripper
+        if spec is None or spec.urdf_joint is None or gripper_position is None:
+            return {}
+        return {spec.urdf_joint: spec.urdf_value(gripper_position)}
+
     def set_urdf_joints(
-        self, urdf: ViserUrdf | None, joint_names: Sequence[str], joints: Sequence[float]
+        self,
+        urdf: ViserUrdf | None,
+        joint_names: Sequence[str],
+        joints: Sequence[float],
+        extra_joints: dict[str, float] | None = None,
     ) -> None:
         if urdf is None:
             return
-        cfg = self.viser_joint_configuration(urdf, joint_names, joints)
+        cfg = self.viser_joint_configuration(urdf, joint_names, joints, extra_joints)
         if not cfg:
             return
         update_cfg = getattr(urdf, "update_cfg", None)
@@ -581,13 +602,20 @@ class ViserManipulationScene:
             update_configuration(cfg)
 
     def viser_joint_configuration(
-        self, urdf: ViserUrdf, joint_names: Sequence[str], joints: Sequence[float]
+        self,
+        urdf: ViserUrdf,
+        joint_names: Sequence[str],
+        joints: Sequence[float],
+        extra_joints: dict[str, float] | None = None,
     ) -> list[float]:
         allowed_names = list(self.viser_actuated_joint_names(urdf))
         if not allowed_names:
             return []
         values_by_name: dict[str, float] = {}
         for name, value in zip(joint_names, joints, strict=False):
+            values_by_name[name] = float(value)
+            values_by_name[name.rsplit("/", 1)[-1]] = float(value)
+        for name, value in (extra_joints or {}).items():
             values_by_name[name] = float(value)
             values_by_name[name.rsplit("/", 1)[-1]] = float(value)
         return [values_by_name.get(name, 0.0) for name in allowed_names]

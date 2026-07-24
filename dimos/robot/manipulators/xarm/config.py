@@ -26,7 +26,7 @@ from dimos.control.components import (
     make_joints,
 )
 from dimos.core.global_config import global_config
-from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.config import GripperSpec, RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -94,6 +94,9 @@ def make_xarm6_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
         "camera_name": "wrist_camera",
         "base_frame_id": "link6",
         "reset_joint_positions": XARM6_SIM_HOME,
+        # hand.xml's driver joint grows as the jaws close; DiMOS positions grow
+        # as they open (XARM_GRIPPER_PARAMS: 0.0 closed, 0.85 open).
+        "gripper_position_inverted": True,
     }
 
 
@@ -126,6 +129,8 @@ def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
         "camera_name": "wrist_camera",
         "base_frame_id": "link7",
         "reset_joint_positions": XARM7_SIM_HOME,
+        # See make_xarm6_sim_module_kwargs.
+        "gripper_position_inverted": True,
     }
 
 
@@ -261,6 +266,18 @@ def make_xarm_model_config(
         ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name if add_gripper else None,
+        gripper=(
+            # drive_joint mimics the MJCF driver: 0 == jaws apart, 0.85 == together.
+            GripperSpec(
+                open_pos=float(XARM_GRIPPER_PARAMS["gripper_open_pos"]),
+                closed_pos=float(XARM_GRIPPER_PARAMS["gripper_closed_pos"]),
+                urdf_joint="drive_joint",
+                urdf_open_value=0.0,
+                urdf_closed_value=0.85,
+            )
+            if add_gripper
+            else None
+        ),
         tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

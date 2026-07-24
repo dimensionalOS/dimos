@@ -25,7 +25,11 @@ import numpy as np
 import pytest
 
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
 
 
 class _FakeData:
@@ -475,3 +479,52 @@ def test_engine_request_reset_to_applies_pose_in_sim_loop(freejoint_engine: Mujo
         [0.0, 0.0, np.sin(0.15), np.cos(0.15)],
         atol=1e-8,
     )
+
+
+def _gripper_hooks(*, inverted: bool) -> _WholeBodySimHooks:
+    """Hooks wired with the xarm hand.xml ranges (ctrl 0..255, driver 0..0.85)."""
+    return _WholeBodySimHooks(
+        MagicMock(),
+        dof=6,
+        gripper_idx=6,
+        gripper_ctrl_range=(0.0, 255.0),
+        gripper_joint_range=(0.0, 0.85),
+        gripper_position_inverted=inverted,
+    )
+
+
+def test_inverted_gripper_maps_dimos_open_to_the_ctrl_that_spreads_the_jaws() -> None:
+    """DiMOS 0.85 == open, but the xarm MJCF driver joint grows as the jaws CLOSE.
+
+    Measured on data/xarm7/hand.xml: ctrl 0 settles the driver at 0.0 with the
+    finger pads 93mm apart (open); ctrl 255 settles it at 0.85 with the pads
+    5.6mm apart (closed). So the DiMOS->ctrl map has to run backwards, or
+    ``pick()`` opens the gripper at exactly the moment it means to grasp.
+    """
+    hooks = _gripper_hooks(inverted=True)
+
+    assert hooks._gripper_joint_to_ctrl(0.85) == pytest.approx(0.0)  # open
+    assert hooks._gripper_joint_to_ctrl(0.0) == pytest.approx(255.0)  # closed
+    assert hooks._gripper_joint_to_ctrl(0.425) == pytest.approx(127.5)
+
+
+def test_inverted_gripper_reports_state_in_dimos_units() -> None:
+    """State readback mirrors the command so ``get_gripper()`` agrees with it."""
+    hooks = _gripper_hooks(inverted=True)
+
+    assert hooks._joint_to_gripper_position(0.0) == pytest.approx(0.85)  # jaws apart
+    assert hooks._joint_to_gripper_position(0.85) == pytest.approx(0.0)  # jaws together
+
+    for commanded in (0.0, 0.2, 0.425, 0.85):
+        ctrl = hooks._gripper_joint_to_ctrl(commanded)
+        settled_joint = 0.85 * (ctrl / 255.0)  # servo tracks ctrl at steady state
+        assert hooks._joint_to_gripper_position(settled_joint) == pytest.approx(commanded)
+
+
+def test_non_inverted_gripper_keeps_the_direct_mapping() -> None:
+    """Models whose joint already grows with the opening are left alone."""
+    hooks = _gripper_hooks(inverted=False)
+
+    assert hooks._gripper_joint_to_ctrl(0.85) == pytest.approx(255.0)
+    assert hooks._gripper_joint_to_ctrl(0.0) == pytest.approx(0.0)
+    assert hooks._joint_to_gripper_position(0.3) == pytest.approx(0.3)
