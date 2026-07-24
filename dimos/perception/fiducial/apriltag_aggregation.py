@@ -140,8 +140,9 @@ def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.nd
     """6x6 covariance for an aggregated tag pose, built in the tag frame and rotated into the pose's frame."""
     R = Rotation.from_quat(pose[3:7]).as_matrix()
     covariance = np.zeros((6, 6))
-    # ROS orders translation first, so these blocks sit swapped vs a rotation-first GTSAM Pose3.
-    covariance[:3, :3] = R @ np.diag([0.0025, 0.0025, 0.25]) @ R.T  # m^2: 5 cm in-plane, 50 cm along the tag normal (PnP's weak axis)
+    # ROS is TRANSLATION-first, so these blocks sit swapped vs jnav's rotation-first GTSAM Pose3.
+    # m^2: 5 cm in-plane, 50 cm along the tag normal (PnP's weak axis)
+    covariance[:3, :3] = R @ np.diag([0.0025, 0.0025, 0.25]) @ R.T
     # rad^2: 11.5 deg about the mirror axes, 2.9 deg spin
     covariance[3:, 3:] = R @ np.diag([0.04, 0.04, 0.0025]) @ R.T
     return covariance * scale
