@@ -133,9 +133,7 @@ def spawn_watchdog(
     return proc
 
 
-def stop_watchdog(
-    watchdog: subprocess.Popen[bytes] | None, *, timeout: float = 2.0
-) -> None:
+def stop_watchdog(watchdog: subprocess.Popen[bytes] | None, *, timeout: float = 2.0) -> None:
     """Terminate and reap a watchdog sidecar if it is still running."""
     if watchdog is None or watchdog.poll() is not None:
         return
