@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Legacy grasp-generation protocol retained for the registry-visible module.
+
+``GraspingModule`` still exposes the pre-existing ``generate_grasps`` API,
+while ``GraspGenSpec`` defines the newer candidate-based API.  Keep this
+boundary until the registry-visible module is migrated.
+"""
+
 from typing import Protocol
 
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
@@ -20,6 +27,8 @@ from dimos.spec.utils import Spec
 
 
 class LegacyGraspGenSpec(Spec, Protocol):
+    """Compatibility protocol for the pre-existing pose-array API."""
+
     def generate_grasps(
         self,
         pointcloud: PointCloud2,

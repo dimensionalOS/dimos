@@ -27,3 +27,4 @@ misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text
+dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz filter=lfs diff=lfs merge=lfs -text

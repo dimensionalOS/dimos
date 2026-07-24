@@ -184,7 +184,11 @@ stack. There is no runtime switching or named asset selection.
 
 ## Fixture and YAML
 
-The checked-in `ycb_banana_scene.npz` and adjacent JSON record the source banana OBJ,
+The checked-in `ycb_banana_scene.npz` is a Git-LFS-backed binary and must be hydrated
+before running tests or building a wheel/sdist. Hydrate only this object with
+`git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"`.
+The adjacent JSON remains normal Git text so its provenance stays diffable. Together,
+they record the source banana OBJ,
 source commit/hash, area-weighted barycentric sampling seed, transform, counts, frame,
 timestamp, ROI, and final NPZ SHA-256. It contains 3,500 banana, 256 table, and 48
 distractor points (3,804 total) in `world`. The inclusive ROI from

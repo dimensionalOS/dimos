@@ -18,6 +18,8 @@ import inspect
 from types import SimpleNamespace
 from typing import Any, cast, get_type_hints
 
+import pytest
+
 from dimos.core.stream import Out
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasping import GraspingModule
@@ -61,14 +63,15 @@ class _Backend:
         return self.result
 
 
-def _module(backend: _Backend, scene: _Scene) -> tuple[GraspingModule, list[PoseArray]]:
-    module = GraspingModule.__new__(GraspingModule)
+def _module(
+    backend: _Backend, scene: _Scene, monkeypatch: pytest.MonkeyPatch
+) -> tuple[GraspingModule, list[PoseArray]]:
+    module = GraspingModule()
     published: list[PoseArray] = []
-    untyped_module = cast("Any", module)
-    untyped_module._grasp_gen = backend
-    untyped_module._scene_registration = scene
-    untyped_module.grasps = SimpleNamespace(publish=published.append)
-    untyped_module._format_grasp_result = lambda grasps, object_name: "generated"
+    monkeypatch.setattr(module, "_grasp_gen", backend, raising=False)
+    monkeypatch.setattr(module, "_scene_registration", scene, raising=False)
+    monkeypatch.setattr(module, "grasps", SimpleNamespace(publish=published.append))
+    monkeypatch.setattr(module, "_format_grasp_result", lambda grasps, object_name: "generated")
     return module, published
 
 
@@ -86,26 +89,36 @@ def test_legacy_shapes_and_lean_spec() -> None:
     assert get_type_hints(GraspingModule)["grasps"] == Out[PoseArray]
 
 
-def test_default_collision_filter_fetches_scene_and_publishes() -> None:
+def test_default_collision_filter_fetches_scene_and_publishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     object_cloud, scene_cloud = object(), object()
     result = PoseArray(cast("Any", Header)(1.0, "base"), [cast("Any", Pose)(0, 0, 0)])
     backend = _Backend(result)
     scene = _Scene(object_cloud, scene_cloud)
-    module, published = _module(backend, scene)
+    module, published = _module(backend, scene, monkeypatch)
 
-    assert module.generate_grasps(object_id="object-id") == "generated"
-    assert backend.calls == [(object_cloud, scene_cloud)]
-    assert scene.scene_exclusion == "object-id"
-    assert published == [result]
+    try:
+        assert module.generate_grasps(object_id="object-id") == "generated"
+        assert backend.calls == [(object_cloud, scene_cloud)]
+        assert scene.scene_exclusion == "object-id"
+        assert published == [result]
+    finally:
+        module.stop()
 
 
-def test_collision_filter_false_passes_no_scene_and_none_is_not_published() -> None:
+def test_collision_filter_false_passes_no_scene_and_none_is_not_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     object_cloud, scene_cloud = object(), object()
     backend = _Backend(None)
     scene = _Scene(object_cloud, scene_cloud)
-    module, published = _module(backend, scene)
+    module, published = _module(backend, scene, monkeypatch)
 
-    assert module.generate_grasps(filter_collisions=False) == "No grasps generated for 'object'"
-    assert backend.calls == [(object_cloud, None)]
-    assert scene.scene_exclusion == "unset"
-    assert published == []
+    try:
+        assert module.generate_grasps(filter_collisions=False) == "No grasps generated for 'object'"
+        assert backend.calls == [(object_cloud, None)]
+        assert scene.scene_exclusion == "unset"
+        assert published == []
+    finally:
+        module.stop()

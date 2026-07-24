@@ -15,6 +15,7 @@ from .extractor import AxisAlignedROI
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ycb_banana_scene.npz"
 METADATA = FIXTURE.with_suffix(".json")
+LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 
 
 def fixture_roi(path: Path = METADATA) -> AxisAlignedROI:
@@ -100,6 +101,11 @@ def _validate_record(
 
 
 def _load_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, float]:
+    if path.read_bytes()[: len(LFS_POINTER_PREFIX)] == LFS_POINTER_PREFIX:
+        raise ValueError(
+            f"scene fixture {path} is a Git-LFS pointer, not hydrated NPZ data; "
+            'run `git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"`'
+        )
     with np.load(path, allow_pickle=False) as data:
         points = np.asarray(data["points"], dtype=np.float32)
         labels = np.asarray(data["labels"], dtype=np.uint8)

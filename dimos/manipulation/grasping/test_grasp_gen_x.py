@@ -284,12 +284,9 @@ def test_default_factory_uses_direct_upstream_calls(
     server = ModuleType("graspgenx.grasp_server")
     server.SWEEP_VOLUME_ONLY_BACKBONES = {"sweep_volume"}  # type: ignore[attr-defined]
 
-    class _Sampler:
-        def __new__(cls, *args: object, **kwargs: object) -> str:
-            calls["constructor"] = (args, kwargs)
-            return "sampler"
-
-    server.GraspGenXSampler = _Sampler  # type: ignore[attr-defined]
+    server.GraspGenXSampler = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: calls.update(constructor=(args, kwargs)) or "sampler"
+    )
     monkeypatch.setitem(sys.modules, "graspgenx.utils.checkpoint_io", checkpoint_io)
     monkeypatch.setitem(sys.modules, "graspgenx.x_grippers", x_grippers)
     monkeypatch.setitem(sys.modules, "graspgenx.grasp_server", server)
@@ -362,6 +359,7 @@ def test_missing_checkpoint_is_reported() -> None:
 
 def test_import_is_offline_and_does_not_hydrate_in_child(tmp_path: Path) -> None:
     """A fresh upstream import must only inspect the explicitly local deployment."""
+    pytest.importorskip("graspgenx", reason="optional graspgenx extra is not installed")
     checkpoint = tmp_path / "deployment"
     (checkpoint / "gen").mkdir(parents=True)
     (checkpoint / "dis").mkdir()

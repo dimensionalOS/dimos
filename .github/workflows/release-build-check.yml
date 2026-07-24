@@ -9,6 +9,9 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/release-build-check.yml
       - pyproject.toml
+      - MANIFEST.in
+      - .gitattributes
+      - dimos/manipulation/graspgenx_demo/**
 
 permissions: {}
 
@@ -24,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Hydrate GraspGenX fixture
+        run: git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.1.0
         with:
