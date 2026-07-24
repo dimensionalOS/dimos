@@ -123,10 +123,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     @rpc
     def stop(self) -> None:
-        self.cancel_goal()
-        self._planner.stop()
-
-        super().stop()
+        try:
+            self._planner.stop()
+        finally:
+            super().stop()
 
     def _on_stop_movement(self, msg: Bool) -> None:
         if msg.data:
