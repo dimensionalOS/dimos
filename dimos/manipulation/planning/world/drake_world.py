@@ -467,44 +467,37 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add an obstacle to the world."""
         with self._lock:
             # Use obstacle's name as ID (allows external ID management)
             obstacle_id = obstacle.name
+            if not obstacle_id:
+                raise ValueError("Obstacle name must not be empty")
 
             # Check for duplicate in our tracking
             if obstacle_id in self._obstacles:
                 logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
-                return obstacle_id
+                return None
 
-            try:
-                if not self._finalized:
-                    geometry_id = self._add_obstacle_to_plant(obstacle, obstacle_id)
-                    self._obstacles[obstacle_id] = _ObstacleData(
-                        obstacle_id=obstacle_id,
-                        obstacle=obstacle,
-                        geometry_id=geometry_id,
-                        source_id=self._plant.get_source_id(),
-                    )
-                else:
-                    geometry_id = self._add_obstacle_to_scene_graph(obstacle, obstacle_id)
-                    self._obstacles[obstacle_id] = _ObstacleData(
-                        obstacle_id=obstacle_id,
-                        obstacle=obstacle,
-                        geometry_id=geometry_id,
-                        source_id=self._obstacle_source_id,
-                    )
+            if not self._finalized:
+                geometry_id = self._add_obstacle_to_plant(obstacle, obstacle_id)
+                self._obstacles[obstacle_id] = _ObstacleData(
+                    obstacle_id=obstacle_id,
+                    obstacle=obstacle,
+                    geometry_id=geometry_id,
+                    source_id=self._plant.get_source_id(),
+                )
+            else:
+                geometry_id = self._add_obstacle_to_scene_graph(obstacle, obstacle_id)
+                self._obstacles[obstacle_id] = _ObstacleData(
+                    obstacle_id=obstacle_id,
+                    obstacle=obstacle,
+                    geometry_id=geometry_id,
+                    source_id=self._obstacle_source_id,
+                )
 
-                logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
-            except RuntimeError as e:
-                # Handle case where geometry name already exists in SceneGraph
-                # (can happen with concurrent access)
-                if "already been used" in str(e):
-                    logger.debug(f"Obstacle '{obstacle_id}' already in SceneGraph, skipping")
-                else:
-                    raise
-
+            logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
             return obstacle_id
 
     def _add_obstacle_to_plant(self, obstacle: Obstacle, obstacle_id: str) -> Any:
@@ -591,7 +584,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             return
 
         # Use Drake's geometry types for Meshcat
-        path = f"obstacles/{obstacle_id}"
+        path = self._meshcat_obstacle_path(obstacle_id)
         transform = self._pose_to_rigid_transform(obstacle.pose)
         rgba = Rgba(*obstacle.color)
 
@@ -599,6 +592,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         drake_shape = self._create_shape(obstacle)
         self._meshcat.SetObject(path, drake_shape, rgba)
         self._meshcat.SetTransform(path, transform)
+
+    @staticmethod
+    def _meshcat_obstacle_path(obstacle_id: str) -> str:
+        """Return one injective, Meshcat-safe path segment for a native ID."""
+        return f"obstacles/id-{obstacle_id.encode('utf-8').hex()}"
 
     def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
         """Convert PoseStamped to Drake RigidTransform."""
@@ -620,6 +618,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             if not obstacle.mesh_path:
                 raise ValueError("MESH obstacle requires mesh_path")
             return Convex(Path(obstacle.mesh_path))
+        elif obstacle.obstacle_type == ObstacleType.OCTREE:
+            raise NotImplementedError("DrakeWorld does not support OCTREE obstacles")
         else:
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
@@ -631,7 +631,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             obstacle_data = self._obstacles[obstacle_id]
 
-            if self._finalized and self._scene_graph_context is not None:
+            if not self._finalized:
+                raise NotImplementedError("DrakeWorld cannot remove obstacles before finalization")
+
+            if self._scene_graph_context is not None:
                 self._scene_graph.RemoveGeometry(
                     obstacle_data.source_id,
                     obstacle_data.geometry_id,
@@ -639,37 +642,66 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             # Also remove from Meshcat
             if self._meshcat is not None:
-                path = f"obstacles/{obstacle_id}"
+                path = self._meshcat_obstacle_path(obstacle_id)
                 self._meshcat.Delete(path)
 
             del self._obstacles[obstacle_id]
             logger.debug(f"Removed obstacle '{obstacle_id}'")
             return True
 
+    def update_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> bool:
+        """Atomically replace supported geometry while preserving its native ID."""
+        # Constructing the shape validates dimensions, mesh configuration, and
+        # backend support before the accepted geometry is touched.
+        self._create_shape(obstacle)
+        with self._lock:
+            obstacle_data = self._obstacles.get(obstacle_id)
+            if obstacle_data is None:
+                return False
+            if obstacle.name != obstacle_data.obstacle.name:
+                raise ValueError(
+                    "Replacement obstacle name must match the existing logical name "
+                    f"'{obstacle_data.obstacle.name}'"
+                )
+            if not self._finalized:
+                raise NotImplementedError(
+                    "DrakeWorld cannot update obstacle geometry before finalization"
+                )
+
+            old_obstacle = obstacle_data.obstacle
+            self.remove_obstacle(obstacle_id)
+            try:
+                native_id = self.add_obstacle(obstacle)
+                if native_id != obstacle_id:
+                    raise RuntimeError(f"Drake returned unexpected replacement ID {native_id!r}")
+            except Exception as update_error:
+                try:
+                    restored_id = self.add_obstacle(old_obstacle)
+                    if restored_id != obstacle_id:
+                        raise RuntimeError(f"Drake returned unexpected rollback ID {restored_id!r}")
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        f"Failed to update obstacle '{obstacle_id}' and restore its "
+                        f"previous geometry: update={update_error!r}; "
+                        f"rollback={rollback_error!r}"
+                    ) from rollback_error
+                raise
+            return True
+
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update obstacle pose."""
+        """Reject pose updates that cannot update Drake collision geometry."""
         with self._lock:
             if obstacle_id not in self._obstacles:
                 return False
-
-            # Store PoseStamped directly
-            self._obstacles[obstacle_id].obstacle.pose = pose
-
-            # Update Meshcat visualization
-            if self._meshcat is not None:
-                path = f"obstacles/{obstacle_id}"
-                transform = self._pose_to_rigid_transform(pose)
-                self._meshcat.SetTransform(path, transform)
-
-            # Note: SceneGraph geometry pose is fixed after registration
-            # Meshcat is updated for visualization, but collision checking
-            # uses the original pose. For dynamic obstacles, remove and re-add.
-
-            return True
+            raise NotImplementedError(
+                "DrakeWorld cannot update obstacle collision geometry in place"
+            )
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
         with self._lock:
+            if not self._finalized and self._obstacles:
+                raise NotImplementedError("DrakeWorld cannot clear obstacles before finalization")
             obstacle_ids = list(self._obstacles.keys())
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
@@ -850,10 +882,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        ctx = self._diagram.CreateDefaultContext()
-
-        # Copy live robot states so inter-robot collision checking works
+        # Hold the world lock for the lifetime of the scratch context so a
+        # dynamic geometry replacement cannot invalidate or change the scene
+        # observed partway through a planning query.
         with self._lock:
+            ctx = self._diagram.CreateDefaultContext()
             if self._plant_context is not None:
                 plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
                 for robot_data in self._robots.values():
@@ -865,7 +898,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     except RuntimeError:
                         pass  # Robot not yet synced
 
-        yield ctx
+            yield ctx
 
     def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         """Sync live context from driver's joint state message.
@@ -955,31 +988,33 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def is_collision_free(self, ctx: Context, robot_id: WorldRobotID) -> bool:
         """Check if current configuration in context is collision-free."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
+        with self._lock:
+            if not self._finalized:
+                raise RuntimeError("World must be finalized first")
 
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
+            if robot_id not in self._robots:
+                raise KeyError(f"Robot '{robot_id}' not found")
 
-        scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
-        query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
+            scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
+            query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
 
-        return not query_object.HasCollisions()
+            return not query_object.HasCollisions()
 
     def get_min_distance(self, ctx: Context, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance (positive = clearance, negative = penetration)."""
-        if not self._finalized:
-            raise RuntimeError("World must be finalized first")
+        with self._lock:
+            if not self._finalized:
+                raise RuntimeError("World must be finalized first")
 
-        scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
-        query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
+            scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
+            query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
 
-        signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()
+            signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()
 
-        if not signed_distance_pairs:
-            return float("inf")
+            if not signed_distance_pairs:
+                return float("inf")
 
-        return float(min(pair.distance for pair in signed_distance_pairs))
+            return float(min(pair.distance for pair in signed_distance_pairs))
 
     # Collision Checking (context-free, for planning)
 

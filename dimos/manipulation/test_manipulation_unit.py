@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -44,6 +45,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -494,6 +496,120 @@ class TestPlanningInitialization:
 
 class TestPlanningGroupApis:
     """Test explicit planning-group API behavior."""
+
+    def test_public_planning_propagates_sync_failure_without_entering_planning(self, robot_config):
+        """Snapshot failures reach callers and preserve the prior state."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._planner = MagicMock()
+        module._kinematics = MagicMock()
+        error = RuntimeError("registration failed")
+        sync = MagicMock(side_effect=error)
+        module._synchronize_planning_collision_snapshot = sync
+
+        with pytest.raises(RuntimeError) as joint_error:
+            module.plan_to_joints(
+                JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
+                robot_name="test_arm",
+            )
+        assert joint_error.value is error
+        assert module._state == ManipulationState.IDLE
+
+        with pytest.raises(RuntimeError) as pose_error:
+            module.plan_to_pose(Pose(orientation=Quaternion()), robot_name="test_arm")
+        assert pose_error.value is error
+        assert module._state == ManipulationState.IDLE
+        assert sync.call_count == 2
+        module._planner.plan_selected_joint_path.assert_not_called()
+
+    def test_busy_group_planning_does_not_synchronize(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._state = ManipulationState.EXECUTING
+        sync = MagicMock()
+        module._synchronize_planning_collision_snapshot = sync
+
+        assert module._begin_group_planning() is None
+        sync.assert_not_called()
+        assert module._state == ManipulationState.EXECUTING
+
+    def test_collision_aware_ik_propagates_sync_failure_and_non_collision_ik_does_not_sync(
+        self, robot_config
+    ):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._kinematics = MagicMock()
+        module._kinematics.solve_pose_targets.return_value = IKResult(status=IKStatus.SUCCESS)
+        seed = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        error = RuntimeError("unsupported backend")
+        sync = MagicMock(side_effect=error)
+        module._synchronize_planning_collision_snapshot = sync
+        target = {"test_arm/manipulator": PoseStamped(frame_id="world")}
+
+        with pytest.raises(RuntimeError) as collision_error:
+            module.inverse_kinematics(target, seed=seed, check_collision=True)
+        assert collision_error.value is error
+        sync.assert_called_once()
+
+        sync.reset_mock()
+        result = module.inverse_kinematics(target, seed=seed, check_collision=False)
+        assert result.status == IKStatus.SUCCESS
+        sync.assert_not_called()
+
+    def test_generation_wrappers_synchronize_once_before_collision_backend(self, robot_config):
+        """Joint and pose generation each synchronize once before backend use."""
+        module = _make_module()
+        registry = PlanningGroupRegistry([robot_config])
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.planning_groups = registry
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
+        module._planner = MagicMock()
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.NO_SOLUTION
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve_pose_targets.return_value = IKResult(
+            status=IKStatus.NO_SOLUTION, message="no solution"
+        )
+        sync = MagicMock()
+        sync.side_effect = lambda: module._world_monitor.add_obstacle(MagicMock())
+        module._synchronize_planning_collision_snapshot = sync
+        module._planner.plan_selected_joint_path.side_effect = lambda **_: (
+            PlanningResult(status=PlanningStatus.NO_SOLUTION)
+            if module._world_monitor.add_obstacle.called
+            else pytest.fail("planner used collision state before snapshot registration")
+        )
+        module._kinematics.solve_pose_targets.side_effect = lambda **_: (
+            IKResult(status=IKStatus.NO_SOLUTION, message="no solution")
+            if module._world_monitor.add_obstacle.called
+            else pytest.fail("IK used collision state before snapshot registration")
+        )
+
+        module.generate_plan_to_joint_targets(
+            {
+                "test_arm/manipulator": JointState(
+                    name=robot_config.joint_names, position=[0.1, 0.2, 0.3]
+                )
+            }
+        )
+        assert sync.call_count == 1
+        module._planner.plan_selected_joint_path.assert_called_once()
+
+        module.reset()
+        module.generate_plan_to_pose_targets(
+            {"test_arm/manipulator": Pose(orientation=Quaternion())}
+        )
+        assert sync.call_count == 2
+        module._kinematics.solve_pose_targets.assert_called_once()
 
     def test_list_planning_groups_and_robot_info_include_groups(self, robot_config):
         module = _make_module()
@@ -1051,6 +1167,20 @@ class TestPlanningDiagnostics:
 
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
         assert module._state == ManipulationState.FAULT
+
+
+class TestPlanningCollisionSnapshots:
+    """Test planning-module collision snapshot integration."""
+
+    def test_invalid_snapshot_does_not_change_committed_state(self) -> None:
+        module = _make_module()
+        module._on_planning_voxel_map(PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]])))
+        assert module.committed_planning_collision_snapshot() is None
+
+        module._on_planning_voxel_map(
+            PointCloud2.from_numpy(np.array([[2.0, 0.0, 0.0]]), frame_id="camera")
+        )
+        assert module.committed_planning_collision_snapshot() is None
 
 
 class TestExecute:

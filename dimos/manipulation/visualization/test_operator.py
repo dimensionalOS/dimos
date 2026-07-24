@@ -96,7 +96,10 @@ class FakeModule:
         ] = []
         self.ik_calls: list[
             tuple[
-                dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...], JointState | None
+                dict[PlanningGroupID, PoseStamped],
+                tuple[PlanningGroupID, ...],
+                JointState | None,
+                bool,
             ]
         ] = []
         self.plan_success = True
@@ -135,8 +138,7 @@ class FakeModule:
         seed: JointState | None = None,
         check_collision: bool = True,
     ) -> IKResult:
-        assert check_collision is True
-        self.ik_calls.append((pose_targets, auxiliary_group_ids, seed))
+        self.ik_calls.append((pose_targets, auxiliary_group_ids, seed, check_collision))
         return IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(name=["arm/j0", "arm/j1"], position=[0.4, 0.5]),
@@ -196,6 +198,7 @@ class FakeWorldMonitor:
             "arm_id": JointState(name=["j0", "j1"], position=[0.0, 0.0])
         }
         self.valid = True
+        self.validity_calls = 0
         self.cancel_preview_calls = 0
         self.telemetry_calls = 0
 
@@ -204,6 +207,7 @@ class FakeWorldMonitor:
         return self.current_states.get(robot_id)
 
     def is_state_valid(self, robot_id: str, joint_state: JointState) -> bool:
+        self.validity_calls += 1
         return self.valid
 
     def get_group_ee_pose(
@@ -312,8 +316,8 @@ def test_joint_target_validation_rejects_overlapping_groups() -> None:
     assert result.status == "INVALID"
 
 
-def test_pose_evaluation_accepts_world_frame_and_delegates_original_request() -> None:
-    operator, module, _ = _operator()
+def test_pose_evaluation_solves_ik_without_collision_then_validates_once() -> None:
+    operator, module, monitor = _operator()
     pose = _pose()
     seed = JointState(name=["arm/j0", "arm/j1"], position=[0.0, 0.0])
     request = PoseTargetRequest({"arm/manipulator": pose}, seed=seed)
@@ -323,7 +327,22 @@ def test_pose_evaluation_accepts_world_frame_and_delegates_original_request() ->
     assert result.success is True
     assert result.target_joints is not None
     assert list(result.target_joints.name) == ["arm/j0", "arm/j1"]
-    assert module.ik_calls == [({"arm/manipulator": pose}, (), seed)]
+    assert module.ik_calls == [({"arm/manipulator": pose}, (), seed, False)]
+    assert monitor.validity_calls == 1
+
+
+def test_pose_solve_returns_joints_before_collision_validation() -> None:
+    operator, module, monitor = _operator()
+    pose = _pose()
+
+    result = operator.solve_pose_target(PoseTargetRequest({"arm/manipulator": pose}))
+
+    assert result.success is True
+    assert result.status == "IK_SOLVED"
+    assert result.collision_free is False
+    assert result.target_joints is not None
+    assert module.ik_calls == [({"arm/manipulator": pose}, (), None, False)]
+    assert monitor.validity_calls == 0
 
 
 def test_pose_validation_rejects_frame_capability_and_seed_errors() -> None:

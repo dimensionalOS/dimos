@@ -83,12 +83,16 @@ class WorldSpec(Protocol):
         ...
 
     # Obstacle Management
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle to the world. Returns unique obstacle ID."""
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        """Add an obstacle, returning its native ID or ``None`` if duplicate."""
         ...
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle. Returns True if removed."""
+        ...
+
+    def update_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> bool:
+        """Replace complete obstacle geometry while preserving its native ID."""
         ...
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
@@ -96,7 +100,7 @@ class WorldSpec(Protocol):
         ...
 
     def clear_obstacles(self) -> None:
-        """Remove all obstacles."""
+        """Remove all obstacles, or raise if the backend cannot do so."""
         ...
 
     def get_obstacles(self) -> list[Obstacle]:
@@ -196,6 +200,22 @@ class VisualizationSpec(Protocol):
 
     def initialize(self, session: VisualizationSession) -> None:
         """Receive one-shot visualization session metadata after world startup."""
+        ...
+
+    def add_vis_obstacle(self, native_id: str, obstacle: Obstacle) -> None:
+        """Add or replace an accepted obstacle under its stable native ID."""
+        ...
+
+    def remove_vis_obstacle(self, native_id: str) -> None:
+        """Remove a previously accepted obstacle from the visualization."""
+        ...
+
+    def clear_vis_obstacles(self) -> None:
+        """Remove all backend-accepted obstacles from the visualization."""
+        ...
+
+    def update_vis_obstacle_pose(self, native_id: str, pose: PoseStamped) -> None:
+        """Update the rendered pose of an accepted obstacle."""
         ...
 
     def get_visualization_url(self) -> str | None:

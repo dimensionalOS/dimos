@@ -24,6 +24,7 @@ class ObstacleType(Enum):
     SPHERE = auto()
     CYLINDER = auto()
     MESH = auto()
+    OCTREE = auto()
 
 
 class IKStatus(Enum):

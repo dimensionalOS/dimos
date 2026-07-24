@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 from pathlib import Path
 import sys
+import threading
 from types import ModuleType
 from typing import Any, ClassVar
 
@@ -74,13 +76,28 @@ class FakeMesh:
         self.filename = filename
 
 
+class FakeOcTree:
+    def __init__(self, boxes: list[np.ndarray], resolution: float) -> None:
+        self.boxes = boxes
+        self.resolution = resolution
+
+
 class FakeJointGroupInfo:
-    def __init__(self, joint_names: list[str]) -> None:
+    def __init__(self, joint_names: list[str], v_indices: list[int] | None = None) -> None:
         self.joint_names = joint_names
+        if v_indices is not None:
+            self.v_indices = v_indices
+
+
+class FakeJointInfo:
+    def __init__(self, mimic_info: object = None, num_velocity_dofs: int = 1) -> None:
+        self.mimic_info = mimic_info
+        self.num_velocity_dofs = num_velocity_dofs
 
 
 class FakeScene:
     joint_group_joint_names: ClassVar[list[str]] = ["joint1", "joint2"]
+    joint_group_v_indices: ClassVar[list[int]] = [0, 1]
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
 
@@ -88,7 +105,28 @@ class FakeScene:
         self.constructor_args = args
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
+        self.geometry_parent_frames: dict[str, str] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
+        self.octree_geometry: tuple[str, str, FakeOcTree, np.ndarray, np.ndarray] | None = None
+        self.group_info_calls: list[str] = []
+
+    def getFrameId(self, frame_name: str) -> str:
+        if frame_name != "universe":
+            raise ValueError(frame_name)
+        return frame_name
+
+    def addOcTreeGeometry(
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        octree: FakeOcTree,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        assert parent_frame == "universe"
+        self.octree_geometry = (obstacle_id, parent_frame, octree, matrix, color)
+        self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
@@ -103,7 +141,11 @@ class FakeScene:
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
-        return FakeJointGroupInfo(self.joint_group_joint_names)
+        self.group_info_calls.append(name)
+        return FakeJointGroupInfo(self.joint_group_joint_names, self.joint_group_v_indices)
+
+    def getJointInfo(self, name: str) -> FakeJointInfo:
+        return FakeJointInfo()
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
         return q
@@ -116,7 +158,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        assert parent_frame == "universe"
         self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def addSphereGeometry(
         self,
@@ -126,7 +170,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        assert parent_frame == "universe"
         self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def addCylinderGeometry(
         self,
@@ -136,7 +182,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        assert parent_frame == "universe"
         self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def addMeshGeometry(
         self,
@@ -146,15 +194,22 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        assert parent_frame == "universe"
         self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def updateGeometryPlacement(
         self, obstacle_id: str, parent_frame: str, matrix: np.ndarray
     ) -> None:
+        assert parent_frame == "universe"
         self.geometry[obstacle_id] = matrix
+        self.geometry_parent_frames[obstacle_id] = parent_frame
 
     def removeGeometry(self, obstacle_id: str) -> None:
         del self.geometry[obstacle_id]
+        self.geometry_parent_frames.pop(obstacle_id, None)
+        if self.octree_geometry is not None and self.octree_geometry[0] == obstacle_id:
+            self.octree_geometry = None
 
     def setCollisions(self, body1: str, body2: str, enable: bool) -> None:
         self.collision_settings[(body1, body2)] = enable
@@ -205,6 +260,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core.Sphere = FakeSphere  # type: ignore[attr-defined]
     core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
     core.Mesh = FakeMesh  # type: ignore[attr-defined]
+    core.OcTree = FakeOcTree  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
         scene: FakeScene,
@@ -423,6 +479,7 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     )
     assert world.add_obstacle(obstacle) == "box"
     assert "box" in world._scene.geometry
+    assert world._scene.geometry_parent_frames["box"] == "universe"
     updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
         "box",
@@ -430,7 +487,299 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     )
     assert world.get_obstacles()[0].pose is updated_pose
     np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
+    assert world._scene.geometry_parent_frames["box"] == "universe"
     assert world.remove_obstacle("box")
+    assert world.get_obstacles() == []
+
+
+def test_native_octree_geometry_preserves_all_points_and_transform(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    points = np.asarray([[1.0, 2.0, 3.0], [-1.0, 0.5, 4.0]], dtype=np.float64)
+    obstacle = Obstacle(
+        name="voxels",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(0.2, 0.3, 0.4), orientation=Quaternion()),  # type: ignore[call-arg]
+        points=points,
+        octree_resolution=0.05,
+    )
+
+    assert world.add_obstacle(obstacle) == "voxels"
+    obstacle_id, parent_frame, octree, matrix, _color = world._scene.octree_geometry
+    assert obstacle_id == "voxels"
+    assert parent_frame == "universe"
+    assert len(octree.boxes) == len(points)
+    np.testing.assert_allclose(octree.boxes, [(*point, 0.05, 1.0, 0.5) for point in points])
+    assert octree.resolution == 0.05
+    assert matrix.flags.f_contiguous
+    np.testing.assert_allclose(matrix, pose_to_matrix(obstacle.pose))
+
+
+def test_native_octree_update_preserves_id_and_replaces_all_points(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    initial = Obstacle(
+        name="voxels",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(),
+        points=np.asarray([[1.0, 2.0, 3.0]]),
+        octree_resolution=0.05,
+    )
+    replacement = replace(
+        initial,
+        points=np.asarray([[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]),
+    )
+
+    assert world.add_obstacle(initial) == "voxels"
+    assert world.update_obstacle("voxels", replacement)
+
+    assert [obstacle.name for obstacle in world.get_obstacles()] == ["voxels"]
+    assert world._scene.octree_geometry is not None
+    octree = world._scene.octree_geometry[2]
+    assert len(octree.boxes) == 2
+    np.testing.assert_allclose(
+        octree.boxes,
+        [
+            (4.0, 5.0, 6.0, 0.05, 1.0, 0.5),
+            (7.0, 8.0, 9.0, 0.05, 1.0, 0.5),
+        ],
+    )
+
+
+def test_obstacle_update_keeps_published_scene_when_replacement_insertion_fails(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    initial = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    replacement = replace(initial, dimensions=(2.0, 2.0, 2.0))
+    assert world.add_obstacle(initial) == "box"
+    published_scene = world._scene
+    original_add = world._add_obstacle_to_scene
+
+    def fail_replacement(obstacle: Obstacle, obstacle_id: str, *args: Any) -> None:
+        if obstacle is replacement:
+            raise RuntimeError("insertion failed")
+        original_add(obstacle, obstacle_id, *args)
+
+    monkeypatch.setattr(world, "_add_obstacle_to_scene", fail_replacement)
+
+    with pytest.raises(RuntimeError, match="insertion failed"):
+        world.update_obstacle("box", replacement)
+
+    assert world.get_obstacles() == [initial]
+    assert world._scene is published_scene
+    assert "box" in world._scene.geometry
+
+
+def test_obstacle_update_keeps_published_scene_when_replacement_scene_creation_fails(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    initial = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    replacement = replace(initial, dimensions=(2.0, 2.0, 2.0))
+    assert world.add_obstacle(initial) == "box"
+    published_scene = world._scene
+    monkeypatch.setattr(
+        world,
+        "_create_scene_from_prepared_robot",
+        lambda: (_ for _ in ()).throw(RuntimeError("replacement scene creation failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="replacement scene creation failed"):
+        world.update_obstacle("box", replacement)
+
+    assert world.get_obstacles() == [initial]
+    assert world._scene is published_scene
+    assert "box" in world._scene.geometry
+
+
+def test_collision_query_continues_while_replacement_scene_is_built(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    initial = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    replacement = replace(initial, dimensions=(2.0, 2.0, 2.0))
+    assert world.add_obstacle(initial) == "box"
+    rebuilding = threading.Event()
+    continue_update = threading.Event()
+    query_finished = threading.Event()
+    query_errors: list[BaseException] = []
+    update_errors: list[BaseException] = []
+    original_add = world._add_obstacle_to_scene
+
+    def blocking_add(obstacle: Obstacle, obstacle_id: str, *args: Any) -> None:
+        if obstacle is replacement:
+            rebuilding.set()
+            assert continue_update.wait(timeout=2.0)
+        original_add(obstacle, obstacle_id, *args)
+
+    monkeypatch.setattr(world, "_add_obstacle_to_scene", blocking_add)
+
+    def run_query() -> None:
+        try:
+            assert world.check_config_collision_free(
+                robot_id,
+                JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+            )
+        except BaseException as exc:
+            query_errors.append(exc)
+        finally:
+            query_finished.set()
+
+    def run_update() -> None:
+        try:
+            assert world.update_obstacle("box", replacement)
+        except BaseException as exc:
+            update_errors.append(exc)
+
+    update_thread = threading.Thread(target=run_update)
+    query_thread = threading.Thread(target=run_query)
+
+    try:
+        update_thread.start()
+        assert rebuilding.wait(timeout=2.0)
+        assert world.get_obstacles() == [initial]
+        query_thread.start()
+        assert query_finished.wait(timeout=2.0)
+    finally:
+        continue_update.set()
+        update_thread.join(timeout=2.0)
+        if query_thread.ident is not None:
+            query_thread.join(timeout=2.0)
+
+    assert not update_thread.is_alive()
+    assert not query_thread.is_alive()
+    assert query_finished.is_set()
+    assert query_errors == []
+    assert update_errors == []
+    assert world.get_obstacles() == [replacement]
+
+
+def test_kinematics_query_continues_while_collision_query_is_blocked(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    collision_started = threading.Event()
+    release_collision = threading.Event()
+    kinematics_finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def blocking_collision(_q: np.ndarray) -> bool:
+        collision_started.set()
+        assert release_collision.wait(timeout=2.0)
+        return False
+
+    monkeypatch.setattr(world._scene, "hasCollisions", blocking_collision)
+
+    def run_collision() -> None:
+        try:
+            assert world.check_config_collision_free(
+                robot_id,
+                JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def run_kinematics() -> None:
+        try:
+            jacobian = world.get_group_jacobian(world.get_live_context(), "arm/manipulator")
+            assert jacobian.shape == (6, 2)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            kinematics_finished.set()
+
+    collision_thread = threading.Thread(target=run_collision)
+    kinematics_thread = threading.Thread(target=run_kinematics)
+    try:
+        collision_thread.start()
+        assert collision_started.wait(timeout=2.0)
+        kinematics_thread.start()
+        assert kinematics_finished.wait(timeout=2.0)
+    finally:
+        release_collision.set()
+        collision_thread.join(timeout=2.0)
+        if kinematics_thread.ident is not None:
+            kinematics_thread.join(timeout=2.0)
+
+    assert not collision_thread.is_alive()
+    assert not kinematics_thread.is_alive()
+    assert errors == []
+
+
+def test_native_octree_rejects_empty_geometry_before_scene_call(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    obstacle = Obstacle(
+        name="empty",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        points=np.empty((0, 3)),
+        octree_resolution=0.05,
+    )
+
+    with pytest.raises(ValueError, match="non-empty Nx3"):
+        world.add_obstacle(obstacle)
+    assert world._scene.octree_geometry is None
+
+
+def test_octree_rejects_legacy_scene_geometry_method_without_calling_it(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = False
+
+    def legacy_point_cloud(self: FakeScene, *args: Any) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.delattr(FakeScene, "addOcTreeGeometry")
+    monkeypatch.setattr(FakeScene, "addPointCloudGeometry", legacy_point_cloud, raising=False)
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    obstacle = Obstacle(
+        name="legacy",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        points=np.asarray([[0.0, 0.0, 0.0]]),
+        octree_resolution=0.05,
+    )
+
+    with pytest.raises(NotImplementedError, match="OcTree"):
+        world.add_obstacle(obstacle)
+    assert not called
     assert world.get_obstacles() == []
 
 
@@ -513,7 +862,8 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
             "joint_limits_upper": [1.0, 2.0, 3.0],
         }
     )
-    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1", "joint3"])
+    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint1", "joint3"])
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", [1, 2])
     monkeypatch.setattr(FakeScene, "position_limits_lower", [-2.0, -1.0, -3.0])
     monkeypatch.setattr(FakeScene, "position_limits_upper", [2.0, 1.0, 3.0])
     fk_frames: list[str] = []
@@ -596,15 +946,17 @@ def test_group_jacobian_validates_projection_shape_and_joint_names(
     world.set_joint_state(ctx, robot_id, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
 
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint1", "other"])
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", [0, 1])
     monkeypatch.setattr(
         FakeScene,
         "computeFrameJacobian",
         lambda self, q, frame_name, local=True: np.ones((6, 2)),
     )
-    with pytest.raises(ValueError, match="Unknown joints"):
+    with pytest.raises(ValueError, match="do not exactly match"):
         world.get_group_jacobian(ctx, "arm/manipulator")
 
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint1", "joint2"])
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", [0, 1])
     monkeypatch.setattr(
         FakeScene,
         "computeFrameJacobian",
@@ -613,16 +965,26 @@ def test_group_jacobian_validates_projection_shape_and_joint_names(
     with pytest.raises(ValueError, match="Unexpected RoboPlan Jacobian shape"):
         world.get_group_jacobian(ctx, "arm/manipulator")
 
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", [0, 1])
     monkeypatch.setattr(
         FakeScene,
         "computeFrameJacobian",
         lambda self, q, frame_name, local=True: np.ones((6, 3)),
     )
-    with pytest.raises(ValueError, match="cannot project"):
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", [0, 1, 2])
+    with pytest.raises(ValueError, match="lengths must match"):
+        world.get_group_jacobian(ctx, "arm/manipulator")
+
+    monkeypatch.setattr(
+        FakeScene,
+        "computeFrameJacobian",
+        lambda self, q, frame_name, local=True: np.ones((6, 2, 1)),
+    )
+    with pytest.raises(ValueError, match="expected 2D"):
         world.get_group_jacobian(ctx, "arm/manipulator")
 
 
-def test_group_jacobian_falls_back_to_configured_joint_order_when_scene_order_is_unavailable(
+def test_group_jacobian_rejects_missing_authoritative_velocity_metadata(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     monkeypatch: pytest.MonkeyPatch,
@@ -642,10 +1004,139 @@ def test_group_jacobian_falls_back_to_configured_joint_order_when_scene_order_is
         lambda self, q, frame_name, local=True: np.arange(12, dtype=np.float64).reshape(6, 2),
     )
 
-    np.testing.assert_allclose(
-        world.get_group_jacobian(ctx, "arm/manipulator"),
-        np.arange(12, dtype=np.float64).reshape(6, 2),
+    with pytest.raises(ValueError, match="authoritative v_indices"):
+        world.get_group_jacobian(ctx, "arm/manipulator")
+
+
+def test_group_jacobian_projects_full_xarm_velocity_columns_in_group_order(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    joint_names = [f"joint{i}" for i in range(1, 8)]
+    config = robot_config.model_copy(
+        update={
+            "joint_names": joint_names,
+            "planning_groups": [
+                PlanningGroupDefinition("manipulator", tuple(joint_names), "base", "tcp")
+            ],
+            "joint_limits_lower": [-1.0] * 7,
+            "joint_limits_upper": [1.0] * 7,
+        }
     )
+    scene_names = joint_names
+    v_indices = [2, 4, 5, 6, 7, 0, 3]
+    monkeypatch.setattr(FakeScene, "joint_group_joint_names", scene_names)
+    monkeypatch.setattr(FakeScene, "joint_group_v_indices", v_indices)
+    monkeypatch.setattr(
+        FakeScene,
+        "computeFrameJacobian",
+        lambda self, q, frame_name, local=True: np.arange(48, dtype=np.float64).reshape(6, 8),
+    )
+    world, robot_id = _make_world(fake_roboplan, config)
+    world.finalize()
+    ctx = world.get_live_context()
+    jacobian = world.get_group_jacobian(ctx, "arm/manipulator")
+
+    assert world._kinematics_scene.group_info_calls[-1] == "manipulator"
+    assert jacobian.shape == (6, 7)
+    np.testing.assert_allclose(
+        jacobian, np.arange(48, dtype=np.float64).reshape(6, 8)[:, [2, 4, 5, 6, 7, 0, 3]]
+    )
+
+
+def test_group_jacobian_handles_free_flyer_prefix_and_skipped_velocity_columns(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    info = FakeJointGroupInfo(["joint1", "joint2"], [6, 7])
+    monkeypatch.setattr(FakeScene, "getJointGroupInfo", lambda self, name: info)
+
+    indices = world._jacobian_velocity_indices(
+        world._scene, "manipulator", ("joint1", "joint2"), "arm/manipulator", 8
+    )
+    assert indices == [6, 7]
+
+
+@pytest.mark.parametrize(
+    ("v_indices", "message"),
+    [
+        ([0], "lengths must match"),
+        ([0, 0], "unique"),
+        ([-1, 1], "nonnegative"),
+        ([0, 8], "out of bounds"),
+    ],
+)
+def test_group_jacobian_rejects_inconsistent_velocity_indices(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    v_indices: list[int],
+    message: str,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    info = FakeJointGroupInfo(["joint1", "joint2"], v_indices)
+    monkeypatch.setattr(FakeScene, "getJointGroupInfo", lambda self, name: info)
+    with pytest.raises(ValueError, match=message):
+        world._jacobian_velocity_indices(
+            world._scene, "manipulator", ("joint1", "joint2"), "arm/manipulator", 8
+        )
+
+
+@pytest.mark.parametrize(
+    ("native_names", "message"),
+    [
+        (["joint1", "joint1"], "duplicate joint names"),
+        (["joint1", "other"], "do not exactly match"),
+        (["joint1", "joint2", "extra"], "do not exactly match"),
+    ],
+)
+def test_group_jacobian_rejects_invalid_native_group_names(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    native_names: list[str],
+    message: str,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    info = FakeJointGroupInfo(native_names, list(range(len(native_names))))
+    monkeypatch.setattr(FakeScene, "getJointGroupInfo", lambda self, name: info)
+    with pytest.raises(ValueError, match=message):
+        world._jacobian_velocity_indices(
+            world._scene, "manipulator", ("joint1", "joint2"), "arm/manipulator", 2
+        )
+
+
+@pytest.mark.parametrize("joint_info", [FakeJointInfo(object()), FakeJointInfo(None, 2)])
+def test_group_jacobian_rejects_mimic_or_multidof_joint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    joint_info: FakeJointInfo,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    monkeypatch.setattr(
+        FakeScene,
+        "getJointGroupInfo",
+        lambda self, name: FakeJointGroupInfo(["joint1", "joint2"], [0, 1]),
+    )
+    monkeypatch.setattr(FakeScene, "getJointInfo", lambda self, name: joint_info)
+    with pytest.raises(ValueError, match="independent scalar"):
+        world._jacobian_velocity_indices(
+            world._scene, "manipulator", ("joint1", "joint2"), "arm/manipulator", 2
+        )
+
+
+def test_group_jacobian_rejects_nonfinite_result(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    monkeypatch.setattr(
+        FakeScene,
+        "computeFrameJacobian",
+        lambda self, q, frame_name, local=True: np.full((6, 2), np.nan),
+    )
+    with pytest.raises(ValueError, match="non-finite"):
+        world.get_group_jacobian(world.get_live_context(), "arm/manipulator")
 
 
 def test_legacy_kinematics_wrappers_require_unique_pose_group(

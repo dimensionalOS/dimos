@@ -72,7 +72,12 @@ class WorldMonitor:
     ) -> None:
         self._world = world
         self._visualization = visualization
+        self._visualization_initialized = False
         self._lock = threading.RLock()
+        # Obstacle callbacks acquire their private lock before entering this
+        # monitor.  Global clears use the same order (obstacle -> operation ->
+        # world), so tracking cannot be reset concurrently with an add.
+        self._obstacle_operation_lock = threading.RLock()
         # Keep renderer mutations and periodic publishes ordered.  Cancellation is
         # deliberately issued outside this lock so it can interrupt an animation.
         self._visualization_lock = threading.RLock()
@@ -120,9 +125,10 @@ class WorldMonitor:
         visualization = self._visualization
         if visualization is None:
             return
-        visualization.initialize(
-            VisualizationSession(scene=self.planning_scene_info(), operator=operator)
-        )
+        session = VisualizationSession(scene=self.planning_scene_info(), operator=operator)
+        with self._visualization_lock:
+            visualization.initialize(session)
+            self._visualization_initialized = True
 
     def sync_visualization_scene(self) -> None:
         """Compatibility wrapper for initializing visualization metadata."""
@@ -147,20 +153,106 @@ class WorldMonitor:
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle. Returns obstacle_id."""
-        with self._lock:
-            return self._world.add_obstacle(obstacle)
+    def _ensure_visualization_initialized(self) -> None:
+        if self._visualization is None or self._visualization_initialized:
+            return
+        self.initialize_visualization()
+
+    def _visualization_fault(self, operation: str, native_id: str | None, exc: Exception) -> None:
+        logger.error(
+            "Visualization synchronization fault operation=%s native_id=%s: %s",
+            operation,
+            native_id,
+            exc,
+        )
+
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        """Add an obstacle and render it only after backend acceptance."""
+        with self._obstacle_operation_lock:
+            with self._lock:
+                self._ensure_visualization_initialized()
+                native_id = self._world.add_obstacle(obstacle)
+                if native_id is not None and self._visualization is not None:
+                    try:
+                        with self._visualization_lock:
+                            self._visualization.add_vis_obstacle(native_id, obstacle)
+                    except Exception as exc:
+                        self._visualization_fault("add", native_id, exc)
+                return native_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle."""
-        with self._lock:
-            return self._world.remove_obstacle(obstacle_id)
+        with self._obstacle_operation_lock:
+            with self._lock:
+                self._ensure_visualization_initialized()
+                removed = self._world.remove_obstacle(obstacle_id)
+                if removed and self._visualization is not None:
+                    try:
+                        with self._visualization_lock:
+                            self._visualization.remove_vis_obstacle(obstacle_id)
+                    except Exception as exc:
+                        self._visualization_fault("remove", obstacle_id, exc)
+                return removed
+
+    def update_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> bool:
+        """Replace backend geometry and upsert its visualization after acceptance."""
+        with self._obstacle_operation_lock:
+            with self._lock:
+                self._ensure_visualization_initialized()
+                updated = self._world.update_obstacle(obstacle_id, obstacle)
+                if updated and self._visualization is not None:
+                    try:
+                        with self._visualization_lock:
+                            self._visualization.add_vis_obstacle(obstacle_id, obstacle)
+                    except Exception as exc:
+                        self._visualization_fault("update", obstacle_id, exc)
+                return updated
+
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Update collision pose and notify visualization only on success."""
+        with self._obstacle_operation_lock:
+            with self._lock:
+                self._ensure_visualization_initialized()
+                updated = self._world.update_obstacle_pose(obstacle_id, pose)
+                if updated and self._visualization is not None:
+                    try:
+                        with self._visualization_lock:
+                            self._visualization.update_vis_obstacle_pose(obstacle_id, pose)
+                    except Exception as exc:
+                        self._visualization_fault("update_pose", obstacle_id, exc)
+                return updated
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
-        with self._lock:
-            self._world.clear_obstacles()
+        obstacle_monitor = self._obstacle_monitor
+        # Keep the operation lock through visualization clearing as well as the
+        # backend operation.  Otherwise an add can be accepted between those
+        # events and then have its visualization erased by this clear.
+        with self._obstacle_operation_lock:
+            if obstacle_monitor is None:
+                with self._lock:
+                    self._ensure_visualization_initialized()
+                    had_obstacles = bool(self._world.get_obstacles())
+                    self._world.clear_obstacles()
+            else:
+                # The obstacle monitor lock is acquired before the
+                # operation/world locks.  Thus callbacks cannot hold tracking
+                # state while waiting for a clear, and reset is performed only
+                # after backend success.
+                with obstacle_monitor.coordinated_world_clear(), self._lock:
+                    self._ensure_visualization_initialized()
+                    had_obstacles = bool(self._world.get_obstacles())
+                    self._world.clear_obstacles()
+                    obstacle_monitor.reset_world_tracking()
+
+            # The world lock is released before taking the visualization lock,
+            # while the operation lock still excludes all obstacle mutations.
+            if had_obstacles and self._visualization is not None:
+                try:
+                    with self._visualization_lock:
+                        self._visualization.clear_vis_obstacles()
+                except Exception as exc:
+                    self._visualization_fault("clear", None, exc)
 
     # Monitor Control
 
@@ -209,8 +301,8 @@ class WorldMonitor:
                 return
 
             self._obstacle_monitor = WorldObstacleMonitor(
-                world=self._world,
-                lock=self._lock,
+                world_monitor=self,
+                lock=threading.RLock(),
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")
@@ -557,8 +649,9 @@ class WorldMonitor:
     def update_visualization_state(self) -> None:
         """Push current state to visualization."""
         if self._visualization is not None:
+            frame = self.visualization_state_frame()
             with self._visualization_lock:
-                self._visualization.update_state(self.visualization_state_frame())
+                self._visualization.update_state(frame)
 
     def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
         """Cancel active visualization preview animation."""
@@ -654,6 +747,7 @@ class WorldMonitor:
     def set_visualization(self, visualization: VisualizationSpec | None) -> None:
         """Set optional visualization backend after monitor construction."""
         self._visualization = visualization
+        self._visualization_initialized = False
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

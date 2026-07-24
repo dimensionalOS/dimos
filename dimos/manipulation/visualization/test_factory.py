@@ -62,6 +62,18 @@ class FakeVisualization:
     def cancel_preview_animation(self) -> None:
         return None
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        return None
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        return None
+
+    def clear_vis_obstacles(self) -> None:
+        return None
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        return None
+
     def close(self) -> None:
         return None
 
@@ -95,6 +107,9 @@ class FakeWorld:
         return "obstacle-1"
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
+        return True
+
+    def update_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> bool:
         return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
@@ -258,3 +273,19 @@ def test_create_viser_visualization_has_group_preview_protocol_without_legacy_pa
     assert isinstance(visualization, VisualizationSpec)
     assert isinstance(FakeVisualization(), VisualizationSpec)
     assert not hasattr(visualization, "animate_path")
+
+
+def test_create_viser_visualization_has_no_committed_snapshot_provider() -> None:
+    pytest.importorskip("viser")
+    manipulation = MagicMock()
+
+    visualization = create_manipulation_visualization(
+        ViserVisualizationConfig(),
+        world=FakeWorld(),
+        world_monitor=MagicMock(),
+        manipulation_module=manipulation,
+    )
+
+    assert visualization is not None
+    assert not hasattr(visualization, "_committed_snapshot_provider")
+    assert not hasattr(visualization, "_refresh_committed_planning_collision_snapshot")

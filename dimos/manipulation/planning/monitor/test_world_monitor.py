@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any
 
 import numpy as np
@@ -25,6 +26,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
+    CollisionObjectMessage,
     PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
@@ -89,6 +91,10 @@ class FakeWorld:
         return "obstacle-1"
 
     def remove_obstacle(self, obstacle_id):
+        return True
+
+    def update_obstacle(self, obstacle_id, obstacle):
+        self.calls.append(("update_obstacle", obstacle_id, obstacle))
         return True
 
     def update_obstacle_pose(self, obstacle_id, pose):
@@ -182,6 +188,18 @@ class FakeViz:
     def initialize(self, session: VisualizationSession) -> None:
         self.calls.append(("initialize", session))
 
+    def add_vis_obstacle(self, native_id: str, obstacle: object) -> None:
+        self.calls.append(("add_vis_obstacle", native_id, obstacle))
+
+    def remove_vis_obstacle(self, native_id: str) -> None:
+        self.calls.append(("remove_vis_obstacle", native_id))
+
+    def clear_vis_obstacles(self) -> None:
+        self.calls.append(("clear_vis_obstacles",))
+
+    def update_vis_obstacle_pose(self, native_id: str, pose: PoseStamped) -> None:
+        self.calls.append(("update_vis_obstacle_pose", native_id, pose))
+
     def update_state(self, frame: VisualizationStateFrame) -> None:
         self.calls.append(("update_state", frame))
 
@@ -193,6 +211,76 @@ class FakeViz:
 
     def close(self) -> None:
         self.calls.append(("close", None))
+
+
+class _FailingInitializationViz(FakeViz):
+    def initialize(self, session: VisualizationSession) -> None:
+        raise RuntimeError("initialization failed")
+
+
+class _FailingClearWorld(FakeWorld):
+    def clear_obstacles(self) -> None:
+        raise RuntimeError("clear failed")
+
+
+class _BlockingClearWorld(FakeWorld):
+    def __init__(self) -> None:
+        super().__init__()
+        self.obstacles = {"old"}
+        self.clear_started = threading.Event()
+        self.allow_clear = threading.Event()
+        self.add_started = threading.Event()
+
+    def add_obstacle(self, obstacle: object) -> str:  # type: ignore[override]
+        self.add_started.set()
+        obstacle_id = f"new-{len(self.obstacles)}"
+        self.obstacles.add(obstacle_id)
+        return obstacle_id
+
+    def get_obstacles(self) -> list[str]:
+        return list(self.obstacles)
+
+    def clear_obstacles(self) -> None:
+        self.clear_started.set()
+        if not self.allow_clear.wait(timeout=1.0):
+            raise AssertionError("test did not release backend clear")
+        self.obstacles.clear()
+
+
+class _BlockingClearVisualization(FakeViz):
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+        self.clear_started = threading.Event()
+        self.allow_clear = threading.Event()
+        self.obstacles: set[str] = set()
+
+    def add_vis_obstacle(self, native_id: str, obstacle: object) -> None:
+        self.events.append("add")
+        self.obstacles.add(native_id)
+
+    def clear_vis_obstacles(self) -> None:
+        self.events.append("clear")
+        self.clear_started.set()
+        if not self.allow_clear.wait(timeout=1.0):
+            raise AssertionError("test did not release visualization clear")
+        self.obstacles.clear()
+
+
+class _LockOrderProbe:
+    def __init__(self, world_lock: _LockOrderProbe | None = None) -> None:
+        self._world_lock = world_lock
+        self.held = False
+
+    def __enter__(self) -> _LockOrderProbe:
+        if self._world_lock is not None and self._world_lock.held:
+            raise AssertionError("visualization lock acquired while world lock is held")
+        self.held = True
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        self.held = False
+        return False
 
 
 def _robot_config() -> RobotModelConfig:
@@ -489,6 +577,182 @@ def test_legacy_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> None:
     )
     with pytest.raises(ValueError, match="no pose-targetable"):
         monitor.get_ee_pose(no_pose_id, JointState(name=["j1", "j2"], position=[0.0, 0.0]))
+
+
+def test_visualization_metadata_and_state_do_not_invert_lock_order() -> None:
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
+    monitor.add_robot(_robot_config())
+    world_lock = _LockOrderProbe()
+    visual_lock = _LockOrderProbe(world_lock)
+    monitor._lock = world_lock  # type: ignore[assignment]
+    monitor._visualization_lock = visual_lock  # type: ignore[assignment]
+
+    monitor.initialize_visualization()
+    monitor.update_visualization_state()
+
+
+def test_visualization_initialization_failure_prevents_backend_mutation() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(
+        world=fake_world, visualization=_FailingInitializationViz()
+    )  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="initialization failed"):
+        monitor.add_obstacle(object())  # type: ignore[arg-type]
+    assert not any(call[0] == "add_obstacle" for call in fake_world.calls)
+
+
+def test_full_obstacle_update_upserts_visualization_after_backend_success() -> None:
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
+    obstacle = object()
+
+    assert monitor.update_obstacle("native-id", obstacle)  # type: ignore[arg-type]
+
+    assert ("update_obstacle", "native-id", obstacle) in fake_world.calls
+    assert fake_viz.calls[-1] == ("add_vis_obstacle", "native-id", obstacle)
+
+
+def test_failed_full_obstacle_update_emits_no_visualization_event(
+    mocker: MockerFixture,
+) -> None:
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
+    update = mocker.patch.object(
+        fake_world,
+        "update_obstacle",
+        side_effect=RuntimeError("replacement failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        monitor.update_obstacle("native-id", object())  # type: ignore[arg-type]
+
+    update.assert_called_once()
+    assert not any(call[0] == "add_vis_obstacle" for call in fake_viz.calls)
+
+
+def test_successful_global_clear_resets_obstacle_monitor_tracking() -> None:
+    monitor = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    obstacle_monitor._collision_objects["collision"] = "native-collision"
+    obstacle_monitor._perception_objects["perception"] = "native-perception"
+    obstacle_monitor._perception_timestamps["perception"] = 1.0
+    obstacle_monitor._object_obstacles["object"] = "native-object"
+
+    monitor.clear_obstacles()
+
+    assert obstacle_monitor._collision_objects == {}
+    assert obstacle_monitor._perception_objects == {}
+    assert obstacle_monitor._perception_timestamps == {}
+    assert obstacle_monitor._object_obstacles == {}
+
+
+def test_failed_global_clear_retains_obstacle_monitor_tracking() -> None:
+    monitor = world_monitor_module.WorldMonitor(world=_FailingClearWorld())  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    obstacle_monitor._collision_objects["collision"] = "native-collision"
+
+    with pytest.raises(RuntimeError, match="clear failed"):
+        monitor.clear_obstacles()
+
+    assert obstacle_monitor._collision_objects == {"collision": "native-collision"}
+
+
+def test_global_clear_serializes_callback_and_preserves_post_clear_obstacle() -> None:
+    fake_world = _BlockingClearWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    obstacle_monitor._collision_objects["old"] = "old"
+
+    clear_thread = threading.Thread(target=monitor.clear_obstacles)
+    clear_thread.start()
+    assert fake_world.clear_started.wait(timeout=1.0)
+
+    callback_done = threading.Event()
+    callback_started = threading.Event()
+
+    def run_callback() -> None:
+        callback_started.set()
+        monitor.on_collision_object(
+            CollisionObjectMessage(
+                id="after-clear",
+                operation="add",
+                primitive_type="box",
+                pose=PoseStamped(position=Vector3()),
+                dimensions=(1.0, 1.0, 1.0),
+            )
+        )
+        callback_done.set()
+
+    callback_thread = threading.Thread(target=run_callback)
+    callback_thread.start()
+    assert callback_started.wait(timeout=1.0)
+    assert not callback_done.is_set()
+
+    fake_world.allow_clear.set()
+    clear_thread.join(timeout=1.0)
+    callback_thread.join(timeout=1.0)
+
+    assert not clear_thread.is_alive()
+    assert not callback_thread.is_alive()
+    assert callback_done.is_set()
+    assert set(fake_world.obstacles) == {"new-0"}
+    assert set(obstacle_monitor._collision_objects) == {"after-clear"}
+
+
+def test_global_clear_serializes_visual_clear_before_concurrent_add() -> None:
+    fake_world = _BlockingClearWorld()
+    fake_viz = _BlockingClearVisualization()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+
+    clear_thread = threading.Thread(target=monitor.clear_obstacles)
+    clear_thread.start()
+    assert fake_world.clear_started.wait(timeout=1.0)
+    fake_world.allow_clear.set()
+    assert fake_viz.clear_started.wait(timeout=1.0)
+
+    callback_done = threading.Event()
+    callback_started = threading.Event()
+
+    def run_callback() -> None:
+        callback_started.set()
+        monitor.on_collision_object(
+            CollisionObjectMessage(
+                id="after-clear",
+                operation="add",
+                primitive_type="box",
+                pose=PoseStamped(position=Vector3()),
+                dimensions=(1.0, 1.0, 1.0),
+            )
+        )
+        callback_done.set()
+
+    callback_thread = threading.Thread(target=run_callback)
+    callback_thread.start()
+    assert callback_started.wait(timeout=1.0)
+    assert not fake_world.add_started.is_set()
+    assert not callback_done.is_set()
+
+    fake_viz.allow_clear.set()
+    clear_thread.join(timeout=1.0)
+    callback_thread.join(timeout=1.0)
+
+    assert not clear_thread.is_alive()
+    assert not callback_thread.is_alive()
+    assert fake_viz.events == ["clear", "add"]
+    assert set(fake_world.obstacles) == {"new-0"}
+    assert fake_viz.obstacles == {"new-0"}
 
     fake_world2 = FakeWorld()
     monitor2 = world_monitor_module.WorldMonitor(world=fake_world2)  # type: ignore[arg-type]

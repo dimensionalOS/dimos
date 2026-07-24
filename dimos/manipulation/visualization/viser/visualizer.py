@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -32,6 +33,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
@@ -170,8 +172,34 @@ class ViserManipulationVisualizer:
             robot_id_string = str(robot_id)
             self._current_states[robot_id_string] = JointState(current)
             self._scene.update_current_robot(robot_id_string, current)
+        latest_snapshot = getattr(self._operator, "latest_planning_collision_snapshot", None)
+        if callable(latest_snapshot):
+            self._scene.update_planning_collision_snapshot(latest_snapshot())
         if self._gui is not None:
             self._gui.refresh()
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render an accepted obstacle under its stable native ID."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is not None:
+            self._scene.add_vis_obstacle(obstacle_id, obstacle)
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove one accepted obstacle, ignoring unknown IDs deterministically."""
+        if self._scene is not None:
+            self._scene.remove_vis_obstacle(obstacle_id)
+
+    def clear_vis_obstacles(self) -> None:
+        """Remove all accepted obstacle visuals."""
+        if self._scene is not None:
+            self._scene.clear_vis_obstacles()
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Update one accepted obstacle visual pose by native ID."""
+        if self._scene is not None:
+            self._scene.update_vis_obstacle_pose(obstacle_id, pose)
 
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
