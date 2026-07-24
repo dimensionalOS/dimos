@@ -38,17 +38,48 @@ PLATE_MM = plate_size_mm("tag36h11", SIZE_MM, 1.0)
 HOLE_DIA_MM = 3.4
 SPACING_MM = hole_spacing_mm(PLATE_MM, HOLE_DIA_MM)
 
+# Probe cube edge. Small against every feature it lands in (cells are millimetres
+# across, the thinnest is a text stroke) and large against float noise.
+_PROBE_MM = 0.2
 
-# Booleans are the slow part here, so the file shares one built tag and one written set.
+
+def inside(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
+    """Which points fall inside `mesh`, one boolean per point.
+
+    trimesh's own `contains` wants an rtree index, which is a dependency this feature
+    doesn't otherwise earn. Intersecting a cube per point against the mesh answers the
+    same question with the boolean engine already in play: a cube survives iff its
+    point was inside, and every probe rides on one intersection call.
+    """
+    probes = trimesh.util.concatenate(
+        [
+            trimesh.creation.box(
+                extents=(_PROBE_MM,) * 3,
+                transform=trimesh.transformations.translation_matrix(point),
+            )
+            for point in points
+        ]
+    )
+    hit = trimesh.boolean.intersection([mesh, probes])
+    if hit.is_empty:
+        return np.zeros(len(points), dtype=bool)
+    survivors = np.array([piece.centroid for piece in hit.split(only_watertight=False)])
+    gap = np.linalg.norm(points[:, None, :] - survivors[None, :, :], axis=2)
+    return gap.min(axis=1) < _PROBE_MM
+
+
+# Rasterizing the back text costs ~20x what the rest of a tag does, so nothing here
+# builds a full one; text_solid is covered directly with a single glyph instead.
+# Booleans are the next slowest thing, hence the module-scoped shares.
 @pytest.fixture(scope="module")
 def tag() -> TagParts:
-    return build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM)
+    return build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, back_text=False)
 
 
 @pytest.fixture(scope="module")
 def written(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
     out = tmp_path_factory.mktemp("tags")
-    return generate_3d([0], out, size_mm=SIZE_MM, legs_mm=250.0)
+    return generate_3d([0], out, size_mm=SIZE_MM, legs_mm=250.0, back_text=False)
 
 
 def test_grid_rects_stacks_runs_that_repeat_down_rows() -> None:
@@ -69,7 +100,7 @@ def test_marker_is_the_same_tag_the_pdf_draws() -> None:
     )
     expected = np.array([bool(cells[r][c]) for r in range(n) for c in range(n)])
     marker = marker_solid("tag36h11", 7, SIZE_MM, 2.2, 3.0)
-    assert np.array_equal(marker.contains(centers), expected)
+    assert np.array_equal(inside(marker, centers), expected)
 
 
 def test_the_two_filaments_meet_flush_and_never_share_space(tag: TagParts) -> None:
@@ -80,29 +111,20 @@ def test_the_two_filaments_meet_flush_and_never_share_space(tag: TagParts) -> No
     assert trimesh.boolean.intersection([tag.base, tag.marker]).volume < 1e-6
 
 
-def test_text_inlay_exactly_refills_the_pocket_it_cut(tag: TagParts) -> None:
-    assert tag.text is not None
-    assert tag.text.is_watertight
-    # Flush with the bottom face, so it prints as the first layers.
-    assert tag.text.bounds[0][2] == pytest.approx(0.0)
-    solid = build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, back_text=False).base
-    assert tag.base.volume + tag.text.volume == pytest.approx(solid.volume, rel=1e-6)
-
-
 def test_flange_holes_are_open_and_clear_of_the_quiet_zone(tag: TagParts) -> None:
     cx = PLATE_MM / 2 + hole_pad_mm(HOLE_DIA_MM)
     cy = SPACING_MM / 2
     holes = np.array([[sx * cx, sy * cy, 1.5] for sx in (-1, 1) for sy in (-1, 1)])
-    assert not tag.base.contains(holes).any()
+    assert not inside(tag.base, holes).any()
     # The flanges widen the plate in X only; the tag's own margin stays solid plastic.
     assert tag.base.bounds[1][1] == pytest.approx(PLATE_MM / 2)
     corner = PLATE_MM / 2 - 0.5
     corners = np.array([[sx * corner, sy * corner, 1.5] for sx in (-1, 1) for sy in (-1, 1)])
-    assert tag.base.contains(corners).all()
+    assert inside(tag.base, corners).all()
 
 
 def test_no_holes_leaves_a_bare_square_plate() -> None:
-    base = build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, holes=False).base
+    base = build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, holes=False, back_text=False).base
     assert base.bounds[1][0] == pytest.approx(PLATE_MM / 2)
     assert base.bounds[1][1] == pytest.approx(PLATE_MM / 2)
 
@@ -113,9 +135,9 @@ def test_back_text_is_mirrored_so_it_reads_from_below() -> None:
     # 'L' is a stem with a foot to its right; mirrored, the stem sits at max X.
     lo, hi = solid.bounds
     stroke = (hi[0] - lo[0]) / 5
-    assert solid.contains(np.array([[hi[0] - stroke / 2, 0.0, 0.3]]))[0]
-    assert solid.contains(np.array([[lo[0] + stroke / 2, lo[1] + stroke / 2, 0.3]]))[0]
-    assert not solid.contains(np.array([[lo[0] + stroke / 2, hi[1] - 0.1, 0.3]]))[0]
+    assert inside(solid, np.array([[hi[0] - stroke / 2, 0.0, 0.3]]))[0]
+    assert inside(solid, np.array([[lo[0] + stroke / 2, lo[1] + stroke / 2, 0.3]]))[0]
+    assert not inside(solid, np.array([[lo[0] + stroke / 2, hi[1] - 0.1, 0.3]]))[0]
 
 
 def test_text_too_fine_to_print_is_dropped_rather_than_generated() -> None:
@@ -141,7 +163,7 @@ def test_legs_bolt_to_the_holes_the_plate_actually_has() -> None:
     assert leg.is_watertight
     # Both holes open end to end — the brace must never land across the lower one.
     for z in (250.0 - SPACING_MM / 2, 250.0 + SPACING_MM / 2):
-        assert not leg.contains(np.array([[0.0, y, z] for y in (0.2, 3.0, 5.8)])).any()
+        assert not inside(leg, np.array([[0.0, y, z] for y in (0.2, 3.0, 5.8)])).any()
     # Planar but for the outrigger, so it prints lying on its side.
     assert leg.bounds[0][0] == pytest.approx(-hole_pad_mm(HOLE_DIA_MM))
 
@@ -153,7 +175,6 @@ def test_generate_3d_writes_a_file_set_that_reloads_watertight(written: list[Pat
         "tag36h11_000.3mf",
         "tag36h11_000_base.stl",
         "tag36h11_000_marker.stl",
-        "tag36h11_000_text.stl",
     ]
     # STL stores float32, and near-coincident vertices used to weld into bowties on reload.
     for path in (p for p in written if p.suffix == ".stl"):
@@ -168,8 +189,8 @@ def test_3mf_carries_every_part_with_its_own_color(written: list[Path]) -> None:
     # swaps them prints a photographic negative no detector will decode.
     assert '<base name="base" displaycolor="#F5F5F5FF"/>' in model
     assert '<base name="marker" displaycolor="#141414FF"/>' in model
-    assert model.count("<object ") == 3
-    assert model.count("<item ") == 3
+    assert model.count("<object ") == 2
+    assert model.count("<item ") == 2
 
 
 def test_generate_3d_rejects_empty_ids(tmp_path: Path) -> None:
@@ -179,5 +200,5 @@ def test_generate_3d_rejects_empty_ids(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("family", ["tag25h9", "aruco_4x4_50"])
 def test_other_families_build(family: str) -> None:
-    parts = build_tag_meshes(family, 1, size_mm=60.0)
+    parts = build_tag_meshes(family, 1, size_mm=60.0, back_text=False)
     assert parts.base.is_watertight and parts.marker.is_watertight

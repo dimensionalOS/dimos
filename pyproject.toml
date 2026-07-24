@@ -425,8 +425,6 @@ tests = [
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
-    # trimesh's point-in-mesh test, which the apriltag mesh tests lean on, needs an
-    "rtree>=1.4.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
