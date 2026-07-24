@@ -302,6 +302,21 @@ class StudioService:
         except (requests.RequestException, McpError) as exc:
             raise ValueError(f"Agent 暂不可用: {exc}") from exc
 
+    def request_remote_stop(self) -> dict[str, str]:
+        """Call movement cancellation tools directly, without LLM mediation."""
+
+        adapter = McpAdapter.from_run_entry(timeout=5)
+        results: dict[str, str] = {}
+        errors: list[str] = []
+        for tool_name in ("end_exploration", "stop_navigation"):
+            try:
+                results[tool_name] = adapter.call_tool_text(tool_name, {})
+            except (requests.RequestException, McpError) as exc:
+                errors.append(f"{tool_name}: {exc}")
+        if errors:
+            raise ValueError("; ".join(errors))
+        return results
+
     def mission_status(self) -> dict[str, Any]:
         mission = self.mission_controller.mission
         return {
@@ -475,13 +490,11 @@ class StudioService:
 
     def _best_effort_agent_stop(self, command: str) -> dict[str, Any]:
         try:
-            result = self.send_agent_message(
-                f"{command}。立即调用 end_exploration 和 stop_navigation；不要开始任何新动作。"
-            )
+            result = self.request_remote_stop()
         except ValueError as exc:
             return {
                 "remote_stop_confirmed": False,
-                "remote_stop_error": str(exc),
+                "remote_stop_error": f"{command}: {exc}",
             }
         return {
             "remote_stop_confirmed": True,

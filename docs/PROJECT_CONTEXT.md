@@ -11,11 +11,13 @@ For manual operation, Studio launches DimOS's existing
 <https://teleop.dimensionalos.com/>. The official page remains the cockpit for
 video, map, joystick, emergency stop, and click-to-navigate.
 
-The next development target is a separate local-LAN Mission Control mode. It
-will combine camera, LiDAR mapping, frontier exploration, semantic door
-recognition, Agent/MCP task execution, conservative person-yield behavior, and
-remote supervision in one local page. The accepted design is
-`docs/plans/2026-07-24-go2-local-mission-control-design.md`.
+The current development target is a separate local-LAN Mission Control mode.
+Its first vertical slice now combines the existing camera/map visualization,
+natural-language mission submission, a deterministic mission safety state
+machine, evidence-based door policy skills, direct MCP navigation cancellation,
+and remote supervision in one local page. The accepted design is
+`docs/plans/2026-07-24-go2-local-mission-control-design.md`; the implementation
+plan is `docs/plans/2026-07-24-go2-mission-control-implementation.md`.
 
 Safety rule: real hardware movement is locked by default. Simulation is the
 preferred place to test new skills. Hardware startup requires both disabling the
@@ -46,6 +48,14 @@ Studio now also provides:
 - official Hosted Teleop launch with `go2connection.auto_stand=false`
 - duplicate-start protection while DimOS is still registering
 - cleanup of a launcher process that fails before registration
+- unified Mission Control with the existing DimOS viewer embedded at port 7779
+- persisted mission lifecycle and explicit create/start/pause/resume/stop/E-STOP
+- a direct `end_exploration` plus `stop_navigation` MCP cancellation path
+- autonomous navigation capped at 0.1 m/s with reverse navigation disabled in
+  the external Studio Blueprint
+- three-frame, confidence- and position-consistent door verification helpers
+- one-metre stand-off goal calculation that remains advisory until navigation
+  is explicitly allowed
 
 ## Known constraints
 
@@ -60,8 +70,54 @@ Studio now also provides:
   remain an explicit action.
 - Map and teleoperation views only become available when the selected DimOS
   Blueprint successfully starts its visualization stack.
+- The Mission Control person-yield state machine is implemented, but live
+  person distance is not yet fed into it from a detector. Do not claim live
+  crowd yielding until that stream bridge is built and tested.
+- Door evidence policy and Agent skills are implemented, but automatic
+  camera-frame-to-door-observation ingestion is not yet built. The external VLM
+  path still needs simulation/replay evaluation.
+- A local E-STOP state is not physical proof. Mission Control directly requests
+  both exploration and navigation cancellation through MCP and reports whether
+  those calls succeeded; the operator must still verify the robot stopped.
+- No real autonomous motion has been validated. Keep dense-venue movement
+  locked until simulation, hardware-read-only, empty-area, and controlled
+  pedestrian gates all pass.
 
 ## Recent task log
+
+### 2026-07-24 — Go2 Mission Control first implementation slice
+
+- Changed: added a deterministic mission/safety state machine, mission REST API,
+  unified camera/map/task page, direct MCP stop path, evidence-based door Agent
+  skills, and a navigation speed/reverse safety filter.
+- Why: provide one beginner-usable place to see DimOS telemetry, describe a
+  task, supervise its state, and stop it without replacing the existing DimOS
+  mapping, exploration, planning, spatial memory, or MCP layers.
+- Files: `dimos/web/studio/`,
+  `dimos/navigation/movement_manager/movement_manager.py`,
+  `extensions/go2-studio-agent/`,
+  `docs/plans/2026-07-24-go2-mission-control-implementation.md`, and this
+  document.
+- Commands/tests: Studio mission/API pytest suite, MovementManager pytest suite,
+  external door-policy and Blueprint smoke tests, Ruff, Node JavaScript syntax
+  check, and a live local browser inspection on port 8766.
+- Validation: mission transitions, lock/runtime start gates, person-distance
+  pause policy, three-second resume policy, navigation failure cutoff, direct
+  stop failure reporting, door evidence thresholds, one-metre stand-off math,
+  0.1 m/s navigation clipping, reverse blocking, and required Blueprint modules
+  are covered by tests. The rendered page had no JavaScript console errors and
+  showed an explicit offline state while the port-7779 viewer was unavailable.
+- Safety boundary: no real robot movement or autonomous hardware command was
+  issued during development. The direct speed limiter applies to autonomous
+  navigation output; risky Unitree sport skills and person-follow are disabled
+  in the Studio Blueprint.
+- Unresolved: live person detection is not connected to the state machine,
+  camera frames are not automatically recorded as door evidence, Agent progress
+  is not yet streamed back into mission phases, and simulation/replay plus all
+  real-world gates remain unvalidated.
+- Next: connect perception telemetry to mission safety/evidence, run a recorded
+  or simulated door-search mission, then validate real hardware read-only before
+  considering empty-area movement.
 
 ### 2026-07-24 — Local autonomous Mission Control design
 
@@ -78,10 +134,10 @@ Studio now also provides:
 - Safety boundary: current hardware only; no person follows the robot, but a
   remote supervisor and E-STOP are mandatory. Dense-crowd movement stays locked
   until staged simulation and controlled real-world gates pass.
-- Unresolved: implementation has not started; external VLM provider and final
-  crowd-mode acceptance metrics still require validation.
-- Next: create the implementation plan, build the local telemetry/UI slice, and
-  prove perception and safety behavior before enabling real movement.
+- Resolved later: the implementation plan, local telemetry/UI slice, mission
+  state machine, and door policy skills now exist.
+- Remaining: external VLM integration and final crowd-mode acceptance metrics
+  still require staged validation before enabling real movement.
 
 ### 2026-07-24 — Restore official Hosted Teleop
 

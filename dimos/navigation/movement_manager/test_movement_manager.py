@@ -139,3 +139,34 @@ def test_tele_cmd_vel_scaling(manager_and_captured):
     assert published.linear.y == pytest.approx(2.0)
     assert published.linear.z == pytest.approx(0.0)
     assert published.angular.z == pytest.approx(0.25)
+
+
+def test_nav_linear_speed_is_capped_when_configured():
+    module = MovementManager(max_nav_linear_speed=0.1)
+    captured, unsubs = _attach(module)
+    try:
+        module._on_nav(Twist(Vector3(0.3, 0.4, 0), Vector3(0, 0, 0.5)))
+
+        published = captured.cmd_vel[-1]
+        assert published.linear.x == pytest.approx(0.06)
+        assert published.linear.y == pytest.approx(0.08)
+        assert published.angular.z == pytest.approx(0.5)
+    finally:
+        for unsub in unsubs:
+            unsub()
+        module._close_module()
+
+
+def test_nav_reverse_is_blocked_when_configured():
+    module = MovementManager(allow_nav_reverse=False)
+    captured, unsubs = _attach(module)
+    try:
+        module._on_nav(Twist(Vector3(-0.2, 0.05, 0), Vector3(0, 0, 0)))
+
+        published = captured.cmd_vel[-1]
+        assert published.linear.x == 0.0
+        assert published.linear.y == pytest.approx(0.05)
+    finally:
+        for unsub in unsubs:
+            unsub()
+        module._close_module()

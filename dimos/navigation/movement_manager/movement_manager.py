@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -46,6 +47,8 @@ MAX_CLICK_VERTICAL_M = 50.0
 class MovementManagerConfig(ModuleConfig):
     tele_cooldown_sec: float = 1.0
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
+    max_nav_linear_speed: float | None = Field(default=None, gt=0)
+    allow_nav_reverse: bool = True
 
 
 class MovementManager(Module):
@@ -117,7 +120,22 @@ class MovementManager(Module):
                 if elapsed < self.config.tele_cooldown_sec:
                     return
                 self._teleop_active = False
-            self.cmd_vel.publish(msg)
+            linear_x = msg.linear.x
+            linear_y = msg.linear.y
+            if not self.config.allow_nav_reverse:
+                linear_x = max(0.0, linear_x)
+            speed = math.hypot(linear_x, linear_y)
+            speed_limit = self.config.max_nav_linear_speed
+            if speed_limit is not None and speed > speed_limit:
+                scale = speed_limit / speed
+                linear_x *= scale
+                linear_y *= scale
+            self.cmd_vel.publish(
+                Twist(
+                    linear=Vector3(linear_x, linear_y, msg.linear.z),
+                    angular=msg.angular,
+                )
+            )
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:

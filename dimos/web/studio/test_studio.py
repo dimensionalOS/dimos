@@ -206,10 +206,10 @@ def test_emergency_stop_is_recorded_when_mcp_is_unavailable(
     service = app.state.studio_service
     client.post("/api/mission", json={"objective": "找到门"})
 
-    def unavailable(_message: str) -> str:
+    def unavailable() -> dict[str, str]:
         raise ValueError("MCP unavailable")
 
-    monkeypatch.setattr(service, "send_agent_message", unavailable)
+    monkeypatch.setattr(service, "request_remote_stop", unavailable)
 
     stopped = client.post(
         "/api/mission/estop",

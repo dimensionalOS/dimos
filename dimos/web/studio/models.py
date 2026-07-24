@@ -21,7 +21,7 @@ class StudioSettings(BaseModel):
     )
     obstacle_avoidance: bool = True
     movement_locked: bool = True
-    navigation_speed_scale: float = Field(default=0.35, ge=0.1, le=1.0)
+    navigation_speed_scale: float = Field(default=0.18, ge=0.1, le=1.0)
 
 
 class RobotCheckRequest(BaseModel):
