@@ -190,17 +190,18 @@ class Go2CommandModule(Module):
         self._cmd.bump_safety_epoch()
         self._cancel_nav()
         self._cmd.clear_nonces()
-        try:
-            self.go2.stop_movement()
-        except Exception:
-            logger.exception("stop_movement on operator loss failed")
-        if self.config.damp_on_operator_lost:
-            self._cmd.submit(
-                "damp_on_operator_lost",
-                None,
-                lambda _ep: bool(self.go2.sport_command(ALLOWED_SPORT_CMDS["Damp"])),
-                urgent=True,
-            )
+        damp = self.config.damp_on_operator_lost
+
+        def task(_ep: int) -> bool:
+            try:
+                self.go2.stop_movement()
+            except Exception:
+                logger.exception("stop_movement on operator loss failed")
+            if damp:
+                return bool(self.go2.sport_command(ALLOWED_SPORT_CMDS["Damp"]))
+            return True
+
+        self._cmd.submit("operator_lost stop", None, task, urgent=True)
 
     # ─── discrete commands (RPC to the driver) ────────────────────────
 

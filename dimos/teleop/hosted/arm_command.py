@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.quest.quest_extensions import ArmTeleopConfig, ArmTeleopModule
 from dimos.teleop.quest.quest_types import Hand
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
@@ -64,6 +65,9 @@ class ArmCommandModule(ArmTeleopModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._estopped = False
+        self._cmd = SerializedCommandExecutor(
+            lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
+        )
         self._last_twist_ts = 0.0
         self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
@@ -81,12 +85,18 @@ class ArmCommandModule(ArmTeleopModule):
     @rpc
     def start(self) -> None:
         super().start()
+        self._cmd.start()
         for stream, cb in (
             (self.cmd_raw, self._on_cmd_raw),
             (self.state_json, self._on_state_json),
         ):
             self.register_disposable(Disposable(stream.subscribe(cb)))
         self._publish_robot_state()
+
+    @rpc
+    def stop(self) -> None:
+        self._cmd.stop()
+        super().stop()
 
     # ─── Inbound command plane (operator → robot) ─────────────────────
 
@@ -212,28 +222,32 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── E-STOP / operator-loss hooks ─────────────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
-        """Latch FIRST (gates operator input), halt coordinator tasks, disengage."""
+        """Latch FIRST (gates operator input), disengage, then latch the
+        coordinator off-thread; the ack carries the coordinator result."""
         self._estopped = True
         logger.warning("E-STOP latched by operator")
-        self._set_coordinator_estop(True)
         with self._lock:
             self._disengage()
         self._publish_robot_state()
-        self._send_ack(nonce, True)
+        self._cmd.submit("estop", nonce, self._apply_coordinator_latch, urgent=True)
 
     def _handle_estop_clear(self, nonce: Any) -> None:
-        """Re-arm; a still-held engage re-engages next tick and rebaselines (no jump)."""
+        """Re-arm; a still-held engage re-engages next tick and rebaselines (no
+        jump). Safe local-first: while the coordinator stays latched, tasks are
+        inert, so a failed clear (nacked) can't move the arm."""
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
-        self._set_coordinator_estop(False)
         self._publish_robot_state()
-        self._send_ack(nonce, True)
+        self._cmd.submit("estop_clear", nonce, self._apply_coordinator_latch, urgent=True)
 
-    def _set_coordinator_estop(self, estopped: bool) -> None:
+    def _apply_coordinator_latch(self, _epoch: int) -> bool:
+        estopped = self._estopped
         try:
             self.coordinator.set_estop(estopped)
+            return True
         except Exception:
             logger.exception("coordinator.set_estop(%s) failed", estopped)
+            return False
 
     def _on_operator_lost(self) -> None:
         """Disengage so a stale engage can't keep streaming the last delta."""

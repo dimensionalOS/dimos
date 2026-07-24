@@ -299,6 +299,54 @@ def test_stand_ready_aborts_on_mid_sequence_estop(
     assert module._posture == "Sit"
 
 
+# ─── operator-lost ───────────────────────────────────────────────────
+
+
+def test_operator_lost_stops_movement_and_fences(
+    module: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(module, "_send_ack", lambda nonce, ok: None)
+    epoch_before = module._cmd.safety_epoch
+    module._cmd._nonce_results["stale"] = (True, 0.0)
+
+    module._on_state_json(b'{"type": "operator_lost"}')
+
+    assert module._cmd.safety_epoch == epoch_before + 1  # queued cmds fenced
+    assert not module._cmd._nonce_results  # reconnect must not re-ack old nonces
+    module.stop_movement.publish.assert_called_once()  # nav plan cancelled
+    wait_until(lambda: module.go2.stop_movement.called, timeout=2.0)
+    module.go2.sport_command.assert_not_called()  # damp_on_operator_lost=False
+
+
+def test_operator_lost_damps_when_configured(
+    module: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module.config.damp_on_operator_lost = True
+    module.go2.sport_command.return_value = True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(module, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    module._on_state_json(b'{"type": "operator_lost"}')
+
+    wait_until(lambda: module.go2.sport_command.called, timeout=2.0)
+    module.go2.sport_command.assert_called_with(ALLOWED_SPORT_CMDS["Damp"])
+    module.go2.stop_movement.assert_called_once()  # one task: stop THEN damp
+    assert acks == []  # internal task — no junk ack to the operator
+
+
+def test_non_urgent_cmd_rejected_while_estopped(
+    module: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(module, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+    module._estopped = True
+
+    module._handle_sport_cmd({"name": "Sit", "nonce": 4})
+
+    module.go2.sport_command.assert_not_called()
+    assert acks == [(4, False)]
+
+
 # ─── nonce dedup ─────────────────────────────────────────────────────
 
 
