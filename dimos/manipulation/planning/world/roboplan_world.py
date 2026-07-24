@@ -73,7 +73,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_WORLD_FRAME = ""
+_WORLD_FRAME = "dimos_world"
 
 
 @dataclass

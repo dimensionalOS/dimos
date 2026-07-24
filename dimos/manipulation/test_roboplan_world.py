@@ -508,9 +508,17 @@ def test_duplicate_resolved_joint_names_fail_clearly(
 
 
 def test_obstacle_mutation_updates_scene_and_stored_pose(
-    fake_roboplan: None, robot_config: RobotModelConfig
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
+    add_box = mocker.patch.object(
+        FakeScene,
+        "addBoxGeometry",
+        autospec=True,
+        side_effect=FakeScene.addBoxGeometry,
+    )
 
     obstacle = Obstacle(
         name="box",
@@ -519,6 +527,7 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
         dimensions=(0.1, 0.2, 0.3),
     )
     assert world.add_obstacle(obstacle) == "box"
+    assert add_box.call_args.args[2] == "dimos_world"
     assert "box" in world._scene.geometry
     updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
@@ -1001,11 +1010,31 @@ def test_native_planner_rejects_empty_path(
 def test_collision_exclusion_pairs_are_written_to_generated_srdf(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    robot_config.collision_exclusion_pairs = [("base", "link2")]
+    robot_config.collision_exclusion_pairs = [
+        ("base", "link2"),
+        ("other_base", "other_tip"),
+    ]
     world, _ = _make_world(fake_roboplan, robot_config)
 
     srdf_path = Path(world._scene.constructor_args[2])
-    assert 'disable_collisions link1="base" link2="link2"' in srdf_path.read_text()
+    srdf = srdf_path.read_text()
+    assert 'disable_collisions link1="base" link2="link2"' in srdf
+    assert "other_base" not in srdf
+
+
+def test_collision_exclusion_with_one_unknown_link_is_rejected(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    robot_config.collision_exclusion_pairs = [("base", "missing")]
+    module = _import_roboplan_world(fake_roboplan)
+    world = module.RoboPlanWorld()
+    world.add_robot(robot_config)
+
+    with pytest.raises(
+        ValueError,
+        match=r"collision exclusion references unknown links: base <-> missing",
+    ):
+        world.finalize()
 
 
 def test_generated_srdf_uses_scoped_temp_directory(

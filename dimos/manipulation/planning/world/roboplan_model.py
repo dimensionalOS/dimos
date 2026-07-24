@@ -391,7 +391,11 @@ def _srdf(
         if config.srdf_path is not None:
             configured.extend(_source_exclusions(config.srdf_path))
         for first, second in configured:
-            if first not in mapping.links or second not in mapping.links:
+            first_exists = first in mapping.links
+            second_exists = second in mapping.links
+            if not first_exists and not second_exists:
+                continue
+            if not first_exists or not second_exists:
                 raise ValueError(
                     f"Robot '{config.name}' collision exclusion references unknown links: "
                     f"{first} <-> {second}"
