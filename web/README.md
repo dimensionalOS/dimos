@@ -1,13 +1,14 @@
 # DimOS web
 
 Deno workspace for the robot web stack. `shared/` holds the wire protocol and its golden vectors;
-the WebTransport relay (`relay/`, with `deno task dev`), its Python mirror + client
-(`dimos/web/relay_bridge/`), and the Cockpit browser app arrive in follow-up PRs.
+`relay/` is the WebTransport relay. The Python mirror + client (`dimos/web/relay_bridge/`) and the
+Cockpit browser app arrive in follow-up PRs.
 
 Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there).
 
 ```bash
-deno task test           # unit tests
+deno task dev            # relay on http://127.0.0.1:7780 (debug page at /debug.html)
+deno task test           # unit + loopback e2e tests
 deno task check          # type-check; deno fmt + deno lint for style
 ```
 

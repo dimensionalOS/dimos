@@ -333,7 +333,7 @@ dds = [
 webrtc = [
     # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
     "aiortc>=1.14.0",
-    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
 ]
 
 base = [
@@ -658,6 +658,7 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
 ]
