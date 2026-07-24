@@ -69,7 +69,7 @@ class ImageEmbeddingProvider:
             import onnxruntime as ort  # type: ignore[import-untyped]
             import torch  # noqa: F401
             from transformers import (
-                AutoFeatureExtractor,
+                AutoImageProcessor,
                 AutoModel,
                 CLIPProcessor,
             )
@@ -95,7 +95,7 @@ class ImageEmbeddingProvider:
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"  # type: ignore[assignment]
                 self.model = AutoModel.from_pretrained(model_id)
-                self.processor = AutoFeatureExtractor.from_pretrained(model_id)
+                self.processor = AutoImageProcessor.from_pretrained(model_id)
                 logger.info(f"Loaded ResNet model: {model_id}")
             else:
                 raise ValueError(f"Unsupported model: {self.model_name}")

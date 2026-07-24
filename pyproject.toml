@@ -240,7 +240,7 @@ perception = [
     "ultralytics>=8.3.70",
     "Pillow",
     "lap>=0.5.12",
-    "transformers[torch]>=4.53.0,<4.54",
+    "transformers[torch]>=4.53.0,<6",
     # Florence2 (dimos/models/vl/florence.py) loads via transformers trust_remote_code;
     # its downloaded modeling file imports einops (not captured by package metadata).
     "einops>=0.8.1",
@@ -371,7 +371,7 @@ project-deps = [
     "langchain==1.2.3",
     "langchain-core==1.3.3",
     "googlemaps>=4.10.0",
-    "transformers[torch]==4.53.3",
+    "transformers[torch]==5.13.0",
     "einops>=0.8.1",         # Florence2 trust_remote_code dep (see perception extra)
     "ultralytics>=8.3.70",
     "hydra-core>=1.3.0",
