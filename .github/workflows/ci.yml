@@ -656,7 +656,10 @@ jobs:
         # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
         # evicts pre-built wheels (re-downloaded on the next run) while keeping
         # the expensive wheels built from source. uv has nothing age-based.
-        if: ${{ always() && matrix.os == 'Linux' }}
+        # Not always(): on a cancelled run, lingering test processes still
+        # hold the shared cache lock and prune would block on it until the
+        # job timeout.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
         run: |
           uv cache prune
           size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
@@ -780,7 +783,7 @@ jobs:
       - name: Prune the persistent uv cache
         # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
         # default with `uv cache dir`.
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
           uv cache prune
           size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
