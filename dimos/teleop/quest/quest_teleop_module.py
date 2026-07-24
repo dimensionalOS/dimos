@@ -22,7 +22,9 @@ deltas, and publishes PoseStamped commands.
 """
 
 import asyncio
+import base64
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import threading
 import time
@@ -72,6 +74,12 @@ class QuestTeleopConfig(ModuleConfig):
     # (global_config.listen_host, typically loopback) would only ever serve
     # a browser on the robot itself.
     listen_host: str = "0.0.0.0"
+    # When set, every websocket frame the headset sends (pose, joy, buttons)
+    # is appended verbatim to this JSONL file with receive timestamps, so a
+    # session can be replayed bit-exactly against the sim blueprint with
+    # scripts/r1lite_test/replay_quest_stream.py. strftime tokens in the path
+    # expand when the file opens (first frame received). Empty disables.
+    record_path: str = ""
 
 
 _Config = TypeVar("_Config", bound=QuestTeleopConfig)
@@ -132,6 +140,11 @@ class QuestTeleopModule(Module):
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
 
+        # Session recorder (see QuestTeleopConfig.record_path)
+        self._record_lock = threading.Lock()
+        self._record_file: Any = None
+        self._record_count = 0
+
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
         assert self._web_server is not None
@@ -156,6 +169,7 @@ class QuestTeleopModule(Module):
             try:
                 while True:
                     data = await ws.receive_bytes()
+                    self._record_frame(data)
                     fingerprint = data[:8]
                     decoder = self._decoders.get(fingerprint)
                     if decoder:
@@ -181,7 +195,40 @@ class QuestTeleopModule(Module):
     def stop(self) -> None:
         self._stop_control_loop()
         self._stop_server()
+        self._close_recorder()
         super().stop()
+
+    def _record_frame(self, data: bytes) -> None:
+        """Append one raw websocket frame to the session recording."""
+        if not self.config.record_path:
+            return
+        with self._record_lock:
+            if self._record_file is None:
+                path = Path(time.strftime(self.config.record_path)).expanduser()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._record_file = path.open("a", encoding="utf-8")
+                logger.info(f"Recording quest stream to {path}")
+            self._record_file.write(
+                json.dumps(
+                    {
+                        "t": time.monotonic(),
+                        "wall": time.time(),
+                        "data": base64.b64encode(data).decode("ascii"),
+                    }
+                )
+                + "\n"
+            )
+            self._record_count += 1
+            # Survive a crash or power cut with at most ~1 s of frames lost.
+            if self._record_count % 100 == 0:
+                self._record_file.flush()
+
+    def _close_recorder(self) -> None:
+        with self._record_lock:
+            if self._record_file is not None:
+                self._record_file.close()
+                self._record_file = None
+                logger.info(f"Quest stream recording closed ({self._record_count} frames)")
 
     def _engage(self, hand: Hand | None = None) -> bool:
         """Engage a hand. Assumes self._lock is held."""

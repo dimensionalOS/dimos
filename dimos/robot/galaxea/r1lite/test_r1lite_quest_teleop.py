@@ -361,6 +361,52 @@ def test_rotation_deadband_holds_small_and_shortens_large() -> None:
     assert moved == pytest.approx(26.0, abs=0.1)
 
 
+def test_recorder_writes_replayable_frames(tmp_path: Any) -> None:
+    # The recorder stores raw websocket frames verbatim; the replay script
+    # must recover the exact bytes and relative timing.
+    import base64
+    import json
+
+    record = tmp_path / "session.jsonl"
+    m = _module(record_path=str(record))
+    frames = [b"\x01\x02fingerprint-a", b"\x03\x04fingerprint-b"]
+    for frame in frames:
+        m._record_frame(frame)
+    m._close_recorder()
+
+    entries = [json.loads(line) for line in record.read_text().splitlines()]
+    assert [base64.b64decode(e["data"]) for e in entries] == frames
+    assert entries[1]["t"] >= entries[0]["t"]
+
+    import sys
+
+    sys.path.insert(0, "scripts/r1lite_test")
+    try:
+        from replay_quest_stream import load_frames
+    finally:
+        sys.path.pop(0)
+    loaded = load_frames(record, 0.0, float("inf"))
+    assert [data for _, data in loaded] == frames
+    assert loaded[0][0] == 0.0
+
+
+def test_recorder_off_by_default() -> None:
+    m = _module()
+    m._record_frame(b"frame")
+    m._close_recorder()
+    assert m._record_file is None
+    assert m._record_count == 0
+
+
+def test_hardware_blueprint_records_sessions() -> None:
+    kwargs = next(
+        atom.kwargs
+        for atom in r1lite_quest_teleop.blueprints
+        if atom.module is R1LiteQuestTeleopModule
+    )
+    assert kwargs["record_path"].startswith("/tmp/quest_record_")
+
+
 def test_position_deadband_zeroes_small_deltas() -> None:
     m = _module(position_deadband_m=0.02)
     m._is_engaged[Hand.LEFT] = True
