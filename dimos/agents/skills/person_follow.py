@@ -39,7 +39,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
-from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -69,7 +68,6 @@ class PersonFollowSkillContainer(Module):
 
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
-    _tf: TF | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -98,8 +96,7 @@ class PersonFollowSkillContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._tf = TF(self.tf)
-        self._detection_navigation = DetectionNavigation(self._tf, self._camera_info)
+        self._detection_navigation = DetectionNavigation(self.tfbuffer, self._camera_info)
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         if self.config.use_3d_navigation:
             self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))

@@ -44,6 +44,7 @@ from dimos.core.stream import IO, In, Out, RemoteOut, Transport
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.protocol.tf.tf import TF
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -135,6 +136,7 @@ class ModuleBase(Configurable, CompositeResource):
     dedicated_worker: ClassVar[bool] = False
 
     _rpc: RPCSpec | None = None
+    _tf: TF | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _bound_rpc_calls: dict[str, RpcCall] = {}
@@ -217,6 +219,13 @@ class ModuleBase(Configurable, CompositeResource):
             self._loop = None
             self._loop_thread = None
 
+        if self._tf is not None:
+            # _tf may hold an injected lookup (tests, replay) without dispose().
+            dispose = getattr(self._tf, "dispose", None)
+            if dispose is not None:
+                dispose()
+            self._tf = None
+
         # Stop transports and break the In/Out -> owner -> self reference
         # cycle so the instance can be freed by refcount instead of waiting for GC.
         for attr in [*self.inputs.values(), *self.outputs.values(), *self.ios.values()]:
@@ -288,6 +297,28 @@ class ModuleBase(Configurable, CompositeResource):
             for name, s in self.__dict__.items()
             if isinstance(s, IO) and not name.startswith("_")
         }
+
+    @property
+    def tfbuffer(self) -> TF:
+        """Lazy transform buffer over the module's declared ``tf`` port.
+
+        Built on first touch, disposed with the module. Requires a
+        ``tf: In[TFMessage]`` or ``tf: IO[TFMessage]`` port declaration.
+        """
+        if self._tf is None:
+            port = getattr(self, "tf", None)
+            if not isinstance(port, (In, IO, Out)):
+                raise TypeError(
+                    f"{type(self).__name__} has no tf port — declare "
+                    "`tf: In[TFMessage]` (or IO[TFMessage]) to use tfbuffer"
+                )
+            if getattr(port, "_transport", None) is None:
+                raise RuntimeError(
+                    f"{type(self).__name__}.tf port has no transport yet — "
+                    "deploy via a blueprint or call set_transport('tf', ...) first"
+                )
+            self._tf = TF(port)
+        return self._tf
 
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -436,7 +467,12 @@ class ModuleBase(Configurable, CompositeResource):
 
         skills: list[SkillInfo] = []
         for name in dir(self):
-            attr = getattr(self, name)
+            try:
+                attr = getattr(self, name)
+            except Exception:
+                # Properties may legitimately raise when unconfigured (e.g.
+                # tfbuffer without a tf port); they are not skills.
+                continue
             if callable(attr) and hasattr(attr, "__skill__"):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
                 uses = tuple(getattr(attr, "__skill_uses__", ()) or ())

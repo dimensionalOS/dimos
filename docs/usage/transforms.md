@@ -204,7 +204,7 @@ Transforms travel on an ordinary stream named `tf` carrying [`TFMessage`](/dimos
 
 The coordinator wires every port named `tf` onto one shared `/tf` transport, so all modules see one transform tree.
 
-For lookups, wrap the port in [`TF`](/dimos/protocol/tf/tf.py) — a disposable buffer view that subscribes to the stream, buffers what it sees, and answers `get()` queries (including chained and inverse lookups). Construct it in `start()`, once transports are wired.
+For lookups, use `self.tfbuffer` — a lazy [`TF`](/dimos/protocol/tf/tf.py) buffer view over the module's `tf` port that subscribes to the stream, buffers what it sees, and answers `get()` queries (including chained and inverse lookups). It is built on first touch and disposed with the module. Outside modules, construct the view explicitly: `TF(stream)` accepts any port or raw transport.
 
 ### Multi-Module Transform Example
 
@@ -226,7 +226,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
@@ -285,34 +284,26 @@ class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
     tf: In[TFMessage]
-    _tf: TF | None = None
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        # A disposable buffer view over the tf stream.
-        # Transform lookups normally happen in fast loops in IRL modules.
-        self._tf = TF(self.tf)
 
     @rpc
     def lookup(self) -> None:
 
         # Will pretty-print information on transforms in the buffer
-        print(self._tf)
+        print(self.tfbuffer)
 
-        direct = self._tf.get("world", "base_link")
+        direct = self.tfbuffer.get("world", "base_link")
         print(f"Direct: robot is at ({direct.translation.x}, {direct.translation.y})m in world\n")
 
         # Chained lookup - automatically composes world -> base -> camera -> optical
-        chained = self._tf.get("world", "camera_optical")
+        chained = self.tfbuffer.get("world", "camera_optical")
         print(f"Chained: {chained}\n")
 
         # Inverse lookup - automatically inverts direction
-        inverse = self._tf.get("camera_optical", "world")
+        inverse = self.tfbuffer.get("camera_optical", "world")
         print(f"Inverse: {inverse}\n")
 
         print("Transform tree:")
-        print(self._tf.graph())
+        print(self.tfbuffer.graph())
 
 if __name__ == "__main__":
     dimos = ModuleCoordinator.build(autoconnect(

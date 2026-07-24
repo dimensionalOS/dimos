@@ -32,7 +32,6 @@ from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.protocol.tf.tf import TF
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -63,7 +62,6 @@ class Detection2DModule(Module):
     detected_image_2: Out[Image]
 
     cnt: int = 0
-    _tf: TF | None = None
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -91,9 +89,7 @@ class Detection2DModule(Module):
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def track(self, detections: ImageDetections2D) -> None:
-        if self._tf is None:
-            return
-        sensor_frame = self._tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
+        sensor_frame = self.tfbuffer.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
             return
@@ -131,11 +127,10 @@ class Detection2DModule(Module):
             )
 
         self.previous_detection_count = current_count
-        self._tf.publish(*transforms)
+        self.tfbuffer.publish(*transforms)
 
     @rpc
     def start(self) -> None:
-        self._tf = TF(self.tf)
         # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(

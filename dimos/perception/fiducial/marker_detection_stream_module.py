@@ -41,7 +41,6 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
-from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -72,8 +71,6 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     color_image: In[Image]
     tf: In[TFMessage]
     detections: Out[Detection3DArray]
-
-    _tf: TF | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -126,15 +123,11 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
         ts = getattr(image, "ts", None) or time.time()
         optical = camera_optical_frame_id(image, info)
-        t_world_optical = (
-            self._tf.get(
-                self.config.world_frame,
-                optical,
-                time_point=ts,
-                time_tolerance=self.config.tf_lookup_tolerance,
-            )
-            if self._tf
-            else None
+        t_world_optical = self.tfbuffer.get(
+            self.config.world_frame,
+            optical,
+            time_point=ts,
+            time_tolerance=self.config.tf_lookup_tolerance,
         )
         if t_world_optical is None:
             logger.debug(
@@ -162,8 +155,6 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     @rpc
     def start(self) -> None:
         Module.start(self)
-
-        self._tf = TF(self.tf)
 
         data_inputs = {name: port for name, port in self.inputs.items() if port is not self.tf}
         if len(data_inputs) != 1 or len(self.outputs) != 1:

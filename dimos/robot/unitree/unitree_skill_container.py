@@ -31,7 +31,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
-from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -201,12 +200,6 @@ class UnitreeSkillContainer(Module):
     _connection: GO2ConnectionSpec
 
     tf: In[TFMessage]
-    _tf: TF | None = None
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self._tf = TF(self.tf)
 
     @rpc
     def stop(self) -> None:
@@ -234,7 +227,7 @@ class UnitreeSkillContainer(Module):
         """
         forward, left, degrees = float(forward), float(left), float(degrees)
 
-        tf = self._tf.get("world", "base_link") if self._tf else None
+        tf = self.tfbuffer.get("world", "base_link")
         if tf is None:
             return "Failed to get the position of the robot."
 
