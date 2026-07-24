@@ -128,7 +128,7 @@ jobs:
   first-time-contributor:
     if: >-
       github.event_name == 'pull_request_target' &&
-      (github.event.action == 'opened' || github.event.action == 'reopened')
+      github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write  # To add the label
