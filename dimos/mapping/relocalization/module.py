@@ -25,6 +25,7 @@ from reactivex import Subject, combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.relocalization.eval import SourceTally, format_eval_summary
 from dimos.mapping.relocalization.priors import (
     EmptyProposalError,
     FiducialPrior,
@@ -132,6 +133,9 @@ class RelocalizationModule(Module):
         super().__init__(**kwargs)
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
+        # Per-source accept/reject tally, filled only under verbose_eval_logging (--eval)
+        # and rendered once at stop(). The module already owns the accept/reject data.
+        self._eval_tally: dict[str, SourceTally] = {}
         self._world_to_map: Subject[Transform | None] = Subject()
         # Prior objects are built ONCE, not per frame: the fiducial holds pending-fix state
         # across bursts that a fresh instance would reset. The RANSAC prior is a pure source;
@@ -212,6 +216,14 @@ class RelocalizationModule(Module):
             map_file=self.config.map_file,
             loaded_map_frame_id=self._premap.frame_id,
         )
+
+    @rpc
+    def stop(self) -> None:
+        # Emit the per-source accept/reject table once, at shutdown, from the tally the
+        # fire path filled -- the module owns the data, so no log parsing.
+        if self.config.verbose_eval_logging and self._eval_tally:
+            logger.info("relocalize eval summary", table=format_eval_summary(self._eval_tally))
+        super().stop()
 
     def _fiducial_config(self) -> FiducialPriorConfig | None:
         """The first enabled fiducial entry, or None -- one detector feeds one prior."""
@@ -429,6 +441,8 @@ class RelocalizationModule(Module):
         gate_source = winning_source if winning_source is not None else RansacPrior.name
         threshold = self._accept_threshold[gate_source]
         if fitness < threshold:
+            if self.config.verbose_eval_logging:
+                self._eval_tally.setdefault(gate_source, SourceTally()).rejects += 1
             # threshold= IS the reason: this is the only reject path, and the
             # operator's next move is to compare the two numbers.
             extra: dict[str, Any] = (
@@ -482,6 +496,9 @@ class RelocalizationModule(Module):
             child_frame_id=FRAME_MAP,
         )
         if self.config.verbose_eval_logging:
+            entry = self._eval_tally.setdefault(gate_source, SourceTally())
+            entry.accepts += 1
+            entry.fitnesses.append(round(fitness, 3))
             logger.info(
                 "relocalize accepted",
                 **source_kw,
