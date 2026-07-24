@@ -24,6 +24,11 @@ mapping, LiDAR geometry, navigation, safety, and motion local while sending only
 up to three explicitly selected candidate screenshots to an OpenAI vision
 provider. Its first offline implementation is available through
 `python -m dimos.perception.offline_target_verification`.
+The active Git baseline is `d52d8c851`, before later continuous live-frame
+capture work. The default Go2 Studio Blueprint no longer includes
+`SpatialMemory`, `PerceiveLoopSkill`, or an embedded `McpClient`; its camera
+`observe` MCP tool captures a frame only when an external Agent explicitly
+calls it.
 
 Safety rule: real hardware movement is locked by default. Simulation is the
 preferred place to test new skills. Hardware startup requires both disabling the
@@ -36,19 +41,21 @@ The separate `hardware_readonly` mode connects sensor streams while
 - Local FastAPI workbench: `dimos/web/studio/`
 - User-editable external Blueprint package: `extensions/go2-studio-agent/`
 - Clickable macOS bundle: `apps/DimOS Studio.app`
+- Native AppKit control app: `apps/DimOS Native.app`
+- Double-click real-Go2 launcher: `启动 DimOS 机械狗.command`
+- Canonical launcher source: `scripts/start_dimos_go2.command`
 - macOS launcher: `scripts/open_dimos_studio.command`
 - Figma baseline: <https://www.figma.com/design/fpQYydt4G0EVFubTDAI1Uy>
 - Default Studio URL: <http://127.0.0.1:8765>
 - Existing DimOS map/command center URL: <http://127.0.0.1:7779/command-center>
 
-Live state on 2026-07-25: the Mac reached the Go2 at `192.168.12.1` while
-internet remained available through the phone. Mission
-`8c1a12389dab462db2d5d2651b992742` stopped after battery reached 4%, below its
-5% floor, and the operator then explicitly stopped it. The global E-STOP
-validation subsequently closed real-hardware run
-`20260725-012510-dimos-go2-studio-go2`; no robot runtime is currently active.
-Exactly one Studio service remains available at `127.0.0.1:8765`, and it was
-started with `--no-open` so it does not create duplicate browser tabs.
+Live state on 2026-07-25: the lightweight Blueprint was validated in replay
+with native Rerun, the original command-center service, and 16 first-party MCP
+tools. The real-Go2 launcher then correctly refused startup because the Mac had
+changed to venue address `30.201.216.83`; `192.168.12.1:9991` was no longer
+reachable and LAN discovery returned no robot. No robot runtime is currently
+active and no movement command was sent. The launcher now tries the configured
+IP first, then performs LAN discovery before it starts anything.
 
 The Studio currently supports Go2 signal-port diagnostics, DimOS
 start/stop/status, MCP tool listing, Agent task submission, safe source editing
@@ -84,13 +91,21 @@ Studio now also provides:
 - automatic transition from exhausted frontier exploration to coverage patrol
 - no automatic Rerun browser-tab launch; the existing Studio page embeds the
   DimOS viewer, avoiding duplicate pages and excess browser memory
+- native Rerun launch with `--rerun-open native --no-rerun-web`; the AppKit
+  control app contains no `WebView`
+- first-party `McpServer` without an embedded cloud model or API key
+- foreground process supervision on macOS, avoiding the broken RPC state seen
+  after DimOS's `--daemon` double fork
+- one-click real-Go2 startup with network gating, native Viewer, MCP, lidar
+  mapping, and hardware movement locked by default
 - one-metre stand-off goal calculation that remains advisory until navigation
   is explicitly allowed
 
 ## Known constraints
 
-- The desktop wrapper currently opens a Chrome app window (or the default
-  browser); native Tauri packaging is deferred because Rust is not installed.
+- `DimOS Native.app` is a native arm64 AppKit bundle and uses the native Rerun
+  viewer for camera/map rendering. The legacy Studio and original command
+  center remain browser pages for configuration and 2D controls.
 - A reachable Go2 port is not proof of a complete WebRTC control link.
 - Hosted Teleop is not connected until the broker accepts the API key and the
   official page visibly shows the robot, video, and current status.
@@ -124,6 +139,40 @@ Studio now also provides:
   movement authorization.
 
 ## Recent task log
+
+### 2026-07-25 — Rollback, native macOS launcher, and first-party MCP
+
+- Changed: preserved the newer work on backup branch
+  `backup/pre-openai-rollback-20260725-0350` at `cbbeacfb4`, then moved the
+  active branch to OpenAI offline-verifier commit `d52d8c851`. Removed the
+  later continuous-frame Agent path from the active Go2 Blueprint.
+- Why: restore the prior interface/behavior, stop continuous screenshot
+  recognition, avoid browser WebGL load, and make real-Go2 startup usable from
+  one macOS file.
+- Files: `apps/DimOS Native/`, `apps/DimOS Native.app`,
+  `scripts/build_dimos_native_app.sh`, `scripts/start_dimos_go2.command`,
+  `启动 DimOS 机械狗.command`, `scripts/open_dimos_studio.command`,
+  `dimos/web/studio/service.py`, the external Blueprint/tests, and this file.
+- Runtime behavior: the native App and launcher start native Rerun, the
+  original `7779` command-center service, lidar mapping, obstacle avoidance,
+  and DimOS's built-in `McpServer`. Continuous `SpatialMemory`,
+  `PerceiveLoopSkill`, and embedded `McpClient` are absent. Real-hardware
+  one-click startup sets `movement_enabled=false` and `auto_stand=false`.
+- Commands/tests: installed Homebrew `jpeg-turbo 3.2.0`; built and ad-hoc signed
+  the arm64 AppKit bundle; `plutil` and `codesign --verify` passed; 15 focused
+  pytest tests passed; Ruff, shell syntax, and `git diff --check` passed.
+- Validation: replay registered 16 MCP tools, including `observe`,
+  `begin_exploration`, `end_exploration`, patrol controls, battery, server
+  status, and Studio policy skills. Ports `9877`, `9990`, `7779`, and `3030`
+  listened and the native `dimos-viewer` launched. `observe` remained
+  on-demand; no continuous recognition call was made.
+- Current blocker: the Mac is on venue network `30.201.216.83`; the Go2 at
+  `192.168.12.1:9991` is unreachable and LAN discovery is empty. The real
+  launcher failed closed, so no fake connection or movement was reported.
+- Next: connect the Mac to the Go2 network (or expose the Go2 on the same LAN),
+  then double-click `启动 DimOS 机械狗.command`. The script will auto-discover,
+  connect, open the native app/viewer, start MCP and mapping, while keeping
+  physical movement locked.
 
 ### 2026-07-25 — Offline candidate-only vision verifier
 

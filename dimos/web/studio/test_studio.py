@@ -64,7 +64,7 @@ def test_hardware_start_requires_unlock_and_confirmation(tmp_path: Path) -> None
         raise AssertionError("hardware start must stay locked by default")
 
 
-def test_command_preview_applies_model_and_speed_settings(tmp_path: Path) -> None:
+def test_command_preview_uses_native_viewer_without_embedded_model(tmp_path: Path) -> None:
     service = StudioService(
         settings_path=tmp_path / "settings.json",
         skill_path=tmp_path / "skills.py",
@@ -78,7 +78,10 @@ def test_command_preview_applies_model_and_speed_settings(tmp_path: Path) -> Non
 
     assert command[:3] == [service._dimos_executable(), "--simulation", "mujoco"]
     assert command[command.index("--nerf-speed") + 1] == "0.25"
-    assert "mcpclient.model=ollama:qwen3:8b" in command
+    assert not any(item.startswith("mcpclient.") for item in command)
+    assert "--daemon" not in command
+    assert command[command.index("--rerun-open") + 1] == "native"
+    assert "--no-rerun-web" in command
 
 
 def test_readonly_hardware_command_disables_motion(tmp_path: Path) -> None:
@@ -92,6 +95,21 @@ def test_readonly_hardware_command_disables_motion(tmp_path: Path) -> None:
     assert "--simulation" not in command
     assert "go2connection.movement_enabled=false" in command
     assert "go2connection.auto_stand=false" in command
+
+
+def test_local_runtime_bypasses_proxy_for_robot_and_mcp(tmp_path: Path) -> None:
+    service = StudioService(
+        settings_path=tmp_path / "settings.json",
+        skill_path=tmp_path / "skills.py",
+    )
+    settings = service.load_settings().model_copy(update={"robot_ip": "192.168.12.1"})
+
+    environment = service._build_environment(settings, "hardware_readonly")
+
+    assert {"localhost", "127.0.0.1", "192.168.12.1"} <= set(
+        environment["NO_PROXY"].split(",")
+    )
+    assert environment["no_proxy"] == environment["NO_PROXY"]
 
 
 def test_parse_go2_discovery_output() -> None:

@@ -39,6 +39,7 @@ HARDWARE_CONFIRMATION = "START GO2"
 TELEOP_CONFIRMATION = "START TELEOP"
 TELEOP_URL = "https://teleop.dimensionalos.com/"
 TELEOP_BLUEPRINT = "teleop-hosted-go2-transport"
+LIGHTWEIGHT_MCP_BLUEPRINT = "dimos-go2-studio.go2"
 TELEOP_KEYCHAIN_SERVICE = "com.dimos.studio.teleop"
 TELEOP_KEYCHAIN_ACCOUNT = "hosted-broker"
 MISSION_CONFIRMATION = "START MISSION"
@@ -439,23 +440,24 @@ class StudioService:
             command.extend(["--robot-ip", settings.robot_ip])
         command.extend(["--viewer", settings.viewer])
         if settings.viewer == "rerun":
-            command.extend(["--rerun-open", "web"])
+            command.extend(["--rerun-open", "native", "--no-rerun-web"])
         command.extend(["--detection-model", settings.detection_model])
         command.extend(["--nerf-speed", str(settings.navigation_speed_scale)])
         command.append(
             "--obstacle-avoidance" if settings.obstacle_avoidance else "--no-obstacle-avoidance"
         )
-        command.extend(
-            [
-                "run",
-                settings.blueprint,
-                "--daemon",
-                "--option",
-                f"mcpclient.model={settings.agent_model}",
-                "--option",
-                f"mcpclient.system_prompt={settings.system_prompt}",
-            ]
-        )
+        command.extend(["run", settings.blueprint])
+        if settings.blueprint != LIGHTWEIGHT_MCP_BLUEPRINT:
+            command.append("--daemon")
+        if settings.blueprint != LIGHTWEIGHT_MCP_BLUEPRINT:
+            command.extend(
+                [
+                    "--option",
+                    f"mcpclient.model={settings.agent_model}",
+                    "--option",
+                    f"mcpclient.system_prompt={settings.system_prompt}",
+                ]
+            )
         if mode == "hardware_readonly":
             command.extend(
                 [
@@ -469,13 +471,6 @@ class StudioService:
 
     def _build_environment(self, settings: StudioSettings, mode: str) -> dict[str, str]:
         environment = os.environ.copy()
-        if mode != "hosted_teleop":
-            return environment
-        key = self._load_teleop_key()
-        if not key:
-            raise ValueError("尚未保存 Teleop 密钥。")
-        environment["TRANSPORTS__BROKER__API_KEY"] = key
-        environment["TRANSPORTS__BROKER__ROBOT_NAME"] = settings.robot_name
         no_proxy = [
             item.strip()
             for item in environment.get("NO_PROXY", environment.get("no_proxy", "")).split(",")
@@ -486,6 +481,13 @@ class StudioService:
                 no_proxy.append(target)
         environment["NO_PROXY"] = ",".join(no_proxy)
         environment["no_proxy"] = environment["NO_PROXY"]
+        if mode != "hosted_teleop":
+            return environment
+        key = self._load_teleop_key()
+        if not key:
+            raise ValueError("尚未保存 Teleop 密钥。")
+        environment["TRANSPORTS__BROKER__API_KEY"] = key
+        environment["TRANSPORTS__BROKER__ROBOT_NAME"] = settings.robot_name
         return environment
 
     def _best_effort_agent_stop(self, command: str) -> dict[str, Any]:
