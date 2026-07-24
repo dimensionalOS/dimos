@@ -43,6 +43,10 @@ Available functions:
     add_box(name,x,y,z)   Add box obstacle
     add_sphere(name,x,y,z) Add sphere obstacle
     add_cylinder(name,x,y,z) Add cylinder obstacle
+    update_box(name,x,y,z,w,h,d) Replace a complete box obstacle
+    update_sphere(name,x,y,z,radius) Replace a complete sphere obstacle
+    update_cylinder(name,x,y,z,radius,height) Replace a complete cylinder obstacle
+    update_pose(name,x,y,z) Move an obstacle without changing its geometry
     remove(id)            Remove obstacle by ID
     collision_free(joints) Check if config is collision-free
 """
@@ -277,6 +281,75 @@ def add_cylinder(
     """Add a cylinder obstacle. e.g. add_cylinder("can", 0.3, 0, 0.2)"""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
     return _client.add_obstacle(name, pose, "cylinder", [radius, height], None)
+
+
+def update_obstacle(
+    name: str,
+    pose: Pose,
+    shape: str,
+    dimensions: list[float] | None = None,
+    mesh_path: str | None = None,
+    color: list[float] | None = None,
+) -> bool:
+    """Replace a complete obstacle; omitted values use new-object defaults."""
+    return _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color)
+
+
+def update_box(
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    w: float,
+    h: float,
+    d: float,
+    color: list[float] | None = None,
+) -> bool:
+    """Replace a complete box obstacle."""
+    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
+    return update_obstacle(name, pose, "box", [w, h, d], color=color)
+
+
+def update_sphere(
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    radius: float,
+    color: list[float] | None = None,
+) -> bool:
+    """Replace a complete sphere obstacle."""
+    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
+    return update_obstacle(name, pose, "sphere", [radius], color=color)
+
+
+def update_cylinder(
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    radius: float,
+    height: float,
+    color: list[float] | None = None,
+) -> bool:
+    """Replace a complete cylinder obstacle."""
+    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
+    return update_obstacle(name, pose, "cylinder", [radius, height], color=color)
+
+
+def update_pose(
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    roll: float = 0.0,
+    pitch: float = 0.0,
+    yaw: float = 0.0,
+) -> bool:
+    """Move an obstacle while preserving its geometry and appearance."""
+    orientation = Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw))
+    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
+    return _client.update_obstacle_pose(name, pose)
 
 
 def remove(obstacle_id: str) -> bool:

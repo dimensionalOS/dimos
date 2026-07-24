@@ -1790,9 +1790,6 @@ class ManipulationModule(Module):
             logger.warning("mesh_path required for mesh obstacles")
             return ""
 
-        # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
         obstacle = Obstacle(
             name=name,
             obstacle_type=obstacle_type,
@@ -1801,6 +1798,58 @@ class ManipulationModule(Module):
             mesh_path=mesh_path,
         )
         return self._world_monitor.add_obstacle(obstacle)
+
+    @rpc
+    def update_obstacle(
+        self,
+        name: str,
+        pose: Pose,
+        shape: str,
+        dimensions: list[float] | None = None,
+        mesh_path: str | None = None,
+        color: list[float] | None = None,
+    ) -> bool:
+        """Replace a complete obstacle identified by name."""
+        if self._world_monitor is None:
+            return False
+
+        shape_map = {
+            "box": ObstacleType.BOX,
+            "sphere": ObstacleType.SPHERE,
+            "cylinder": ObstacleType.CYLINDER,
+            "mesh": ObstacleType.MESH,
+        }
+        obstacle_type = shape_map.get(shape)
+        if obstacle_type is None:
+            raise ValueError(f"Unknown obstacle shape: {shape}")
+        if obstacle_type == ObstacleType.MESH and not mesh_path:
+            raise ValueError("mesh_path required for mesh obstacles")
+        if color is None:
+            rgba = (0.8, 0.2, 0.2, 0.8)
+        elif len(color) == 4:
+            rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
+        else:
+            raise ValueError("Obstacle color must contain four values")
+
+        obstacle = Obstacle(
+            name=name,
+            obstacle_type=obstacle_type,
+            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            dimensions=tuple(dimensions) if dimensions else (),
+            color=rgba,
+            mesh_path=mesh_path,
+        )
+        return self._world_monitor.update_obstacle(obstacle)
+
+    @rpc
+    def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
+        """Update only an obstacle pose while preserving all other properties."""
+        if self._world_monitor is None:
+            return False
+        return self._world_monitor.update_obstacle_pose(
+            name,
+            PoseStamped(position=pose.position, orientation=pose.orientation),
+        )
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:

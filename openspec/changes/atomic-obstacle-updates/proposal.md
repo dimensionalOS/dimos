@@ -13,6 +13,7 @@ Obstacle mutation and collision queries currently access the same native plannin
 - Treat unexpected native update failure as an invariant violation that invalidates the planning world.
 - Keep visualization best-effort: renderer failures are handled internally with log and frontend warnings and do not invalidate the planning world.
 - Route pose-only collision messages to pose update and require complete obstacle information for structural or appearance replacement.
+- Expose complete and pose-only updates through `ManipulationModule` RPC and the interactive manipulation client.
 - **BREAKING** Require world finalization before every planning-world obstacle operation, including add, remove, update, clear, and retrieval.
 
 ## Capabilities

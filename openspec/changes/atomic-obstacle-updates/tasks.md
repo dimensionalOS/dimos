@@ -29,6 +29,7 @@
 - [x] 4.4 Handle Viser renderer failures internally with obstacle-aware logs and a persistent frontend warning, without retry or replay
 - [x] 4.5 Add matching Drake embedded-visualization methods that rely on authoritative world mutation without duplicating geometry changes
 - [x] 4.6 Leave batch updates, stored-plan invalidation, execution-time obstacle behavior, and intentional callback redesign unchanged
+- [x] 4.7 Expose complete and pose-only obstacle update RPCs through `ManipulationModule` and its interactive client
 
 ## 5. Deterministic Verification
 
@@ -39,6 +40,7 @@
 - [x] 5.5 Add native failure-injection tests proving the original exception propagates and later scene operations fail closed
 - [x] 5.6 Add Drake regression tests proving pose and complete updates change collision geometry, not only Meshcat state
 - [x] 5.7 Add monitor-routing and visualization tests for successful forwarding, unknown obstacles, incomplete messages, internal renderer warnings, and no automatic recovery
+- [x] 5.8 Add module RPC and interactive-client forwarding tests for complete and pose-only updates
 
 ## 6. Validation and Review
 

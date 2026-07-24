@@ -43,6 +43,12 @@ def update_obstacle_pose(self, obstacle_name: str, pose: PoseStamped) -> bool: .
 
 `VisualizationSpec` receives matching `update_vis_obstacle(obstacle)` and `update_vis_obstacle_pose(obstacle_name, pose)` commands.
 
+`ManipulationModule` mirrors both operations over RPC. Its complete-update RPC
+constructs a new `Obstacle` only from the supplied request and new-object
+defaults; it does not retrieve or merge the prior obstacle. The interactive
+manipulation client provides both a generic replacement helper and
+shape-specific convenience helpers, plus a pose-only helper.
+
 Alternative considered: a generic partial patch. It was rejected because optional values cannot distinguish preservation from clearing, and merging would create ambiguous ownership between perception, monitors, and the world.
 
 ### All planning-world obstacle operations require finalization

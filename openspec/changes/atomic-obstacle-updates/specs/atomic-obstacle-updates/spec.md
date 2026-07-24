@@ -134,6 +134,19 @@ The system SHALL make each individual obstacle operation atomic and SHALL NOT im
 - **WHEN** a perception frame causes updates to multiple obstacles
 - **THEN** a collision query may run after one obstacle update commits and before another begins
 
+### Requirement: Manipulation client access
+`ManipulationModule` SHALL expose complete and pose-only obstacle updates over
+RPC, and the interactive manipulation client SHALL provide callable helpers for
+both operations.
+
+#### Scenario: Complete client replacement
+- **WHEN** a client supplies an obstacle name, pose, shape, dimensions, mesh information, and appearance
+- **THEN** the module constructs a complete replacement without retrieving or merging the existing obstacle
+
+#### Scenario: Pose-only client update
+- **WHEN** a client supplies an obstacle name and new pose through the pose-only helper
+- **THEN** the module invokes the authoritative pose-only update path
+
 ### Requirement: Stored plans remain outside update semantics
 Successful obstacle updates SHALL NOT invalidate stored generated plans or add execution-time collision guarantees as part of this capability.
 
