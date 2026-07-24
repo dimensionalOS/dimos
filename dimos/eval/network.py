@@ -55,30 +55,119 @@ SAME_HOST: frozenset[str] = frozenset(
     {"memory", "shm_pickle", "shm_bytes", "shm_lcm", "webrtc_loopback"}
 )
 
+def _build_networked_cases() -> list[Any]:
+    """Build transport cases directly from transport implementations.
 
-def _transport_key(context_name: str) -> str:
-    """"lcm_pubsub_channel" -> "lcm"; "zenoh_peers_pubsub_channel" -> "zenoh_peers"."""
-    return context_name.replace("_pubsub_channel", "")
+    Avoids importing testdata.py which has a top-level ``import pytest`` and
+    therefore cannot be imported in a runtime (non-dev) installation.
+    Each entry is a SimpleNamespace with ``.pubsub_context``, ``.msg_gen``,
+    and ``.display_name``.
+    """
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    cases: list[Any] = []
+
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    import numpy as np
+
+    # LCM (UDP multicast)
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic as LCMTopic
+
+    @contextmanager
+    def _lcm_ctx():
+        p = LCM(); p.start(); yield p; p.stop()
+
+    def _lcm_msg(size: int):
+        data = np.frombuffer(bytes(i % 256 for i in range(size)), dtype=np.uint8)
+        h = max(1, int(len(data) ** 0.5)); w = len(data) // h
+        return LCMTopic(topic="eval/lcm", lcm_type=Image), Image(
+            data=data[: h * w].reshape(h, w, 1), format=ImageFormat.RGB)
+
+    cases.append(SimpleNamespace(pubsub_context=_lcm_ctx, msg_gen=_lcm_msg, display_name="LCM"))
+
+    # UdpBytes (raw UDP via LCM base)
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
+
+    @contextmanager
+    def _udp_ctx():
+        p = LCMPubSubBase(); p.start(); yield p; p.stop()
+
+    def _udp_msg(size: int):
+        return LCMTopic(topic="eval/udp"), bytes(i % 256 for i in range(size))
+
+    cases.append(SimpleNamespace(pubsub_context=_udp_ctx, msg_gen=_udp_msg, display_name="UdpBytes"))
+
+    # Zenoh (single session — intra-session local routing)
+    from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh, Topic as ZenohTopic
+    from dimos.protocol.service.zenohservice import ZenohSessionPool
+
+    @contextmanager
+    def _zenoh_ctx():
+        pool = ZenohSessionPool()
+        p = Zenoh(session_pool=pool); p.start(); yield p; p.stop(); pool.close_all()
+
+    def _zenoh_msg(size: int):
+        data = np.frombuffer(bytes(i % 256 for i in range(size)), dtype=np.uint8)
+        h = max(1, int(len(data) ** 0.5)); w = len(data) // h
+        return ZenohTopic("eval/zenoh", Image), Image(
+            data=data[: h * w].reshape(h, w, 1), format=ImageFormat.RGB)
+
+    cases.append(SimpleNamespace(pubsub_context=_zenoh_ctx, msg_gen=_zenoh_msg, display_name="Zenoh"))
+
+    # ZenohPeers (two peer sessions — cross-process wire path)
+    from dimos.utils.testing.waiting import wait_until
+
+    @contextmanager
+    def _zenoh_peers_ctx():
+        pub_pool, sub_pool = ZenohSessionPool(), ZenohSessionPool()
+        pub = Zenoh(session_pool=pub_pool); sub = Zenoh(session_pool=sub_pool)
+        pub.start(); sub.start()
+        wait_until(lambda: len(pub.session.info.peers_zid()) > 0, timeout=5.0,
+                   message="Zenoh peers did not discover each other")
+
+        class _Split:
+            def publish(self, t, m): pub.publish(t, m)
+            def subscribe(self, t, cb): return sub.subscribe(t, cb)
+
+        yield _Split()
+        pub.stop(); sub.stop(); pub_pool.close_all(); sub_pool.close_all()
+
+    def _zenoh_peers_msg(size: int):
+        data = np.frombuffer(bytes(i % 256 for i in range(size)), dtype=np.uint8)
+        h = max(1, int(len(data) ** 0.5)); w = len(data) // h
+        return ZenohTopic("eval/zenoh_peers", Image), Image(
+            data=data[: h * w].reshape(h, w, 1), format=ImageFormat.RGB)
+
+    cases.append(SimpleNamespace(pubsub_context=_zenoh_peers_ctx, msg_gen=_zenoh_peers_msg, display_name="ZenohPeers"))
+
+    # Redis (optional — only when server is running)
+    try:
+        from dimos.protocol.pubsub.impl.redispubsub import Redis
+
+        @contextmanager
+        def _redis_ctx():
+            p = Redis(); p.start(); yield p; p.stop()
+
+        def _redis_msg(size: int):
+            import base64
+            return "eval/redis", {"data": base64.b64encode(bytes(i % 256 for i in range(size))).decode()}
+
+        cases.append(SimpleNamespace(pubsub_context=_redis_ctx, msg_gen=_redis_msg, display_name="Redis"))
+    except Exception:
+        pass
+
+    return cases
 
 
 def networked_cases() -> list[Any]:
-    """The subset of the benchmark's testcases that actually cross a link."""
-    try:
-        from dimos.protocol.pubsub.benchmark.testdata import testcases
-    except ImportError as exc:
-        raise ImportError(
-            "The transport benchmark test-data module requires pytest and its "
-            "dependencies to be installed. Install with: uv sync --all-extras"
-        ) from exc
-
-    return [c for c in testcases if _transport_key(c.pubsub_context.__name__) not in SAME_HOST]
+    """Transport cases that cross a real network link, with no pytest dependency."""
+    return _build_networked_cases()
 
 
 def _display_name(case: Any) -> str:
-    """Pretty transport label, shared with the benchmark's pubsub_id."""
-    from dimos.eval.measure import transport_name
+    return case.display_name
 
-    return transport_name(case.pubsub_context.__name__)
 
 
 @dataclass(frozen=True)
