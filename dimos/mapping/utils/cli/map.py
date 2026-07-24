@@ -515,13 +515,6 @@ def main(
         "--marker-smoothing",
         help="Sliding-window track buffer for marker pose averaging (s); 0 disables (one box per raw detection)",
     ),
-    markers_out: Path | None = typer.Option(
-        None,
-        "--markers-out",
-        help="Write the aggregated marker locations — one map_T_tag pose per marker_id, "
-        "every detection of that id aggregated rather than one box per track — to PATH "
-        "as JSON. Implies --markers. Default: no marker locations written.",
-    ),
     bottom_cutoff: float | None = typer.Option(
         None,
         "--bottom-cutoff",
@@ -555,8 +548,6 @@ def main(
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export or full_pgo:
         pgo = True
-    if markers_out is not None:
-        markers = True
 
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
@@ -783,14 +774,17 @@ def main(
             f"markers: {len(marker_dets)} entries from {len(all_dets)} raw detections "
             f"across {len(unique_ids)} unique ids {unique_ids}"
         )
-        if markers_out is not None:
+        if export:
+            # Write the aggregated marker map (one map_T_tag pose per marker_id)
+            # alongside the exported premap, sharing its stem.
+            marker_map_path = Path.cwd() / f"{db_path.stem}.marker_map.json"
             if all_dets:
                 aggregated_markers = _aggregate_marker_map(all_dets, graph)
-                _write_marker_map(markers_out, aggregated_markers, source=db_path.name)
+                _write_marker_map(marker_map_path, aggregated_markers, source=db_path.name)
                 aggregated_ids = sorted(aggregated_markers)
                 print(
                     f"wrote aggregated marker locations: {len(aggregated_ids)} tags "
-                    f"{aggregated_ids} -> {markers_out}"
+                    f"{aggregated_ids} -> {marker_map_path}"
                 )
                 for marker_id in aggregated_ids:
                     print(

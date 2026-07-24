@@ -380,9 +380,7 @@ def run(
         # declares no In/Out (it subscribes to /tf + /odom directly in start()), so
         # there is nothing to autowire; bump n_workers by one for its slot. If a
         # stack pins n_workers tightly this may need a manual `-o g.n_workers=...`.
-        # The VERIFIED eval path needs no CLI wiring at all: run the held-out matrix
-        # via the offline held-out driver, which shells out to the shipped blueprint
-        # and calls the same RelocEval report offline.
+        # RelocEval logs the per-source accept/reject table in-process.
         from dimos.core.coordination.blueprints import config_key
         from dimos.mapping.relocalization.eval_module import RelocEval
         from dimos.mapping.relocalization.module import RelocalizationModule
