@@ -301,6 +301,7 @@ class R1LiteQuestTeleopConfig(VideoArmTeleopConfig):
     angular_speed: float = 0.4  # rad/s at full stick deflection
     deadzone: float = 0.1
     joy_timeout: float = 0.5  # seconds without Joy before a controller stops driving
+    motion_gain: float = 1.0  # scales hand position deltas; >1 = arm covers more than the hand
     gripper_open: float = 100.0
     gripper_closed: float = 0.0
 
@@ -357,6 +358,17 @@ class R1LiteQuestTeleopModule(VideoArmTeleopModule):
         except Exception:
             logger.exception("Failed to publish stop Twist")
         super().stop()
+
+    def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
+        pose = super()._get_output_pose(hand)
+        if pose is None or self.config.motion_gain == 1.0:
+            return pose
+        return PoseStamped(
+            position=pose.position * self.config.motion_gain,
+            orientation=pose.orientation,
+            ts=pose.ts,
+            frame_id=pose.frame_id,
+        )
 
     def _on_joy_bytes(self, data: bytes) -> None:
         msg = Joy.lcm_decode(data)

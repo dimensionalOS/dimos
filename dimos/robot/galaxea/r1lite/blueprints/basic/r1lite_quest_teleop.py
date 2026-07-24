@@ -73,14 +73,14 @@ _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while 
 _ARM_IK_LIMITS = {
     "max_joint_delta_deg": 45.0,
     "max_step_deg_per_tick": 1.5,
-    "max_target_offset_m": 0.06,
+    "max_target_offset_m": 0.08,
     "max_target_rot_deg": 20.0,
     "joint_limit_margin_deg": 2.0,
     # QP solver with limits as hard constraints and posture regularization;
     # orientation_weight becomes the FrameTask orientation cost. Falls back to
     # dls automatically where the manipulation extra is absent.
     "solver": "pink",
-    "orientation_weight": 0.5,
+    "orientation_weight": 0.2,
     # Ride through pose-stream gaps instead of cycling deactivate/reactivate;
     # catch-up stays bounded by the chase window either way.
     "timeout": 1.5,
@@ -122,13 +122,13 @@ r1lite_quest_teleop = autoconnect(
     # Headset video off: JPEG encode starved the module loop on hardware and
     # the stalls surfaced as arm twitch and chassis dead-man dropouts. Flip
     # video_enabled back on once the encode is off the critical path.
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, video_enabled=False),
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, video_enabled=False, motion_gain=1.3),
     # tracking_speed is the actual arm speed (the vendor tracker follows each
     # target at this rate); 0.5 measured as the dominant slowness. Teleop-only
     # override, next ladder step is 1.0 after hardware feel check.
     r1lite_control_base(
         extra_tasks=_teleop_tasks(),
-        connection_kwargs={"tracking_speed": 1.0, "enable_cameras": False},
+        connection_kwargs={"tracking_speed": 1.25, "enable_cameras": False},
     ),
     r1lite_vis(),
 ).remappings(

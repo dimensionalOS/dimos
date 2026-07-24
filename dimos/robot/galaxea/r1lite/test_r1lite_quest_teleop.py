@@ -246,6 +246,17 @@ def test_on_joy_bytes_rejects_malformed_without_stamping() -> None:
     assert m._joy_rx_ts[Hand.LEFT] == 0.0
 
 
+def test_motion_gain_scales_position_delta_only() -> None:
+    m = _module(motion_gain=1.3)
+    m._is_engaged[Hand.LEFT] = True
+    m._initial_poses[Hand.LEFT] = PoseStamped()
+    moved = PoseStamped(position=[0.10, 0.0, 0.20])
+    m._current_poses[Hand.LEFT] = moved
+    out = m._get_output_pose(Hand.LEFT)
+    assert out.position.x == pytest.approx(0.13)
+    assert out.position.z == pytest.approx(0.26)
+
+
 def test_pose_frame_id_routes_to_task_name() -> None:
     m = _module(task_names={"left": "teleop_left_arm", "right": "teleop_right_arm"})
     m._publish_msg(Hand.LEFT, PoseStamped())
@@ -291,7 +302,7 @@ def test_teleop_connection_raises_tracking_speed() -> None:
     kwargs = next(
         atom.kwargs for atom in r1lite_quest_teleop.blueprints if atom.module is R1LiteConnection
     )
-    assert kwargs["tracking_speed"] == 1.0
+    assert kwargs["tracking_speed"] == 1.25
 
 
 def test_arm_slices_match_connection_layout() -> None:
@@ -342,10 +353,10 @@ def test_ik_tasks_configure_bounded_stepping() -> None:
         for name in ("teleop_left_arm", "teleop_right_arm"):
             assert tasks[name].params["max_joint_delta_deg"] == 45.0
             assert tasks[name].params["max_step_deg_per_tick"] == 1.5
-            assert tasks[name].params["max_target_offset_m"] == 0.06
+            assert tasks[name].params["max_target_offset_m"] == 0.08
             assert tasks[name].params["max_target_rot_deg"] == 20.0
             assert tasks[name].params["solver"] == "pink"
-            assert tasks[name].params["orientation_weight"] == 0.5
+            assert tasks[name].params["orientation_weight"] == 0.2
 
 
 def test_teleop_chases_through_folded_home_and_teleports() -> None:
