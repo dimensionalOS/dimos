@@ -64,8 +64,8 @@ MAP_SUFFIX = ".pc2.lcm"
 MARKER_MAP_SUFFIXES = (".json", ".yaml", ".yml")
 SKIP_LOG_INTERVAL_S = 5.0  # s; throttle relocalize-skip warnings so a starved feed can't spam
 # Jump guard, TRACKING only: largest per-second step from the previous accepted fix. T is world->map, so between accepts it moves only by the drift the fix corrects; this refuses the mirror-flipped fix that lands a room over. Floored at one second's worth below so back-to-back priors keep a real budget.
-MAX_JUMP_M_PER_S = 5.0  # m/s; 10 m at the 2 s RANSAC interval
-MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s; a half turn needs 2 s between accepted fixes
+MAX_JUMP_M_PER_S = 5.0  # m/s, scaled by time since the last accept
+MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s, same time-scaled budget
 
 
 class Config(ModuleConfig):

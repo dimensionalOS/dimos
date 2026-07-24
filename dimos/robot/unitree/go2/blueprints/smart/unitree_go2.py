@@ -20,7 +20,6 @@ from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
-from dimos.mapping.relocalization.priors import FiducialPriorConfig, RansacPriorConfig
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -103,7 +102,7 @@ unitree_go2_relocalization = autoconnect(
         marker_length_m=0.10,
         camera_info=GO2Connection.camera_info_static,
     ),
-    RelocalizationModule.blueprint(priors=[RansacPriorConfig(), FiducialPriorConfig()]),
+    RelocalizationModule.blueprint(priors=[{"type": "ransac"}, {"type": "fiducial"}]),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
 unitree_go2_memory = autoconnect(
