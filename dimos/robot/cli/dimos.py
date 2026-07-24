@@ -300,8 +300,8 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
     except ValidationError as exc:
         # The overlay is PARTIAL: it layers over each module's blueprint preset (merged at
         # deploy in _merge_config_kwargs), so a field missing here is normal -- the preset
-        # fills it. Without this, `-o relocalizationmodule.map_file=...` would be rejected
-        # for the priors the preset already carries. Typos and type errors still raise.
+        # fills it. Without this, `-o markerdetectionstreammodule.aggregation.min_observations=3`
+        # would be rejected for the marker_length_m the preset carries. Typos and type errors raise.
         if any(err["type"] != "missing" for err in exc.errors()):
             raise
 

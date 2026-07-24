@@ -80,8 +80,8 @@ class Config(ModuleConfig):
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
-    # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). REQUIRED, no default -- a blueprint must state it, so there is no silent reloc behavior.
-    priors: list[PriorConfig]
+    # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). Both on by default, so a blueprint declares nothing; `--disable MarkerDetectionStreamModule` leaves RANSAC alone.
+    priors: list[PriorConfig] = [RansacPriorConfig(), FiducialPriorConfig()]
 
 
 class RelocalizationModule(Module):
