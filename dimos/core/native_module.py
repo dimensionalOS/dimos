@@ -133,7 +133,9 @@ class NativeModuleConfig(ModuleConfig):
         """
         Return module-specific config fields as a plain dict (for stdin JSON).
         """
-        ignore_fields = set(NativeModuleConfig.model_fields)
+        # frame_id is a base field, but native modules stamp it onto their
+        # output message headers, so it passes through like to_cli_args keeps it.
+        ignore_fields = {f for f in NativeModuleConfig.model_fields if f != "frame_id"}
         return {
             k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
         }

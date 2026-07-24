@@ -79,6 +79,7 @@ yolo11n.pt
 results/
 **/cpp/result
 **/rust/result
+**/virtual_mid360/result
 
 CLAUDE.MD
 /assets/teleop_certs/

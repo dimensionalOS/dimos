@@ -1,0 +1,11 @@
+# Out-of-source build dir (recommended layout)
+build/
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# clangd language-server output
+.cache/
+.clangd

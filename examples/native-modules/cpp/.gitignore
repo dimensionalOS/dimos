@@ -1,0 +1,6 @@
+# Plain-cmake build dir (the module builds via `nix build`)
+build/
+
+# nix build output symlinks
+result
+result-*

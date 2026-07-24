@@ -79,17 +79,23 @@ autoconnect(
 
 ### Manual invocation (for debugging)
 
+The module reads one line of JSON on stdin: the LCM topics for its `lidar` and
+`imu` output ports plus the full config. `DIMOS_TRANSPORT` selects the transport.
+
 ```bash
-./result/bin/mid360_native \
-    --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
-    --imu '/imu#sensor_msgs.Imu' \
-    --host_ip 192.168.1.5 \
-    --lidar_ip 192.168.1.155 \
-    --frequency 10
+echo '{"topics": {"lidar": "/lidar#sensor_msgs.PointCloud2", "imu": "/imu#sensor_msgs.Imu"},
+       "config": {"host_ip": "192.168.1.5", "lidar_ip": "192.168.1.155", "frequency": 10.0,
+                  "enable_imu": true, "frame_id": "lidar_link", "imu_frame_id": "imu_link",
+                  "cmd_data_port": 56100, "push_msg_port": 56200, "point_data_port": 56300,
+                  "imu_data_port": 56400, "log_data_port": 56500, "host_cmd_data_port": 56101,
+                  "host_push_msg_port": 56201, "host_point_data_port": 56301,
+                  "host_imu_data_port": 56401, "host_log_data_port": 56501}}' \
+    | DIMOS_TRANSPORT=lcm ./result/bin/mid360_native
 ```
 
-Topic strings must include the `#type` suffix -- this is the actual LCM channel
-name used by dimos subscribers.
+Every config field is required -- Python owns the defaults and always sends them.
+Topic strings include the `#type` suffix, the actual LCM channel name dimos
+subscribers use. Normally `Mid360` builds this blob for you.
 
 View data in another terminal:
 
@@ -107,8 +113,7 @@ lcm-spy
 
 | File                      | Description                                              |
 |---------------------------|----------------------------------------------------------|
-| `main.cpp`                | Livox SDK2 callbacks, frame accumulation, LCM publishing |
-| `dimos_native_module.hpp` | Reusable header for parsing NativeModule CLI args        |
+| `main.cpp`                | `Mid360` module on the dimos native SDK: SDK2 callbacks, frame accumulation, publishing |
 | `flake.nix`               | Nix flake for hermetic builds                            |
 | `CMakeLists.txt`          | Build config, fetches dimos-lcm headers automatically    |
 | `../module.py`            | Python NativeModule wrapper (`Mid360`)                   |

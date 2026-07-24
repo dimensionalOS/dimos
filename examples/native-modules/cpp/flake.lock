@@ -3,11 +3,11 @@
     "dimos-lcm": {
       "flake": false,
       "locked": {
-        "lastModified": 1769774949,
-        "narHash": "sha256-icRK7jerqNlwK1WZBrnIP04I2WozzFqTD7qsmnPxQuo=",
+        "lastModified": 1782118008,
+        "narHash": "sha256-z88X38ZM3vr1eneG1CkJ4GAGWBW3JYWPEX/2x7aRVJI=",
         "owner": "dimensionalOS",
         "repo": "dimos-lcm",
-        "rev": "0aa72b7b1bd3a65f50f5c03485ee9b728df56afe",
+        "rev": "0a1c24710ce2f7a569e1673617102cc5254a75e2",
         "type": "github"
       },
       "original": {
@@ -32,30 +32,6 @@
       "original": {
         "owner": "numtide",
         "repo": "flake-utils",
-        "type": "github"
-      }
-    },
-    "gtsam-extended": {
-      "inputs": {
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "nixpkgs-stable": "nixpkgs-stable"
-      },
-      "locked": {
-        "lastModified": 1775168452,
-        "narHash": "sha256-fsUWPQIw+lk4VEQUOniiPLwiPoldWh8ZdnIdos202+I=",
-        "owner": "jeff-hykin",
-        "repo": "gtsam-extended",
-        "rev": "f4572a80b6339181693aee6029ca28153e59a993",
-        "type": "github"
-      },
-      "original": {
-        "owner": "jeff-hykin",
-        "repo": "gtsam-extended",
         "type": "github"
       }
     },
@@ -84,32 +60,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1777954456,
-        "narHash": "sha256-hGdgeU2Nk87RAuZyYjyDjFL6LK7dAZN5RE9+hrDTkDU=",
+        "lastModified": 1783224372,
+        "narHash": "sha256-8i/87eeoqiGE4yOTjwSA3Eh/ziJRQEmd/unYU+K27sk=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
+        "rev": "d407951447dcd00442e97087bf374aad70c04cea",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
         "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-stable": {
-      "locked": {
-        "lastModified": 1751274312,
-        "narHash": "sha256-/bVBlRpECLVzjV19t5KMdMFWSwKLtb5RyXdjz3LJT+g=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "50ab793786d9de88ee30ec4e4c24fb4236fc2674",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-24.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -135,7 +95,6 @@
       "inputs": {
         "dimos-lcm": "dimos-lcm",
         "flake-utils": "flake-utils",
-        "gtsam-extended": "gtsam-extended",
         "lcm-extended": "lcm-extended",
         "nixpkgs": "nixpkgs",
         "pfr": "pfr"

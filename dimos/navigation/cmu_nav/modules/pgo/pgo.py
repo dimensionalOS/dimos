@@ -42,6 +42,7 @@ class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent / "cpp")
     executable: str = "result/bin/pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
+    stdin_config: bool = True
 
     # Frame names
     world_frame: str = FRAME_MAP

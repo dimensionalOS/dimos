@@ -18,8 +18,8 @@ Binds Livox SDK2 into FAST-LIO-NON-ROS for real-time LiDAR SLAM; outputs
 sensor/body-frame point clouds (register via the odometry pose) and odometry
 with covariance.
 
-FAST-LIO tuning lives directly on ``FastLio2Config`` and is passed to the C++
-binary as plain CLI args (no YAML).
+FAST-LIO tuning lives directly on ``FastLio2Config`` and is sent to the C++
+binary as stdin JSON (no YAML).
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
+    stdin_config: bool = True
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
     # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
     # DIMOS_FASTLIO_HOST_IP.
@@ -86,7 +87,7 @@ class FastLio2Config(NativeModuleConfig):
 
     debug: bool = False
 
-    # FAST-LIO tuning, passed to the binary as plain CLI args (read in main.cpp).
+    # FAST-LIO tuning (read in main.cpp).
     # common
     time_sync_en: bool = False
     time_offset_lidar_to_imu: float = 0.0
@@ -112,7 +113,7 @@ class FastLio2Config(NativeModuleConfig):
     extrinsic_r: list[float] = Field(
         default_factory=lambda: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     )
-    # publish behaviour (passed to the binary as CLI args, not the YAML)
+    # publish behavior
     scan_publish_en: bool = True  # false closes the lidar output
     dense_publish_en: bool = True  # false voxel-downsamples the published cloud
 

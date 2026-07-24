@@ -13,6 +13,11 @@
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
+    pfr = {
+      url = "github:apolukhin/pfr_non_boost/2.3.2";
+      flake = false;
+    };
     gtsam-extended = {
       url = "github:jeff-hykin/gtsam-extended";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -20,7 +25,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, lcm-extended, dimos-lcm, gtsam-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, lcm-extended, dimos-lcm, pfr, gtsam-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -59,6 +64,7 @@
             pkgs.glib
             pkgs.eigen
             pkgs.boost
+            pkgs.nlohmann_json
             pcl
             gtsam
           ];
@@ -68,6 +74,10 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
+            # The header-only SDK lives outside this dir. A git-tree flake can
+            # reach it as a path literal within the repo tree.
+            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
           ];
 
           # On macOS, libgtsam.4.dylib is referenced via @rpath but the binary

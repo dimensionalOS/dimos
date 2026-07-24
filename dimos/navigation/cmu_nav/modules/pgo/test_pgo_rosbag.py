@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -88,47 +90,44 @@ class TestPGORosbag:
         )
         handle_thread.start()
 
+        # The port reads topics and config from one JSON stdin line and picks
+        # its transport from DIMOS_TRANSPORT, matching NativeModule.start().
+        stdin_blob = (
+            json.dumps(
+                {
+                    "topics": {
+                        "registered_scan": SCAN_LCM,
+                        "odometry": ODOM_LCM,
+                        "corrected_odometry": CORRECTED_ODOM_LCM,
+                        "global_map": GLOBAL_MAP_LCM,
+                        "pgo_tf": TF_LCM,
+                    },
+                    # Config params matching pgo_unity_sim.yaml. Every PGOConfig
+                    # field must be present: the C++ side rejects missing keys.
+                    "config": {
+                        "world_frame": "map",
+                        "local_frame": "odom",
+                        "key_pose_delta_deg": 10.0,
+                        "key_pose_delta_trans": 0.5,
+                        "loop_search_radius": 1.0,
+                        "loop_time_thresh": 60.0,
+                        "loop_score_thresh": 0.15,
+                        "loop_submap_half_range": 5,
+                        "submap_resolution": 0.1,
+                        "min_loop_detect_duration": 5.0,
+                        "unregister_input": True,
+                        "global_map_voxel_size": 0.1,
+                        "global_map_publish_rate": 1.0,
+                        "debug": False,
+                    },
+                }
+            ).encode()
+            + b"\n"
+        )
         runner = NativeProcessRunner(
             binary_path=str(PGO_BIN),
-            args=[
-                "--registered_scan",
-                SCAN_LCM,
-                "--odometry",
-                ODOM_LCM,
-                "--corrected_odometry",
-                CORRECTED_ODOM_LCM,
-                "--global_map",
-                GLOBAL_MAP_LCM,
-                "--pgo_tf",
-                TF_LCM,
-                # Config params matching pgo_unity_sim.yaml
-                "--key_pose_delta_deg",
-                "10.0",
-                "--key_pose_delta_trans",
-                "0.5",
-                "--loop_search_radius",
-                "1.0",
-                "--loop_time_thresh",
-                "60.0",
-                "--loop_score_thresh",
-                "0.15",
-                "--loop_submap_half_range",
-                "5",
-                "--submap_resolution",
-                "0.1",
-                "--min_loop_detect_duration",
-                "5.0",
-                "--global_map_voxel_size",
-                "0.1",
-                "--global_map_publish_rate",
-                "1.0",
-                "--unregister_input",
-                "true",
-                "--world_frame",
-                "map",
-                "--local_frame",
-                "odom",
-            ],
+            stdin_blob=stdin_blob,
+            env={**os.environ, "DIMOS_TRANSPORT": "lcm"},
         )
 
         try:
