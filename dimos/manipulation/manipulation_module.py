@@ -251,7 +251,8 @@ class ManipulationModule(Module):
             )
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
-        self._world_monitor.finalize()
+        operator = ManipulationOperator(self, self._world_monitor)
+        self._world_monitor.finalize(visualization, operator=operator)
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
@@ -272,10 +273,6 @@ class ManipulationModule(Module):
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
-
-        self._world_monitor.set_visualization(visualization)
-        operator = ManipulationOperator(self, self._world_monitor)
-        self._world_monitor.initialize_visualization(operator=operator)
 
         if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
