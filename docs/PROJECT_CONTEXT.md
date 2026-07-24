@@ -21,7 +21,9 @@ plan is `docs/plans/2026-07-24-go2-mission-control-implementation.md`.
 Candidate-only external visual verification is now also accepted in
 `docs/plans/2026-07-25-go2-candidate-vision-verification-design.md`. It keeps
 mapping, LiDAR geometry, navigation, safety, and motion local while sending only
-three candidate screenshots to an OpenAI vision provider.
+up to three explicitly selected candidate screenshots to an OpenAI vision
+provider. Its first offline implementation is available through
+`python -m dimos.perception.offline_target_verification`.
 
 Safety rule: real hardware movement is locked by default. Simulation is the
 preferred place to test new skills. Hardware startup requires both disabling the
@@ -76,6 +78,9 @@ Studio now also provides:
 - independent 30-minute watchdog and five-second battery monitoring
 - fresh-frame, three-view, position-consistent semantic verification plus
   contrastive rejection of glass walls, whiteboards, chairs, and people
+- an offline candidate-only vision verifier that loads one to three named
+  persisted frames, defaults to a no-upload dry run, and requires an explicit
+  `--send` flag before constructing the OpenAI client
 - automatic transition from exhausted frontier exploration to coverage patrol
 - no automatic Rerun browser-tab launch; the existing Studio page embeds the
   DimOS viewer, avoiding duplicate pages and excess browser memory
@@ -112,8 +117,46 @@ Studio now also provides:
   the lidar cost map and replanning stack active. Camera-only person distance is
   still not bridged into Mission Control, so the claim is obstacle replanning,
   not independently verified person classification or social navigation.
+- The candidate-only verifier has passed offline validation against the saved
+  578-frame real-Go2 memory. This shell does not currently have
+  `OPENAI_API_KEY`, so no cloud model verdict has been obtained. The verifier is
+  not yet connected to the live mission runner, camera/LiDAR projection, or
+  movement authorization.
 
 ## Recent task log
+
+### 2026-07-25 — Offline candidate-only vision verifier
+
+- Changed: added immutable candidate evidence/result contracts, selective
+  persisted-frame loading and JPEG resizing, an OpenAI Responses structured
+  output adapter, fail-closed timeout/retry behavior, a two-confirmed-view
+  acceptance policy, and a dry-run-first CLI.
+- Why: validate the semantic `AI check` path using saved real-Go2 frames before
+  reconnecting the robot or permitting any new motion.
+- Files: `dimos/perception/target_verification.py`,
+  `dimos/perception/offline_target_verification.py`, their two test modules,
+  `docs/plans/2026-07-25-go2-offline-vision-verification-implementation.md`,
+  and this document.
+- Commands/tests: ran both focused pytest modules (15 passed), Ruff on all four
+  new Python modules (passed), and the offline CLI against
+  `assets/output/memory/spatial_memory/visual_memory.pkl`.
+- Validation: the real memory loaded 578 frames; only
+  `frame_20260725_012917_f56dd2cc` and
+  `frame_20260725_013012_fa0912d3` were selected and resized to 1024 by 576.
+  The result reported `mode=dry_run` and `upload_authorized=false`; image bytes
+  were not printed or persisted in the report. An explicit `--send` attempt
+  with the same two frames failed closed as `uncertain` with
+  `OPENAI_API_KEY is not configured`; no external request was made.
+- Safety boundary: no robot service, browser page, external API request, or
+  movement command was started. A model `yes` is downgraded unless two distinct
+  selected views both contain positive bounding-box evidence.
+- Unresolved: `OPENAI_API_KEY` is absent from this shell, so the actual OpenAI
+  response remains unvalidated. Keychain-backed credentials, live mission
+  wiring, camera-to-LiDAR/map projection, and controlled motion stay outside
+  this offline phase.
+- Next: configure the API key without committing it, run one explicit
+  candidate-only `--send` check, inspect the structured evidence, then build
+  the local geometry gate before any approach behavior.
 
 ### 2026-07-25 — Candidate-only OpenAI visual verification design
 
