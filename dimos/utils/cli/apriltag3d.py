@@ -33,7 +33,7 @@ import zipfile
 import numpy as np
 import trimesh
 
-from dimos.utils.cli.apriltag import _FAMILIES, cell_matrix, row_runs
+from dimos.utils.cli.apriltag import _FAMILIES, cell_matrix, display_color, row_runs
 
 # Cutting solids overshoot the plate by this much so coplanar faces never meet in a
 # boolean; the exported solids stay at their exact nominal dimensions.
@@ -117,11 +117,12 @@ _STROKE_CELLS = _FONT_SCALE + 2 * _FONT_DILATE
 
 
 class TagParts(NamedTuple):
-    """One tag's solids, in a shared coordinate frame: light plate, dark cells, text inlay."""
+    """One tag's solids, all in a shared coordinate frame."""
 
     base: trimesh.Trimesh
     marker: trimesh.Trimesh
     text: trimesh.Trimesh | None
+    frame: trimesh.Trimesh | None = None
 
 
 def _at(x: float, y: float, z: float) -> np.ndarray:
@@ -257,7 +258,10 @@ def text_solid(
     Pass `z0 = -_EPS` for the solid that cuts the pocket, `0.0` for the inlay filling it.
     """
     grid, cells_w, cells_h = _text_cells(lines)
-    cell = min(plate_w * 0.8 / cells_w, plate_h * 0.5 / cells_h)
+    # Fill most of the plate: the text scales with it, and the wider the strokes the
+    # easier they are to lay down. Width is the binding constraint for a typical family
+    # name, so the margin left here is what actually sets the stroke.
+    cell = min(plate_w * 0.9 / cells_w, plate_h * 0.55 / cells_h)
     # A cell is a fraction of a stroke now, so printability is about the stroke it builds.
     if cell * _STROKE_CELLS < min_stroke_mm:
         return None
@@ -410,6 +414,111 @@ def _strut_yz(
     bar = _box(x0, x1, -half, half, -(length / 2 + sink0), length / 2 + sink1)
     bar.apply_transform(_at(0.0, (y0 + y1) / 2, (z0 + z1) / 2) @ rotate)
     return bar
+
+
+# The tag drops into the frame from behind: the pocket is this much deeper and wider than
+# the plate, and the front lip laps this far over its edge — less if the quiet zone can't
+# spare it, but never less than _FRAME_RABBET_MIN_MM or there is nothing holding the tag.
+_FRAME_SLACK_MM = 0.3
+_FRAME_FIT_MM = 0.4
+_FRAME_RABBET_MM = 3.0
+_FRAME_RABBET_MIN_MM = 1.5
+
+
+def _ring(
+    outer_w: float, outer_h: float, inner_w: float, inner_h: float, z0: float, z1: float
+) -> list[trimesh.Trimesh]:
+    """A rectangular ring, as the four bars that make it up."""
+    ox, oy, ix, iy = outer_w / 2, outer_h / 2, inner_w / 2, inner_h / 2
+    return [
+        _box(-ox, ox, iy, oy, z0, z1),
+        _box(-ox, ox, -oy, -iy, z0, z1),
+        _box(-ox, -ix, -iy, iy, z0, z1),
+        _box(ix, ox, -iy, iy, z0, z1),
+    ]
+
+
+def _stud(x: float, y: float, radius: float, z0: float, z1: float) -> trimesh.Trimesh:
+    """A round boss standing proud of the frame face — printable, no overhang."""
+    return trimesh.creation.cylinder(  # type: ignore[no-any-return]
+        radius=radius,
+        height=z1 - z0,
+        sections=_HOLE_SEGMENTS,
+        transform=_at(x, y, (z0 + z1) / 2),
+    )
+
+
+def _bead_run(
+    half_w: float, half_h: float, spacing: float, inset: float
+) -> list[tuple[float, float]]:
+    """Evenly spaced points along a rectangle's perimeter, leaving the corners free."""
+    points: list[tuple[float, float]] = []
+    for length, place in (
+        (2 * half_w, lambda t: [(t, half_h), (t, -half_h)]),
+        (2 * half_h, lambda t: [(half_w, t), (-half_w, t)]),
+    ):
+        span = length - 2 * inset
+        count = int(span // spacing)
+        if count < 1:
+            continue
+        step = span / count
+        for i in range(count + 1):
+            points.extend(place(-span / 2 + i * step))
+    return points
+
+
+def frame_solid(
+    plate_mm: float,
+    tag_thickness_mm: float,
+    *,
+    width_mm: float = 0.0,
+    face_mm: float = 3.0,
+    rabbet_mm: float = _FRAME_RABBET_MM,
+) -> trimesh.Trimesh:
+    """An ornamental picture frame the tag sits in, as a separate part to print in its own
+    material.
+
+    Modelled face-up in the tag's own coordinate frame, so the tag drops straight into the
+    pocket at z=0 and the front lip laps over its edge — meaning the 3MF shows the pair
+    assembled, and the frame still prints flat on its back with every ornament facing up.
+
+    The moulding is a raised rim at each edge of the face with a run of beads on the land
+    between them, and a two-tier rosette on each corner.
+    """
+    pocket = plate_mm + 2 * _FRAME_FIT_MM
+    lip = plate_mm - 2 * rabbet_mm
+    band = width_mm if width_mm > 0 else max(12.0, 0.22 * plate_mm)
+    outer = plate_mm + 2 * band
+    if lip <= 0:
+        raise ValueError(f"a {plate_mm:.1f} mm plate is too small to frame")
+
+    back = tag_thickness_mm + _FRAME_SLACK_MM
+    face = back + face_mm
+    # Everything on the face is proportioned off the band, so the frame scales with the tag.
+    rim = band * 0.30
+    rim_h = band * 0.14
+    bead_r = band * 0.15
+    rosette_r = band * 0.24
+
+    parts = [
+        # Pocket wall, then the front face whose inner edge laps over the tag.
+        *_ring(outer, outer, pocket, pocket, 0.0, back),
+        *_ring(outer, outer, lip, lip, back, face),
+        # A raised rim along the outer and inner edges of the face.
+        *_ring(outer, outer, outer - 2 * rim, outer - 2 * rim, face - _EPS, face + rim_h),
+        *_ring(lip + 2 * rim, lip + 2 * rim, lip, lip, face - _EPS, face + rim_h * 0.7),
+    ]
+    # Beads along the land between the rims, and a rosette on each corner.
+    land = (outer - 2 * rim + lip + 2 * rim) / 4
+    parts += [
+        _stud(x, y, bead_r, face - _EPS, face + rim_h * 0.9)
+        for x, y in _bead_run(land, land, bead_r * 3.2, rosette_r * 2.2)
+    ]
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            parts.append(_stud(sx * land, sy * land, rosette_r, face - _EPS, face + rim_h))
+            parts.append(_stud(sx * land, sy * land, rosette_r * 0.6, face, face + rim_h * 1.8))
+    return _union(parts)
 
 
 def leg_solid(
@@ -569,6 +678,8 @@ def build_tag_meshes(
     back_text: bool = True,
     text_depth_mm: float = 0.6,
     text_inlay: bool = True,
+    frame: bool = False,
+    frame_width_mm: float = 0.0,
     min_stroke_mm: float = 0.45,
 ) -> TagParts:
     """Build one tag's solids, all sharing one coordinate frame."""
@@ -613,7 +724,24 @@ def build_tag_meshes(
     footprint = plate_footprint_mm(plate, hole_dia_mm, holes)
     body = _rounded_plate(footprint[0], footprint[1], thickness_mm)
     base = trimesh.boolean.difference([body, *cuts])
-    return TagParts(base=base, marker=marker, text=text)
+    ornament = None
+    if frame:
+        # The lip is opaque and a different color, so it eats into the quiet zone. Give it
+        # only what the margin can spare beyond the one cell the detector needs.
+        spare = margin - size_mm / n
+        if spare < _FRAME_RABBET_MIN_MM:
+            raise ValueError(
+                f"a frame needs {_FRAME_RABBET_MIN_MM:g} mm of margin beyond the tag's "
+                f"one-cell quiet zone to grip; this plate spares {spare:.1f} mm — "
+                f"raise --margin-cells (2 works for most tags)"
+            )
+        ornament = frame_solid(
+            plate,
+            thickness_mm,
+            width_mm=frame_width_mm,
+            rabbet_mm=min(_FRAME_RABBET_MM, spare),
+        )
+    return TagParts(base=base, marker=marker, text=text, frame=ornament)
 
 
 _CONTENT_TYPES = (
@@ -648,7 +776,7 @@ def _mesh_xml(mesh: trimesh.Trimesh) -> str:
 def write_3mf(path: Path, parts: list[tuple[str, trimesh.Trimesh, str]]) -> Path:
     """Write a 3MF holding each (name, mesh, '#RRGGBB') part as a separately colored object."""
     materials = "".join(
-        f'<base name="{escape(name)}" displaycolor="{color.upper()}FF"/>'
+        f'<base name="{escape(name)}" displaycolor="{display_color(color)}"/>'
         for name, _mesh, color in parts
     )
     objects = "".join(
@@ -684,12 +812,15 @@ def generate_3d(
     hole_dia_mm: float = 3.4,
     back_text: bool = True,
     text_inlay: bool = True,
+    frame: bool = False,
+    frame_width_mm: float = 0.0,
     legs_mm: float = 0.0,
     leg_thickness_mm: float = 6.0,
     leg_brace: bool = True,
     base_color: str = "#F5F5F5",
     marker_color: str = "#141414",
     text_color: str | None = None,
+    frame_color: str = "#8A6A3B",
 ) -> list[Path]:
     """Write an STL per solid plus one colored 3MF per tag into `out_dir`."""
     if not ids:
@@ -712,11 +843,15 @@ def generate_3d(
             hole_dia_mm=hole_dia_mm,
             back_text=back_text,
             text_inlay=text_inlay,
+            frame=frame,
+            frame_width_mm=frame_width_mm,
         )
         stem = f"{family.lower()}_{tag_id:03d}"
         parts = [("base", tag.base, base_color), ("marker", tag.marker, marker_color)]
         if tag.text is not None:
             parts.append(("text", tag.text, text_color or marker_color))
+        if tag.frame is not None:
+            parts.append(("frame", tag.frame, frame_color))
         for name, mesh, _color in parts:
             path = out_dir / f"{stem}_{name}.stl"
             mesh.export(path)

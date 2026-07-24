@@ -974,6 +974,17 @@ def apriltag(
         "--text-inlay/--no-text-inlay",
         help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
     ),
+    frame: bool = typer.Option(
+        False,
+        "--frame/--no-frame",
+        help="[3d] Instead of mounting holes, add an ornamental picture frame as its own part",
+    ),
+    frame_width_mm: float = typer.Option(
+        0.0, "--frame-width-mm", help="[3d] Frame band width in mm (0 = scale with the tag)"
+    ),
+    frame_color: str = typer.Option(
+        "#8A6A3B", "--frame-color", help="[3d] Frame color in the 3MF, #RRGGBB"
+    ),
     legs: float = typer.Option(
         0.0,
         "--legs",
@@ -1002,39 +1013,41 @@ def apriltag(
     """Generate a printable AprilTag/ArUco PDF, optionally with 3D-printable STLs."""
     from dimos.utils.cli.apriltag import TagRequest, parse_id_spec
 
-    request = TagRequest(
-        ids=parse_id_spec(ids),
-        out=out,
-        id_spec=ids,
-        family=family,
-        size_mm=size_mm,
-        page_size=page_size,
-        pack=pack,
-        three_d=three_d,
-        thickness_mm=thickness_mm,
-        marker_mm=marker_mm,
-        margin_cells=margin_cells,
-        holes=holes,
-        hole_dia_mm=hole_dia_mm,
-        back_text=back_text,
-        text_inlay=text_inlay,
-        legs_mm=legs,
-        leg_thickness_mm=leg_thickness_mm,
-        leg_brace=leg_brace,
-        base_color=base_color,
-        marker_color=marker_color,
-        text_color=text_color,
-    )
-
-    typer.echo("apriltag")
-    for key, value in request.describe():
-        typer.echo(f"  {key:<10} {value}")
-    typer.echo("")
-
     try:
+        request = TagRequest(
+            ids=parse_id_spec(ids),
+            out=out,
+            id_spec=ids,
+            family=family,
+            size_mm=size_mm,
+            page_size=page_size,
+            pack=pack,
+            three_d=three_d,
+            thickness_mm=thickness_mm,
+            marker_mm=marker_mm,
+            margin_cells=margin_cells,
+            holes=holes,
+            hole_dia_mm=hole_dia_mm,
+            back_text=back_text,
+            text_inlay=text_inlay,
+            frame=frame,
+            frame_width_mm=frame_width_mm,
+            legs_mm=legs,
+            leg_thickness_mm=leg_thickness_mm,
+            leg_brace=leg_brace,
+            base_color=base_color,
+            marker_color=marker_color,
+            text_color=text_color,
+            frame_color=frame_color,
+        )
+        typer.echo("apriltag")
+        for key, value in request.describe():
+            typer.echo(f"  {key:<10} {value}")
+        typer.echo("")
         written = request.render()
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
     for line in request.summary(written):
         typer.echo(line)
 

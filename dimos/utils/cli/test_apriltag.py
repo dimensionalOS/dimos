@@ -16,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from dimos.utils.cli.apriltag import TagRequest, _grid_layout, generate_pdf, parse_id_spec
+from dimos.utils.cli.apriltag import (
+    TagRequest,
+    _grid_layout,
+    display_color,
+    generate_pdf,
+    parse_id_spec,
+)
 
 
 def test_parse_id_spec_range() -> None:
@@ -169,3 +175,27 @@ def test_render_and_summary_cover_the_whole_3d_file_set(tmp_path: Path) -> None:
     assert all(p.parent == tmp_path / "tags" for p in written)
     assert {p.suffix for p in written[1:]} == {".stl", ".3mf"}
     assert "leg_*_left and leg_*_right" in "\n".join(request.summary(written))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"ids": []}, "no IDs"),
+        ({"family": "bogus"}, "unsupported family"),
+        ({"page_size": "a99"}, "unsupported page_size"),
+        ({"three_d": True, "marker_color": "red"}, "color must be"),
+        ({"three_d": True, "base_color": "#GGGGGG"}, "color must be"),
+    ],
+)
+def test_bad_input_is_rejected_before_anything_is_described(
+    kwargs: dict[str, object], match: str
+) -> None:
+    """describe() indexes ids and looks up the family, so it must not run on bad input."""
+    with pytest.raises(ValueError, match=match):
+        _request(**kwargs)
+
+
+def test_display_color_normalizes_and_rejects() -> None:
+    assert display_color("#f5f5f5") == "#F5F5F5FF"
+    with pytest.raises(ValueError, match="color must be"):
+        display_color("#fff")

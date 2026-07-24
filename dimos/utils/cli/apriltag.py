@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import cv2
 from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, A5, A6, A7, A8, LETTER
@@ -69,6 +70,16 @@ _PAGE_SIZES = {
     "a8": A8,
     "letter": LETTER,
 }
+
+
+_HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}\Z")
+
+
+def display_color(color: str) -> str:
+    """Validate a #RRGGBB color and return the opaque #RRGGBBAA form 3MF wants."""
+    if not _HEX_COLOR.match(color):
+        raise ValueError(f"color must be #RRGGBB; got {color!r}")
+    return color.upper() + "FF"
 
 
 def parse_id_spec(spec: str) -> list[int]:
@@ -349,17 +360,37 @@ class TagRequest:
     hole_dia_mm: float = 3.4
     back_text: bool = True
     text_inlay: bool = True
+    frame: bool = False
+    frame_width_mm: float = 0.0
     legs_mm: float = 0.0
     leg_thickness_mm: float = 6.0
     leg_brace: bool = True
     base_color: str = "#F5F5F5"
     marker_color: str = "#141414"
     text_color: str = ""
+    frame_color: str = "#8A6A3B"
+
+    def __post_init__(self) -> None:
+        """Reject bad input up front, so describing a request can't trip over it."""
+        if not self.ids:
+            raise ValueError("no IDs to render")
+        if self.family.lower() not in _FAMILIES:
+            raise ValueError(f"unsupported family: {self.family}; choose from {sorted(_FAMILIES)}")
+        if self.page_size.lower() not in _PAGE_SIZES:
+            raise ValueError(
+                f"unsupported page_size: {self.page_size}; choose from {sorted(_PAGE_SIZES)}"
+            )
+        if self.frame and self.legs_mm > 0:
+            raise ValueError("--frame and --legs are alternatives; pick one")
+        if self.three_d:
+            colors = [self.base_color, self.marker_color, self.text_color or "#000000"]
+            for color in [*colors, self.frame_color]:
+                display_color(color)
 
     @property
     def mounted(self) -> bool:
-        """Legs bolt through the flange holes, so asking for legs asks for those holes."""
-        return self.holes or self.legs_mm > 0
+        """Legs bolt through the flange holes; a frame holds the tag instead of screws."""
+        return not self.frame and (self.holes or self.legs_mm > 0)
 
     @property
     def out_dir(self) -> Path | None:
@@ -419,6 +450,10 @@ class TagRequest:
                 else "none",
             ),
             (
+                "frame",
+                "ornamental, separate part (own material)" if self.frame else "none",
+            ),
+            (
                 "back text",
                 "family + ID + size, " + ("color inlay" if self.text_inlay else "engraved only")
                 if self.back_text
@@ -431,7 +466,8 @@ class TagRequest:
                     f", text {self.text_color or self.marker_color}"
                     if self.back_text and self.text_inlay
                     else ""
-                ),
+                )
+                + (f", frame {self.frame_color}" if self.frame else ""),
             ),
         ]
 
@@ -465,12 +501,15 @@ class TagRequest:
                 hole_dia_mm=self.hole_dia_mm,
                 back_text=self.back_text,
                 text_inlay=self.text_inlay,
+                frame=self.frame,
+                frame_width_mm=self.frame_width_mm,
                 legs_mm=self.legs_mm,
                 leg_thickness_mm=self.leg_thickness_mm,
                 leg_brace=self.leg_brace,
                 base_color=self.base_color,
                 marker_color=self.marker_color,
                 text_color=self.text_color or None,
+                frame_color=self.frame_color,
             )
         return written
 
@@ -486,4 +525,6 @@ class TagRequest:
         )
         if self.legs_mm > 0:
             lines.append("  Print leg_*_left and leg_*_right once each — 2 screws per leg.")
+        if self.frame:
+            lines.append("  The _frame part is separate — print it in its own material.")
         return lines
