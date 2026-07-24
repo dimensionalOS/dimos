@@ -35,7 +35,7 @@ from dimos.mapping.relocalization.priors import (
     RansacPriorConfig,
     RelocPrior,
     load_marker_map,
-    relocalize_with_priors as _relocalize_with_priors,
+    relocalize_with_priors,
 )
 from dimos.mapping.relocalization.relocalize import (
     InsufficientWallEvidenceError,
@@ -333,7 +333,7 @@ class RelocalizationModule(Module):
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
                 )
             else:
-                T, fitness, winning_source = _relocalize_with_priors(
+                T, fitness, winning_source = relocalize_with_priors(
                     self._premap.pointcloud,
                     msg.pointcloud,
                     priors,
