@@ -15,12 +15,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -31,6 +34,28 @@ requires_drake = pytest.mark.skipif(
     not DRAKE_AVAILABLE,
     reason="Drake planning-group tests require the manipulation extra",
 )
+
+
+def test_meshcat_obstacle_path_encodes_native_id_as_one_injective_segment() -> None:
+    paths = {DrakeWorld._meshcat_obstacle_path(value) for value in ("a", "a/b", "id-61", "")}
+    assert len(paths) == 4
+    assert all(path.startswith("obstacles/id-") for path in paths)
+    assert all("/" not in path.removeprefix("obstacles/") for path in paths)
+
+
+def test_drake_pre_finalize_remove_and_clear_reject_without_dropping_tracking() -> None:
+    world = object.__new__(DrakeWorld)
+    world._lock = RLock()
+    world._finalized = False
+    world._obstacles = {"a": object()}
+
+    with pytest.raises(NotImplementedError, match="before finalization"):
+        world.remove_obstacle("a")
+    assert "a" in world._obstacles
+
+    with pytest.raises(NotImplementedError, match="before finalization"):
+        world.clear_obstacles()
+    assert "a" in world._obstacles
 
 
 def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
@@ -147,6 +172,19 @@ def test_drake_config_group_helpers_validate_duplicate_and_ambiguous_groups(
         DrakeWorld._primary_pose_group_id_for_config(ambiguous)
     with pytest.raises(KeyError, match="Unknown planning group ID"):
         DrakeWorld._planning_group_from_config(ambiguous, "arm/missing")
+
+
+def test_drake_rejects_octree_geometry_before_backend_mutation() -> None:
+    obstacle = Obstacle(
+        name="voxels",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        points=np.asarray([[0.0, 0.0, 0.0]]),
+        octree_resolution=0.1,
+    )
+
+    with pytest.raises(NotImplementedError, match="does not support OCTREE"):
+        DrakeWorld._create_shape(object.__new__(DrakeWorld), obstacle)
 
 
 @requires_drake

@@ -23,8 +23,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from operator import index as index_value
 from pathlib import Path
 import tempfile
+import threading
 import time
 from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_WORLD_FRAME = ""
+_WORLD_FRAME = "universe"
 
 
 @dataclass
@@ -95,6 +97,7 @@ class RoboPlanWorld:
 
     def __init__(self, enable_viz: bool = False, **_: object) -> None:
         self._scene: roboplan_core.Scene | None = None
+        self._kinematics_scene: roboplan_core.Scene | None = None
         self._enable_viz = enable_viz
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
@@ -105,6 +108,19 @@ class RoboPlanWorld:
         self._finalized = False
         self._live_context = RoboPlanContext()
         self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
+        self._prepared_urdf_path: Path | None = None
+        self._prepared_srdf_path: Path | None = None
+        self._prepared_package_paths: list[str] | None = None
+        # Queries hold this lock only while using the currently published
+        # scene. Replacement scenes are built without it, then published in
+        # one short critical section.
+        self._scene_lock = threading.RLock()
+        # FK and Jacobian evaluation use a robot-only scene, so expensive
+        # collision queries on the obstacle scene cannot stall IK.
+        self._kinematics_lock = threading.RLock()
+        # Serialize obstacle writers so a replacement is always based on the
+        # latest committed obstacle registry.
+        self._scene_mutation_lock = threading.RLock()
 
     # Robot Management
 
@@ -123,7 +139,8 @@ class RoboPlanWorld:
         self._validate_robot_config(config)
         self._robot_counter += 1
         robot_id = f"robot_{self._robot_counter}"
-        self._scene = self._create_scene(config)
+        self._kinematics_scene = self._create_scene(config)
+        self._scene = self._create_scene_from_prepared_config(config)
         lower, upper = self._extract_joint_limits(config)
         self._robots[robot_id] = _RoboPlanRobotData(
             robot_id=robot_id,
@@ -154,41 +171,84 @@ class RoboPlanWorld:
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add a supported obstacle to the RoboPlan scene."""
+        self._validate_obstacle(obstacle)
         obstacle_id = obstacle.name
-        if obstacle_id in self._obstacles:
-            return obstacle_id
-        self._add_obstacle_to_scene(obstacle, obstacle_id)
-        self._obstacles[obstacle_id] = obstacle
-        return obstacle_id
+        with self._scene_mutation_lock:
+            with self._scene_lock:
+                if obstacle_id in self._obstacles:
+                    return None
+                self._add_obstacle_to_scene(obstacle, obstacle_id)
+                self._obstacles[obstacle_id] = obstacle
+                return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.removeGeometry(obstacle_id)
-        del self._obstacles[obstacle_id]
-        return True
+        with self._scene_mutation_lock:
+            with self._scene_lock:
+                if obstacle_id not in self._obstacles:
+                    return False
+                scene = self._require_scene()
+                scene.removeGeometry(obstacle_id)
+                del self._obstacles[obstacle_id]
+                return True
+
+    def update_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> bool:
+        """Build and atomically publish replacement geometry under a stable ID."""
+        self._validate_obstacle(obstacle)
+        with self._scene_mutation_lock:
+            with self._scene_lock:
+                old_obstacle = self._obstacles.get(obstacle_id)
+                if old_obstacle is None:
+                    return False
+                committed_obstacles = dict(self._obstacles)
+            if obstacle.name != old_obstacle.name:
+                raise ValueError(
+                    "Replacement obstacle name must match the existing logical name "
+                    f"'{old_obstacle.name}'"
+                )
+
+            next_obstacles = {**committed_obstacles, obstacle_id: obstacle}
+            replacement_scene = self._create_scene_from_prepared_robot()
+            for native_id, committed_obstacle in next_obstacles.items():
+                self._add_obstacle_to_scene(
+                    committed_obstacle,
+                    native_id,
+                    replacement_scene,
+                )
+
+            # Existing queries finish against the old immutable scene. New
+            # queries see the complete replacement after this atomic publish.
+            with self._scene_lock:
+                self._scene = replacement_scene
+                self._obstacles = next_obstacles
+            return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         """Update an obstacle pose and invalidate collision scratch."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
-        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
-        return True
+        with self._scene_mutation_lock:
+            with self._scene_lock:
+                if obstacle_id not in self._obstacles:
+                    return False
+                current_pose = self._obstacles[obstacle_id].pose
+                if np.allclose(pose_to_matrix(current_pose), pose_to_matrix(pose)):
+                    return False
+                scene = self._require_scene()
+                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
+                self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
+                return True
 
     def clear_obstacles(self) -> None:
         """Remove all tracked obstacles."""
-        for obstacle_id in list(self._obstacles.keys()):
-            self.remove_obstacle(obstacle_id)
+        with self._scene_mutation_lock:
+            for obstacle_id in list(self._obstacles.keys()):
+                self.remove_obstacle(obstacle_id)
 
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently tracked by DimOS."""
-        return list(self._obstacles.values())
+        with self._scene_lock:
+            return list(self._obstacles.values())
 
     # Lifecycle
 
@@ -317,8 +377,11 @@ class RoboPlanWorld:
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
+        with self._kinematics_lock:
+            scene = self._require_kinematics_scene()
+            result = scene.forwardKinematics(
+                self._to_scene_q(robot_id, q, scene=scene), link_name, ""
+            )
         return np.asarray(result, dtype=np.float64)
 
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
@@ -337,33 +400,110 @@ class RoboPlanWorld:
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
         robot_id = self._robot_id_for_group(group_id)
-        robot = self._get_robot(robot_id)
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        scene = self._require_scene()
-        result = scene.computeFrameJacobian(self._to_scene_q(robot_id, q), group.tip_link, True)
-        arr = np.asarray(result, dtype=np.float64)
-        if arr.shape[0] != 6:
-            raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
-        scene_joint_order = self._query_scene_joint_order(scene, robot.config)
-        if scene_joint_order is not None and arr.shape[1] == len(scene_joint_order):
-            missing = [name for name in group.local_joint_names if name not in scene_joint_order]
-            if missing:
-                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
-            indices = [scene_joint_order.index(name) for name in group.local_joint_names]
-            return arr[:, indices]
-        if arr.shape[1] == len(robot.config.joint_names):
-            missing = [
-                name for name in group.local_joint_names if name not in robot.config.joint_names
-            ]
-            if missing:
-                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
-            indices = [robot.config.joint_names.index(name) for name in group.local_joint_names]
-            return arr[:, indices]
-        raise ValueError(
-            f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
-        )
+        with self._kinematics_lock:
+            scene = self._require_kinematics_scene()
+            result = scene.computeFrameJacobian(
+                self._to_scene_q(robot_id, q, scene=scene), group.tip_link, True
+            )
+            arr = np.asarray(result, dtype=np.float64)
+            if arr.ndim != 2:
+                raise ValueError(
+                    f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 2D 6 x n"
+                )
+            if arr.shape[0] != 6:
+                raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
+            indices = self._jacobian_velocity_indices(
+                scene, group.group_name, group.local_joint_names, group_id, arr.shape[1]
+            )
+        projected = arr[:, indices]
+        expected_shape = (6, len(group.local_joint_names))
+        if projected.shape != expected_shape:
+            raise ValueError(
+                f"Projected RoboPlan Jacobian shape {projected.shape} does not match "
+                f"planning group '{group_id}' shape {expected_shape}"
+            )
+        if not np.all(np.isfinite(projected)):
+            raise ValueError(
+                f"RoboPlan Jacobian for planning group '{group_id}' contains non-finite values"
+            )
+        return projected
+
+    def _jacobian_velocity_indices(
+        self,
+        scene: roboplan_core.Scene,
+        group_name: str,
+        group_joint_names: tuple[str, ...],
+        group_id: PlanningGroupID,
+        jacobian_width: int,
+    ) -> list[int]:
+        """Resolve group joints to authoritative full-model velocity columns."""
+        try:
+            info = scene.getJointGroupInfo(group_name)
+        except (AttributeError, KeyError, RuntimeError) as exc:
+            raise ValueError(
+                "RoboPlan JointGroupInfo with authoritative v_indices is unavailable; "
+                "cannot project a full-model Jacobian"
+            ) from exc
+        try:
+            names = getattr(info, "joint_names", None)
+            velocity_indices = getattr(info, "v_indices", None)
+            names = list(names) if names is not None else None
+            velocity_indices = list(velocity_indices) if velocity_indices is not None else None
+        except (AttributeError, KeyError, RuntimeError) as exc:
+            raise ValueError(
+                "RoboPlan JointGroupInfo joint_names/v_indices metadata is unavailable; "
+                "cannot project a full-model Jacobian"
+            ) from exc
+        if names is None or velocity_indices is None:
+            raise ValueError(
+                "RoboPlan JointGroupInfo must expose joint_names and v_indices for "
+                "Jacobian projection"
+            )
+        if len(names) != len(velocity_indices):
+            raise ValueError("RoboPlan JointGroupInfo joint_names and v_indices lengths must match")
+        if len(set(names)) != len(names):
+            raise ValueError("RoboPlan JointGroupInfo contains duplicate joint names")
+        if len(names) != len(group_joint_names) or set(names) != set(group_joint_names):
+            missing = [name for name in group_joint_names if name not in names]
+            extras = [name for name in names if name not in group_joint_names]
+            raise ValueError(
+                f"RoboPlan native group '{group_name}' names do not exactly match planning "
+                f"group '{group_id}': missing={missing}, extras={extras}"
+            )
+        try:
+            validated_indices = [index_value(value) for value in velocity_indices]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "RoboPlan JointGroupInfo v_indices must contain integer indices"
+            ) from exc
+        selected = [validated_indices[names.index(name)] for name in group_joint_names]
+        if len(set(selected)) != len(selected) or any(value < 0 for value in selected):
+            raise ValueError("RoboPlan selected v_indices must be unique and nonnegative")
+        if any(value >= jacobian_width for value in selected):
+            raise ValueError(
+                f"RoboPlan selected v_indices {selected} are out of bounds for Jacobian width "
+                f"{jacobian_width}"
+            )
+        for name in group_joint_names:
+            try:
+                joint_info = scene.getJointInfo(name)
+                mimic_info = joint_info.mimic_info
+                velocity_dofs = joint_info.num_velocity_dofs
+            except (AttributeError, KeyError, RuntimeError) as exc:
+                raise ValueError(
+                    f"RoboPlan joint metadata for '{name}' is unavailable; cannot validate "
+                    "independent scalar velocity variables"
+                ) from exc
+            if mimic_info is not None or velocity_dofs != 1:
+                raise ValueError(
+                    f"Planning group '{group_id}' joint '{name}' is not an independent "
+                    f"scalar velocity variable (mimic_info={mimic_info!r}, "
+                    f"num_velocity_dofs={velocity_dofs!r})"
+                )
+        return selected
 
     # PlannerSpec for native RoboPlan planning
 
@@ -502,8 +642,35 @@ class RoboPlanWorld:
         urdf_path = self._prepare_robot_urdf(config)
         srdf_path = self._prepare_robot_srdf(config, urdf_path)
         package_paths = [str(path) for path in config.package_paths.values()]
+        self._prepared_urdf_path = urdf_path
+        self._prepared_srdf_path = srdf_path
+        self._prepared_package_paths = package_paths
         scene = roboplan_core.Scene(config.name, str(urdf_path), str(srdf_path), package_paths)
         self._apply_collision_exclusions(scene, config, urdf_path)
+        return scene
+
+    def _create_scene_from_prepared_robot(self) -> roboplan_core.Scene:
+        """Create a clean scene without repeating URDF/SRDF preparation."""
+        if len(self._robots) != 1:
+            raise RuntimeError("RoboPlan replacement scenes require exactly one registered robot")
+        config = next(iter(self._robots.values())).config
+        return self._create_scene_from_prepared_config(config)
+
+    def _create_scene_from_prepared_config(self, config: RobotModelConfig) -> roboplan_core.Scene:
+        """Create a clean scene from already prepared robot inputs."""
+        if (
+            self._prepared_urdf_path is None
+            or self._prepared_srdf_path is None
+            or self._prepared_package_paths is None
+        ):
+            raise RuntimeError("RoboPlan robot scene inputs are not prepared")
+        scene = roboplan_core.Scene(
+            config.name,
+            str(self._prepared_urdf_path),
+            str(self._prepared_srdf_path),
+            self._prepared_package_paths,
+        )
+        self._apply_collision_exclusions(scene, config, self._prepared_urdf_path)
         return scene
 
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
@@ -720,18 +887,30 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan scene is not initialized; add a robot first")
         return self._scene
 
-    def _to_scene_q(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> NDArray[np.float64]:
+    def _require_kinematics_scene(self) -> roboplan_core.Scene:
+        if self._kinematics_scene is None:
+            raise RuntimeError("RoboPlan kinematics scene is not initialized; add a robot first")
+        return self._kinematics_scene
+
+    def _to_scene_q(
+        self,
+        robot_id: WorldRobotID,
+        q: NDArray[np.float64],
+        *,
+        scene: roboplan_core.Scene | None = None,
+    ) -> NDArray[np.float64]:
         """Expand DimOS group positions to RoboPlan's full scene vector when available."""
-        scene = self._require_scene()
+        scene = self._require_scene() if scene is None else scene
         robot = self._get_robot(robot_id)
         if len(q) != len(robot.config.joint_names):
             return q
         return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
 
     def _has_collisions(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
-        scene = self._require_scene()
-        scene_q = self._to_scene_q(robot_id, q)
-        return bool(scene.hasCollisions(scene_q))
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene_q = self._to_scene_q(robot_id, q)
+            return bool(scene.hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
@@ -740,22 +919,28 @@ class RoboPlanWorld:
         q_end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        scene = self._require_scene()
-        scene_q_start = self._to_scene_q(robot_id, q_start)
-        scene_q_end = self._to_scene_q(robot_id, q_end)
-        return bool(
-            roboplan_core.hasCollisionsAlongPath(
-                scene,
-                scene_q_start,
-                scene_q_end,
-                step_size,
-                False,
-                True,
+        with self._scene_lock:
+            scene = self._require_scene()
+            scene_q_start = self._to_scene_q(robot_id, q_start)
+            scene_q_end = self._to_scene_q(robot_id, q_end)
+            return bool(
+                roboplan_core.hasCollisionsAlongPath(
+                    scene,
+                    scene_q_start,
+                    scene_q_end,
+                    step_size,
+                    False,
+                    True,
+                )
             )
-        )
 
-    def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
-        scene = self._require_scene()
+    def _add_obstacle_to_scene(
+        self,
+        obstacle: Obstacle,
+        obstacle_id: str,
+        scene: roboplan_core.Scene | None = None,
+    ) -> None:
+        scene = self._require_scene() if scene is None else scene
         matrix = pose_to_matrix(obstacle.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
@@ -798,7 +983,63 @@ class RoboPlanWorld:
                 color,
             )
             return
+        if obstacle.obstacle_type == ObstacleType.OCTREE:
+            points = self._require_octree_points(obstacle)
+            resolution = self._require_octree_resolution(obstacle)
+            self._add_octree_geometry(scene, obstacle_id, points, resolution, matrix)
+            return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+
+    def _require_octree_points(self, obstacle: Obstacle) -> NDArray[np.float64]:
+        if obstacle.points is None:
+            raise ValueError("OCTREE obstacle requires points")
+        points = np.asarray(obstacle.points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+            raise ValueError("OCTREE obstacle points must be a non-empty Nx3 array")
+        if not np.all(np.isfinite(points)):
+            raise ValueError("OCTREE obstacle points must be finite")
+        return points
+
+    def _require_octree_resolution(self, obstacle: Obstacle) -> float:
+        resolution = obstacle.octree_resolution
+        if resolution is None or not np.isfinite(resolution) or resolution <= 0.0:
+            raise ValueError("OCTREE obstacle requires a positive octree_resolution")
+        return float(resolution)
+
+    def _add_octree_geometry(
+        self,
+        scene: object,
+        obstacle_id: str,
+        points: NDArray[np.float64],
+        resolution: float,
+        matrix: NDArray[np.float64],
+    ) -> object:
+        """Add an octree through RoboPlan's native geometry adapter."""
+        native_method = getattr(scene, "addOcTreeGeometry", None)
+        octree_cls = getattr(roboplan_core, "OcTree", None)
+        if not callable(native_method) or not callable(octree_cls):
+            raise NotImplementedError(
+                "RoboPlan OCTREE obstacles require roboplan_core.OcTree and a callable "
+                "scene.addOcTreeGeometry"
+            )
+
+        boxes = [
+            np.asarray(
+                (point[0], point[1], point[2], resolution, 1.0, 0.5),
+                dtype=np.float64,
+            )
+            for point in points
+        ]
+        octree = octree_cls(boxes, resolution)
+        color = np.asarray((0.0, 0.6, 1.0, 0.6), dtype=np.float64)
+        result = native_method(
+            obstacle_id,
+            _WORLD_FRAME,
+            octree,
+            np.asarray(matrix, dtype=np.float64, order="F"),
+            color,
+        )
+        return obstacle_id if result is None else result
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:
@@ -806,6 +1047,25 @@ class RoboPlanWorld:
                 f"{obstacle.obstacle_type.name} obstacle requires {n_dims} dimensions, "
                 f"got {len(obstacle.dimensions)}"
             )
+
+    def _validate_obstacle(self, obstacle: Obstacle) -> None:
+        """Validate geometry completely before a scene replacement can remove old state."""
+        if not obstacle.name:
+            raise ValueError("Obstacle name must not be empty")
+        if obstacle.obstacle_type == ObstacleType.BOX:
+            self._require_dimensions(obstacle, 3)
+        elif obstacle.obstacle_type == ObstacleType.SPHERE:
+            self._require_dimensions(obstacle, 1)
+        elif obstacle.obstacle_type == ObstacleType.CYLINDER:
+            self._require_dimensions(obstacle, 2)
+        elif obstacle.obstacle_type == ObstacleType.MESH:
+            if not obstacle.mesh_path:
+                raise ValueError("MESH obstacle requires mesh_path")
+        elif obstacle.obstacle_type == ObstacleType.OCTREE:
+            self._require_octree_points(obstacle)
+            self._require_octree_resolution(obstacle)
+        else:
+            raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _run_native_rrt(
         self,
@@ -817,18 +1077,21 @@ class RoboPlanWorld:
         group_name: str | None = None,
         joint_names: list[str] | None = None,
     ) -> list[NDArray[np.float64]]:
-        scene = self._require_scene()
-        robot = self._get_robot(robot_id)
-        options = roboplan_rrt.RRTOptions()
-        native_group_name = robot.config.name if group_name is None else group_name
-        native_joint_names = robot.config.joint_names if joint_names is None else joint_names
-        options.group_name = native_group_name
-        options.max_planning_time = timeout
-        options.collision_check_use_bisection = False
-        planner = roboplan_rrt.RRT(scene, options)
-        start_config = self._to_native_joint_configuration(robot_id, q_start, native_joint_names)
-        goal_config = self._to_native_joint_configuration(robot_id, q_goal, native_joint_names)
-        result = planner.plan(start_config, goal_config)
+        with self._scene_lock:
+            scene = self._require_scene()
+            robot = self._get_robot(robot_id)
+            options = roboplan_rrt.RRTOptions()
+            native_group_name = robot.config.name if group_name is None else group_name
+            native_joint_names = robot.config.joint_names if joint_names is None else joint_names
+            options.group_name = native_group_name
+            options.max_planning_time = timeout
+            options.collision_check_use_bisection = False
+            planner = roboplan_rrt.RRT(scene, options)
+            start_config = self._to_native_joint_configuration(
+                robot_id, q_start, native_joint_names
+            )
+            goal_config = self._to_native_joint_configuration(robot_id, q_goal, native_joint_names)
+            result = planner.plan(start_config, goal_config)
         if result is None:
             raise ValueError("RoboPlan RRT returned no path")
         return self._extract_native_path(result)

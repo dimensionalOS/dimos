@@ -134,7 +134,11 @@ class ViserPanelGui:
         self._handles: dict[str, PanelHandle] = {}
         self._joint_sliders: dict[tuple[PlanningGroupID, str], GuiSliderHandle[float]] = {}
         self._worker = TargetEvaluationWorker(
-            self._handle_target_evaluation_request,
+            self._handle_target_kinematics_request,
+            self._apply_target_kinematics_result,
+        )
+        self._collision_worker = TargetEvaluationWorker(
+            self._handle_target_collision_request,
             self._apply_target_evaluation_result,
         )
         self._operation_worker = OperationWorker(self._set_error)
@@ -146,6 +150,7 @@ class ViserPanelGui:
             return
         try:
             self._worker.start()
+            self._collision_worker.start()
             self._operation_worker.start()
             self.state.runtime = PanelRuntime.RUNNING
             self._build()
@@ -163,6 +168,7 @@ class ViserPanelGui:
         if self.scene is not None:
             self.scene.cancel_preview_animation()
         self._worker.stop()
+        self._collision_worker.stop()
         self._operation_worker.stop(timeout=2.0)
         self._clear_joint_sliders()
         self._remove_panel_handles()
@@ -894,7 +900,7 @@ class ViserPanelGui:
         self._refresh_target_joints_from_groups()
         self._move_joint_target_visuals(targets)
         sequence_id = self.state.next_sequence_id()
-        self._worker.submit(
+        self._collision_worker.submit(
             TargetEvaluationRequest(
                 sequence_id=sequence_id,
                 source="joints",
@@ -964,29 +970,85 @@ class ViserPanelGui:
         for _robot_name, robot_id, _config in self.robot_items():
             self.scene.set_target_active(str(robot_id), str(robot_id) in active_robot_ids)
 
-    def _handle_target_evaluation_request(
+    def _handle_target_kinematics_request(
+        self, request: TargetEvaluationRequest
+    ) -> TargetEvaluationResult:
+        if request.source != "cartesian" or not request.pose_targets:
+            return TargetEvaluationResult(False, "INVALID", "No pose target")
+        stamped = {
+            group_id: PoseStamped(
+                frame_id="world", position=pose.position, orientation=pose.orientation
+            )
+            for group_id, pose in request.pose_targets.items()
+        }
+        return self.operator.solve_pose_target(
+            PoseTargetRequest(
+                stamped,
+                request.auxiliary_group_ids,
+                _copy_joint_state(request.joints),
+            )
+        )
+
+    def _handle_target_collision_request(
         self, request: TargetEvaluationRequest
     ) -> TargetEvaluationResult:
         if request.source == "cartesian":
-            if not request.pose_targets:
-                return TargetEvaluationResult(False, "INVALID", "No pose target")
-            return self.evaluate_pose_target_set(
-                request.pose_targets, request.auxiliary_group_ids, request.joints
+            if request.joints is None:
+                return TargetEvaluationResult(False, "INVALID", "No IK joint target")
+            return self.operator.evaluate_joint_target(
+                JointTargetRequest(request.group_ids, JointState(request.joints))
             )
         if not request.joint_targets:
             return TargetEvaluationResult(False, "INVALID", "No joint target")
         return self.evaluate_joint_target_set(request.group_ids, request.joint_targets)
 
+    def _apply_target_kinematics_result(
+        self, request: TargetEvaluationRequest, result: TargetEvaluationResult
+    ) -> None:
+        if not self._request_is_current(request):
+            return
+        if not result.success or result.target_joints is None:
+            self._apply_target_evaluation_result(request, result)
+            return
+        self.state.target_joints = JointState(result.target_joints)
+        self._split_target_joints_by_group(result.target_joints)
+        self.state.group_poses = {
+            str(group_id): pose
+            for group_id, pose in result.group_poses.items()
+            if isinstance(pose, Pose)
+        }
+        self.state.target_status = TargetStatus.CHECKING
+        self.state.feasibility.status = FeasibilityStatus.UNKNOWN
+        self.state.feasibility.message = result.message
+        self.state.error = ""
+        self._sync_controls_from_targets()
+        self.refresh()
+        self._collision_worker.submit(
+            TargetEvaluationRequest(
+                sequence_id=request.sequence_id,
+                source=request.source,
+                robot_name=request.robot_name,
+                selection_epoch=request.selection_epoch,
+                group_ids=request.group_ids,
+                pose=request.pose,
+                joints=JointState(result.target_joints),
+                auxiliary_group_ids=request.auxiliary_group_ids,
+                pose_targets=dict(request.pose_targets),
+                joint_targets=dict(request.joint_targets),
+            )
+        )
+
+    def _request_is_current(self, request: TargetEvaluationRequest) -> bool:
+        return not self._closed and (
+            request.sequence_id == self.state.latest_sequence_id
+            and request.selection_epoch == self.state.selection_epoch
+            and request.group_ids == self.state.selected_group_ids
+        )
+
     def _apply_target_evaluation_result(
         self, request: TargetEvaluationRequest, result: TargetEvaluationResult
     ) -> None:
-        if self._closed:
-            return
-        if (
-            request.sequence_id != self.state.latest_sequence_id
-            or request.selection_epoch != self.state.selection_epoch
-            or request.group_ids != self.state.selected_group_ids
-        ):
+        if not self._request_is_current(request):
             return
         collision_free = result.collision_free
         success = result.success

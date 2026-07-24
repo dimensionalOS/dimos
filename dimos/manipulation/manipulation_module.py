@@ -56,6 +56,9 @@ from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
 )
+from dimos.manipulation.planning.monitor.planning_collision_snapshot import (
+    PlanningCollisionSnapshot,
+)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
@@ -84,6 +87,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
@@ -133,6 +137,8 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    planning_voxel_resolution: float = 0.05
+    planning_world_frame: str = "world"
 
 
 class ManipulationModule(Module):
@@ -148,6 +154,7 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    planning_voxel_map: In[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -167,6 +174,10 @@ class ManipulationModule(Module):
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
+        self._planning_collision_snapshot = PlanningCollisionSnapshot(
+            resolution=float(getattr(self.config, "planning_voxel_resolution", 0.05)),
+            planning_frame=str(getattr(self.config, "planning_world_frame", "world")),
+        )
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
 
@@ -212,8 +223,39 @@ class ManipulationModule(Module):
         if self.coordinator_joint_state is not None:
             self.coordinator_joint_state.subscribe(self._on_joint_state)
             logger.info("Subscribed to coordinator_joint_state port")
+        if self.planning_voxel_map is not None:
+            self.planning_voxel_map.subscribe(self._on_planning_voxel_map)
+            logger.info("Subscribed to planning_voxel_map port")
 
         logger.info("ManipulationModule started")
+
+    def _on_planning_voxel_map(self, cloud: PointCloud2) -> None:
+        """Stage the latest complete planning collision snapshot."""
+        try:
+            if not hasattr(self, "_planning_collision_snapshot"):
+                self._planning_collision_snapshot = PlanningCollisionSnapshot()
+            self._planning_collision_snapshot.stage(cloud)
+        except ValueError as exc:
+            logger.warning("Rejected planning collision snapshot: %s", exc)
+
+    def _synchronize_planning_collision_snapshot(self) -> None:
+        """Commit staged collision input before collision-aware planning work."""
+        if not hasattr(self, "_planning_collision_snapshot"):
+            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+        if self._world_monitor is not None:
+            self._planning_collision_snapshot.synchronize(self._world_monitor)
+
+    def committed_planning_collision_snapshot(self) -> PointCloud2 | None:
+        """Return the completely committed planning collision snapshot."""
+        if not hasattr(self, "_planning_collision_snapshot"):
+            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+        return self._planning_collision_snapshot.committed()
+
+    def latest_planning_collision_snapshot(self) -> PointCloud2 | None:
+        """Return the latest validated snapshot for prompt visualization."""
+        if not hasattr(self, "_planning_collision_snapshot"):
+            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+        return self._planning_collision_snapshot.staged()
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -253,6 +295,12 @@ class ManipulationModule(Module):
 
         self._world_monitor.finalize()
 
+        # Install and initialize visualization before any managed obstacle
+        # mutation (including the built-in floor obstacle).
+        self._world_monitor.set_visualization(visualization)
+        operator = ManipulationOperator(self, self._world_monitor)
+        self._world_monitor.initialize_visualization(operator=operator)
+
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
             fz = self.config.floor_z
@@ -272,10 +320,6 @@ class ManipulationModule(Module):
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
-
-        self._world_monitor.set_visualization(visualization)
-        operator = ManipulationOperator(self, self._world_monitor)
-        self._world_monitor.initialize_visualization(operator=operator)
 
         if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
@@ -563,10 +607,16 @@ class ManipulationModule(Module):
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
+            # Synchronize before publishing PLANNING.  In particular, a failed
+            # backend registration must leave the caller's prior state intact.
+            # Holding the lock also keeps a concurrent planning request from
+            # observing or racing this reservation.
+            self._synchronize_planning_collision_snapshot()
             self._planning_epoch += 1
             self._last_plan = None
             self._state = ManipulationState.PLANNING
-            return self._planning_epoch
+            planning_epoch = self._planning_epoch
+        return planning_epoch
 
     def _require_unique_pose_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID:
         """Return the unique pose-targetable group or raise if it is ambiguous."""
@@ -859,14 +909,29 @@ class ManipulationModule(Module):
         seed: JointState | None = None,
         check_collision: bool = True,
     ) -> IKResult:
-        """Solve planning-group pose targets without planning a joint path."""
+        """Synchronize collision input and solve planning-group pose targets."""
         if self._kinematics is None or self._world_monitor is None:
             return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         if not pose_targets:
             return IKResult(
                 status=IKStatus.NO_SOLUTION, message="At least one pose target is required"
             )
+        if check_collision:
+            self._synchronize_planning_collision_snapshot()
+        return self._inverse_kinematics_impl(
+            pose_targets, auxiliary_group_ids, seed, check_collision
+        )
 
+    def _inverse_kinematics_impl(
+        self,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        auxiliary_group_ids: Sequence[PlanningGroupID] = (),
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult:
+        """Solve pose targets after the caller synchronized collision input."""
+        if self._kinematics is None or self._world_monitor is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         try:
             stamped_targets = dict(pose_targets)
             auxiliary_ids = tuple(auxiliary_group_ids)
@@ -956,13 +1021,20 @@ class ManipulationModule(Module):
                     status=IKStatus.NO_SOLUTION,
                     message=f"Cannot solve IK while state is {self._state.name}",
                 )
+            previous_state = self._state
             self._state = ManipulationState.PLANNING
-        result = self.inverse_kinematics_single(
-            pose,
-            robot_name=robot_name,
-            seed=seed,
-            check_collision=check_collision,
-        )
+        try:
+            result = self.inverse_kinematics_single(
+                pose,
+                robot_name=robot_name,
+                seed=seed,
+                check_collision=check_collision,
+            )
+        except Exception:
+            with self._lock:
+                if self._state == ManipulationState.PLANNING:
+                    self._state = previous_state
+            raise
         self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
         if result.is_success():
             logger.info(f"IK solved, error: {result.position_error:.4f}m")
@@ -1113,7 +1185,7 @@ class ManipulationModule(Module):
         except Exception as exc:
             self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
             return None
-        ik = self.inverse_kinematics(
+        ik = self._inverse_kinematics_impl(
             pose_targets=stamped_targets,
             auxiliary_group_ids=auxiliary_ids,
             seed=start,
@@ -1803,7 +1875,8 @@ class ManipulationModule(Module):
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
         )
-        return self._world_monitor.add_obstacle(obstacle)
+        # Preserve the historical RPC string contract for duplicate additions.
+        return self._world_monitor.add_obstacle(obstacle) or ""
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:

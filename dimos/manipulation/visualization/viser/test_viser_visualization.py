@@ -22,13 +22,14 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
-from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan, Obstacle, PlanningSceneInfo
 from dimos.manipulation.visualization.operator import TargetEvaluationResult
 from dimos.manipulation.visualization.viser import scene as scene_module
 from dimos.manipulation.visualization.viser.animation import (
@@ -61,7 +62,9 @@ from dimos.manipulation.visualization.viser.state import (
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -359,6 +362,19 @@ class Operator:
             js,
             {},
             {group_id: self.monitor.get_group_ee_pose(group_id) for group_id in group_ids},
+        )
+
+    def solve_pose_target(self, request: object) -> TargetEvaluationResult:
+        result = self.evaluate_pose_target(request)
+        return TargetEvaluationResult(
+            result.success,
+            "IK_SOLVED",
+            "IK solved; collision check pending",
+            False,
+            result.group_ids,
+            result.target_joints,
+            result.group_diagnostics,
+            result.group_poses,
         )
 
     def plan_to_joints(self, request: object) -> GeneratedPlan:
@@ -864,6 +880,48 @@ def test_target_callbacks_require_current_target_identity(
     assert gui.state.target_status == TargetStatus.CHECKING
 
 
+def test_pose_ik_updates_ghost_before_collision_result() -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    scene.register_robot("id-arm", module.configs["arm"])
+    gui = scene_gui(module, server, scene)
+    gui.start()
+    gui._worker.stop()
+    gui._collision_worker.stop()
+    submitted: list[TargetEvaluationRequest] = []
+    gui._collision_worker.submit = submitted.append  # type: ignore[method-assign]
+    request = TargetEvaluationRequest(
+        gui.state.next_sequence_id(),
+        "cartesian",
+        selection_epoch=gui.state.selection_epoch,
+        group_ids=gui.state.selected_group_ids,
+        pose_targets={selected.id: Pose()},
+    )
+    solved = TargetEvaluationResult(
+        True,
+        "IK_SOLVED",
+        "IK solved; collision check pending",
+        False,
+        (selected.id,),
+        JointState({"name": ["arm/j1"], "position": [0.7]}),
+    )
+
+    try:
+        gui._apply_target_kinematics_result(request, solved)
+
+        assert gui.state.target_status == TargetStatus.CHECKING
+        assert scene._urdfs["id-arm:target"].cfg == [0.7, 0.2]
+        assert len(submitted) == 1
+        assert list(submitted[0].joints.position) == [0.7]  # type: ignore[union-attr]
+    finally:
+        gui.close()
+
+
 def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
@@ -1054,6 +1112,163 @@ def test_scene_reference_grid_has_expected_defaults_and_toggle() -> None:
     assert grids[0].visible is False
     scene.set_reference_grid_visible(True)
     assert grids[0].visible is True
+
+
+def test_scene_accepted_obstacles_use_distinct_safe_paths_and_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    registry: dict[str, Handle] = {}
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def add(kind: str, name: str, **kwargs: object) -> Handle:
+        assert name not in registry
+        handle = Handle(value=kwargs)
+        registry[name] = handle
+        calls.append((kind, name, kwargs))
+        return handle
+
+    for kind in ("box", "icosphere", "cylinder", "mesh_simple", "point_cloud"):
+        setattr(
+            server.scene,
+            f"add_{kind}",
+            lambda name, _kind=kind, **kwargs: add(_kind, name, **kwargs),
+        )
+    monkeypatch.setattr(
+        scene_module.trimesh,
+        "load",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            vertices=np.zeros((3, 3)), faces=np.array([[0, 1, 2]])
+        ),
+    )
+    scene = ViserManipulationScene(server, Urdf)
+    pose = PoseStamped(position=[1.0, 2.0, 3.0])
+    obstacles = [
+        Obstacle("box", ObstacleType.BOX, pose, dimensions=(1.0, 2.0, 3.0)),
+        Obstacle("sphere", ObstacleType.SPHERE, pose, dimensions=(0.5,)),
+        Obstacle("cylinder", ObstacleType.CYLINDER, pose, dimensions=(0.5, 2.0)),
+        Obstacle("mesh", ObstacleType.MESH, pose, mesh_path="mesh.obj"),
+        Obstacle(
+            "octree",
+            ObstacleType.OCTREE,
+            pose,
+            points=np.arange(9, dtype=np.float64).reshape(3, 3),
+            octree_resolution=0.1,
+        ),
+    ]
+    for obstacle_id, obstacle in zip(
+        ("a", "a/b", "id-61", "mesh", "octree"), obstacles, strict=True
+    ):
+        scene.add_vis_obstacle(obstacle_id, obstacle)
+
+    paths = [name for _, name, _ in calls]
+    assert len(paths) == len(set(paths)) == 5
+    assert all(
+        path.startswith("/manipulation/obstacles/id-") and "/" not in path[24:] for path in paths
+    )
+    assert [kind for kind, _, _ in calls] == [
+        "box",
+        "icosphere",
+        "cylinder",
+        "mesh_simple",
+        "point_cloud",
+    ]
+
+    scene.update_vis_obstacle_pose("a/b", PoseStamped(position=[4.0, 5.0, 6.0]))
+    assert registry[paths[1]].position == (4.0, 5.0, 6.0)  # type: ignore[attr-defined]
+    scene.remove_vis_obstacle("a")
+    assert registry[paths[0]].removed is True
+    scene.remove_vis_obstacle("unknown")
+    scene.clear_vis_obstacles()
+    assert all(handle.removed for handle in registry.values())
+    scene.close()
+
+
+def test_scene_octree_replacement_removes_before_add_and_caps_only_rendered_points() -> None:
+    server = Server()
+    handles: list[Handle] = []
+    registry: dict[str, Handle] = {}
+
+    class RegistryHandle(Handle):
+        def __init__(self, name: str, **kwargs: object) -> None:
+            super().__init__(value=kwargs)
+            self.name = name
+
+        def remove(self) -> None:
+            self.removed = True
+            registry.pop(self.name, None)
+
+    def add_point_cloud(name: str, **kwargs: object) -> Handle:
+        assert name not in registry
+        handle = RegistryHandle(name, **kwargs)
+        handles.append(handle)
+        registry[name] = handle
+        return handle
+
+    server.scene.add_point_cloud = add_point_cloud
+    scene = ViserManipulationScene(server, Urdf)
+    points = np.arange(60_003, dtype=np.float64).reshape(-1, 3)
+    first = Obstacle(
+        "first", ObstacleType.OCTREE, PoseStamped(), points=points, octree_resolution=0.2
+    )
+    second = Obstacle(
+        "second", ObstacleType.OCTREE, PoseStamped(), points=points + 1, octree_resolution=0.2
+    )
+
+    scene.add_vis_obstacle("A", first)
+    scene.add_vis_obstacle("B", second)
+    path_a = scene._vis_obstacle_path("A")
+    path_b = scene._vis_obstacle_path("B")
+    assert registry[path_a] is handles[0]
+    assert registry[path_b] is handles[1]
+    scene.remove_vis_obstacle("A")
+    assert handles[0].removed is True
+    assert registry[path_b] is handles[1]
+
+    scene.add_vis_obstacle("same", first)
+    scene.add_vis_obstacle("same", second)
+    path = scene._vis_obstacle_path("same")
+    assert handles[2].removed is True
+    assert registry[path] is handles[3]
+    assert len(handles[2].value["points"]) == 20_000  # type: ignore[arg-type]
+    assert len(second.points) == 20_001  # type: ignore[arg-type]
+    current_handle = registry[path]
+    scene.clear_vis_obstacles()
+    assert current_handle.removed is True
+    assert registry == {}
+
+
+def test_scene_uses_live_snapshot_as_single_planning_collision_visual() -> None:
+    server = Server()
+    calls: list[str] = []
+    server.scene.add_point_cloud = lambda name, **_kwargs: calls.append(name) or Handle()
+    scene = ViserManipulationScene(server, Urdf)
+    points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float64)
+
+    scene.add_vis_obstacle(
+        "accepted-planning-id",
+        Obstacle(
+            "planning-collision",
+            ObstacleType.OCTREE,
+            PoseStamped(),
+            points=points,
+            octree_resolution=0.05,
+        ),
+    )
+    scene.add_vis_obstacle(
+        "ordinary-octree-id",
+        Obstacle(
+            "ordinary-octree",
+            ObstacleType.OCTREE,
+            PoseStamped(),
+            points=points,
+            octree_resolution=0.05,
+        ),
+    )
+
+    assert calls == [scene._vis_obstacle_path("ordinary-octree-id")]
+    assert "accepted-planning-id" not in scene._vis_obstacles
+    assert "ordinary-octree-id" in scene._vis_obstacles
 
 
 def test_scene_returns_false_for_missing_robot_target_updates() -> None:
@@ -1314,3 +1529,41 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
     assert control.position == (0.7, 0.8, 0.9)
     assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
     gui.close()
+
+
+def test_scene_live_planning_snapshot_create_update_and_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(scene_module, "PLANNING_SNAPSHOT_MIN_UPDATE_INTERVAL_S", 0.0)
+    server = Server()
+    handles: list[Handle] = []
+
+    def add_point_cloud(name: str, **kwargs: object) -> Handle:
+        handle = Handle(label=name)
+        for key, value in kwargs.items():
+            setattr(handle, key, value)
+        handles.append(handle)
+        return handle
+
+    server.scene.add_point_cloud = add_point_cloud
+    scene = ViserManipulationScene(server, Urdf)
+    first = PointCloud2.from_numpy(
+        np.asarray([[0.0, 0.0, 0.0], [0.1, 0.2, 0.3]], dtype=np.float32),
+        frame_id="world",
+    )
+    latest = PointCloud2.from_numpy(
+        np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+        frame_id="world",
+    )
+
+    scene.update_planning_collision_snapshot(first)
+    scene.update_planning_collision_snapshot(latest)
+
+    assert len(handles) == 1
+    assert handles[0].label == "/planning/collision_snapshot"
+    np.testing.assert_allclose(handles[0].points, latest.points_f32())  # type: ignore[attr-defined]
+
+    scene.update_planning_collision_snapshot(
+        PointCloud2.from_numpy(np.empty((0, 3), dtype=np.float32), frame_id="world")
+    )
+    assert handles[0].removed is True

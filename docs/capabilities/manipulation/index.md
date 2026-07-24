@@ -186,6 +186,11 @@ Viser support is included in the `manipulation` extra:
 uv sync --extra manipulation --inexact
 ```
 
+For an end-to-end xArm simulation that feeds wrist-camera occupancy into
+RoboPlan and displays accepted backend obstacles in Viser, see the [xArm
+Voxel Planning with Viser](/docs/usage/xarm_voxel_planning_viser_demo.md)
+guide.
+
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
 `VisualizationSession`. GUI callbacks enqueue operations through that operator
 for target evaluation, planning, preview, execution, cancellation, reset, and

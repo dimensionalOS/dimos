@@ -22,12 +22,16 @@ from pathlib import Path
 import tempfile
 from threading import RLock
 import time
-from typing import Protocol, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
+import numpy as np
+import trimesh  # type: ignore[import-untyped]
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
@@ -40,7 +44,9 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_URDF_INSTALL_HINT,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.model_parser import parse_model
 from dimos.utils.logging_config import setup_logger
 
@@ -88,6 +94,12 @@ REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
+PLANNING_OBSTACLE_POINT_CAP = 20_000
+PLANNING_SNAPSHOT_POINT_CAP = 20_000
+PLANNING_SNAPSHOT_MIN_UPDATE_INTERVAL_S = 0.5
+PLANNING_SNAPSHOT_PATH = "/planning/collision_snapshot"
+PLANNING_SNAPSHOT_COLOR = (30, 144, 255)
+PLANNING_COLLISION_OBSTACLE_NAME = "planning-collision"
 
 
 class RobotDisplayMode(StrEnum):
@@ -125,6 +137,10 @@ class ViserManipulationScene:
         self._animation_generations: dict[str, int] = {}
         self._collision_fallback_urdfs: dict[str, ViserUrdf] = {}
         self._robot_display_mode = RobotDisplayMode.VISUAL
+        self._vis_obstacles: dict[str, tuple[str, object]] = {}
+        self._planning_snapshot_handle: object | None = None
+        self._planning_snapshot_last_ts: float | None = None
+        self._planning_snapshot_last_update_time = 0.0
         self._ensure_reference_grid()
 
     @property
@@ -194,7 +210,7 @@ class ViserManipulationScene:
 
     def _ensure_reference_grid(self) -> None:
         try:
-            scene = self.server.scene
+            scene: Any = self.server.scene
         except AttributeError:
             return
         try:
@@ -390,6 +406,174 @@ class ViserManipulationScene:
         self.set_target_control_visual_state(robot_id, feasible)
         self.set_target_robot_visual_state(robot_id, feasible)
 
+    @staticmethod
+    def _vis_obstacle_path(obstacle_id: str) -> str:
+        """Encode an arbitrary native ID into one injective, safe path segment."""
+        return f"/manipulation/obstacles/id-{obstacle_id.encode('utf-8').hex()}"
+
+    @staticmethod
+    def _obstacle_pose_kwargs(pose: PoseStamped) -> dict[str, tuple[float, ...]]:
+        return {
+            "position": (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            "wxyz": (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        }
+
+    @staticmethod
+    def _obstacle_color(
+        color: tuple[float, float, float, float],
+    ) -> tuple[tuple[int, int, int], float]:
+        return (
+            (
+                round(max(0.0, min(1.0, color[0])) * 255),
+                round(max(0.0, min(1.0, color[1])) * 255),
+                round(max(0.0, min(1.0, color[2])) * 255),
+            ),
+            max(0.0, min(1.0, color[3])),
+        )
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Add or replace an accepted obstacle visual under the native ID."""
+        with self._scene_lock:
+            self.remove_vis_obstacle(obstacle_id)
+            # The latest planning snapshot already owns the prompt, unified
+            # point-cloud visual. Rendering its accepted OCTREE projection as
+            # well produces an overlapping second layer with different point
+            # primitives. Backend acceptance remains unchanged.
+            if (
+                obstacle.name == PLANNING_COLLISION_OBSTACLE_NAME
+                and obstacle.obstacle_type == ObstacleType.OCTREE
+            ):
+                return
+            path = self._vis_obstacle_path(obstacle_id)
+            color, opacity = self._obstacle_color(obstacle.color)
+            pose = self._obstacle_pose_kwargs(obstacle.pose)
+            scene: Any = self.server.scene
+            handle: Any
+            if obstacle.obstacle_type == ObstacleType.BOX:
+                handle = scene.add_box(
+                    path, dimensions=obstacle.dimensions, color=color, opacity=opacity, **pose
+                )
+            elif obstacle.obstacle_type == ObstacleType.SPHERE:
+                handle = scene.add_icosphere(
+                    path, radius=obstacle.dimensions[0], color=color, opacity=opacity, **pose
+                )
+            elif obstacle.obstacle_type == ObstacleType.CYLINDER:
+                handle = scene.add_cylinder(
+                    path,
+                    radius=obstacle.dimensions[0],
+                    height=obstacle.dimensions[1],
+                    color=color,
+                    opacity=opacity,
+                    **pose,
+                )
+            elif obstacle.obstacle_type == ObstacleType.MESH:
+                if obstacle.mesh_path is None:
+                    raise ValueError("MESH obstacle requires mesh_path")
+                mesh = cast("Any", trimesh.load(obstacle.mesh_path, force="mesh"))
+                handle = scene.add_mesh_simple(
+                    path,
+                    vertices=np.asarray(mesh.vertices),
+                    faces=np.asarray(mesh.faces),
+                    color=color,
+                    opacity=opacity,
+                    **pose,
+                )
+            elif obstacle.obstacle_type == ObstacleType.OCTREE:
+                if obstacle.points is None or obstacle.octree_resolution is None:
+                    raise ValueError("OCTREE obstacle requires points and octree_resolution")
+                points = np.asarray(obstacle.points)
+                displayed_points = points[:PLANNING_OBSTACLE_POINT_CAP]
+                handle = scene.add_point_cloud(
+                    path,
+                    points=displayed_points,
+                    colors=color,
+                    point_size=obstacle.octree_resolution,
+                    **pose,
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported visualization obstacle type: {obstacle.obstacle_type!r}"
+                )
+            self._vis_obstacles[obstacle_id] = (path, handle)
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove an accepted obstacle visual; unknown IDs are a no-op."""
+        with self._scene_lock:
+            visual = self._vis_obstacles.pop(obstacle_id, None)
+            if visual is not None:
+                self._remove_scene_handle(visual[1])
+
+    def clear_vis_obstacles(self) -> None:
+        """Remove every accepted obstacle visual."""
+        with self._scene_lock:
+            for obstacle_id in list(self._vis_obstacles):
+                self.remove_vis_obstacle(obstacle_id)
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Move an accepted obstacle visual by native ID; unknown IDs are a no-op."""
+        with self._scene_lock:
+            visual = self._vis_obstacles.get(obstacle_id)
+            if visual is None:
+                return
+            position = self._obstacle_pose_kwargs(pose)
+            handle = cast("Any", visual[1])
+            handle.position = position["position"]
+            handle.wxyz = position["wxyz"]
+
+    def update_planning_collision_snapshot(self, cloud: PointCloud2 | None) -> None:
+        """Render the latest staged snapshot without waiting for planning commit."""
+        if cloud is None:
+            return
+        points = np.asarray(cloud.points_f32(), dtype=np.float32).reshape((-1, 3))
+        if len(points) > PLANNING_SNAPSHOT_POINT_CAP:
+            stride = int(np.ceil(len(points) / PLANNING_SNAPSHOT_POINT_CAP))
+            points = points[::stride]
+
+        with self._scene_lock:
+            if len(points) == 0:
+                self._remove_planning_collision_snapshot()
+                self._planning_snapshot_last_ts = cloud.ts
+                return
+            if (
+                self._planning_snapshot_handle is not None
+                and cloud.ts is not None
+                and cloud.ts == self._planning_snapshot_last_ts
+            ):
+                return
+            now = time.monotonic()
+            if (
+                self._planning_snapshot_handle is not None
+                and now - self._planning_snapshot_last_update_time
+                < PLANNING_SNAPSHOT_MIN_UPDATE_INTERVAL_S
+            ):
+                return
+            handle = self._planning_snapshot_handle
+            if handle is None:
+                scene: Any = self.server.scene
+                handle = scene.add_point_cloud(
+                    PLANNING_SNAPSHOT_PATH,
+                    points=points,
+                    colors=PLANNING_SNAPSHOT_COLOR,
+                    point_size=0.02,
+                    point_shape="circle",
+                )
+                self._planning_snapshot_handle = handle
+            else:
+                cast("Any", handle).points = points
+            self._planning_snapshot_last_ts = cloud.ts
+            self._planning_snapshot_last_update_time = now
+
+    def _remove_planning_collision_snapshot(self) -> None:
+        handle = self._planning_snapshot_handle
+        if handle is not None:
+            self._remove_scene_handle(handle)
+            self._planning_snapshot_handle = None
+
     def set_target_control_visual_state(self, control_id: str, feasible: bool) -> None:
         """Set feasibility color for one planning-group keyed target control."""
         color = TARGET_CONTROL_FEASIBLE_COLOR if feasible else TARGET_CONTROL_INFEASIBLE_COLOR
@@ -406,6 +590,9 @@ class ViserManipulationScene:
 
     def close(self) -> None:
         self.cancel_preview_animation()
+        with self._scene_lock:
+            self._remove_planning_collision_snapshot()
+        self.clear_vis_obstacles()
         for key in list(self._handles):
             self._remove_handle(key)
         if self._grid_handle is not None:

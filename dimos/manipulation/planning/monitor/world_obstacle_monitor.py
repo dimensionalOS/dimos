@@ -26,6 +26,7 @@ Example:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -35,10 +36,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     import threading
 
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
@@ -65,7 +66,7 @@ class WorldObstacleMonitor:
 
     def __init__(
         self,
-        world: WorldSpec,
+        world_monitor: WorldMonitor,
         lock: threading.RLock,
         detection_timeout: float = 2.0,
         use_mesh_obstacles: bool = False,
@@ -73,12 +74,12 @@ class WorldObstacleMonitor:
         """Create a world obstacle monitor.
 
         Args:
-            world: WorldSpec instance to update
+            world_monitor: WorldMonitor instance to update
             lock: Shared lock for thread-safe access
             detection_timeout: Time before removing stale detections (seconds)
             use_mesh_obstacles: Use convex hull meshes from pointclouds instead of bounding boxes
         """
-        self._world = world
+        self._world_monitor = world_monitor
         self._lock = lock
         self._detection_timeout = detection_timeout
         self._use_mesh_obstacles = use_mesh_obstacles
@@ -145,7 +146,10 @@ class WorldObstacleMonitor:
             logger.warning(f"Failed to create obstacle from message: {msg.id}")
             return
 
-        obstacle_id = self._world.add_obstacle(obstacle)
+        obstacle_id = self._world_monitor.add_obstacle(obstacle)
+        if obstacle_id is None:
+            logger.warning("World rejected duplicate collision object '%s'", msg.id)
+            return
         self._collision_objects[msg.id] = obstacle_id
 
         logger.debug(f"Added collision object '{msg.id}' as '{obstacle_id}'")
@@ -164,7 +168,9 @@ class WorldObstacleMonitor:
             return
 
         obstacle_id = self._collision_objects[msg_id]
-        self._world.remove_obstacle(obstacle_id)
+        if not self._world_monitor.remove_obstacle(obstacle_id):
+            logger.warning("Failed to remove collision object '%s'; retaining cache", msg_id)
+            return
         del self._collision_objects[msg_id]
 
         logger.debug(f"Removed collision object '{msg_id}'")
@@ -186,7 +192,8 @@ class WorldObstacleMonitor:
         obstacle_id = self._collision_objects[msg.id]
 
         if msg.pose is not None:
-            self._world.update_obstacle_pose(obstacle_id, msg.pose)
+            if not self._world_monitor.update_obstacle_pose(obstacle_id, msg.pose):
+                return
             logger.debug(f"Updated collision object '{msg.id}' pose")
 
         # Notify callbacks
@@ -247,21 +254,23 @@ class WorldObstacleMonitor:
                 if det_id in self._perception_objects:
                     # Update existing obstacle
                     obstacle_id = self._perception_objects[det_id]
-                    self._world.update_obstacle_pose(obstacle_id, pose)
+                    self._world_monitor.update_obstacle_pose(obstacle_id, pose)
                     self._perception_timestamps[det_id] = current_time
                 else:
                     # Add new obstacle
                     obstacle = self._detection_to_obstacle(detection)
-                    obstacle_id = self._world.add_obstacle(obstacle)
-                    self._perception_objects[det_id] = obstacle_id
+                    new_obstacle_id = self._world_monitor.add_obstacle(obstacle)
+                    if new_obstacle_id is None:
+                        continue
+                    self._perception_objects[det_id] = new_obstacle_id
                     self._perception_timestamps[det_id] = current_time
 
-                    logger.debug(f"Added perception object '{det_id}' as '{obstacle_id}'")
+                    logger.debug(f"Added perception object '{det_id}' as '{new_obstacle_id}'")
 
                     # Notify callbacks
                     for callback in self._obstacle_callbacks:
                         try:
-                            callback("add", obstacle_id, obstacle)
+                            callback("add", new_obstacle_id, obstacle)
                         except Exception as e:
                             logger.error(f"Obstacle callback error: {e}")
 
@@ -303,9 +312,10 @@ class WorldObstacleMonitor:
 
         for det_id in stale_ids:
             obstacle_id = self._perception_objects[det_id]
-            removed = self._world.remove_obstacle(obstacle_id)
+            removed = self._world_monitor.remove_obstacle(obstacle_id)
             if not removed:
                 logger.warning(f"Obstacle '{obstacle_id}' not found in world during cleanup")
+                continue
             del self._perception_objects[det_id]
             del self._perception_timestamps[det_id]
 
@@ -363,7 +373,7 @@ class WorldObstacleMonitor:
 
         msg = CollisionObjectMessage(id=name, operation="remove")
         self.on_collision_object(msg)
-        return True
+        return name not in self._collision_objects
 
     def clear_all_obstacles(self) -> None:
         """Remove all tracked obstacles."""
@@ -374,9 +384,24 @@ class WorldObstacleMonitor:
 
             # Clear perception objects
             for det_id, obstacle_id in list(self._perception_objects.items()):
-                self._world.remove_obstacle(obstacle_id)
+                if not self._world_monitor.remove_obstacle(obstacle_id):
+                    continue
                 del self._perception_objects[det_id]
                 del self._perception_timestamps[det_id]
+
+    def reset_world_tracking(self) -> None:
+        """Forget managed world IDs after a successful global backend clear."""
+        with self._lock:
+            self._collision_objects.clear()
+            self._perception_objects.clear()
+            self._perception_timestamps.clear()
+            self._object_obstacles.clear()
+
+    @contextmanager
+    def coordinated_world_clear(self) -> Generator[None, None, None]:
+        """Hold tracking ownership while WorldMonitor clears its backend."""
+        with self._lock:
+            yield
 
     def get_obstacle_count(self) -> int:
         """Get total number of tracked obstacles."""
@@ -468,25 +493,31 @@ class WorldObstacleMonitor:
 
         # Step 3: apply to Drake world under lock (fast)
         with self._lock:
-            for obs_id in self._object_obstacles.values():
-                self._world.remove_obstacle(obs_id)
-            self._object_obstacles.clear()
+            retained: dict[str, str] = {}
+            for object_id, obs_id in self._object_obstacles.items():
+                if not self._world_monitor.remove_obstacle(obs_id):
+                    retained[object_id] = obs_id
+            self._object_obstacles = retained
 
             result: list[dict[str, Any]] = []
             for oid, obj, obstacle in prepared:
                 assert isinstance(obj, Object)
-                obs_id = self._world.add_obstacle(obstacle)
-                self._object_obstacles[oid] = obs_id
+                if oid in self._object_obstacles:
+                    continue
+                new_obs_id = self._world_monitor.add_obstacle(obstacle)
+                if new_obs_id is None:
+                    continue
+                self._object_obstacles[oid] = new_obs_id
                 result.append(
                     {
                         "object_id": oid,
-                        "obstacle_id": obs_id,
+                        "obstacle_id": new_obs_id,
                         "name": obj.name,
                         "center": [float(obj.center.x), float(obj.center.y), float(obj.center.z)],
                         "size": [float(obj.size.x), float(obj.size.y), float(obj.size.z)],
                     }
                 )
-                logger.debug(f"Added object obstacle '{oid}' ({obj.name}) as '{obs_id}'")
+                logger.debug(f"Added object obstacle '{oid}' ({obj.name}) as '{new_obs_id}'")
 
             return result
 
@@ -500,10 +531,12 @@ class WorldObstacleMonitor:
             True if found and removed, False otherwise.
         """
         with self._lock:
-            obs_id = self._object_obstacles.pop(object_id, None)
+            obs_id = self._object_obstacles.get(object_id)
             if obs_id is None:
                 return False
-            self._world.remove_obstacle(obs_id)
+            if not self._world_monitor.remove_obstacle(obs_id):
+                return False
+            del self._object_obstacles[object_id]
             logger.info(f"Removed obstacle for object '{object_id}'")
             return True
 
@@ -514,11 +547,12 @@ class WorldObstacleMonitor:
             Number of obstacles removed
         """
         with self._lock:
-            count = len(self._object_obstacles)
-            for obs_id in self._object_obstacles.values():
-                self._world.remove_obstacle(obs_id)
-            self._object_obstacles.clear()
-            return count
+            removed = 0
+            for object_id, obs_id in list(self._object_obstacles.items()):
+                if self._world_monitor.remove_obstacle(obs_id):
+                    del self._object_obstacles[object_id]
+                    removed += 1
+            return removed
 
     def get_perception_status(self) -> dict[str, int]:
         """Get perception obstacle status."""
