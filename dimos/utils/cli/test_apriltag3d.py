@@ -35,7 +35,7 @@ from dimos.utils.cli.apriltag3d import (
 )
 
 SIZE_MM = 50.0
-PLATE_MM = plate_size_mm("tag36h11", SIZE_MM, 1.0)
+PLATE_MM = plate_size_mm("tag36h11", SIZE_MM, 2.0)
 HOLE_DIA_MM = 3.4
 SPACING_MM = hole_spacing_mm(PLATE_MM, HOLE_DIA_MM)
 
@@ -182,9 +182,7 @@ def test_other_families_build(family: str) -> None:
 
 
 def test_frame_is_a_separate_part_the_tag_drops_into() -> None:
-    parts = build_tag_meshes(
-        "tag36h11", 0, size_mm=SIZE_MM, holes=False, frame=True, margin_cells=2.0
-    )
+    parts = build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0)
     assert parts.frame is not None and parts.frame.is_watertight
     # Same coordinate frame, and the pocket clears the plate rather than fouling it.
     assert trimesh.boolean.intersection([parts.base, parts.frame]).volume < 1e-6
@@ -201,4 +199,17 @@ def test_frame_lip_leaves_the_quiet_zone_visible() -> None:
 
 def test_frame_is_refused_when_the_margin_cannot_spare_a_lip() -> None:
     with pytest.raises(ValueError, match="raise --margin-cells"):
-        build_tag_meshes("tag36h11", 0, size_mm=SIZE_MM, holes=False, frame=True)
+        build_tag_meshes(
+            "tag36h11", 0, size_mm=SIZE_MM, holes=False, frame_mm=15.0, margin_cells=1.0
+        )
+
+
+def test_frame_hangs_flat_on_a_wall() -> None:
+    """Rope and nail live inside the recess, so the back plane stays flat against the wall."""
+    frame = frame_solid(75.0, 3.0)
+    band_y = (75.0 / 2 + frame.bounds[1][1]) / 2
+    # Open at the back for the rope, bridged by a bar, and closed before the face.
+    rope = np.array([[x, band_y, 1.0] for x in np.linspace(-18, 18, 60)])
+    assert not frame.contains(rope).all()
+    # ...and closed again below the face, so the recess never shows from the front.
+    assert frame.contains(np.array([[0.0, band_y, z] for z in (5.0, 6.0)])).all()

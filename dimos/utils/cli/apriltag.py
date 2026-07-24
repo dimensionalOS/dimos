@@ -355,20 +355,18 @@ class TagRequest:
     three_d: bool = False
     thickness_mm: float = 3.0
     marker_mm: float = 0.8
-    margin_cells: float = 1.0
+    margin_cells: float = 2.0
     holes: bool = True
     hole_dia_mm: float = 3.4
     back_text: bool = True
     text_inlay: bool = True
-    frame: bool = False
-    frame_width_mm: float = 0.0
+    frame_mm: float = 0.0
     legs_mm: float = 0.0
     leg_thickness_mm: float = 6.0
     leg_brace: bool = True
     base_color: str = "#F5F5F5"
     marker_color: str = "#141414"
     text_color: str = ""
-    frame_color: str = "#8A6A3B"
 
     def __post_init__(self) -> None:
         """Reject bad input up front, so describing a request can't trip over it."""
@@ -380,17 +378,16 @@ class TagRequest:
             raise ValueError(
                 f"unsupported page_size: {self.page_size}; choose from {sorted(_PAGE_SIZES)}"
             )
-        if self.frame and self.legs_mm > 0:
+        if self.frame_mm > 0 and self.legs_mm > 0:
             raise ValueError("--frame and --legs are alternatives; pick one")
         if self.three_d:
-            colors = [self.base_color, self.marker_color, self.text_color or "#000000"]
-            for color in [*colors, self.frame_color]:
+            for color in (self.base_color, self.marker_color, self.text_color or "#000000"):
                 display_color(color)
 
     @property
     def mounted(self) -> bool:
         """Legs bolt through the flange holes; a frame holds the tag instead of screws."""
-        return not self.frame and (self.holes or self.legs_mm > 0)
+        return self.frame_mm <= 0 and (self.holes or self.legs_mm > 0)
 
     @property
     def out_dir(self) -> Path | None:
@@ -417,7 +414,12 @@ class TagRequest:
         return rows if not self.three_d else rows + self._describe_3d()
 
     def _describe_3d(self) -> list[tuple[str, str]]:
-        from dimos.utils.cli.apriltag3d import hole_spacing_mm, plate_footprint_mm, plate_size_mm
+        from dimos.utils.cli.apriltag3d import (
+            FRAME_COLOR,
+            hole_spacing_mm,
+            plate_footprint_mm,
+            plate_size_mm,
+        )
 
         plate = plate_size_mm(self.family, self.size_mm, self.margin_cells)
         width, height = plate_footprint_mm(plate, self.hole_dia_mm, self.mounted)
@@ -451,7 +453,9 @@ class TagRequest:
             ),
             (
                 "frame",
-                "ornamental, separate part (own material)" if self.frame else "none",
+                f"ornamental, {self.frame_mm:g} mm band, separate part (own material)"
+                if self.frame_mm > 0
+                else "none",
             ),
             (
                 "back text",
@@ -467,7 +471,7 @@ class TagRequest:
                     if self.back_text and self.text_inlay
                     else ""
                 )
-                + (f", frame {self.frame_color}" if self.frame else ""),
+                + (f", frame {FRAME_COLOR}" if self.frame_mm > 0 else ""),
             ),
         ]
 
@@ -501,15 +505,13 @@ class TagRequest:
                 hole_dia_mm=self.hole_dia_mm,
                 back_text=self.back_text,
                 text_inlay=self.text_inlay,
-                frame=self.frame,
-                frame_width_mm=self.frame_width_mm,
+                frame_mm=self.frame_mm,
                 legs_mm=self.legs_mm,
                 leg_thickness_mm=self.leg_thickness_mm,
                 leg_brace=self.leg_brace,
                 base_color=self.base_color,
                 marker_color=self.marker_color,
                 text_color=self.text_color or None,
-                frame_color=self.frame_color,
             )
         return written
 
@@ -525,6 +527,6 @@ class TagRequest:
         )
         if self.legs_mm > 0:
             lines.append("  Print leg_*_left and leg_*_right once each — 2 screws per leg.")
-        if self.frame:
+        if self.frame_mm > 0:
             lines.append("  The _frame part is separate — print it in its own material.")
         return lines

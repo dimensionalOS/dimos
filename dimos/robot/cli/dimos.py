@@ -958,7 +958,7 @@ def apriltag(
         0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
     ),
     margin_cells: float = typer.Option(
-        1.0, "--margin-cells", help="[3d] Light quiet-zone border around the tag, in tag cells"
+        2.0, "--margin-cells", help="[3d] Light quiet-zone border around the tag, in tag cells"
     ),
     holes: bool = typer.Option(
         True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"
@@ -974,16 +974,14 @@ def apriltag(
         "--text-inlay/--no-text-inlay",
         help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
     ),
-    frame: bool = typer.Option(
-        False,
-        "--frame/--no-frame",
-        help="[3d] Instead of mounting holes, add an ornamental picture frame as its own part",
-    ),
-    frame_width_mm: float = typer.Option(
-        0.0, "--frame-width-mm", help="[3d] Frame band width in mm (0 = scale with the tag)"
-    ),
-    frame_color: str = typer.Option(
-        "#8A6A3B", "--frame-color", help="[3d] Frame color in the 3MF, #RRGGBB"
+    frame: float = typer.Option(
+        0.0,
+        "--frame",
+        metavar="WIDTH_MM",
+        help=(
+            "[3d] Instead of mounting holes, add an ornamental picture frame this many mm "
+            "wide, as its own part to print in another material. 15 is a good width"
+        ),
     ),
     legs: float = typer.Option(
         0.0,
@@ -1030,15 +1028,13 @@ def apriltag(
             hole_dia_mm=hole_dia_mm,
             back_text=back_text,
             text_inlay=text_inlay,
-            frame=frame,
-            frame_width_mm=frame_width_mm,
+            frame_mm=frame,
             legs_mm=legs,
             leg_thickness_mm=leg_thickness_mm,
             leg_brace=leg_brace,
             base_color=base_color,
             marker_color=marker_color,
             text_color=text_color,
-            frame_color=frame_color,
         )
         typer.echo("apriltag")
         for key, value in request.describe():

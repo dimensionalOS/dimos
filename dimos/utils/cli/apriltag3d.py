@@ -424,6 +424,16 @@ _FRAME_FIT_MM = 0.4
 _FRAME_RABBET_MM = 3.0
 _FRAME_RABBET_MIN_MM = 1.5
 
+# Default width of the frame band, and the color it is written into the 3MF with.
+_FRAME_WIDTH_MM = 15.0
+
+# Hanging recess on the back of the top rail: how deep it cuts, how much material it must
+# leave towards the face, and the bar it bridges for the rope.
+_HANGER_DEPTH_MM = 5.0
+_HANGER_KEEP_MM = 2.0
+_HANGER_BAR_MM = 1.6
+FRAME_COLOR = "#8A6A3B"
+
 
 def _ring(
     outer_w: float, outer_h: float, inner_w: float, inner_h: float, z0: float, z1: float
@@ -471,7 +481,7 @@ def frame_solid(
     plate_mm: float,
     tag_thickness_mm: float,
     *,
-    width_mm: float = 0.0,
+    width_mm: float = _FRAME_WIDTH_MM,
     face_mm: float = 3.0,
     rabbet_mm: float = _FRAME_RABBET_MM,
 ) -> trimesh.Trimesh:
@@ -487,7 +497,7 @@ def frame_solid(
     """
     pocket = plate_mm + 2 * _FRAME_FIT_MM
     lip = plate_mm - 2 * rabbet_mm
-    band = width_mm if width_mm > 0 else max(12.0, 0.22 * plate_mm)
+    band = width_mm
     outer = plate_mm + 2 * band
     if lip <= 0:
         raise ValueError(f"a {plate_mm:.1f} mm plate is too small to frame")
@@ -518,7 +528,44 @@ def frame_solid(
         for sy in (-1, 1):
             parts.append(_stud(sx * land, sy * land, rosette_r, face - _EPS, face + rim_h))
             parts.append(_stud(sx * land, sy * land, rosette_r * 0.6, face, face + rim_h * 1.8))
-    return _union(parts)
+
+    solid = _union(parts)
+    recess, bars = _hanger(outer, pocket, band, face)
+    return _union([trimesh.boolean.difference([solid, recess]), *bars])
+
+
+def _hanger(
+    outer: float, tag_pocket: float, band: float, rail_thickness: float
+) -> tuple[trimesh.Trimesh, list[trimesh.Trimesh]]:
+    """A rope recess in the back of the top rail: (material to cut, bars to put back).
+
+    Both the rope and the nail head sit inside the recess, so the back stays flat against
+    the wall. That is what keeps the frame from tilting: anything proud of the back holds
+    the frame off the wall, and its mass — which sits in front of the wall plane — then
+    swings it until the centre of mass hangs under the nail.
+
+    The rope runs along the recess, threading under a bar at each end and tying back on
+    itself. Each bar bridges the recess front-to-back, so it prints over a short span with
+    no support, and nothing is cut through to the face.
+    """
+    depth = min(_HANGER_DEPTH_MM, rail_thickness - _HANGER_KEEP_MM)
+    half_x = outer * 0.25
+    mid_y = (tag_pocket / 2 + outer / 2) / 2
+    half_y = band * 0.25
+    recess = _box(-half_x, half_x, mid_y - half_y, mid_y + half_y, -_EPS, depth)
+    bar_half = band * 0.16
+    bars = [
+        _box(
+            sx * (half_x - band * 0.55) - bar_half,
+            sx * (half_x - band * 0.55) + bar_half,
+            mid_y - half_y - _EPS,
+            mid_y + half_y + _EPS,
+            depth - _HANGER_BAR_MM,
+            depth + _EPS,
+        )
+        for sx in (-1, 1)
+    ]
+    return recess, bars
 
 
 def leg_solid(
@@ -672,14 +719,13 @@ def build_tag_meshes(
     size_mm: float = 50.0,
     thickness_mm: float = 3.0,
     marker_mm: float = 0.8,
-    margin_cells: float = 1.0,
+    margin_cells: float = 2.0,
     holes: bool = True,
     hole_dia_mm: float = 3.4,
     back_text: bool = True,
     text_depth_mm: float = 0.6,
     text_inlay: bool = True,
-    frame: bool = False,
-    frame_width_mm: float = 0.0,
+    frame_mm: float = 0.0,
     min_stroke_mm: float = 0.45,
 ) -> TagParts:
     """Build one tag's solids, all sharing one coordinate frame."""
@@ -725,7 +771,7 @@ def build_tag_meshes(
     body = _rounded_plate(footprint[0], footprint[1], thickness_mm)
     base = trimesh.boolean.difference([body, *cuts])
     ornament = None
-    if frame:
+    if frame_mm > 0:
         # The lip is opaque and a different color, so it eats into the quiet zone. Give it
         # only what the margin can spare beyond the one cell the detector needs.
         spare = margin - size_mm / n
@@ -738,7 +784,7 @@ def build_tag_meshes(
         ornament = frame_solid(
             plate,
             thickness_mm,
-            width_mm=frame_width_mm,
+            width_mm=frame_mm,
             rabbet_mm=min(_FRAME_RABBET_MM, spare),
         )
     return TagParts(base=base, marker=marker, text=text, frame=ornament)
@@ -807,20 +853,18 @@ def generate_3d(
     size_mm: float = 50.0,
     thickness_mm: float = 3.0,
     marker_mm: float = 0.8,
-    margin_cells: float = 1.0,
+    margin_cells: float = 2.0,
     holes: bool = True,
     hole_dia_mm: float = 3.4,
     back_text: bool = True,
     text_inlay: bool = True,
-    frame: bool = False,
-    frame_width_mm: float = 0.0,
+    frame_mm: float = 0.0,
     legs_mm: float = 0.0,
     leg_thickness_mm: float = 6.0,
     leg_brace: bool = True,
     base_color: str = "#F5F5F5",
     marker_color: str = "#141414",
     text_color: str | None = None,
-    frame_color: str = "#8A6A3B",
 ) -> list[Path]:
     """Write an STL per solid plus one colored 3MF per tag into `out_dir`."""
     if not ids:
@@ -843,15 +887,14 @@ def generate_3d(
             hole_dia_mm=hole_dia_mm,
             back_text=back_text,
             text_inlay=text_inlay,
-            frame=frame,
-            frame_width_mm=frame_width_mm,
+            frame_mm=frame_mm,
         )
         stem = f"{family.lower()}_{tag_id:03d}"
         parts = [("base", tag.base, base_color), ("marker", tag.marker, marker_color)]
         if tag.text is not None:
             parts.append(("text", tag.text, text_color or marker_color))
         if tag.frame is not None:
-            parts.append(("frame", tag.frame, frame_color))
+            parts.append(("frame", tag.frame, FRAME_COLOR))
         for name, mesh, _color in parts:
             path = out_dir / f"{stem}_{name}.stl"
             mesh.export(path)
