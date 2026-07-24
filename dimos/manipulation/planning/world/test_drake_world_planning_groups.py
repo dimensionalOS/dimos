@@ -68,6 +68,32 @@ def _write_urdf(path: Path) -> None:
     )
 
 
+def _write_urdf_with_base_collision(path: Path) -> None:
+    path.write_text(
+        """
+<robot name="chain">
+  <link name="base_link">
+    <collision>
+      <geometry><box size="0.4 0.4 0.4"/></geometry>
+    </collision>
+  </link>
+  <link name="link1"/>
+  <link name="tool0"/>
+  <joint name="joint1" type="revolute">
+    <parent link="base_link"/><child link="link1"/>
+    <origin xyz="1 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/><child link="tool0"/>
+    <origin xyz="1 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+    )
+
+
 def _write_urdf_with_world_base_joint(path: Path) -> None:
     path.write_text(
         """
@@ -204,6 +230,41 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     retrieved = world.get_obstacles()[0]
     retrieved.dimensions = (8.0,)
     assert world.get_obstacles()[0].dimensions == (0.5,)
+
+
+@requires_drake
+def test_drake_obstacle_updates_change_planning_collision_queries(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf_with_base_collision(urdf)
+    world = DrakeWorld(enable_viz=False)
+    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.finalize()
+    joint_state = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=[2.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
+        dimensions=(0.2, 0.2, 0.2),
+    )
+    assert world.add_obstacle(obstacle) == "box"
+    assert world.check_config_collision_free(robot_id, joint_state)
+
+    colliding_pose = PoseStamped(
+        position=[0.0, 0.0, 0.0],
+        orientation=[0.0, 0.0, 0.0, 1.0],
+    )
+    assert world.update_obstacle_pose("box", colliding_pose)
+    assert not world.check_config_collision_free(robot_id, joint_state)
+
+    replacement = replace(
+        obstacle,
+        obstacle_type=ObstacleType.SPHERE,
+        dimensions=(0.1,),
+    )
+    assert world.update_obstacle(replacement)
+    assert world.check_config_collision_free(robot_id, joint_state)
 
 
 @requires_drake
