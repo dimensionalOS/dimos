@@ -96,7 +96,7 @@ const enc = new TextEncoder();
 // corrupted bytes into channel names or message fields.
 const dec = new TextDecoder("utf-8", { fatal: true });
 
-// Runtime field validation, mirror of _MSG_FIELD_KINDS in protocol.py:
+// Runtime field validation, mirrored by the pydantic models in protocol.py:
 // "string" is a JSON string, "number" any JSON number (booleans excluded by
 // typeof).
 const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {

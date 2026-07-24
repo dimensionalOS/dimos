@@ -1242,9 +1242,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def _publish_visualization(self, ctx: Context | None = None) -> None:
         """Publish current state to visualization."""
         with self._lock:
-            self._require_finalized()
             if self._meshcat_visualizer is None or self._meshcat is None:
                 return
+            self._require_finalized()
             if ctx is None:
                 ctx = self._live_context
             if ctx is not None:
