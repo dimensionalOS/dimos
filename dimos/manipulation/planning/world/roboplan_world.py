@@ -158,9 +158,9 @@ class RoboPlanWorld:
         obstacle_id = obstacle.name
         if obstacle_id in self._obstacles:
             return obstacle_id
-        self._obstacles[obstacle_id] = obstacle
         if self._finalized:
             self._add_obstacle_to_scene(obstacle, obstacle_id)
+        self._obstacles[obstacle_id] = obstacle
         return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:

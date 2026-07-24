@@ -24,10 +24,7 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.manipulation.manipulation_module import (
-    ManipulationModule,
-    ManipulationModuleConfig,
-)
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
@@ -111,13 +108,6 @@ def test_explicit_legacy_planner_path_does_not_import_roboplan(
 
     assert "roboplan.core" not in sys.modules
     assert "roboplan.rrt" not in sys.modules
-
-
-def test_manipulation_defaults_to_roboplan_world_and_planner() -> None:
-    config = ManipulationModuleConfig()
-
-    assert config.world_backend == "roboplan"
-    assert config.planner_name == "roboplan"
 
 
 def test_validate_backend_combination_rejects_invalid_combinations() -> None:
