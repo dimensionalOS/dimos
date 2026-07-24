@@ -73,12 +73,7 @@ def set_run_log_dir(log_dir: str | Path) -> None:
 
 
 def get_run_log_dir() -> Path | None:
-    # Forkserver workers don't run set_run_log_dir(); they inherit the run dir
-    # as DIMOS_RUN_LOG_DIR (process_lifecycle.py:114) -- read the env var second.
-    if _RUN_LOG_DIR is not None:
-        return _RUN_LOG_DIR
-    env_log_dir = os.environ.get("DIMOS_RUN_LOG_DIR")
-    return Path(env_log_dir) if env_log_dir else None
+    return _RUN_LOG_DIR
 
 
 def _get_log_directory() -> Path:
