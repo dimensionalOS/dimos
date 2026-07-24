@@ -653,7 +653,7 @@ jobs:
           df -h /nix || true
       - name: Prune the persistent uv cache
         # Same story as /nix above: lock bumps accumulate superseded wheels
-        # forever. Drop unreachable objects each run; past 10 GB, `--ci` also
+        # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
         # evicts pre-built wheels (re-downloaded on the next run) while keeping
         # the expensive wheels built from source. uv has nothing age-based.
         if: ${{ always() && matrix.os == 'Linux' }}
@@ -661,7 +661,7 @@ jobs:
           uv cache prune
           size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
           echo "uv cache size: ${size_mb} MB"
-          if [ "$size_mb" -gt 10240 ]; then uv cache prune --ci; fi
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -785,7 +785,7 @@ jobs:
           uv cache prune
           size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
           echo "uv cache size: ${size_mb} MB"
-          if [ "$size_mb" -gt 10240 ]; then uv cache prune --ci; fi
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
