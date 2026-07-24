@@ -15,7 +15,8 @@ set -euo pipefail
 
 
 # ─── signal handling (must be early so Ctrl+C works everywhere) ────────────────
-trap 'printf "\n"; exit 130' INT
+handle_interrupt() { printf "\n"; exit 130; }
+trap handle_interrupt INT
 
 # If piped from curl (stdin is not a TTY and $0 is the shell),
 # save to temp file and re-execute so interactive prompts get proper TTY input.
@@ -27,6 +28,8 @@ if [ ! -t 0 ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ] || [ "$0" = "/bin/bas
 fi
 
 INSTALLER_VERSION="0.3.0"
+readonly SMOKE_TEST_TIMEOUT_SECONDS=60
+readonly SMOKE_TEST_SHUTDOWN_GRACE_SECONDS=5
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
 UBUNTU_PACKAGES="curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1"
@@ -73,6 +76,47 @@ run_cmd() {
 }
 
 has_cmd() { command -v "$1" &>/dev/null; }
+
+run_with_timeout() {
+    local timeout_seconds="$1"; shift
+    local deadline pid
+    local exit_code=0
+    local interrupted=0
+    local terminated=0
+    local timed_out=0
+
+    trap 'interrupted=1' INT
+    "$@" &
+    pid=$!
+    deadline=$((SECONDS + timeout_seconds))
+
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ "$interrupted" == "1" ]] && [[ "$terminated" == "0" ]]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            terminated=1
+            deadline=$((SECONDS + SMOKE_TEST_SHUTDOWN_GRACE_SECONDS))
+        elif [[ "$terminated" == "0" ]] && (( SECONDS >= deadline )); then
+            timed_out=1
+            kill -TERM "$pid" 2>/dev/null || true
+            terminated=1
+            deadline=$((SECONDS + SMOKE_TEST_SHUTDOWN_GRACE_SECONDS))
+        elif [[ "$terminated" == "1" ]] && (( SECONDS >= deadline )); then
+            kill -KILL "$pid" 2>/dev/null || true
+            break
+        fi
+        sleep 0.1 || true
+    done
+
+    wait "$pid" 2>/dev/null || exit_code=$?
+    trap handle_interrupt INT
+    if [[ "$interrupted" == "1" ]]; then
+        exit_code=130
+    elif [[ "$timed_out" == "1" ]]; then
+        exit_code=124
+    fi
+
+    return "$exit_code"
+}
 
 # ─── gum bootstrap ───────────────────────────────────────────────────────────
 GUM_VERSION="0.17.0"
@@ -868,33 +912,30 @@ run_post_install_tests() {
         return
     fi
 
-    if ! prompt_confirm "Run a quick smoke test? (starts unitree-go2 for 60s)" "yes"; then
+    if ! prompt_confirm "Run a quick smoke test? (starts unitree-go2 for ${SMOKE_TEST_TIMEOUT_SECONDS}s)" "yes"; then
         dim "  skipping smoke test"
         return
     fi
 
     printf "\n"; info "${BOLD}post-install smoke test${RESET}"; printf "\n"
 
-    local cmd
+    local -a cmd
     if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then
-        cmd="dimos --simulation run unitree-go2"
+        cmd=(dimos --simulation run unitree-go2)
     else
-        cmd="dimos --replay run unitree-go2"
+        cmd=(dimos --replay run unitree-go2)
     fi
 
-    info "running: ${DIM}${cmd}${RESET} (Ctrl+C to stop)"
+    info "running: ${DIM}${cmd[*]}${RESET} (Ctrl+C to stop)"
 
     local exit_code=0
     pushd "$dir" >/dev/null
     source "$venv"
-    $cmd &
-    local pid=$!
-    # wait allows bash to process INT trap immediately
-    wait $pid || exit_code=$?
+    run_with_timeout "$SMOKE_TEST_TIMEOUT_SECONDS" "${cmd[@]}" || exit_code=$?
     popd >/dev/null
 
     printf "\n"
-    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran 60s without crash ✓"
+    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran ${SMOKE_TEST_TIMEOUT_SECONDS}s without crash ✓"
     elif [[ $exit_code -eq 130 ]] || [[ $exit_code -eq 137 ]]; then
         ok "smoke test: stopped by user"
     elif [[ $exit_code -eq 0 ]]; then ok "smoke test: completed ✓"
