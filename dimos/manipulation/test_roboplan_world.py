@@ -91,7 +91,13 @@ class FakeScene:
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
         self.geometry_shapes: dict[str, object] = {}
+        self.geometry_parent_frames: list[str] = []
         self.collision_settings: dict[tuple[str, str], bool] = {}
+
+    def _require_frame(self, parent_frame: str) -> None:
+        if parent_frame != "base":
+            raise RuntimeError(f"Frame name '{parent_frame}' not found in frame_map_.")
+        self.geometry_parent_frames.append(parent_frame)
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
@@ -119,6 +125,7 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
         self.geometry_shapes[obstacle_id] = box
 
@@ -130,6 +137,7 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
         self.geometry_shapes[obstacle_id] = sphere
 
@@ -141,6 +149,7 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
         self.geometry_shapes[obstacle_id] = cylinder
 
@@ -152,12 +161,14 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
         self.geometry_shapes[obstacle_id] = mesh
 
     def updateGeometryPlacement(
         self, obstacle_id: str, parent_frame: str, matrix: np.ndarray
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
 
     def removeGeometry(self, obstacle_id: str) -> None:
@@ -264,6 +275,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
         model_path=model_path,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
+        base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
@@ -526,6 +538,25 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
     assert world.get_obstacles()[0].dimensions == (0.4,)
     assert world.get_obstacles()[0].pose.position.x == pytest.approx(1.0)
     assert world.update_obstacle(replace(replacement, name="missing")) is False
+
+
+def test_complete_replacement_uses_base_frame_and_keeps_duplicate_guard(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    replacement = replace(obstacle, dimensions=(0.2, 0.1, 0.1))
+
+    assert world.add_obstacle(obstacle) == "box"
+    assert world.update_obstacle(replacement) is True
+    assert world.add_obstacle(obstacle) is None
+    assert world._scene.geometry_parent_frames == ["base", "base"]
 
 
 def test_collision_query_blocks_during_obstacle_replacement(

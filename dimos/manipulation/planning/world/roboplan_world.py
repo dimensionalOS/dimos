@@ -74,8 +74,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_WORLD_FRAME = ""
-
 
 @dataclass
 class _RoboPlanRobotData:
@@ -214,7 +212,11 @@ class RoboPlanWorld:
                 return False
             scene = self._require_scene()
             try:
-                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, matrix)
+                scene.updateGeometryPlacement(
+                    obstacle_id,
+                    self._obstacle_parent_frame(),
+                    matrix,
+                )
             except Exception:
                 self._usable = False
                 raise
@@ -796,6 +798,11 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan scene is not initialized; add a robot first")
         return self._scene
 
+    def _obstacle_parent_frame(self) -> str:
+        if not self._robots:
+            raise RuntimeError("RoboPlan obstacle operations require a robot")
+        return next(iter(self._robots.values())).config.base_link
+
     def _to_scene_q(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> NDArray[np.float64]:
         """Expand DimOS group positions to RoboPlan's full scene vector when available."""
         scene = self._require_scene()
@@ -832,6 +839,7 @@ class RoboPlanWorld:
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
+        parent_frame = self._obstacle_parent_frame()
         matrix = pose_to_matrix(obstacle.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
@@ -839,7 +847,7 @@ class RoboPlanWorld:
             width, height, depth = obstacle.dimensions
             scene.addBoxGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                parent_frame,
                 roboplan_core.Box(width, height, depth),
                 matrix,
                 color,
@@ -849,7 +857,11 @@ class RoboPlanWorld:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
             scene.addSphereGeometry(
-                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+                obstacle_id,
+                parent_frame,
+                roboplan_core.Sphere(radius),
+                matrix,
+                color,
             )
             return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
@@ -857,7 +869,7 @@ class RoboPlanWorld:
             radius, length = obstacle.dimensions
             scene.addCylinderGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                parent_frame,
                 roboplan_core.Cylinder(radius, length),
                 matrix,
                 color,
@@ -868,7 +880,7 @@ class RoboPlanWorld:
                 raise ValueError("MESH obstacle requires mesh_path")
             scene.addMeshGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                parent_frame,
                 roboplan_core.Mesh(obstacle.mesh_path),
                 matrix,
                 color,
