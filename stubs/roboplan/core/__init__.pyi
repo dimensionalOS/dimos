@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 import os
+from typing import overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -50,11 +51,21 @@ class Mesh:
     ) -> None: ...
 
 class Scene:
+    @overload
     def __init__(
         self,
         name: str,
         urdf_path: str | os.PathLike[str],
         srdf_path: str | os.PathLike[str],
+        package_paths: Sequence[str | os.PathLike[str]] = ...,
+        yaml_config_path: str | os.PathLike[str] = ...,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        name: str,
+        urdf: str,
+        srdf: str,
         package_paths: Sequence[str | os.PathLike[str]] = ...,
         yaml_config_path: str | os.PathLike[str] = ...,
     ) -> None: ...

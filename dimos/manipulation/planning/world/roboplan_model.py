@@ -16,11 +16,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
-import tempfile
 from typing import Any, Protocol
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
@@ -53,6 +52,17 @@ class _BuildRobot(Protocol):
     config: RobotModelConfig
 
 
+class _SceneFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        name: str,
+        urdf: str,
+        srdf: str,
+        package_paths: Sequence[str],
+    ) -> Any: ...
+
+
 @dataclass(frozen=True)
 class RoboPlanGroup:
     """One backend-private group in canonical public order."""
@@ -73,7 +83,6 @@ class RoboPlanModel:
     """The scene and small amount of mapping state needed by its adapter."""
 
     scene: Any
-    owner: tempfile.TemporaryDirectory[str]
     groups: Mapping[frozenset[PlanningGroupID], RoboPlanGroup]
     legacy_group_ids: Mapping[RobotName, PlanningGroupID]
     native_joint_by_global: Mapping[str, str]
@@ -105,62 +114,55 @@ class _Composed:
 def build_roboplan_model(
     robots: Sequence[_BuildRobot],
     registry: PlanningGroupRegistry,
-    scene_factory: Callable[[str, str, str, list[str]], Any],
+    scene_factory: _SceneFactory,
 ) -> RoboPlanModel:
     """Build one composite scene transactionally."""
     if not robots:
         raise ValueError("RoboPlanWorld requires at least one robot")
-    owner = tempfile.TemporaryDirectory(prefix="dimos_roboplan_")
-    try:
-        prepared = [
-            (
-                robot,
-                Path(
-                    prepare_urdf_for_drake(
-                        robot.config.model_path,
-                        package_paths=robot.config.package_paths,
-                        xacro_args=robot.config.xacro_args,
-                        convert_meshes=robot.config.auto_convert_meshes,
-                    )
-                ),
-            )
-            for robot in robots
-        ]
-        composite = len(robots) > 1
-        composed = _compose(prepared, composite)
-        groups, legacy_ids, all_group = _groups(robots, registry, composed.maps, composite)
-        model_name = "dimos_composite" if composite else robots[0].config.name
-        cache = Path(owner.name)
-        urdf_path = cache / f"{model_name}.urdf"
-        srdf_path = cache / f"{model_name}.srdf"
-        urdf_path.write_text(composed.xml)
-        srdf_path.write_text(_srdf(model_name, robots, groups, composed))
-        package_paths = list(
-            dict.fromkeys(
-                str(path) for robot in robots for path in robot.config.package_paths.values()
-            )
+    prepared = [
+        (
+            robot,
+            Path(
+                prepare_urdf_for_drake(
+                    robot.config.model_path,
+                    package_paths=robot.config.package_paths,
+                    xacro_args=robot.config.xacro_args,
+                    convert_meshes=robot.config.auto_convert_meshes,
+                )
+            ),
         )
-        scene = scene_factory(model_name, str(urdf_path), str(srdf_path), package_paths)
-        groups = _validate_group_order(scene, groups)
-        all_group = groups[frozenset(all_group.group_ids)]
-        _apply_collision_exclusions(scene, srdf_path)
-        native_joint_by_global = {
-            f"{robot.config.name}/{local}": composed.maps[robot.config.name].joints[local]
-            for robot in robots
-            for local in robot.config.joint_names
-        }
-        return RoboPlanModel(
-            scene=scene,
-            owner=owner,
-            groups=groups,
-            legacy_group_ids=legacy_ids,
-            native_joint_by_global=native_joint_by_global,
-            native_link_by_robot={name: mapping.links for name, mapping in composed.maps.items()},
-            all_group=all_group,
-        )
-    except BaseException:
-        owner.cleanup()
-        raise
+        for robot in robots
+    ]
+    composite = len(robots) > 1
+    composed = _compose(prepared, composite)
+    groups, legacy_ids, all_group = _groups(robots, registry, composed.maps, composite)
+    model_name = "dimos_composite" if composite else robots[0].config.name
+    srdf = _srdf(model_name, robots, groups, composed)
+    package_paths = list(
+        dict.fromkeys(str(path) for robot in robots for path in robot.config.package_paths.values())
+    )
+    scene = scene_factory(
+        name=model_name,
+        urdf=composed.xml,
+        srdf=srdf,
+        package_paths=package_paths,
+    )
+    groups = _validate_group_order(scene, groups)
+    all_group = groups[frozenset(all_group.group_ids)]
+    _apply_collision_exclusions(scene, srdf)
+    native_joint_by_global = {
+        f"{robot.config.name}/{local}": composed.maps[robot.config.name].joints[local]
+        for robot in robots
+        for local in robot.config.joint_names
+    }
+    return RoboPlanModel(
+        scene=scene,
+        groups=groups,
+        legacy_group_ids=legacy_ids,
+        native_joint_by_global=native_joint_by_global,
+        native_link_by_robot={name: mapping.links for name, mapping in composed.maps.items()},
+        all_group=all_group,
+    )
 
 
 def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _Composed:
@@ -430,7 +432,10 @@ def _validate_group_order(
 
 
 def _source_exclusions(path: Path) -> list[tuple[str, str]]:
-    root = ET.parse(path).getroot()
+    return _exclusions(ET.parse(path).getroot())
+
+
+def _exclusions(root: ET.Element) -> list[tuple[str, str]]:
     return [
         (first, second)
         for element in root.iter()
@@ -440,8 +445,8 @@ def _source_exclusions(path: Path) -> list[tuple[str, str]]:
     ]
 
 
-def _apply_collision_exclusions(scene: Any, srdf_path: Path) -> None:
-    for first, second in _source_exclusions(srdf_path):
+def _apply_collision_exclusions(scene: Any, srdf: str) -> None:
+    for first, second in _exclusions(ET.fromstring(srdf)):
         scene.setCollisions(first, second, False)
 
 

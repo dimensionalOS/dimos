@@ -224,7 +224,6 @@ class RoboPlanWorld:
             except BaseException:
                 self._scene = None
                 self._model = None
-                model.owner.cleanup()
                 raise
             self._finalized = True
 

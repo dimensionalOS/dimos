@@ -90,26 +90,38 @@ class FakeScene:
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
 
-    def __init__(self, *args: Any) -> None:
-        self.constructor_args = args
+    def __init__(
+        self,
+        *,
+        name: str,
+        urdf: str,
+        srdf: str,
+        package_paths: list[str],
+    ) -> None:
+        self.constructor_kwargs = {
+            "name": name,
+            "urdf": urdf,
+            "srdf": srdf,
+            "package_paths": package_paths,
+        }
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
-        self.groups = self._read_groups(Path(args[2]))
-        self.native_joint_names = self._read_joint_names(Path(args[1]))
+        self.groups = self._read_groups(srdf)
+        self.native_joint_names = self._read_joint_names(urdf)
         self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
 
     @staticmethod
-    def _read_groups(path: Path) -> dict[str, list[str]]:
-        root = ET.parse(path).getroot()
+    def _read_groups(srdf: str) -> dict[str, list[str]]:
+        root = ET.fromstring(srdf)
         return {
             group.get("name", ""): [joint.get("name", "") for joint in group.findall("joint")]
             for group in root.findall("group")
         }
 
     @staticmethod
-    def _read_joint_names(path: Path) -> list[str]:
-        root = ET.parse(path).getroot()
+    def _read_joint_names(urdf: str) -> list[str]:
+        root = ET.fromstring(urdf)
         return [
             joint.get("name", "")
             for joint in root.findall("joint")
@@ -131,7 +143,7 @@ class FakeScene:
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
         names = (
             self.joint_group_joint_names
-            if self.joint_group_joint_names is not None and name == self.constructor_args[0]
+            if self.joint_group_joint_names is not None and name == self.constructor_kwargs["name"]
             else self.groups[name]
         )
         return FakeJointGroupInfo(list(names))
@@ -403,12 +415,11 @@ def test_robot_registration_finalization_and_joint_limits(
 
     assert world.get_robot_ids() == [robot_id]
     assert world.get_robot_config(robot_id) is robot_config
-    assert world._scene.constructor_args[0] == "arm"
-    assert Path(world._scene.constructor_args[1]).suffix == ".urdf"
-    assert Path(world._scene.constructor_args[2]).suffix == ".srdf"
+    assert world._scene.constructor_kwargs["name"] == "arm"
+    assert ET.fromstring(world._scene.constructor_kwargs["urdf"]).get("name") == "arm"
+    assert world._scene.constructor_kwargs["srdf"].startswith('<robot name="arm">')
     assert (
-        'disable_collisions link1="base" link2="link1"'
-        in Path(world._scene.constructor_args[2]).read_text()
+        'disable_collisions link1="base" link2="link1"' in world._scene.constructor_kwargs["srdf"]
     )
     lower, upper = world.get_joint_limits(robot_id)
     np.testing.assert_allclose(lower, [-1.0, -2.0])
@@ -1088,8 +1099,7 @@ def test_collision_exclusion_pairs_are_written_to_generated_srdf(
     ]
     world, _ = _make_world(fake_roboplan, robot_config)
 
-    srdf_path = Path(world._scene.constructor_args[2])
-    srdf = srdf_path.read_text()
+    srdf = world._scene.constructor_kwargs["srdf"]
     assert 'disable_collisions link1="base" link2="link2"' in srdf
     assert "other_base" not in srdf
 
@@ -1109,14 +1119,16 @@ def test_collision_exclusion_with_one_unknown_link_is_rejected(
         world.finalize()
 
 
-def test_generated_srdf_uses_scoped_temp_directory(
+def test_scene_receives_generated_model_contents_inline(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
 
-    srdf_path = Path(world._scene.constructor_args[2])
-    assert srdf_path.parent.name.startswith("dimos_roboplan_")
-    assert srdf_path.exists()
+    urdf = ET.fromstring(world._scene.constructor_kwargs["urdf"])
+    srdf = ET.fromstring(world._scene.constructor_kwargs["srdf"])
+    assert urdf.tag == "robot"
+    assert srdf.tag == "robot"
+    assert world._scene.constructor_kwargs["package_paths"] == []
 
 
 def test_base_pose_is_written_to_composed_model(
@@ -1127,7 +1139,7 @@ def test_base_pose_is_written_to_composed_model(
     )
     world, _ = _make_world(fake_roboplan, robot_config)
 
-    urdf_root = ET.parse(Path(world._scene.constructor_args[1])).getroot()
+    urdf_root = ET.fromstring(world._scene.constructor_kwargs["urdf"])
     origin = urdf_root.find("./joint[@name='dimos_world_joint']/origin")
     assert origin is not None
     assert origin.get("xyz") == "1 0 0"
