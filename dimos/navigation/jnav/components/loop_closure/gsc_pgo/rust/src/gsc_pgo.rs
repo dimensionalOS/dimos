@@ -145,8 +145,11 @@ pub struct Config {
     pub loop_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
     pub loop_min_degeneracy: f64,
-    /// Log one "PGO_DIAG ..." line per loop candidate that reaches ICP.
-    pub debug: bool,
+    /// Aliasing gate (Lowe ratio = best/second-best Scan-Context distance).
+    /// In self-similar spaces the top two matches tie (ratio -> 1), so the
+    /// candidate can't be trusted to pick the right keyframe. Reject when the
+    /// ratio exceeds this. 0 disables. Only applies to scan-context candidates.
+    pub loop_max_lowe_ratio: f64,
     /// Robust (M-estimator) kernel wrapping all loop factors.
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
@@ -154,19 +157,19 @@ pub struct Config {
     /// by GscPgo itself — kept for config parity).
     pub use_location_constraints: bool,
     // Odometry between-factor noise (anisotropic).
-    pub odom_rot_rp_var: f64,
+    pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
     pub odom_trans_xy_var: f64,
     pub odom_trans_z_var: f64,
     // First-keyframe absolute anchor prior (always added; fixes the pose graph
-    // gauge). Per-axis variances double as stiffness knobs: a tight anchor_rp_var
+    // gauge). Per-axis variances double as stiffness knobs: a tight anchor_roll_pitch_var
     // hard-pins roll/pitch to the initial LIO attitude, a loose one frees it.
-    pub anchor_rp_var: f64,
+    pub anchor_roll_pitch_var: f64,
     pub anchor_yaw_var: f64,
     pub anchor_trans_var: f64,
     /// Optional roll/pitch prior on every keyframe (yaw + translation left free).
-    pub per_keyframe_rp_prior: bool,
-    pub per_keyframe_rp_var: f64,
+    pub per_keyframe_roll_pitch_prior: bool,
+    pub per_keyframe_roll_pitch_var: f64,
     // Scan Context settings.
     pub use_scan_context: bool,
     pub scan_context_num_rings: i32,
@@ -192,19 +195,19 @@ impl Default for Config {
             min_descriptor_std: 0.0,
             loop_min_occupancy: 80,
             loop_min_degeneracy: 0.05,
-            debug: false,
+            loop_max_lowe_ratio: 0.0,
             loop_robust_kernel: false,
             loop_robust_huber_k: 1.345,
             use_location_constraints: false,
-            odom_rot_rp_var: 1e-8,
+            odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-6,
-            anchor_rp_var: 1e-12,
+            anchor_roll_pitch_var: 1e-12,
             anchor_yaw_var: 1e-12,
             anchor_trans_var: 1e-12,
-            per_keyframe_rp_prior: false,
-            per_keyframe_rp_var: 1e-4,
+            per_keyframe_roll_pitch_prior: false,
+            per_keyframe_roll_pitch_var: 1e-4,
             use_scan_context: true,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
@@ -406,11 +409,11 @@ impl GscPgo {
             // Pose3 tangent order is [rot(3), trans(3)]: components 0-1 are
             // roll/pitch, 2 is yaw. Each stiffness is a config knob — the smaller
             // the variance, the harder that axis is pinned to the initial (LIO)
-            // pose. A tight anchor_rp_var pins roll/pitch to the LIO attitude; a
+            // pose. A tight anchor_roll_pitch_var pins roll/pitch to the LIO attitude; a
             // loose one lets odom/loops decide it.
             let prior_var = [
-                self.config.anchor_rp_var,
-                self.config.anchor_rp_var,
+                self.config.anchor_roll_pitch_var,
+                self.config.anchor_roll_pitch_var,
                 self.config.anchor_yaw_var,
                 self.config.anchor_trans_var,
                 self.config.anchor_trans_var,
@@ -431,8 +434,8 @@ impl GscPgo {
                 &mat3::sub(&pose.translation, &last_item.translation_local),
             );
             let noise = NoiseModel::diagonal_variances(&[
-                self.config.odom_rot_rp_var,
-                self.config.odom_rot_rp_var,
+                self.config.odom_rot_roll_pitch_var,
+                self.config.odom_rot_roll_pitch_var,
                 self.config.odom_rot_yaw_var,
                 self.config.odom_trans_xy_var,
                 self.config.odom_trans_xy_var,
@@ -453,10 +456,10 @@ impl GscPgo {
             // Optional per-keyframe roll/pitch prior: pin this keyframe's
             // roll/pitch to its initial (LIO) attitude, leaving yaw + translation
             // free (huge variance).
-            if self.config.per_keyframe_rp_prior {
+            if self.config.per_keyframe_roll_pitch_prior {
                 let grav_var = [
-                    self.config.per_keyframe_rp_var,
-                    self.config.per_keyframe_rp_var,
+                    self.config.per_keyframe_roll_pitch_var,
+                    self.config.per_keyframe_roll_pitch_var,
                     FREE_VARIANCE,
                     FREE_VARIANCE,
                     FREE_VARIANCE,
@@ -708,6 +711,9 @@ impl GscPgo {
             (loop_idx, sector_shift, sc_best, sc_second) = self.search_by_scan_context();
             self.timing.scan_context_s += t0.elapsed().as_secs_f64();
         }
+        // sc_best/sc_second are only meaningful for a scan-context candidate;
+        // the position fallback leaves them at their sentinel init.
+        let from_scan_context = loop_idx >= 0;
         if loop_idx < 0 {
             // Fallback (or sole path if SC disabled): search past positions.
             loop_idx = self.search_by_position();
@@ -716,6 +722,17 @@ impl GscPgo {
             return;
         }
         let loop_idx = loop_idx as usize;
+
+        // Aliasing gate: reject scan-context matches whose best and second-best
+        // distances are near-tied (Lowe ratio -> 1). Runs before the expensive
+        // ICP/submap work.
+        if from_scan_context
+            && self.config.loop_max_lowe_ratio > 0.0
+            && sc_second > 1e-6
+            && (sc_best / sc_second) as f64 > self.config.loop_max_lowe_ratio
+        {
+            return;
+        }
 
         // Positional-plausibility gate on scan-context false matches.
         if self.config.loop_candidate_max_distance_m > 0.0 {
@@ -791,58 +808,10 @@ impl GscPgo {
         // Observability gate: a planar/degenerate source scan leaves the
         // alignment unconstrained in-plane — fitness lies.
         let mut degeneracy_min = -1.0f32;
-        let mut degeneracy_mid = -1.0f32;
-        if self.config.loop_min_degeneracy > 0.0 || self.config.debug {
+        if self.config.loop_min_degeneracy > 0.0 {
             let t0 = std::time::Instant::now();
-            (degeneracy_min, degeneracy_mid) = cloud_degeneracy(&source_cloud);
+            (degeneracy_min, _) = cloud_degeneracy(&source_cloud);
             self.timing.degeneracy_s += t0.elapsed().as_secs_f64();
-        }
-
-        if self.config.debug {
-            let cand_dist = mat3::norm(&mat3::sub(
-                &self.key_poses[cur_idx].translation_global,
-                &self.key_poses[loop_idx].translation_global,
-            ));
-            let have_desc =
-                self.config.use_scan_context && !self.scan_context_descriptors.is_empty();
-            let structure = if have_desc {
-                scan_context::descriptor_structure(self.scan_context_descriptors.last().unwrap())
-            } else {
-                -1.0
-            };
-            let occupancy = if have_desc {
-                scan_context::descriptor_occupancy(self.scan_context_descriptors.last().unwrap())
-                    as i64
-            } else {
-                -1
-            };
-            // Lowe ratio: best / second-best Scan-Context distance.
-            let lowe_ratio = if sc_second > 1e-6 {
-                sc_best / sc_second
-            } else {
-                -1.0
-            };
-            let accepted = icp.converged && icp.fitness <= self.config.loop_score_thresh;
-            eprintln!(
-                "PGO_DIAG kf={} cand={} dist={:.2} fitness={:e} converged={} structure={:.2} \
-                 occ={} sc_best={:.3} sc_2nd={:.3} lowe={:.3} degen_min={:.4} degen_mid={:.4} \
-                 src_pts={} tgt_pts={} accepted={}",
-                cur_idx,
-                loop_idx,
-                cand_dist,
-                icp.fitness,
-                if icp.converged { 1 } else { 0 },
-                structure,
-                occupancy,
-                sc_best,
-                sc_second,
-                lowe_ratio,
-                degeneracy_min,
-                degeneracy_mid,
-                source_cloud.len(),
-                target_cloud.len(),
-                if accepted { 1 } else { 0 }
-            );
         }
 
         if self.config.loop_min_degeneracy > 0.0
@@ -972,17 +941,6 @@ impl GscPgo {
             instance_id: constraint.constraint_instance_id.clone(),
             graph_pos,
         });
-
-        if self.config.debug {
-            eprintln!(
-                "PGO_LOCATION node={} to_id={} new={} |translation_body_loc|={:.2} instance={}",
-                node_idx,
-                constraint.to_id,
-                if is_new { 1 } else { 0 },
-                mat3::norm(&constraint.translation_body_loc),
-                constraint.constraint_instance_id
-            );
-        }
     }
 
     /// `SimplePGO::smoothAndUpdate`: stage cached loop pairs as between
@@ -1074,18 +1032,6 @@ impl GscPgo {
 
         self.timing.gtsam_s += smooth_t0.elapsed().as_secs_f64();
         self.timing.smooth_calls += 1;
-        if self.config.debug && self.timing.smooth_calls.is_multiple_of(100) {
-            let timing = &self.timing;
-            eprintln!(
-                "PGO_TIMING kf={} sc={:.1}s submap={:.1}s icp={:.1}s degen={:.1}s gtsam={:.1}s",
-                self.key_poses.len(),
-                timing.scan_context_s,
-                timing.submap_s,
-                timing.icp_s,
-                timing.degeneracy_s,
-                timing.gtsam_s,
-            );
-        }
     }
 
     /// Direct access to the ICP used for loop verification — handy for
