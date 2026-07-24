@@ -26,8 +26,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 import typer
 
-# Heavy dimos imports (torch, transformers, open3d) are deferred into the function
-# bodies so `dimos --help` stays fast. See test_cli_startup.py.
+# Heavy dimos imports (torch, transformers, open3d) are deferred into the function bodies so `dimos --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory2.stream import Stream
@@ -367,7 +366,7 @@ def _aggregate_marker_map(
 def _write_marker_map(
     path: Path, aggregated: dict[int, tuple[_Pose7, int]], *, source: str
 ) -> None:
-    """Serialize aggregated marker locations to the ``map_T_tag`` JSON that ``fiducial_relocalization.load_marker_map`` reads (translation m, rotation xyzw, map frame)."""
+    """Serialize aggregated marker locations to the ``map_T_tag`` JSON that ``relocalization.priors.load_marker_map`` reads (translation m, rotation xyzw, map frame)."""
     markers = {
         str(marker_id): {
             "translation": [pose[0], pose[1], pose[2]],
@@ -529,8 +528,7 @@ def main(
 
     total = lidar.count()
 
-    # Register clouds into the world frame via the tf stream. Stored per-frame poses
-    # are never used for registration, only as trajectory metadata (dedup/path).
+    # Register clouds into the world frame via the tf stream. Stored per-frame poses are never used for registration, only as trajectory metadata (dedup/path).
     from dimos.memory2.tf import StreamTF
 
     tf_buf = StreamTF.from_store(store)
@@ -552,8 +550,7 @@ def main(
     if world is None:
         world = "world"  # empty lidar stream; the frame is moot
 
-    # Sensor-frame clouds get a per-frame tf lookup (no answer -> dropped); clouds
-    # already in the world frame accumulate verbatim (register=None).
+    # Sensor-frame clouds get a per-frame tf lookup (no answer -> dropped); clouds already in the world frame accumulate verbatim (register=None).
     register: Callable[[Observation[Any]], Transform | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
         # Fail fast: probe the first cloud (unbounded tolerance -- "possible at all", not "in range").
@@ -591,8 +588,7 @@ def main(
             return (pose.position.x, pose.position.y, pose.position.z)
         return None
 
-    # Spatial dedup: bucket frames by 3D cell (trajectory position), keep the latest per
-    # cell; cheap since it never touches obs.data. pgo_tol<=0 disables it (keep all, keyed by index).
+    # Spatial dedup: bucket frames by 3D cell (trajectory position), keep the latest per cell; cheap since it never touches obs.data. pgo_tol<=0 disables it (keep all, keyed by index).
     seen: dict[Any, tuple[Observation[Any], tuple[float, float, float]]] = {}
     for i, obs in enumerate(lidar):
         pos = _position(obs)
@@ -681,9 +677,7 @@ def main(
     marker_dets: list[Observation[Any]] = []
     aggregated_markers: dict[int, tuple[_Pose7, int]] = {}
     if markers:
-        # color_image is stamped frame_id="camera_optical", so obs.pose is already
-        # optical-in-world. --image-pose swaps it for another source (e.g. fastlio_odometry),
-        # composing the base->optical mount onto it first.
+        # color_image is stamped frame_id="camera_optical", so obs.pose is already optical-in-world. --image-pose swaps it for another source (e.g. fastlio_odometry), composing the base->optical mount onto it first.
         color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:
@@ -699,15 +693,12 @@ def main(
             camera_info=cam_info,
             marker_length_m=marker_size,
             smoothing_window=marker_smoothing,
-            # The survey PRODUCES the map_T_tag every fiducial fix inherits, so gate
-            # mirror-ambiguous IPPE poses with the SAME floor the live detector uses
-            # (read off its config so they can't drift; DetectMarkers' own default 1.0 = off).
+            # the survey PRODUCES the map_T_tag every fiducial fix inherits, so gate mirror-ambiguous IPPE poses with the SAME floor the live detector uses (read off its config so they can't drift; DetectMarkers' own default 1.0 = off)
             ambiguity_ratio_min=MarkerDetectionStreamModuleConfig.model_fields[
                 "ambiguity_ratio_min"
             ].default,
         )
-        # Keep the sharpest frame per window, then drop fast-moving frames (linear +
-        # rotational). Defaults match replay_marker.py so positions agree.
+        # Keep the sharpest frame per window, then drop fast-moving frames (linear + rotational). Defaults match replay_marker.py so positions agree.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
                 QualityWindow(lambda img: img.sharpness, window=marker_quality_window)

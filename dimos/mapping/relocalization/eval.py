@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compact per-source accept/reject summary for --eval, formatted from the tally the
-RelocalizationModule fills as it fires -- pure formatting, no I/O, no log parsing."""
+"""Compact per-source accept/reject summary for --eval, formatted from the tally the RelocalizationModule fills as it fires -- pure formatting, no I/O, no log parsing."""
 
 from dataclasses import dataclass, field
 from statistics import median

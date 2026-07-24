@@ -73,8 +73,7 @@ def _solve_pnp_inputs(
     dist_coeffs: np.ndarray,
     distortion_model: str | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(image_points, solve_dist)`` for solvePnP, undistorting fisheye corners
-    into pinhole-equivalent pixels (shared by the single- and multi-candidate estimators)."""
+    """Return ``(image_points, solve_dist)`` for solvePnP, undistorting fisheye corners into pinhole-equivalent pixels (shared by the single- and multi-candidate estimators)."""
     img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
     if is_fisheye_model(distortion_model):
         d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
@@ -125,13 +124,7 @@ def estimate_marker_pose_candidates(
     *,
     distortion_model: str | None = None,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Return every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric``.
-
-    A planar square has two IPPE mirror solutions (Collins & Bartoli 2014
-    https://link.springer.com/article/10.1007/s11263-014-0725-5) that
-    :func:`estimate_marker_pose` hides; :func:`ambiguity_gated_pose` compares their
-    reproj errors. Non-finite solver output (degenerate corners) is dropped.
-    """
+    """Every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric`` -- the two IPPE mirror solutions ``estimate_marker_pose`` hides (Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5), non-finite solver output dropped."""
     obj = _aruco_marker_object_points(marker_length_m)
     img, solve_dist = _solve_pnp_inputs(corners_px, camera_matrix, dist_coeffs, distortion_model)
     n_solutions, rvecs, tvecs, _errors = cv2.solvePnPGeneric(
@@ -157,12 +150,7 @@ def ambiguity_gated_pose(
     distortion_model: str | None = None,
     ambiguity_ratio_min: float,
 ) -> tuple[np.ndarray, float] | None:
-    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, gated on the IPPE
-    mirror ambiguity (Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5).
-
-    Rejects (returns ``None``) when the runner-up pose's reproj error is within
-    ``ambiguity_ratio_min`` x the best -- the mirror explains the pixels nearly as well.
-    """
+    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (IPPE mirror explains the pixels nearly as well; Collins & Bartoli 2014 https://link.springer.com/article/10.1007/s11263-014-0725-5)."""
     candidates = estimate_marker_pose_candidates(
         corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
     )

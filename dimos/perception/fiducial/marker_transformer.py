@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ArUco / AprilTag detection as memory2 transforms.
-
-Emits one world-frame :class:`Detection3DMarker` per marker, plus smoothing
-helpers, ``MarkersPerFrame`` and :class:`AggregateTagBursts` (per-glimpse gates +
-one aggregated pose per tag visit). Aggregation core from jnav, dimos PR #2587.
-"""
+"""ArUco / AprilTag detection as memory2 transforms: one world-frame :class:`Detection3DMarker` per marker, plus smoothing helpers, ``MarkersPerFrame`` and :class:`AggregateTagBursts` (per-glimpse gates + one aggregated pose per tag visit); aggregation core from jnav, dimos PR #2587."""
 
 from __future__ import annotations
 
@@ -104,8 +99,7 @@ def _pose_tuple_to_transform(
 def _average_marker_pose(
     buffer: TimestampedBufferCollection[Detection3DMarker],
 ) -> tuple[Vector3, Quaternion]:
-    """Mean translation; sign-aligned linear quaternion mean (small-angle Markley
-    approximation https://ntrs.nasa.gov/citations/20070017872; flip any q whose dot vs the first is negative)."""
+    """Mean translation; sign-aligned linear quaternion mean (small-angle Markley approximation https://ntrs.nasa.gov/citations/20070017872; flip any q whose dot vs the first is negative)."""
     items = list(buffer)
     n = len(items)
     cx = sum(d.center.x for d in items) / n
@@ -299,12 +293,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
 
 class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
-    """Collapse marker fan-out back into one Detection3DArray per image frame.
-
-    ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
-    empty frames and tags each marker with the source image + frame marker
-    count, so this transformer emits without waiting for a later timestamp.
-    """
+    """Collapse marker fan-out back into one Detection3DArray per image frame; ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for empty frames and tags each marker with the source image + frame marker count, so this transformer emits without waiting for a later timestamp."""
 
     def __init__(self, frame_id: str = "world") -> None:
         self.frame_id = frame_id
@@ -386,20 +375,14 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
         obs: Observation[Detection3DMarker | None],
         detections: list[Detection3DMarker],
     ) -> Transform | Pose | None:
-        # Both branches are re-coerced to the storage 7-tuple by ``derive(pose=)``
-        # (Transform.translation/rotation and Pose.position/orientation -> 7-tuple).
+        # both branches are re-coerced to the storage 7-tuple by ``derive(pose=)`` (Transform.translation/rotation and Pose.position/orientation -> 7-tuple)
         if detections and detections[0].transform is not None:
             return detections[0].transform
         return obs.pose
 
 
 class AggregateTagBursts:
-    """Gate each tag glimpse, then publish ONE robustly-aggregated pose per tag VISIT.
-
-    A ``Stream.tap`` between ``DetectMarkers`` and ``MarkersPerFrame`` that yields nothing
-    (so ``detections`` stays byte-identical) -- the only live spot where the gate inputs
-    (corners_px, reproj, camera transform) still exist. Edge-triggered per (marker, visit).
-    """
+    """Gate each tag glimpse, then publish ONE robustly-aggregated pose per tag VISIT; a ``Stream.tap`` between ``DetectMarkers`` and ``MarkersPerFrame`` that yields nothing (so ``detections`` stays byte-identical) -- the only live spot where the gate inputs (corners_px, reproj, camera transform) still exist, edge-triggered per (marker, visit)."""
 
     def __init__(
         self,
@@ -410,8 +393,7 @@ class AggregateTagBursts:
         self._publish = publish
         self._world_frame = world_frame
         self._aggregator = TagAggregator(config)
-        # Markers whose CURRENT burst already published; a marker leaves the set once its
-        # window thins under min_observations (left view > time_window_s), re-arming the edge.
+        # markers whose CURRENT burst already published; a marker leaves the set once its window thins under min_observations (left view > time_window_s), re-arming the edge
         self._burst_counted: set[int] = set()
 
     def __call__(self, obs: Observation[Detection3DMarker | None]) -> None:
@@ -436,8 +418,7 @@ class AggregateTagBursts:
                 world_T_marker
             )
             distance_m, view_angle_deg = view_quality(pose7_from_matrix(optical_T_marker))
-        # else: smoothing_window > 0 emits an averaged pose with transform=None, so the
-        # two camera-relative gates go quiet and only reproj / tag_px bite (default 0.0, off).
+        # else: smoothing_window > 0 emits an averaged pose with transform=None, so the two camera-relative gates go quiet and only reproj / tag_px bite (default 0.0, off)
 
         reason = self._aggregator.observe(
             TagObservation(
@@ -462,8 +443,7 @@ class AggregateTagBursts:
         self._publish(self._aggregated_array(det, estimate))
 
     def _aggregated_array(self, det: Detection3DMarker, estimate: TagEstimate) -> Detection3DArray:
-        """One-detection array with this tag's aggregated world_T_marker; covariance
-        and score are the same number twice, so they cannot disagree."""
+        """One-detection array with this tag's aggregated world_T_marker; covariance and score are the same number twice, so they cannot disagree."""
         scale = tag_noise_scale(estimate.distance_m, estimate.reproj_px)
         x, y, z, qx, qy, qz, qw = estimate.pose
         aggregated = dataclasses.replace(
@@ -476,15 +456,12 @@ class AggregateTagBursts:
         msg = ImageDetections3D(det.image, [aggregated]).to_ros_detection3d_array(
             frame_id=self._world_frame
         )
-        # ASSIGN, never mutate: the generated LCM constructor shares ONE default
-        # PoseWithCovariance across all hypotheses, so writing .covariance would stamp every
-        # detection in the process (same hazard as detection3d/bbox.py).
+        # ASSIGN, never mutate: the generated LCM constructor shares ONE default PoseWithCovariance across all hypotheses, so writing .covariance would stamp every detection in the process (same hazard as detection3d/bbox.py)
         msg.detections[0].results[0].pose = PoseWithCovariance(
             Pose(position=aggregated.center, orientation=aggregated.orientation),
             tag_covariance(estimate.pose, scale),
         )
-        # Covariance is NOT divided by n: PnP errors within one visit share a viewpoint
-        # and are correlated, so 1/n would read optimistic to a downstream landmark factor.
+        # covariance is NOT divided by n: PnP errors within one visit share a viewpoint and are correlated, so 1/n would read optimistic to a downstream landmark factor
         logger.info(
             "tag burst aggregated",
             marker_id=det.marker_id,

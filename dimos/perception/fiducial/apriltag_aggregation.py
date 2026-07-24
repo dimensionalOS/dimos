@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Robust multi-sighting fiducial-marker pose aggregation.
-
-Time-cluster same-marker sightings, gate each independently, and reduce each
-cluster to one robust pose via Huber-weighted IRLS (weighted-mean translation +
-Markley quaternion eigen-mean).
-"""
+"""Robust multi-sighting fiducial-marker pose aggregation: time-cluster same-marker sightings, gate each, reduce each cluster to one pose via Huber-weighted IRLS (weighted-mean translation + Markley quaternion eigen-mean)."""
 
 from __future__ import annotations
 
@@ -109,8 +104,7 @@ def matrix_from_pose7(pose: tuple[float, ...] | list[float]) -> np.ndarray:
 
 
 def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[float, float]:
-    """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame
-    (view_angle is line-of-sight vs the tag normal, 0 == head-on; camera-relative for the gate)."""
+    """``(distance_m, view_angle_deg)`` for a tag pose in the CAMERA optical frame (view_angle is line-of-sight vs the tag normal, 0 == head-on; camera-relative for the gate)."""
     translation = np.array(optical_T_marker[:3], dtype=np.float64)
     distance_m = float(np.linalg.norm(translation))
     normal = Rotation.from_quat(optical_T_marker[3:7]).as_matrix()[:, 2]
@@ -130,9 +124,7 @@ def tag_side_px(corners_px: np.ndarray) -> float:
 
 
 def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
-    """Dimensionless variance inflation for one aggregated tag pose (jnav tag_noise);
-    ~quadratic in range x reproj_px, inner-clamped (0.2 m / 0.5 px) and floored at 0.25 so
-    no read claims near-zero variance. A ``None`` input reads as the reference (neutral)."""
+    """Dimensionless variance inflation for one aggregated tag pose (jnav tag_noise); ~quadratic in range x reproj_px, inner-clamped (0.2 m / 0.5 px) and floored at 0.25 so no read claims near-zero variance; a ``None`` input reads as the reference (neutral)."""
     distance_m = REF_DISTANCE_M if distance_m is None else distance_m
     reproj_px = REF_REPROJ_PX if reproj_px is None else reproj_px
     return max(
@@ -142,13 +134,7 @@ def tag_noise_scale(distance_m: float | None, reproj_px: float | None) -> float:
 
 
 def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.ndarray:
-    """6x6 ROS-order covariance (m^2 / rad^2) for an aggregated tag pose, in the pose's frame.
-
-    ROS order is TRANSLATION-first, so the two diag blocks are SWAPPED vs jnav's
-    rotation-first GTSAM ``Pose3`` source; both are built in the tag frame, rotated by R.
-    Trans: 5 cm in-plane, 50 cm along the normal (PnP's weak axis); rot: 11.5 deg in-plane
-    (mirror axes), 2.9 deg spin.
-    """
+    """6x6 ROS-order covariance (m^2 / rad^2) for an aggregated tag pose, in the pose's frame; ROS is TRANSLATION-first so the diag blocks are SWAPPED vs jnav's rotation-first GTSAM ``Pose3`` (both built in tag frame, rotated by R); trans 5 cm in-plane / 50 cm along normal (PnP's weak axis), rot 11.5 deg in-plane (mirror axes) / 2.9 deg spin."""
     R = Rotation.from_quat(pose[3:7]).as_matrix()
     covariance = np.zeros((6, 6))
     covariance[:3, :3] = R @ np.diag([0.0025, 0.0025, 0.25]) @ R.T
@@ -157,8 +143,7 @@ def tag_covariance(pose: tuple[float, ...] | list[float], scale: float) -> np.nd
 
 
 def gate_reason(obs: TagObservation, config: AggregationConfig) -> str | None:
-    """Rejection reason, or ``None`` if the glimpse clears every gate whose input
-    is present (a ``None`` field skips ITS gate rather than failing shut)."""
+    """Rejection reason, or ``None`` if the glimpse clears every gate whose input is present (a ``None`` field skips ITS gate rather than failing shut)."""
     if obs.reproj_px is not None and obs.reproj_px > config.max_reproj_px:
         return "reproj"
     if obs.tag_px is not None and obs.tag_px < config.min_tag_px:
@@ -182,8 +167,7 @@ def _pose_distance(
 def cluster_medoid(
     cluster: list[TagObservation], rotation_weight_m_per_rad: float
 ) -> TagObservation:
-    """The observation whose pose is most central (min total pose-distance) --
-    a robust seed for the Huber refinement."""
+    """The observation whose pose is most central (min total pose-distance) -- a robust seed for the Huber refinement."""
     poses = [obs.pose for obs in cluster]
     best_index, best_cost = 0, float("inf")
     for i in range(len(poses)):
@@ -198,9 +182,7 @@ def cluster_medoid(
 
 
 def _huber_weights(residuals: np.ndarray, delta: float) -> np.ndarray:
-    """IRLS Huber weights: 1 inside ``delta``, decaying as ``delta / r`` past it.
-    https://en.wikipedia.org/wiki/Huber_loss
-    """
+    """IRLS Huber weights: 1 inside ``delta``, decaying as ``delta / r`` past it. https://en.wikipedia.org/wiki/Huber_loss"""
     weights = np.ones_like(residuals)
     outside = residuals > delta
     weights[outside] = (
@@ -214,8 +196,7 @@ def robust_cluster_pose(
     rotation_weight_m_per_rad: float,
     huber_delta_m: float,
 ) -> tuple[float, float, float, float, float, float, float]:
-    """Cluster representative: the medoid refined by Huber-weighted IRLS -- weighted-mean
-    translation + Markley quaternion eigen-mean https://ntrs.nasa.gov/citations/20070017872."""
+    """Cluster representative: the medoid refined by Huber-weighted IRLS -- weighted-mean translation + Markley quaternion eigen-mean https://ntrs.nasa.gov/citations/20070017872."""
     medoid = cluster_medoid(cluster, rotation_weight_m_per_rad)
     if len(cluster) < 2:
         return medoid.pose
@@ -252,8 +233,7 @@ def robust_cluster_pose(
 
 
 def _median_present(values: list[float | None]) -> float | None:
-    """Median over the members that carry the field, ``None`` when none do --
-    median not mean, so one in-gate outlier cannot inflate the health signal."""
+    """Median over the members that carry the field, ``None`` when none do -- median not mean, so one in-gate outlier cannot inflate the health signal."""
     present = [v for v in values if v is not None]
     return float(np.median(present)) if present else None
 
@@ -280,8 +260,7 @@ class TagAggregator:
         return None
 
     def robust_estimate(self, marker_id: int) -> TagEstimate | None:
-        """Huber-aggregated pose for a marker's in-window glimpses, or ``None`` when
-        fewer than ``min_observations`` are available."""
+        """Huber-aggregated pose for a marker's in-window glimpses, or ``None`` when fewer than ``min_observations`` are available."""
         buf = self._by_marker.get(marker_id, [])
         if len(buf) < self._config.min_observations:
             return None

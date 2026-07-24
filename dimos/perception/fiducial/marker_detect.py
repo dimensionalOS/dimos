@@ -85,11 +85,7 @@ def detect_markers_in_image(
 
     for corner_set, mid_arr in zip(corners, ids, strict=True):
         mid = int(mid_arr[0])
-        # Gate the IPPE mirror ambiguity at the source: a planar tag's flipped
-        # solvePnP solution can reproject nearly as well at weak perspective, so
-        # a view whose runner-up is within ambiguity_ratio_min x the best is
-        # dropped instead of published as a confident wrong pose.
-        # See marker_pose.ambiguity_gated_pose.
+        # gate the IPPE mirror-flip at the source; see marker_pose.ambiguity_gated_pose
         gated = ambiguity_gated_pose(
             corner_set,
             marker_length_m,
