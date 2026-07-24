@@ -177,8 +177,8 @@ class SpatialVectorDB:
         filtered_results = {"ids": [], "metadatas": [], "distances": []}  # type: ignore[var-annotated]
 
         for i, metadata in enumerate(results["metadatas"]):  # type: ignore[arg-type]
-            item_x = metadata.get("x")
-            item_y = metadata.get("y")
+            item_x = metadata.get("pos_x")
+            item_y = metadata.get("pos_y")
 
             if item_x is not None and item_y is not None:
                 distance = np.sqrt((x - item_x) ** 2 + (y - item_y) ** 2)
@@ -280,10 +280,10 @@ class SpatialVectorDB:
             if isinstance(metadata, list) and metadata and isinstance(metadata[0], dict):
                 metadata = metadata[0]  # Handle nested metadata
 
-            if isinstance(metadata, dict) and "x" in metadata and "y" in metadata:
-                x = metadata.get("x", 0)
-                y = metadata.get("y", 0)
-                z = metadata.get("z", 0) if "z" in metadata else 0
+            if isinstance(metadata, dict) and "pos_x" in metadata and "pos_y" in metadata:
+                x = metadata.get("pos_x", 0)
+                y = metadata.get("pos_y", 0)
+                z = metadata.get("pos_z", 0) if "pos_z" in metadata else 0
                 locations.append((x, y, z))
 
         return locations
