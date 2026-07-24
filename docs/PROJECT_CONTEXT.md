@@ -18,6 +18,10 @@ machine, evidence-based door policy skills, direct MCP navigation cancellation,
 and remote supervision in one local page. The accepted design is
 `docs/plans/2026-07-24-go2-local-mission-control-design.md`; the implementation
 plan is `docs/plans/2026-07-24-go2-mission-control-implementation.md`.
+Candidate-only external visual verification is now also accepted in
+`docs/plans/2026-07-25-go2-candidate-vision-verification-design.md`. It keeps
+mapping, LiDAR geometry, navigation, safety, and motion local while sending only
+three candidate screenshots to an OpenAI vision provider.
 
 Safety rule: real hardware movement is locked by default. Simulation is the
 preferred place to test new skills. Hardware startup requires both disabling the
@@ -35,6 +39,15 @@ The separate `hardware_readonly` mode connects sensor streams while
 - Default Studio URL: <http://127.0.0.1:8765>
 - Existing DimOS map/command center URL: <http://127.0.0.1:7779/command-center>
 
+Live state on 2026-07-25: the Mac reached the Go2 at `192.168.12.1` while
+internet remained available through the phone. Mission
+`8c1a12389dab462db2d5d2651b992742` stopped after battery reached 4%, below its
+5% floor, and the operator then explicitly stopped it. The global E-STOP
+validation subsequently closed real-hardware run
+`20260725-012510-dimos-go2-studio-go2`; no robot runtime is currently active.
+Exactly one Studio service remains available at `127.0.0.1:8765`, and it was
+started with `--no-open` so it does not create duplicate browser tabs.
+
 The Studio currently supports Go2 signal-port diagnostics, DimOS
 start/stop/status, MCP tool listing, Agent task submission, safe source editing
 for custom `@skill` methods, and persisted model/runtime parameters.
@@ -50,10 +63,22 @@ Studio now also provides:
 - cleanup of a launcher process that fails before registration
 - unified Mission Control with the existing DimOS viewer embedded at port 7779
 - persisted mission lifecycle and explicit create/start/pause/resume/stop/E-STOP
-- a direct `end_exploration` plus `stop_navigation` MCP cancellation path
-- autonomous navigation capped at 0.1 m/s with reverse navigation disabled in
+- a sticky global control bar on every Studio page: the green button routes a
+  beginner to robot connection or mission startup, while the red
+  `关闭控制 / 立即停止` button remains available even without an active mission
+- latched global E-STOP behavior: Agent cancellation, exploration, patrol,
+  navigation, and lookout stops are issued in parallel while the DimOS robot
+  runtime is shut down on a separate parallel path
+- direct `end_exploration`, `stop_patrol`, `stop_navigation`, and
+  `stop_looking_out` cleanup on every task exit
+- autonomous navigation capped at 0.2 m/s with reverse navigation disabled in
   the external Studio Blueprint
-- three-frame, confidence- and position-consistent door verification helpers
+- independent 30-minute watchdog and five-second battery monitoring
+- fresh-frame, three-view, position-consistent semantic verification plus
+  contrastive rejection of glass walls, whiteboards, chairs, and people
+- automatic transition from exhausted frontier exploration to coverage patrol
+- no automatic Rerun browser-tab launch; the existing Studio page embeds the
+  DimOS viewer, avoiding duplicate pages and excess browser memory
 - one-metre stand-off goal calculation that remains advisory until navigation
   is explicitly allowed
 
@@ -73,17 +98,299 @@ Studio now also provides:
 - The Mission Control person-yield state machine is implemented, but live
   person distance is not yet fed into it from a detector. Do not claim live
   crowd yielding until that stream bridge is built and tested.
-- Door evidence policy and Agent skills are implemented, but automatic
-  camera-frame-to-door-observation ingestion is not yet built. The external VLM
-  path still needs simulation/replay evaluation.
-- A local E-STOP state is not physical proof. Mission Control directly requests
-  both exploration and navigation cancellation through MCP and reports whether
-  those calls succeeded; the operator must still verify the robot stopped.
-- No real autonomous motion has been validated. Keep dense-venue movement
-  locked until simulation, hardware-read-only, empty-area, and controlled
-  pedestrian gates all pass.
+- DimOS CLIP spatial-memory ingestion is now wired into the deterministic
+  mission runner and has passed one bounded real-Go2 candidate-search test.
+  CLIP provides a semantic camera-viewpoint candidate, not a door bounding box
+  or metric door pose. A second-stage geometric/visual verifier is still
+  required before any one-metre approach.
+- A software E-STOP is not the Go2's physical power switch. The global red
+  control now sends all five MCP cancellation calls and closes the robot
+  runtime, reporting the two confirmations separately. If the computer,
+  network, browser, or robot firmware is unresponsive, the operator must still
+  use the Go2's physical stop/power control and physically verify it stopped.
+- Supervised venue motion has been validated at the configured 0.2 m/s cap with
+  the lidar cost map and replanning stack active. Camera-only person distance is
+  still not bridged into Mission Control, so the claim is obstacle replanning,
+  not independently verified person classification or social navigation.
 
 ## Recent task log
+
+### 2026-07-25 — Candidate-only OpenAI visual verification design
+
+- Changed: accepted and documented a provider-neutral `VisionVerifier` that
+  sends at most three candidate screenshots to the OpenAI API, receives a
+  structured `yes/no/uncertain` verdict plus normalized image boxes, and keeps
+  target projection, LiDAR passage checks, navigation, and E-STOP local.
+- Why: the real run proved that CLIP can rank map-linked camera viewpoints but
+  cannot reliably identify a door or produce the door's metric map position.
+  The user selected candidate-only cloud upload rather than a fully local model.
+- Files: `docs/plans/2026-07-25-go2-candidate-vision-verification-design.md`
+  and this document.
+- Validation: reviewed against the current `VisualMemory`, CLIP search skill,
+  OpenAI VLM adapter, mission runner, and bbox navigation code. The last run's
+  persisted visual memory contains 578 real frames and both known candidate
+  frame IDs, so the first verifier acceptance can be offline.
+- Safety boundary: no robot process, API request, credential change, or motion
+  command was issued. A cloud verdict is semantic evidence only and cannot
+  authorize movement without local multi-view and LiDAR geometry checks.
+- Unresolved: implementation has not started; OpenAI Responses API support,
+  Keychain-backed credential storage, candidate-frame retrieval, structured
+  result validation, and camera/LiDAR map projection still need to be built.
+- Next: create the implementation plan and complete the offline 578-frame
+  verification slice before reconnecting the Go2.
+
+### 2026-07-25 — Global close/start controls and latched software E-STOP
+
+- Changed: added a sticky safety bar visible on every Studio page. Its green
+  button routes to the robot connection controls when DimOS is off and to the
+  Mission Control startup confirmation when DimOS is running. Its red
+  `关闭控制 / 立即停止` button is never disabled merely because no mission exists.
+  The E-STOP backend now cancels Agent work, exploration, patrol, navigation,
+  and lookout concurrently and closes the DimOS robot runtime concurrently.
+- Why: the old start/stop controls were hidden inside the Mission Control tab,
+  the E-STOP button was disabled in the idle state, and sequential MCP calls
+  could take roughly 25 seconds in the worst case. The user needs an obvious,
+  global, fail-closed way to regain control.
+- Files: `dimos/web/studio/service.py`,
+  `dimos/web/studio/static/index.html`,
+  `dimos/web/studio/static/styles.css`,
+  `dimos/web/studio/static/app.js`,
+  `dimos/web/studio/test_studio.py`, and this document.
+- Commands/tests: Studio mission/API/runner suite passed 34 tests; Ruff passed;
+  Node JavaScript syntax checking passed. A barrier-based test verifies that
+  all five MCP cancellations are actually dispatched in parallel.
+- Live validation: the active MCP server failed to acknowledge any stop tool
+  within its timeout, so the E-STOP correctly took the runtime-shutdown path.
+  Run `20260725-012510-dimos-go2-studio-go2` was stopped and its PID disappeared;
+  Studio now reports `DimOS 当前未运行`. The run required SIGKILL after the normal
+  SIGTERM timeout, so this proves runtime closure, not a physical power-off.
+- Unresolved: automated visual refresh of the existing in-app browser tab was
+  blocked by the browser's localhost policy. The served HTML contains both
+  global controls and the static/API checks pass; the operator must press
+  `Command + R` once in the existing Studio tab to load the new UI.
+- Next: recharge the Go2, refresh Studio, use the green control to reconnect,
+  and keep the red control in view during the next supervised test. Do not
+  restart the door-search mission until target localization replaces blind
+  coverage patrol.
+
+### 2026-07-25 — Continuous real-Go2 exploration and coverage patrol
+
+- Changed: extended the deterministic mission to 1,800 seconds and 20 m,
+  increased the navigation cap to 0.2 m/s, added fresh-frame and contrastive
+  semantic filtering, added five-second battery checks, and introduced a
+  20-second frontier-to-coverage-patrol handoff. Cleanup now stops patrol as
+  well as exploration, navigation, and lookout. Lowered the operator-requested
+  mission battery floor from 15% to 5%, while retaining a nonzero collapse
+  margin. Removed `--rerun-open web` so future starts reuse the embedded viewer
+  instead of opening another browser page.
+- Why: the earlier bounded explorer could remain logically running after all
+  frontiers were exhausted while the physical Go2 was stationary. The user
+  requires continuous venue search, visible mapping, and no duplicate local
+  pages that consume browser memory.
+- Files: `dimos/web/studio/mission.py`, `mission_runner.py`, `service.py`, their
+  focused tests, the external Go2 Blueprint/policy files, and this document.
+- Commands/tests: focused Studio mission, runner, and API suite passed 31 tests
+  after all battery and browser-tab adjustments; Ruff and `git diff --check`
+  passed while the physical mission remained active.
+- Live validation: during this historical run, one Studio listener on
+  `127.0.0.1:8765` and one Go2 runtime were confirmed. The real Go2 moved from
+  about `(-2.54, 1.84)` to
+  `(-1.70, 1.09)` during frontier exploration, published a target at
+  `(0.94, 4.39)`, then cleanly called `end_exploration` and `start_patrol`.
+  During coverage patrol it reached about `(-0.86, 0.23)`, selected a new goal
+  near `(-1.53, 2.58)`, continued moving, and rejected a glass-wall/whiteboard
+  false semantic target instead of stopping. Battery later reached 4%, the
+  mission failed closed below its 5% floor, and the operator stopped it.
+- Unresolved: no real door has yet been verified, CLIP still yields camera
+  viewpoints rather than metric door geometry, and the final one-metre approach
+  is not implemented. The local Moondream weights are not cached. Continuous
+  operation is limited by the currently low battery and will stop at 5%.
+- Next: do not resume blind coverage patrol. Expose the selected camera frame,
+  verify a door bounding region, project it through depth/LiDAR, and only then
+  authorize goal-directed motion. Recharge before another acceptance run.
+
+### 2026-07-24 — Real-Go2 DimOS semantic candidate search
+
+- Changed: replaced the first-stage mission dependency on the stalled local
+  Moondream lookout with a deterministic runner over DimOS's existing CLIP
+  spatial memory; added the `search_semantic_memory` MCP skill, three-frame
+  spatial consistency, a 5 cm independent-view requirement, stop-before-report
+  ordering, and fail-closed CLIP inference. On macOS the fused CLIP ONNX session
+  now uses `CPUExecutionProvider` because CoreML failed after alternating image
+  and text inference and the old error path returned random embeddings.
+- Why: keep perception on the existing DimOS camera/map stack, remove the local
+  `ollama:qwen3:4b` Agent from physical mission timing, and test fixes against
+  the real Go2 instead of treating network/service health as acceptance.
+- Files: `dimos/perception/image_embedding.py`,
+  `dimos/perception/test_image_embedding.py`,
+  `dimos/web/studio/mission_runner.py`,
+  `dimos/web/studio/test_mission_runner.py`,
+  `extensions/go2-studio-agent/src/dimos_go2_studio/skills.py`,
+  `extensions/go2-studio-agent/tests/test_skills.py`, and this document.
+- Commands/tests: ran focused mission-runner, extension-skill, Blueprint,
+  mission-policy, CLIP fail-closed and macOS-provider tests; ran Ruff and
+  `git diff --check` and JavaScript syntax checking. The final affected suite
+  passed 62 tests with one warning; started run
+  `20260725-000903-dimos-go2-studio-go2` in real hardware mode after the
+  operator's `START GO2`/clear-area authorization; queried battery, executed a
+  15-second maximum semantic mission, called exploration/navigation stop again,
+  and inspected the live 2D map, camera and Rerun 3D point cloud.
+- Validation: battery was 46% before motion and 45% afterward. Repeated queries
+  for the same frame became deterministic at `0.2319`. The Go2 published a
+  frontier goal and physically explored while 13 map-linked camera frames were
+  stored. Three viewpoints separated by at least 5 cm produced a doorway
+  candidate (`best_similarity=0.2533`); the runner stopped before reporting it.
+  `end_exploration` returned after about 2.0 seconds, `stop_navigation` returned
+  `Stopped`, the final visible pose was about `(-0.05, 0.18)`, and no later
+  frontier goal was published. The live camera visibly contained framed
+  glass/metal doorway openings consistent with the semantic candidate.
+- Safety boundary: this proves real autonomous movement, semantic
+  find-and-stop, live map/camera updates and direct stop. It does not prove a
+  metric door position or one-metre stand-off, and no approach was attempted.
+  Studio was restored to `movement_locked=true` and read-only run
+  `20260725-002303-dimos-go2-studio-go2` with
+  `go2connection.movement_enabled=false`.
+- Unresolved: CLIP is an uncalibrated ranking model; the current threshold must
+  not be treated as object-detection confidence. Candidate-frame retrieval,
+  door geometry/depth fusion, live person distance, and one-metre approach
+  approval remain to be implemented. The runtime still needs SIGKILL after the
+  normal stop timeout.
+- Next: expose the selected candidate frame, validate it with a stronger
+  configured detector or local replay, project the verified doorway into the
+  map using LiDAR/depth and calibration, then perform a separately authorized
+  one-metre stand-off test.
+
+### 2026-07-24 — First controlled real-Go2 movement acceptance
+
+- Changed: temporarily unlocked real hardware after the user confirmed
+  `START GO2`, reduced the runtime navigation parameter to `0.1`, ran one
+  Agent-driven mission attempt, then ran one deterministic twenty-second
+  `look_out_for` plus frontier-exploration attempt. The runtime was stopped and
+  restored to `hardware_readonly` afterward.
+- Why: verify the first complete path from the local Studio to a real Go2,
+  including current camera/map data, autonomous frontier motion, visual target
+  search, and remote stop behavior.
+- Commands/checks: verified the direct `192.168.12.129 -> 192.168.12.1` route,
+  9991 signal port, Studio/runtime APIs, battery and 20 MCP tools; inspected the
+  live 2D map, camera, and Rerun 3D point cloud; used mission create/start/stop
+  and E-STOP APIs; directly called `look_out_for`, `begin_exploration`,
+  `end_exploration`, and `stop_navigation`; then verified the read-only process
+  command and settings.
+- Validation: Go2 network RTT averaged about 7.4 ms; fresh camera frames, map,
+  and point cloud were visible; battery was 61% before the first attempt and
+  59% before movement. Direct frontier exploration started successfully,
+  published a first goal at `(-0.68, 0.09)`, reached it, and published a second
+  goal before cancellation. The visible robot pose changed from about
+  `(-0.00, 0.01)` to `(-0.23, 0.03)`, proving controlled real movement and map
+  updates. `end_exploration` reported a physical stop and `stop_navigation`
+  returned `Stopped`.
+- Failed acceptance: local `ollama:qwen3:4b` produced no Agent tool call within
+  90 seconds, so the Agent mission never moved. The deterministic vision call
+  did not identify a door; `look_out_for` and `stop_looking_out` each ultimately
+  hit the 120-second RPC timeout. The integrated Rerun pane displayed about
+  44.6 seconds of latency near the end of the run.
+- Safety boundary: no door was approached or crossed. The twenty-second motion
+  window was stopped through direct exploration cancellation, navigation stop,
+  and the Studio E-STOP path. Studio is back at `movement_locked=true`, with a
+  live `hardware_readonly` runtime using
+  `go2connection.movement_enabled=false` and
+  `go2connection.auto_stand=false`.
+- Unresolved: `mission_timeout_s` is not enforced by a runtime watchdog; a
+  stalled Agent does not automatically pause the mission; pending Agent work
+  has no independent cancellation path; and the perception-loop tools are not
+  reliably cancellable through MCP. Live person-distance safety is also still
+  absent.
+- Next: implement an independent mission watchdog and pending-Agent
+  cancellation, repair background perception-tool cancellation and evidence
+  events, choose a responsive task-planning model, then repeat the same
+  controlled test before any longer autonomous search.
+
+### 2026-07-24 — Ring-to-Go2 generic Agent platform design
+
+- Changed: proposed a typed local task gateway, reusable task profiles,
+  observation-only execution mode, generic spatial evidence contract,
+  phase-specific MCP tool permissions, and a reliable ring-to-Studio delivery
+  boundary.
+- Why: door finding is only the first test; the product needs to turn later
+  home objectives from the ring into inspectable Agent tasks without generating
+  new robot code or training a model for every request.
+- Files: `docs/plans/2026-07-24-ring-to-go2-agent-platform-design.md` and this
+  document.
+- Current finding: the existing mission API accepts arbitrary text, but its
+  Agent prompt is still door-specific; live safety telemetry, model detections,
+  Agent tool events, and ring task delivery are not yet wired into one loop.
+- Validation: design checked against the current Studio mission/API code,
+  external Go2 skill package, DimOS Agent/MCP/perception/navigation docs, and
+  the existing Ring Voice Input delivery contract. The user accepted the typed
+  task architecture and selected `让机器狗执行` as the explicit ring activation
+  phrase. No runtime or robot command was issued.
+- Safety boundary: the first end-to-end acceptance is explicitly
+  `observe_only`; ring input creates a task draft and cannot unlock or start
+  physical movement.
+- Unresolved: implementation has not started; live perception, safety telemetry,
+  Agent tool events, and ring delivery still need to be wired.
+- Next: implement the generic task core and software-only acceptance tests,
+  then connect live perception/safety telemetry before the read-only Go2 test.
+
+### 2026-07-24 — Live Go2 read-only Agent and visualization
+
+- Changed: made CLIP preprocessing fully local, added an OpenCV JPEG fallback
+  when native TurboJPEG is absent, removed redundant Studio daemonization,
+  bypassed environment proxies for local MCP calls, disabled optional
+  speech/microphone modules, switched the Agent to local `qwen3:4b`, and fixed
+  the embedded Rerun viewer from stale `9090/9876` ports to `9878/9877`.
+- Why: bring the real Go2 sensor/Agent stack up on the robot LAN while retaining
+  phone-hotspot internet and without depending on paid cloud inference.
+- Files: `dimos/perception/image_embedding.py`,
+  `dimos/msgs/sensor_msgs/Image.py`, `dimos/agents/mcp/mcp_adapter.py`,
+  `dimos/web/templates/rerun_dashboard.html`, `dimos/web/studio/`,
+  `extensions/go2-studio-agent/`, their tests, and this document.
+- Commands/tests: installed `python-multipart`, pulled Ollama `qwen3:4b`, ran
+  the Studio, Blueprint, image, and MCP adapter pytest suites, ran Ruff on all
+  changed Python files, checked Studio/runtime/MCP HTTP endpoints, and inspected
+  the integrated page in the local browser.
+- Validation: Studio and the runtime are live; the map shows real robot pose and
+  obstacle data; Rerun shows the live 3D point cloud; new camera frames reach
+  spatial perception; 20 MCP tools are registered; and the local Agent made a
+  verified `studio_ready` tool call. Motion, exploration, patrol, navigation,
+  following, and speech tools were not called.
+- Safety boundary: `movement_locked=true`,
+  `go2connection.movement_enabled=false`, and
+  `go2connection.auto_stand=false`. No movement command was sent.
+- Unresolved: the Rerun Camera pane still shows a loading state even though
+  camera frames are reaching spatial perception. Live battery display,
+  simulation/replay missions, physical E-STOP proof, and all autonomous-motion
+  gates remain unvalidated.
+- Next: fix the Rerun image-pane rendering, validate battery/telemetry without
+  motion, then test the full mission in simulation or replay before any
+  supervised empty-area movement.
+
+### 2026-07-24 — Restore Go2 dependency and network connection path
+
+- Changed: installed Git LFS 3.7.1, downloaded and SHA-256-verified the
+  `models_clip` LFS object, extracted its ONNX model, and made every Studio
+  hardware runtime add the robot IP plus localhost to both `NO_PROXY` and
+  `no_proxy`.
+- Why: the full Agent Blueprint first crashed because `git-lfs` was missing;
+  after that was fixed, local WebRTC requests could still be misrouted through
+  the macOS system proxy.
+- Files: `dimos/web/studio/service.py`,
+  `dimos/web/studio/test_studio.py`, and this document. The Git LFS object is in
+  the local Git cache and the extracted model is under `data/models_clip/`.
+- Commands/tests: verified Git LFS and its DimOS endpoint, checked out and
+  extracted `models_clip`, ran the hardware-read-only Blueprint twice, ran
+  `pytest -q dimos/web/studio/test_studio.py` (13 passed), and ran Ruff on the
+  changed Studio files (passed).
+- Validation: the missing-tool crash is resolved and ONNX initialization
+  succeeds. BLE provisioning of `Go2_49060` succeeded and confirmed serial
+  `B42D1000PC4C1M86`. No movement command was sent.
+- Unresolved: the Mac is now on the venue `ADVX-Players` network, whose client
+  isolation prevents LAN discovery/WebRTC. The prior `HUAWEI` personal hotspot
+  is currently unavailable. Runtime therefore remains stopped.
+- Next: enable a non-isolated personal router/hotspot, connect the Mac to it,
+  provision `Go2_49060` to the same SSID with `dimos go2tool connect-wifi`,
+  discover its new IP, update Studio settings, and retry hardware-read-only
+  startup before any Agent movement.
 
 ### 2026-07-24 — Go2 Mission Control first implementation slice
 
