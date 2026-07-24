@@ -28,6 +28,7 @@ use tracing::debug;
 
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
+type Xyzi = (f32, f32, f32, f32);
 
 /// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
@@ -296,11 +297,15 @@ impl Worker {
         let frame = &self.config.world_frame;
         let graph = planner.graph();
 
-        let surface_points: Vec<Xyz> = planner
-            .surface()
-            .map(|(ix, iy, iz)| surface_point_xyz(ix, iy, iz, voxel_size))
+        let surface_points: Vec<Xyzi> = planner
+            .surface_clearance()
+            .into_iter()
+            .map(|((ix, iy, iz), clearance)| {
+                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                (x, y, z, clearance)
+            })
             .collect();
-        let surface = build_pc2_xyz(&surface_points, frame, now());
+        let surface = build_pc2_xyzi(&surface_points, frame, now());
 
         let node_points: Vec<Xyz> = graph.nodes.iter().map(|n| n.pos).collect();
         let node_cloud = build_pc2_xyz(&node_points, frame, now());
@@ -455,6 +460,40 @@ fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stam
     Path {
         header: header(frame_id, stamp),
         poses,
+    }
+}
+
+/// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's wall clearance.
+fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let n = points.len() as i32;
+    let mut data = Vec::with_capacity(points.len() * 16);
+    for &(x, y, z, i) in points {
+        data.extend_from_slice(&x.to_le_bytes());
+        data.extend_from_slice(&y.to_le_bytes());
+        data.extend_from_slice(&z.to_le_bytes());
+        data.extend_from_slice(&i.to_le_bytes());
+    }
+    let make_field = |name: &str, off: i32| PointField {
+        name: name.into(),
+        offset: off,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: header(frame_id, stamp),
+        height: 1,
+        width: n,
+        fields: vec![
+            make_field("x", 0),
+            make_field("y", 4),
+            make_field("z", 8),
+            make_field("intensity", 12),
+        ],
+        is_bigendian: false,
+        point_step: 16,
+        row_step: 16 * n,
+        data,
+        is_dense: true,
     }
 }
 

@@ -149,8 +149,9 @@ Backend choices:
 
 - `meshcat`: embedded Drake/Meshcat visualizer. The planning world must be created with
   embedded visualization enabled, so this is selected through the visualization config.
-- `viser`: in-process Viser visualizer. It renders current robot state, target controls,
-  transient preview ghosts, planned path previews, and optional panel controls.
+- `viser`: in-process Viser visualizer. It renders pushed current robot state,
+  target controls, transient preview ghosts, synchronized trajectory previews,
+  and optional panel controls.
 - `none`: no manipulation planning visualization.
 
 CLI example:
@@ -185,20 +186,27 @@ Viser support is included in the `manipulation` extra:
 uv sync --extra manipulation --inexact
 ```
 
-The Viser panel uses existing manipulation planning, preview, execute, cancel, and clear-plan
-RPC methods through a small in-process adapter. GUI callbacks enqueue operations instead of
-touching `WorldSpec`, IK, planner objects, or live Drake contexts directly. Rendering copies
-mutable joint state/path containers at the read boundary, then updates the Viser scene after
-manipulation/world accessors have returned.
+The Viser panel talks to the concrete `ManipulationOperator` bound into its
+`VisualizationSession`. GUI callbacks enqueue operations through that operator
+for target evaluation, planning, preview, execution, cancellation, reset, and
+clear-plan actions. The panel owns only target drafts, selection state, and
+callback generations; it does not touch `WorldSpec`, IK, planner objects,
+`ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
 
-External manipulation visualizers are initialized from a backend-neutral planning-scene snapshot
-after the planning world has added its robots. This snapshot maps world robot IDs to
-`RobotModelConfig` metadata so Viser can prepare current, target, and transient preview robot
-visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
-does not need extra setup because it observes the Drake world directly.
+External manipulation visualizers are initialized from a backend-neutral
+`VisualizationSession` after the planning world has added its robots. The
+session contains static `PlanningSceneInfo` metadata: world robot IDs,
+`RobotModelConfig` values, and resolved planning groups. Runtime joint state is
+then pushed through `VisualizationStateFrame` updates so renderers do not poll
+world/module state or own freshness policy. Embedded Meshcat visualization does
+not need extra setup because it observes the Drake world directly.
 
-When the Viser panel is enabled, it can call the existing manipulation execution path after a
-fresh feasible plan is available and the current robot joints still match the plan start.
+Previews use the stored synchronized `JointTrajectory` from the generated plan.
+Viser projects the globally named trajectory into robot-local preview ghosts and
+plays the stored timestamped points directly; optional preview duration only
+scales the stored delays. Execute freshness is enforced by the manipulation
+module/operator immediately before dispatch, not by Viser-side telemetry
+snapshots.
 
 ### Perception + Agent
 

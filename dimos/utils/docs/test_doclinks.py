@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.docs.doclinks import (
     build_doc_index,
     build_file_index,
@@ -32,7 +33,7 @@ from dimos.utils.docs.doclinks import (
 )
 
 # Use the actual repo root
-REPO_ROOT = Path(__file__).parent.parent.parent.parent
+REPO_ROOT = DIMOS_PROJECT_ROOT
 
 
 @pytest.fixture(scope="module")

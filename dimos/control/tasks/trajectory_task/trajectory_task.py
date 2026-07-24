@@ -23,6 +23,7 @@ is compute-only and relies on the coordinator for timing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from dimos.control.task import (
@@ -122,7 +123,7 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             JointCommandOutput with positions, or None if not executing
         """
-        if self._trajectory is None:
+        if self._trajectory is None or not self._trajectory.joint_names:
             return None
 
         # Set start time on first compute() for consistent timing
@@ -138,8 +139,10 @@ class JointTrajectoryTask(BaseControlTask):
             logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
             # Return final position to hold at goal
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
+            final_names = list(self._trajectory.joint_names)
+            self._clear_active_trajectory()
             return JointCommandOutput(
-                joint_names=self._joint_names_list,
+                joint_names=final_names,
                 positions=list(q_ref),
                 mode=ControlMode.SERVO_POSITION,
             )
@@ -148,7 +151,7 @@ class JointTrajectoryTask(BaseControlTask):
         q_ref, _ = self._trajectory.sample(t_elapsed)
 
         return JointCommandOutput(
-            joint_names=self._joint_names_list,
+            joint_names=list(self._trajectory.joint_names),
             positions=list(q_ref),
             mode=ControlMode.SERVO_POSITION,
         )
@@ -164,6 +167,60 @@ class JointTrajectoryTask(BaseControlTask):
         # Abort if any of our joints were preempted
         if joints & self._joint_names:
             self._state = TrajectoryState.ABORTED
+            self._clear_active_trajectory()
+
+    def _clear_active_trajectory(self) -> None:
+        """Clear stored trajectory-specific execution state."""
+        self._trajectory = None
+        self._pending_start = False
+        self._start_time = 0.0
+
+    def _validate_trajectory(self, trajectory: JointTrajectory) -> bool:
+        """Validate a trajectory before execution."""
+        joint_names = list(trajectory.joint_names)
+        if not joint_names:
+            logger.warning("Trajectory for %s has empty joint names", self._name)
+            return False
+        if len(set(joint_names)) != len(joint_names):
+            logger.warning("Trajectory for %s has duplicate joint names", self._name)
+            return False
+        unknown = [name for name in joint_names if name not in self._joint_names]
+        if unknown:
+            logger.warning("Trajectory for %s has unknown joints: %s", self._name, unknown)
+            return False
+        if not trajectory.points:
+            logger.warning("Empty trajectory for %s", self._name)
+            return False
+        width = len(joint_names)
+        previous_time: float | None = None
+        for index, point in enumerate(trajectory.points):
+            if len(point.positions) != width or len(point.velocities) != width:
+                logger.warning("Trajectory point %d for %s has invalid width", index, self._name)
+                return False
+            if not all(math.isfinite(value) for value in point.positions):
+                logger.warning(
+                    "Trajectory point %d for %s has non-finite positions", index, self._name
+                )
+                return False
+            if not all(math.isfinite(value) for value in point.velocities):
+                logger.warning(
+                    "Trajectory point %d for %s has non-finite velocities", index, self._name
+                )
+                return False
+            if not math.isfinite(point.time_from_start):
+                logger.warning("Trajectory point %d for %s has non-finite time", index, self._name)
+                return False
+            if index == 0 and point.time_from_start != 0.0:
+                logger.warning("Trajectory for %s must start at t=0", self._name)
+                return False
+            if previous_time is not None and point.time_from_start <= previous_time:
+                logger.warning("Trajectory for %s has non-increasing timestamps", self._name)
+                return False
+            previous_time = point.time_from_start
+        if trajectory.duration <= 0.0:
+            logger.warning("Trajectory for %s has nonpositive duration", self._name)
+            return False
+        return True
 
     def execute(self, trajectory: JointTrajectory) -> bool:
         """Start executing a trajectory.
@@ -178,17 +235,17 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Cannot execute: {self._name} in FAULT state")
             return False
 
-        if trajectory is None or trajectory.duration <= 0:
+        if trajectory is None:
             logger.warning(f"Invalid trajectory for {self._name}")
             return False
 
-        if not trajectory.points:
-            logger.warning(f"Empty trajectory for {self._name}")
+        if not self._validate_trajectory(trajectory):
             return False
 
         # Preempt any active trajectory
         if self._state == TrajectoryState.EXECUTING:
             logger.info(f"Preempting active trajectory on {self._name}")
+            self._clear_active_trajectory()
 
         self._trajectory = trajectory
         self._pending_start = True  # Start time set on first compute()
@@ -209,6 +266,7 @@ class JointTrajectoryTask(BaseControlTask):
         if self._state != TrajectoryState.EXECUTING:
             return False
         self._state = TrajectoryState.ABORTED
+        self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} cancelled")
         return True
 
@@ -222,7 +280,7 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Cannot reset {self._name} while executing")
             return False
         self._state = TrajectoryState.IDLE
-        self._trajectory = None
+        self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} reset to IDLE")
         return True
 

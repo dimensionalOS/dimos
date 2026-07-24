@@ -21,11 +21,12 @@ from dimos.msgs.nav_msgs.Path import Path
 
 
 class PathDistancer:
-    _lookahead_dist: float = 0.5
+    _lookahead_dist: float
     _path: NDArray[np.float64]
     _cumulative_dists: NDArray[np.float64]
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, lookahead_dist: float = 0.5) -> None:
+        self._lookahead_dist = lookahead_dist
         self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
         self._cumulative_dists = _make_cumulative_distance_array(self._path)
 

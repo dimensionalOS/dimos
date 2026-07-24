@@ -19,5 +19,6 @@ TASK_FACTORIES = {
 TASK_CONSUMES = {
     "eef_twist": {
         "coordinator_ee_twist_command": ("on_ee_twist_command", "by_task_name"),
+        "gripper_command": ("on_gripper_command", "broadcast"),
     },
 }

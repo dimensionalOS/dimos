@@ -21,6 +21,11 @@ from pathlib import Path
 from pydantic import Field
 
 from dimos.core.module import ModuleConfig
+from dimos.manipulation.planning.groups.identifiers import (
+    assert_local_joint_names,
+    assert_valid_robot_name,
+)
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -30,10 +35,13 @@ class RobotModelConfig(ModuleConfig):
     Attributes:
         name: Human-readable robot name
         model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
-        base_pose: Pose of robot base in world frame (position + orientation)
-        joint_names: Ordered list of controlled joint names (in URDF namespace)
-        end_effector_link: Name of the end-effector link for FK/IK
-        base_link: Name of the base link (default: "base_link")
+        srdf_path: Optional path to SRDF file containing planning group definitions
+        base_pose: Placement transform. This is the canonical world placement for
+            robot instances.
+        joint_names: Ordered list of controllable joints in the local model
+            namespace. This is not a planning group.
+        base_link: Robot-scoped link that base_pose places in the world and
+            current backends use for weld/placement.
         package_paths: Dict mapping package names to filesystem Paths
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
@@ -45,19 +53,20 @@ class RobotModelConfig(ModuleConfig):
             links may legitimately overlap (e.g., mimic joints).
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
-        joint_name_mapping: Maps coordinator joint names to URDF joint names.
-            Example: {"left/joint1": "joint1"} means coordinator's "left/joint1"
-            corresponds to URDF's "joint1". If empty, names are assumed to match.
+        joint_name_mapping: Maps coordinator joint names to local model joint names.
+            This is retained for current coordinator/monitor integrations while planning
+            APIs move toward globally scoped joint names.
         coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
     """
 
     name: str
     model_path: Path
-    base_pose: PoseStamped
+    srdf_path: Path | None = None
+    base_pose: PoseStamped = Field(default_factory=PoseStamped)
     joint_names: list[str]
-    end_effector_link: str
     base_link: str = "base_link"
+    planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
     package_paths: dict[str, Path] = Field(default_factory=dict)
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
@@ -79,14 +88,44 @@ class RobotModelConfig(ModuleConfig):
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 
+    def model_post_init(self, __context: object) -> None:
+        """Validate delimiter-based naming constraints."""
+        assert_valid_robot_name(self.name)
+        assert_local_joint_names(self.joint_names)
+
+    @property
+    def end_effector_link(self) -> str:
+        """Compatibility pose target frame derived from planning groups.
+
+        Current world, IK, and visualization layers still ask robot configs for
+        one end-effector link. The planning-group model stores that frame as a
+        group ``tip_link``; this shim keeps those layers working until they are
+        migrated to explicit planning-group IDs.
+        """
+        pose_tip_links = [
+            group.tip_link for group in self.planning_groups if group.tip_link is not None
+        ]
+        if not pose_tip_links:
+            raise ValueError(
+                f"RobotModelConfig '{self.name}' has no pose-target planning group; "
+                "define PlanningGroupDefinition.tip_link"
+            )
+        unique_tip_links = list(dict.fromkeys(pose_tip_links))
+        if len(unique_tip_links) > 1:
+            raise ValueError(
+                f"RobotModelConfig '{self.name}' has multiple pose-target planning groups; "
+                "use an explicit planning group ID"
+            )
+        return unique_tip_links[0]
+
     def get_urdf_joint_name(self, coordinator_name: str) -> str:
-        """Translate coordinator joint name to URDF joint name."""
+        """Translate coordinator joint name to local model joint name."""
         return self.joint_name_mapping.get(coordinator_name, coordinator_name)
 
     def get_coordinator_joint_name(self, urdf_name: str) -> str:
-        """Translate URDF joint name to coordinator joint name."""
-        for coord_name, u_name in self.joint_name_mapping.items():
-            if u_name == urdf_name:
+        """Translate local model joint name to coordinator joint name."""
+        for coord_name, model_name in self.joint_name_mapping.items():
+            if model_name == urdf_name:
                 return coord_name
         return urdf_name
 
@@ -94,4 +133,4 @@ class RobotModelConfig(ModuleConfig):
         """Get joint names in coordinator namespace."""
         if not self.joint_name_mapping:
             return self.joint_names
-        return [self.get_coordinator_joint_name(j) for j in self.joint_names]
+        return [self.get_coordinator_joint_name(joint_name) for joint_name in self.joint_names]

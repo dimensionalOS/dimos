@@ -32,6 +32,7 @@ from dimos.manipulation.planning.factory import (
     create_world,
     validate_backend_combination,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.kinematics.config import JacobianKinematicsConfig
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
@@ -64,7 +65,14 @@ def robot_config() -> RobotModelConfig:
         model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
-        end_effector_link="tcp",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2"),
+                base_link="base_link",
+                tip_link="tcp",
+            )
+        ],
         coordinator_task_name="traj_arm",
     )
 

@@ -25,10 +25,14 @@ Usage:
 Available functions:
     joints()              Get current joint positions
     ee()                  Get end-effector pose
+    groups()              List explicit planning groups
     state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
     ik_pose(x,y,z, seed_joints=None) Solve IK only, without path planning
+    ik_group_pose(group_id,x,y,z) Solve IK for an explicit planning group
     plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
+    plan_group(group_id,joints) Plan to an explicit planning-group joint target
     plan_pose(x,y,z)      Plan to Cartesian pose
+    plan_group_pose(group_id,x,y,z) Plan to an explicit planning-group pose target
     preview(duration=None) Preview planned path in Meshcat
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
@@ -50,8 +54,10 @@ from typing import Any
 
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -78,6 +84,21 @@ def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
     """Plan to joint configuration. e.g. plan([0.1]*7)"""
     js = JointState(position=target_joints)
     return _client.plan_to_joints(js, robot_name)
+
+
+def groups() -> list[PlanningGroup]:
+    """List explicit planning groups available for group APIs."""
+    return _client.list_planning_groups()
+
+
+def plan_group(group_id: str, target_joints: list[float] | JointState) -> bool:
+    """Plan to a joint target for an explicit planning group."""
+    target = (
+        target_joints
+        if isinstance(target_joints, JointState)
+        else JointState(position=target_joints)
+    )
+    return _client.plan_to_joint_targets({group_id: target})
 
 
 def _make_target_pose(
@@ -124,7 +145,6 @@ def ik_pose(
     pitch: float | None = None,
     yaw: float | None = None,
     robot_name: str | None = None,
-    check_collision: bool = True,
     seed_joints: list[float] | JointState | None = None,
 ) -> IKResult:
     """Solve IK for a Cartesian pose without path planning.
@@ -137,13 +157,32 @@ def ik_pose(
         pitch: Optional target pitch. Preserves current orientation if omitted.
         yaw: Optional target yaw. Preserves current orientation if omitted.
         robot_name: Robot to solve for when multiple robots are configured.
-        check_collision: Whether to reject IK candidates in collision.
         seed_joints: Optional initial joint configuration for local IK. Pass either
             a list of joint positions in robot joint order or a named JointState.
     """
     target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
     seed = _make_seed_joint_state(seed_joints, robot_name)
-    return _client.solve_ik(target, robot_name, check_collision, seed)
+    return _client.inverse_kinematics_single(target, robot_name, seed)
+
+
+def ik_group_pose(
+    group_id: str,
+    x: float,
+    y: float,
+    z: float,
+    roll: float | None = None,
+    pitch: float | None = None,
+    yaw: float | None = None,
+    seed: JointState | None = None,
+) -> IKResult:
+    """Solve IK for an explicit planning group pose target."""
+    target = _make_target_pose(x, y, z, roll, pitch, yaw)
+    stamped = PoseStamped(
+        frame_id="world",
+        position=target.position,
+        orientation=target.orientation,
+    )
+    return _client.inverse_kinematics({group_id: stamped}, seed=seed)
 
 
 def plan_pose(
@@ -160,13 +199,26 @@ def plan_pose(
     return _client.plan_to_pose(target, robot_name)
 
 
+def plan_group_pose(
+    group_id: str,
+    x: float,
+    y: float,
+    z: float,
+    roll: float | None = None,
+    pitch: float | None = None,
+    yaw: float | None = None,
+) -> bool:
+    """Plan to a Cartesian pose for an explicit planning group."""
+    target = _make_target_pose(x, y, z, roll, pitch, yaw)
+    return _client.plan_to_pose_targets({group_id: target})
+
+
 def preview(
     duration: float | None = None,
     robot_name: str | None = None,
-    target_fps: float = 30.0,
 ) -> bool:
-    """Preview planned path in Meshcat."""
-    return _client.preview_path(duration, robot_name, target_fps)
+    """Preview the last generated plan in the visualizer."""
+    return _client.preview_plan(None, duration, robot_name)
 
 
 def execute(robot_name: str | None = None) -> bool:

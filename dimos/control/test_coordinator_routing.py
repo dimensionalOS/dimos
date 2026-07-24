@@ -40,6 +40,7 @@ import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
+from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -118,18 +119,20 @@ def make_coordinator(
 
     def make(
         *,
+        coordinator_cls: type[ControlCoordinator] = ControlCoordinator,
         stub_task_types: bool = False,
         fail_streams: tuple[str, ...] = (),
         **kwargs: Any,
     ) -> tuple[ControlCoordinator, dict[str, PortTap]]:
-        coordinator = ControlCoordinator(publish_joint_state=False, **kwargs)
+        coordinator = coordinator_cls(publish_joint_state=False, **kwargs)
         if stub_task_types:
             coordinator._create_task_from_config = lambda cfg: RecordingTask(
                 cfg.name, frozenset(cfg.joint_names)
             )
+        # Every declared input, so a subclass's own ports are tapped too.
         taps = {
-            stream: PortTap(mocker, getattr(coordinator, stream), fail=stream in fail_streams)
-            for stream in STREAMS
+            stream: PortTap(mocker, port, fail=stream in fail_streams)
+            for stream, port in coordinator.inputs.items()
         }
         coordinators.append(coordinator)
         return coordinator, taps
@@ -706,6 +709,14 @@ class TestCardRoutingContract:
         assert any("srvo" in str(c) for c in warn.call_args_list)
         assert not taps["joint_command"].subscribed
 
+    def test_no_stream_bind_keeps_card_named_ports(self, make_coordinator):
+        # The default path: routes are keyed by the card's own stream name.
+        coordinator, _ = _streaming_coordinator(make_coordinator)
+
+        assert coordinator.describe_task("servo1")["streams"] == [
+            ("joint_command", "claim_overlap")
+        ]
+
     def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
         warn = mocker.patch.object(coord_mod.logger, "warning")
         coordinator, _ = make_coordinator()
@@ -716,3 +727,259 @@ class TestCardRoutingContract:
         coordinator.add_task(RecordingTask("traj", frozenset(ARM_JOINTS)), task_type="trajectory")
 
         assert not any("unknown task_type" in str(c.args[0]) for c in warn.call_args_list)
+
+
+class SubclassedCoordinator(ControlCoordinator):
+    """How a deployment adds its own input: one annotation, no coordinator edits."""
+
+    custom_in: In[JointState]
+
+
+class FanoutCoordinator(ControlCoordinator):
+    """One port per task instance, for the stream_bind tests."""
+
+    a_in: In[JointState]
+    b_in: In[JointState]
+
+
+@pytest.fixture
+def register_card() -> Iterator[Callable[[str, dict[str, tuple[str, str]]], str]]:
+    """Register throwaway task cards; drop them on teardown."""
+    registered: list[str] = []
+
+    def register(task_type: str, consumes: dict[str, tuple[str, str]]) -> str:
+        control_task_registry.register_bindings(task_type, consumes=consumes)
+        registered.append(task_type)
+        return task_type
+
+    try:
+        yield register
+    finally:
+        for task_type in registered:
+            control_task_registry._bindings.pop(task_type, None)
+            control_task_registry._binding_sources.pop(task_type, None)
+
+
+class TestSubclassDeclaredStreams:
+    """Cards can bind ports a coordinator subclass declares."""
+
+    def test_subclass_port_routes_with_zero_coordinator_edits(
+        self, make_coordinator, register_card
+    ):
+        card = register_card("subclass_probe_task", {"custom_in": ("on_probe_command", "direct")})
+        coordinator, taps = make_coordinator(coordinator_cls=SubclassedCoordinator)
+        coordinator.start()
+        probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(probe, task_type=card)
+
+        assert taps["custom_in"].subscribed
+        msg = JointState(name=ARM_JOINTS, position=[0.1, 0.2])
+        taps["custom_in"].emit(msg)
+
+        assert len(probe.probe_commands) == 1
+        assert probe.probe_commands[0][0] is msg
+
+    def test_direct_routing_delivers_without_a_claim_gate(self, make_coordinator, register_card):
+        card = register_card("direct_probe_task", {"custom_in": ("on_probe_command", "direct")})
+        coordinator, taps = make_coordinator(coordinator_cls=SubclassedCoordinator)
+        coordinator.start()
+        probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(probe, task_type=card)
+
+        # Joints the task does not claim, and no frame_id: neither gate applies.
+        taps["custom_in"].emit(JointState(name=["other/joint9"], position=[1.0]))
+
+        assert len(probe.probe_commands) == 1
+
+    def test_missing_port_error_names_the_annotation_to_add(self, make_coordinator, register_card):
+        card = register_card("admittance_probe", {"wrench_command": ("on_probe_command", "direct")})
+        coordinator, _ = make_coordinator()
+        coordinator.start()
+
+        with pytest.raises(ValueError) as excinfo:
+            coordinator.add_task(ProbeTask("adm"), task_type=card)
+
+        message = str(excinfo.value)
+        assert "adm" in message
+        assert card in message
+        assert "wrench_command: In[...]" in message
+        assert coordinator.list_tasks() == []  # nothing half-registered
+
+    def test_subclass_port_is_rejected_by_a_plain_coordinator(
+        self, make_coordinator, register_card
+    ):
+        # Same card, two deployments: it binds only where the port is declared.
+        card = register_card("subclass_only_probe", {"custom_in": ("on_probe_command", "direct")})
+        plain, _ = make_coordinator()
+        plain.start()
+        with pytest.raises(ValueError, match="custom_in"):
+            plain.add_task(ProbeTask("probe1"), task_type=card)
+
+        subclassed, taps = make_coordinator(coordinator_cls=SubclassedCoordinator)
+        subclassed.start()
+        assert subclassed.add_task(ProbeTask("probe1"), task_type=card)
+        assert taps["custom_in"].subscribed
+
+
+class ActiveProbeTask(ProbeTask):
+    """Probe that claims its joints for real, so remove_hardware can refuse it."""
+
+    def is_active(self) -> bool:
+        return True
+
+
+class TestStreamBind:
+    """Per-instance remapping of a card's inputs onto other ports."""
+
+    @staticmethod
+    def _fanout_card(register_card) -> str:
+        return register_card("fanout_probe_task", {"sensor_in": ("on_probe_command", "direct")})
+
+    def test_two_instances_read_separate_ports(self, make_coordinator, register_card):
+        card = self._fanout_card(register_card)
+        coordinator, taps = make_coordinator(coordinator_cls=FanoutCoordinator)
+        coordinator.start()
+        a = ProbeTask("a", frozenset(ARM_JOINTS))
+        b = ProbeTask("b", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(a, task_type=card, stream_bind={"sensor_in": "a_in"})
+        assert coordinator.add_task(b, task_type=card, stream_bind={"sensor_in": "b_in"})
+
+        taps["a_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+        assert len(a.probe_commands) == 1
+        assert b.probe_commands == []
+
+        taps["b_in"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
+
+        assert len(a.probe_commands) == 1
+        assert len(b.probe_commands) == 1
+
+    def test_logical_name_is_not_subscribed_when_remapped(self, make_coordinator, register_card):
+        # "sensor_in" is not a port on this coordinator at all; only a_in is.
+        card = self._fanout_card(register_card)
+        coordinator, taps = make_coordinator(coordinator_cls=FanoutCoordinator)
+        coordinator.start()
+        assert coordinator.add_task(
+            ProbeTask("a", frozenset(ARM_JOINTS)), task_type=card, stream_bind={"sensor_in": "a_in"}
+        )
+
+        assert taps["a_in"].subscribed
+        assert not taps["b_in"].subscribed
+        assert coordinator.describe_task("a")["streams"] == [("a_in", "direct")]
+
+    def test_stream_bind_from_task_config(self, make_coordinator, register_card):
+        # The deployment path: stream_bind arrives in the blueprint's TaskConfig.
+        card = self._fanout_card(register_card)
+        coordinator, taps = make_coordinator(
+            coordinator_cls=FanoutCoordinator,
+            tasks=[
+                TaskConfig(name="a", type=card, stream_bind={"sensor_in": "a_in"}),
+                TaskConfig(name="b", type=card, stream_bind={"sensor_in": "b_in"}),
+            ],
+        )
+        coordinator._create_task_from_config = lambda cfg: ProbeTask(
+            cfg.name, frozenset(cfg.joint_names)
+        )
+        coordinator.start()
+
+        taps["b_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+        assert coordinator.get_task("a").probe_commands == []
+        assert len(coordinator.get_task("b").probe_commands) == 1
+
+    def test_bad_task_config_rolls_back_the_whole_setup(self, make_coordinator, register_card):
+        card = self._fanout_card(register_card)
+        base_joints = make_twist_base_joints("base")
+        coordinator, _ = make_coordinator(
+            coordinator_cls=FanoutCoordinator,
+            hardware=[_base_component()],
+            tasks=[
+                TaskConfig(
+                    name="good",
+                    type=card,
+                    joint_names=base_joints,
+                    stream_bind={"sensor_in": "a_in"},
+                ),
+                TaskConfig(name="bad", type=card, stream_bind={"sensor_in": "no_such_port"}),
+            ],
+        )
+        coordinator._create_task_from_config = lambda cfg: ActiveProbeTask(
+            cfg.name, frozenset(cfg.joint_names)
+        )
+
+        with pytest.raises(ValueError, match="no_such_port"):
+            coordinator.start()
+
+        # Tasks go first, or "good" is active on the base joints and pins the hardware.
+        assert coordinator.list_tasks() == []
+        assert coordinator.list_hardware() == []
+
+    def test_unknown_stream_bind_key_is_loud(self, make_coordinator, register_card):
+        card = register_card(
+            "typo_probe_task", {"joint_command": ("on_probe_command", "claim_overlap")}
+        )
+        coordinator, _ = make_coordinator()
+        coordinator.start()
+
+        with pytest.raises(ValueError) as excinfo:
+            coordinator.add_task(
+                ProbeTask("probe1", frozenset(ARM_JOINTS)),
+                task_type=card,
+                stream_bind={"joint_comand": "joint_command"},
+            )
+
+        message = str(excinfo.value)
+        assert "joint_comand" in message  # the typo'd key
+        assert "joint_command" in message  # what the card does declare
+        assert coordinator.list_tasks() == []
+
+    def test_stream_bind_onto_missing_port_is_loud(self, make_coordinator, register_card):
+        card = register_card(
+            "misbound_probe_task", {"joint_command": ("on_probe_command", "claim_overlap")}
+        )
+        coordinator, _ = make_coordinator()
+        coordinator.start()
+
+        with pytest.raises(ValueError, match="no_such_port: In"):
+            coordinator.add_task(
+                ProbeTask("probe1", frozenset(ARM_JOINTS)),
+                task_type=card,
+                stream_bind={"joint_command": "no_such_port"},
+            )
+
+    def test_stream_bind_without_task_type_is_loud(self, make_coordinator):
+        # No card means nothing to remap; dropping it silently would hide a bug.
+        coordinator, _ = make_coordinator()
+        coordinator.start()
+
+        with pytest.raises(ValueError, match="task_type"):
+            coordinator.add_task(
+                ProbeTask("probe1", frozenset(ARM_JOINTS)),
+                stream_bind={"joint_command": "joint_command"},
+            )
+
+        assert coordinator.list_tasks() == []
+
+    def test_direct_cross_talk_warns_naming_both_tasks(
+        self, make_coordinator, register_card, mocker
+    ):
+        card = register_card("shared_probe_task", {"custom_in": ("on_probe_command", "direct")})
+        coordinator, taps = make_coordinator(coordinator_cls=SubclassedCoordinator)
+        coordinator.start()
+        first = ProbeTask("first", frozenset(ARM_JOINTS))
+        second = ProbeTask("second", frozenset(ARM_JOINTS))
+
+        warn = mocker.patch.object(coord_mod.logger, "warning")
+        assert coordinator.add_task(first, task_type=card)
+        assert not warn.called  # one task on the port is not cross-talk
+
+        assert coordinator.add_task(second, task_type=card)  # allowed, just noisy
+
+        assert warn.called
+        logged = str(warn.call_args)
+        assert "first" in logged and "second" in logged
+        assert "stream_bind" in logged
+
+        taps["custom_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        assert len(first.probe_commands) == 1
+        assert len(second.probe_commands) == 1

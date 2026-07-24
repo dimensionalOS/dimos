@@ -14,85 +14,49 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-import time
-
-from dimos.msgs.sensor_msgs.JointState import JointState
-
-
-def interpolate_joint_path(
-    path: Sequence[JointState], duration: float, fps: float
-) -> list[list[float]]:
-    """Interpolate a joint path into visualization frames."""
-    waypoints = [list(waypoint.position) for waypoint in path if waypoint.position]
-    if not waypoints:
-        return []
-    if len(waypoints) == 1 or duration <= 0.0:
-        return [waypoints[-1]]
-    frame_count = max(int(duration * max(fps, 1.0)) + 1, len(waypoints))
-    segment_count = len(waypoints) - 1
-    frames: list[list[float]] = []
-    for frame_index in range(frame_count):
-        path_t = frame_index / max(frame_count - 1, 1)
-        scaled = path_t * segment_count
-        segment_index = min(int(scaled), segment_count - 1)
-        local_t = scaled - segment_index
-        start = waypoints[segment_index]
-        end = waypoints[segment_index + 1]
-        if len(start) != len(end):
-            continue
-        frames.append(
-            [
-                start_value + (end_value - start_value) * local_t
-                for start_value, end_value in zip(start, end, strict=False)
-            ]
-        )
-    if frames and frames[-1] != waypoints[-1]:
-        frames.append(waypoints[-1])
-    return frames
+from collections.abc import Sequence
+from dataclasses import dataclass
+from itertools import pairwise
 
 
-def sampled_joint_path_frames(
-    path: Sequence[JointState], duration: float, fps: float
-) -> list[list[float]]:
-    """Return animation frames while preserving already sampled trajectories.
+@dataclass(frozen=True)
+class PreviewFrame:
+    """One timestamped local robot preview frame."""
 
-    ManipulationModule.preview_path() owns trajectory-aware interpolation because it has access
-    to JointTrajectory waypoint timing. If a path arrives already sampled near the target display
-    rate, Viser should play those samples directly instead of re-interpolating by waypoint index.
-    Sparse direct VisualizationSpec callers still get local interpolation as a fallback.
-    """
-    waypoints = [list(waypoint.position) for waypoint in path if waypoint.position]
-    if not waypoints:
-        return []
-    expected_frames = max(int(duration * max(fps, 1.0)) + 1, 1) if duration > 0.0 else 1
-    if len(waypoints) >= expected_frames:
-        return waypoints
-    return interpolate_joint_path(path, duration, fps)
+    time_from_start: float
+    positions: tuple[float, ...]
 
 
-class PreviewAnimator:
-    """Blocking preview-ghost path animator with Meshcat-compatible semantics.
+@dataclass(frozen=True)
+class PreviewTrack:
+    """One fixed-baseline local robot track in a group-native preview."""
 
-    This class is only for transient path playback. Persistent target ghosts are updated
-    directly by scene target methods and must not be routed through this animator.
-    """
+    robot_id: str
+    joint_names: tuple[str, ...]
+    frames: tuple[PreviewFrame, ...]
 
-    def __init__(
-        self,
-        set_joints: Callable[[Sequence[float]], None],
-        *,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self._set_joints = set_joints
-        self._sleep = sleep
 
-    def animate(self, path: Sequence[JointState], duration: float, fps: float) -> bool:
-        frames = sampled_joint_path_frames(path, duration, fps)
-        if not frames:
-            return False
-        step_delay = duration / max(len(frames) - 1, 1) if duration > 0.0 else 0.0
-        for joints in frames:
-            self._set_joints(joints)
-            self._sleep(step_delay)
-        return True
+@dataclass(frozen=True)
+class GroupPreviewAnimation:
+    """Validated collection of robot tracks sharing one preview transaction."""
+
+    tracks: tuple[PreviewTrack, ...]
+
+
+def scaled_frame_delays(frames: Sequence[PreviewFrame], duration: float) -> tuple[float, ...]:
+    """Return stored inter-frame delays, optionally scaled to a requested duration."""
+    if len(frames) < 2:
+        return ()
+    original_duration = max(float(frames[-1].time_from_start), 0.0)
+    scale = duration / original_duration if duration > 0.0 and original_duration > 0.0 else 1.0
+    return tuple(
+        max(float(next_frame.time_from_start) - float(frame.time_from_start), 0.0) * scale
+        for frame, next_frame in pairwise(frames)
+    )
+
+
+def preview_tick_times(preview: GroupPreviewAnimation) -> tuple[float, ...]:
+    """Union all stored track timestamps without synthesizing extra samples."""
+    return tuple(
+        sorted({float(frame.time_from_start) for track in preview.tracks for frame in track.frames})
+    )

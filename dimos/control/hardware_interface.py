@@ -61,6 +61,10 @@ class ConnectedHardware:
         self._arm_joint_names: list[JointName] = list(component.joints)
         self._gripper_joints: list[JointName] = list(component.gripper_joints)
         self._joint_names: list[JointName] = component.all_joints
+        self._gripper_open = component.gripper_open_position
+        self._gripper_closed = component.gripper_closed_position
+        if (self._gripper_open is None) != (self._gripper_closed is None):
+            raise ValueError("gripper open/closed positions must be set together")
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -123,7 +127,9 @@ class ConnectedHardware:
             gripper_pos = self._adapter.read_gripper_position()
             for gj in self._gripper_joints:
                 result[gj] = JointState(
-                    position=gripper_pos if gripper_pos is not None else 0.0,
+                    position=self._physical_to_normalized(gripper_pos)
+                    if gripper_pos is not None
+                    else 0.0,
                     velocity=0.0,
                     effort=0.0,
                 )
@@ -188,7 +194,10 @@ class ConnectedHardware:
         for gj in self._gripper_joints:
             if gj in self._last_commanded:
                 gripper_ok = (
-                    self._adapter.write_gripper_position(self._last_commanded[gj]) and gripper_ok
+                    self._adapter.write_gripper_position(
+                        self._normalized_to_physical(self._last_commanded[gj])
+                    )
+                    and gripper_ok
                 )
 
         return arm_ok and gripper_ok
@@ -205,7 +214,11 @@ class ConnectedHardware:
                 if self._gripper_joints:
                     gripper_pos = self._adapter.read_gripper_position()
                     for gj in self._gripper_joints:
-                        self._last_commanded[gj] = gripper_pos if gripper_pos is not None else 0.0
+                        self._last_commanded[gj] = (
+                            self._physical_to_normalized(gripper_pos)
+                            if gripper_pos is not None
+                            else 0.0
+                        )
 
                 self._initialized = True
                 return
@@ -215,6 +228,20 @@ class ConnectedHardware:
         raise RuntimeError(
             f"Hardware {self.hardware_id} failed to read initial positions after retries"
         )
+
+    def _normalized_to_physical(self, value: float) -> float:
+        """Map normalized input to adapter-native endpoint units."""
+        if self._gripper_open is None or self._gripper_closed is None:
+            return value
+        value = max(0.0, min(1.0, value))
+        return self._gripper_closed + (self._gripper_open - self._gripper_closed) * value
+
+    def _physical_to_normalized(self, value: float) -> float:
+        """Map adapter-native endpoint units back to normalized input."""
+        if self._gripper_open is None or self._gripper_closed is None:
+            return value
+        span = self._gripper_open - self._gripper_closed
+        return 0.0 if span == 0.0 else max(0.0, min(1.0, (value - self._gripper_closed) / span))
 
     def _build_ordered_command(self) -> list[float]:
         """Build ordered command list from last_commanded dict."""

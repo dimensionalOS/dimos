@@ -26,6 +26,7 @@ from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm6_model_config,
     make_xarm7_model_config,
+    make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
@@ -41,6 +42,26 @@ dual_xarm6_planner = ManipulationModule.blueprint(
         make_xarm6_model_config(name="right_arm", y_offset=-0.5),
     ],
     planning_timeout=10.0,
+)
+
+_mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
+_mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
+
+dual_xarm6_planner_coordinator = autoconnect(
+    planner(
+        robots=[
+            make_xarm6_model_config(name="left_arm", y_offset=0.5),
+            make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+        ],
+        visualization={"backend": "viser"},
+    ),
+    coordinator(
+        hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
+        tasks=[
+            trajectory_task(_mock_left_xarm6_hw),
+            trajectory_task(_mock_right_xarm6_hw),
+        ],
+    ),
 )
 
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)

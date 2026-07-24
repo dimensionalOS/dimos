@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import make_gripper_joints
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -25,6 +25,7 @@ from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
     eef_twist_task,
     teleop_ik_task,
+    trajectory_task,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
@@ -41,7 +42,10 @@ _piper_keyboard_hw = make_piper_hardware(
     adapter_type="piper" if global_config.can_port else "mock",
     address=global_config.can_port or "can0",
     gripper=True,
+    gripper_open_position=0.07,
+    gripper_closed_position=0.0,
 )
+_piper_model = make_piper_model_config()
 
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -50,11 +54,21 @@ keyboard_teleop_piper = autoconnect(
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_piper_keyboard_hw],
-        tasks=[eef_twist_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+        tasks=[
+            eef_twist_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6),
+            TaskConfig(
+                name="servo_gripper",
+                type="servo",
+                joint_names=["arm/gripper"],
+                priority=20,
+                params={"timeout": 0.0, "default_positions": [0.0]},
+            ),
+            trajectory_task(_piper_keyboard_hw, name=_piper_model.coordinator_task_name),
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_piper_model_config()],
-        visualization={"backend": "meshcat"},
+        robots=[_piper_model],
+        visualization={"backend": "viser"},
     ),
 )
 
@@ -68,7 +82,7 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
     tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
 )
 
-_piper_teleop_hw = piper_hardware("arm")
+_piper_teleop_hw = piper_hardware("arm", gripper_open_position=0.07, gripper_closed_position=0.0)
 
 coordinator_teleop_piper = autoconnect(
     ControlCoordinator.blueprint(
@@ -82,11 +96,16 @@ coordinator_teleop_piper = autoconnect(
                 name="teleop_piper",
                 params={
                     "gripper_joint": make_gripper_joints("arm")[0],
-                    "gripper_open_pos": 0.0,
-                    "gripper_closed_pos": 0.035,
+                    "gripper_open_pos": 1.0,
+                    "gripper_closed_pos": 0.0,
                 },
             ),
+            trajectory_task(_piper_teleop_hw, name=_piper_model.coordinator_task_name),
         ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[_piper_model],
+        visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
 )

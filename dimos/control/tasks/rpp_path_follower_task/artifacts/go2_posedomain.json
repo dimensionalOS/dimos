@@ -1,0 +1,129 @@
+{
+  "provenance": {
+    "robot_id": "go2",
+    "surface": "concrete",
+    "mode": "default",
+    "date": "2026-06-23",
+    "git_sha": "97298ef8c",
+    "sim_or_hw": "hw",
+    "characterization_session_dir": "data/characterization/go2/go2_recording_default_2026-06-23_222.db",
+    "methodology_version": 2
+  },
+  "plant": {
+    "vx": {
+      "K": 0.8031702038136178,
+      "tau": 0.3,
+      "L": 0.15
+    },
+    "vy": {
+      "K": 0.7359189288019671,
+      "tau": 0.3,
+      "L": 0.15
+    },
+    "wz": {
+      "K": 0.8988635584229723,
+      "tau": 0.3,
+      "L": 0.15
+    }
+  },
+  "feedforward": {
+    "K_vx": 1.2450661083439023,
+    "K_vy": 1.3588453304604373,
+    "K_wz": 1.1125158992477884,
+    "output_min_vx": -1.0,
+    "output_max_vx": 1.0,
+    "output_min_vy": -1.0,
+    "output_max_vy": 1.0,
+    "output_min_wz": -1.5,
+    "output_max_wz": 1.5
+  },
+  "velocity_profile": {
+    "max_linear_speed": 0.819432592238089,
+    "max_angular_speed": 1.180671561475521,
+    "max_centripetal_accel": 1.0,
+    "max_linear_accel": 2.7314419741269633,
+    "max_linear_decel": 5.462883948253927,
+    "min_speed": 0.25,
+    "lookahead_pts": 8
+  },
+  "recommended_controller": {
+    "name": "baseline",
+    "params": {
+      "k_angular": 0.5
+    },
+    "evidence": "Baseline P-controller, hardcoded. The Go2 base is FOPDT per axis; at a given speed the tracking error equals the plant floor (tau + L) * v, which no reactive control law can beat (~zero headroom over the floor \u2014 validated controller bake-off). The only effective lever is speed vs path curvature, which the derived velocity profile + feedforward already apply. See reports/tuning_README.md and the characterization findings (this evidence string cites the Go2 result; a different robot's headroom is TBD until characterized)."
+  },
+  "caveats": [
+    "Valid only for surface='concrete', mode='default', hw. Re-run characterization on any surface or gait-mode change.",
+    "Plant fitted from data/characterization/go2/go2_recording_default_2026-06-23_222.db on 2026-06-23 (git 97298ef8c)."
+  ],
+  "operating_point_map": null,
+  "velocity_envelope": null,
+  "dynamics_by_amplitude": {
+    "vx": [
+      {
+        "amp": 0.688,
+        "K": 0.8031702038136178,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9997340425001168,
+        "source": "sweep"
+      },
+      {
+        "amp": 1.0,
+        "K": 0.819432592238089,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9997340425001168,
+        "source": "sweep"
+      }
+    ],
+    "vy": [
+      {
+        "amp": 0.65,
+        "K": 0.7359189288019671,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9998431135682062,
+        "source": "sweep"
+      },
+      {
+        "amp": 1.0,
+        "K": 0.8413264464473194,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9998431135682062,
+        "source": "sweep"
+      }
+    ],
+    "wz": [
+      {
+        "amp": 0.725,
+        "K": 0.7699677897678445,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9999577115547055,
+        "source": "sweep"
+      },
+      {
+        "amp": 1.15,
+        "K": 0.8988635584229723,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9999577115547055,
+        "source": "sweep"
+      },
+      {
+        "amp": 1.5,
+        "K": 0.9260169109611931,
+        "tau": 0.3,
+        "L": 0.15,
+        "r2": 0.9999577115547055,
+        "source": "sweep"
+      }
+    ]
+  },
+  "floor_probe_results": null,
+  "valid_for_tuning": true,
+  "schema_version": 1
+}

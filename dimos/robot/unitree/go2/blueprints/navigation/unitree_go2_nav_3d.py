@@ -37,6 +37,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
+from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
@@ -46,6 +47,8 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
+# Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
+planner_viz_hz = 0.0
 # base_link <- lidar mount rotation, so nav reads odometry in the level body frame.
 _sensor_mount_rotation = list(base_link_from_mid360().rotation.to_tuple())
 
@@ -157,9 +160,7 @@ _nav_rerun_config = {
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
-        "world/surface_map": None,
-        "world/nodes": None,
-        "world/node_edges": None,
+        **planner_visual_override(planner_viz_hz),
     },
 }
 
@@ -198,7 +199,7 @@ unitree_go2_nav_3d = autoconnect(
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
         step_penalty_weight=4.0,
-        viz_publish_hz=0.0,
+        viz_publish_hz=planner_viz_hz,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
