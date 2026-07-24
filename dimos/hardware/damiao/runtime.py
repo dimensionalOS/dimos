@@ -213,7 +213,10 @@ class DamiaoRobotRuntime:
         if self._robot is None:
             return False
         try:
+            self._robot.set_mode("mit")
+            self._robot.tick(self._tick_deadline_us)
             self._robot.enable()
+            self._robot.tick(self._tick_deadline_us)
         except Exception:
             logger.exception("damiao runtime enable failed", adapter=self._adapter_type)
             # The binding may have enabled a subset of the robot before

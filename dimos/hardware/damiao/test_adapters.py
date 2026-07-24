@@ -363,8 +363,29 @@ def test_arm_adapter_preserves_enabled_state_when_safety_disable_fails(mocker) -
     assert adapter.read_enabled() is True
 
 
+
+def test_runtime_selects_mit_mode_before_enable(mocker) -> None:
+    runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
+    robot = mocker.Mock()
+    runtime._robot = robot
+
+    assert runtime.enable() is True
+    assert robot.method_calls[:4] == [
+        mocker.call.set_mode("mit"),
+        mocker.call.tick(1_000),
+        mocker.call.enable(),
+        mocker.call.tick(1_000),
+    ]
+
+
 def test_runtime_preserves_enabled_state_when_partial_enable_rollback_fails() -> None:
     class _FailingRobot:
+        def set_mode(self, mode: str) -> None:
+            assert mode == "mit"
+
+        def tick(self, deadline_us: int) -> None:
+            assert deadline_us == 1_000
+
         def enable(self) -> None:
             raise RuntimeError("partial enable")
 

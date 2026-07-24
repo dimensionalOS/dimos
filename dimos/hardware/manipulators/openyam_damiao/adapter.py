@@ -150,6 +150,26 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
             **kwargs,
         )
 
+    def write_mit_commands(
+        self,
+        *,
+        q: list[float],
+        dq: list[float],
+        kp: list[float],
+        kd: list[float],
+        tau: list[float],
+    ) -> bool:
+        """Temporarily send zero-torque MIT frames for compliant position readback."""
+        self._validate_command_lengths(q=q, dq=dq, kp=kp, kd=kd, tau=tau)
+        zeros = self._zero_vector()
+        return super().write_mit_commands(
+            q=zeros,
+            dq=zeros,
+            kp=zeros,
+            kd=zeros,
+            tau=zeros,
+        )
+
     def read_gripper_position(self) -> float | None:
         """Gripper feedback is disabled until the binding provides calibration."""
         return None

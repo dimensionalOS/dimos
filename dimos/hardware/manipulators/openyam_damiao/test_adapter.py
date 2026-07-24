@@ -98,6 +98,34 @@ def test_openyam_normal_enable_and_error_recovery() -> None:
     runtime.enable.assert_called_once_with()
 
 
+def test_openyam_temporarily_writes_zero_torque_mit_commands() -> None:
+    adapter = OpenYamDamiaoAdapter(
+        gravity_model_path=GRAVITY_MODEL_PATH,
+        use_mock_bus=True,
+    )
+    runtime = Mock()
+    runtime.write_group_mit_commands.return_value = True
+    adapter._runtime = runtime
+    adapter._enabled = True
+
+    assert adapter.write_mit_commands(
+        q=[1.0] * 6,
+        dq=[2.0] * 6,
+        kp=[3.0] * 6,
+        kd=[4.0] * 6,
+        tau=[5.0] * 6,
+    )
+
+    runtime.write_group_mit_commands.assert_called_once_with(
+        group_name="arm",
+        q=[0.0] * 6,
+        dq=[0.0] * 6,
+        kp=[0.0] * 6,
+        kd=[0.0] * 6,
+        tau=[0.0] * 6,
+    )
+
+
 def test_openyam_xacro_limits_reject_duplicate_joint_names(monkeypatch: pytest.MonkeyPatch) -> None:
     joints = [JointDescription(f"yam_joint{i}", "revolute", -1.0, 1.0, 1.0) for i in range(1, 7)]
     joints.append(joints[0])
