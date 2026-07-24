@@ -17,6 +17,21 @@ env:
   UV_NO_SYNC: "1"
 
 jobs:
+  changes:
+    # Is anything outside docs/ touched? Docs-only PRs skip the code jobs.
+    # Non-PR events (push, merge_group) always get 'true' — they run everything.
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read  # For paths-filter to list the PR's files
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: '{code: ["!docs/**"]}'
+
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
     # so downstream jobs can reference it from their `container:` field.
@@ -71,6 +86,8 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
   rust:
+    if: needs.changes.outputs.code == 'true'
+    needs: changes
     timeout-minutes: 20
     runs-on: ubuntu-latest
     permissions:
@@ -279,6 +296,8 @@ jobs:
         run: deno task test
 
   tests:
+    if: needs.changes.outputs.code == 'true'
+    needs: changes
     timeout-minutes: 20
     strategy:
       matrix:
@@ -477,8 +496,9 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.changes.outputs.code == 'true' &&
       contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
-    needs: [compute-ros-pin, cmu-nav-natives]
+    needs: [changes, compute-ros-pin, cmu-nav-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -647,7 +667,9 @@ jobs:
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.changes.outputs.code == 'true'
+    needs: changes
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -777,6 +799,7 @@ jobs:
     if: always()
 
     needs:
+    - changes
     - lint
     - rust
     - md-babel
@@ -795,7 +818,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
+        allowed-skips: rust, tests, cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7
