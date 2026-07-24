@@ -14,9 +14,9 @@
 
 """Unitree G1 GR00T whole-body control, mapping, and navigation.
 
-The module graph above the hardware boundary is identical in real and simulated
-runs. A simulation provider replaces the G1 and MID360 devices without replacing
-PointLIO, mapping, navigation, control, or visualization.
+Real hardware uses PointLIO to produce registered lidar and odometry. Simulation
+provides the same typed localization boundary from simulator truth. Both feed
+the same mapping, planning, control, and visualization modules.
 
 Usage:
     dimos run unitree-g1-groot-wbc
@@ -42,7 +42,6 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
@@ -56,9 +55,6 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.blueprints.basic.groot_wbc_platform import (
     resolve_g1_groot_platform,
-)
-from dimos.robot.unitree.g1.blueprints.basic.pointlio_zenoh_relay import (
-    PointLioZenohRelay,
 )
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
@@ -84,13 +80,9 @@ _pelvis_mid360_cache: list[Any] = []
 assert G1.height_clearance is not None and G1.width_clearance is not None
 
 _platform = resolve_g1_groot_platform()
-_pointlio_transport = (
-    PointLioZenohRelay.blueprint() if global_config.transport == "zenoh" else autoconnect()
-)
 
 _navigation = autoconnect(
-    _pointlio_transport,
-    PointLio.blueprint(**_platform.pointlio_config),
+    _platform.localization_source,
     RayTracingVoxelMap.blueprint(
         voxel_size=_NAV_VOXEL_RESOLUTION,
         emit_every=0,
@@ -147,7 +139,7 @@ def _pelvis_to_mid360() -> Any:
     return _pelvis_mid360_cache[0]
 
 
-def _odometry_root(odometry: Any) -> Any:
+def _real_odometry_root(odometry: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -164,12 +156,12 @@ def _odometry_root(odometry: Any) -> Any:
     )
 
 
-def _ground_z() -> float:
+def _real_ground_z() -> float:
     return -(float(_pelvis_to_mid360()[2, 3]) + _NOMINAL_PELVIS_Z)
 
 
-def _costmap(grid: Any) -> Any:
-    return g1_costmap(grid, z_offset=_ground_z() + 0.02)
+def _real_costmap(grid: Any) -> Any:
+    return g1_costmap(grid, z_offset=_real_ground_z() + 0.02)
 
 
 _static_entities: dict[str, Any] = {
@@ -178,6 +170,7 @@ _static_entities: dict[str, Any] = {
 _static_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config: dict[str, Any] = {
+    "memory_limit": "8GB" if _platform.simulation else "512MB",
     "blueprint": _rerun_blueprint,
     "visual_override": {
         "world/color_image": None,
@@ -186,9 +179,8 @@ _rerun_config: dict[str, Any] = {
         "world/depth_camera_info": None,
         "world/lidar": None,
         "world/coordinator_joint_state": g1_urdf_joint_state(root_path=_RERUN_ROOT),
-        "world/odometry": _odometry_root,
-        "world/global_costmap": _costmap,
-        "world/navigation_costmap": _costmap,
+        "world/global_costmap": g1_costmap,
+        "world/navigation_costmap": g1_costmap,
         "world/path": _nav_path,
     },
     "max_hz": {
@@ -204,6 +196,11 @@ _rerun_config: dict[str, Any] = {
     },
     "static": _static_entities,
 }
+
+if not _platform.simulation:
+    _rerun_config["visual_override"]["world/odometry"] = _real_odometry_root
+    _rerun_config["visual_override"]["world/global_costmap"] = _real_costmap
+    _rerun_config["visual_override"]["world/navigation_costmap"] = _real_costmap
 
 
 def _viewer() -> Any:

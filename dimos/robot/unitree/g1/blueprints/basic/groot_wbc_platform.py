@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Platform-owned control and localization inputs for the G1 GR00T stack.
+
+Hardware uses PointLIO for ``lidar`` and ``odometry``. A simulation provider
+publishes those streams itself. Mapping and navigation remain outside this
+boundary.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.simulation.providers import SimulationRequest, load_simulation_provider
 from dimos.utils.data import LfsPath
@@ -30,6 +36,8 @@ _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 @dataclass(frozen=True)
 class G1GrootPlatform:
     backend: Blueprint
+    localization_source: Blueprint
+    simulation: bool
     adapter_type: str
     adapter_address: str | Path
     tick_rate: float
@@ -38,15 +46,23 @@ class G1GrootPlatform:
     auto_dry_run: bool
     ramp_seconds: float
     n_workers: int
-    pointlio_config: dict[str, Any]
 
 
 def resolve_g1_groot_platform() -> G1GrootPlatform:
     if not global_config.simulation:
+        from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+        from dimos.robot.unitree.g1.blueprints.basic.pointlio_zenoh_relay import (
+            PointLioZenohRelay,
+        )
         from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
+        pointlio_transport = (
+            PointLioZenohRelay.blueprint() if global_config.transport == "zenoh" else autoconnect()
+        )
         return G1GrootPlatform(
             backend=G1WholeBodyConnection.blueprint(release_sport_mode=True),
+            localization_source=autoconnect(pointlio_transport, PointLio.blueprint()),
+            simulation=False,
             adapter_type="transport_lcm",
             adapter_address="",
             tick_rate=100.0,
@@ -55,7 +71,6 @@ def resolve_g1_groot_platform() -> G1GrootPlatform:
             auto_dry_run=True,
             ramp_seconds=10.0,
             n_workers=10,
-            pointlio_config={},
         )
 
     if global_config.simulation != "mujoco":
@@ -72,13 +87,10 @@ def resolve_g1_groot_platform() -> G1GrootPlatform:
             scene_package=global_config.scene_package,
         )
     )
-    mid360 = binding.require_device("mid360")
-    if mid360.protocol != "livox_mid360":
-        raise ValueError(
-            f"unitree-g1-groot-wbc requires a livox_mid360 device, got {mid360.protocol!r}"
-        )
     return G1GrootPlatform(
         backend=binding.backend,
+        localization_source=autoconnect(),
+        simulation=True,
         adapter_type=binding.adapter_type,
         adapter_address=binding.adapter_address,
         tick_rate=50.0,
@@ -87,8 +99,4 @@ def resolve_g1_groot_platform() -> G1GrootPlatform:
         auto_dry_run=False,
         ramp_seconds=0.0,
         n_workers=10,
-        pointlio_config={
-            "host_ip": mid360.host_address,
-            "lidar_ip": mid360.device_address,
-        },
     )
