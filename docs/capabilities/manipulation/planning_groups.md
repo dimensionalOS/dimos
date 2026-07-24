@@ -66,10 +66,10 @@ When discovery runs without an SRDF, fallback uses
 This field is the robot's ordered local model joint set, not an implicit
 planning group.
 
-Fallback succeeds only when those joints form one unambiguous serial chain. It
-allows prismatic joints in the middle of the chain and strips only terminal tip
-prismatic joints, which usually represent gripper fingers. The generated group
-name is always `manipulator`.
+Fallback removes terminal prismatic leaves first, including branched finger
+joints, and then requires the remaining joints to form one unambiguous serial
+chain. Internal prismatic axes remain part of the arm. The generated group name
+is always `manipulator`.
 
 ## RoboPlan multi-robot scenes
 

@@ -133,17 +133,6 @@ def generate_fallback_planning_group(
 ) -> PlanningGroupDefinition:
     """Generate one conservative fallback planning group named ``manipulator``."""
     ordered_joints = _validate_and_order_serial_joints(model, controllable_joint_names)
-    while ordered_joints and ordered_joints[-1].type == "prismatic":
-        removed = ordered_joints.pop()
-        logger.warning(
-            f"Excluding terminal prismatic joint {removed.name} from "
-            f"fallback planning group {FALLBACK_PLANNING_GROUP_NAME}"
-        )
-
-    if not ordered_joints:
-        raise PlanningGroupDiscoveryError(
-            "Fallback planning group generation removed all candidate joints; provide SRDF"
-        )
 
     return PlanningGroupDefinition(
         name=FALLBACK_PLANNING_GROUP_NAME,
@@ -309,6 +298,12 @@ def _validate_and_order_serial_joints(
             raise PlanningGroupDiscoveryError(f"joint {joint_name} is fixed")
         joints.append(joint)
 
+    joints = _exclude_terminal_prismatic_joints(joints)
+    if not joints:
+        raise PlanningGroupDiscoveryError(
+            "Fallback planning group generation removed all candidate joints; provide SRDF"
+        )
+
     by_parent = {joint.parent_link: joint for joint in joints}
     by_child = {joint.child_link: joint for joint in joints}
     if len(by_parent) != len(joints) or len(by_child) != len(joints):
@@ -333,6 +328,28 @@ def _validate_and_order_serial_joints(
     if len(ordered_joints) != len(joints):
         raise PlanningGroupDiscoveryError("controllable joints are disconnected; provide SRDF")
     return ordered_joints
+
+
+def _exclude_terminal_prismatic_joints(
+    joints: list[JointDescription],
+) -> list[JointDescription]:
+    remaining = list(joints)
+    while True:
+        parent_links = {joint.parent_link for joint in remaining}
+        terminal_prismatic = [
+            joint
+            for joint in remaining
+            if joint.type == "prismatic" and joint.child_link not in parent_links
+        ]
+        if not terminal_prismatic:
+            return remaining
+        removed_names = {joint.name for joint in terminal_prismatic}
+        remaining = [joint for joint in remaining if joint.name not in removed_names]
+        for joint in terminal_prismatic:
+            logger.warning(
+                f"Excluding terminal prismatic joint {joint.name} from "
+                f"fallback planning group {FALLBACK_PLANNING_GROUP_NAME}"
+            )
 
 
 def _validate_controllable(
