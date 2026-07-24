@@ -50,6 +50,7 @@ except ImportError as e:
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        Obstacle,
         PlanningSceneInfo,
         VisualizationSession,
         VisualizationStateFrame,
@@ -158,6 +159,30 @@ class ViserManipulationVisualizer:
 
     def get_visualization_url(self) -> str | None:
         return None if self._runtime is None else self._runtime.url
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render an accepted planning obstacle."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is not None:
+            self._scene.add_vis_obstacle(obstacle_id, obstacle)
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove an obstacle representation."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is not None:
+            self._scene.remove_vis_obstacle(obstacle_id)
+
+    def clear_vis_obstacles(self) -> None:
+        """Remove all obstacle representations."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is not None:
+            self._scene.clear_vis_obstacles()
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""

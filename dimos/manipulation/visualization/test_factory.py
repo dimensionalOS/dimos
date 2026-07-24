@@ -26,13 +26,16 @@ import pytest
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     Obstacle,
+    PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.manipulation.visualization.config import (
     MeshcatVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -65,6 +68,15 @@ class FakeVisualization:
     def close(self) -> None:
         return None
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        return None
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        return None
+
+    def clear_vis_obstacles(self) -> None:
+        return None
+
 
 class FakeWorld:
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
@@ -91,8 +103,8 @@ class FakeWorld:
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         return (np.array([], dtype=np.float64), np.array([], dtype=np.float64))
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        return "obstacle-1"
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        return obstacle.name
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         return True
@@ -164,8 +176,51 @@ class FakeWorld:
         return np.zeros((6, 0), dtype=np.float64)
 
 
-class FakeVisualizationWorld(FakeWorld, FakeVisualization):
-    pass
+class FakeMeshcatWorld(FakeWorld):
+    def __init__(self) -> None:
+        self.native_calls: list[str] = []
+        self.visualization_calls: list[tuple[object, ...]] = []
+
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        self.native_calls.append("add")
+        return obstacle.name
+
+    def remove_obstacle(self, obstacle_id: str) -> bool:
+        self.native_calls.append("remove")
+        return True
+
+    def clear_obstacles(self) -> None:
+        self.native_calls.append("clear")
+
+    def initialize(self, session: VisualizationSession) -> None:
+        self.visualization_calls.append(("initialize", session))
+
+    def get_visualization_url(self) -> str | None:
+        self.visualization_calls.append(("get_visualization_url",))
+        return "meshcat://test"
+
+    def update_state(self, frame: VisualizationStateFrame) -> None:
+        self.visualization_calls.append(("update_state", frame))
+
+    def animate_trajectory(
+        self, trajectory: JointTrajectory, duration: float | None = None
+    ) -> None:
+        self.visualization_calls.append(("animate_trajectory", trajectory, duration))
+
+    def cancel_preview_animation(self, robot_ids: tuple[WorldRobotID, ...] | None = None) -> None:
+        self.visualization_calls.append(("cancel_preview_animation", robot_ids))
+
+    def close(self) -> None:
+        self.visualization_calls.append(("close",))
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        self.visualization_calls.append(("add_vis_obstacle", obstacle_id, obstacle))
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        self.visualization_calls.append(("remove_vis_obstacle", obstacle_id))
+
+    def clear_vis_obstacles(self) -> None:
+        self.visualization_calls.append(("clear_vis_obstacles",))
 
 
 def test_config_defaults_to_no_visualization() -> None:
@@ -218,18 +273,46 @@ def test_create_visualization_none_returns_none() -> None:
 
 
 def test_create_visualization_meshcat_accepts_structural_world() -> None:
-    fake_world = FakeVisualizationWorld()
-    assert isinstance(fake_world, VisualizationSpec)
+    fake_world = FakeMeshcatWorld()
     world_monitor = MagicMock()
-    assert (
-        create_manipulation_visualization(
-            MeshcatVisualizationConfig(),
-            world=fake_world,
-            world_monitor=world_monitor,
-            manipulation_module=MagicMock(),
-        )
-        is fake_world
+    visualization = create_manipulation_visualization(
+        MeshcatVisualizationConfig(),
+        world=fake_world,
+        world_monitor=world_monitor,
+        manipulation_module=MagicMock(),
     )
+    assert visualization is fake_world  # type: ignore[comparison-overlap]
+    assert isinstance(visualization, VisualizationSpec)
+    session = VisualizationSession(PlanningSceneInfo(robots={}), operator=object())
+    frame = VisualizationStateFrame(joint_states={})
+    trajectory = JointTrajectory(joint_names=["arm/j1"], points=[])
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    visualization.initialize(session)
+    assert visualization.get_visualization_url() == "meshcat://test"
+    visualization.update_state(frame)
+    visualization.cancel_preview_animation()
+    visualization.animate_trajectory(trajectory, 2.5)
+    visualization.close()
+    visualization.add_vis_obstacle("box", obstacle)
+    visualization.remove_vis_obstacle("box")
+    visualization.clear_vis_obstacles()
+    assert fake_world.visualization_calls == [
+        ("initialize", session),
+        ("get_visualization_url",),
+        ("update_state", frame),
+        ("cancel_preview_animation", None),
+        ("animate_trajectory", trajectory, 2.5),
+        ("close",),
+        ("add_vis_obstacle", "box", obstacle),
+        ("remove_vis_obstacle", "box"),
+        ("clear_vis_obstacles",),
+    ]
+    assert fake_world.native_calls == []
 
 
 def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
@@ -243,6 +326,37 @@ def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
             world_monitor=world_monitor,
             manipulation_module=MagicMock(),
         )
+
+
+@pytest.mark.skipif(
+    not DRAKE_AVAILABLE, reason="Drake visualization tests require the manipulation extra"
+)
+def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None:
+    world = DrakeWorld(enable_viz=False)
+
+    visualization = create_manipulation_visualization(
+        MeshcatVisualizationConfig(),
+        world=world,
+        world_monitor=MagicMock(),
+        manipulation_module=MagicMock(),
+    )
+
+    assert visualization is world
+    assert isinstance(visualization, VisualizationSpec)
+    assert world.get_visualization_url() is None
+    world.initialize(VisualizationSession(PlanningSceneInfo(robots={}), operator=object()))
+    world.update_state(VisualizationStateFrame(joint_states={}))
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(),
+        dimensions=(1.0, 1.0, 1.0),
+    )
+    world.add_vis_obstacle("box", obstacle)
+    world.remove_vis_obstacle("box")
+    world.clear_vis_obstacles()
+    world.cancel_preview_animation()
+    world.close()
 
 
 def test_create_viser_visualization_has_group_preview_protocol_without_legacy_path_api() -> None:
