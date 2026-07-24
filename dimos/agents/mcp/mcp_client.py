@@ -29,7 +29,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
-from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp import session_store, tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -62,6 +62,10 @@ class McpClientConfig(ModuleConfig):
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    # Issue #1898: conversation persistence. CLI usually sets session_id; when
+    # restore_session is True we load that file before accepting new messages.
+    session_id: str | None = None
+    restore_session: bool = False
 
 
 class McpClient(Module):
@@ -80,6 +84,7 @@ class McpClient(Module):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _session_id: str
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -88,6 +93,7 @@ class McpClient(Module):
         self._message_queue = Queue()
         self._tool_registry = {}
         self._history = []
+        self._session_id = self.config.session_id or str(uuid.uuid4())
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -236,13 +242,58 @@ class McpClient(Module):
             model = _init_model(self.config.model)
 
         with self._lock:
+            if self.config.restore_session:
+                self._load_session_history()
             self._state_graph = create_agent(
                 model=model,
                 tools=tools,
                 system_prompt=self.config.system_prompt,
             )
+            logger.info(
+                "Agent session ready",
+                session_id=self._session_id,
+                restore=self.config.restore_session,
+                n_history=len(self._history),
+            )
             if not self._thread.is_alive():
                 self._thread.start()
+
+    def _load_session_history(self) -> None:
+        try:
+            self._history = session_store.load_session(self._session_id)
+        except FileNotFoundError:
+            logger.warning(
+                "restore_session set but no file found; starting empty",
+                session_id=self._session_id,
+            )
+            self._history = []
+            return
+        except Exception:
+            # Corrupt JSON / unexpected message payload must not block robot start.
+            logger.exception(
+                "Failed to restore agent session; starting empty",
+                session_id=self._session_id,
+            )
+            self._history = []
+            return
+        logger.info(
+            "Restored agent session from disk",
+            session_id=self._session_id,
+            n_messages=len(self._history),
+        )
+
+    def _save_session_history(self) -> None:
+        # Avoid creating empty session files when a run never received messages.
+        if not self._history:
+            return
+        try:
+            session_store.save_session(
+                self._session_id,
+                self._history,
+                model=self.config.model,
+            )
+        except Exception:
+            logger.exception("Failed to save agent session", session_id=self._session_id)
 
     @rpc
     def stop(self) -> None:
@@ -254,6 +305,8 @@ class McpClient(Module):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        with self._lock:
+            self._save_session_history()
         self._http_client.close()
         super().stop()
 
@@ -346,6 +399,8 @@ class McpClient(Module):
                     self._history.append(msg)
                     pretty_print_langchain_message(msg)
                     self.agent.publish(msg)
+
+        self._save_session_history()
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)

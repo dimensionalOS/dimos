@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -24,8 +25,62 @@ import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot import external_blueprints as external
-from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
+from dimos.robot.cli.dimos import (
+    _apply_agent_session_cli,
+    _normalize_simulation_argv,
+    arg_help,
+    load_config_args,
+    main,
+)
 import dimos.utils.cli.spy.run_spy as run_spy
+
+
+def test_apply_agent_session_cli_assigns_new_id(capsys: pytest.CaptureFixture[str]) -> None:
+    class Cfg(BaseModel):
+        mcpclient: dict[str, object] = Field(default_factory=dict)
+
+    kwargs: dict[str, object] = {}
+    _apply_agent_session_cli(kwargs, Cfg, None, ["demo-skill"])
+    mcp = kwargs["mcpclient"]
+    assert isinstance(mcp, dict)
+    assert mcp["restore_session"] is False
+    assert isinstance(mcp["session_id"], str) and len(mcp["session_id"]) > 0
+    out = capsys.readouterr().out
+    assert "Agent session:" in out
+    assert "--restore-session=" in out
+
+
+def test_apply_agent_session_cli_restore(capsys: pytest.CaptureFixture[str]) -> None:
+    class Cfg(BaseModel):
+        mcpclient: dict[str, object] = Field(default_factory=dict)
+
+    kwargs: dict[str, object] = {}
+    _apply_agent_session_cli(kwargs, Cfg, "fixed-session-id", ["demo-skill"])
+    mcp = kwargs["mcpclient"]
+    assert isinstance(mcp, dict)
+    assert mcp["session_id"] == "fixed-session-id"
+    assert mcp["restore_session"] is True
+    assert "restoring" in capsys.readouterr().out
+
+
+def test_apply_agent_session_cli_rejects_bad_id() -> None:
+    class Cfg(BaseModel):
+        mcpclient: dict[str, object] = Field(default_factory=dict)
+
+    with pytest.raises(typer.Exit):
+        _apply_agent_session_cli({}, Cfg, "../escape", ["demo-skill"])
+
+
+def test_apply_agent_session_cli_ignored_without_mcpclient(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Cfg(BaseModel):
+        other: int = 1
+
+    kwargs: dict[str, object] = {}
+    _apply_agent_session_cli(kwargs, Cfg, "x", ["unitree-go2-basic"])
+    assert "mcpclient" not in kwargs
+    assert "ignored" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

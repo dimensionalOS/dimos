@@ -31,6 +31,7 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
 import typer
+import uuid
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -300,6 +301,47 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
     return kwargs  # type: ignore[no-any-return]
 
 
+def _apply_agent_session_cli(
+    kwargs: dict[str, Any],
+    blueprint_config: type[BaseModel],
+    restore_session: str | None,
+    robot_types: list[str],
+) -> None:
+    """Wire --restore-session / auto session id when the blueprint has McpClient."""
+    if "mcpclient" not in blueprint_config.model_fields:
+        if restore_session:
+            typer.echo(
+                "Warning: --restore-session ignored (blueprint has no McpClient)",
+                err=True,
+            )
+        return
+
+    mcp = kwargs.setdefault("mcpclient", {})
+    if not isinstance(mcp, dict):
+        typer.echo("Error: mcpclient config must be a mapping", err=True)
+        raise typer.Exit(1)
+
+    if restore_session:
+        from dimos.agents.mcp.session_store import session_path
+
+        try:
+            session_path(restore_session)  # validate id (no path traversal)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        mcp["session_id"] = restore_session
+        mcp["restore_session"] = True
+        typer.echo(f"  Agent session: {restore_session} (restoring)")
+        return
+
+    mcp.setdefault("session_id", str(uuid.uuid4()))
+    mcp.setdefault("restore_session", False)
+    session_id = mcp["session_id"]
+    blueprint_token = " ".join(robot_types)
+    typer.echo(f"  Agent session: {session_id}")
+    typer.echo(f"  Resume with:  dimos run {blueprint_token} --restore-session={session_id}")
+
+
 @main.command()
 def run(
     ctx: typer.Context,
@@ -309,6 +351,11 @@ def run(
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    restore_session: str | None = typer.Option(
+        None,
+        "--restore-session",
+        help="Restore McpClient conversation history for this session UUID (#1898)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -369,6 +416,8 @@ def run(
     kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
     if cli_config_overrides:
         kwargs["g"] = cli_config_overrides
+
+    _apply_agent_session_cli(kwargs, blueprint_config, restore_session, robot_types)
 
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
@@ -642,6 +691,74 @@ def agent_send_cmd(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(text)
+
+
+agent_app = typer.Typer(help="Agent session helpers (issue #1898)")
+main.add_typer(agent_app, name="agent")
+
+
+@agent_app.command("sessions")
+def agent_sessions() -> None:
+    """List saved agent conversation sessions on disk."""
+    from dimos.agents.mcp.session_store import list_sessions
+
+    sessions = list_sessions()
+    if not sessions:
+        typer.echo("No saved agent sessions.")
+        return
+
+    typer.echo(f"{'SESSION ID':<38} {'MSGS':>4}  {'UPDATED':<28}  SUMMARY")
+    for s in sessions:
+        typer.echo(
+            f"{s.session_id:<38} {s.n_messages:>4}  {s.updated_at:<28}  {s.summary}"
+        )
+    typer.echo("\nResume: dimos run <blueprint> --restore-session=<SESSION ID>")
+    typer.echo("Rename: dimos agent update-summary <SESSION ID> \"new title\"")
+    typer.echo("Delete: dimos agent delete <SESSION ID>")
+
+
+@agent_app.command("update-summary")
+def agent_update_summary(
+    session_id: str = typer.Argument(..., help="Session UUID"),
+    summary: str = typer.Argument(
+        ...,
+        help="Custom display name (user_summary). Empty string clears it.",
+    ),
+) -> None:
+    """Set user_summary for a session. List shows user_summary, else auto summary."""
+    from dimos.agents.mcp.session_store import update_session_summary
+
+    try:
+        update_session_summary(session_id, summary)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    text = " ".join(summary.split()).strip()
+    if text:
+        typer.echo(f"Updated user_summary for {session_id}: {text}")
+    else:
+        typer.echo(f"Cleared user_summary for {session_id} (will show auto summary)")
+
+
+@agent_app.command("delete")
+def agent_delete_session(
+    session_id: str = typer.Argument(..., help="Session UUID to delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+) -> None:
+    """Delete a saved agent session file."""
+    from dimos.agents.mcp.session_store import delete_session
+
+    if not yes:
+        confirm = typer.confirm(f"Delete agent session {session_id}?")
+        if not confirm:
+            typer.echo("Cancelled.")
+            raise typer.Exit(0)
+    try:
+        delete_session(session_id)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Deleted session {session_id}")
 
 
 @main.command()
