@@ -19,9 +19,13 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial.transform import Rotation
+
+if TYPE_CHECKING:
+    from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 
 # Frame-invariant marker pose 7-vector: (x, y, z, qx, qy, qz, qw), meters + xyzw.
 Pose7 = tuple[float, float, float, float, float, float, float]
@@ -116,6 +120,18 @@ def view_quality(optical_T_marker: tuple[float, ...] | list[float]) -> tuple[flo
     cos_angle = abs(float(np.dot(line_of_sight, normal)))
     view_angle_deg = math.degrees(math.acos(min(1.0, cos_angle)))
     return distance_m, view_angle_deg
+
+
+def camera_relative_quality(
+    det: Detection3DMarker, world_T_marker: Pose7
+) -> tuple[float | None, float | None]:
+    """``(distance_m, view_angle_deg)`` of this glimpse, or ``(None, None)`` when no camera transform rode along."""
+    if det.transform is None:
+        # smoothing_window > 0 emits an averaged pose with transform=None, so the two camera-relative gates go quiet
+        return None, None
+    # det.transform IS world_T_optical; this inverse exactly undoes the compose that built world_T_marker.
+    optical_T_marker = np.linalg.inv(det.transform.to_matrix()) @ matrix_from_pose7(world_T_marker)
+    return view_quality(pose7_from_matrix(optical_T_marker))
 
 
 def tag_side_px(corners_px: np.ndarray) -> float:

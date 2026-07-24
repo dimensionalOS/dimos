@@ -57,12 +57,10 @@ from dimos.perception.fiducial.apriltag_aggregation import (
     TagAggregator,
     TagEstimate,
     TagObservation,
-    matrix_from_pose7,
-    pose7_from_matrix,
+    camera_relative_quality,
     tag_covariance,
     tag_noise_scale,
     tag_side_px,
-    view_quality,
 )
 from dimos.perception.fiducial.marker_detect import (
     detect_markers_in_image as _detect_markers_in_image,
@@ -445,20 +443,6 @@ class AggregateTagBursts:
         # markers whose CURRENT burst already published; a marker leaves the set once its window thins under min_observations (left view > time_window_s), re-arming the edge
         self._burst_counted: set[int] = set()
 
-    @staticmethod
-    def _camera_relative_quality(
-        det: Detection3DMarker, world_T_marker: Pose7
-    ) -> tuple[float | None, float | None]:
-        """``(distance_m, view_angle_deg)`` of this glimpse, or ``(None, None)`` when no camera transform rode along."""
-        if det.transform is None:
-            # smoothing_window > 0 emits an averaged pose with transform=None, so the two camera-relative gates go quiet
-            return None, None
-        # det.transform IS world_T_optical; this inverse exactly undoes the compose that built world_T_marker.
-        optical_T_marker = np.linalg.inv(det.transform.to_matrix()) @ matrix_from_pose7(
-            world_T_marker
-        )
-        return view_quality(pose7_from_matrix(optical_T_marker))
-
     def __call__(self, obs: Observation[Detection3DMarker | None]) -> None:
         det = obs.data
         if det is None:
@@ -473,7 +457,7 @@ class AggregateTagBursts:
             det.orientation.z,
             det.orientation.w,
         )
-        distance_m, view_angle_deg = self._camera_relative_quality(det, world_T_marker)
+        distance_m, view_angle_deg = camera_relative_quality(det, world_T_marker)
         reason = self._aggregator.observe(
             TagObservation(
                 ts=obs.ts,

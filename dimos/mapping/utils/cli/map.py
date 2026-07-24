@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 import math
 from pathlib import Path
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.perception.fiducial.apriltag_aggregation import Pose7
+    from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig, Pose7
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory2/vis/space/rerun.py): thin vertical line
@@ -321,33 +322,73 @@ def _log_reconstruction(
             _log_aggregated_markers(aggregated_markers, half, outline_bump)
 
 
+def _corrected_pose7(d: Observation[Any], graph: PoseGraph | None) -> Pose7:
+    """Lift one detection's marker pose from world_raw into the PGO-corrected map frame."""
+    from dimos.msgs.geometry_msgs.Transform import Transform
+
+    c, o = d.data.center, d.data.orientation
+    if graph is None:
+        return (c.x, c.y, c.z, o.x, o.y, o.z, o.w)
+    corrected = graph.correct(
+        Transform(
+            translation=c,
+            rotation=o,
+            frame_id="world",
+            child_frame_id=f"marker_{d.data.marker_id}",
+            ts=d.ts,
+        )
+    )
+    t, r = corrected.translation, corrected.rotation
+    return (t.x, t.y, t.z, r.x, r.y, r.z, r.w)
+
+
 def _marker_observations(
     dets: list[Observation[Any]],
     graph: PoseGraph | None,
 ) -> list[Any]:
-    """PGO-correct each detection into the map frame and wrap it as a TagObservation."""
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.perception.fiducial.apriltag_aggregation import TagObservation
+    """PGO-correct each detection into the map frame and wrap it as a TagObservation carrying all four gate inputs."""
+    from dimos.perception.fiducial.apriltag_aggregation import (
+        TagObservation,
+        camera_relative_quality,
+        tag_side_px,
+    )
 
     observations = []
     for d in dets:
-        if graph is not None:
-            corrected = graph.correct(
-                Transform(
-                    translation=d.data.center,
-                    rotation=d.data.orientation,
-                    frame_id="world",
-                    child_frame_id=f"marker_{d.data.marker_id}",
-                    ts=d.ts,
-                )
+        c, o = d.data.center, d.data.orientation
+        # quality off the RAW pair: PGO moves camera and marker by the same per-frame correction, so camera-relative geometry is unchanged
+        distance_m, view_angle_deg = camera_relative_quality(
+            d.data, (c.x, c.y, c.z, o.x, o.y, o.z, o.w)
+        )
+        observations.append(
+            TagObservation(
+                ts=d.ts,
+                marker_id=d.data.marker_id,
+                pose=_corrected_pose7(d, graph),
+                distance_m=distance_m,
+                view_angle_deg=view_angle_deg,
+                reproj_px=d.data.reprojection_error,
+                tag_px=tag_side_px(d.data.corners_px),
             )
-            t, r = corrected.translation, corrected.rotation
-            pose7: Pose7 = (t.x, t.y, t.z, r.x, r.y, r.z, r.w)
-        else:
-            c, o = d.data.center, d.data.orientation
-            pose7 = (c.x, c.y, c.z, o.x, o.y, o.z, o.w)
-        observations.append(TagObservation(ts=d.ts, marker_id=d.data.marker_id, pose=pose7))
+        )
     return observations
+
+
+def _gate_observations(
+    observations: list[Any], config: AggregationConfig
+) -> tuple[list[Any], Counter[str]]:
+    """Keep the glimpses clearing every per-glimpse gate; tally the rest by rejection reason."""
+    from dimos.perception.fiducial.apriltag_aggregation import gate_reason
+
+    kept: list[Any] = []
+    rejected: Counter[str] = Counter()
+    for obs in observations:
+        reason = gate_reason(obs, config)
+        if reason is None:
+            kept.append(obs)
+        else:
+            rejected[reason] += 1
+    return kept, rejected
 
 
 def main(
@@ -701,30 +742,45 @@ def main(
         else:
             marker_dets = all_dets
         unique_ids = sorted({obs.data.marker_id for obs in marker_dets})
+        # a surveyed pose is inherited until someone re-surveys, so hold each glimpse to the SAME per-glimpse bars the live detector uses (read off its config so they can't drift)
+        aggregation = MarkerDetectionStreamModuleConfig.model_fields["aggregation"].get_default(
+            call_default_factory=True
+        )
+        in_gate, rejected = _gate_observations(_marker_observations(all_dets, graph), aggregation)
         print(
             f"markers: {len(marker_dets)} entries from {len(all_dets)} raw detections "
-            f"across {len(unique_ids)} unique ids {unique_ids}"
+            f"across {len(unique_ids)} unique ids {unique_ids}; "
+            f"{sum(rejected.values())} gated out {dict(rejected.most_common())}"
         )
         if export:
             # Write the aggregated marker map alongside the exported premap, sharing its stem.
             marker_map_path = Path.cwd() / f"{db_path.stem}.marker_map.json"
-            if all_dets:
+            if in_gate:
                 from dimos.mapping.relocalization.priors import write_marker_map
                 from dimos.perception.fiducial.apriltag_aggregation import aggregate_by_marker_id
 
-                aggregated_markers = aggregate_by_marker_id(_marker_observations(all_dets, graph))
+                fused = aggregate_by_marker_id(in_gate)
+                # thinner than min_observations leaves the Huber fit no redundancy to reject a mirror flip with
+                aggregated_markers = {
+                    marker_id: (pose, n)
+                    for marker_id, (pose, n) in fused.items()
+                    if n >= aggregation.min_observations
+                }
                 write_marker_map(marker_map_path, aggregated_markers, source=db_path.name)
                 aggregated_ids = sorted(aggregated_markers)
                 print(
                     f"wrote aggregated marker locations: {len(aggregated_ids)} tags "
                     f"{aggregated_ids} -> {marker_map_path}"
                 )
+                thin_ids = sorted(set(fused) - set(aggregated_markers))
+                if thin_ids:
+                    print(f"  dropped {thin_ids}: under {aggregation.min_observations} in-gate")
                 for marker_id in aggregated_ids:
                     print(
                         f"  id {marker_id}: aggregated {aggregated_markers[marker_id][1]} detections"
                     )
             else:
-                print("no marker detections; skipping marker locations")
+                print("no in-gate marker detections; skipping marker locations")
 
     rerun_init("dimos map tool")
     rr.save(str(out))
