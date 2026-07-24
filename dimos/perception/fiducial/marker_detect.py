@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import cv2
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -97,9 +96,7 @@ def detect_markers_in_image(
         if pose is None:
             continue
 
-        optical_T_marker, _reproj_px = pose
-        rvec = cv2.Rodrigues(optical_T_marker[:3, :3])[0]
-        tvec = optical_T_marker[:3, 3].reshape(3, 1)
+        rvec, tvec = pose
         t_optical_marker = rvec_tvec_to_transform(
             rvec,
             tvec,

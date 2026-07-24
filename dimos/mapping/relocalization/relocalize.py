@@ -45,7 +45,7 @@ class InsufficientWallEvidenceError(ValueError):
 
 
 class NoUprightCandidateError(ValueError):
-    """Every candidate tilts past ``gravity_tilt_max_deg``; no valid winner, so refuse rather than admit a gravity-violating pose."""
+    """Every candidate tilts past ``GRAVITY_TILT_MAX_DEG``; no valid winner, so refuse rather than admit a gravity-violating pose."""
 
 
 def _preprocess(
@@ -133,7 +133,6 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
 def relocalize(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
-    gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float]:
     """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
 
@@ -143,13 +142,7 @@ def relocalize(
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
     """
     candidates = generate_ransac_candidates(global_map, local_map)
-    T, fitness = refine_candidates(
-        global_map,
-        local_map,
-        candidates,
-        gravity_tilt_max_deg=gravity_tilt_max_deg,
-    )
-    return T, fitness
+    return refine_candidates(global_map, local_map, candidates)
 
 
 def generate_ransac_candidates(
@@ -188,7 +181,6 @@ def refine_candidates(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
     candidates: list[np.ndarray],
-    gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float]:
     """Judge a pool of candidate local_map->global_map transforms and refine the winner (gravity-filter, WALL-only rerank, wall ICP polish, final full-cloud ICP)."""
     # Fine downsample once — used for both candidate scoring and the final ICP.
@@ -199,11 +191,11 @@ def refine_candidates(
     tgt_fine = _global_fine(global_map, FINE_VOXEL)
 
     # A tilted winner is a rotationally-symmetric-floor mis-solve, so refuse the whole pool.
-    upright = [T for T in candidates if _gravity_tilt_deg(T) <= gravity_tilt_max_deg]
+    upright = [T for T in candidates if _gravity_tilt_deg(T) <= GRAVITY_TILT_MAX_DEG]
     if not upright:
         raise NoUprightCandidateError(
             f"no candidate within the gravity gate: {len(candidates)} candidate(s), "
-            f"none within {gravity_tilt_max_deg} deg -- refusing"
+            f"none within {GRAVITY_TILT_MAX_DEG} deg -- refusing"
         )
     pool = upright
 

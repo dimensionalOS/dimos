@@ -17,7 +17,7 @@ import time
 from typing import Any
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import model_validator
 import reactivex as rx
 from reactivex import Subject, combine_latest, operators as ops
 
@@ -36,7 +36,6 @@ from dimos.mapping.relocalization.priors import (
     relocalize_with_prior,
 )
 from dimos.mapping.relocalization.relocalize import (
-    GRAVITY_TILT_MAX_DEG,
     InsufficientWallEvidenceError,
     NoUprightCandidateError,
 )
@@ -69,10 +68,8 @@ class Config(ModuleConfig):
         None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
     )
     publish_loaded_map: bool = False
-    # Max z-axis tilt (deg) a candidate may keep at the judge's gravity gate.
-    gravity_tilt_max_deg: float = Field(default=GRAVITY_TILT_MAX_DEG, ge=0.0)
     use_carving: bool = True
-    # False (default): one line per accepted fix plus throttled warnings. True (`--eval`): each accept also logs its published pose, timing and point count.
+    # True (`--eval`): raise the throttled refusal lines to warning and tally accepts/rejects per prior for the summary at stop().
     verbose_eval_logging: bool = False
     # The prior pool keyed by `type`, so every knob is `-o relocalizationmodule.priors.<key>.<field>`: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven). Both on by default, so a blueprint declares nothing; `--disable marker-detection-stream-module` leaves RANSAC alone.
     priors: dict[str, PriorConfig] = {
@@ -320,22 +317,18 @@ class RelocalizationModule(Module):
         if solved is None:
             return None
         map_T_world, fitness = solved
-        solve_s, n_pts = time.monotonic() - t0, len(msg)
-        if not self._fitness_ok(prior, fitness, solve_s, n_pts):
+        dt = time.monotonic() - t0
+        n_pts = len(msg)
+        if not self._fitness_ok(prior, fitness, dt, n_pts):
             return None
-        return self._publish_fix(map_T_world, prior, fitness, solve_s, n_pts)
+        return self._publish_fix(map_T_world, prior, fitness, dt, n_pts)
 
     def _solve(self, msg: PointCloud2, prior: RelocPrior) -> tuple[np.ndarray, float] | None:
         """Judge this prior's candidates, turning each refusal into a None sentinel."""
         assert self._premap is not None, "start() loads the premap before any fire"
         try:
             # None here is the double-fire race: the other thread's propose() drained the pending tag fix first and already published it -- benign no-op.
-            return relocalize_with_prior(
-                self._premap.pointcloud,
-                msg.pointcloud,
-                prior,
-                gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
-            )
+            return relocalize_with_prior(self._premap.pointcloud, msg.pointcloud, prior)
         except InsufficientWallEvidenceError as e:
             # Too few wall points to judge the pool (a sparse acquisition cloud a tag burst is allowed to fire on): drop the unjudged fix -- a pose scored against <100 walls isn't trustworthy, and the tag is re-seen as the robot moves into structure.
             self._throttled_warn(
@@ -352,7 +345,7 @@ class RelocalizationModule(Module):
             logger.exception("relocalize() failed")
             return None
 
-    def _fitness_ok(self, prior: RelocPrior, fitness: float, solve_s: float, n_pts: int) -> bool:
+    def _fitness_ok(self, prior: RelocPrior, fitness: float, dt: float, n_pts: int) -> bool:
         """Gate the fix on its own prior's bar."""
         threshold = self._accept_threshold[prior.name]
         if fitness >= threshold:
@@ -361,7 +354,7 @@ class RelocalizationModule(Module):
             self._eval_tally.setdefault(prior.name, SourceTally()).rejects += 1
         # threshold= IS the reason: this is the only fitness reject path, and the operator's next move is to compare the two numbers.
         extra: dict[str, Any] = (
-            {"time_cost_s": round(solve_s, 1), "n_pts": n_pts}
+            {"time_cost_s": round(dt, 1), "n_pts": n_pts}
             if self.config.verbose_eval_logging
             else {}
         )
@@ -375,14 +368,14 @@ class RelocalizationModule(Module):
         return False
 
     def _publish_fix(
-        self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, solve_s: float, n_pts: int
+        self, map_T_world: np.ndarray, prior: RelocPrior, fitness: float, dt: float, n_pts: int
     ) -> Transform:
         """Return the accepted fix as the world->map TF."""
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
         # so inverse the transform T here to get map_in_scan_frame
         world_T_map = np.linalg.inv(map_T_world)
-        self._log_accept(prior, fitness, solve_s, n_pts, map_T_world, world_T_map)
+        self._log_accept(prior, fitness, dt, n_pts, map_T_world, world_T_map)
         return Transform(
             translation=Vector3(*world_T_map[:3, 3]),
             rotation=Quaternion.from_rotation_matrix(world_T_map[:3, :3]),
@@ -394,37 +387,23 @@ class RelocalizationModule(Module):
         self,
         prior: RelocPrior,
         fitness: float,
-        solve_s: float,
+        dt: float,
         n_pts: int,
         map_T_world: np.ndarray,
         world_T_map: np.ndarray,
     ) -> None:
-        """One accept line: the fix plus its health, with pose and timing under --eval."""
+        """One accept line: the published fix, its health, and which prior won."""
         if self.config.verbose_eval_logging:
             entry = self._eval_tally.setdefault(prior.name, SourceTally())
             entry.accepts += 1
             entry.fitnesses.append(round(fitness, 3))
         logger.info(
-            "relocalize accepted",
-            source=prior.name,
-            fitness=round(fitness, 3),
-            time_cost_s=round(solve_s, 1),
-            **self._pose_kw(n_pts, map_T_world, world_T_map),
+            f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
+            f"reloc_t={map_T_world[:3, 3].round(3).tolist()} "
+            f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
+            f"published_t={world_T_map[:3, 3].round(3).tolist()} "
+            f"source={prior.name} "
         )
-
-    def _pose_kw(
-        self, n_pts: int, map_T_world: np.ndarray, world_T_map: np.ndarray
-    ) -> dict[str, Any]:
-        """The published pose rides on --eval only: the quiet line is the fix plus its health."""
-        if not self.config.verbose_eval_logging:
-            return {}
-        return {
-            "n_pts": n_pts,
-            "reloc_t_m": map_T_world[:3, 3].round(3).tolist(),
-            "tf_from": FRAME_WORLD,
-            "tf_to": FRAME_MAP,
-            "published_t_m": world_T_map[:3, 3].round(3).tolist(),
-        }
 
     def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
         _, tf = pair

@@ -26,7 +26,7 @@ import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
@@ -295,15 +295,7 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
 
     # We don't need this config, but this atleast validates the user input first.
     # This will help catch misspellings and similar mistakes.
-    try:
-        config(**kwargs)
-    except ValidationError as exc:
-        # The overlay is PARTIAL: it layers over each module's blueprint preset (merged at
-        # deploy in _merge_config_kwargs), so a field missing here is normal -- the preset
-        # fills it. Without this, `-o markerdetectionstreammodule.aggregation.min_observations=3`
-        # would be rejected for the marker_length_m the preset carries. Typos and type errors raise.
-        if any(err["type"] != "missing" for err in exc.errors()):
-            raise
+    config(**kwargs)
 
     return kwargs  # type: ignore[no-any-return]
 
@@ -317,7 +309,7 @@ def run(
     eval_reloc: bool = typer.Option(
         False,
         "--eval",
-        help="Turn the relocalization module's verbose accept trace on",
+        help="Raise the relocalization refusal lines to warning and print a per-prior summary at stop",
     ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(

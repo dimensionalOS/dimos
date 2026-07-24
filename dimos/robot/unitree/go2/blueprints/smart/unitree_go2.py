@@ -102,7 +102,7 @@ unitree_go2_relocalization = autoconnect(
         camera_info=GO2Connection.camera_info_static,
     ),
     RelocalizationModule.blueprint(),
-).global_config(n_workers=12, robot_model="unitree_go2")
+).global_config(n_workers=12)
 
 unitree_go2_memory = autoconnect(
     unitree_go2,

@@ -27,7 +27,6 @@ import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import Field
 
 from dimos.mapping.relocalization.relocalize import (
-    GRAVITY_TILT_MAX_DEG,
     generate_ransac_candidates,
     refine_candidates,
 )
@@ -196,15 +195,9 @@ def relocalize_with_prior(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
     prior: RelocPrior,
-    gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
 ) -> tuple[np.ndarray, float] | None:
     """Judge this prior's candidates through the shared fine-ICP tail; ``None`` when it proposed none."""
     transforms = prior.propose(global_map, local_map)
     if not transforms:
         return None
-    return refine_candidates(
-        global_map,
-        local_map,
-        transforms,
-        gravity_tilt_max_deg=gravity_tilt_max_deg,
-    )
+    return refine_candidates(global_map, local_map, transforms)

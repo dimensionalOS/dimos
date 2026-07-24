@@ -179,8 +179,8 @@ def ambiguity_gated_pose(
     *,
     distortion_model: str | None = None,
     ambiguity_ratio_min: float,
-) -> tuple[np.ndarray, float] | None:
-    """Best ``(camera_optical <- marker)`` 4x4 pose + its RMS reproj px, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (the mirror solution explains the pixels nearly as well)."""
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Best ``(rvec, tvec)`` for ``camera_optical <- marker``, ``None`` when the runner-up's reproj is within ``ambiguity_ratio_min`` x the best (the mirror solution explains the pixels nearly as well)."""
     candidates = estimate_marker_pose_candidates(
         corners_px, marker_length_m, camera_matrix, dist_coeffs, distortion_model=distortion_model
     )
@@ -193,10 +193,7 @@ def ambiguity_gated_pose(
     # error > 1e-12 px guards the ratio div-by-zero when the best pose fits the corners exactly
     if len(scored) > 1 and error > 1e-12 and scored[1][0] / error < ambiguity_ratio_min:
         return None  # IPPE planar mirror ambiguity https://doi.org/10.1007/s11263-014-0725-5
-    optical_T_marker = np.eye(4)
-    optical_T_marker[:3, :3] = cv2.Rodrigues(rvec)[0]
-    optical_T_marker[:3, 3] = tvec.reshape(3)
-    return optical_T_marker, float(error)
+    return rvec, tvec
 
 
 def rvec_tvec_to_transform(
