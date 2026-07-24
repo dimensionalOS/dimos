@@ -278,6 +278,7 @@ pub struct Builder {
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+    tf: Option<crate::tf::Tf>,
 }
 
 impl Builder {
@@ -286,6 +287,7 @@ impl Builder {
             topics,
             routes: HashMap::new(),
             outputs: Vec::new(),
+            tf: None,
         }
     }
 
@@ -328,6 +330,24 @@ impl Builder {
             encode,
             sender: tx,
         }
+    }
+
+    /// A handle that answers transform queries and publishes on the `tf` topic.
+    ///
+    /// The graph fills in the background as `tf` messages arrive. Repeated calls
+    /// share one graph.
+    pub fn tf(&mut self) -> crate::tf::Tf {
+        if let Some(tf) = &self.tf {
+            return tf.clone();
+        }
+        let topic = self.topic_for("tf");
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.clone(), rx));
+        let (tf, route) =
+            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, tx);
+        self.routes.entry(topic).or_default().push(route);
+        self.tf = Some(tf.clone());
+        tf
     }
 }
 
@@ -768,6 +788,23 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
+    }
+
+    #[test]
+    fn tf_uses_mapped_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/robot/tf")]);
+        builder.tf();
+        assert!(builder.routes.contains_key("/robot/tf"));
+        assert_eq!(builder.outputs[0].0, "/robot/tf");
+    }
+
+    #[test]
+    fn repeated_tf_calls_share_one_graph() {
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        builder.tf();
+        builder.tf();
+        assert_eq!(builder.outputs.len(), 1);
+        assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
     }
 
     // recv/publish concurrency

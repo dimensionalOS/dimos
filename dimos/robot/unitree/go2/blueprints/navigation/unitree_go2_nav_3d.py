@@ -36,21 +36,19 @@ from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_PITCH_DOWN,
-    base_link_from_mid360,
+    Go2Mid360StaticTf,
 )
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
 # Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
 planner_viz_hz = 0.0
-# base_link <- lidar mount rotation, so nav reads odometry in the level body frame.
-_sensor_mount_rotation = list(base_link_from_mid360().rotation.to_tuple())
 
 # Body-frame axis-triad length (m).
 _axis_len = 0.5
@@ -102,7 +100,10 @@ def _render_path(msg: Any) -> Any:
 def _static_robot_body(rr: Any) -> list[Any]:
     """Go2-shaped box on pointlio's sensor frame, counter-rotated for the lidar pitch."""
     return [
-        rr.Boxes3D(half_sizes=[0.35, 0.155, 0.2], colors=[(0, 255, 127)]),
+        rr.Boxes3D(
+            half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, ROBOT_HEIGHT / 2],
+            colors=[(0, 255, 127)],
+        ),
         rr.Transform3D(
             parent_frame="tf#/mid360_link",
             rotation=rr.RotationAxisAngle(axis=(0, 1, 0), degrees=-math.degrees(MID360_PITCH_DOWN)),
@@ -176,9 +177,7 @@ unitree_go2_nav_3d = autoconnect(
         ]
     ),
     PointLio.blueprint(),
-    # Level pointlio's tilted-sensor odometry into the body frame so the follower
-    # steers on a true heading. The ray tracer keeps the raw sensor odometry.
-    OdomBodyFrame.blueprint(mount_rotation=_sensor_mount_rotation),
+    Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
         emit_every=1,
@@ -192,7 +191,7 @@ unitree_go2_nav_3d = autoconnect(
     MLSPlannerNative.blueprint(
         world_frame="odom",
         voxel_size=voxel_size,
-        robot_height=0.3,
+        robot_height=ROBOT_HEIGHT,
         surface_closing_radius=0.3,
         wall_clearance_m=0.1,
         wall_buffer_m=0.75,
@@ -201,10 +200,8 @@ unitree_go2_nav_3d = autoconnect(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    GoalRelay.blueprint(),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
-        [(BasicPathFollower, "odometry", "body_odometry")]
-    ),
+    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 

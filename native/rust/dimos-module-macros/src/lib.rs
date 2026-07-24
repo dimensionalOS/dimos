@@ -17,7 +17,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, Path, Type};
 
-#[proc_macro_derive(Module, attributes(input, output, config, module))]
+#[proc_macro_derive(Module, attributes(input, output, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand(input) {
@@ -178,6 +178,7 @@ enum FieldKind {
     Input { decode: Path, handler: Ident },
     Output { encode: Path },
     Config,
+    Tf,
     State,
 }
 
@@ -273,6 +274,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote!(#name: builder.output(#name_str, #encode))
             }
             FieldKind::Config => quote!(#name: config),
+            FieldKind::Tf => quote!(#name: builder.tf()),
             FieldKind::State => quote!(#name: ::core::default::Default::default()),
         }
     });
@@ -355,7 +357,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
+                    "field has multiple module attributes; only one of #[input], #[output], #[config], #[tf] is allowed",
                 ));
             }
             let mut decode: Option<Path> = None;
@@ -380,7 +382,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
+                    "field has multiple module attributes; only one of #[input], #[output], #[config], #[tf] is allowed",
                 ));
             }
             let mut encode: Option<Path> = None;
@@ -402,10 +404,18 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
+                    "field has multiple module attributes; only one of #[input], #[output], #[config], #[tf] is allowed",
                 ));
             }
             found = Some(FieldKind::Config);
+        } else if path.is_ident("tf") {
+            if found.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "field has multiple module attributes; only one of #[input], #[output], #[config], #[tf] is allowed",
+                ));
+            }
+            found = Some(FieldKind::Tf);
         }
     }
 

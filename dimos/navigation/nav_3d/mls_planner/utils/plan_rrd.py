@@ -31,25 +31,31 @@ import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.tf import StreamTF
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
+from dimos.navigation.tf_pose import base_height_above_ground
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
 
-# Body-frame axis-triad length for the odometry transform (m).
-ODOM_AXIS_LEN = 0.5
-# Arrow radius as a fraction of the triad length.
+AXIS_LEN = 0.5
 AXIS_RADIUS_RATIO = 25
 
-# The travelled trail. Blue, but light enough to read against the map's turbo
-# lows, and clear of PATH_PALETTE so it never reads as a planned path.
-ODOM_PATH_COLOR = [80, 160, 255]
+# Mount frames as recorded on the tf stream.
+BASE_FRAME = "base_link"
+SENSOR_FRAME = "mid360_link"
 
-# Distinct path colors for overlaid configurations, config 0 first.
+SENSOR_PATH_COLOR = [80, 160, 255]
+
+# Different colors for each path when running with multiple configs
 PATH_PALETTE = [
     [0, 255, 0],
     [255, 0, 255],
@@ -126,19 +132,80 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
     rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
 
 
+def _base_from_sensor(store: SqliteStore) -> Transform | None:
+    """Sensor to robot base link transform from the recorded tf stream."""
+    tf = StreamTF.from_store(store)
+    if tf is None:
+        print("no tf stream in the recording; skipping the base_link triad")
+        return None
+    return tf.get(SENSOR_FRAME, BASE_FRAME)
+
+
+def _base_pose(pose: tuple[float, ...], ts: float, base_from_sensor: Transform) -> Transform:
+    """World to robot base link."""
+    px, py, pz, qx, qy, qz, qw = pose
+    sensor = Transform(
+        translation=Vector3(px, py, pz),
+        rotation=Quaternion(qx, qy, qz, qw),
+        frame_id="world",
+        child_frame_id=base_from_sensor.frame_id,
+        ts=ts,
+    )
+    return sensor + base_from_sensor
+
+
+def _plan_start(
+    pose: tuple[float, ...],
+    ts: float,
+    base_from_sensor: Transform | None,
+    base_height: float,
+    robot_height: float,
+) -> tuple[tuple[float, float, float], Transform | None]:
+    """Ground-projected planner start, plus the base pose when tf has the mount.
+
+    Without a tf stream the start is the sensor pose dropped by the robot height.
+    """
+    px, py, pz, *_ = pose
+    if base_from_sensor is None:
+        return (float(px), float(py), float(pz) - robot_height), None
+    base = _base_pose(pose, ts, base_from_sensor)
+    start = (
+        float(base.translation.x),
+        float(base.translation.y),
+        float(base.translation.z) - base_height,
+    )
+    return start, base
+
+
 def _log_odometry(
-    pose: tuple[float, ...], ts: float, trail: list[tuple[float, float, float]]
+    pose: tuple[float, ...],
+    ts: float,
+    trail: list[tuple[float, float, float]],
+    base: Transform | None,
 ) -> None:
-    """Log the odometry pose as a moving body-frame transform and the growing trail."""
+    """Trace the sensor moving throughout the scene."""
     px, py, pz, qx, qy, qz, qw = pose
     rr.set_time(TIMELINE, timestamp=ts)
     rr.log(
-        "world/odom",
+        "world/mid360_link",
         rr.Transform3D(translation=[px, py, pz], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])),
     )
     trail.append((px, py, pz))
     if len(trail) > 1:
-        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[ODOM_PATH_COLOR], radii=0.015))
+        rr.log(
+            "world/mid360_path", rr.LineStrips3D([trail], colors=[SENSOR_PATH_COLOR], radii=0.015)
+        )
+    if base is None:
+        return
+    rr.log(
+        "world/base_link",
+        rr.Transform3D(
+            translation=[base.translation.x, base.translation.y, base.translation.z],
+            quaternion=rr.Quaternion(
+                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+            ),
+        ),
+    )
 
 
 def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
@@ -309,7 +376,7 @@ def _process_frame(
     ray_obs: Observation[PointCloud2],
     planners: list[tuple[str, list[int], MLSPlanner]],
     goal: tuple[float, float, float],
-    robot_height: float,
+    start: tuple[float, float, float],
     render_voxel: float,
     clearance_clamp: float,
     hard_clearance: float,
@@ -318,8 +385,7 @@ def _process_frame(
     """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
     assert ray_obs.pose_tuple is not None
     bounds = ray_obs.tags["region_bounds"]
-    px, py, pz, *_ = ray_obs.pose_tuple
-    start = (float(px), float(py), float(pz) - robot_height)
+    _, _, pz, *_ = ray_obs.pose_tuple
     ox, oy, radius, z_min, z_max = bounds
     pts = ray_obs.data.points_f32()
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
@@ -390,7 +456,9 @@ def main(
         help="Min occupied neighbors a surface voxel needs to be emitted; "
         "0 emits all, higher drops isolated returns",
     ),
-    robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
+    robot_height: float = typer.Option(
+        ROBOT_HEIGHT, "--robot-height", help="Robot height, ground to tallest point / lidar (m)"
+    ),
     max_overhead: float = typer.Option(
         2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
     ),
@@ -499,39 +567,71 @@ def main(
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
-        # Static XYZ axis triad in the odometry body frame (world/odom transform).
-        rr.log(
-            "world/odom/axes",
-            rr.Arrows3D(
-                origins=[[0.0, 0.0, 0.0]] * 3,
-                vectors=[
-                    [ODOM_AXIS_LEN, 0.0, 0.0],
-                    [0.0, ODOM_AXIS_LEN, 0.0],
-                    [0.0, 0.0, ODOM_AXIS_LEN],
-                ],
-                colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-                radii=ODOM_AXIS_LEN / AXIS_RADIUS_RATIO,
-            ),
-            static=True,
+        base_from_sensor = _base_from_sensor(store)
+        base_height = (
+            base_height_above_ground(robot_height, base_from_sensor.inverse())
+            if base_from_sensor is not None
+            else 0.0
         )
-        odom_trail: list[tuple[float, float, float]] = []
+        entities = ["world/mid360_link/axes"] + (
+            ["world/base_link/axes"] if base_from_sensor else []
+        )
+        for entity in entities:
+            rr.log(
+                entity,
+                rr.Arrows3D(
+                    origins=[[0.0, 0.0, 0.0]] * 3,
+                    vectors=[
+                        [AXIS_LEN, 0.0, 0.0],
+                        [0.0, AXIS_LEN, 0.0],
+                        [0.0, 0.0, AXIS_LEN],
+                    ],
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+                    radii=AXIS_LEN / AXIS_RADIUS_RATIO,
+                ),
+                static=True,
+            )
+        if base_from_sensor is not None:
+            rr.log(
+                "world/base_link/outline",
+                rr.Boxes3D(
+                    half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, robot_height / 2],
+                    colors=[(0, 255, 127)],
+                ),
+                static=True,
+            )
+            # wall_clearance is the planner's proxy for the robot radius.
+            rr.log(
+                "world/base_link/clearance",
+                rr.Cylinders3D(
+                    lengths=[robot_height],
+                    radii=[wall_clearance],
+                    colors=[(255, 120, 120, 80)],
+                    fill_mode="solid",
+                ),
+                static=True,
+            )
+        sensor_trail: list[tuple[float, float, float]] = []
 
         try:
             frame = 0
             for ray_obs in ray_pipeline:
                 if ray_obs.pose_tuple is None:
                     continue
+                start, base = _plan_start(
+                    ray_obs.pose_tuple, ray_obs.ts, base_from_sensor, base_height, robot_height
+                )
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,
                     goal,
-                    robot_height,
+                    start,
                     render_voxel,
                     clearance_clamp,
                     ref_clearance,
                     crop,
                 )
-                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, odom_trail)
+                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(
                     f"frame={frame} configs={len(planners)} "

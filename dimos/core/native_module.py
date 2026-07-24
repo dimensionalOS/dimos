@@ -60,6 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import tf_channel
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -255,7 +256,8 @@ class NativeModule(Module):
         assert self._process.stdin is not None
         if self.config.stdin_config:
             config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+            stdin_topics = {**topics, "tf": tf_channel()}
+            blob: dict[str, Any] = {"topics": stdin_topics, "config": config_dict or None}
             qos = self._collect_output_qos()
             if qos:
                 blob["qos"] = qos
