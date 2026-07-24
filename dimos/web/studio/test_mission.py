@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Tests for the deterministic Go2 mission and safety state machine."""
 
 from datetime import datetime, timedelta, timezone

@@ -9,6 +9,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .models import (
     AgentMessageRequest,
+    MissionActionRequest,
+    MissionCreateRequest,
+    MissionStartRequest,
     RobotCheckRequest,
     RuntimeStartRequest,
     SkillSourceRequest,
@@ -26,6 +29,7 @@ def create_app(
 
     app = FastAPI(title="DimOS Studio", version="0.1.0")
     service = StudioService(settings_path=settings_path, skill_path=skill_path)
+    app.state.studio_service = service
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -119,6 +123,52 @@ def create_app(
             return {"result": service.send_agent_message(payload.message)}
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/mission/status")
+    def mission_status() -> dict[str, Any]:
+        return service.mission_status()
+
+    @app.post("/api/mission")
+    def mission_create(payload: MissionCreateRequest) -> dict[str, Any]:
+        try:
+            return service.create_mission(payload.objective)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/mission/start")
+    def mission_start(payload: MissionStartRequest) -> dict[str, Any]:
+        try:
+            return service.start_mission(payload.confirmation)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/mission/pause")
+    def mission_pause(payload: MissionActionRequest) -> dict[str, Any]:
+        try:
+            return service.pause_mission(payload.reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/mission/resume")
+    def mission_resume(payload: MissionStartRequest) -> dict[str, Any]:
+        try:
+            return service.resume_mission(payload.confirmation)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/mission/stop")
+    def mission_stop(payload: MissionActionRequest) -> dict[str, Any]:
+        try:
+            return service.stop_mission(payload.reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/mission/estop")
+    def mission_emergency_stop(payload: MissionActionRequest) -> dict[str, Any]:
+        try:
+            return service.emergency_stop_mission(payload.reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/skill")
     def get_skill() -> dict[str, Any]:

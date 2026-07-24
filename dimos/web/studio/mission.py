@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Deterministic mission state and safety policy for the local Go2 Studio.
 
 This module deliberately contains no robot I/O. It decides whether a requested
@@ -121,10 +122,10 @@ class MissionController:
         now: datetime | None = None,
     ) -> MissionRecord:
         mission = self._require_mission()
-        if not runtime_running:
-            raise ValueError("DimOS 尚未运行，不能启动任务")
         if movement_locked:
             raise ValueError("运动锁仍然开启，不能启动自主任务")
+        if not runtime_running:
+            raise ValueError("DimOS 尚未运行，不能启动任务")
         if mission.state not in {MissionState.DRAFT, MissionState.PAUSED}:
             raise ValueError(f"当前任务状态 {mission.state.value} 不能启动")
         timestamp = now or _utc_now()

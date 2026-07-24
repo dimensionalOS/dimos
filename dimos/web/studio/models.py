@@ -49,3 +49,15 @@ class AgentMessageRequest(BaseModel):
 
 class TeleopKeyRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=500)
+
+
+class MissionCreateRequest(BaseModel):
+    objective: str = Field(min_length=1, max_length=2000)
+
+
+class MissionStartRequest(BaseModel):
+    confirmation: str = ""
+
+
+class MissionActionRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)

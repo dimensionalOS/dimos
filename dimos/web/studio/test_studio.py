@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Tests for the safe, local DimOS Studio API."""
 
 from pathlib import Path
@@ -134,3 +135,89 @@ def test_hosted_teleop_uses_keychain_key_only_in_environment(
     assert environment["TRANSPORTS__BROKER__API_KEY"] == "dtk_test_secret"
     assert environment["TRANSPORTS__BROKER__ROBOT_NAME"] == "Go2_Test"
     assert "30.201.217.128" in environment["NO_PROXY"].split(",")
+
+
+def test_mission_api_create_and_status(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    app = create_app(tmp_path / "settings.json", skill_path)
+    client = TestClient(app)
+
+    initial = client.get("/api/mission/status")
+    assert initial.status_code == 200
+    assert initial.json()["mission"] is None
+
+    created = client.post(
+        "/api/mission",
+        json={"objective": "探索会场，找到门并在门前一米停下"},
+    )
+
+    assert created.status_code == 200
+    assert created.json()["mission"]["state"] == "draft"
+    assert client.get("/api/mission/status").json()["mission"]["objective"] == (
+        "探索会场，找到门并在门前一米停下"
+    )
+
+
+def test_mission_start_requires_safety_gate_and_forwards_agent_prompt(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    app = create_app(tmp_path / "settings.json", skill_path)
+    client = TestClient(app)
+    service = app.state.studio_service
+    client.post("/api/mission", json={"objective": "找到出口门"})
+
+    locked = client.post(
+        "/api/mission/start",
+        json={"confirmation": "START MISSION"},
+    )
+    assert locked.status_code == 409
+    assert "运动锁" in locked.json()["detail"]
+
+    service.save_settings(service.load_settings().model_copy(update={"movement_locked": False}))
+    monkeypatch.setattr(service, "runtime_status", lambda: {"running": True})
+    sent: list[str] = []
+    monkeypatch.setattr(service, "send_agent_message", lambda message: sent.append(message) or "ok")
+
+    started = client.post(
+        "/api/mission/start",
+        json={"confirmation": "START MISSION"},
+    )
+
+    assert started.status_code == 200
+    assert started.json()["mission"]["state"] == "running"
+    assert sent
+    assert "begin_exploration" in sent[0]
+    assert "1.0 米" in sent[0]
+    assert "不能修改或绕过安全参数" in sent[0]
+
+
+def test_emergency_stop_is_recorded_when_mcp_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    app = create_app(tmp_path / "settings.json", skill_path)
+    client = TestClient(app)
+    service = app.state.studio_service
+    client.post("/api/mission", json={"objective": "找到门"})
+
+    def unavailable(_message: str) -> str:
+        raise ValueError("MCP unavailable")
+
+    monkeypatch.setattr(service, "send_agent_message", unavailable)
+
+    stopped = client.post(
+        "/api/mission/estop",
+        json={"reason": "operator test"},
+    )
+
+    assert stopped.status_code == 200
+    assert stopped.json()["mission"]["state"] == "stopped"
+    assert stopped.json()["mission"]["phase"] == "急停"
+    assert stopped.json()["remote_stop_confirmed"] is False
+    assert "MCP unavailable" in stopped.json()["remote_stop_error"]

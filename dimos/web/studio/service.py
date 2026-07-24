@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Core services for the local DimOS Studio workbench."""
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, DIMOS_PROJECT_ROOT
 from dimos.core.run_registry import get_most_recent
 
+from .mission import MissionController, MissionRecord
 from .models import StudioSettings
 
 DEFAULT_SETTINGS_PATH = CONFIG_DIR / "dimos-studio.json"
@@ -39,6 +41,7 @@ TELEOP_URL = "https://teleop.dimensionalos.com/"
 TELEOP_BLUEPRINT = "teleop-hosted-go2-transport"
 TELEOP_KEYCHAIN_SERVICE = "com.dimos.studio.teleop"
 TELEOP_KEYCHAIN_ACCOUNT = "hosted-broker"
+MISSION_CONFIRMATION = "START MISSION"
 
 
 class StudioService:
@@ -51,6 +54,8 @@ class StudioService:
     ) -> None:
         self.settings_path = settings_path
         self.skill_path = skill_path
+        self.mission_path = settings_path.with_name("dimos-studio-mission.json")
+        self.mission_controller = MissionController(self._load_mission())
         self._launcher_processes: list[subprocess.Popen[str]] = []
 
     def load_settings(self) -> StudioSettings:
@@ -297,6 +302,84 @@ class StudioService:
         except (requests.RequestException, McpError) as exc:
             raise ValueError(f"Agent 暂不可用: {exc}") from exc
 
+    def mission_status(self) -> dict[str, Any]:
+        mission = self.mission_controller.mission
+        return {
+            "mission": mission.model_dump(mode="json") if mission else None,
+            "policy": self.mission_controller.policy.model_dump(mode="json"),
+        }
+
+    def create_mission(self, objective: str) -> dict[str, Any]:
+        mission = self.mission_controller.create(objective)
+        self._save_mission(mission)
+        return self.mission_status()
+
+    def start_mission(self, confirmation: str) -> dict[str, Any]:
+        if confirmation != MISSION_CONFIRMATION:
+            raise ValueError(f"自主任务需要输入确认词: {MISSION_CONFIRMATION}")
+        status = self.runtime_status()
+        settings = self.load_settings()
+        mission = self.mission_controller.start(
+            runtime_running=bool(status.get("running")),
+            movement_locked=settings.movement_locked,
+        )
+        self._save_mission(mission)
+        try:
+            agent_result = self.send_agent_message(self._mission_prompt(mission))
+        except ValueError as exc:
+            mission = self.mission_controller.pause(f"Agent 启动失败：{exc}")
+            self._save_mission(mission)
+            raise
+        return {**self.mission_status(), "agent_result": agent_result}
+
+    def pause_mission(self, reason: str = "") -> dict[str, Any]:
+        mission = self.mission_controller.pause(reason or "操作员暂停")
+        self._save_mission(mission)
+        return {
+            **self.mission_status(),
+            **self._best_effort_agent_stop("暂停当前自主任务"),
+        }
+
+    def resume_mission(self, confirmation: str) -> dict[str, Any]:
+        if confirmation != MISSION_CONFIRMATION:
+            raise ValueError(f"恢复自主任务需要输入确认词: {MISSION_CONFIRMATION}")
+        status = self.runtime_status()
+        settings = self.load_settings()
+        mission = self.mission_controller.resume(
+            runtime_running=bool(status.get("running")),
+            movement_locked=settings.movement_locked,
+        )
+        self._save_mission(mission)
+        try:
+            agent_result = self.send_agent_message(self._mission_prompt(mission))
+        except ValueError as exc:
+            mission = self.mission_controller.pause(f"Agent 恢复失败：{exc}")
+            self._save_mission(mission)
+            raise
+        return {**self.mission_status(), "agent_result": agent_result}
+
+    def stop_mission(self, reason: str = "") -> dict[str, Any]:
+        mission = self.mission_controller.stop(reason or "操作员停止")
+        self._save_mission(mission)
+        return {
+            **self.mission_status(),
+            **self._best_effort_agent_stop("停止当前自主任务"),
+        }
+
+    def emergency_stop_mission(self, reason: str = "") -> dict[str, Any]:
+        """Record E-STOP first, then request all Agent movement to stop.
+
+        The returned confirmation flag matters: a local state update alone is
+        not proof that the physical robot received the stop request.
+        """
+
+        mission = self.mission_controller.emergency_stop(reason or "操作员触发急停")
+        self._save_mission(mission)
+        return {
+            **self.mission_status(),
+            **self._best_effort_agent_stop("急停：立刻停止探索和导航"),
+        }
+
     def read_skill_source(self) -> dict[str, Any]:
         source = self.skill_path.read_text(encoding="utf-8")
         validation = validate_skill_source(source)
@@ -389,6 +472,58 @@ class StudioService:
         environment["NO_PROXY"] = ",".join(no_proxy)
         environment["no_proxy"] = environment["NO_PROXY"]
         return environment
+
+    def _best_effort_agent_stop(self, command: str) -> dict[str, Any]:
+        try:
+            result = self.send_agent_message(
+                f"{command}。立即调用 end_exploration 和 stop_navigation；不要开始任何新动作。"
+            )
+        except ValueError as exc:
+            return {
+                "remote_stop_confirmed": False,
+                "remote_stop_error": str(exc),
+            }
+        return {
+            "remote_stop_confirmed": True,
+            "remote_stop_result": result,
+        }
+
+    @staticmethod
+    def _mission_prompt(mission: MissionRecord) -> str:
+        policy = mission.policy
+        return f"""\
+执行一个观察优先的 Go2 任务：{mission.objective}
+
+必须遵守以下顺序和硬限制：
+1. 先观察相机和语义空间记忆，再调用 begin_exploration 探索未知区域。
+2. 通过视觉提出“门”候选；至少用多个独立画面确认，不确定就继续观察并报告。
+3. 找到可信的门后，使用现有导航技能接近，但必须在 {policy.door_standoff_m:.1f} 米外停下。
+4. 最大速度 {policy.max_speed_mps:.1f} m/s，探索半径不超过 {policy.exploration_radius_m:.0f} 米。
+5. 人员进入 {policy.person_safety_radius_m:.1f} 米内时，立即停止导航和探索；连续安全
+   {policy.clear_before_resume_s:.0f} 秒后才可恢复。
+6. 连接异常、感知过期、电量低于 {policy.minimum_battery_percent:.0f}%、
+   人工接管或连续 {policy.maximum_navigation_failures} 次导航失败时立即停止并报告。
+7. 不能倒车，不能修改或绕过安全参数，不能直接发送 cmd_vel。
+
+每次阶段变化都用简短中文报告：当前阶段、看到的证据、下一步和停止原因。
+"""
+
+    def _load_mission(self) -> MissionRecord | None:
+        try:
+            return MissionRecord.model_validate_json(
+                self.mission_path.read_text(encoding="utf-8")
+            )
+        except (FileNotFoundError, ValueError, OSError):
+            return None
+
+    def _save_mission(self, mission: MissionRecord) -> None:
+        self.mission_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.mission_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            mission.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        temporary_path.replace(self.mission_path)
 
     @staticmethod
     def _parse_discovery_output(output: str) -> list[dict[str, str]]:
