@@ -37,9 +37,6 @@ from dimos.mapping.relocalization.relocalize import (
 )
 from dimos.perception.fiducial.apriltag_aggregation import AggregationConfig
 from dimos.protocol.service.spec import BaseConfig
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 # s between RANSAC fires. One FPFH+RANSAC search costs seconds of CPU (4.4-23 s
 # measured on the trial's go2/Orin recordings), so the sweep is paced, not per-frame.
@@ -209,12 +206,10 @@ def relocalize_with_priors(
     local_map: o3d.geometry.PointCloud,
     priors: list[RelocPrior],
     gravity_tilt_max_deg: float = GRAVITY_TILT_MAX_DEG,
-    verbose_eval_logging: bool = False,
 ) -> tuple[np.ndarray, float, str]:
     """Gather candidates from the priors this fire runs, judge them through the shared
     fine-ICP tail (``refine_candidates``), report which won. ``gravity_tilt_max_deg``
-    threads to the judge's gravity gate; ``verbose_eval_logging`` turns the per-cycle
-    proposal census on (``--eval``). Returns ``(T, fitness, winning_source)``; raises
+    threads to the judge's gravity gate. Returns ``(T, fitness, winning_source)``; raises
     ``EmptyProposalError`` if every prior proposed zero candidates (a benign race).
     """
     all_transforms: list[np.ndarray] = []
@@ -226,11 +221,6 @@ def relocalize_with_priors(
 
     if not all_transforms:
         raise EmptyProposalError("relocalize_with_priors: no prior proposed any candidate")
-
-    # Proposal census (eval-only): which prior offered candidates this fire.
-    if verbose_eval_logging:
-        counts = {s: sources.count(s) for s in sorted(set(sources))}
-        logger.info("relocalize candidates", counts=counts)
 
     T, fitness, winning_index = refine_candidates(
         global_map,

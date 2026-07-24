@@ -253,7 +253,6 @@ all_modules = {
     "receiver-module": "dimos.utils.demo_image_encoding.ReceiverModule",
     "recorder": "dimos.memory2.module.Recorder",
     "reid-module": "dimos.perception.detection.reid.module.ReidModule",
-    "reloc-eval": "dimos.mapping.relocalization.eval_module.RelocEval",
     "relocalization-module": "dimos.mapping.relocalization.module.RelocalizationModule",
     "replanning-a-star-planner": "dimos.navigation.replanning_a_star.module.ReplanningAStarPlanner",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",

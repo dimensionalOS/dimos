@@ -318,10 +318,7 @@ def run(
     eval_reloc: bool = typer.Option(
         False,
         "--eval",
-        help=(
-            "Attach the RelocEval collector (per-source reloc table) and turn the "
-            "relocalization module's verbose trace on"
-        ),
+        help="Turn the relocalization module's verbose accept trace on",
     ),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
@@ -376,25 +373,14 @@ def run(
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     if eval_reloc:
-        # Best-effort: add the in-process reloc collector on its own worker. It
-        # declares no In/Out (it subscribes to /tf + /odom directly in start()), so
-        # there is nothing to autowire; bump n_workers by one for its slot. If a
-        # stack pins n_workers tightly this may need a manual `-o g.n_workers=...`.
-        # RelocEval logs the per-source accept/reject table in-process.
+        # --eval turns the relocalization module's own verbose accept trace on: each
+        # accepted fix logs source + fitness + published pose. Guarded on the module
+        # being present because blueprint.config() is extra="forbid" -- an unconditional
+        # override would hard-fail --eval on a stack with no relocalization. An explicit
+        # -o still wins; config_key(b.name) so a namespaced instance resolves.
         from dimos.core.coordination.blueprints import config_key
-        from dimos.mapping.relocalization.eval_module import RelocEval
         from dimos.mapping.relocalization.module import RelocalizationModule
 
-        n_workers = int(blueprint.global_config_overrides.get("n_workers", 12))
-        blueprint = autoconnect(blueprint, RelocEval.blueprint()).global_config(
-            n_workers=n_workers + 1
-        )
-        # RelocEval joins each accept to its winning prior through the module's VERBOSE
-        # trace: published_t_m is the join key, and the quiet operating line carries no
-        # position, so without this every fix in the table would read "unknown". Guarded
-        # on the module being present because blueprint.config() is extra="forbid" -- an
-        # unconditional override would hard-fail --eval on a stack with no relocalization.
-        # An explicit -o still wins; config_key(b.name) so a namespaced instance resolves.
         for b in blueprint.blueprints:
             if b.module is RelocalizationModule:
                 key = f"{config_key(b.name)}.verbose_eval_logging"

@@ -105,7 +105,7 @@ class Config(ModuleConfig):
     gravity_tilt_max_deg: float = Field(default=10.0, ge=0.0)
     use_carving: bool = True
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`):
-    # the full per-fire trace the eval parsers read.
+    # each accept also logs its published pose, timing and point count.
     verbose_eval_logging: bool = False
     # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven).
     # REQUIRED, no default -- a blueprint must state it, so there is no silent reloc behavior.
@@ -394,7 +394,6 @@ class RelocalizationModule(Module):
                     msg.pointcloud,
                     priors,
                     gravity_tilt_max_deg=self.config.gravity_tilt_max_deg,
-                    verbose_eval_logging=self.config.verbose_eval_logging,
                 )
         except EmptyProposalError:
             # Double-fire race: the other thread drained the pending tag fix first, so this
