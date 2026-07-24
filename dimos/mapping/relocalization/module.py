@@ -75,8 +75,8 @@ MAX_JUMP_YAW_DEG_PER_S = 45.0  # deg/s; 90 deg at the 2 s RANSAC interval
 _MOVED_TO_PRIORS = {
     "reloc_interval_s": (
         "reloc_interval_s moved onto the ransac prior entry; set "
-        "priors=[RansacPriorConfig(interval_s=...)] instead -- each prior "
-        "now owns its own trigger"
+        "priors=[RansacPriorConfig(interval_s=...)] instead -- the ransac "
+        "poll cadence is now per prior"
     ),
     "fitness_threshold": (
         "fitness_threshold moved onto each prior entry; set e.g. "
@@ -107,7 +107,7 @@ class Config(ModuleConfig):
     # False (default): one line per accepted fix plus throttled warnings. True (`--eval`):
     # the full per-fire trace the eval parsers read.
     verbose_eval_logging: bool = False
-    # The prior pool: each entry a toggleable candidate proposer that owns its own trigger.
+    # The prior pool: each entry a toggleable candidate proposer (RANSAC polled, fiducial event-driven).
     # REQUIRED, no default -- a blueprint must state it, so there is no silent reloc behavior.
     priors: list[PriorConfig]
 
@@ -133,19 +133,24 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
-        # Prior objects are built ONCE, not per frame: each holds its own trigger state
-        # (RANSAC's interval timer, the fiducial's burst edge) that a fresh instance would reset.
+        # Prior objects are built ONCE, not per frame: the fiducial holds pending-fix state
+        # across bursts that a fresh instance would reset. The RANSAC prior is a pure source;
+        # the module owns its poll timer (below).
         ransac_entry = next(
             (p for p in self.config.priors if isinstance(p, RansacPriorConfig)),
             RansacPriorConfig(),
         )
-        self._ransac_prior = RansacPrior(interval_s=ransac_entry.interval_s)
+        self._ransac_prior = RansacPrior()
         # Per-source accept gate {Candidate.source: min wall fitness}. Each fire pools one
         # source, so gating the winner by its own source's bar IS per-source. Key = the
         # entry's `type` discriminator, which equals the source its prior proposes.
         self._accept_threshold: dict[str, float] = {
             p.type: p.fitness_threshold for p in self.config.priors
         }
+        # RANSAC poll timer (the prior is a pure source): its interval and last fire.
+        # None == never fired, so the first dense-enough frame relocalizes immediately.
+        self._ransac_interval_s = ransac_entry.interval_s
+        self._last_ransac_fired_s: float | None = None
         # RANSAC-only point floor (a fiducial burst fires regardless); read from the
         # ransac entry, or the default when no ransac entry is enabled (then unused).
         self._ransac_min_local_points = ransac_entry.min_local_points
@@ -294,18 +299,14 @@ class RelocalizationModule(Module):
             )
             self._fiducial_prior.observe(marker_id, world_T_marker_aggregated)
         # Fire HERE, not at the next cloud: the tag candidate is composed from the marker
-        # alone, so waiting on lidar is dead time on acquisition. No cloud yet -> leave the
-        # trigger unacked and let _on_local_map fire it on the first frame.
-        local_map = self._last_local_map
-        if local_map is None:
-            return
-        now_s = self._now_fn()
-        if self._fiducial_prior.is_due(now_s):
-            self._fire(self._fiducial_prior, local_map, now_s)
+        # alone, so waiting on lidar is dead time on acquisition. No cloud yet -> pending
+        # stays and _on_local_map fires it on the first frame.
+        cloud = self._last_local_map
+        if cloud is not None and self._fiducial_prior.has_pending:
+            self._fire(self._fiducial_prior, cloud)
 
-    def _fire(self, prior: RelocPrior, local_map: PointCloud2, now_s: float) -> None:
-        """Ack the trigger that asked and run its ONE relocalization."""
-        prior.on_fired(now_s)
+    def _fire(self, prior: RelocPrior, local_map: PointCloud2) -> None:
+        """Run this prior's ONE relocalization and publish the resulting TF."""
         self._publish_tf(self._try_relocalize(local_map, [prior]))
 
     @staticmethod
@@ -336,24 +337,36 @@ class RelocalizationModule(Module):
         return objects
 
     def _on_local_map(self, msg: PointCloud2) -> None:
-        """One INDEPENDENT relocalization per prior asking for one.
+        """Poll the RANSAC prior on the module's timer, and on cold start fire a pending
+        fiducial fix.
 
         RANSAC lives on THIS path because it GENERATES its candidates from the cloud in
-        hand; the fiducial prior reaches here only when its burst beat the first cloud.
+        hand; the fiducial reaches here only when its burst beat the first cached cloud.
         ``min_local_points`` gates the RANSAC prior ONLY -- a tag burst fires below the
-        floor, and a starved RANSAC cycle is not acked so it re-fires on the next dense frame.
+        floor, and a starved RANSAC cycle leaves the timer unmoved so it re-fires on the
+        next dense frame.
         """
         self._last_local_map = msg  # what a burst-triggered fire judges against
-        now_s = self._now_fn()
+        now = self._now_fn()
+        # _ransac_prior is always constructed, so gate it on the enabled set (the toggle);
+        # _fiducial_prior is None unless its enabled entry loaded a marker map.
         enabled = self._enabled_prior_objects()
-        has_enough_points = len(msg) >= self._ransac_min_local_points
-        # Every prior is asked -- no short-circuit -- so each runs its own timer/edge bookkeeping.
-        due = [prior for prior in enabled if prior.is_due(now_s)]
-        for prior in due:
-            if isinstance(prior, RansacPrior) and not has_enough_points:
-                self._maybe_log_skip(msg)  # RANSAC starved: log, do not ack, retry next dense frame
-                continue
-            self._fire(prior, msg, now_s)
+
+        if self._ransac_prior in enabled:
+            time_due = (
+                self._last_ransac_fired_s is None
+                or now - self._last_ransac_fired_s >= self._ransac_interval_s
+            )
+            if time_due and len(msg) >= self._ransac_min_local_points:
+                self._last_ransac_fired_s = now
+                self._fire(self._ransac_prior, msg)
+            elif time_due:
+                # Starved: log, leave the timer so the trigger stands and fires next dense frame.
+                self._maybe_log_skip(msg)
+
+        if self._fiducial_prior is not None and self._fiducial_prior.has_pending:
+            # Cold start: a burst arrived before any cloud was cached; fire it on the first cloud.
+            self._fire(self._fiducial_prior, msg)
 
     def _try_relocalize(self, msg: PointCloud2, priors: list[RelocPrior]) -> Transform | None:
         if self._premap is None:

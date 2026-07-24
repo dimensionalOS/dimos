@@ -14,9 +14,10 @@
 # limitations under the License.
 
 """Pluggable relocalization priors: candidate proposers feeding the shared
-fine-ICP judge in relocalize.py (``refine_candidates``). Each prior owns its own
-trigger (``is_due`` / ``on_fired``) and is accepted only by surviving the
-wall-only fine-fitness rerank, never by its source's reported confidence.
+fine-ICP judge in relocalize.py (``refine_candidates``). A prior only proposes;
+its trigger lives with its nature -- RANSAC is polled by the module on a timer,
+the fiducial is event-driven off a tag burst. Every candidate is accepted only by
+surviving the wall-only fine-fitness rerank, never by its source's confidence.
 """
 
 from __future__ import annotations
@@ -63,9 +64,6 @@ class RansacPriorConfig(PriorConfigBase):
     relocalize.py, this entry owns the accept bar, cadence and geometry floor."""
 
     type: Literal["ransac"] = "ransac"
-    # HIGH bar (dimensionless wall fitness, 0-1): a RANSAC fix is anchored only by the
-    # walls it landed on. 0.6 raises the old single 0.45 lidar-only module gate.
-    fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # s between RANSAC fires -- this prior's trigger; a global search has no event to
     # wait for, so it paces itself.
     interval_s: float = Field(default=DEFAULT_RANSAC_INTERVAL_S, gt=0.0)
@@ -80,9 +78,6 @@ class FiducialPriorConfig(PriorConfigBase):
     (``FiducialPrior``). Owns the whole fiducial parameter surface."""
 
     type: Literal["fiducial"] = "fiducial"
-    # Same wall-fitness bar as any other source (dimensionless, 0-1): a decoded id
-    # names the tag, it does not show the composed pose fits the walls.
-    fitness_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Surveyed marker map (map_T_marker per id), a .json path resolved via
     # resolve_named_path; required -- start() no-ops the prior without it.
     marker_map_file: str | None = None
@@ -110,13 +105,10 @@ class Candidate:
 
 
 class RelocPrior(Protocol):
-    """A relocalization candidate proposer that owns its own trigger.
+    """A relocalization candidate proposer. The module owns the trigger.
 
     Implementations must not self-select a winner (``refine_candidates``'s job);
-    returning zero candidates is a valid, expected response. ``is_due(now_s)`` is the
-    trigger; ``on_fired(now_s)`` acks the fire that answered it. ``now_s`` is seconds
-    on the module's monotonic timebase, passed in so a test can drive it without
-    sleeping.
+    returning zero candidates is a valid, expected response.
     """
 
     name: str
@@ -127,21 +119,13 @@ class RelocPrior(Protocol):
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]: ...
 
-    def is_due(self, now_s: float) -> bool: ...
-
-    def on_fired(self, now_s: float) -> None: ...
-
 
 class RansacPrior:
-    """Wraps relocalize.py's FPFH+RANSAC global search; trigger is a paced interval
-    (a global search waits on no event, so the pace bounds its cost)."""
+    """Wraps relocalize.py's FPFH+RANSAC global search. A pure candidate source: the
+    module polls it on a paced interval (a global search waits on no event, so the pace
+    bounds its cost) and owns that timer state."""
 
     name = "ransac"
-
-    def __init__(self, interval_s: float = DEFAULT_RANSAC_INTERVAL_S) -> None:
-        self._interval_s = interval_s
-        # None == never fired, so the first dense-enough frame relocalizes immediately.
-        self._last_fired_s: float | None = None
 
     def propose(
         self,
@@ -151,12 +135,6 @@ class RansacPrior:
         transforms = generate_ransac_candidates(global_map, local_map)
         return [Candidate(T=T, source=self.name) for T in transforms]
 
-    def is_due(self, now_s: float) -> bool:
-        return self._last_fired_s is None or now_s - self._last_fired_s >= self._interval_s
-
-    def on_fired(self, now_s: float) -> None:
-        self._last_fired_s = now_s
-
 
 class FiducialPrior:
     """Aggregated fiducial tag poses -> ONE world->map candidate per tag.
@@ -165,7 +143,8 @@ class FiducialPrior:
     map; ``propose()`` hands each composed fix to the judge. Frame convention: a
     candidate's ``T`` is map_T_world = ``map_T_marker @ inv(world_T_marker_aggregated)``,
     the same local_map(world)->global_map(map) direction RANSAC uses. A composed fix
-    stays pending until ``propose()`` consumes it, and pending is what ``is_due`` reports.
+    stays pending until ``propose()`` consumes it; ``has_pending`` reports readiness so
+    the module fires this event prior on the burst edge.
     """
 
     name = "fiducial"
@@ -190,23 +169,19 @@ class FiducialPrior:
             self._pending[marker_id] = map_T_marker @ np.linalg.inv(world_T_marker_aggregated)
         return None
 
-    def is_due(self, now_s: float) -> bool:
+    @property
+    def has_pending(self) -> bool:
+        """A composed fix is waiting for the judge -- the module's fire signal."""
         return bool(self._pending)
-
-    def on_fired(self, now_s: float) -> None:
-        """Nothing to ack: propose() consumes the pending fix, and pending IS the
-        trigger."""
 
     def propose(
         self,
         global_map: o3d.geometry.PointCloud,
         local_map: o3d.geometry.PointCloud,
     ) -> list[Candidate]:
-        # Consume on use, and HERE rather than in on_fired(): the module acks the
-        # trigger BEFORE the solve that reaches propose() (module.py::_fire), so an
-        # on_fired() clear would drop the fix unjudged. Re-offering a fix on a later
-        # fire hands the judge the SAME measurement against a world that has drifted
-        # further since, so it can only score worse than it did when fresh.
+        # Consume on use: a fix is drained the one time it reaches the judge. Re-offering
+        # it on a later fire hands the judge the SAME measurement against a world that has
+        # drifted further since, so it can only score worse than it did when fresh.
         # The swap takes the lock because the swap alone is not enough: a store in
         # observe() reads self._pending and writes it as two steps, and a detections
         # thread preempted between them still holds the dict this fire is draining:

@@ -81,7 +81,9 @@ def _bare_module(config: Config) -> RelocalizationModule:
     ransac_entry = next(
         (p for p in config.priors if isinstance(p, RansacPriorConfig)), RansacPriorConfig()
     )
-    m._ransac_prior = RansacPrior(interval_s=ransac_entry.interval_s)
+    m._ransac_prior = RansacPrior()
+    m._last_ransac_fired_s = None
+    m._ransac_interval_s = ransac_entry.interval_s
     m._accept_threshold = {p.type: p.fitness_threshold for p in config.priors}
     m._ransac_min_local_points = ransac_entry.min_local_points
     m._premap = None
