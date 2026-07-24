@@ -67,7 +67,7 @@ So the gates and the outcome are auditable after the fact. `--summary` recompute
 
 - `--no-icp` — tag PGO only, skip the ICP stage.
 - `--no-lcm` / `--no-rrd` — skip the cloud export / the viewer.
-- `--out=NAME` — output prefix, if you want to keep several corrections in one db.
+- `--suffix=NAME` — extra suffix on the output stream names, if you want to keep several corrections in one db.
 - Tag quality gates (sharpness, reprojection error, distance, view angle, motion blur) are single-sourced in `dimos/navigation/jnav/utils/apriltags.py` (the `DEFAULT_*` constants); `post_process.py` and the eval both import them. They're relaxed by default to keep more sightings. Tighten them there if a bad tag pose is yanking the map around.
 
 ## When it won't help
