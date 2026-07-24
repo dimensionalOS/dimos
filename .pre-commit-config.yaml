@@ -146,7 +146,7 @@ repos:
             set -euo pipefail
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
-            done | sort -u | while read -r root; do
+            done | sort -u | grep -v "/gsc_pgo/rust/Cargo.toml$" | while read -r root; do
               cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
             done
           '

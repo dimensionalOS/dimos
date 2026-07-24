@@ -82,11 +82,15 @@ jobs:
       - name: Find Cargo workspace roots
         id: find-crates
         run: |
+          # gsc_pgo/rust links C++ gtsam via an FFI shim; it can't build on this
+          # plain-ubuntu job (no gtsam). It's built+tested in the `gsc-pgo-rust`
+          # job via its nix flake dev shell instead.
           crates=$(find . -name Cargo.lock \
             -not -path './target/*' \
             -not -path './.venv/*' \
             -not -path './node_modules/*' \
             -not -path './.git/*' \
+            -not -path './dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust/*' \
             -printf '%h\n' \
             | sed 's|^\./||' \
             | sort)
@@ -146,6 +150,97 @@ jobs:
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+
+  gsc-pgo-rust-marker:
+    # Check whether the marker cache for this rust-dir hash already exists.
+    # Used to skip gsc-pgo-rust without using the cachix environment.
+    if: |
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      cache-hit: ${{ steps.marker.outputs.cache-hit }}
+      key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - name: Checkout files used for cache key
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
+          sparse-checkout-cone-mode: false
+      - name: Compute cache key
+        # Recomputing the key in gsc-pgo-rust after build breaks the key.
+        # Save here so it can be reused verbatim.
+        id: cache-key
+        run: echo "key=gsc-pgo-rust-${{ hashFiles('dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Look up marker cache
+        id: marker
+        uses: actions/cache/restore@v6
+        with:
+          path: /tmp/gsc-pgo-rust-marker
+          key: ${{ steps.cache-key.outputs.key }}
+          lookup-only: true
+
+  gsc-pgo-rust:
+    # The gsc_pgo PGO crate links C++ gtsam through an FFI shim, so it can't build
+    # on the plain-ubuntu `rust` job. Its flake dev shell supplies gtsam + eigen +
+    # boost + tbb via nix; fmt/clippy/test all run inside `nix develop`.
+    #
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️  Same posture as cmu-nav-natives:
+    # this job has write access to CACHIX_AUTH_TOKEN, so the `if:` guard below is
+    # the only thing keeping forks out — DO NOT REMOVE.
+    if: |
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.gsc-pgo-rust-marker.outputs.cache-hit != 'true'
+    needs: gsc-pgo-rust-marker
+    timeout-minutes: 300
+    environment: cachix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install Nix (with Cachix substituter)
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-gsc-pgo-rust-${{ runner.os }}-${{ hashFiles('dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust/flake.lock') }}
+          restore-keys: nix-gsc-pgo-rust-${{ runner.os }}-
+      - name: Authenticate Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: fmt / clippy / test in the flake dev shell
+        run: |
+          cd dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
+          nix develop path:. --command bash -c '
+            set -euxo pipefail
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            cargo test --workspace --all-features --locked
+          '
+      - name: Write marker file
+        run: install -D /dev/null /tmp/gsc-pgo-rust-marker/ok
+      - name: Save marker cache
+        uses: actions/cache/save@v6
+        with:
+          path: /tmp/gsc-pgo-rust-marker
+          key: ${{ needs.gsc-pgo-rust-marker.outputs.key }}
 
   md-babel:
     timeout-minutes: 15
@@ -779,6 +874,7 @@ jobs:
     needs:
     - lint
     - rust
+    - gsc-pgo-rust
     - md-babel
     - docs-validate
     - web
@@ -795,7 +891,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
+        allowed-skips: gsc-pgo-rust, cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7
