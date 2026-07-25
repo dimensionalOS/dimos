@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.protocol.pubsub.impl.webrtc import replay_repository_cli
+from dimos.protocol.pubsub.impl.webrtc.replay_nodes import NodeRecommendation
 from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
     ReplayManifest,
     ReplayObject,
@@ -96,6 +97,8 @@ def test_serve_uses_environment_token(
         "token": "secret",
         "public_read": True,
         "repository": None,
+        "node_name": "local",
+        "region": "other",
     }
 
 
@@ -152,6 +155,43 @@ def test_serve_rejects_missing_s3_bucket(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "--s3-bucket is required" in result.output
+
+
+def test_serve_rejects_invalid_region(tmp_path: Path) -> None:
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        ["serve", "--root", str(tmp_path), "--region", "europe"],
+    )
+
+    assert result.exit_code == 2
+    assert "--region must be china, us, or other" in result.output
+
+
+def test_recommend_node_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    node = replay_repository_cli.load_replay_nodes(
+        '[{"name":"cn","url":"https://cn.example","region":"china"}]'
+    )[0]
+    recommendation = replay_repository_cli.recommend_node
+    monkeypatch.setattr(replay_repository_cli, "load_replay_nodes", lambda: (node,))
+    monkeypatch.setattr(
+        replay_repository_cli,
+        "recommend_node",
+        lambda *_, **__: NodeRecommendation(
+            selected=node,
+            detected_region="china",
+            measured_at=1.0,
+            probes=(),
+        ),
+    )
+
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        ["recommend-node", "--force"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["selected"]["url"] == "https://cn.example"
+    assert recommendation is not replay_repository_cli.recommend_node
 
 
 def test_upload_list_and_download_commands(

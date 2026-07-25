@@ -22,6 +22,11 @@ from pathlib import Path
 import typer
 
 from dimos.constants import STATE_DIR
+from dimos.protocol.pubsub.impl.webrtc.replay_nodes import (
+    choose_server_url,
+    load_replay_nodes,
+    recommend_node,
+)
 from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
     download_object,
     download_objects,
@@ -108,8 +113,16 @@ def serve(
         envvar="DIMOS_REPLAY_S3_ADDRESSING_STYLE",
         help="S3 addressing style: auto, path, or virtual",
     ),
+    node_name: str = typer.Option("local", "--node-name"),
+    region: str = typer.Option(
+        "other",
+        "--region",
+        help="Node region advertised by /healthz: china, us, or other",
+    ),
 ) -> None:
     """Run the MVP repository server."""
+    if region not in {"china", "us", "other"}:
+        raise typer.BadParameter("--region must be china, us, or other")
     if host not in {"127.0.0.1", "::1", "localhost"} and not token:
         raise typer.BadParameter(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
@@ -142,6 +155,8 @@ def serve(
                 "backend": backend,
                 "auth": token is not None,
                 "public_read": public_read,
+                "node": node_name,
+                "region": region,
             },
             sort_keys=True,
         )
@@ -154,6 +169,8 @@ def serve(
             token=token,
             public_read=public_read,
             repository=storage,
+            node_name=node_name,
+            region=region,
         )
     except KeyboardInterrupt:
         pass
@@ -164,7 +181,7 @@ def upload(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
     owner: str = typer.Option(..., "--owner", help="Developer or organization name"),
     repository: str = typer.Option(..., "--repository", "--repo"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -176,7 +193,7 @@ def upload(
 ) -> None:
     """Upload a raw MP4/H.264/H.265 or replay file without ZIP packaging."""
     result = upload_file(
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
         path=path,
@@ -191,7 +208,7 @@ def upload(
 def list_repository(
     owner: str = typer.Option(..., "--owner", help="Developer or organization name"),
     repository: str = typer.Option(..., "--repository", "--repo"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -201,7 +218,7 @@ def list_repository(
 ) -> None:
     """List downloadable objects owned by one developer repository."""
     objects = list_objects(
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
         token=token,
@@ -215,7 +232,7 @@ def download(
     owner: str = typer.Option(..., "--owner", help="Developer or organization name"),
     repository: str = typer.Option(..., "--repository", "--repo"),
     output: Path | None = typer.Option(None, "--output", "-o"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -228,7 +245,7 @@ def download(
 ) -> None:
     """Download one object and verify its SHA-256 digest."""
     destination = download_object(
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
         object_id=object_id,
@@ -248,7 +265,7 @@ def batch_upload(
     repository: str = typer.Option(..., "--repository", "--repo"),
     pattern: str = typer.Option("*", "--pattern", help="Recursive filename glob"),
     manifest: Path | None = typer.Option(None, "--manifest"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -264,7 +281,7 @@ def batch_upload(
     if not paths:
         raise typer.BadParameter(f"no files matched {pattern!r} below {directory}")
     result = upload_files(
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
         paths=paths,
@@ -292,7 +309,7 @@ def batch_upload(
 def batch_download(
     manifest: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
     output_dir: Path = typer.Option(..., "--output-dir"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -307,7 +324,7 @@ def batch_download(
     """Download every object in a manifest concurrently and verify each hash."""
     result = read_manifest(manifest)
     paths = download_objects(
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         manifest=result,
         output_dir=output_dir,
         token=token,
@@ -317,6 +334,19 @@ def batch_download(
         overwrite=overwrite,
     )
     typer.echo(json.dumps({"downloaded": [str(path) for path in paths]}, sort_keys=True))
+
+
+@replay_repository_app.command("recommend-node")
+def recommend_repository_node(
+    force: bool = typer.Option(False, "--force", help="Ignore the hourly cached result"),
+    timeout_seconds: float = typer.Option(3.0, "--timeout-seconds", min=0.1, max=30.0),
+) -> None:
+    """Probe configured China/US nodes and print the fastest healthy route."""
+    nodes = load_replay_nodes()
+    if not nodes:
+        raise typer.BadParameter("DIMOS_REPLAY_NODES is not configured")
+    result = recommend_node(nodes, force=force, timeout_seconds=timeout_seconds)
+    typer.echo(json.dumps(result.to_dict(), sort_keys=True))
 
 
 def main() -> None:

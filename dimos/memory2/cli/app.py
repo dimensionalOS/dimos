@@ -31,7 +31,7 @@ def upload(
     dataset: str = typer.Argument(..., help="memory2 .db: bare name (cwd or data/) or path"),
     owner: str = typer.Option(..., "--owner", help="Developer or organization name"),
     repository: str = typer.Option(..., "--repository", "--repo"),
-    server_url: str = typer.Option("http://127.0.0.1:8765", "--server-url"),
+    server_url: str | None = typer.Option(None, "--server-url"),
     token: str | None = typer.Option(
         None,
         "--token",
@@ -45,11 +45,12 @@ def upload(
     """Upload a consistent, uncompressed memory2 snapshot and searchable index."""
     from dimos.memory2.cli.dataset import resolve_dataset
     from dimos.memory2.remote_dataset import upload_memory2_dataset
+    from dimos.protocol.pubsub.impl.webrtc.replay_nodes import choose_server_url
 
     path = resolve_dataset(dataset)
     result = upload_memory2_dataset(
         path=path,
-        server_url=server_url,
+        server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
         token=token,

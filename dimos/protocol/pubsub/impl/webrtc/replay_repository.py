@@ -362,10 +362,16 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         *,
         token: str | None,
         public_read: bool = False,
+        node_name: str = "local",
+        region: str = "other",
     ) -> None:
+        if region not in {"china", "us", "other"}:
+            raise ValueError("region must be china, us, or other")
         self.repository = repository
         self.token = token
         self.public_read = public_read
+        self.node_name = node_name
+        self.region = region
         super().__init__(address, ReplayRepositoryRequestHandler)
 
 
@@ -504,6 +510,16 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
     def do_GET(self) -> None:
+        if urlsplit(self.path).path == "/healthz":
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "status": "ok",
+                    "node": self._repository_server().node_name,
+                    "region": self._repository_server().region,
+                },
+            )
+            return
         if not self._check_authorized(write=False):
             return
         try:
@@ -568,6 +584,8 @@ def serve_repository(
     token: str | None,
     public_read: bool = False,
     repository: ReplayRepositoryBackend | None = None,
+    node_name: str = "local",
+    region: str = "other",
 ) -> None:
     """Serve until interrupted."""
     with ReplayRepositoryServer(
@@ -575,6 +593,8 @@ def serve_repository(
         repository or ReplayRepository(root),
         token=token,
         public_read=public_read,
+        node_name=node_name,
+        region=region,
     ) as server:
         server.serve_forever()
 

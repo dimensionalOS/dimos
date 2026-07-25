@@ -225,6 +225,36 @@ directory. Replaying the same object again uses the verified local cache. The
 repository token is read from the environment and is not embedded in the URI,
 so references can be shared without sharing credentials.
 
+## China/US node selection
+
+Each server exposes an unauthenticated, metadata-only `/healthz` endpoint.
+Configure its identity when starting the service:
+
+```bash
+dimos replay-repo serve \
+  --host 0.0.0.0 \
+  --node-name cn-beijing \
+  --region china
+```
+
+Clients can configure both China and US candidates as JSON:
+
+```bash
+export DIMOS_REPLAY_NODES='[
+  {"name":"cn-beijing","url":"https://cn-replays.example.com","region":"china"},
+  {"name":"us-west","url":"https://us-replays.example.com","region":"us"}
+]'
+
+dimos replay-repo recommend-node
+```
+
+The probes run concurrently. Unhealthy nodes are excluded and the lowest
+measured health-check latency is recommended. The result is keyed by the node
+configuration and cached for one hour; `recommend-node --force` refreshes it
+immediately. Upload, list, download, batch transfer, and `dimos mem upload`
+automatically use this recommendation when neither `--server-url` nor
+`DIMOS_REPLAY_SERVER_URL` is set.
+
 Multipart upload, range reads, signed CDN URLs, TLS, quotas, and audit logs are
 separate production-hardening work and are required before exposing private
 recordings to the public internet.
