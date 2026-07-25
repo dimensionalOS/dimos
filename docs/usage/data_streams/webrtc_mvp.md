@@ -181,6 +181,33 @@ selected backend. Completed metadata is written after the immutable blob, so
 an interrupted upload is never listed as complete. Downloads stream from
 object storage without first materializing the entire object on server disk.
 
+## Upload a memory2 dataset
+
+Upload a live or closed memory2 SQLite recording through the same repository:
+
+```bash
+dimos mem upload go2-office.db \
+  --owner alice \
+  --repo go2-debug \
+  --server-url https://replays.example.com
+```
+
+The command does not copy the database file directly. It uses SQLite's backup
+API to create a consistent standalone snapshot, including committed data still
+in the WAL, and runs `PRAGMA integrity_check` before upload. The original `.db`
+is sent without ZIP packaging.
+
+Each upload publishes two immutable objects:
+
+1. The replayable memory2 `.db` snapshot.
+2. A `<dataset>.memory2.json` index containing the snapshot object id,
+   SHA-256, size, SQLite user version, and each stream's item count and time
+   range.
+
+The index is uploaded only after the database object completes, so consumers
+never discover an index that points at an unfinished upload. Use `--name` to
+give the portable dataset a name different from its local filename.
+
 Multipart upload, range reads, signed CDN URLs, TLS, quotas, and audit logs are
 separate production-hardening work and are required before exposing private
 recordings to the public internet.
