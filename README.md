@@ -296,7 +296,7 @@ if __name__ == "__main__":
 - [LCM](docs/usage/lcm.md)
 - [Blueprints](docs/usage/blueprints.md)
 - [Transports](docs/usage/transports/index.md) — LCM, SHM, DDS, ROS 2
-- [Data Streams](docs/usage/data_streams/README.md)
+- [Data Streams](docs/usage/data_streams/index.md)
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)
 
