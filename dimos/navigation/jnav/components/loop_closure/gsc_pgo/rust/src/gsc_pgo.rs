@@ -736,17 +736,24 @@ impl GscPgo {
             }
         }
 
-        // Seed ICP with the scan-context yaw, rotating about the source
-        // keyframe's own global position (both submaps are in global frame):
-        //     init = T(source_position) * Rz(yaw) * T(-source_position)
-        // Built in f32, then widened to f64 for the icp_point_to_point API —
-        // which narrows it back losslessly.
+        // Seed ICP from the place-recognition match: the source keyframe is put
+        // at the *target's* global position (rotated by the scan-context yaw),
+        // i.e. init = T(target_position) * Rz(yaw) * T(-source_position). When
+        // odometry has drifted far, source_position and target_position differ by
+        // the whole drift; anchoring at source_position instead would leave the
+        // two submaps non-overlapping and ICP could never converge. For small
+        // drift target_position ~= source_position, so this reduces to the old
+        // rotate-in-place seed. Built in f32, then widened to f64 for the
+        // icp_point_to_point API — which narrows it back losslessly.
         let mut init_rotation = mat3::identity();
         let mut init_translation = [0.0f64; 3];
-        if self.config.use_scan_context && sector_shift != 0 {
-            let yaw =
-                scan_context::yaw_from_shift(sector_shift, self.scan_context_config.n_sectors);
-            let yaw_f = yaw as f32;
+        {
+            let yaw_f = if self.config.use_scan_context && sector_shift != 0 {
+                scan_context::yaw_from_shift(sector_shift, self.scan_context_config.n_sectors)
+                    as f32
+            } else {
+                0.0f32
+            };
             // Rz(yaw) from AngleAxisf(yaw_f, UnitZ()): note the (2,2) entry is
             // computed as (1 - cos) + cos, which is not always exactly 1.0f.
             let (s, c) = (yaw_f.sin(), yaw_f.cos());
@@ -761,12 +768,17 @@ impl GscPgo {
                 self.key_poses[cur_idx].translation_global[1] as f32,
                 self.key_poses[cur_idx].translation_global[2] as f32,
             ];
+            let target_position = [
+                self.key_poses[loop_idx].translation_global[0] as f32,
+                self.key_poses[loop_idx].translation_global[1] as f32,
+                self.key_poses[loop_idx].translation_global[2] as f32,
+            ];
             // rotation * source_position: fixed-size Eigen Matrix3f *
             // Vector3f, unrolled binary-tree redux t0 + (t1 + t2).
             for i in 0..3 {
                 let rotated_source = source_position[0] * rotation[i][0]
                     + (source_position[1] * rotation[i][1] + source_position[2] * rotation[i][2]);
-                init_translation[i] = f64::from(source_position[i] - rotated_source);
+                init_translation[i] = f64::from(target_position[i] - rotated_source);
                 init_rotation[i] = [
                     f64::from(rotation[i][0]),
                     f64::from(rotation[i][1]),
