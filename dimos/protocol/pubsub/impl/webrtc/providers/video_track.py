@@ -22,13 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
-
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.Image import Image
 
 _AV_FORMAT_MAP = {
     "bgr": "bgr24",
@@ -37,6 +34,14 @@ _AV_FORMAT_MAP = {
     "rgba": "rgba",
     "gray": "gray",
 }
+
+
+class ImageLike(Protocol):
+    @property
+    def data(self) -> Any: ...
+
+    @property
+    def format(self) -> Any: ...
 
 
 class CameraVideoTrack(VideoStreamTrack):
@@ -51,7 +56,7 @@ class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
         self._loop: asyncio.AbstractEventLoop = loop
-        self._latest: Image | None = None
+        self._latest: ImageLike | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
@@ -67,7 +72,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._consumed_seq = self._frame_seq
         self._armed = True
 
-    def set_latest(self, img: Image) -> None:
+    def set_latest(self, img: ImageLike) -> None:
         """Publish the latest frame. Called from the producer (stream) thread.
 
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
