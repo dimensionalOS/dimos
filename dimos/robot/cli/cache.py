@@ -24,15 +24,6 @@ from dimos.utils.cache import clean_caches
 
 app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 
-_CACHE_ENTRY_LABELS = {
-    "ament_prefix": "ament package index",
-    "deno": "downloaded Deno runtime",
-    "scene_meshes": "cooked scene meshes",
-    "scene_sources": "normalized scene sources",
-    "urdf": "prepared URDFs and convex hulls",
-    "viser_urdf": "Viser-prepared URDFs",
-}
-
 
 @app.command("clean")
 def clean(
@@ -69,8 +60,7 @@ def clean(
         entries = []
     if entries:
         for entry in entries:
-            label = _CACHE_ENTRY_LABELS.get(entry.name, "DimOS cache entry")
-            typer.echo(f"  - {entry} ({label})")
+            typer.echo(f"  - {entry}")
     else:
         typer.echo(f"  - {CACHE_DIR} (empty cache root)")
 

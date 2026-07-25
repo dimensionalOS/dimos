@@ -67,8 +67,7 @@ def test_clean_previews_current_entries_and_defaults_confirmation_to_no(
 
     assert result.exit_code == 0
     assert f"Cache root:\n  {cache_dir}" in result.output
-    assert f"  - {unknown_entry} (DimOS cache entry)" in result.output
-    assert f"  - {deno_dir} (downloaded Deno runtime)" in result.output
+    assert f"Current entries:\n  - {unknown_entry}\n  - {deno_dir}\n\nContinue?" in result.output
     assert "Continue? [y/N]:" in result.output
     assert result.output.endswith("Cache cleanup cancelled.\n")
     clean_caches.assert_not_called()
