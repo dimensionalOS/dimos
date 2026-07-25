@@ -201,10 +201,10 @@ class RelayClient:
         consumer mid-iteration never orphans the queue getter (which would
         steal the next delivered frame).
         """
-        closed = asyncio.ensure_future(self._session.wait_closed())
+        closed = asyncio.create_task(self._session.wait_closed())
         try:
             while True:
-                get = asyncio.ensure_future(self._session.frames.get())
+                get = asyncio.create_task(self._session.frames.get())
                 try:
                     await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
                     # get first: a frame buffered before close still drains.
@@ -241,7 +241,7 @@ class LatestChannelWriter:
         self.sent = 0
         self.resets = 0
         self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None]] = asyncio.Queue(maxsize=1)
-        self._task = asyncio.ensure_future(self._pump())
+        self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
     def _on_pump_done(self, task: asyncio.Future[None]) -> None:
@@ -273,10 +273,10 @@ class LatestChannelWriter:
 
     async def _pump(self) -> None:
         session = self._client._session
-        closed = asyncio.ensure_future(session.closed.wait())
+        closed = asyncio.create_task(session.closed.wait())
         try:
             while not session.closed.is_set():
-                get = asyncio.ensure_future(self._mailbox.get())
+                get = asyncio.create_task(self._mailbox.get())
                 try:
                     await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
                     if not get.done():

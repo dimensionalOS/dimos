@@ -2,9 +2,8 @@
 title: "Manipulation"
 ---
 
-Motion planning and teleoperation for robotic manipulators. Drake remains the default
-world backend, RoboPlan is available as an optional planning backend, and
-manipulation visualization supports Meshcat or Viser.
+Motion planning and teleoperation for robotic manipulators. RoboPlan provides
+the default world and native path planner.
 
 ## Quick Start
 
@@ -88,18 +87,16 @@ Manipulation planning separates the world backend from the planner algorithm:
 - `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
   field remains available as a compatibility shim.
 
-Drake remains the default:
 
 ```bash
 dimos run xarm7-planner-coordinator
 ```
 
-RoboPlan is available as an optional backend for evaluating a non-Drake world
-implementation. Select it explicitly with module options:
+Select the legacy Drake world and generic RRT planner explicitly when needed:
 
 ```bash
 dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.world_backend=roboplan \
+  -o manipulationmodule.world_backend=drake \
   -o manipulationmodule.planner_name=rrt_connect
 ```
 
@@ -107,11 +104,11 @@ Valid combinations:
 
 | `world_backend` | `planner_name` | `kinematics.backend` | Status |
 |-----------------|----------------|-------------------|--------|
-| `drake` | `rrt_connect` | `pink` | Default path |
+| `roboplan` | `roboplan` | `pink` or `jacobian` | Default path; RoboPlan-native planner |
+| `drake` | `rrt_connect` | `pink` | Legacy Drake world |
 | `drake` | `rrt_connect` | `jacobian` | Legacy Jacobian IK |
 | `drake` | `rrt_connect` | `drake_optimization` | Drake-only IK |
 | `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
-| `roboplan` | `roboplan` | `pink` or `jacobian` | RoboPlan-native planner, using the RoboPlan world object |
 
 Invalid combinations fail during startup instead of waiting for the first plan
 request. For example, `planner_name=roboplan` requires

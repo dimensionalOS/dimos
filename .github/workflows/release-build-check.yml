@@ -9,6 +9,8 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/release-build-check.yml
       - pyproject.toml
+      - setup.py
+      - MANIFEST.in
 
 permissions: {}
 
