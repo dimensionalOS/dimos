@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native Rust PGO module — a 1:1 port of gsc_pgo's main.cpp on top of the
-//! `dimos_module` framework (same wire protocol as the C++
-//! dimos_native_module.hpp, but config arrives as stdin JSON instead of CLI
-//! args).
+//! Native Rust PGO module on top of the `dimos_module` framework (config
+//! arrives as stdin JSON).
 //!
-//! Structure mirrors the C++ exactly:
+//! Structure:
 //! - LCM handlers stash odometry (latest + a sliding interpolation buffer),
 //!   pair each lidar scan with the LATEST odometry pose (CloudWithPose), and
 //!   buffer LocationConstraints.
@@ -65,7 +63,7 @@ use utils::{
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
-    /// Output/map frame (the C++ module's `frame_id`; renamed because the
+    /// Output/map frame (named `map_frame` rather than `frame_id` because the
     /// Python coordinator strips base-config field names — `frame_id` is one —
     /// from the stdin config dict).
     pub map_frame: String,
@@ -116,11 +114,9 @@ pub struct Config {
     pub use_location_constraints: bool,
     pub odom_buffer_window: f64,
 
-    // First-keyframe absolute anchor prior (per-axis stiffness) + optional
-    // per-keyframe roll/pitch prior.
+    // First-keyframe anchor prior roll/pitch stiffness + optional per-keyframe
+    // roll/pitch prior.
     pub anchor_roll_pitch_var: f64,
-    pub anchor_yaw_var: f64,
-    pub anchor_trans_var: f64,
     pub per_keyframe_roll_pitch_prior: bool,
     pub per_keyframe_roll_pitch_var: f64,
 
@@ -158,8 +154,6 @@ impl Config {
             odom_trans_xy_var: self.odom_trans_xy_var,
             odom_trans_z_var: self.odom_trans_z_var,
             anchor_roll_pitch_var: self.anchor_roll_pitch_var,
-            anchor_yaw_var: self.anchor_yaw_var,
-            anchor_trans_var: self.anchor_trans_var,
             per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
             per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
             use_scan_context: self.use_scan_context,
@@ -173,7 +167,7 @@ impl Config {
     }
 }
 
-// ---- shared state (the C++ file's globals) --------------------------------------
+// ---- shared state ---------------------------------------------------------------
 
 #[derive(Clone)]
 struct OdomSample {
@@ -186,12 +180,12 @@ struct OdomSample {
 #[derive(Default)]
 struct SharedState {
     latest_odom: Option<OdomSample>,
-    /// Reject out-of-order scans (mirrors g_last_message_time).
+    /// Reject out-of-order scans.
     last_message_time: f64,
     /// Sliding odometry history for interpolating a constraint's pose at its
-    /// own timestamp (mirrors g_odom_buffer).
+    /// own timestamp.
     odom_buffer: VecDeque<OdomSample>,
-    /// Bounded scan FIFO (mirrors g_cloud_buffer + g_max_scan_queue).
+    /// Bounded scan FIFO.
     cloud_buffer: VecDeque<CloudWithPose>,
     /// Pending LocationConstraints, drained by the worker loop.
     constraints: Vec<(LocationConstraintObs, String)>,
@@ -213,8 +207,8 @@ struct GscPgoModule {
     odometry: Input<Odometry>,
 
     // Optional decoupled LocationConstraint events; only consumed when
-    // config.use_location_constraints is set (the C++ skips the subscription
-    // entirely; here the handler is a no-op instead).
+    // config.use_location_constraints is set (otherwise the handler is a
+    // no-op).
     #[input(decode = LocationConstraint::decode, handler = on_location_constraint)]
     location_constraints: Input<LocationConstraint>,
 
@@ -289,7 +283,8 @@ impl GscPgoModule {
         }
     }
 
-    /// Port of Handlers::on_odometry.
+    /// Handle an incoming odometry message: record it as the latest sample
+    /// and push it onto the sliding interpolation buffer.
     async fn on_odometry(&mut self, msg: Odometry) {
         let q = &msg.pose.pose.orientation;
         let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
@@ -315,7 +310,8 @@ impl GscPgoModule {
         }
     }
 
-    /// Port of Handlers::on_registered_scan.
+    /// Handle an incoming lidar scan: pair it with the latest odometry pose
+    /// and enqueue it on the bounded scan FIFO.
     async fn on_cloud(&mut self, msg: PointCloud2) {
         let mut state = self.state.lock().expect("state");
         let Some(latest) = state.latest_odom.clone() else {
@@ -352,7 +348,8 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    /// Port of Handlers::on_location_constraint.
+    /// Handle an incoming LocationConstraint: validate its frame and buffer
+    /// it for the worker loop to drain.
     async fn on_location_constraint(&mut self, msg: LocationConstraint) {
         if !self.config.use_location_constraints {
             return;
@@ -389,7 +386,7 @@ impl GscPgoModule {
     }
 }
 
-// ---- worker (the C++ main loop) -----------------------------------------------------
+// ---- worker (the PGO main loop) -----------------------------------------------------
 
 struct Worker {
     state: Shared<SharedState>,
@@ -633,9 +630,9 @@ impl Worker {
         self.publish(&self.correction, &tf_msg, "correction");
     }
 
-    /// Port of publish_deformation_nodes: each keyframe keeps a stable random
-    /// id; a node is (re)published only when it's new or the optimizer moved
-    /// it past an epsilon.
+    /// Publish per-keyframe deformation nodes: each keyframe keeps a stable
+    /// random id; a node is (re)published only when it's new or the optimizer
+    /// moved it past an epsilon.
     fn publish_deformation_nodes(
         &self,
         key_poses: &[KeyPoseWithCloud],

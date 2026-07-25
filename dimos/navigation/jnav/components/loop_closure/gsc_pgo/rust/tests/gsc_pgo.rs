@@ -327,7 +327,7 @@ fn per_keyframe_rp_prior_keeps_keyframes_level() {
     let frames = make_drifted_loop(k, 30.0, 0.0040);
     let run = |per_kf: bool| -> f64 {
         let mut cfg = test_config();
-        cfg.per_keyframe_rp_prior = per_kf;
+        cfg.per_keyframe_roll_pitch_prior = per_kf;
         let mut pgo = GscPgo::new(cfg);
         for (i, fr) in frames.iter().enumerate() {
             step(&mut pgo, i as f64 * 0.1, fr.odom_pos, yaw(fr.odom_yaw));

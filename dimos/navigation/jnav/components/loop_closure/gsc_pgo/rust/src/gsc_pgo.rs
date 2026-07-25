@@ -12,17 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `GscPgo` — line-faithful port of gsc_pgo's `SimplePGO`
-//! (simple_pgo.{h,cpp} @ remove-tag-handling). Same keyframe gating, same
-//! loop-candidate search + gates, same factor graph construction, same
-//! iSAM2 update sequence, same outputs, given the same inputs.
+//! `GscPgo` — keyframe gating, loop-candidate search + gates, factor graph
+//! construction, and the iSAM2 update sequence.
 //!
-//! Key structural mapping:
+//! Key structural details:
 //! - keyframe node keys are the plain contiguous indices (0, 1, 2, ...);
 //! - location variables are `Symbol('l', i)` keys;
-//! - `CloudType::Ptr` -> `Option<Arc<PointCloud>>` (a constraint-triggered
-//!   node has no cloud);
-//! - Eigen M3D/V3D -> `mat3::Mat3` / `mat3::Vec3` (row-major f64).
+//! - a constraint-triggered node has no cloud (`Option<Arc<PointCloud>>`);
+//! - rotations/vectors are `mat3::Mat3` / `mat3::Vec3` (row-major f64).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -39,7 +36,7 @@ use crate::scan_context;
 /// contributing a tiny bit of information (keeps the linear system non-singular).
 const FREE_VARIANCE: f64 = 1e8;
 
-/// `PoseWithTime` from commons.h.
+/// A pose paired with a timestamp.
 #[derive(Debug, Clone)]
 pub struct PoseWithTime {
     pub translation: Vec3,
@@ -60,7 +57,7 @@ impl PoseWithTime {
         }
     }
 
-    /// `PoseWithTime::setTime` from commons.cpp.
+    /// Set the timestamp from sec/nsec, deriving the fractional `second`.
     pub fn set_time(&mut self, sec: i32, nsec: u32) {
         self.sec = sec;
         self.nsec = nsec;
@@ -68,9 +65,9 @@ impl PoseWithTime {
     }
 }
 
-/// `LocationConstraintObs` from commons.h: a relative-pose measurement from
-/// the body frame to a location variable, plus its 6x6 covariance
-/// (row-major, GTSAM Pose3 tangent order [rot(3), trans(3)]).
+/// A relative-pose measurement from the body frame to a location variable,
+/// plus its 6x6 covariance (row-major, GTSAM Pose3 tangent order
+/// [rot(3), trans(3)]).
 #[derive(Debug, Clone)]
 pub struct LocationConstraintObs {
     pub to_id: String,
@@ -81,7 +78,7 @@ pub struct LocationConstraintObs {
     pub ts: f64,
 }
 
-/// `CloudWithPose` from commons.h.
+/// A point cloud paired with the pose it was captured at.
 #[derive(Debug, Clone)]
 pub struct CloudWithPose {
     pub cloud: Option<Arc<PointCloud>>,
@@ -89,7 +86,7 @@ pub struct CloudWithPose {
     pub frame_id: String,
 }
 
-/// `KeyPoseWithCloud` from simple_pgo.h.
+/// A keyframe: its local and global poses, time, and body-frame cloud.
 #[derive(Debug, Clone)]
 pub struct KeyPoseWithCloud {
     pub rotation_local: Mat3,
@@ -100,8 +97,8 @@ pub struct KeyPoseWithCloud {
     pub body_cloud: Option<Arc<PointCloud>>,
 }
 
-/// `LoopPair` from simple_pgo.h: a detected loop with the ICP-refined
-/// relative pose and the per-constraint noise model built at detection.
+/// A detected loop with the ICP-refined relative pose and the per-constraint
+/// noise model built at detection.
 pub struct LoopPair {
     pub source_id: usize,
     pub target_id: usize,
@@ -124,7 +121,7 @@ pub struct PoseStamped {
     pub orientation: [f64; 4],
 }
 
-/// `Config` from simple_pgo.h — every field, same defaults.
+/// Tunable configuration for the PGO core.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub keyframe_min_rotation_degrees: f64,
@@ -154,19 +151,16 @@ pub struct Config {
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
-    /// by GscPgo itself — kept for config parity).
+    /// by GscPgo itself).
     pub use_location_constraints: bool,
     // Odometry between-factor noise (anisotropic).
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
     pub odom_trans_xy_var: f64,
     pub odom_trans_z_var: f64,
-    // First-keyframe absolute anchor prior (always added; fixes the pose graph
-    // gauge). Per-axis variances double as stiffness knobs: a tight anchor_roll_pitch_var
+    // Roll/pitch stiffness of the first-keyframe anchor prior: a tight value
     // hard-pins roll/pitch to the initial LIO attitude, a loose one frees it.
     pub anchor_roll_pitch_var: f64,
-    pub anchor_yaw_var: f64,
-    pub anchor_trans_var: f64,
     /// Optional roll/pitch prior on every keyframe (yaw + translation left free).
     pub per_keyframe_roll_pitch_prior: bool,
     pub per_keyframe_roll_pitch_var: f64,
@@ -204,8 +198,6 @@ impl Default for Config {
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-6,
             anchor_roll_pitch_var: 1e-12,
-            anchor_yaw_var: 1e-12,
-            anchor_trans_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
             per_keyframe_roll_pitch_var: 1e-4,
             use_scan_context: true,
@@ -282,8 +274,8 @@ impl GscPgo {
             scan_context_ring_keys: Vec::new(),
             rotation_offset: mat3::identity(),
             translation_offset: [0.0; 3],
-            // The shim configures ISAM2 like the C++ constructor:
-            // relinearizeThreshold = 0.01, relinearizeSkip = 1.
+            // The shim configures ISAM2 with relinearizeThreshold = 0.01,
+            // relinearizeSkip = 1.
             isam2: Isam2::new(),
             initial_values: Values::new(),
             graph: FactorGraph::new(),
@@ -302,8 +294,8 @@ impl GscPgo {
         &self.config
     }
 
-    /// `SimplePGO::isKeyPose`: keyframe gating by translation / rotation
-    /// delta against the last keyframe's LOCAL pose.
+    /// Keyframe gating by translation / rotation delta against the last
+    /// keyframe's LOCAL pose.
     pub fn is_key_pose(&self, pose: &PoseWithTime) -> bool {
         if self.key_poses.is_empty() {
             return true;
@@ -316,7 +308,8 @@ impl GscPgo {
             || delta_deg > self.config.keyframe_min_rotation_degrees
     }
 
-    /// `SimplePGO::addKeyPose`.
+    /// Insert a keyframe if the pose clears the keyframe gate; returns
+    /// whether it was added.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         if !self.is_key_pose(&cloud_with_pose.pose) {
             return false;
@@ -329,8 +322,8 @@ impl GscPgo {
         true
     }
 
-    /// `SimplePGO::addLocationConstraint`: the constraint becomes its own
-    /// pose node (at the interpolated-odometry pose supplied by the caller)
+    /// The constraint becomes its own pose node (at the interpolated-odometry
+    /// pose supplied by the caller)
     /// linked to the backbone by an odom between-factor, plus a
     /// BetweenFactor(node, location) with the constraint's covariance.
     /// Returns false (and does nothing) if no keyframe exists yet.
@@ -380,8 +373,8 @@ impl GscPgo {
         &self.scan_context_ring_keys
     }
 
-    /// `SimplePGO::insertPoseNode`: new node (key = next contiguous index)
-    /// with initial value + backbone factor (gravity prior on the first,
+    /// New node (key = next contiguous index) with initial value + backbone
+    /// factor (gravity prior on the first,
     /// else an odom between-factor), the optional per-keyframe gravity
     /// anchor, the scan-context cache, and the frame record.
     fn insert_pose_node(
@@ -407,17 +400,17 @@ impl GscPgo {
             // Absolute anchor prior on the first keyframe (always present: a
             // relative-only pose graph is singular without one absolute anchor).
             // Pose3 tangent order is [rot(3), trans(3)]: components 0-1 are
-            // roll/pitch, 2 is yaw. Each stiffness is a config knob — the smaller
-            // the variance, the harder that axis is pinned to the initial (LIO)
-            // pose. A tight anchor_roll_pitch_var pins roll/pitch to the LIO attitude; a
-            // loose one lets odom/loops decide it.
+            // roll/pitch, 2 is yaw. Yaw and translation are hard-pinned to the
+            // gauge; only roll/pitch stiffness is exposed as a config knob.
+            const ANCHOR_YAW_VAR: f64 = 1e-12;
+            const ANCHOR_TRANS_VAR: f64 = 1e-12;
             let prior_var = [
                 self.config.anchor_roll_pitch_var,
                 self.config.anchor_roll_pitch_var,
-                self.config.anchor_yaw_var,
-                self.config.anchor_trans_var,
-                self.config.anchor_trans_var,
-                self.config.anchor_trans_var,
+                ANCHOR_YAW_VAR,
+                ANCHOR_TRANS_VAR,
+                ANCHOR_TRANS_VAR,
+                ANCHOR_TRANS_VAR,
             ];
             let noise = NoiseModel::diagonal_variances(&prior_var);
             self.graph
@@ -528,8 +521,8 @@ impl GscPgo {
         idx
     }
 
-    /// `SimplePGO::getSubMap`: aggregate the body clouds of keyframes
-    /// [idx-half_range, idx+half_range] transformed by their GLOBAL poses,
+    /// Aggregate the body clouds of keyframes [idx-half_range,
+    /// idx+half_range] transformed by their GLOBAL poses,
     /// then voxel-downsample at `resolution` (when > 0).
     pub fn get_sub_map(&self, idx: i32, half_range: i32, resolution: f64) -> PointCloud {
         assert!(idx >= 0 && (idx as usize) < self.key_poses.len());
@@ -553,9 +546,8 @@ impl GscPgo {
         ret
     }
 
-    /// `SimplePGO::searchByPosition`: radius search on past key-pose global
-    /// positions (candidates ascending by distance, like PCL's radiusSearch),
-    /// returning the first far-enough-in-time hit.
+    /// Radius search on past key-pose global positions (candidates ascending
+    /// by distance), returning the first far-enough-in-time hit.
     fn search_by_position(&self) -> i64 {
         let cur_idx = self.key_poses.len() - 1;
         let last_item = self.key_poses.last().unwrap();
@@ -587,7 +579,7 @@ impl GscPgo {
         -1
     }
 
-    /// `SimplePGO::searchByScanContext`. Returns (loop_idx or -1,
+    /// Scan-context candidate search. Returns (loop_idx or -1,
     /// sector_shift, best, second): the accepted candidate under the match
     /// threshold, plus the closest / 2nd-closest cosine distances across the
     /// top-K (the Lowe ratio distinctiveness signal).
@@ -662,9 +654,8 @@ impl GscPgo {
         (best_idx, best_shift, out_best, out_second)
     }
 
-    /// `SimplePGO::searchForLoopPairs`: candidate search (scan context with
-    /// position fallback) + all the gates, ICP verification, and LoopPair
-    /// construction.
+    /// Candidate search (scan context with position fallback) + all the
+    /// gates, ICP verification, and LoopPair construction.
     pub fn search_for_loop_pairs(&mut self) {
         if self.key_poses.len() < 10 {
             return;
@@ -748,18 +739,16 @@ impl GscPgo {
         // Seed ICP with the scan-context yaw, rotating about the source
         // keyframe's own global position (both submaps are in global frame):
         //     init = T(source_position) * Rz(yaw) * T(-source_position)
-        // Built in f32 like the C++ (`Eigen::Matrix4f init_guess` from
-        // AngleAxisf / Matrix3f / Vector3f), then widened to f64 for the
-        // icp_point_to_point API — which narrows it back losslessly.
+        // Built in f32, then widened to f64 for the icp_point_to_point API —
+        // which narrows it back losslessly.
         let mut init_rotation = mat3::identity();
         let mut init_translation = [0.0f64; 3];
         if self.config.use_scan_context && sector_shift != 0 {
             let yaw =
                 scan_context::yaw_from_shift(sector_shift, self.scan_context_config.n_sectors);
             let yaw_f = yaw as f32;
-            // Eigen AngleAxisf(yaw_f, UnitZ()).toRotationMatrix(): note the
-            // (2,2) entry is computed as (1 - cos) + cos, which is not
-            // always exactly 1.0f.
+            // Rz(yaw) from AngleAxisf(yaw_f, UnitZ()): note the (2,2) entry is
+            // computed as (1 - cos) + cos, which is not always exactly 1.0f.
             let (s, c) = (yaw_f.sin(), yaw_f.cos());
             let rotation_zz = (1.0f32 - c) + c;
             let rotation = [
@@ -854,8 +843,8 @@ impl GscPgo {
         self.history_pairs.push((loop_idx, cur_idx));
     }
 
-    /// `SimplePGO::addLocationConstraintFactors`: ensure a graph variable for
-    /// `to_id` (initialized from this node's global pose when new), add a
+    /// Ensure a graph variable for `to_id` (initialized from this node's
+    /// global pose when new), add a
     /// BetweenFactor(node, location) with the constraint's covariance, and
     /// apply instance-id revision by scheduling removal of committed factors
     /// with the same instance id.
@@ -943,8 +932,8 @@ impl GscPgo {
         });
     }
 
-    /// `SimplePGO::smoothAndUpdate`: stage cached loop pairs as between
-    /// factors, run the iSAM2 update sequence (with revision removals and
+    /// Stage cached loop pairs as between factors, run the iSAM2 update
+    /// sequence (with revision removals and
     /// the extra relinearization passes a closure needs), commit staged
     /// constraint-factor indices, then refresh all keyframe globals and the
     /// rotation/translation offsets from the best estimate.

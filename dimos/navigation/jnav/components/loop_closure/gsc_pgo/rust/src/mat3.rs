@@ -13,10 +13,8 @@
 // limitations under the License.
 
 //! Small dense linear algebra for the PGO core: 3x3 rotation / vector
-//! helpers (the Eigen `M3D`/`V3D` operations simple_pgo.cpp uses) and a
-//! cyclic-Jacobi symmetric eigensolver (stand-in for Eigen's
-//! `SelfAdjointEigenSolver`, also used for Horn's 4x4 quaternion matrix in
-//! the ICP transformation estimation).
+//! helpers and a cyclic-Jacobi symmetric eigensolver (also used for Horn's
+//! 4x4 quaternion matrix in the ICP transformation estimation).
 
 pub type Mat3 = [[f64; 3]; 3];
 pub type Vec3 = [f64; 3];

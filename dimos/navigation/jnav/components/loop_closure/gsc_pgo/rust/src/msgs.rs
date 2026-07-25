@@ -13,17 +13,15 @@
 // limitations under the License.
 
 //! jnav custom LCM wire formats the PGO module speaks that have no binding in
-//! the shared `lcm-msgs` crate. Each is a byte-for-byte port of the Python
-//! implementation (the canonical schema):
+//! the shared `lcm-msgs` crate. The canonical schema for each lives in Python:
 //!
 //! - `Graph3D`       — `dimos/navigation/jnav/msgs/Graph3D.py` (encode)
 //! - `GraphDelta3D`  — `dimos/navigation/jnav/msgs/GraphDelta3D.py` (encode)
 //! - `DeformationNode` — `dimos/msgs/nav_msgs/DeformationNode.py` (encode)
 //! - `LocationConstraint` — `dimos/navigation/jnav/msgs/LocationConstraint.py`
-//!   (decode only; the PGO never publishes constraints). The decode mirrors
-//!   the C++ helper at gsc_pgo/msgs/LocationConstraint.hpp exactly, including
-//!   the tolerant tail read: `map_id`/`kind` are absent on pre-consolidation
-//!   payloads and must decode as `""` rather than failing.
+//!   (decode only; the PGO never publishes constraints). The decode does a
+//!   tolerant tail read: `map_id`/`kind` are absent on pre-consolidation
+//!   payloads and decode as `""` rather than failing.
 //!
 //! All formats are big-endian, custom binary (dispatched by channel-name
 //! suffix, not an LCM fingerprint). Strings are `u32 len + utf-8 bytes`,
