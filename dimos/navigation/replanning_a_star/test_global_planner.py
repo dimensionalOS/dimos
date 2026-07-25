@@ -40,7 +40,8 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
     # On the other side of the wall; the path must round a wall end.
     goal = Vector3(2.75, 1.5, 0)
 
-    path = planner._find_wide_path(goal, robot)
+    result = planner._find_wide_path(goal, robot)
 
-    assert path is not None
+    assert result is not None
+    path, _ = result
     assert len(path.poses) > 0

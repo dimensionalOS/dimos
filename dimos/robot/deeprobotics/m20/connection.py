@@ -61,8 +61,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# --- Patrol protocol (manual §1.1) --------------------------------------------
-
 # 16-byte header sync word. The spec table (§1.1.5) gives EB 91 EB 90, but the
 # appendix C sample writes EB 90 EB 90. We trust the spec table; if the robot
 # rejects frames, switch to _SYNC_ALT. TODO: confirm against real hardware.
@@ -266,9 +264,6 @@ class PatrolLink:
             logger.warning("M20 abnormal status: %s", errors)
         if self.on_report is not None and isinstance(asdu, dict):
             self.on_report(int(asdu.get("Type", 0)), int(asdu.get("Command", 0)), items)
-
-
-# --- dimos module -------------------------------------------------------------
 
 
 class M20Config(ModuleConfig):

@@ -488,6 +488,7 @@ class GlobalPlanner(Resource):
             distance = robot_pos.distance(goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
+            self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
             path = min_cost_astar(
                 costmap,
                 goal,
