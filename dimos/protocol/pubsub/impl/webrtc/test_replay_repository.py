@@ -18,16 +18,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 import threading
+from typing import TYPE_CHECKING
 
 import pytest
 import requests
 
 from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
-    RepositoryError,
     ReplayManifest,
     ReplayObject,
     ReplayRepository,
     ReplayRepositoryServer,
+    RepositoryError,
     download_object,
     download_objects,
     list_objects,
@@ -38,6 +39,9 @@ from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
     write_manifest,
 )
 
+if TYPE_CHECKING:
+    from typing import Any
+
 
 @contextmanager
 def _running_server(
@@ -45,12 +49,14 @@ def _running_server(
     *,
     token: str | None = "test-token",
     public_read: bool = False,
+    **server_options: Any,
 ) -> Iterator[str]:
     server = ReplayRepositoryServer(
         ("127.0.0.1", 0),
         ReplayRepository(root),
         token=token,
         public_read=public_read,
+        **server_options,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -203,6 +209,118 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
     assert video.headers["Content-Disposition"].startswith("inline;")
     assert download.content == source.read_bytes()
     assert download.headers["Content-Disposition"].startswith("attachment;")
+
+
+def test_repository_enforces_object_and_repository_quotas(tmp_path: Path) -> None:
+    too_large = tmp_path / "too-large.mp4"
+    too_large.write_bytes(b"123456")
+    with _running_server(
+        tmp_path / "object-limit",
+        max_object_bytes=5,
+    ) as server_url:
+        with pytest.raises(requests.HTTPError, match="413"):
+            upload_file(
+                server_url=server_url,
+                owner="alice",
+                repository="go2",
+                path=too_large,
+                token="test-token",
+                retries=0,
+            )
+
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"first!")
+    second.write_bytes(b"second")
+    with _running_server(
+        tmp_path / "repository-limit",
+        max_repository_bytes=10,
+    ) as server_url:
+        upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="go2",
+            path=first,
+            token="test-token",
+        )
+        with pytest.raises(requests.HTTPError, match="507"):
+            upload_file(
+                server_url=server_url,
+                owner="alice",
+                repository="go2",
+                path=second,
+                token="test-token",
+                retries=0,
+            )
+
+
+def test_metrics_count_completed_transfer_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "metrics.mp4"
+    source.write_bytes(b"metrics-video")
+    download = tmp_path / "metrics-copy.mp4"
+
+    with _running_server(tmp_path / "objects") as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="go2",
+            path=source,
+            token="test-token",
+        )
+        download_object(
+            server_url=server_url,
+            owner="alice",
+            repository="go2",
+            object_id=uploaded.object_id,
+            output=download,
+            token="test-token",
+        )
+        metrics = requests.get(
+            f"{server_url}/metrics",
+            headers={"Authorization": "Bearer test-token"},
+            timeout=5.0,
+        )
+
+    assert metrics.status_code == 200
+    assert "dimos_replay_uploads_total 1" in metrics.text
+    assert "dimos_replay_downloads_total 1" in metrics.text
+    assert f"dimos_replay_uploaded_bytes_total {source.stat().st_size}" in metrics.text
+    assert f"dimos_replay_downloaded_bytes_total {source.stat().st_size}" in metrics.text
+
+
+def test_cdn_base_url_is_used_by_repository_page(tmp_path: Path) -> None:
+    source = tmp_path / "cdn.mp4"
+    source.write_bytes(b"cdn-video")
+
+    with _running_server(
+        tmp_path / "objects",
+        public_read=True,
+        cdn_base_url="https://cdn.example",
+    ) as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="go2",
+            path=source,
+            token="test-token",
+        )
+        page = requests.get(f"{server_url}/r/alice/go2", timeout=5.0)
+
+    assert page.status_code == 200
+    assert (
+        f"https://cdn.example/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
+        in page.text
+    )
+
+
+def test_server_recovers_interrupted_upload_parts(tmp_path: Path) -> None:
+    root = tmp_path / "objects"
+    part = root / "alice" / "go2" / ".upload-interrupted.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"incomplete")
+
+    with _running_server(root):
+        assert not part.exists()
 
 
 def test_batch_upload_manifest_and_download(tmp_path: Path) -> None:

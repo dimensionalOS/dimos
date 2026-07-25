@@ -119,10 +119,43 @@ def serve(
         "--region",
         help="Node region advertised by /healthz: china, us, or other",
     ),
+    max_object_bytes: int | None = typer.Option(
+        None,
+        "--max-object-bytes",
+        min=1,
+        envvar="DIMOS_REPLAY_MAX_OBJECT_BYTES",
+    ),
+    max_repository_bytes: int | None = typer.Option(
+        None,
+        "--max-repository-bytes",
+        min=1,
+        envvar="DIMOS_REPLAY_MAX_REPOSITORY_BYTES",
+    ),
+    cdn_base_url: str | None = typer.Option(
+        None,
+        "--cdn-base-url",
+        envvar="DIMOS_REPLAY_CDN_BASE_URL",
+    ),
+    tls_certfile: Path | None = typer.Option(
+        None,
+        "--tls-certfile",
+        exists=True,
+        dir_okay=False,
+        envvar="DIMOS_REPLAY_TLS_CERTFILE",
+    ),
+    tls_keyfile: Path | None = typer.Option(
+        None,
+        "--tls-keyfile",
+        exists=True,
+        dir_okay=False,
+        envvar="DIMOS_REPLAY_TLS_KEYFILE",
+    ),
 ) -> None:
     """Run the MVP repository server."""
     if region not in {"china", "us", "other"}:
         raise typer.BadParameter("--region must be china, us, or other")
+    if (tls_certfile is None) != (tls_keyfile is None):
+        raise typer.BadParameter("--tls-certfile and --tls-keyfile must be provided together")
     if host not in {"127.0.0.1", "::1", "localhost"} and not token:
         raise typer.BadParameter(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
@@ -157,6 +190,7 @@ def serve(
                 "public_read": public_read,
                 "node": node_name,
                 "region": region,
+                "tls": tls_certfile is not None,
             },
             sort_keys=True,
         )
@@ -171,6 +205,11 @@ def serve(
             repository=storage,
             node_name=node_name,
             region=region,
+            max_object_bytes=max_object_bytes,
+            max_repository_bytes=max_repository_bytes,
+            cdn_base_url=cdn_base_url,
+            tls_certfile=tls_certfile,
+            tls_keyfile=tls_keyfile,
         )
     except KeyboardInterrupt:
         pass

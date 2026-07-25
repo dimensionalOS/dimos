@@ -255,6 +255,37 @@ immediately. Upload, list, download, batch transfer, and `dimos mem upload`
 automatically use this recommendation when neither `--server-url` nor
 `DIMOS_REPLAY_SERVER_URL` is set.
 
-Multipart upload, range reads, signed CDN URLs, TLS, quotas, and audit logs are
-separate production-hardening work and are required before exposing private
-recordings to the public internet.
+## Production hardening
+
+The server can terminate TLS directly, enforce byte limits, and generate links
+through a CDN origin:
+
+```bash
+dimos replay-repo serve \
+  --host 0.0.0.0 \
+  --port 443 \
+  --tls-certfile /etc/letsencrypt/live/replays.example.com/fullchain.pem \
+  --tls-keyfile /etc/letsencrypt/live/replays.example.com/privkey.pem \
+  --max-object-bytes 10737418240 \
+  --max-repository-bytes 107374182400 \
+  --cdn-base-url https://cdn.example.com
+```
+
+TLS requires both files and enforces TLS 1.2 or newer. Per-object limits reject
+the request before reading its body; repository reservations include concurrent
+uploads so parallel clients cannot overrun the quota. Content-addressed
+reuploads do not consume quota twice.
+
+`/metrics` exposes Prometheus counters for requests, failures, transfers,
+bytes, and recovered partial uploads. It follows normal read authorization;
+send the bearer token unless `--public-read` is intentionally enabled.
+`/healthz` remains public and contains no repository data so load balancers can
+probe it. Successful uploads are written to the Python audit log with owner,
+repository, object id, and byte count. Filesystem servers remove interrupted
+`.part` files at startup, while S3-compatible servers continue to advertise
+metadata only after the immutable object finishes.
+
+Run multiple stateless API nodes behind the China/US load balancers with the
+shared S3/R2/MinIO backend. The CDN should use the API nodes as its origin and
+cache immutable object-id URLs. Multipart/resumable upload and provider-native
+signed CDN URLs remain follow-up work for very large datasets.

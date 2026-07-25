@@ -26,11 +26,14 @@ from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
 import re
+import ssl
 import tempfile
+from threading import Lock
 import time
 from typing import Any, Protocol, TypeVar, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -41,10 +44,19 @@ _CHUNK_SIZE = 1024 * 1024
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _OBJECT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _T = TypeVar("_T")
+logger = logging.getLogger(__name__)
 
 
 class RepositoryError(ValueError):
     """A repository request is invalid."""
+
+
+class ObjectTooLargeError(RepositoryError):
+    """An upload exceeds the configured per-object limit."""
+
+
+class RepositoryQuotaError(RepositoryError):
+    """An upload exceeds the configured repository byte quota."""
 
 
 class BinaryReader(Protocol):
@@ -348,6 +360,47 @@ class ReplayRepository:
         ]
         return sorted(objects, key=lambda item: item.created_at, reverse=True)
 
+    def recover_incomplete_uploads(self) -> int:
+        """Remove temporary files left by an interrupted server process."""
+        if not self.root.exists():
+            return 0
+        recovered = 0
+        for path in self.root.rglob("*.part"):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+                recovered += 1
+        return recovered
+
+
+class RepositoryMetrics:
+    """Small thread-safe Prometheus counter registry."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._values: dict[str, int] = {
+            "requests_total": 0,
+            "errors_total": 0,
+            "uploads_total": 0,
+            "downloads_total": 0,
+            "uploaded_bytes_total": 0,
+            "downloaded_bytes_total": 0,
+            "recovered_parts_total": 0,
+        }
+
+    def increment(self, name: str, value: int = 1) -> None:
+        with self._lock:
+            self._values[name] += value
+
+    def render(self) -> str:
+        with self._lock:
+            values = dict(self._values)
+        lines = [
+            "# HELP dimos_replay_requests_total HTTP requests handled.",
+            "# TYPE dimos_replay_requests_total counter",
+        ]
+        lines.extend(f"dimos_replay_{name} {value}" for name, value in sorted(values.items()))
+        return "\n".join(lines) + "\n"
+
 
 class ReplayRepositoryServer(ThreadingHTTPServer):
     """Threaded HTTP server carrying repository state."""
@@ -364,15 +417,74 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         public_read: bool = False,
         node_name: str = "local",
         region: str = "other",
+        max_object_bytes: int | None = None,
+        max_repository_bytes: int | None = None,
+        cdn_base_url: str | None = None,
     ) -> None:
         if region not in {"china", "us", "other"}:
             raise ValueError("region must be china, us, or other")
+        if max_object_bytes is not None and max_object_bytes < 1:
+            raise ValueError("max_object_bytes must be positive")
+        if max_repository_bytes is not None and max_repository_bytes < 1:
+            raise ValueError("max_repository_bytes must be positive")
+        if cdn_base_url is not None:
+            parsed_cdn = urlsplit(cdn_base_url)
+            if parsed_cdn.scheme not in {"http", "https"} or not parsed_cdn.hostname:
+                raise ValueError("cdn_base_url must be an absolute HTTP(S) URL")
         self.repository = repository
         self.token = token
         self.public_read = public_read
         self.node_name = node_name
         self.region = region
+        self.max_object_bytes = max_object_bytes
+        self.max_repository_bytes = max_repository_bytes
+        self.cdn_base_url = cdn_base_url.rstrip("/") if cdn_base_url else None
+        self.metrics = RepositoryMetrics()
+        self._quota_lock = Lock()
+        self._pending_bytes: dict[tuple[str, str], int] = {}
+        recover = getattr(repository, "recover_incomplete_uploads", None)
+        if callable(recover):
+            self.metrics.increment("recovered_parts_total", int(recover()))
         super().__init__(address, ReplayRepositoryRequestHandler)
+
+    def reserve_upload(
+        self,
+        owner: str,
+        repository: str,
+        size_bytes: int,
+        expected_sha256: str | None,
+    ) -> int:
+        if self.max_object_bytes is not None and size_bytes > self.max_object_bytes:
+            raise ObjectTooLargeError(
+                f"object has {size_bytes} bytes; limit is {self.max_object_bytes}"
+            )
+        if self.max_repository_bytes is None:
+            return 0
+        key = (owner, repository)
+        with self._quota_lock:
+            existing = self.repository.list(owner, repository)
+            if expected_sha256 and any(item.object_id == expected_sha256 for item in existing):
+                return 0
+            used = sum(item.size_bytes for item in existing)
+            pending = self._pending_bytes.get(key, 0)
+            if used + pending + size_bytes > self.max_repository_bytes:
+                raise RepositoryQuotaError(
+                    f"repository would use {used + pending + size_bytes} bytes; "
+                    f"quota is {self.max_repository_bytes}"
+                )
+            self._pending_bytes[key] = pending + size_bytes
+            return size_bytes
+
+    def release_upload(self, owner: str, repository: str, reserved_bytes: int) -> None:
+        if reserved_bytes == 0:
+            return
+        key = (owner, repository)
+        with self._quota_lock:
+            remaining = self._pending_bytes.get(key, 0) - reserved_bytes
+            if remaining > 0:
+                self._pending_bytes[key] = remaining
+            else:
+                self._pending_bytes.pop(key, None)
 
 
 class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
@@ -415,7 +527,18 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def _send_error_json(self, status: HTTPStatus, message: str) -> None:
+        self._repository_server().metrics.increment("errors_total")
         self._send_json(status, {"error": message})
+
+    def _send_text(self, status: HTTPStatus, payload: str, content_type: str) -> None:
+        encoded = payload.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(encoded)
+        self.close_connection = True
 
     def _send_html(self, status: HTTPStatus, page: str) -> None:
         payload = page.encode()
@@ -446,15 +569,21 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 f"/api/v1/repositories/{quote(owner, safe='')}/"
                 f"{quote(repository_name, safe='')}/objects/{item.object_id}"
             )
+            public_object_url = (
+                f"{self._repository_server().cdn_base_url}{object_url}"
+                if self._repository_server().cdn_base_url
+                else object_url
+            )
+            escaped_object_url = escape(public_object_url, quote=True)
             preview = ""
             if item.content_type.startswith("video/"):
-                preview = f'<video controls preload="metadata" src="{object_url}"></video>'
+                preview = f'<video controls preload="metadata" src="{escaped_object_url}"></video>'
             cards.append(
                 "<article>"
                 f"<h2>{escape(item.filename)}</h2>"
                 f"{preview}"
                 f"<p>{item.size_bytes:,} bytes · SHA-256 {escape(item.sha256)}</p>"
-                f'<a href="{object_url}?download=1">Download</a>'
+                f'<a href="{escaped_object_url}?download=1">Download</a>'
                 "</article>"
             )
         body = "".join(cards) or "<p>No objects have been uploaded yet.</p>"
@@ -481,8 +610,13 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         self._send_html(HTTPStatus.OK, page)
 
     def do_POST(self) -> None:
+        server = self._repository_server()
+        server.metrics.increment("requests_total")
         if not self._check_authorized(write=True):
             return
+        reserved_bytes = 0
+        owner = ""
+        repository = ""
         try:
             owner, repository, object_id = self._route()
             if object_id is not None:
@@ -494,22 +628,47 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             filename = self.headers.get("X-Dimos-Filename")
             if filename is None:
                 raise RepositoryError("X-Dimos-Filename is required")
-            metadata = self._repository_server().repository.put_stream(
+            expected_sha256 = self.headers.get("X-Dimos-Sha256")
+            reserved_bytes = server.reserve_upload(
+                owner,
+                repository,
+                size_bytes,
+                expected_sha256,
+            )
+            metadata = server.repository.put_stream(
                 owner=owner,
                 repository=repository,
                 filename=unquote(filename),
                 source=self.rfile,
                 size_bytes=size_bytes,
                 content_type=self.headers.get("Content-Type", "application/octet-stream"),
-                expected_sha256=self.headers.get("X-Dimos-Sha256"),
+                expected_sha256=expected_sha256,
+            )
+            server.metrics.increment("uploads_total")
+            server.metrics.increment("uploaded_bytes_total", metadata.size_bytes)
+            logger.info(
+                "replay upload owner=%s repository=%s object_id=%s bytes=%d",
+                owner,
+                repository,
+                metadata.object_id,
+                metadata.size_bytes,
             )
             self._send_json(HTTPStatus.CREATED, metadata.to_dict())
+        except ObjectTooLargeError as exc:
+            self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+        except RepositoryQuotaError as exc:
+            self._send_error_json(HTTPStatus.INSUFFICIENT_STORAGE, str(exc))
         except (RepositoryError, ValueError) as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except OSError as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+        finally:
+            if owner and repository:
+                server.release_upload(owner, repository, reserved_bytes)
 
     def do_GET(self) -> None:
+        server = self._repository_server()
+        server.metrics.increment("requests_total")
         if urlsplit(self.path).path == "/healthz":
             self._send_json(
                 HTTPStatus.OK,
@@ -518,6 +677,15 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                     "node": self._repository_server().node_name,
                     "region": self._repository_server().region,
                 },
+            )
+            return
+        if urlsplit(self.path).path == "/metrics":
+            if not self._check_authorized(write=False):
+                return
+            self._send_text(
+                HTTPStatus.OK,
+                server.metrics.render(),
+                "text/plain; version=0.0.4; charset=utf-8",
             )
             return
         if not self._check_authorized(write=False):
@@ -564,6 +732,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
             finally:
                 source.close()
+            server.metrics.increment("downloads_total")
+            server.metrics.increment("downloaded_bytes_total", metadata.size_bytes)
             self.close_connection = True
         except RepositoryError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
@@ -586,8 +756,15 @@ def serve_repository(
     repository: ReplayRepositoryBackend | None = None,
     node_name: str = "local",
     region: str = "other",
+    max_object_bytes: int | None = None,
+    max_repository_bytes: int | None = None,
+    cdn_base_url: str | None = None,
+    tls_certfile: str | Path | None = None,
+    tls_keyfile: str | Path | None = None,
 ) -> None:
     """Serve until interrupted."""
+    if (tls_certfile is None) != (tls_keyfile is None):
+        raise ValueError("tls_certfile and tls_keyfile must be provided together")
     with ReplayRepositoryServer(
         (host, port),
         repository or ReplayRepository(root),
@@ -595,7 +772,15 @@ def serve_repository(
         public_read=public_read,
         node_name=node_name,
         region=region,
+        max_object_bytes=max_object_bytes,
+        max_repository_bytes=max_repository_bytes,
+        cdn_base_url=cdn_base_url,
     ) as server:
+        if tls_certfile is not None and tls_keyfile is not None:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(str(tls_certfile), str(tls_keyfile))
+            server.socket = context.wrap_socket(server.socket, server_side=True)
         server.serve_forever()
 
 

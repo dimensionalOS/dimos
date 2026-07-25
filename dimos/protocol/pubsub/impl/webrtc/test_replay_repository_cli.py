@@ -99,6 +99,11 @@ def test_serve_uses_environment_token(
         "repository": None,
         "node_name": "local",
         "region": "other",
+        "max_object_bytes": None,
+        "max_repository_bytes": None,
+        "cdn_base_url": None,
+        "tls_certfile": None,
+        "tls_keyfile": None,
     }
 
 
@@ -165,6 +170,62 @@ def test_serve_rejects_invalid_region(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "--region must be china, us, or other" in result.output
+
+
+def test_serve_passes_tls_and_limit_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cert.write_text("certificate")
+    key.write_text("key")
+    received: dict[str, Any] = {}
+    monkeypatch.setattr(
+        replay_repository_cli,
+        "serve_repository",
+        lambda **kwargs: received.update(kwargs),
+    )
+
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        [
+            "serve",
+            "--root",
+            str(tmp_path / "objects"),
+            "--tls-certfile",
+            str(cert),
+            "--tls-keyfile",
+            str(key),
+            "--max-object-bytes",
+            "1000",
+            "--max-repository-bytes",
+            "5000",
+            "--cdn-base-url",
+            "https://cdn.example",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["tls"] is True
+    assert received["tls_certfile"] == cert
+    assert received["tls_keyfile"] == key
+    assert received["max_object_bytes"] == 1000
+    assert received["max_repository_bytes"] == 5000
+    assert received["cdn_base_url"] == "https://cdn.example"
+
+
+def test_serve_requires_tls_certificate_and_key_together(tmp_path: Path) -> None:
+    cert = tmp_path / "server.crt"
+    cert.write_text("certificate")
+
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        ["serve", "--root", str(tmp_path), "--tls-certfile", str(cert)],
+    )
+
+    assert result.exit_code == 2
+    assert "must be provided together" in result.output
 
 
 def test_recommend_node_command(monkeypatch: pytest.MonkeyPatch) -> None:
