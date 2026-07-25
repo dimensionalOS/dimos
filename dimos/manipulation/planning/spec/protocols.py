@@ -83,8 +83,8 @@ class WorldSpec(Protocol):
         ...
 
     # Obstacle Management
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle to the world. Returns unique obstacle ID."""
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        """Add an obstacle, returning a non-empty native ID if inserted."""
         ...
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
@@ -196,6 +196,18 @@ class VisualizationSpec(Protocol):
 
     def initialize(self, session: VisualizationSession) -> None:
         """Receive one-shot visualization session metadata after world startup."""
+        ...
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render or otherwise accept an obstacle added to the planning world."""
+        ...
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove an obstacle representation from the visualization."""
+        ...
+
+    def clear_vis_obstacles(self) -> None:
+        """Clear obstacle representations from the visualization."""
         ...
 
     def get_visualization_url(self) -> str | None:
