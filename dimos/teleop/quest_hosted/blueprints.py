@@ -28,7 +28,7 @@ from dimos.teleop.utils.recorder import TeleopRecorder, TeleopRecorderConfig
 
 # Single XArm7 teleop via the hosted (WebRTC) client. Pass `--simulation` to
 # run the coordinator inside MuJoCo, omit it for real hardware.
-teleop_hosted_xarm7 = (
+teleop_hosted_module_xarm7 = (
     autoconnect(
         HostedArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
         coordinator_teleop_xarm7,

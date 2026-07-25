@@ -95,6 +95,7 @@ rerun_config: dict[str, Any] = {
         "world/global_map": 0,  # publishes at ~7.8 Hz
         "world/color_image": 0,  # publishes at ~14 Hz
         "world/global_costmap": 0,  # publishes at ~7.6 Hz
+        "world/lidar": 1,  # publishes at ~7.7 Hz; hidden by default in the blueprint
     },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {

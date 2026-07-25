@@ -1,0 +1,77 @@
+{
+  "vectors": [
+    {
+      "name": "hello_robot",
+      "message": {
+        "t": "hello",
+        "v": 1,
+        "role": "robot"
+      },
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoicm9ib3QifQ=="
+    },
+    {
+      "name": "hello_viewer",
+      "message": {
+        "t": "hello",
+        "v": 1,
+        "role": "viewer"
+      },
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoidmlld2VyIn0="
+    },
+    {
+      "name": "welcome",
+      "message": {
+        "t": "welcome",
+        "v": 1
+      },
+      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjF9"
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoicGluZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoicG9uZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "error_version",
+      "message": {
+        "t": "error",
+        "code": "version_mismatch",
+        "message": "protocol v1 required, versiune neacceptată"
+      },
+      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2MSByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
+    },
+    {
+      "name": "twist",
+      "message": {
+        "t": "twist",
+        "vx": 0.5,
+        "wz": -0.25,
+        "seq": 12,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoidHdpc3QiLCJ2eCI6MC41LCJ3eiI6LTAuMjUsInNlcSI6MTIsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "stop",
+      "message": {
+        "t": "stop",
+        "seq": 13,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0Ijoic3RvcCIsInNlcSI6MTMsInRzIjoxNzUyNTc2MDAwLjV9"
+    }
+  ]
+}

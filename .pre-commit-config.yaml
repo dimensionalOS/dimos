@@ -55,7 +55,8 @@ repos:
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
-        exclude: ^misc/DimSim/public/sims/  # LFS-tracked
+        # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`
+        exclude: ^(misc/DimSim/public/sims/|web/)
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1
@@ -151,4 +152,11 @@ repos:
           '
         language: system
         types: [rust]
+        pass_filenames: false
+
+      - id: deno-fmt
+        name: deno fmt (web/)
+        entry: bash -c 'cd web && deno fmt'
+        language: system
+        files: ^web/
         pass_filenames: false

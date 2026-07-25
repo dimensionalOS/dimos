@@ -15,3 +15,9 @@
 TASK_FACTORIES = {
     "cartesian_ik": "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "cartesian_ik": {
+        "coordinator_cartesian_command": ("on_cartesian_command", "by_task_name"),
+    },
+}

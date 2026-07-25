@@ -713,8 +713,10 @@ def _materialize_transports(
         config = None
         config_cls = spec.config_cls
         if config_cls is not None:
+            # Config-field kwargs pinned on the spec
+            spec_fields = {k: v for k, v in spec.kwargs.items() if k in config_cls.model_fields}
             sub = overrides.get(transport_config_name(config_cls), {})
-            config = config_cls(**sub)
+            config = config_cls(**{**spec_fields, **sub})
         materialized[key] = _coerce_transport_to_backend(spec.build(config=config))
     return materialized
 

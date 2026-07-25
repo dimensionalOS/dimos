@@ -13,22 +13,22 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Iterator
-import json
+from collections.abc import Callable
 from queue import Empty
-from unittest.mock import MagicMock, patch
+from threading import RLock
+from unittest.mock import MagicMock, create_autospec, patch
 
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
+from langchain_openai import ChatOpenAI
 import pytest
+import requests
 
 from dimos.agents.mcp.mcp_client import McpClient
 
 
-def _mock_post(url: str, **kwargs: object) -> MagicMock:
-    """Return a fake httpx response based on the JSON-RPC method."""
-    body = kwargs.get("json") or (kwargs.get("content") and json.loads(kwargs["content"]))
-    assert isinstance(body, dict)
+def _mock_payload(body: dict[str, object]) -> dict[str, object]:
+    """Return the JSON-RPC response dict for a request body, keyed by method."""
     method = body["method"]
     req_id = body["id"]
 
@@ -77,32 +77,33 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
             text = "Skill not found"
         result = {"content": [{"type": "text", "text": text}]}
     else:
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+        return {
             "jsonrpc": "2.0",
             "id": req_id,
             "error": {"code": -32601, "message": f"Unknown: {method}"},
         }
+
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) -> MagicMock:
+    """Return an autospec'd requests.Session whose .post() replies via payload_fn."""
+
+    def _post(url: str, *, json: dict[str, object], timeout: float | None = None) -> MagicMock:
+        resp = create_autospec(requests.Response, instance=True, spec_set=True)
+        resp.json.return_value = payload_fn(json)
         return resp
 
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"jsonrpc": "2.0", "id": req_id, "result": result}
-    return resp
+    session = create_autospec(requests.Session, instance=True, spec_set=True)
+    session.post.side_effect = _post
+    return session
 
 
 @pytest.fixture
-def mcp_client() -> Iterator[McpClient]:
-    """Build an McpClient wired to the mock MCP post handler."""
-    mock_http = MagicMock()
-    mock_http.post.side_effect = _mock_post
-
-    with patch("dimos.agents.mcp.mcp_client.httpx.Client", return_value=mock_http):
-        client = McpClient(mcp_server_url="http://localhost:9990/mcp")
-
+def mcp_client() -> McpClient:
+    """Build an McpClient wired to a mock requests session."""
+    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+    client._http_client = _mock_session(_mock_payload)
     try:
         yield client
     finally:
@@ -127,18 +128,14 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
-    def error_post(url: str, **kwargs: object) -> MagicMock:
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+    def error_payload(body: dict[str, object]) -> dict[str, object]:
+        return {
             "jsonrpc": "2.0",
             "id": 1,
             "error": {"code": -32601, "message": "Unknown: bad/method"},
         }
-        return resp
 
-    mcp_client._http_client.post.side_effect = error_post
+    mcp_client._http_client = _mock_session(error_payload)
 
     try:
         mcp_client._mcp_request("bad/method")
@@ -210,8 +207,8 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
         captured["params"] = params
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    mcp_client._mcp_request = fake_request
-    mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
+    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
+        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
 
     assert captured["method"] == "tools/call"
     params = captured["params"]
@@ -222,3 +219,49 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
     assert isinstance(meta, dict)
     token = meta["progressToken"]
     assert isinstance(token, str) and len(token) > 0
+
+
+@pytest.fixture
+def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
+    """Prepare a client for testing agent model initialization."""
+    mcp_client.config.model_fixture = None
+    mcp_client.config.system_prompt = "System prompt"
+    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
+    mcp_client._lock = RLock()
+    mcp_client._thread = MagicMock()
+    mcp_client._thread.is_alive.return_value = True
+    return mcp_client
+
+
+def test_on_system_modules_uses_responses_api_model(
+    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production agents use the Responses API required for Luna tool calls."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    configured_mcp_client.config.model = "gpt-5.6-luna"
+
+    with patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent:
+        configured_mcp_client.on_system_modules([])
+
+    model = create_agent.call_args.kwargs["model"]
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "gpt-5.6-luna"
+    assert model.use_responses_api is True
+    assert model.reasoning == {"effort": "medium", "summary": "auto"}
+
+
+@pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
+def test_on_system_modules_resolves_non_reasoning_models(
+    configured_mcp_client: McpClient, model_name: str
+) -> None:
+    """Models without Responses reasoning support use provider resolution."""
+    configured_mcp_client.config.model = model_name
+    resolved_model = MagicMock()
+
+    with (
+        patch("dimos.agents.mcp.mcp_client.create_agent"),
+        patch("dimos.agents.mcp.mcp_client.init_chat_model", return_value=resolved_model) as init,
+    ):
+        configured_mcp_client.on_system_modules([])
+
+    init.assert_called_once_with(model=model_name)

@@ -74,6 +74,12 @@ class HardwareComponent:
             on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
             off the generic HardwareComponent shared by manipulators,
             bases, and grippers.
+        gripper_open_position: Adapter-native open endpoint used when
+            normalized gripper commands are mapped. These are not universally
+            meters: Piper uses 0.07, while the existing XArm adapter path
+            uses its parent-native 0.85 endpoint.
+        gripper_closed_position: Adapter-native closed endpoint; typically
+            0.0 for Piper and XArm.
     """
 
     hardware_id: HardwareId
@@ -86,6 +92,10 @@ class HardwareComponent:
     domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
+    # Optional mapping for normalized gripper commands. Endpoints are
+    # adapter-native command units, not a universal unit such as meters.
+    gripper_open_position: float | None = None
+    gripper_closed_position: float | None = None
 
     @property
     def all_joints(self) -> list[JointName]:

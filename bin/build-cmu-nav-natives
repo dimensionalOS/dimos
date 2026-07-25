@@ -61,6 +61,41 @@ def discover() -> tuple[type[NativeModuleConfig], ...]:
     return tuple(found)
 
 
+# Persistent GC-root dir on the runner's /nix volume — nix's own roots dir, not
+# the git checkout — so `git clean -ffdx` can't delete the roots and
+# nix-collect-garbage never reaps the native closures. Roots are per-store, so
+# each self-hosted runner pins its own /nix here (they can't travel via Cachix,
+# which ships store paths, not roots).
+GCROOTS_DIR = Path("/nix/var/nix/gcroots/dimos-natives")
+
+
+def _pin(root_name: str, out_link: Path) -> str:
+    """Anchor a realized module output with a permanent GC-root under /nix.
+
+    Best-effort and non-fatal: only nix `result`-style outputs (a symlink into
+    /nix/store) are pinned; a prebuilt/absolute executable or a non-writable
+    /nix is skipped with a note. The root name is stable per module, so a
+    version bump overwrites the link and the old closure becomes collectible.
+    """
+    try:
+        target = out_link.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ""  # nothing realized here to pin
+    if not str(target).startswith("/nix/store/"):
+        return ""
+    link = GCROOTS_DIR / root_name
+    try:
+        GCROOTS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = GCROOTS_DIR / f".{root_name}.tmp"
+        tmp.unlink(missing_ok=True)
+        tmp.symlink_to(target)
+        tmp.replace(link)  # atomic swap
+    except OSError as e:
+        return f" [pin skipped: {e}]"
+    # readlink -e: the freshly written root must resolve into the store.
+    return " [pinned]" if link.exists() else f" [pin INVALID: {link}]"
+
+
 def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
     name = cfg_cls.__name__
     cfg = cfg_cls()
@@ -70,24 +105,48 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
     cwd = Path(cfg.cwd) if cfg.cwd is not None else base_dir
     if not cwd.is_absolute():
         cwd = base_dir / cwd
-    exe = Path(cfg.executable)
-    if not exe.is_absolute():
-        exe = cwd / exe
+    rel = Path(cfg.executable)
+    exe = rel if rel.is_absolute() else cwd / rel
+    out_link = rel if rel.is_absolute() else cwd / rel.parts[0]  # the `result` symlink
+
+    # Fast path: a previous run on this runner already built and pinned this exact
+    # command. `git clean` wipes the `result` symlink, but the pin under /nix
+    # survives — restore `result` from it so the exe.exists() check below skips
+    # `nix build` entirely. Without this, every run re-evaluates the flake and
+    # re-fetches its multi-GB `-source` closure just for the GC to delete it
+    # again. The `.cmd` sidecar guards correctness: a version bump changes
+    # build_command, misses the pin, and rebuilds.
+    cmd_file = GCROOTS_DIR / f"{name}.cmd"
+    pin = GCROOTS_DIR / name
+    if pin.exists() and cmd_file.is_file() and cmd_file.read_text() == cfg.build_command:
+        out_link.unlink(missing_ok=True)
+        out_link.symlink_to(pin.resolve())
+
     if exe.exists():
-        return f"OK:    {name} already built at {exe}"
-    _log(f"START: {name} in {cwd}: {cfg.build_command}")
-    proc = subprocess.run(
-        cfg.build_command,
-        shell=True,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    body = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
-        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
-    return f"DONE:  {name}\n{body}".rstrip()
+        status = f"OK:    {name} already built at {exe}"
+    else:
+        _log(f"START: {name} in {cwd}: {cfg.build_command}")
+        proc = subprocess.run(
+            cfg.build_command,
+            shell=True,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        body = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0:
+            raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+        status = f"DONE:  {name}\n{body}".rstrip()
+    # Anchor the realized store path with a permanent GC-root (see _pin) and
+    # record its build_command so next run's fast path can validate the pin.
+    out = status + _pin(name, out_link)
+    if pin.exists():
+        try:
+            cmd_file.write_text(cfg.build_command)
+        except OSError:
+            pass
+    return out
 
 
 def main() -> None:
