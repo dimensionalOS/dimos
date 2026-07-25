@@ -1,16 +1,15 @@
 import AppKit
 import Foundation
 
-private let hardwareConfirmation = "START GO2"
 private let studioBlueprint = "dimos-go2-studio.go2"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private let robotIPField = NSTextField(string: "192.168.12.1")
-    private let confirmationField = NSSecureTextField(string: "")
     private let statusView = NSTextView()
     private var projectRoot: URL?
     private var runtimeProcess: Process?
+    private var isTransitioning = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -62,13 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ipLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         robotIPField.placeholderString = "192.168.12.1"
 
-        let confirmationLabel = NSTextField(labelWithString: "运动确认词")
-        confirmationLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        confirmationField.placeholderString = hardwareConfirmation
-
         let inputGrid = NSGridView(views: [
             [ipLabel, robotIPField],
-            [confirmationLabel, confirmationField],
         ])
         inputGrid.rowSpacing = 10
         inputGrid.columnSpacing = 12
@@ -80,11 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(startReplay(_:))
         )
         let readOnlyButton = button(
-            "一键连接狗 + 建图 + MCP",
+            "只读连接（不能遥控）",
             action: #selector(startReadOnly(_:))
         )
         let hardwareButton = button(
-            "启用运动（需 START GO2）",
+            "连接并启用遥控",
             action: #selector(startHardware(_:))
         )
         let stopButton = button("停止 DimOS", action: #selector(stopDimOS(_:)))
@@ -110,10 +104,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(openHeadedStudio(_:))
         )
         let mcpButton = button("检查官方 MCP", action: #selector(checkMCP(_:)))
+        let trajectoryButton = button(
+            "查看实际轨迹",
+            action: #selector(checkRobotSummary(_:))
+        )
         let statusButton = button("刷新状态", action: #selector(refreshStatus(_:)))
 
         let toolsRow = NSStackView(
-            views: [viewerButton, commandCenterButton, studioButton, mcpButton, statusButton]
+            views: [
+                viewerButton,
+                commandCenterButton,
+                studioButton,
+                mcpButton,
+                trajectoryButton,
+                statusButton,
+            ]
         )
         toolsRow.orientation = .horizontal
         toolsRow.spacing = 8
@@ -259,10 +264,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appendStatus("DimOS 路径不可用。")
             return
         }
-        if runtimeProcess?.isRunning == true {
-            appendStatus("已有 DimOS 进程正在启动或运行，请先停止。")
-            return
-        }
 
         let logURL = root.appendingPathComponent("logs/dimos-native-runtime.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -282,7 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.terminationHandler = { [weak self] process in
             try? logHandle.close()
             DispatchQueue.main.async {
-                self?.runtimeProcess = nil
+                if self?.runtimeProcess === process {
+                    self?.runtimeProcess = nil
+                }
                 self?.appendStatus("DimOS 进程已退出（\(process.terminationStatus)）。")
             }
         }
@@ -291,12 +294,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try process.run()
             runtimeProcess = process
             appendStatus("DimOS 已启动，PID \(process.processIdentifier)。")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
                 self.refreshStatus(nil)
             }
         } catch {
             try? logHandle.close()
             appendStatus("启动失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func prepareRuntime(completion: @escaping () -> Void) {
+        guard let root = projectRoot else {
+            appendStatus("项目目录不可用。")
+            return
+        }
+        guard !isTransitioning else {
+            appendStatus("正在切换 DimOS 运行模式，请稍候。")
+            return
+        }
+
+        isTransitioning = true
+        let helper = root.appendingPathComponent("scripts/stop_dimos_native_conflicts.sh")
+        appendStatus("正在停止旧 DimOS/MCP，并释放控制端口…")
+        runProcess(
+            executable: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [helper.path]
+        ) { code, output in
+            self.runtimeProcess = nil
+            self.isTransitioning = false
+            guard code == 0 else {
+                self.appendStatus(
+                    "无法切换运行模式（\(code)）：\(output.isEmpty ? "控制端口仍被占用" : output)"
+                )
+                return
+            }
+            self.appendStatus(output.isEmpty ? "旧运行实例已停止。" : output)
+            completion()
         }
     }
 
@@ -306,12 +339,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appendStatus("请输入机器狗 IP。")
             return
         }
-        if !readOnly && confirmationField.stringValue != hardwareConfirmation {
-            appendStatus("拒绝启用运动：确认词必须是 \(hardwareConfirmation)。")
-            NSSound.beep()
-            return
-        }
-
         var arguments = [
             "--robot-ip", robotIP,
             "--viewer", "rerun",
@@ -325,25 +352,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "--option", "go2connection.movement_enabled=false",
                 "--option", "go2connection.auto_stand=false",
             ]
+        } else {
+            arguments += [
+                "--option", "go2connection.movement_enabled=true",
+                "--option", "go2connection.auto_stand=false",
+            ]
         }
 
         appendStatus(
             readOnly
-                ? "正在连接机器狗并启动雷达建图、原生 Viewer 与 MCP…"
-                : "正在启动官方硬件 Blueprint、原生 Viewer 与 MCP…"
+                ? "正在启动只读模式：地图/相机可用，键盘移动会被拦截。"
+                : "正在启动可遥控模式：Viewer 打开后请先点击画面，再用键盘控制。"
         )
-        launchRuntime(arguments)
+        prepareRuntime {
+            self.launchRuntime(arguments)
+        }
     }
 
     @objc private func startReplay(_ sender: Any?) {
         appendStatus("正在启动官方 Go2 回放、原生 Viewer 与 MCP…")
-        runDimos([
-            "--replay",
-            "--viewer", "rerun",
-            "--rerun-open", "native",
-            "--no-rerun-web",
-            "run", studioBlueprint,
-        ])
+        prepareRuntime {
+            self.launchRuntime([
+                "--replay",
+                "--viewer", "rerun",
+                "--rerun-open", "native",
+                "--no-rerun-web",
+                "run", studioBlueprint,
+            ])
+        }
     }
 
     @objc private func startReadOnly(_ sender: Any?) {
@@ -355,12 +391,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopDimOS(_ sender: Any?) {
-        appendStatus("正在停止 DimOS…")
-        runDimos(["stop"]) { code, output in
-            self.appendStatus("停止返回码 \(code)：\(output.isEmpty ? "已停止" : output)")
-            if self.runtimeProcess?.isRunning == true {
-                self.runtimeProcess?.terminate()
-            }
+        prepareRuntime {
+            self.appendStatus("DimOS、旧 MCP 和原生 Viewer 已停止。")
             self.refreshStatus(nil)
         }
     }
@@ -374,6 +406,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func checkMCP(_ sender: Any?) {
         runDimos(["mcp", "list-tools"]) { code, output in
             self.appendStatus("官方 MCP（\(code)）：\(output.isEmpty ? "未启动" : output)")
+        }
+    }
+
+    @objc private func checkRobotSummary(_ sender: Any?) {
+        runDimos(["mcp", "call", "get_robot_summary"]) { code, output in
+            self.appendStatus(
+                "真实里程计 / actual path（\(code)）：\(output.isEmpty ? "暂无数据" : output)"
+            )
         }
     }
 

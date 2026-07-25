@@ -9,12 +9,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .models import (
     AgentMessageRequest,
-    MissionActionRequest,
-    MissionCreateRequest,
-    MissionStartRequest,
     RobotCheckRequest,
     RuntimeStartRequest,
     SkillSourceRequest,
+    StageTwoCancelRequest,
+    StageTwoConfirmPlaceRequest,
+    StageTwoNavigateRequest,
+    StageTwoReplyRequest,
     StudioSettings,
     TeleopKeyRequest,
 )
@@ -124,49 +125,50 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    @app.get("/api/mission/status")
-    def mission_status() -> dict[str, Any]:
-        return service.mission_status()
+    @app.get("/api/stage2/status")
+    def stage2_status() -> dict[str, Any]:
+        return service.stage2_status()
 
-    @app.post("/api/mission")
-    def mission_create(payload: MissionCreateRequest) -> dict[str, Any]:
+    @app.post("/api/stage2/navigate")
+    def stage2_navigate(payload: StageTwoNavigateRequest) -> dict[str, Any]:
         try:
-            return service.create_mission(payload.objective)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.post("/api/mission/start")
-    def mission_start(payload: MissionStartRequest) -> dict[str, Any]:
-        try:
-            return service.start_mission(payload.confirmation)
+            return service.stage2_navigate(
+                payload.instruction_id,
+                payload.destination,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/mission/pause")
-    def mission_pause(payload: MissionActionRequest) -> dict[str, Any]:
+    @app.post("/api/stage2/places/confirm-current")
+    def stage2_confirm_current_place(
+        payload: StageTwoConfirmPlaceRequest,
+    ) -> dict[str, Any]:
         try:
-            return service.pause_mission(payload.reason)
+            return service.stage2_confirm_current_place(
+                payload.name,
+                payload.aliases,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/mission/resume")
-    def mission_resume(payload: MissionStartRequest) -> dict[str, Any]:
+    @app.post("/api/stage2/cancel")
+    def stage2_cancel(payload: StageTwoCancelRequest) -> dict[str, Any]:
         try:
-            return service.resume_mission(payload.confirmation)
+            return service.stage2_cancel(payload.task_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/mission/stop")
-    def mission_stop(payload: MissionActionRequest) -> dict[str, Any]:
+    @app.post("/api/stage2/stop-all")
+    def stage2_stop_all() -> dict[str, Any]:
         try:
-            return service.stop_mission(payload.reason)
+            return service.stage2_stop_all()
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/mission/estop")
-    def mission_emergency_stop(payload: MissionActionRequest) -> dict[str, Any]:
+    @app.post("/api/stage2/reply")
+    def stage2_reply(payload: StageTwoReplyRequest) -> dict[str, Any]:
         try:
-            return service.emergency_stop_mission(payload.reason)
+            return service.stage2_reply(payload.model_dump(mode="json"))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

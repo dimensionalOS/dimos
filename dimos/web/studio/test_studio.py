@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001
 """Tests for the safe, local DimOS Studio API."""
 
 from pathlib import Path
@@ -155,93 +154,19 @@ def test_hosted_teleop_uses_keychain_key_only_in_environment(
     assert "30.201.217.128" in environment["NO_PROXY"].split(",")
 
 
-def test_mission_api_create_and_status(tmp_path: Path) -> None:
+def test_legacy_mission_api_is_not_mounted_or_loaded(tmp_path: Path) -> None:
     skill_path = tmp_path / "skills.py"
     skill_path.write_text(VALID_SKILL)
     app = create_app(tmp_path / "settings.json", skill_path)
     client = TestClient(app)
 
-    initial = client.get("/api/mission/status")
-    assert initial.status_code == 200
-    assert initial.json()["mission"] is None
-
-    created = client.post(
-        "/api/mission",
-        json={"objective": "探索会场，找到门并在门前一米停下"},
-    )
-
-    assert created.status_code == 200
-    assert created.json()["mission"]["state"] == "draft"
-    assert client.get("/api/mission/status").json()["mission"]["objective"] == (
-        "探索会场，找到门并在门前一米停下"
-    )
+    assert client.get("/api/mission/status").status_code == 404
+    assert client.post("/api/mission", json={"objective": "找到门"}).status_code == 404
+    assert app.state.studio_service._legacy_mission_controller is None
+    assert not (tmp_path / "dimos-studio-mission.json").exists()
 
 
-def test_mission_start_requires_safety_gate_and_forwards_agent_prompt(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    skill_path = tmp_path / "skills.py"
-    skill_path.write_text(VALID_SKILL)
-    app = create_app(tmp_path / "settings.json", skill_path)
-    client = TestClient(app)
-    service = app.state.studio_service
-    client.post("/api/mission", json={"objective": "找到出口门"})
-
-    locked = client.post(
-        "/api/mission/start",
-        json={"confirmation": "START MISSION"},
-    )
-    assert locked.status_code == 409
-    assert "运动锁" in locked.json()["detail"]
-
-    service.save_settings(service.load_settings().model_copy(update={"movement_locked": False}))
-    monkeypatch.setattr(service, "runtime_status", lambda: {"running": True})
-    sent: list[str] = []
-    monkeypatch.setattr(service, "send_agent_message", lambda message: sent.append(message) or "ok")
-
-    started = client.post(
-        "/api/mission/start",
-        json={"confirmation": "START MISSION"},
-    )
-
-    assert started.status_code == 200
-    assert started.json()["mission"]["state"] == "running"
-    assert sent
-    assert "begin_exploration" in sent[0]
-    assert "1.0 米" in sent[0]
-    assert "不能修改或绕过安全参数" in sent[0]
-
-
-def test_emergency_stop_is_recorded_when_mcp_is_unavailable(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    skill_path = tmp_path / "skills.py"
-    skill_path.write_text(VALID_SKILL)
-    app = create_app(tmp_path / "settings.json", skill_path)
-    client = TestClient(app)
-    service = app.state.studio_service
-    client.post("/api/mission", json={"objective": "找到门"})
-
-    def unavailable() -> dict[str, str]:
-        raise ValueError("MCP unavailable")
-
-    monkeypatch.setattr(service, "request_remote_stop", unavailable)
-
-    stopped = client.post(
-        "/api/mission/estop",
-        json={"reason": "operator test"},
-    )
-
-    assert stopped.status_code == 200
-    assert stopped.json()["mission"]["state"] == "stopped"
-    assert stopped.json()["mission"]["phase"] == "急停"
-    assert stopped.json()["remote_stop_confirmed"] is False
-    assert "MCP unavailable" in stopped.json()["remote_stop_error"]
-
-
-def test_studio_has_unified_mission_control_page(tmp_path: Path) -> None:
+def test_studio_has_thin_stage2_control_page(tmp_path: Path) -> None:
     skill_path = tmp_path / "skills.py"
     skill_path.write_text(VALID_SKILL)
     client = TestClient(create_app(tmp_path / "settings.json", skill_path))
@@ -250,13 +175,126 @@ def test_studio_has_unified_mission_control_page(tmp_path: Path) -> None:
 
     assert 'data-page="mission"' in html
     assert 'src="http://127.0.0.1:7779/"' in html
-    assert 'id="mission-objective"' in html
-    assert 'id="create-mission"' in html
-    assert 'id="start-mission"' in html
-    assert 'id="pause-mission"' in html
-    assert 'id="resume-mission"' in html
-    assert 'id="stop-mission"' in html
     assert 'id="mission-estop"' in html
-    assert 'id="mission-state"' in html
-    assert "人流礼让" in html
-    assert "运动锁" in html
+    assert 'id="stage2-map-id"' in html
+    assert 'id="stage2-places"' in html
+    assert 'id="stage2-place-name"' in html
+    assert 'id="stage2-confirm-place"' in html
+    assert 'id="stage2-task-id"' in html
+    assert 'id="stage2-task-state"' in html
+    assert 'id="stage2-destination"' in html
+    assert 'id="stage2-recovery"' in html
+    assert 'id="stage2-navigate"' in html
+    assert 'id="stage2-cancel"' in html
+    assert 'id="mission-objective"' not in html
+    assert 'id="create-mission"' not in html
+    assert 'id="stage2-trajectory"' not in html
+    assert "Studio 只负责地点命名、路线选择和发送任务" in html
+
+
+def test_stage2_api_delegates_to_the_single_supervision_adapter(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    skill_path = tmp_path / "skills.py"
+    skill_path.write_text(VALID_SKILL)
+    app = create_app(tmp_path / "settings.json", skill_path)
+    client = TestClient(app)
+    control = app.state.studio_service.stage2_control
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        control,
+        "status",
+        lambda: {
+            "connected": True,
+            "semantic_world": {
+                "map_id": "venue-a",
+                "map_version": "v1",
+                "places": [],
+            },
+            "task": {"state": "idle", "active": False, "task": None},
+            "telemetry": {"planned_path": [], "actual_path": []},
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        control,
+        "confirm_current_place",
+        lambda name, aliases: calls.append(("confirm", (name, aliases)))
+        or {"accepted": True},
+    )
+    monkeypatch.setattr(
+        control,
+        "navigate",
+        lambda instruction_id, destination: calls.append(
+            ("navigate", (instruction_id, destination))
+        )
+        or {"accepted": True},
+    )
+    monkeypatch.setattr(
+        control,
+        "cancel",
+        lambda task_id: calls.append(("cancel", task_id))
+        or {"state": "cancelled", "active": False},
+    )
+    monkeypatch.setattr(
+        control,
+        "stop_all",
+        lambda: calls.append(("stop_all", None))
+        or {"status": "stopped", "failed_components": []},
+    )
+    monkeypatch.setattr(
+        control,
+        "record_reply",
+        lambda payload: calls.append(("reply", payload))
+        or {"accepted": True, "duplicate": False},
+    )
+
+    assert client.get("/api/stage2/status").json()["connected"] is True
+    assert (
+        client.post(
+            "/api/stage2/places/confirm-current",
+            json={"name": "测试起点", "aliases": ["起点"]},
+        ).status_code
+        == 200
+    )
+    assert client.post("/api/stage2/stop-all").status_code == 200
+    assert (
+        client.post(
+            "/api/stage2/navigate",
+            json={
+                "instruction_id": "studio-instruction-0001",
+                "destination": "门口测试点",
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/stage2/cancel",
+            json={"task_id": "task-stage2-0001"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/stage2/reply",
+            json={
+                "event": "agent.reply.completed",
+                "reply_id": "reply-stage2-0001",
+                "instruction_id": "studio-instruction-0001",
+                "text": "任务已完成",
+                "completed_at": "2026-07-25T06:00:02Z",
+            },
+        ).status_code
+        == 200
+    )
+    assert calls[0] == ("confirm", ("测试起点", ["起点"]))
+    assert calls[1] == ("stop_all", None)
+    assert calls[2] == (
+        "navigate",
+        ("studio-instruction-0001", "门口测试点"),
+    )
+    assert calls[3] == ("cancel", "task-stage2-0001")
+    assert calls[4][0] == "reply"

@@ -28,6 +28,7 @@ class QwenVlModelConfig(VlModelConfig):
 
     model_name: str = "qwen2.5-vl-72b-instruct"
     api_key: str | None = None
+    base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
 class QwenVlModel(VlModel):
@@ -35,16 +36,27 @@ class QwenVlModel(VlModel):
 
     @cached_property
     def _client(self) -> OpenAI:
-        api_key = self.config.api_key or os.getenv("ALIBABA_API_KEY")
+        api_key = (
+            self.config.api_key
+            or os.getenv("DIMOS_QWEN_VL_API_KEY")
+            or os.getenv("ALIBABA_API_KEY")
+        )
         if not api_key:
             raise ValueError(
-                "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
+                "Qwen VL API key must be provided or set in "
+                "DIMOS_QWEN_VL_API_KEY/ALIBABA_API_KEY"
             )
 
         return OpenAI(
-            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            base_url=os.getenv("DIMOS_QWEN_VL_BASE_URL", self.config.base_url),
             api_key=api_key,
         )
+
+    @property
+    def model_name(self) -> str:
+        """Resolved provider model ID, allowing deployment-level overrides."""
+
+        return os.getenv("DIMOS_QWEN_VL_MODEL", self.config.model_name)
 
     def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override]
         if isinstance(image, np.ndarray):
@@ -64,7 +76,7 @@ class QwenVlModel(VlModel):
         img_base64 = image.to_base64()
 
         response = self._client.chat.completions.create(
-            model=self.config.model_name,
+            model=self.model_name,
             messages=[
                 {
                     "role": "user",
@@ -104,7 +116,7 @@ class QwenVlModel(VlModel):
         content.append({"type": "text", "text": query})
 
         messages = [{"role": "user", "content": content}]
-        api_kwargs: dict[str, Any] = {"model": self.config.model_name, "messages": messages}
+        api_kwargs: dict[str, Any] = {"model": self.model_name, "messages": messages}
         if response_format:
             api_kwargs["response_format"] = response_format
 

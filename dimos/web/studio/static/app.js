@@ -1,6 +1,7 @@
 let settings = null;
 let lastStatus = null;
-let missionState = null;
+let stage2State = null;
+let pendingStage2InstructionId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,13 +27,6 @@ function renderSafety() {
   const locked = settings?.movement_locked !== false;
   $("lock-label").textContent = locked ? "运动已锁定" : "警告：真实运动已解锁";
   $("lock-dot").style.background = locked ? "#f0bd4e" : "#e54c43";
-  if ($("mission-safety-state")) {
-    const mission = missionState?.mission;
-    $("mission-safety-state").textContent = locked
-      ? "运动锁开启"
-      : mission?.safety_reason || "等待实时安全数据";
-    $("mission-safety-state").classList.toggle("unsafe", !locked);
-  }
 }
 
 async function loadSettings() {
@@ -82,11 +76,6 @@ async function refreshStatus() {
       ? `正在启动 · PID ${lastStatus.pid}`
       : lastStatus.message;
   $("runtime-logs").textContent = lastStatus.log_tail || "暂无日志";
-  if ($("mission-runtime-state")) {
-    $("mission-runtime-state").textContent = lastStatus.running
-      ? `运行中 · ${lastStatus.blueprint || "DimOS"}`
-      : lastStatus.starting ? "正在启动" : "未运行";
-  }
   if ($("visual-frame")) {
     $("visual-frame").classList.toggle("is-offline", !lastStatus.running);
     if (!wasRunning && lastStatus.running) {
@@ -95,71 +84,64 @@ async function refreshStatus() {
   }
 }
 
-const missionLabels = {
-  idle: "尚未创建",
-  draft: "草稿",
-  running: "执行中",
-  paused: "已暂停",
-  completed: "已完成",
-  stopped: "已停止",
-  failed: "失败",
-};
+function renderStage2() {
+  const world = stage2State?.semantic_world || { places: [] };
+  const taskStatus = stage2State?.task || { state: "unavailable", active: false };
+  const task = taskStatus.task || null;
+  const telemetry = stage2State?.telemetry || {};
+  $("stage2-connection").textContent = stage2State?.connected
+    ? "已连接"
+    : `不可用${stage2State?.errors?.length ? ` · ${stage2State.errors[0]}` : ""}`;
+  $("stage2-map-id").textContent = world.map_id && world.map_version
+    ? `${world.map_id} · ${world.map_version}`
+    : "未配置";
+  $("stage2-task-state").textContent =
+    `${taskStatus.state || "unavailable"}${taskStatus.active ? " · active" : ""}`;
+  $("stage2-task-state").dataset.state = taskStatus.state || "unavailable";
+  $("stage2-task-id").textContent = task?.task_id || "—";
+  $("stage2-destination").textContent = task?.destination || "—";
+  const odometry = telemetry.odometry || {};
+  $("stage2-odometry").textContent = odometry.fresh
+    ? `fresh · ${Number(odometry.age_s || 0).toFixed(2)}s`
+    : telemetry.status || "unavailable";
+  const recovery = telemetry.recovery;
+  $("stage2-recovery").textContent = recovery
+    ? `#${recovery.attempt} ${recovery.cause} / ${recovery.action}`
+    : "—";
 
-function renderMissionEvents(events) {
-  const container = $("mission-events");
-  container.replaceChildren();
-  if (!events?.length) {
-    container.textContent = "尚无任务事件";
-    return;
+  const places = Array.isArray(world.places) ? world.places : [];
+  const select = $("stage2-places");
+  const selected = select.value;
+  select.replaceChildren();
+  if (!places.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "当前地图没有 confirmed place";
+    select.append(option);
+  } else {
+    places.forEach((place) => {
+      const option = document.createElement("option");
+      option.value = place.name;
+      option.textContent = place.aliases?.length
+        ? `${place.name}（${place.aliases.join(" / ")}）`
+        : place.name;
+      select.append(option);
+    });
+    if (places.some((place) => place.name === selected)) select.value = selected;
   }
-  [...events].reverse().forEach((event) => {
-    const row = document.createElement("div");
-    const time = document.createElement("time");
-    const message = document.createElement("span");
-    time.textContent = new Date(event.at).toLocaleTimeString("zh-CN", { hour12: false });
-    message.textContent = event.message;
-    row.append(time, message);
-    container.append(row);
-  });
+  $("stage2-navigate").disabled = !stage2State?.connected || !places.length || taskStatus.active;
+  $("stage2-cancel").disabled = !stage2State?.connected || !task?.task_id || !taskStatus.active;
+  $("stage2-confirm-place").disabled =
+    !stage2State?.connected || !odometry.fresh || taskStatus.active;
+  const reply = stage2State?.last_reply;
+  $("stage2-reply").textContent = reply
+    ? `${reply.text}\n${reply.instruction_id}`
+    : "尚无终态回复";
 }
 
-function renderMission() {
-  const mission = missionState?.mission;
-  const state = mission?.state || "idle";
-  $("mission-state").textContent = missionLabels[state] || state;
-  $("mission-state").dataset.state = state;
-  $("mission-phase").textContent = mission?.phase || "—";
-  if (mission && document.activeElement !== $("mission-objective")) {
-    $("mission-objective").value = mission.objective;
-  }
-  renderMissionEvents(mission?.events);
-  $("start-mission").disabled = state !== "draft";
-  $("pause-mission").disabled = state !== "running";
-  $("resume-mission").disabled = state !== "paused";
-  $("stop-mission").disabled = !["draft", "running", "paused"].includes(state);
-  $("mission-estop").disabled = state === "idle";
-  renderSafety();
-}
-
-async function loadMission() {
-  missionState = await api("/api/mission/status");
-  renderMission();
-}
-
-async function missionAction(path, body = {}) {
-  $("mission-action-result").textContent = "正在发送…";
-  try {
-    missionState = await api(path, { method: "POST", body: JSON.stringify(body) });
-    renderMission();
-    const remoteWarning = missionState.remote_stop_confirmed === false
-      ? `；警告：机器狗未确认停止：${missionState.remote_stop_error}`
-      : "";
-    $("mission-action-result").textContent = `操作完成${remoteWarning}`;
-    return true;
-  } catch (error) {
-    $("mission-action-result").textContent = error.message;
-    return false;
-  }
+async function loadStage2() {
+  stage2State = await api("/api/stage2/status");
+  renderStage2();
 }
 
 async function loadTeleopKeyStatus() {
@@ -311,43 +293,91 @@ $("send-agent").addEventListener("click", async () => {
   } catch (error) { $("agent-result").textContent = error.message; }
 });
 
-$("create-mission").addEventListener("click", async () => {
-  const objective = $("mission-objective").value.trim();
-  if (!objective) {
-    $("mission-action-result").textContent = "先写下任务目标。";
-    return;
+$("mission-estop").addEventListener("click", async () => {
+  $("stage2-action-result").textContent = "正在请求 canonical MCP stop_all…";
+  try {
+    const result = await api("/api/stage2/stop-all", { method: "POST" });
+    const failures = Array.isArray(result.failed_components)
+      ? result.failed_components
+      : [];
+    $("stage2-action-result").textContent = failures.length
+      ? `stop_all 已返回，但以下组件失败：${failures.join("、")}`
+      : "stop_all 已确认停止。";
+    await loadStage2();
+  } catch (error) {
+    $("stage2-action-result").textContent = `stop_all 未确认：${error.message}`;
   }
-  await missionAction("/api/mission", { objective });
 });
 
-$("start-mission").addEventListener("click", () => missionAction(
-  "/api/mission/start",
-  { confirmation: $("mission-confirmation").value.trim() },
-));
+$("stage2-navigate").addEventListener("click", async () => {
+  const destination = $("stage2-places").value;
+  if (!destination) return;
+  pendingStage2InstructionId ||= `studio-${crypto.randomUUID()}`;
+  $("stage2-action-result").textContent = "正在提交到 Agent Gateway…";
+  try {
+    const result = await api("/api/stage2/navigate", {
+      method: "POST",
+      body: JSON.stringify({
+        instruction_id: pendingStage2InstructionId,
+        destination,
+      }),
+    });
+    $("stage2-action-result").textContent =
+      `已受理 ${result.instruction_id}；这不代表已经到达。`;
+    pendingStage2InstructionId = null;
+    await loadStage2();
+  } catch (error) {
+    $("stage2-action-result").textContent =
+      `${error.message}；下次重试会复用同一 instruction ID。`;
+  }
+});
 
-$("pause-mission").addEventListener("click", () => missionAction(
-  "/api/mission/pause",
-  { reason: "操作员从 Mission Control 暂停" },
-));
+$("stage2-confirm-place").addEventListener("click", async () => {
+  const name = $("stage2-place-name").value.trim();
+  if (!name) {
+    $("stage2-action-result").textContent = "请先输入地点名称。";
+    return;
+  }
+  const aliases = $("stage2-place-aliases").value
+    .split(/[，,]/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  $("stage2-action-result").textContent = `正在用 fresh odometry 确认“${name}”…`;
+  try {
+    const result = await api("/api/stage2/places/confirm-current", {
+      method: "POST",
+      body: JSON.stringify({ name, aliases }),
+    });
+    $("stage2-action-result").textContent =
+      `已确认地点：${result.place?.name || name}。`;
+    $("stage2-place-name").value = "";
+    $("stage2-place-aliases").value = "";
+    await loadStage2();
+  } catch (error) {
+    $("stage2-action-result").textContent = error.message;
+  }
+});
 
-$("resume-mission").addEventListener("click", () => missionAction(
-  "/api/mission/resume",
-  { confirmation: $("mission-confirmation").value.trim() },
-));
-
-$("stop-mission").addEventListener("click", () => missionAction(
-  "/api/mission/stop",
-  { reason: "操作员从 Mission Control 停止" },
-));
-
-$("mission-estop").addEventListener("click", () => missionAction(
-  "/api/mission/estop",
-  { reason: "操作员按下 Mission Control 急停" },
-));
+$("stage2-cancel").addEventListener("click", async () => {
+  const taskId = stage2State?.task?.task?.task_id;
+  if (!taskId) return;
+  $("stage2-action-result").textContent = `正在取消 ${taskId}…`;
+  try {
+    const result = await api("/api/stage2/cancel", {
+      method: "POST",
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    $("stage2-action-result").textContent =
+      `取消结果：${result.state || "unknown"} · active=${String(result.active)}`;
+    await loadStage2();
+  } catch (error) {
+    $("stage2-action-result").textContent = error.message;
+  }
+});
 
 $("reload-visualizer").addEventListener("click", () => {
   $("dimos-visualizer").src = $("dimos-visualizer").src;
-  $("mission-action-result").textContent = lastStatus?.running
+  $("stage2-action-result").textContent = lastStatus?.running
     ? "正在重新连接相机与地图…"
     : "DimOS 尚未运行，画面服务还没有启动。";
 });
@@ -375,9 +405,9 @@ $("refresh-logs").addEventListener("click", () => refreshStatus().catch((error) 
 Promise.all([
   loadSettings(),
   refreshStatus(),
-  loadMission(),
+  loadStage2(),
   loadSkill(),
   loadTeleopKeyStatus(),
 ]).catch((error) => toast(error.message));
 setInterval(() => refreshStatus().catch(() => {}), 5000);
-setInterval(() => loadMission().catch(() => {}), 2000);
+setInterval(() => loadStage2().catch(() => {}), 2000);

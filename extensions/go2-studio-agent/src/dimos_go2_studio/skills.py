@@ -1,7 +1,9 @@
-"""Skills edited from the DimOS Studio application.
+"""Policy/evidence skills edited from the DimOS Studio application.
 
 Keep movement actions out of this file until they have been tested in simulation.
 Every ``@skill`` needs a docstring, typed parameters, and a typed return value.
+Mission lifecycle and movement capability ownership belong to
+``MissionExecutor``; do not duplicate start/pause/resume/cancel methods here.
 """
 
 from datetime import datetime, timezone

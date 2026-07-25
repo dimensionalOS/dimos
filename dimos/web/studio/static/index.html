@@ -85,17 +85,17 @@
       <section id="page-mission" class="page mission-page">
         <div class="mission-heading">
           <div>
-            <h1>Go2 Mission Control</h1>
-            <p>相机、雷达地图、路线和自主任务集中在一个页面。</p>
+            <h1>Go2 语义导航控制台</h1>
+            <p>Studio 只负责地点命名、路线选择和发送任务；机器人状态以 Product Runtime 为准。</p>
           </div>
           <button id="mission-estop" class="estop">急停 E-STOP</button>
         </div>
 
         <div class="mission-status-strip">
-          <div><span>DimOS</span><strong id="mission-runtime-state">未运行</strong></div>
-          <div><span>任务</span><strong id="mission-state">尚未创建</strong></div>
-          <div><span>阶段</span><strong id="mission-phase">—</strong></div>
-          <div><span>安全</span><strong id="mission-safety-state">运动锁开启</strong></div>
+          <div><span>Product 控制栈</span><strong id="stage2-connection">检查中</strong></div>
+          <div><span>地图</span><strong id="stage2-map-id">—</strong></div>
+          <div><span>Canonical 任务</span><strong id="stage2-task-state">unavailable</strong></div>
+          <div><span>里程计</span><strong id="stage2-odometry">unavailable</strong></div>
         </div>
 
         <div class="mission-layout">
@@ -120,54 +120,36 @@
               </div>
             </div>
             <div class="visual-help">
-              看不到画面时，先去“机器人”页启动仿真或“连接真实 Go2（运动锁定）”。
+              点位、当前目标、官方规划路线和实际轨迹均由 Product Runtime 送入官方 dimos-viewer。
             </div>
           </article>
 
           <aside class="mission-sidebar">
-            <article>
-              <h2>1. 写下任务</h2>
-              <label>你希望机器狗完成什么
-                <textarea
-                  id="mission-objective"
-                  rows="4"
-                  placeholder="例如：自主探索会场，找到出口门，在门前 1 米停下并报告。"
-                ></textarea>
+            <article class="stage2-card">
+              <h2>Stage 2：前往已确认地点</h2>
+              <label>把机器狗当前位置确认成地点
+                <input id="stage2-place-name" placeholder="例如：测试起点" maxlength="200" />
               </label>
-              <button id="create-mission" class="primary wide">创建任务</button>
-            </article>
-
-            <article>
-              <h2>2. 安全确认与控制</h2>
-              <p class="safety-copy">
-                启动前必须确认运动锁已关闭、DimOS 已运行、现场有人远程看守。
-              </p>
-              <label>启动确认
-                <input id="mission-confirmation" placeholder="输入 START MISSION" />
+              <label>别名（用逗号分隔，可空）
+                <input id="stage2-place-aliases" placeholder="例如：起点, 出发点" maxlength="1000" />
+              </label>
+              <button id="stage2-confirm-place" class="wide">确认当前位置</button>
+              <label>当前地图的 confirmed places
+                <select id="stage2-places">
+                  <option value="">等待 product MCP…</option>
+                </select>
               </label>
               <div class="mission-actions">
-                <button id="start-mission" class="primary">启动</button>
-                <button id="pause-mission">暂停</button>
-                <button id="resume-mission">恢复</button>
-                <button id="stop-mission">停止</button>
+                <button id="stage2-navigate" class="primary">前往选中地点</button>
+                <button id="stage2-cancel">取消当前任务</button>
               </div>
-              <div id="mission-action-result" class="inline-result">等待操作</div>
-            </article>
-
-            <article>
-              <h2>固定安全策略</h2>
-              <dl id="mission-policy" class="policy-list">
-                <div><dt>最大自主速度</dt><dd>0.1 m/s</dd></div>
-                <div><dt>人员安全半径</dt><dd>1.5 m</dd></div>
-                <div><dt>人流礼让</dt><dd>有人即停，连续安全 3 秒再走</dd></div>
-                <div><dt>门前停止距离</dt><dd>1.0 m</dd></div>
-                <div><dt>自主倒车</dt><dd>禁止</dd></div>
+              <dl class="policy-list task-facts">
+                <div><dt>Task ID</dt><dd id="stage2-task-id">—</dd></div>
+                <div><dt>Destination</dt><dd id="stage2-destination">—</dd></div>
+                <div><dt>Recovery</dt><dd id="stage2-recovery">—</dd></div>
               </dl>
-            </article>
-
-            <article>
-              <h2>任务事件</h2>
-              <div id="mission-events" class="event-list">尚无任务事件</div>
+              <div id="stage2-action-result" class="inline-result">等待控制栈</div>
+              <div id="stage2-reply" class="inline-result">尚无终态回复</div>
             </article>
           </aside>
         </div>

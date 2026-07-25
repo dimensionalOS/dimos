@@ -10,6 +10,10 @@ from dimos.web.studio.mission import (
     MissionState,
     SafetySnapshot,
 )
+from dimos.web.studio.models import (
+    MissionActionRequest,
+    MissionCreateRequest,
+)
 
 
 def test_new_mission_starts_as_draft() -> None:
@@ -97,3 +101,19 @@ def test_three_navigation_failures_fail_mission() -> None:
     assert mission.state is MissionState.FAILED
     assert mission.navigation_failures == 3
     assert mission.safety_reason == "连续导航失败 3 次"
+
+
+def test_mission_request_dto_trims_operator_text() -> None:
+    request = MissionCreateRequest(objective="  去门口  ")
+    action = MissionActionRequest(reason="  操作员取消  ")
+
+    assert request.objective == "去门口"
+    assert action.reason == "操作员取消"
+
+
+def test_mission_request_dto_rejects_blank_or_unknown_fields() -> None:
+    with pytest.raises(ValueError):
+        MissionCreateRequest(objective="   ")
+
+    with pytest.raises(ValueError):
+        MissionCreateRequest(objective="去门口", movement_speed=1.0)

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from urllib.parse import urlparse
 import uuid
 
 import requests
@@ -62,6 +63,9 @@ class McpAdapter:
             url = f"http://localhost:{global_config.mcp_port}/mcp"
         self.url = url
         self.timeout = timeout
+        self._session = requests.Session()
+        if urlparse(url).hostname in {"localhost", "127.0.0.1", "::1"}:
+            self._session.trust_env = False
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and return the parsed response.
@@ -76,7 +80,7 @@ class McpAdapter:
         if params:
             payload["params"] = params
 
-        resp = requests.post(self.url, json=payload, timeout=self.timeout)
+        resp = self._session.post(self.url, json=payload, timeout=self.timeout)
         try:
             resp.raise_for_status()
         except requests.HTTPError as e:
@@ -109,7 +113,7 @@ class McpAdapter:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                resp = requests.post(
+                resp = self._session.post(
                     self.url,
                     json={"jsonrpc": "2.0", "id": "probe", "method": "initialize"},
                     timeout=2,
@@ -126,7 +130,7 @@ class McpAdapter:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                requests.post(
+                self._session.post(
                     self.url,
                     json={"jsonrpc": "2.0", "id": "probe", "method": "initialize"},
                     timeout=1,

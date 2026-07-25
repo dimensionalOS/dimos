@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StudioSettings(BaseModel):
@@ -51,13 +51,57 @@ class TeleopKeyRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=500)
 
 
-class MissionCreateRequest(BaseModel):
+class _StrictMissionRequest(BaseModel):
+    """Strict HTTP ingress DTO; domain contracts live in the Go2 extension."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class MissionCreateRequest(_StrictMissionRequest):
     objective: str = Field(min_length=1, max_length=2000)
 
 
-class MissionStartRequest(BaseModel):
+class MissionStartRequest(_StrictMissionRequest):
     confirmation: str = ""
 
 
-class MissionActionRequest(BaseModel):
+class MissionActionRequest(_StrictMissionRequest):
     reason: str = Field(default="", max_length=500)
+
+
+class StageTwoNavigateRequest(_StrictMissionRequest):
+    instruction_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
+    destination: str = Field(min_length=1, max_length=200)
+
+
+class StageTwoCancelRequest(_StrictMissionRequest):
+    task_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
+
+
+class StageTwoConfirmPlaceRequest(_StrictMissionRequest):
+    name: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=20)
+
+
+class StageTwoReplyRequest(_StrictMissionRequest):
+    event: Literal["agent.reply.completed"]
+    reply_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
+    instruction_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
+    text: str = Field(min_length=1, max_length=20_000)
+    completed_at: str = Field(min_length=10, max_length=64)

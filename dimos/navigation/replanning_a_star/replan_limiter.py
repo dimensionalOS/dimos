@@ -26,7 +26,9 @@ class ReplanLimiter:
     the area, the number of attempts is reset.
     """
 
-    _max_attempts: int = 6
+    # Allow two additional local retries before abandoning the goal. Moving
+    # outside the existing reset radius still clears the attempt counter.
+    _max_attempts: int = 8
     _reset_distance: float = 2.0
     _attempt_pos: Vector3 | None = None
     _lock: RLock

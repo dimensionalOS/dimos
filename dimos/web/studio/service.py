@@ -24,6 +24,7 @@ from dimos.core.run_registry import get_most_recent
 
 from .mission import MissionController, MissionRecord
 from .models import StudioSettings
+from .stage2 import StageTwoControl
 
 DEFAULT_SETTINGS_PATH = CONFIG_DIR / "dimos-studio.json"
 DEFAULT_SKILL_PATH = (
@@ -52,12 +53,24 @@ class StudioService:
         self,
         settings_path: Path = DEFAULT_SETTINGS_PATH,
         skill_path: Path = DEFAULT_SKILL_PATH,
+        stage2_control: StageTwoControl | None = None,
     ) -> None:
         self.settings_path = settings_path
         self.skill_path = skill_path
         self.mission_path = settings_path.with_name("dimos-studio-mission.json")
-        self.mission_controller = MissionController(self._load_mission())
+        self._legacy_mission_controller: MissionController | None = None
+        self.stage2_control = stage2_control or StageTwoControl(
+            state_path=settings_path.with_name("dimos-studio-stage2.json")
+        )
         self._launcher_processes: list[subprocess.Popen[str]] = []
+
+    @property
+    def mission_controller(self) -> MissionController:
+        """Load the frozen legacy controller only for direct rollback use."""
+
+        if self._legacy_mission_controller is None:
+            self._legacy_mission_controller = MissionController(self._load_mission())
+        return self._legacy_mission_controller
 
     def load_settings(self) -> StudioSettings:
         try:
@@ -324,6 +337,32 @@ class StudioService:
             "mission": mission.model_dump(mode="json") if mission else None,
             "policy": self.mission_controller.policy.model_dump(mode="json"),
         }
+
+    def stage2_status(self) -> dict[str, Any]:
+        return self.stage2_control.status()
+
+    def stage2_navigate(
+        self,
+        instruction_id: str,
+        destination: str,
+    ) -> dict[str, Any]:
+        return self.stage2_control.navigate(instruction_id, destination)
+
+    def stage2_confirm_current_place(
+        self,
+        name: str,
+        aliases: list[str],
+    ) -> dict[str, Any]:
+        return self.stage2_control.confirm_current_place(name, aliases)
+
+    def stage2_cancel(self, task_id: str) -> dict[str, Any]:
+        return self.stage2_control.cancel(task_id)
+
+    def stage2_stop_all(self) -> dict[str, Any]:
+        return self.stage2_control.stop_all()
+
+    def stage2_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.stage2_control.record_reply(payload)
 
     def create_mission(self, objective: str) -> dict[str, Any]:
         mission = self.mission_controller.create(objective)
