@@ -33,17 +33,14 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.make_rrd import (
     pose3_from_xyzquat,
 )
-from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.recording_scans import (
-    world_register,
-)
 from dimos.navigation.jnav.msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.utils.trajectory_metrics import nearest_index
 
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
-    from dimos.memory2.tf import StreamTF
     from dimos.memory2.type.observation import Observation
+    from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 
 # aggregated .pc2.lcm
 LCM_CHUNK_SCANS = 1000  # collapse buffered scans this often to bound memory
@@ -90,12 +87,14 @@ def write_deformation_nodes(
     keyframe_times: np.ndarray,
     raw_poses: list[Pose3],
     estimate: Values,
+    world_frame: str,
+    body_frame: str,
 ) -> None:
     """Per keyframe: the raw pose then the optimized pose, so tf.get can replay the correction."""
     if name in store.list_streams():
         store.delete_stream(name)
     stream = store.stream(name, DeformationNode)
-    edge_id = tf_id_for("map", "odom")
+    edge_id = tf_id_for(world_frame, body_frame)
     for index in range(len(keyframe_times)):
         node_ts = float(keyframe_times[index])
         for pose in (raw_poses[index], estimate.atPose3(index)):
@@ -106,7 +105,7 @@ def write_deformation_nodes(
                     tf_id=edge_id,
                     pose=PoseStamped(
                         ts=node_ts,
-                        frame_id="map",
+                        frame_id=world_frame,
                         position=[px, py, pz],
                         orientation=[qx, qy, qz, qw],
                     ),
@@ -118,7 +117,9 @@ def write_deformation_nodes(
     print(f"wrote {name}: {len(keyframe_times)} keyframes (raw+optimized)", flush=True)
 
 
-def write_pose_graph(store: Store, name: str, keyframe_times: np.ndarray, estimate: Values) -> None:
+def write_pose_graph(
+    store: Store, name: str, keyframe_times: np.ndarray, estimate: Values, world_frame: str
+) -> None:
     """The optimized keyframe nodes + sequential odom edges as a Graph3D."""
     if name in store.list_streams():
         store.delete_stream(name)
@@ -130,7 +131,7 @@ def write_pose_graph(store: Store, name: str, keyframe_times: np.ndarray, estima
             Graph3D.Node3D(
                 pose=PoseStamped(
                     ts=float(keyframe_times[index]),
-                    frame_id="map",
+                    frame_id=world_frame,
                     position=[px, py, pz],
                     orientation=[qx, qy, qz, qw],
                 ),
@@ -154,7 +155,11 @@ def write_corrected_odom(
     odom_rows: np.ndarray,
     keyframe_times: np.ndarray,
     corrections: list[Pose3],
+    world_frame: str,
+    corrected_odom_frame: str,
 ) -> None:
+    """Corrected trajectory as ``world_frame -> corrected_odom_frame`` odometry, i.e. the tf
+    edge the per-scan corrected clouds hang on."""
     if name in store.list_streams():
         store.delete_stream(name)
     stream = store.stream(name, Odometry)
@@ -169,8 +174,8 @@ def write_corrected_odom(
         stream.append(
             Odometry(
                 ts=ts,
-                frame_id="odom",
-                child_frame_id="base_link",
+                frame_id=world_frame,
+                child_frame_id=corrected_odom_frame,
                 pose=Pose(x, y, z, qx, qy, qz, qw),
             ),
             ts=ts,
@@ -207,8 +212,12 @@ def write_corrected_lidar(
     world_points: Callable[[Observation[PointCloud2]], np.ndarray],
     lcm_path: Path | None,
     lcm_voxel: float,
+    world_frame: str,
+    corrected_odom_frame: str,
 ) -> None:
-    """Per-scan corrected clouds into the db; if lcm_path, also one aggregated .pc2.lcm."""
+    """Per-scan corrected clouds into the db, stored body-relative on ``corrected_odom_frame``
+    so rerun/tf can place them via ``<odom>_corrected``; if lcm_path, also one aggregated,
+    world-baked .pc2.lcm (a single fused cloud has no tf to hang on)."""
     if name in store.list_streams():
         store.delete_stream(name)
     stream = store.stream(name, PointCloud2)
@@ -226,25 +235,28 @@ def write_corrected_lidar(
         scan_count += 1
         ts = float(observation.ts)
         correction = interpolate_correction(keyframe_times, corrections, ts)
-        rotation_matrix = correction.rotation().matrix()
-        translation = np.asarray(correction.translation())
+        raw_pose = pose3_from_xyzquat(odom_rows[nearest_index(odom_times, ts)][1:])
         points = world_points(observation)
         intensities = observation.data.intensities_f32()
-        corrected_points = (points @ rotation_matrix.T + translation).astype(np.float32)
+        # body-relative points: place them via the corrected-odom tf, not baked into world
+        raw_rotation = raw_pose.rotation().matrix()
+        raw_translation = np.asarray(raw_pose.translation())
+        body_points = ((points - raw_translation) @ raw_rotation).astype(np.float32)
         cloud_msg = PointCloud2.from_numpy(
-            corrected_points,
-            frame_id="odom",
+            body_points,
+            frame_id=corrected_odom_frame,
             intensities=(np.asarray(intensities) if intensities is not None else None),
         )
         cloud_msg.ts = ts
         stream.append(
             cloud_msg,
             ts=ts,
-            pose=pose_tuple(
-                correction.compose(pose3_from_xyzquat(odom_rows[nearest_index(odom_times, ts)][1:]))
-            ),
+            pose=pose_tuple(correction.compose(raw_pose)),
         )
         if lcm_path:
+            rotation_matrix = correction.rotation().matrix()
+            translation = np.asarray(correction.translation())
+            corrected_points = (points @ rotation_matrix.T + translation).astype(np.float32)
             buffered_points.append(corrected_points)
             if intensities is not None:
                 have_intensities = True
@@ -275,6 +287,7 @@ def write_corrected_lidar(
             lcm_voxel,
             lcm_path,
             float(odom_times[0]),
+            world_frame,
         )
 
 
@@ -284,6 +297,7 @@ def write_aggregated_lcm(
     voxel: float,
     lcm_path: Path,
     stamp: float,
+    world_frame: str,
 ) -> None:
     """Final unified voxel pass + statistical outlier removal into a single .pc2.lcm cloud."""
     points, intensities = voxel_downsample(points_chunks, intensity_chunks, voxel)
@@ -301,7 +315,9 @@ def write_aggregated_lcm(
     merged_intensities = (
         np.asarray(cloud.colors, np.float32)[:, 0] if intensities is not None else None
     )
-    merged = PointCloud2.from_numpy(merged_xyz, frame_id="odom", intensities=merged_intensities)
+    merged = PointCloud2.from_numpy(
+        merged_xyz, frame_id=world_frame, intensities=merged_intensities
+    )
     merged.ts = stamp
     lcm_path.write_bytes(merged.lcm_encode())
     print(
@@ -313,10 +329,8 @@ def write_aggregated_lcm(
 def raycast_accumulate(
     store: Store,
     in_stream: str,
-    store_tf: StreamTF | None,
+    store_tf: RecordingTF | None,
     world_frame: str,
-    lidar_frame: str,
-    origin_lookup: Callable[[float], tuple[float, float, float]] | None,
     voxel: float,
     max_range: float,
 ) -> None:
@@ -331,8 +345,11 @@ def raycast_accumulate(
     last_ts = 0.0
     start_time = time.time()
     for observation in store.stream(in_stream, PointCloud2):
-        points, origin = world_register(
-            observation, store_tf, world_frame, lidar_frame, origin_lookup
+        if store_tf is None:
+            continue
+        raw_points = np.asarray(observation.data.points_f32())
+        points, origin = store_tf.register(
+            world_frame, observation.data.frame_id, float(observation.ts), raw_points
         )
         if origin is None or not len(points):
             continue

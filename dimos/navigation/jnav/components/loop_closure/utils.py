@@ -24,13 +24,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from itertools import islice
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.utils.apriltags import (
     VISIT_GAP_S,
@@ -149,10 +149,32 @@ def accumulate_maps(
     return np.vstack(raw_clouds), np.vstack(corrected_clouds)
 
 
+def read_camera_info(
+    store: Any, preferred_stream: str = "camera_info"
+) -> tuple[np.ndarray, np.ndarray, str] | None:
+    """``(K 3x3, distortion, optical frame_id)`` from a CameraInfo stream, or None if absent.
+
+    Uses ``preferred_stream`` when present, else the first stream whose name contains
+    ``camera_info`` (the stream name is rig-dependent, e.g. ``realsense_camera_info``)."""
+    streams = store.list_streams()
+    name = (
+        preferred_stream
+        if preferred_stream in streams
+        else next((stream for stream in streams if "camera_info" in stream), "")
+    )
+    if not name:
+        return None
+    observation = next(iter(store.stream(name, CameraInfo)), None)
+    if observation is None:
+        return None
+    info = observation.data
+    return info.get_K_matrix(), info.get_D_coeffs(), info.frame_id
+
+
 def load_tag_detections(
     db_path: Path,
     camera_stream: str | None,
-    intrinsics_json: Path | None,
+    camera_info_stream: str,
     streams: list[str],
     dynamic_tags: set[int],
 ) -> list[dict[str, Any]]:
@@ -163,18 +185,18 @@ def load_tag_detections(
     db_store = SqliteStore(path=db_path, must_exist=True)
     db_store.start()
     if RAW_TAGS_STREAM not in db_store.list_streams():
-        if intrinsics_json is None or not intrinsics_json.exists():
-            print("no raw_april_tags and no intrinsics — voxel agreement only")
-            db_store.stop()
-            return []
-        config = json.loads(intrinsics_json.read_text())
+        camera_info = read_camera_info(db_store, camera_info_stream)
+        if camera_info is None:
+            raise SystemExit(
+                f"no {RAW_TAGS_STREAM!r} and no {camera_info_stream!r} stream — "
+                f"can't detect tags. Disable the camera stream or add camera_info."
+            )
+        camera_matrix, distortion, _optical_frame = camera_info
         ensure_april_streams(
             db_store,
-            np.array(config["intrinsics"], float).reshape(3, 3),
-            np.array(config.get("distortion", []), float),
+            camera_matrix,
+            distortion,
             image_stream=camera_stream,
-            marker_length=config.get("marker_length", 0.10),
-            dictionary=config.get("dictionary", "DICT_APRILTAG_36h11"),
         )
     detections = [
         detection
@@ -326,6 +348,63 @@ def write_isometric_png(
     figure.tight_layout()
     figure.savefig(png_path, dpi=130)
     plt.close(figure)
+
+
+_RRD_RAW_COLOR = np.array([220, 60, 60], dtype=float)
+_RRD_CORRECTED_COLOR = np.array([60, 120, 230], dtype=float)
+
+
+def _z_shaded(cloud: np.ndarray, base_color: np.ndarray) -> np.ndarray:
+    """Per-point colors: ``base_color`` shaded dark (low z) to light (high z)."""
+    low, high = np.percentile(cloud[:, 2], (2.0, 98.0))
+    fraction = np.clip((cloud[:, 2] - low) / ((high - low) or 1.0), 0.0, 1.0)[:, None]
+    dark = base_color * 0.3
+    light = base_color + (255.0 - base_color) * 0.7
+    shaded: np.ndarray = (dark + (light - dark) * fraction).astype(np.uint8)
+    return shaded
+
+
+def write_comparison_rrd(
+    rrd_path: Path,
+    raw_map: np.ndarray,
+    corrected_map: np.ndarray,
+    raw_tags: dict[int, np.ndarray],
+    corrected_tags: dict[int, np.ndarray],
+    raw_path: np.ndarray,
+    corrected_path: np.ndarray,
+    recording_name: str,
+) -> None:
+    """Rerun rrd: raw vs corrected lidar cloud (z-shaded), trajectories, and tag medians."""
+    import rerun as rr
+
+    rr.init(f"eval_{recording_name}")
+    rr.save(str(rrd_path))
+    for name, cloud, base_color, path, path_color in (
+        ("raw", raw_map, _RRD_RAW_COLOR, raw_path, [255, 120, 120]),
+        ("corrected", corrected_map, _RRD_CORRECTED_COLOR, corrected_path, [120, 180, 255]),
+    ):
+        if len(cloud):
+            rr.log(
+                f"{name}/cloud",
+                rr.Points3D(cloud, colors=_z_shaded(cloud, base_color), radii=0.02),
+                static=True,
+            )
+        if len(path):
+            segments = np.stack([path[:-1], path[1:]], axis=1)
+            rr.log(f"{name}/trajectory", rr.LineStrips3D(segments, colors=path_color), static=True)
+    for name, tags in (("raw", raw_tags), ("corrected", corrected_tags)):
+        centers = [positions.mean(axis=0) for positions in tags.values()]
+        if centers:
+            rr.log(
+                f"{name}/tags",
+                rr.Points3D(
+                    np.asarray(centers),
+                    colors=[255, 230, 0],
+                    radii=0.05,
+                    labels=[f"tag{marker_id}" for marker_id in tags],
+                ),
+                static=True,
+            )
 
 
 def _set_equal_3d_aspect(axis: Any, cloud: np.ndarray) -> None:

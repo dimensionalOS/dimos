@@ -55,14 +55,24 @@ unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
     NormalizeGo2Lidar.blueprint(),
     PGO.blueprint(
-        # Tuned for the Go2's short-range onboard L1 lidar (~2.5 m). The ring
-        # range auto-scales from the cloud extent (module default), so the short
-        # lidar gets real radial discrimination instead of collapsing into one
-        # ring; the robust kernel contains the false closures the sparse lidar
-        # still produces instead of letting one blow up the graph.
+        # Do-no-harm tune for the Go2's short-range onboard L1 lidar, found by a
+        # strictness sweep on huge_loop_go2: the sparse L1 produces
+        # geometrically-plausible FALSE closures that survive any single gate and
+        # blow up near-perfect raw odom, so every gate is tightened together. This
+        # is deliberately very conservative -- the loosest point that still does no
+        # harm (1 benign closure on the huge loop; the map barely moves) while
+        # keeping real loops closable. To allow more frequent loop closures, raise
+        # loop_score_thresh (the max ICP fitness a candidate may have; higher admits
+        # more, looser-fitting closures).
         loop_robust_kernel=True,
-        scan_context_match_threshold=0.35,
+        scan_context_max_range_m=8.0,
+        scan_context_match_threshold=0.1323,
         min_descriptor_std=0.1,
+        loop_score_thresh=0.0775,
+        loop_candidate_max_distance_m=13.42,
+        loop_max_lowe_ratio=0.82,
+        loop_min_occupancy=120,
+        loop_min_degeneracy=0.15,
     ),
     vis_module(
         "rerun",

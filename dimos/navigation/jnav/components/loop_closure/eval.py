@@ -38,9 +38,10 @@ Two agreement scores, raw vs corrected:
     trajectory should collapse doubled walls, so the corrected map occupies
     fewer voxels.
 
-Also writes a top-down before/after map PNG so the correction can be eyeballed
+Also writes before/after visuals so the correction can be eyeballed
 (contraction-gaming and tf-chain errors are obvious to the eye, invisible to a
-scalar).
+scalar): a top-down PNG, an isometric PNG, and a rerun rrd — each toggleable via
+``--topdown-png`` / ``--isometric-png`` / ``--rrd`` (all on by default).
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ import numpy as np
 
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.db_fallback import resolve_db_path
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy import (
     normalize_go2_legacy,
 )
@@ -66,6 +68,7 @@ from dimos.navigation.jnav.components.loop_closure.utils import (
     registered_scans,
     report_dict,
     score_tags,
+    write_comparison_rrd,
     write_isometric_png,
     write_topdown_png,
 )
@@ -93,7 +96,7 @@ def evaluate(
     odom_stream: str,
     lidar_stream: str,
     camera_stream: str | None,
-    intrinsics_json: Path | None,
+    camera_info_stream: str,
     module_path: Path,
     module_name: str,
     pgo_config: dict[str, Any],
@@ -102,6 +105,9 @@ def evaluate(
     odom_parent: str,
     odom_child: str,
     recording_name: str | None,
+    write_topdown: bool,
+    write_isometric: bool,
+    write_rrd: bool,
 ) -> dict[str, Any]:
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
@@ -149,7 +155,9 @@ def evaluate(
     if not tags_reachable and camera_stream is not None:
         raise SystemExit(f"no tf path {odom_parent} <- {tag_frame} (frames: {sorted(tf.frames)})")
 
-    detections = load_tag_detections(db_path, camera_stream, intrinsics_json, streams, dynamic_tags)
+    detections = load_tag_detections(
+        db_path, camera_stream, camera_info_stream, streams, dynamic_tags
+    )
 
     started = time.monotonic()
     graph, closures, replay_stats = run_module_graph(
@@ -187,20 +195,34 @@ def evaluate(
     out_dir = RESULTS_DIR / f"{recording_name}__{module_name}"
     out_dir.mkdir(parents=True, exist_ok=True)
     png_path = out_dir / "topdown_before_after.png"
-    write_topdown_png(
-        png_path,
-        raw_map,
-        corrected_map,
-        raw_tag_medians,
-        corrected_tag_medians,
-        raw_path,
-        corrected_path,
-        recording_name,
-    )
+    if write_topdown:
+        write_topdown_png(
+            png_path,
+            raw_map,
+            corrected_map,
+            raw_tag_medians,
+            corrected_tag_medians,
+            raw_path,
+            corrected_path,
+            recording_name,
+        )
     iso_png_path = out_dir / "isometric_before_after.png"
-    write_isometric_png(
-        iso_png_path, raw_map, corrected_map, raw_path, corrected_path, recording_name
-    )
+    if write_isometric:
+        write_isometric_png(
+            iso_png_path, raw_map, corrected_map, raw_path, corrected_path, recording_name
+        )
+    rrd_path = out_dir / "comparison.rrd"
+    if write_rrd:
+        write_comparison_rrd(
+            rrd_path,
+            raw_map,
+            corrected_map,
+            raw_tag_medians,
+            corrected_tag_medians,
+            raw_path,
+            corrected_path,
+            recording_name,
+        )
 
     summary = {
         "db": str(db_path),
@@ -225,8 +247,9 @@ def evaluate(
         "voxel_agreement": voxel,
         "raw_path": raw_path.tolist(),
         "corrected_path": corrected_path.tolist(),
-        "topdown_png": str(png_path),
-        "isometric_png": str(iso_png_path),
+        "topdown_png": str(png_path) if write_topdown else None,
+        "isometric_png": str(iso_png_path) if write_isometric else None,
+        "rrd": str(rrd_path) if write_rrd else None,
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -245,7 +268,12 @@ def evaluate(
             f" ({voxel['improvement']:+.3f}, {voxel['scans_used']} scans)"
         )
     print(f"  closures: {closures}, keyframes: {len(graph)}")
-    print(f"  top-down map:    {png_path}")
+    if write_topdown:
+        print(f"  top-down map:    {png_path}")
+    if write_isometric:
+        print(f"  isometric map:   {iso_png_path}")
+    if write_rrd:
+        print(f"  rrd:             {rrd_path}")
     return summary
 
 
@@ -255,7 +283,12 @@ def main() -> None:
     parser.add_argument("--odom-stream", required=True)
     parser.add_argument("--lidar-stream", default="fastlio_lidar")
     parser.add_argument("--camera-stream", default="color_image")
-    parser.add_argument("--camera-intrinsics-json-path", type=Path, default=None)
+    parser.add_argument(
+        "--camera-info-stream",
+        default="camera_info",
+        help="stream carrying CameraInfo (K + distortion), used to detect tags when "
+        "raw_april_tags isn't already in the db.",
+    )
     parser.add_argument("--module-path", type=Path, required=True)
     parser.add_argument("--module-name", required=True)
     parser.add_argument("--pgo-config-json", default=None)
@@ -272,16 +305,15 @@ def main() -> None:
         "Lidar scans resolve through the tf tree with this dynamic edge added.",
     )
     parser.add_argument("--recording-name", default=None)
+    parser.add_argument("--topdown-png", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--isometric-png", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--rrd", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
-    db_path = args.db_path.expanduser()
-    if not db_path.exists():
-        raise SystemExit(f"no such db: {db_path}")
-    intrinsics_json = (
-        args.camera_intrinsics_json_path.expanduser()
-        if args.camera_intrinsics_json_path is not None
-        else db_path.parent / "camera_intrinsics.json"
-    )
+    try:
+        db_path = resolve_db_path(args.db_path)
+    except (FileNotFoundError, RuntimeError) as error:
+        raise SystemExit(f"no such db: {args.db_path.expanduser()} ({error})")
     dynamic_tags = {int(tag) for tag in args.dynamic_tags.split(",") if tag.strip()}
     pgo_config = json.loads(args.pgo_config_json) if args.pgo_config_json else {}
     odom_parent, _, odom_child = args.odom_tf.partition(":")
@@ -293,7 +325,7 @@ def main() -> None:
         odom_stream=args.odom_stream,
         lidar_stream=args.lidar_stream,
         camera_stream=args.camera_stream,
-        intrinsics_json=intrinsics_json if intrinsics_json.exists() else None,
+        camera_info_stream=args.camera_info_stream,
         module_path=args.module_path,
         module_name=args.module_name,
         pgo_config=pgo_config,
@@ -302,6 +334,9 @@ def main() -> None:
         odom_parent=odom_parent,
         odom_child=odom_child,
         recording_name=args.recording_name,
+        write_topdown=args.topdown_png,
+        write_isometric=args.isometric_png,
+        write_rrd=args.rrd,
     )
 
 

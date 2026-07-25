@@ -725,13 +725,6 @@ follow_imports = "skip"
 module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
-[[tool.mypy.overrides]]
-# untyped analysis scripts (heavy gtsam/open3d/cv2 glue, not worth full typing)
-module = [
-    "dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.*",
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 env = [

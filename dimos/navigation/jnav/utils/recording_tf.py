@@ -106,6 +106,32 @@ class RecordingTF(StreamTF):
             with self._cv:
                 self._apply_override()
 
+    def register(
+        self, world_frame: str, scan_frame: str, ts: float, points: np.ndarray
+    ) -> tuple[np.ndarray, tuple[float, float, float] | None]:
+        """Bring one scan's ``points`` into ``world_frame`` via tf.
+
+        Returns ``(world_points_f32, sensor_origin)`` where the origin is the tf
+        translation (the sensor position, i.e. the ray origin). Origin is ``None``
+        when the tf chain ``world_frame <- scan_frame`` can't be resolved at ``ts``
+        — the caller skips that scan rather than falling back to a guess.
+        """
+        if not len(points):
+            return points.astype(np.float32), None
+        transform = self.get(world_frame, scan_frame, ts, None)
+        if transform is None:
+            return points.astype(np.float32), None
+        rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
+        translation = np.array(
+            [transform.translation.x, transform.translation.y, transform.translation.z], float
+        )
+        world = points @ rotation.T + translation
+        return world.astype(np.float32), (
+            float(translation[0]),
+            float(translation[1]),
+            float(translation[2]),
+        )
+
     @property
     def frames(self) -> set[str]:
         """Every frame name in the (loaded) tf tree."""

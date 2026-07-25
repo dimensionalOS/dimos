@@ -17,13 +17,13 @@ each as its own colored entity, plus AprilTag landmarks + trajectories. Re-run a
 corrected method and it picks the new stream up automatically.
 
 Importable: `build(...)` writes the rrd and returns its path (used by post_process.py).
-Standalone: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH [--lidar=...] [--odom=...] [--tags=...] [--out=...]
+Standalone: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --db=PATH.db [--lidar=...] [--odom=...] [--tags=...] [--out=...]
 """
 
 import colorsys
-import json
 from pathlib import Path
 import sys
+from typing import Any
 
 import cv2
 from gtsam import Point3, Pose3, Rot3
@@ -31,10 +31,16 @@ import numpy as np
 import rerun as rr
 
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.recording_scans import (
+    default_odom_edge,
+)
+from dimos.navigation.jnav.components.loop_closure.utils import read_camera_info
 from dimos.navigation.jnav.utils.apriltags import filter_glimpses, read_raw_tag_stream
+from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 from dimos.navigation.jnav.utils.trajectory_metrics import nearest_index
 
 SCAN_STRIDE, VOXEL = 8, 0.10
+MAX_RENDER_POINTS = 200_000  # cap each accumulated cloud so rerun stays responsive
 TAG_SIZE_M = 0.10  # matches post_process --tag-size default
 TAG_DICT = "DICT_APRILTAG_36h11"
 TAG_IMAGE_PX = 200  # 36h11 incl. border is 10 modules; render each as 20 px
@@ -49,7 +55,7 @@ TAG_CORNERS = np.array(
 )
 
 
-def tag_image(marker_id):
+def tag_image(marker_id: int) -> np.ndarray:
     """RGB bitmap of the actual AprilTag, for texturing its 3D placement."""
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, TAG_DICT))
     grayscale = cv2.aruco.generateImageMarker(dictionary, marker_id, TAG_IMAGE_PX)
@@ -77,7 +83,7 @@ LANDMARK_GATES = dict(
 )
 
 
-def cli_arg(flag, default=""):
+def cli_arg(flag: str, default: str = "") -> str:
     """``--flag=value`` lookup in sys.argv."""
     return next(
         (item.split("=", 1)[1] for item in sys.argv if item.startswith(flag + "=")), default
@@ -85,19 +91,19 @@ def cli_arg(flag, default=""):
 
 
 Z_GRADIENT_PERCENTILES = (2.0, 98.0)  # clip outlier floors/ceilings out of the color range
-GRADIENT_DARK = 0.3  # gradient start: this fraction of the stream color
-GRADIENT_LIGHT = 0.7  # gradient end: blended this far toward white
+GRADIENT_DARK = 0.35  # low-z end: this fraction of the stream color
 
 
-def shade(base_color, t):
-    """Colors along the dark->light gradient of ``base_color`` at fractions ``t`` in [0, 1]."""
-    base = np.asarray(base_color, float)
-    dark = base * GRADIENT_DARK
-    light = base + (255.0 - base) * GRADIENT_LIGHT
-    return (dark + (light - dark) * np.asarray(t, float)[:, None]).astype(np.uint8)
+def shade(base_color: Any, t: Any) -> np.ndarray:
+    """Colors ramping low-z (dark stream color) -> high-z (its vivid saturated hue), at
+    fractions ``t`` in [0, 1]. Both ends stay colored, so height never washes out to white."""
+    low: np.ndarray = np.asarray(base_color, float) * GRADIENT_DARK
+    high: np.ndarray = np.asarray(vibrant(base_color), float)
+    colors: np.ndarray = (low + (high - low) * np.asarray(t, float)[:, None]).astype(np.uint8)
+    return colors
 
 
-def z_gradient_colors(points, base_color):
+def z_gradient_colors(points: np.ndarray, base_color: Any) -> np.ndarray:
     """Per-point colors: the stream color shaded dark (low z) to light (high z)."""
     z_values = points[:, 2]
     low, high = np.percentile(z_values, Z_GRADIENT_PERCENTILES)
@@ -107,14 +113,14 @@ def z_gradient_colors(points, base_color):
 TRAJECTORY_DARK = 0.45  # gradient start: this fraction of the full-vibrance color
 
 
-def vibrant(base_color):
+def vibrant(base_color: Any) -> list[int]:
     """The fully-saturated pure hue of ``base_color`` (so paths pop against the muted clouds)."""
     red, green, blue = (channel / 255.0 for channel in base_color)
     hue, _lightness, _saturation = colorsys.rgb_to_hls(red, green, blue)
     return [round(channel * 255) for channel in colorsys.hls_to_rgb(hue, 0.5, 1.0)]
 
 
-def gradient_trajectory(positions, base_color):
+def gradient_trajectory(positions: np.ndarray, base_color: Any) -> tuple[np.ndarray, np.ndarray]:
     """(segments, colors) for a path shaded dark (start) to full vibrance (finish)."""
     segments = np.stack([positions[:-1], positions[1:]], axis=1)
     t = np.linspace(0.0, 1.0, len(segments))[:, None]
@@ -131,33 +137,58 @@ def pose3_from_xyzquat(xyzquat: np.ndarray) -> Pose3:
 
 
 def build(
-    rec: str | Path,
+    db: str | Path,
     lidar_stream: str = "pointlio_lidar",
     odom_stream: str = "pointlio_odometry",
     tag_stream: str = "raw_april_tags",
     out_name: str = "corrected_compare.rrd",
+    world_frame: str = "world",
 ) -> Path:
-    rec_path = Path(rec).expanduser()
-    db_path = rec_path / "mem2.db" if rec_path.is_dir() else rec_path
+    db_path = Path(db).expanduser()
+    if db_path.is_dir():
+        sys.exit(f"--db must be a .db file, not a directory: {db_path}")
     recording_dir = db_path.parent
     out_path = recording_dir / out_name
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
-    intrinsics_path = recording_dir / "camera_intrinsics.json"
-    base_to_optical = (
-        pose3_from_xyzquat(
-            np.array(json.loads(intrinsics_path.read_text())["optical_in_base"], float)
-        )
-        if intrinsics_path.exists()
-        else None
-    )
+    odom_tf = default_odom_edge(store, odom_stream)
+    body_frame = odom_tf.split(":", 1)[1] if odom_tf else world_frame
+    lidar_frame = body_frame
+    store_tf = RecordingTF.from_store(store, odom_tf=odom_tf or None, odom_stream=odom_stream)
 
-    def accumulate(stream_name):
+    # base<-optical camera extrinsic, read from the tf tree (was the json's optical_in_base)
+    camera_info = read_camera_info(store)
+    base_to_optical = None
+    if camera_info is not None and store_tf is not None:
+        optical_frame = camera_info[2] or "camera_optical"
+        extrinsic = store_tf.get(body_frame, optical_frame)
+        if extrinsic is not None:
+            base_to_optical = Pose3(extrinsic.to_matrix())
+
+    def tf_world_points(
+        observation: Any, tf: RecordingTF | None, world: str, fallback_frame: str
+    ) -> np.ndarray:
+        points = np.asarray(observation.data.points_f32())
+        scan_frame = getattr(observation.data, "frame_id", "") or fallback_frame
+        transform = tf.get(world, scan_frame, float(observation.ts), None) if tf else None
+        if transform is None or not len(points):
+            return points
+        rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
+        offset = transform.translation
+        translation = np.array([offset.x, offset.y, offset.z], float)
+        world_points: np.ndarray = (points @ rotation.T + translation).astype(np.float32)
+        return world_points
+
+    def accumulate(stream_name: str, register: bool = False) -> np.ndarray:
         scans = []
+        observation: Any
         for scan_index, observation in enumerate(store.stream(stream_name)):
             if scan_index % SCAN_STRIDE:
                 continue
-            points = np.asarray(observation.data.points_f32())
+            if register:
+                points = tf_world_points(observation, store_tf, world_frame, lidar_frame)
+            else:
+                points = np.asarray(observation.data.points_f32())
             if len(points):
                 scans.append(points[::3])
         if not scans:
@@ -166,10 +197,15 @@ def build(
         _, unique_indices = np.unique(
             np.floor(all_points / VOXEL).astype(np.int64), axis=0, return_index=True
         )
-        return all_points[unique_indices]
+        voxelized: np.ndarray = all_points[unique_indices]
+        if len(voxelized) > MAX_RENDER_POINTS:
+            keep = np.random.default_rng(0).choice(len(voxelized), MAX_RENDER_POINTS, replace=False)
+            voxelized = voxelized[keep]
+        return voxelized
 
-    def odom_samples(stream_name):
+    def odom_samples(stream_name: str) -> np.ndarray:
         rows = []
+        observation: Any
         for observation in store.stream(stream_name).order_by("ts"):
             pose = observation.data.pose.pose
             rows.append(
@@ -184,18 +220,22 @@ def build(
                     pose.orientation.w,
                 )
             )
-        return np.asarray(rows, dtype=np.float64).reshape(-1, 8)
+        samples: np.ndarray = np.asarray(rows, dtype=np.float64).reshape(-1, 8)
+        return samples
 
-    def traj(stream_name):
-        return odom_samples(stream_name)[:, 1:4].astype(np.float32)
+    def traj(stream_name: str) -> np.ndarray:
+        positions: np.ndarray = odom_samples(stream_name)[:, 1:4].astype(np.float32)
+        return positions
 
-    def landmarks(gt_odom):
+    def landmarks(gt_odom: str) -> tuple[np.ndarray, list[np.ndarray], list[int]]:
         odom_rows = odom_samples(gt_odom)
         detections = filter_glimpses(
             read_raw_tag_stream(store, tag_stream), exclude_tags=(), **LANDMARK_GATES
         )
-        positions_by_marker = {}
-        best_by_marker = {}  # lowest-reproj detection: its rotation orients the tag square
+        positions_by_marker: dict[int, list[np.ndarray]] = {}
+        best_by_marker: dict[
+            int, tuple[float, Pose3]
+        ] = {}  # lowest-reproj detection orients the tag square
         for detection in detections:
             base_pose = pose3_from_xyzquat(
                 odom_rows[nearest_index(odom_rows[:, 0], detection["ts"])][1:]
@@ -227,7 +267,7 @@ def build(
 
     rr.init("corrected_compare")
     rr.save(str(out_path))
-    raw_cloud = accumulate(lidar_stream)
+    raw_cloud = accumulate(lidar_stream, register=True)
     rr.log(
         "raw/cloud",
         rr.Points3D(raw_cloud, colors=z_gradient_colors(raw_cloud, COLORS["raw"]), radii=0.02),
@@ -264,7 +304,7 @@ def build(
         if "_corrected" in stream_name and "odom" in stream_name
     )
     if corrected_odoms and base_to_optical is None:
-        print(f"no {intrinsics_path.name} — skipping tag landmarks")
+        print("no CameraInfo stream or optical tf edge — skipping tag landmarks")
     elif corrected_odoms:
         landmark_positions, landmark_rotations, marker_ids = landmarks(corrected_odoms[0])
         for center, rotation, marker_id in zip(
@@ -299,16 +339,17 @@ def build(
 
 
 if __name__ == "__main__":
-    rec_arg = cli_arg("--rec")
-    if not rec_arg:
+    db_arg = cli_arg("--db")
+    if not db_arg:
         sys.exit(
-            "usage: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH [--lidar=...] [--odom=...] "
-            "[--tags=...] [--out=...]   (--rec is required)"
+            "usage: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --db=PATH.db [--lidar=...] [--odom=...] "
+            "[--tags=...] [--out=...] [--world-frame=...]   (--db is required)"
         )
     build(
-        rec_arg,
+        db_arg,
         lidar_stream=cli_arg("--lidar", "pointlio_lidar"),
         odom_stream=cli_arg("--odom", "pointlio_odometry"),
         tag_stream=cli_arg("--tags", "raw_april_tags"),
         out_name=cli_arg("--out", "corrected_compare.rrd"),
+        world_frame=cli_arg("--world-frame", "world"),
     )

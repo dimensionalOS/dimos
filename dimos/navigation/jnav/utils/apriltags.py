@@ -843,7 +843,8 @@ def read_raw_tag_stream(store: Any, stream_name: str) -> list[Detection]:
 
 def ensure_raw_tag_stream(
     store: Any,
-    intrinsics_json: dict[str, Any] | None,
+    camera_matrix: np.ndarray | None,
+    distortion: np.ndarray | None,
     *,
     raw_stream: str = "raw_april_tags",
     image_stream: str = "color_image",
@@ -852,19 +853,17 @@ def ensure_raw_tag_stream(
 ) -> bool:
     """Detect + persist the unfiltered tag stream when absent; returns whether it exists.
 
-    ``intrinsics_json`` is the parsed camera_intrinsics.json (or None when the recording
-    has no camera, in which case nothing can be detected)."""
+    ``camera_matrix``/``distortion`` come from the recording's CameraInfo stream (or None
+    when it has no camera, in which case nothing can be detected)."""
     if raw_stream in store.list_streams():
         return True
-    if intrinsics_json is None or image_stream not in store.list_streams():
+    if camera_matrix is None or distortion is None or image_stream not in store.list_streams():
         return False
     print(
         f"{raw_stream} missing -- detecting AprilTags over {image_stream} "
         f"(tag_size={marker_length} m, dict={dictionary})...",
         flush=True,
     )
-    camera_matrix = np.array(intrinsics_json["intrinsics"], float).reshape(3, 3)
-    distortion = np.array(intrinsics_json.get("distortion", []), float)
     raw_detections, _, n_images = detect_raw_detections(
         store,
         camera_matrix,

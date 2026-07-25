@@ -12,26 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build the raw_april_tags + april_tags streams into a recording's mem2.db and
+"""Build the raw_april_tags + april_tags streams into a recording's .db and
 record the outcome in summary.json. --summary recomputes only the result section.
 
 Usage:
-  python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.py --rec PATH
-      [--summary] [--output PATH] [--camera color_image] [--intrinsics PATH]
+  python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.py --db PATH.db
+      [--summary] [--output PATH] [--camera color_image] [--camera-info-stream camera_info]
       [--tag-size 0.10] [--dict DICT_APRILTAG_36h11] [--dynamic 17]
 """
 
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.navigation.jnav.components.loop_closure.utils import read_camera_info
 from dimos.navigation.jnav.utils.apriltags import (
     VISIT_GAP_S,
     ensure_april_streams,
     gate_params,
-    load_intrinsics_json,
     split_visits,
 )
 
@@ -141,9 +142,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--rec", type=Path, required=True, help="recording dir or mem2.db path")
+    parser.add_argument("--db", type=Path, required=True, help="recording .db file")
     parser.add_argument("--camera", default="color_image")
-    parser.add_argument("--intrinsics", type=Path, default=None)
+    parser.add_argument(
+        "--camera-info-stream",
+        default="camera_info",
+        help="CameraInfo stream (K + distortion); auto-detects any '*camera_info*' stream if absent",
+    )
     parser.add_argument("--tag-size", type=float, default=None, help="marker length (m)")
     parser.add_argument("--dict", dest="dictionary", default=None)
     parser.add_argument(
@@ -166,10 +171,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    recording_path = args.rec.expanduser()
-    db_path = recording_path if recording_path.name == "mem2.db" else recording_path / "mem2.db"
+    db_path = args.db.expanduser()
+    if db_path.is_dir():
+        parser.error(f"--db must be a .db file, not a directory: {db_path}")
     if not db_path.exists():
-        parser.error(f"no mem2.db at {db_path}")
+        parser.error(f"no db at {db_path}")
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
     summary_path = args.output.expanduser() if args.output else (db_path.parent / SUMMARY_NAME)
@@ -184,18 +190,19 @@ def main() -> None:
 
     # Rebuild both streams and overwrite filter_parameters + result.
     dynamic_tags = _parse_dynamic(args.dynamic)
-    intrinsics_path = (args.intrinsics or (db_path.parent / "camera_intrinsics.json")).expanduser()
-    intrinsics_config = load_intrinsics_json(intrinsics_path)
-    marker_length = (
-        args.tag_size
-        if args.tag_size is not None
-        else intrinsics_config.get("marker_length", DEFAULT_MARKER_LENGTH_METERS)
-    )
-    dictionary = args.dictionary or intrinsics_config.get("dictionary", DEFAULT_DICTIONARY)
+    camera_info = read_camera_info(store, args.camera_info_stream)
+    if camera_info is None:
+        sys.exit(
+            f"no CameraInfo stream (looked for {args.camera_info_stream!r} or any "
+            f"'*camera_info*' stream) in {db_path} -- can't detect AprilTags."
+        )
+    camera_matrix, distortion, _optical_frame = camera_info
+    marker_length = args.tag_size if args.tag_size is not None else DEFAULT_MARKER_LENGTH_METERS
+    dictionary = args.dictionary or DEFAULT_DICTIONARY
     ensure_april_streams(
         store,
-        intrinsics_config["intrinsics"],
-        intrinsics_config["distortion"],
+        camera_matrix,
+        distortion,
         image_stream=args.camera,
         marker_length=marker_length,
         dictionary=dictionary,
