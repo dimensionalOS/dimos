@@ -111,7 +111,7 @@ async def test_frames_cancel_does_not_steal_next_frame() -> None:
         async for _ in client.frames():
             pass
 
-    consumer = asyncio.ensure_future(consume_forever())
+    consumer = asyncio.create_task(consume_forever())
     await asyncio.sleep(0.05)  # consumer now suspended waiting on an empty queue
     consumer.cancel()
     with pytest.raises(asyncio.CancelledError):
