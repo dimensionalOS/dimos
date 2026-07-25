@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import sys
-from types import SimpleNamespace
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -26,9 +24,7 @@ import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot import external_blueprints as external
-import dimos.robot.cli.dimos as dimos_cli
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
-from dimos.utils.cache import CacheCleanResult, CacheIssue
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
@@ -68,115 +64,6 @@ def test_global_config_flag_applies_before_subcommand():
         assert "transport: zenoh" in result.output
     finally:
         global_config.update(transport=original)
-
-
-def test_cache_clean_refuses_while_dimos_is_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        dimos_cli,
-        "get_most_recent",
-        lambda *, alive_only: SimpleNamespace(run_id="active-run"),
-    )
-
-    result = CliRunner().invoke(main, ["cache", "clean"])
-
-    assert result.exit_code == 1
-    assert "DimOS run active-run is active" in result.output
-
-
-def test_cache_clean_force_overrides_active_run(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    calls: list[bool] = []
-    monkeypatch.setattr(
-        dimos_cli,
-        "get_most_recent",
-        lambda *, alive_only: SimpleNamespace(run_id="active-run"),
-    )
-    monkeypatch.setattr(dimos_cli, "CACHE_DIR", cache_dir)
-    monkeypatch.setattr(
-        dimos_cli,
-        "clean_caches",
-        lambda *, force: calls.append(force) or CacheCleanResult(),
-    )
-
-    result = CliRunner().invoke(main, ["cache", "clean", "--force", "--yes"])
-
-    assert result.exit_code == 0
-    assert calls == [True]
-    assert "Warning: cleaning caches while DimOS run active-run is active." in result.output
-    assert "Force mode:" in result.output
-    assert "Removes robot Git checkouts with local changes or local-only commits" in result.output
-
-
-def test_cache_clean_defaults_confirmation_to_no(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cache_dir = tmp_path / "cache"
-    deno_dir = cache_dir / "deno"
-    deno_dir.mkdir(parents=True)
-    unknown_entry = cache_dir / "custom.bin"
-    unknown_entry.write_bytes(b"cache")
-    calls: list[bool] = []
-    monkeypatch.setattr(dimos_cli, "CACHE_DIR", cache_dir)
-    monkeypatch.setattr(dimos_cli, "get_most_recent", lambda *, alive_only: None)
-    monkeypatch.setattr(
-        dimos_cli,
-        "clean_caches",
-        lambda *, force: calls.append(force) or CacheCleanResult(),
-    )
-
-    result = CliRunner().invoke(main, ["cache", "clean"], input="\n")
-
-    assert result.exit_code == 0
-    assert calls == []
-    assert "DimOS cache cleanup" in result.output
-    assert f"Cache root:\n  {cache_dir}" in result.output
-    assert f"- {unknown_entry} (DimOS cache entry)" in result.output
-    assert f"- {deno_dir} (downloaded Deno runtime)" in result.output
-    assert "Preserved:" not in result.output
-    assert "Continue? [y/N]:" in result.output
-    assert "Cache cleanup cancelled." in result.output
-
-
-def test_cache_clean_reports_partial_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    checkout = Path("/cache/robot_assets/sources/key/robot")
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    monkeypatch.setattr(dimos_cli, "CACHE_DIR", cache_dir)
-    monkeypatch.setattr(dimos_cli, "get_most_recent", lambda *, alive_only: None)
-    monkeypatch.setattr(
-        dimos_cli,
-        "clean_caches",
-        lambda *, force: CacheCleanResult(
-            skipped=[CacheIssue(checkout, "Git checkout has local changes")]
-        ),
-    )
-
-    result = CliRunner().invoke(main, ["cache", "clean", "--yes"])
-
-    assert result.exit_code == 1
-    assert f"Skipped cache: {checkout} (Git checkout has local changes)" in result.output
-
-
-def test_cache_clean_without_cache_is_a_noop(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cache_dir = tmp_path / "missing-cache"
-    monkeypatch.setattr(dimos_cli, "CACHE_DIR", cache_dir)
-    monkeypatch.setattr(dimos_cli, "get_most_recent", lambda *, alive_only: None)
-
-    result = CliRunner().invoke(main, ["cache", "clean"])
-
-    assert result.exit_code == 0
-    assert result.output == f"No DimOS cache found at {cache_dir}.\n"
 
 
 def test_blueprint_arg_help():

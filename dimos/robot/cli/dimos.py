@@ -33,7 +33,7 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
-from dimos.constants import CACHE_DIR, CONFIG_DIR, LOG_DIR
+from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -42,9 +42,9 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.robot.cli.cache import app as cache_app
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
-from dimos.utils.cache import clean_caches
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -156,93 +156,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
-
-cache_app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 main.add_typer(cache_app, name="cache")
-
-_CACHE_ENTRY_LABELS = {
-    "ament_prefix": "ament package index",
-    "deno": "downloaded Deno runtime",
-    "robot_assets": "robot source and derived assets",
-    "scene_meshes": "cooked scene meshes",
-    "scene_sources": "normalized scene sources",
-    "urdf": "prepared URDFs and convex hulls",
-    "viser_urdf": "Viser-prepared URDFs",
-}
-
-
-@cache_app.command("clean")
-def cache_clean(
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Clean while DimOS is running and delete cached Git checkouts with local work",
-    ),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Skip the confirmation prompt",
-    ),
-) -> None:
-    """Remove regenerable files cached by DimOS."""
-    active_run = get_most_recent(alive_only=True)
-    if active_run is not None and not force:
-        typer.echo(
-            f"Error: DimOS run {active_run.run_id} is active. Stop it before cleaning "
-            "caches, or pass --force.",
-            err=True,
-        )
-        raise typer.Exit(1)
-    if active_run is not None:
-        typer.echo(
-            f"Warning: cleaning caches while DimOS run {active_run.run_id} is active.",
-            err=True,
-        )
-
-    if not os.path.lexists(CACHE_DIR):
-        typer.echo(f"No DimOS cache found at {CACHE_DIR}.")
-        return
-
-    typer.echo("DimOS cache cleanup")
-    typer.echo("")
-    typer.echo("Cache root:")
-    typer.echo(f"  {CACHE_DIR}")
-    typer.echo("")
-    typer.echo("Current entries:")
-    try:
-        entries = sorted(CACHE_DIR.iterdir(), key=lambda path: path.name)
-    except OSError as error:
-        typer.echo(f"  Could not list cache entries: {error}", err=True)
-        entries = []
-    if entries:
-        for entry in entries:
-            label = _CACHE_ENTRY_LABELS.get(entry.name, "DimOS cache entry")
-            typer.echo(f"  - {entry} ({label})")
-    else:
-        typer.echo(f"  - {CACHE_DIR} (empty cache root)")
-
-    if force:
-        typer.echo("")
-        typer.echo("Force mode:")
-        typer.echo("  - Removes robot Git checkouts with local changes or local-only commits")
-
-    typer.echo("")
-    if not yes and not typer.confirm("Continue?", default=False):
-        typer.echo("Cache cleanup cancelled.")
-        return
-
-    result = clean_caches(force=force)
-    for path in result.cleaned:
-        typer.echo(f"Cleaned cache: {path}")
-    for issue in result.skipped:
-        typer.echo(f"Skipped cache: {issue.path} ({issue.reason})", err=True)
-    for issue in result.failed:
-        typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
-
-    if not result.complete:
-        raise typer.Exit(1)
 
 
 def arg_help(

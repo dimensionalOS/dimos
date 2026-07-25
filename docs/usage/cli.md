@@ -250,9 +250,10 @@ commits.
 
 Before deleting anything, the command displays the cache root and every
 top-level entry currently present. It then asks for confirmation with a default
-of `No`. Pass `--yes` to skip the prompt in automation. Pass `--force` to clean
-while DimOS is running and remove protected Git checkouts; `--force` still
-prompts unless combined with `--yes`.
+of `No`. Pass `--yes` to skip the prompt in automation. Pass `--force` to
+remove cached Git checkouts with local changes or local-only commits; `--force`
+still prompts unless combined with `--yes` and never overrides the active-run
+safety check.
 
 ### `dimos spy`
 

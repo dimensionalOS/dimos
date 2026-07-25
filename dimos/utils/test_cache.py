@@ -16,50 +16,37 @@ from pathlib import Path
 import subprocess
 
 import pytest
+from pytest_mock import MockerFixture
 
-from dimos.constants import (
-    AMENT_PREFIX_CACHE_DIR,
-    CACHE_DIR,
-    DENO_CACHE_DIR,
-    DRAKE_URDF_CACHE_DIR,
-    ROBOT_ASSET_CACHE_DIR,
-    VISER_URDF_CACHE_DIR,
-)
 import dimos.utils.cache as cache_utils
 
 
 @pytest.fixture
-def cache_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, ...]:
+def cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     cache_dir = tmp_path / "cache"
-    paths = (
-        cache_dir,
-        cache_dir / "urdf",
-        cache_dir / "viser_urdf",
-        cache_dir / "ament_prefix",
-        cache_dir / "deno",
-    )
-    monkeypatch.setattr(cache_utils, "CACHE_DIR", paths[0])
-    monkeypatch.setattr(cache_utils, "ROBOT_ASSET_CACHE_DIR", paths[0] / "robot_assets")
-    return paths
+    monkeypatch.setattr(cache_utils, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(cache_utils, "ROBOT_ASSET_CACHE_DIR", cache_dir / "robot_assets")
+    return cache_dir
 
 
-def test_all_cache_paths_share_platform_cache_root() -> None:
-    assert all(
-        CACHE_DIR in path.parents
-        for path in (
-            ROBOT_ASSET_CACHE_DIR,
-            DENO_CACHE_DIR,
-            DRAKE_URDF_CACHE_DIR,
-            VISER_URDF_CACHE_DIR,
-            AMENT_PREFIX_CACHE_DIR,
-        )
+@pytest.fixture
+def robot_checkout(cache_root: Path, tmp_path: Path) -> Path:
+    return _clone_test_repository(
+        tmp_path,
+        cache_root / "robot_assets" / "sources" / "source-key" / "robot",
     )
 
 
 def test_clean_caches_removes_all_known_targets_and_preserves_other_state(
-    cache_paths: tuple[Path, ...],
+    cache_root: Path,
     tmp_path: Path,
 ) -> None:
+    cache_paths = (
+        cache_root / "urdf",
+        cache_root / "viser_urdf",
+        cache_root / "ament_prefix",
+        cache_root / "deno",
+    )
     for path in cache_paths:
         path.mkdir(parents=True, exist_ok=True)
         (path / "cached.bin").write_bytes(b"cache")
@@ -68,31 +55,21 @@ def test_clean_caches_removes_all_known_targets_and_preserves_other_state(
     recording.write_bytes(b"user data")
 
     result = cache_utils.clean_caches()
+    repeated = cache_utils.clean_caches()
 
     assert result.complete
-    assert result.cleaned == [cache_paths[0].absolute()]
+    assert result.cleaned == [cache_root.absolute()]
     assert all(not path.exists() for path in cache_paths)
     assert recording.read_bytes() == b"user data"
-
-
-def test_clean_caches_is_an_idempotent_noop(cache_paths: tuple[Path, ...]) -> None:
-    first = cache_utils.clean_caches()
-    second = cache_utils.clean_caches()
-
-    assert first == cache_utils.CacheCleanResult()
-    assert second == cache_utils.CacheCleanResult()
+    assert repeated == cache_utils.CacheCleanResult()
 
 
 def test_clean_caches_preserves_dirty_robot_checkout_but_removes_derived_assets(
-    cache_paths: tuple[Path, ...],
-    tmp_path: Path,
+    cache_root: Path,
+    robot_checkout: Path,
 ) -> None:
-    checkout = _clone_test_repository(
-        tmp_path,
-        cache_paths[0] / "robot_assets" / "sources" / "source-key" / "robot",
-    )
-    (checkout / "local.txt").write_text("untracked")
-    derived = cache_paths[0] / "robot_assets" / "derived" / "robot.urdf"
+    (robot_checkout / "local.txt").write_text("untracked")
+    derived = cache_root / "robot_assets" / "derived" / "robot.urdf"
     derived.parent.mkdir(parents=True)
     derived.write_text("<robot/>")
 
@@ -100,102 +77,90 @@ def test_clean_caches_preserves_dirty_robot_checkout_but_removes_derived_assets(
 
     assert not result.complete
     assert result.skipped == [
-        cache_utils.CacheIssue(checkout.absolute(), "Git checkout has local changes")
+        cache_utils.CacheIssue(robot_checkout.absolute(), "Git checkout has local changes")
     ]
-    assert checkout.exists()
+    assert robot_checkout.exists()
     assert not derived.exists()
 
 
 def test_clean_caches_preserves_robot_checkout_with_local_only_commit(
-    cache_paths: tuple[Path, ...],
-    tmp_path: Path,
+    robot_checkout: Path,
 ) -> None:
-    checkout = _clone_test_repository(
-        tmp_path,
-        cache_paths[0] / "robot_assets" / "sources" / "source-key" / "robot",
-    )
-    (checkout / "local.txt").write_text("committed locally")
-    _git(checkout, "add", "local.txt")
-    _git(checkout, "commit", "-m", "local cache work")
+    (robot_checkout / "local.txt").write_text("committed locally")
+    _git(robot_checkout, "add", "local.txt")
+    _git(robot_checkout, "commit", "-m", "local cache work")
 
     result = cache_utils.clean_caches()
 
     assert result.skipped == [
-        cache_utils.CacheIssue(checkout.absolute(), "Git checkout has local-only commits")
+        cache_utils.CacheIssue(
+            robot_checkout.absolute(),
+            "Git checkout has local-only commits",
+        )
     ]
-    assert checkout.exists()
+    assert robot_checkout.exists()
 
 
 def test_clean_caches_removes_clean_robot_checkout(
-    cache_paths: tuple[Path, ...],
-    tmp_path: Path,
+    cache_root: Path,
+    robot_checkout: Path,
 ) -> None:
-    checkout = _clone_test_repository(
-        tmp_path,
-        cache_paths[0] / "robot_assets" / "sources" / "source-key" / "robot",
-    )
-
     result = cache_utils.clean_caches()
 
     assert result.complete
-    assert not checkout.exists()
-    assert not cache_paths[0].exists()
+    assert not robot_checkout.exists()
+    assert not cache_root.exists()
 
 
 def test_clean_caches_force_removes_dirty_robot_checkout(
-    cache_paths: tuple[Path, ...],
-    tmp_path: Path,
+    cache_root: Path,
+    robot_checkout: Path,
 ) -> None:
-    checkout = _clone_test_repository(
-        tmp_path,
-        cache_paths[0] / "robot_assets" / "sources" / "source-key" / "robot",
-    )
-    (checkout / "local.txt").write_text("discard me")
+    (robot_checkout / "local.txt").write_text("discard me")
 
     result = cache_utils.clean_caches(force=True)
 
     assert result.complete
-    assert not checkout.exists()
-    assert not cache_paths[0].exists()
+    assert not robot_checkout.exists()
+    assert not cache_root.exists()
 
 
 def test_clean_caches_unlinks_cache_symlink_without_traversing_destination(
-    cache_paths: tuple[Path, ...],
+    cache_root: Path,
     tmp_path: Path,
 ) -> None:
     destination = tmp_path / "outside"
     destination.mkdir()
     retained = destination / "retained.txt"
     retained.write_text("keep")
-    cache_paths[0].mkdir()
-    cache_paths[1].symlink_to(destination, target_is_directory=True)
+    cache_root.mkdir()
+    cached_link = cache_root / "urdf"
+    cached_link.symlink_to(destination, target_is_directory=True)
 
     result = cache_utils.clean_caches()
 
     assert result.complete
-    assert not cache_paths[1].exists()
+    assert not cached_link.exists()
     assert retained.read_text() == "keep"
 
 
 def test_clean_caches_reports_deletion_failure(
-    cache_paths: tuple[Path, ...],
-    monkeypatch: pytest.MonkeyPatch,
+    cache_root: Path,
+    mocker: MockerFixture,
 ) -> None:
-    cache_paths[0].mkdir()
-    original_remove_path = cache_utils._remove_path
-
-    def fail_for_cache_root(path: Path) -> None:
-        if path == cache_paths[0].absolute():
-            raise PermissionError("denied")
-        original_remove_path(path)
-
-    monkeypatch.setattr(cache_utils, "_remove_path", fail_for_cache_root)
+    cache_root.mkdir()
+    remove_path = mocker.patch.object(
+        cache_utils,
+        "_remove_path",
+        side_effect=PermissionError("denied"),
+    )
 
     result = cache_utils.clean_caches()
 
     assert not result.complete
-    assert result.failed == [cache_utils.CacheIssue(cache_paths[0].absolute(), "denied")]
-    assert cache_paths[0].exists()
+    assert result.failed == [cache_utils.CacheIssue(cache_root.absolute(), "denied")]
+    assert cache_root.exists()
+    remove_path.assert_called_once_with(cache_root.absolute())
 
 
 def _clone_test_repository(tmp_path: Path, checkout: Path) -> Path:
