@@ -93,7 +93,7 @@ class PGOConfig(NativeModuleConfig):
 
     # Skip ICP on candidates farther than this (m). 0 disables. Must exceed the worst
     # expected odom drift at revisit so far-drifted large loops still reach ICP.
-    loop_candidate_max_distance_m: float = 80.0
+    loop_candidate_max_distance_m: float = 200.0
 
     # Robust (Huber) kernel on all loop factors (lidar + location). Keeps ISAM2 determinate
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
