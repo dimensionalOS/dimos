@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import os
 from pathlib import Path
+import shutil
 from typing import TypeVar
 
 import pytest
@@ -114,6 +115,26 @@ def test_updates_symlink_on_target_change(tmp_path: Path) -> None:
 def test_empty_dict_is_noop() -> None:
     ensure_ament_packages({})
     assert not os.environ.get("AMENT_PREFIX_PATH")
+
+
+def test_recreates_registration_after_cache_removal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ament_prefix, "_has_ament", True)
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    prefix = tmp_path / "dimos_ament_prefix"
+
+    ensure_ament_packages({"pkg": pkg_dir})
+    shutil.rmtree(prefix)
+    ensure_ament_packages({"pkg": pkg_dir})
+
+    marker = prefix / "share" / "ament_index" / "resource_index" / "packages" / "pkg"
+    share_link = prefix / "share" / "pkg"
+    assert marker.is_file()
+    assert share_link.is_symlink()
+    assert share_link.resolve() == pkg_dir.resolve()
 
 
 @_needs_ament
