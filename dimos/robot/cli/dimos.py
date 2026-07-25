@@ -160,6 +160,16 @@ main.add_typer(piper_app, name="piper")
 cache_app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 main.add_typer(cache_app, name="cache")
 
+_CACHE_ENTRY_LABELS = {
+    "ament_prefix": "ament package index",
+    "deno": "downloaded Deno runtime",
+    "robot_assets": "robot source and derived assets",
+    "scene_meshes": "cooked scene meshes",
+    "scene_sources": "normalized scene sources",
+    "urdf": "prepared URDFs and convex hulls",
+    "viser_urdf": "Viser-prepared URDFs",
+}
+
 
 @cache_app.command("clean")
 def cache_clean(
@@ -195,26 +205,36 @@ def cache_clean(
         typer.echo(f"No DimOS cache found at {CACHE_DIR}.")
         return
 
-    typer.echo(f"DimOS cache directory: {CACHE_DIR}")
-    typer.echo(
-        "Removes downloaded robot assets, prepared URDFs, cooked scene meshes, "
-        "the ament index, and the downloaded Deno runtime."
-    )
-    typer.echo(
-        "Preserves logs, recordings, datasets, configuration, and caches owned "
-        "by third-party tools."
-    )
-    if force:
-        typer.echo(
-            "Force mode also removes cached robot Git checkouts with local changes "
-            "or local-only commits.",
-            err=True,
-        )
+    typer.echo("DimOS cache cleanup")
+    typer.echo("")
+    typer.echo("Cache root:")
+    typer.echo(f"  {CACHE_DIR}")
+    typer.echo("")
+    typer.echo("Entries scheduled for removal:")
+    try:
+        entries = sorted(CACHE_DIR.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        typer.echo(f"  Could not list cache entries: {error}", err=True)
+        entries = []
+    if entries:
+        for entry in entries:
+            label = _CACHE_ENTRY_LABELS.get(entry.name, "DimOS cache entry")
+            typer.echo(f"  - {entry} ({label})")
     else:
-        typer.echo(
-            "Cached robot Git checkouts with local changes or local-only commits will be skipped."
-        )
+        typer.echo(f"  - {CACHE_DIR} (empty cache root)")
 
+    typer.echo("")
+    typer.echo("Preserved:")
+    typer.echo("  - Logs, recordings, datasets, and configuration")
+    typer.echo("  - Caches owned by third-party tools")
+    if force:
+        typer.echo("")
+        typer.echo("Force mode:")
+        typer.echo("  - Removes robot Git checkouts with local changes or local-only commits")
+    else:
+        typer.echo("  - Robot Git checkouts with local changes or local-only commits")
+
+    typer.echo("")
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("Cache cleanup cancelled.")
         return

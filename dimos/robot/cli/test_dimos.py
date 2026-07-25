@@ -107,7 +107,8 @@ def test_cache_clean_force_overrides_active_run(
     assert result.exit_code == 0
     assert calls == [True]
     assert "Warning: cleaning caches while DimOS run active-run is active." in result.output
-    assert "Force mode also removes cached robot Git checkouts" in result.output
+    assert "Force mode:" in result.output
+    assert "Removes robot Git checkouts with local changes or local-only commits" in result.output
 
 
 def test_cache_clean_defaults_confirmation_to_no(
@@ -115,7 +116,10 @@ def test_cache_clean_defaults_confirmation_to_no(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
+    deno_dir = cache_dir / "deno"
+    deno_dir.mkdir(parents=True)
+    unknown_entry = cache_dir / "custom.bin"
+    unknown_entry.write_bytes(b"cache")
     calls: list[bool] = []
     monkeypatch.setattr(dimos_cli, "CACHE_DIR", cache_dir)
     monkeypatch.setattr(dimos_cli, "get_most_recent", lambda *, alive_only: None)
@@ -129,8 +133,12 @@ def test_cache_clean_defaults_confirmation_to_no(
 
     assert result.exit_code == 0
     assert calls == []
-    assert f"DimOS cache directory: {cache_dir}" in result.output
-    assert "Preserves logs, recordings, datasets, configuration" in result.output
+    assert "DimOS cache cleanup" in result.output
+    assert f"Cache root:\n  {cache_dir}" in result.output
+    assert f"- {unknown_entry} (DimOS cache entry)" in result.output
+    assert f"- {deno_dir} (downloaded Deno runtime)" in result.output
+    assert "Preserved:" in result.output
+    assert "Logs, recordings, datasets, and configuration" in result.output
     assert "Continue? [y/N]:" in result.output
     assert "Cache cleanup cancelled." in result.output
 
