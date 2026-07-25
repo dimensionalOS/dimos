@@ -27,31 +27,28 @@ def cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cache_dir
 
 
-def test_clean_caches_removes_cache_root_and_preserves_other_state(
+def test_clean_caches_removes_only_cache_root(
     cache_root: Path,
     tmp_path: Path,
 ) -> None:
-    cache_paths = (
-        cache_root / "urdf",
-        cache_root / "viser_urdf",
-        cache_root / "ament_prefix",
-        cache_root / "deno",
-    )
-    for path in cache_paths:
-        path.mkdir(parents=True, exist_ok=True)
-        (path / "cached.bin").write_bytes(b"cache")
-    recording = tmp_path / "state" / "recordings" / "session.db"
-    recording.parent.mkdir(parents=True)
-    recording.write_bytes(b"user data")
+    cached_file = cache_root / "entry" / "cached.bin"
+    cached_file.parent.mkdir(parents=True)
+    cached_file.write_bytes(b"cache")
+    outside_file = tmp_path / "state" / "retained.bin"
+    outside_file.parent.mkdir()
+    outside_file.write_bytes(b"state")
 
     result = cache_utils.clean_caches()
-    repeated = cache_utils.clean_caches()
 
-    assert result.complete
-    assert result.cleaned == [cache_root.absolute()]
-    assert all(not path.exists() for path in cache_paths)
-    assert recording.read_bytes() == b"user data"
-    assert repeated == cache_utils.CacheCleanResult()
+    assert result == cache_utils.CacheCleanResult(cleaned=[cache_root.absolute()])
+    assert not cache_root.exists()
+    assert outside_file.read_bytes() == b"state"
+
+
+def test_clean_caches_missing_root_is_noop(cache_root: Path) -> None:
+    result = cache_utils.clean_caches()
+
+    assert result == cache_utils.CacheCleanResult()
 
 
 def test_clean_caches_unlinks_root_symlink_without_traversing_destination(
@@ -66,8 +63,7 @@ def test_clean_caches_unlinks_root_symlink_without_traversing_destination(
 
     result = cache_utils.clean_caches()
 
-    assert result.complete
-    assert result.cleaned == [cache_root.absolute()]
+    assert result == cache_utils.CacheCleanResult(cleaned=[cache_root.absolute()])
     assert not cache_root.exists()
     assert retained.read_text() == "keep"
 
@@ -85,7 +81,8 @@ def test_clean_caches_reports_deletion_failure(
 
     result = cache_utils.clean_caches()
 
-    assert not result.complete
-    assert result.failed == [cache_utils.CacheIssue(cache_root.absolute(), "denied")]
+    assert result == cache_utils.CacheCleanResult(
+        failed=[cache_utils.CacheIssue(cache_root.absolute(), "denied")]
+    )
     assert cache_root.exists()
     remove_path.assert_called_once_with(cache_root.absolute())

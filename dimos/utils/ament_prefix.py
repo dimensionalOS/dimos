@@ -63,20 +63,14 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
 
     for pkg_name, pkg_path in package_paths.items():
         resolved = Path(pkg_path).resolve()
-        marker = resource_dir / pkg_name
-        share_link = prefix / "share" / pkg_name
-        if (
-            _ament_registered.get(pkg_name) == resolved
-            and marker.is_file()
-            and share_link.is_symlink()
-            and share_link.resolve() == resolved
-        ):
+        if _ament_registered.get(pkg_name) == resolved:
             continue
 
         # Marker file for ament_index_python
-        marker.write_text("")
+        (resource_dir / pkg_name).write_text("")
 
         # Symlink: <prefix>/share/<pkg_name> -> actual data dir
+        share_link = prefix / "share" / pkg_name
         if share_link.is_symlink() or share_link.exists():
             share_link.unlink()
         share_link.symlink_to(resolved)

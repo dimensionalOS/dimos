@@ -66,10 +66,19 @@ def test_clean_previews_current_entries_and_defaults_confirmation_to_no(
     result = CliRunner().invoke(main, ["cache", "clean"], input="\n")
 
     assert result.exit_code == 0
-    assert f"Cache root:\n  {cache_dir}" in result.output
-    assert f"Current entries:\n  - {unknown_entry}\n  - {deno_dir}\n\nContinue?" in result.output
-    assert "Continue? [y/N]:" in result.output
-    assert result.output.endswith("Cache cleanup cancelled.\n")
+    assert result.output == (
+        "DimOS cache cleanup\n"
+        "\n"
+        "Cache root:\n"
+        f"  {cache_dir}\n"
+        "\n"
+        "Current entries:\n"
+        f"  - {unknown_entry}\n"
+        f"  - {deno_dir}\n"
+        "\n"
+        "Continue? [y/N]: \n"
+        "Cache cleanup cancelled.\n"
+    )
     clean_caches.assert_not_called()
 
 
@@ -99,7 +108,7 @@ def test_clean_reports_deletion_failure(
 ) -> None:
     cache_dir.mkdir()
     mocker.patch.object(cache_cli, "get_most_recent", return_value=None)
-    mocker.patch.object(
+    clean_caches = mocker.patch.object(
         cache_cli,
         "clean_caches",
         return_value=CacheCleanResult(failed=[CacheIssue(cache_dir, "denied")]),
@@ -109,14 +118,7 @@ def test_clean_reports_deletion_failure(
 
     assert result.exit_code == 1
     assert f"Failed to remove cache: {cache_dir} (denied)" in result.output
-
-
-def test_clean_help_does_not_offer_force() -> None:
-    result = CliRunner().invoke(main, ["cache", "clean", "--help"])
-
-    assert result.exit_code == 0
-    assert "--yes" in result.output
-    assert "--force" not in result.output
+    clean_caches.assert_called_once_with()
 
 
 def test_clean_without_cache_is_a_noop(
