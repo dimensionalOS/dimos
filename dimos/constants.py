@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import tempfile
 
 try:
     # Not a dependency, just the best way to get config path if available.
@@ -26,6 +27,12 @@ else:
     CONFIG_DIR = Path(GLib.get_user_config_dir())
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
+
+ROBOT_ASSET_CACHE_DIR = CACHE_DIR / "robot_assets"
+DENO_CACHE_DIR = STATE_DIR / "deno"
+DRAKE_URDF_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_urdf_cache"
+VISER_URDF_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_viser_urdf_cache"
+AMENT_PREFIX_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_ament_prefix"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 

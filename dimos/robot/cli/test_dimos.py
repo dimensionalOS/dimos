@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import sys
+from types import SimpleNamespace
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -24,7 +26,9 @@ import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot import external_blueprints as external
+import dimos.robot.cli.dimos as dimos_cli
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
+from dimos.utils.cache import CacheCleanResult, CacheIssue
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
@@ -64,6 +68,55 @@ def test_global_config_flag_applies_before_subcommand():
         assert "transport: zenoh" in result.output
     finally:
         global_config.update(transport=original)
+
+
+def test_cache_clean_refuses_while_dimos_is_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        dimos_cli,
+        "get_most_recent",
+        lambda *, alive_only: SimpleNamespace(run_id="active-run"),
+    )
+
+    result = CliRunner().invoke(main, ["cache", "clean"])
+
+    assert result.exit_code == 1
+    assert "DimOS run active-run is active" in result.output
+
+
+def test_cache_clean_force_overrides_active_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        dimos_cli,
+        "get_most_recent",
+        lambda *, alive_only: SimpleNamespace(run_id="active-run"),
+    )
+    monkeypatch.setattr(
+        dimos_cli,
+        "clean_caches",
+        lambda *, force: CacheCleanResult(),
+    )
+
+    result = CliRunner().invoke(main, ["cache", "clean", "--force"])
+
+    assert result.exit_code == 0
+    assert "Warning: cleaning caches while DimOS run active-run is active." in result.output
+    assert "No DimOS caches found." in result.output
+
+
+def test_cache_clean_reports_partial_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    checkout = Path("/cache/robot_assets/sources/key/robot")
+    monkeypatch.setattr(dimos_cli, "get_most_recent", lambda *, alive_only: None)
+    monkeypatch.setattr(
+        dimos_cli,
+        "clean_caches",
+        lambda *, force: CacheCleanResult(
+            skipped=[CacheIssue(checkout, "Git checkout has local changes")]
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["cache", "clean"])
+
+    assert result.exit_code == 1
+    assert f"Skipped cache: {checkout} (Git checkout has local changes)" in result.output
 
 
 def test_blueprint_arg_help():

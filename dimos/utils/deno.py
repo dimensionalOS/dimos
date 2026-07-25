@@ -23,7 +23,7 @@ import tempfile
 import urllib.request
 import zipfile
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DENO_CACHE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -38,7 +38,7 @@ def ensure_deno() -> str:
         return which
 
     exe_name = "deno.exe" if platform.system() == "Windows" else "deno"
-    deno_dir = STATE_DIR / "deno" / DENO_VERSION
+    deno_dir = DENO_CACHE_DIR / DENO_VERSION
     deno_path = deno_dir / exe_name
     if deno_path.exists():
         return str(deno_path)

@@ -44,6 +44,7 @@ from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cache import clean_caches
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -155,6 +156,47 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
+
+cache_app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
+main.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("clean")
+def cache_clean(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Clean while DimOS is running and delete cached Git checkouts with local work",
+    ),
+) -> None:
+    """Remove regenerable files cached by DimOS."""
+    active_run = get_most_recent(alive_only=True)
+    if active_run is not None and not force:
+        typer.echo(
+            f"Error: DimOS run {active_run.run_id} is active. Stop it before cleaning "
+            "caches, or pass --force.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if active_run is not None:
+        typer.echo(
+            f"Warning: cleaning caches while DimOS run {active_run.run_id} is active.",
+            err=True,
+        )
+
+    result = clean_caches(force=force)
+    for path in result.cleaned:
+        typer.echo(f"Cleaned cache: {path}")
+    for issue in result.skipped:
+        typer.echo(f"Skipped cache: {issue.path} ({issue.reason})", err=True)
+    for issue in result.failed:
+        typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
+
+    if not result.cleaned and result.complete:
+        typer.echo("No DimOS caches found.")
+    if not result.complete:
+        raise typer.Exit(1)
 
 
 def arg_help(

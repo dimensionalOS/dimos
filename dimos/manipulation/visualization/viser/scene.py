@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET
 
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
+from dimos.constants import VISER_URDF_CACHE_DIR
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
@@ -71,7 +72,7 @@ except ImportError as e:
 
 logger = setup_logger()
 
-_VISER_URDF_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_viser_urdf_cache"
+_VISER_URDF_CACHE_DIR = VISER_URDF_CACHE_DIR
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
