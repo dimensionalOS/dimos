@@ -882,19 +882,40 @@ run_post_install_tests() {
         cmd="dimos --replay run unitree-go2"
     fi
 
-    info "running: ${DIM}${cmd}${RESET} (Ctrl+C to stop)"
+    info "running: ${DIM}${cmd}${RESET} (Ctrl+C to stop, auto-stops after 60s)"
 
     local exit_code=0
-    pushd "$dir" >/dev/null
-    source "$venv"
-    $cmd &
-    local pid=$!
-    # wait allows bash to process INT trap immediately
+    local pid=""
+    # Honor the advertised 60s cap. Prefer coreutils `timeout`; if it is missing
+    # (e.g. stock macOS), fall back to a portable sleep+kill watchdog so the
+    # "60s" cap is real on every platform (issue #3017, Bug 1).
+    local use_timeout=0; has_cmd timeout && use_timeout=1
+    if [[ "$use_timeout" == "1" ]]; then
+        timeout 60 bash -c "cd '$dir'; source '$venv'; $cmd" &
+    else
+        bash -c "cd '$dir'; source '$venv'; $cmd" &
+    fi
+    pid=$!
+    local watchdog=""
+    if [[ "$use_timeout" != "1" ]]; then
+        ( sleep 60; kill -TERM "$pid" 2>/dev/null ) & watchdog=$!
+    fi
+
+    # Local INT trap: forward Ctrl+C to the smoke-test child and report it as a
+    # clean user-stop instead of letting the installer abort and print
+    # "installation failed" (issue #3017, Bug 2).
+    local _orig_int; _orig_int="$(trap -p INT)"
+    trap 'kill -INT "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true' INT
     wait $pid || exit_code=$?
-    popd >/dev/null
+    eval "$_orig_int"   # restore the original INT handler
+    if [[ -n "$watchdog" ]]; then
+        kill -TERM "$watchdog" 2>/dev/null || true
+        wait "$watchdog" 2>/dev/null || true
+    fi
 
     printf "\n"
-    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran 60s without crash ✓"
+    if [[ $exit_code -eq 124 ]] || [[ $exit_code -eq 143 ]]; then
+        ok "smoke test: ran 60s without crash ✓"
     elif [[ $exit_code -eq 130 ]] || [[ $exit_code -eq 137 ]]; then
         ok "smoke test: stopped by user"
     elif [[ $exit_code -eq 0 ]]; then ok "smoke test: completed ✓"
