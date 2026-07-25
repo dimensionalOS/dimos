@@ -246,7 +246,7 @@ async def _subscribe(
     sequences: list[int] = []
     first_frame_at: float | None = None
     invalid_stamps = 0
-    track_ready = asyncio.Event()
+    first_frame_received = asyncio.Event()
     consume_task: asyncio.Task[None] | None = None
 
     @pc.on("track")
@@ -257,11 +257,11 @@ async def _subscribe(
 
         async def _consume() -> None:
             nonlocal first_frame_at, invalid_stamps
-            track_ready.set()
             while True:
                 frame = await track.recv()
                 if first_frame_at is None:
                     first_frame_at = time.perf_counter()
+                    first_frame_received.set()
                 stamp = decode_frame_stamp(frame.to_ndarray(format="bgr24"))
                 if stamp is None:
                     invalid_stamps += 1
@@ -311,7 +311,10 @@ async def _subscribe(
             {"sdp_answer": pc.localDescription.sdp},
         )
         media_ready_at = time.perf_counter()
-        await asyncio.wait_for(track_ready.wait(), timeout=20.0)
+        try:
+            await asyncio.wait_for(first_frame_received.wait(), timeout=20.0)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("No video frame received within 20 seconds") from exc
         await asyncio.sleep(duration)
         stats = await pc.getStats()
     finally:
@@ -329,6 +332,11 @@ async def _subscribe(
             with contextlib.suppress(asyncio.CancelledError):
                 await consume_task
         await pc.close()
+
+    if not latencies_ms:
+        raise RuntimeError(
+            f"Received {invalid_stamps} video frames, but none contained valid timestamp metadata"
+        )
 
     inbound = [
         value
