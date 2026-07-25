@@ -151,9 +151,36 @@ The manifest records the owner, repository, filename, object id, byte count,
 content type, and SHA-256. A failed item does not get advertised as completed;
 rerunning the same batch is safe because object ids are content-addressed.
 
-The current server is a local filesystem reference backend. The stable boundary
-for a production migration is the HTTP object contract plus the manifest. A
-production backend should replace the blob files with S3/R2/MinIO, metadata with
-a durable database, and direct downloads with signed CDN URLs. Multipart upload,
-range reads, TLS, quotas, and audit logs are required before exposing it to the
-public internet.
+## S3, R2, and MinIO storage
+
+Install the optional cloud-storage dependencies and select the S3-compatible
+backend:
+
+```bash
+pip install "dimos[cloud-storage]"
+
+export DIMOS_REPLAY_REPOSITORY_TOKEN=replace-me
+export DIMOS_REPLAY_S3_BUCKET=dimos-replays
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+
+dimos replay-repo serve \
+  --host 0.0.0.0 \
+  --backend s3 \
+  --s3-region us-east-1
+```
+
+Cloudflare R2 and MinIO use the same backend. Set
+`DIMOS_REPLAY_S3_ENDPOINT_URL` to the provider endpoint. MinIO commonly also
+needs `DIMOS_REPLAY_S3_ADDRESSING_STYLE=path`; R2 commonly uses region `auto`.
+The normal AWS credential chain remains available when explicit credentials
+are omitted.
+
+Clients continue to use the same HTTP and manifest contract regardless of the
+selected backend. Completed metadata is written after the immutable blob, so
+an interrupted upload is never listed as complete. Downloads stream from
+object storage without first materializing the entire object on server disk.
+
+Multipart upload, range reads, signed CDN URLs, TLS, quotas, and audit logs are
+separate production-hardening work and are required before exposing private
+recordings to the public internet.

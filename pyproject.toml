@@ -337,6 +337,11 @@ webrtc = [
     "aiohttp>=3.9.0",
 ]
 
+cloud-storage = [
+    # S3-compatible replay storage (AWS S3, Cloudflare R2, and MinIO).
+    "boto3>=1.35.0,<2",
+]
+
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -357,7 +362,7 @@ scene = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cloud-storage,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]

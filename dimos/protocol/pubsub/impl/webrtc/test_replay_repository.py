@@ -192,9 +192,7 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
             token="test-token",
         )
         page = requests.get(f"{server_url}/r/alice/go2", timeout=5.0)
-        object_url = (
-            f"{server_url}/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
-        )
+        object_url = f"{server_url}/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
         video = requests.get(object_url, timeout=5.0)
         download = requests.get(f"{object_url}?download=1", timeout=5.0)
 

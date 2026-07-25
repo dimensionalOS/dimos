@@ -95,7 +95,63 @@ def test_serve_uses_environment_token(
         "port": 9876,
         "token": "secret",
         "public_read": True,
+        "repository": None,
     }
+
+
+def test_serve_builds_an_s3_compatible_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, Any] = {}
+    storage = object()
+
+    def fake_s3_repository(**kwargs: Any) -> object:
+        received["s3"] = kwargs
+        return storage
+
+    monkeypatch.setattr(
+        replay_repository_cli,
+        "S3ReplayRepository",
+        fake_s3_repository,
+    )
+    monkeypatch.setattr(
+        replay_repository_cli,
+        "serve_repository",
+        lambda **kwargs: received.setdefault("server", kwargs),
+    )
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        [
+            "serve",
+            "--root",
+            str(tmp_path),
+            "--backend",
+            "s3",
+            "--s3-bucket",
+            "replays",
+            "--s3-endpoint-url",
+            "https://minio.example",
+            "--s3-addressing-style",
+            "path",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert received["s3"]["bucket"] == "replays"
+    assert received["s3"]["endpoint_url"] == "https://minio.example"
+    assert received["s3"]["addressing_style"] == "path"
+    assert received["server"]["repository"] is storage
+
+
+def test_serve_rejects_missing_s3_bucket(tmp_path: Path) -> None:
+    result = runner.invoke(
+        replay_repository_cli.replay_repository_app,
+        ["serve", "--root", str(tmp_path), "--backend", "s3"],
+    )
+
+    assert result.exit_code == 2
+    assert "--s3-bucket is required" in result.output
 
 
 def test_upload_list_and_download_commands(

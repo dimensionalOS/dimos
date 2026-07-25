@@ -32,6 +32,7 @@ from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
     upload_files,
     write_manifest,
 )
+from dimos.protocol.pubsub.impl.webrtc.replay_repository_s3 import S3ReplayRepository
 
 replay_repository_app = typer.Typer(
     help="Upload and download raw video/replay objects by owner and repository",
@@ -59,12 +60,78 @@ def serve(
         "--public-read",
         help="Let anyone list, play, and download objects; uploads still require the token",
     ),
+    backend: str = typer.Option(
+        "filesystem",
+        "--backend",
+        help="Storage backend: filesystem or s3 (also supports R2 and MinIO)",
+    ),
+    s3_bucket: str | None = typer.Option(
+        None,
+        "--s3-bucket",
+        envvar="DIMOS_REPLAY_S3_BUCKET",
+    ),
+    s3_prefix: str = typer.Option(
+        "dimos-replays",
+        "--s3-prefix",
+        envvar="DIMOS_REPLAY_S3_PREFIX",
+    ),
+    s3_endpoint_url: str | None = typer.Option(
+        None,
+        "--s3-endpoint-url",
+        envvar="DIMOS_REPLAY_S3_ENDPOINT_URL",
+    ),
+    s3_region: str | None = typer.Option(
+        None,
+        "--s3-region",
+        envvar="AWS_DEFAULT_REGION",
+    ),
+    s3_access_key_id: str | None = typer.Option(
+        None,
+        "--s3-access-key-id",
+        envvar="AWS_ACCESS_KEY_ID",
+    ),
+    s3_secret_access_key: str | None = typer.Option(
+        None,
+        "--s3-secret-access-key",
+        envvar="AWS_SECRET_ACCESS_KEY",
+        hide_input=True,
+    ),
+    s3_session_token: str | None = typer.Option(
+        None,
+        "--s3-session-token",
+        envvar="AWS_SESSION_TOKEN",
+        hide_input=True,
+    ),
+    s3_addressing_style: str = typer.Option(
+        "auto",
+        "--s3-addressing-style",
+        envvar="DIMOS_REPLAY_S3_ADDRESSING_STYLE",
+        help="S3 addressing style: auto, path, or virtual",
+    ),
 ) -> None:
     """Run the MVP repository server."""
     if host not in {"127.0.0.1", "::1", "localhost"} and not token:
         raise typer.BadParameter(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
         )
+    storage = None
+    if backend == "s3":
+        if not s3_bucket:
+            raise typer.BadParameter(
+                "DIMOS_REPLAY_S3_BUCKET or --s3-bucket is required for the s3 backend"
+            )
+        storage = S3ReplayRepository(
+            bucket=s3_bucket,
+            prefix=s3_prefix,
+            endpoint_url=s3_endpoint_url,
+            region_name=s3_region,
+            access_key_id=s3_access_key_id,
+            secret_access_key=s3_secret_access_key,
+            session_token=s3_session_token,
+            addressing_style=s3_addressing_style,
+        )
+    elif backend != "filesystem":
+        raise typer.BadParameter("--backend must be filesystem or s3")
     typer.echo(
         json.dumps(
             {
@@ -72,6 +139,7 @@ def serve(
                 "host": host,
                 "port": port,
                 "root": str(root),
+                "backend": backend,
                 "auth": token is not None,
                 "public_read": public_read,
             },
@@ -85,6 +153,7 @@ def serve(
             port=port,
             token=token,
             public_read=public_read,
+            repository=storage,
         )
     except KeyboardInterrupt:
         pass
