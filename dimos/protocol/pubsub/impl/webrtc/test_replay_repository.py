@@ -23,6 +23,9 @@ import pytest
 import requests
 
 from dimos.protocol.pubsub.impl.webrtc.replay_repository import (
+    RepositoryError,
+    ReplayManifest,
+    ReplayObject,
     ReplayRepository,
     ReplayRepositoryServer,
     download_object,
@@ -189,7 +192,9 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
             token="test-token",
         )
         page = requests.get(f"{server_url}/r/alice/go2", timeout=5.0)
-        object_url = f"{server_url}/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
+        object_url = (
+            f"{server_url}/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
+        )
         video = requests.get(object_url, timeout=5.0)
         download = requests.get(f"{object_url}?download=1", timeout=5.0)
 
@@ -250,3 +255,90 @@ def test_batch_upload_manifest_and_download(tmp_path: Path) -> None:
         sha256_file(path) == item.sha256
         for path, item in zip(restored, manifest.objects, strict=True)
     )
+
+
+def test_manifest_rejects_unknown_version_and_invalid_entries() -> None:
+    valid_object = ReplayObject(
+        owner="alice",
+        repository="go2",
+        object_id="a" * 64,
+        filename="capture.db",
+        size_bytes=10,
+        sha256="a" * 64,
+        content_type="application/octet-stream",
+        created_at="2026-07-25T00:00:00+00:00",
+    ).to_dict()
+
+    with pytest.raises(RepositoryError, match="version must be 1"):
+        ReplayManifest.from_dict(
+            {
+                "version": 2,
+                "owner": "alice",
+                "repository": "go2",
+                "objects": [],
+            }
+        )
+    with pytest.raises(RepositoryError, match="every manifest object"):
+        ReplayManifest.from_dict(
+            {
+                "version": 1,
+                "owner": "alice",
+                "repository": "go2",
+                "objects": [valid_object, "invalid"],
+            }
+        )
+
+
+def test_manifest_rejects_cross_repository_objects() -> None:
+    item = ReplayObject(
+        owner="mallory",
+        repository="other",
+        object_id="b" * 64,
+        filename="capture.db",
+        size_bytes=10,
+        sha256="b" * 64,
+        content_type="application/octet-stream",
+        created_at="2026-07-25T00:00:00+00:00",
+    )
+
+    with pytest.raises(RepositoryError, match="must belong"):
+        ReplayManifest.from_dict(
+            {
+                "version": 1,
+                "owner": "alice",
+                "repository": "go2",
+                "objects": [item.to_dict()],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("object_id", "not-a-digest", "invalid replay object metadata"),
+        ("sha256", "c" * 64, "object sha256 must match"),
+        ("filename", "../capture.db", "invalid replay object metadata"),
+        ("size_bytes", -1, "size_bytes cannot be negative"),
+        ("content_type", "", "content_type cannot be empty"),
+        ("created_at", "", "created_at cannot be empty"),
+    ],
+)
+def test_replay_object_metadata_validation(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    data = ReplayObject(
+        owner="alice",
+        repository="go2",
+        object_id="d" * 64,
+        filename="capture.db",
+        size_bytes=10,
+        sha256="d" * 64,
+        content_type="application/octet-stream",
+        created_at="2026-07-25T00:00:00+00:00",
+    ).to_dict()
+    data[field] = value
+
+    with pytest.raises(RepositoryError, match=message):
+        ReplayObject.from_dict(data)

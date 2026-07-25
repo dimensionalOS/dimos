@@ -125,15 +125,34 @@ class ReplayObject:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReplayObject:
+        try:
+            owner = _validate_name(str(data["owner"]), "owner")
+            repository = _validate_name(str(data["repository"]), "repository")
+            object_id = _validate_object_id(str(data["object_id"]))
+            filename = _validate_filename(str(data["filename"]))
+            size_bytes = int(data["size_bytes"])
+            sha256 = _validate_object_id(str(data["sha256"]))
+            content_type = str(data["content_type"])
+            created_at = str(data["created_at"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RepositoryError("invalid replay object metadata") from exc
+        if size_bytes < 0:
+            raise RepositoryError("object size_bytes cannot be negative")
+        if sha256 != object_id:
+            raise RepositoryError("object sha256 must match object_id")
+        if not content_type:
+            raise RepositoryError("object content_type cannot be empty")
+        if not created_at:
+            raise RepositoryError("object created_at cannot be empty")
         return cls(
-            owner=str(data["owner"]),
-            repository=str(data["repository"]),
-            object_id=str(data["object_id"]),
-            filename=str(data["filename"]),
-            size_bytes=int(data["size_bytes"]),
-            sha256=str(data["sha256"]),
-            content_type=str(data["content_type"]),
-            created_at=str(data["created_at"]),
+            owner=owner,
+            repository=repository,
+            object_id=object_id,
+            filename=filename,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            content_type=content_type,
+            created_at=created_at,
         )
 
 
@@ -155,16 +174,26 @@ class ReplayManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReplayManifest:
+        if data.get("version") != 1:
+            raise RepositoryError("manifest version must be 1")
         raw_objects = data.get("objects")
         if not isinstance(raw_objects, list):
             raise RepositoryError("manifest objects must be a list")
-        return cls(
-            owner=_validate_name(str(data["owner"]), "owner"),
-            repository=_validate_name(str(data["repository"]), "repository"),
-            objects=tuple(
-                ReplayObject.from_dict(item) for item in raw_objects if isinstance(item, dict)
-            ),
-        )
+        if any(not isinstance(item, dict) for item in raw_objects):
+            raise RepositoryError("every manifest object must be a JSON object")
+        try:
+            owner = _validate_name(str(data["owner"]), "owner")
+            repository = _validate_name(str(data["repository"]), "repository")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RepositoryError("invalid manifest repository identity") from exc
+        objects = tuple(ReplayObject.from_dict(item) for item in raw_objects)
+        if any(
+            item.owner != owner or item.repository != repository for item in objects
+        ):
+            raise RepositoryError(
+                "manifest objects must belong to the manifest repository"
+            )
+        return cls(owner=owner, repository=repository, objects=objects)
 
 
 class BatchTransferError(RuntimeError):
@@ -240,7 +269,9 @@ class ReplayRepository:
                 )
             object_path, metadata_path = self._paths(owner, repository, object_id)
             if metadata_path.exists() and object_path.exists():
-                return ReplayObject.from_dict(json.loads(metadata_path.read_text(encoding="utf-8")))
+                return ReplayObject.from_dict(
+                    json.loads(metadata_path.read_text(encoding="utf-8"))
+                )
 
             metadata = ReplayObject(
                 owner=owner,
@@ -265,11 +296,15 @@ class ReplayRepository:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
-    def get(self, owner: str, repository: str, object_id: str) -> tuple[ReplayObject, Path]:
+    def get(
+        self, owner: str, repository: str, object_id: str
+    ) -> tuple[ReplayObject, Path]:
         object_path, metadata_path = self._paths(owner, repository, object_id)
         if not object_path.is_file() or not metadata_path.is_file():
             raise FileNotFoundError(object_id)
-        metadata = ReplayObject.from_dict(json.loads(metadata_path.read_text(encoding="utf-8")))
+        metadata = ReplayObject.from_dict(
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+        )
         return metadata, object_path
 
     def list(self, owner: str, repository: str) -> list[ReplayObject]:
@@ -376,7 +411,9 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             )
             preview = ""
             if item.content_type.startswith("video/"):
-                preview = f'<video controls preload="metadata" src="{object_url}"></video>'
+                preview = (
+                    f'<video controls preload="metadata" src="{object_url}"></video>'
+                )
             cards.append(
                 "<article>"
                 f"<h2>{escape(item.filename)}</h2>"
@@ -414,7 +451,9 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         try:
             owner, repository, object_id = self._route()
             if object_id is not None:
-                raise RepositoryError("upload requests must target the objects collection")
+                raise RepositoryError(
+                    "upload requests must target the objects collection"
+                )
             raw_length = self.headers.get("Content-Length")
             if raw_length is None:
                 raise RepositoryError("Content-Length is required")
@@ -428,7 +467,9 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 filename=unquote(filename),
                 source=self.rfile,
                 size_bytes=size_bytes,
-                content_type=self.headers.get("Content-Type", "application/octet-stream"),
+                content_type=self.headers.get(
+                    "Content-Type", "application/octet-stream"
+                ),
                 expected_sha256=self.headers.get("X-Dimos-Sha256"),
             )
             self._send_json(HTTPStatus.CREATED, metadata.to_dict())
@@ -538,7 +579,8 @@ def _upload_file_once(
     headers = {
         **_api_headers(token),
         "Content-Length": str(size_bytes),
-        "Content-Type": mimetypes.guess_type(source_path.name)[0] or "application/octet-stream",
+        "Content-Type": mimetypes.guess_type(source_path.name)[0]
+        or "application/octet-stream",
         "X-Dimos-Filename": quote(source_path.name, safe=""),
         "X-Dimos-Sha256": digest,
     }
@@ -598,7 +640,9 @@ def list_objects(
     raw_objects = data.get("objects") if isinstance(data, dict) else None
     if not isinstance(raw_objects, list):
         raise RuntimeError("repository returned an invalid object listing")
-    return [ReplayObject.from_dict(item) for item in raw_objects if isinstance(item, dict)]
+    return [
+        ReplayObject.from_dict(item) for item in raw_objects if isinstance(item, dict)
+    ]
 
 
 def _download_object_once(
@@ -622,7 +666,9 @@ def _download_object_once(
     ) as response:
         response.raise_for_status()
         encoded_filename = response.headers.get("X-Dimos-Filename", object_id)
-        destination = Path(output) if output is not None else Path(unquote(encoded_filename))
+        destination = (
+            Path(output) if output is not None else Path(unquote(encoded_filename))
+        )
         if destination.exists() and not overwrite:
             raise FileExistsError(
                 f"{destination} already exists; pass overwrite=True to replace it"
@@ -755,7 +801,9 @@ def download_objects(
 
     results: list[Path | None] = [None] * len(manifest.objects)
     failures: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(manifest.objects)))) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(workers, max(1, len(manifest.objects)))
+    ) as executor:
         future_to_index = {
             executor.submit(
                 download_object,
