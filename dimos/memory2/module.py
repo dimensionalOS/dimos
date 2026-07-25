@@ -42,7 +42,6 @@ from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -325,7 +324,6 @@ class Recorder(MemoryModule):
     tf: In[TFMessage]
 
     _pose_setters: dict[str, Any] = {}
-    _tf: TF | None = None
 
     @rpc
     def start(self) -> None:
@@ -360,7 +358,7 @@ class Recorder(MemoryModule):
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
         if getattr(self.tf, "_transport", None) is not None:
-            self._tf = TF(self.tf)
+            self._tf = self.tfbuffer
 
         self._prepare_streams()
 

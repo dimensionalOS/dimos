@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import pickle
-import time
 from types import MappingProxyType
 from typing import Protocol
 
@@ -939,16 +938,7 @@ class IoTfConsumer(Module):
         return list(self._seen or [])
 
 
-def _wait_until(pred, timeout: float = 10.0):  # type: ignore[no-untyped-def]
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if pred():
-            return
-        time.sleep(0.05)
-    raise AssertionError("condition not met within timeout")
-
-
-def test_io_port_autoconnects_and_flows_both_ways() -> None:
+def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
     """An IO port shares the topic with same-named In/Out ports: it hears the
     publisher, its own publishes reach the consumer, and loopback feeds it back
     its own messages."""
@@ -967,11 +957,11 @@ def test_io_port_autoconnects_and_flows_both_ways() -> None:
         assert "tf" in str(echo.tf.transport.topic)
 
         publisher.send("from_pub")
-        _wait_until(lambda: "from_pub" in echo.seen())
-        _wait_until(lambda: "from_pub" in consumer.seen())
+        wait_until(lambda: "from_pub" in echo.seen(), timeout=10.0)
+        wait_until(lambda: "from_pub" in consumer.seen(), timeout=10.0)
 
         echo.send("from_echo")
-        _wait_until(lambda: "from_echo" in consumer.seen())
-        _wait_until(lambda: "from_echo" in echo.seen())
+        wait_until(lambda: "from_echo" in consumer.seen(), timeout=10.0)
+        wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()

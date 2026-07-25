@@ -35,7 +35,7 @@ class _FakeTF:
         self.calls.append((args, kwargs))
         return self.result
 
-    def stop(self) -> None:
+    def dispose(self) -> None:
         pass
 
 

@@ -220,10 +220,7 @@ class ModuleBase(Configurable, CompositeResource):
             self._loop_thread = None
 
         if self._tf is not None:
-            # _tf may hold an injected lookup (tests, replay) without dispose().
-            dispose = getattr(self._tf, "dispose", None)
-            if dispose is not None:
-                dispose()
+            self._tf.dispose()
             self._tf = None
 
         # Stop transports and break the In/Out -> owner -> self reference
@@ -291,7 +288,7 @@ class ModuleBase(Configurable, CompositeResource):
         }
 
     @property
-    def ios(self) -> dict[str, IO]:  # type: ignore[type-arg]
+    def ios(self) -> dict[str, IO[Any]]:
         return {
             name: s
             for name, s in self.__dict__.items()

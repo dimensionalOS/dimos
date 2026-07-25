@@ -151,17 +151,8 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
                 Transform(
                     frame_id=self.frame_id,
                     child_frame_id=self.config.sensor_frame_id,
-                    translation=Vector3(
-                        msg.pose.position.x,
-                        msg.pose.position.y,
-                        msg.pose.position.z,
-                    ),
-                    rotation=Quaternion(
-                        msg.pose.orientation.x,
-                        msg.pose.orientation.y,
-                        msg.pose.orientation.z,
-                        msg.pose.orientation.w,
-                    ),
+                    translation=Vector3(msg.pose.position),
+                    rotation=Quaternion(msg.pose.orientation),
                     ts=msg.ts or time.time(),
                 )
             )

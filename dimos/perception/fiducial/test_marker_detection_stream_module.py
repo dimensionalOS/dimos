@@ -238,7 +238,7 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
             self.calls.append((parent_frame, child_frame, time_point, time_tolerance))
             return t_world_optical
 
-        def stop(self) -> None:
+        def dispose(self) -> None:
             pass
 
     module = MarkerDetectionStreamModule(
@@ -285,7 +285,7 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
             self.calls += 1
             return None
 
-        def stop(self) -> None:
+        def dispose(self) -> None:
             pass
 
     missing_tf = MissingTf()
