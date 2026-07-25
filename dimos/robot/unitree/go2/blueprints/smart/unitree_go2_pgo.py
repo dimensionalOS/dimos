@@ -33,7 +33,7 @@ Run on the dog:
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import PGO
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.normalize_go2_lidar import NormalizeGo2Lidar
@@ -54,7 +54,7 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
     NormalizeGo2Lidar.blueprint(),
-    PGO.blueprint(
+    GscPGO.blueprint(
         # Do-no-harm tune for the Go2's short-range onboard L1 lidar, found by a
         # strictness sweep on huge_loop_go2: the sparse L1 produces
         # geometrically-plausible FALSE closures that survive any single gate and

@@ -113,17 +113,19 @@ def registered_scans(
     identity; scans whose frame can't be reached at their timestamp are dropped."""
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
-    for observation in islice(store.stream(lidar_stream, PointCloud2), 0, None, stride):
-        cloud = observation.data
-        timestamp = float(observation.ts)
-        points = np.asarray(cloud.points_f32(), dtype=np.float64)[:, :3]
-        frame_id = cloud.frame_id or odom_parent
-        world_from_sensor = tf.get(odom_parent, frame_id, timestamp)
-        if world_from_sensor is None:
-            continue
-        matrix = world_from_sensor.to_matrix()
-        yield timestamp, points @ matrix[:3, :3].T + matrix[:3, 3]
-    store.stop()
+    try:
+        for observation in islice(store.stream(lidar_stream, PointCloud2), 0, None, stride):
+            cloud = observation.data
+            timestamp = float(observation.ts)
+            points = np.asarray(cloud.points_f32(), dtype=np.float64)[:, :3]
+            frame_id = cloud.frame_id or odom_parent
+            world_from_sensor = tf.get(odom_parent, frame_id, timestamp)
+            if world_from_sensor is None:
+                continue
+            matrix = world_from_sensor.to_matrix()
+            yield timestamp, points @ matrix[:3, :3].T + matrix[:3, 3]
+    finally:
+        store.stop()
 
 
 def accumulate_maps(

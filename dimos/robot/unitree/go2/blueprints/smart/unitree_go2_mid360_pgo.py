@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import PGO
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.visualization.rerun.bridge import RerunMulti
 from dimos.visualization.vis_module import vis_module
@@ -54,7 +54,7 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 
 unitree_go2_mid360_pgo = autoconnect(
     PointLio.blueprint().remappings([(PointLio, "lidar", "cloud")]),
-    PGO.blueprint(),
+    GscPGO.blueprint(),
     vis_module(
         "rerun",
         rerun_config={"visual_override": {_POSE_GRAPH_PATH: _render_pose_graph}},

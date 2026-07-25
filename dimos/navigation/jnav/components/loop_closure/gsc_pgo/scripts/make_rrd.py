@@ -229,6 +229,8 @@ def build(
 
     def landmarks(gt_odom: str) -> tuple[np.ndarray, list[np.ndarray], list[int]]:
         odom_rows = odom_samples(gt_odom)
+        if not len(odom_rows):
+            return np.empty((0, 3)), [], []
         detections = filter_glimpses(
             read_raw_tag_stream(store, tag_stream), exclude_tags=(), **LANDMARK_GATES
         )

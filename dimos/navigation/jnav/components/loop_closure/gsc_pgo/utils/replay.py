@@ -228,6 +228,7 @@ class LockstepReplay(Module):
             frame_id = payload.frame_id or "map"
             if apply_drift:
                 points = points + (drift * (timestamp - t0)).astype(np.float32)
+            self._ack_event.clear()
             self.cloud.publish(
                 PointCloud2.from_numpy(points, frame_id=frame_id, timestamp=timestamp)
             )
@@ -237,8 +238,6 @@ class LockstepReplay(Module):
             except TimeoutError:
                 timeouts += 1
                 skipped_scan_ts.append(timestamp)
-            else:
-                self._ack_event.clear()
             if scans_sent % _PROGRESS_EVERY_N_SCANS == 0:
                 # Periodic progress so a capped run still reports coverage.
                 Path(str(self.config.done_path) + ".progress").write_text(
