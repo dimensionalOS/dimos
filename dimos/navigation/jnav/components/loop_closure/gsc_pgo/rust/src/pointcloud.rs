@@ -12,46 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Point-cloud machinery mirroring the PCL pieces simple_pgo.cpp leans on:
+//! Point-cloud machinery for the PGO core:
 //!
 //! - `voxel_downsample`: `pcl::VoxelGrid` semantics — points are binned on
-//!   `floor(p / leaf)` (float math, like PCL) and each occupied voxel emits
-//!   the CENTROID of its points (not the voxel center). Output is ordered by
-//!   (z, y, x) cell index, matching PCL's leaf-index sort.
-//! - `transform_cloud`: `pcl::transformPointCloud` with a double rotation +
-//!   translation, storing back to f32 points.
-//! - `KdTree`: exact nearest-neighbour / k-NN over f32 points (PCL uses
-//!   FLANN's exact single-tree index; this is a hand-rolled median-split
-//!   kd-tree with branch-and-bound, no external crates).
-//! - `icp_point_to_point`: `pcl::IterativeClosestPoint<PointXYZI, PointXYZI>`
-//!   (point-to-point, `TransformationEstimationSVD` = Eigen f32 Umeyama with
-//!   a two-sided Jacobi SVD) with PCL's `DefaultConvergenceCriteria`
-//!   semantics and the exact parameters simple_pgo.cpp sets: max 50
-//!   iterations, max correspondence distance 10 m, transformation epsilon
-//!   1e-6, euclidean fitness epsilon 1e-6. The whole ICP core runs on f32
-//!   4x4 transforms with PCL/Eigen's per-coefficient evaluation order so the
-//!   iterates match the C++ reference bit for bit; only the returned
-//!   rotation/translation are widened to f64 (mirroring
-//!   `getFinalTransformation().cast<double>()`).
-//!   Fitness score is PCL `getFitnessScore()`: mean *squared* NN distance
-//!   over all source points (default max_range = DBL_MAX).
+//!   `floor(p / leaf)` (float math) and each occupied voxel emits the
+//!   CENTROID of its points (not the voxel center). Output is ordered by
+//!   (z, y, x) cell index.
+//! - `transform_cloud`: apply a double rotation + translation, storing back
+//!   to f32 points.
+//! - `KdTree`: exact nearest-neighbour / k-NN over f32 points (hand-rolled
+//!   median-split kd-tree with branch-and-bound, no external crates).
+//! - `icp_point_to_point`: point-to-point ICP with `DefaultConvergenceCriteria`
+//!   semantics and these parameters: max 50 iterations, max correspondence
+//!   distance 10 m, transformation epsilon 1e-6, euclidean fitness epsilon
+//!   1e-6. The rigid estimate is an f32 Umeyama with a two-sided Jacobi SVD.
+//!   The whole ICP core runs on f32 4x4 transforms; only the returned
+//!   rotation/translation are widened to f64. Fitness score is the mean
+//!   *squared* NN distance over all source points.
 //! - `cloud_degeneracy`: the Zhang-2016/X-ICP normal-scatter observability
-//!   measure from the anonymous namespace at the top of simple_pgo.cpp
-//!   (PCL NormalEstimation with kSearch=10, then normalized eigenvalues of
-//!   the sum of normal outer products).
+//!   measure (normal estimation with kSearch=10, then normalized eigenvalues
+//!   of the sum of normal outer products).
 
-// Index-based loops mirror the reference Eigen/PCL numeric kernels (diagonal
+// Index-based loops match the numeric kernels' access patterns (diagonal
 // access, symmetric r[i][j], dual-row column writes); keep the index form.
 #![allow(clippy::needless_range_loop)]
 
 use crate::mat3::{self, Mat3, Vec3};
 
-/// Body/global-frame cloud: xyz as f32, like `pcl::PointXYZI` minus the
-/// intensity (nothing in the PGO core reads intensity).
+/// Body/global-frame cloud: xyz as f32 (nothing in the PGO core reads
+/// intensity).
 pub type PointCloud = Vec<[f32; 3]>;
 
-/// `pcl::transformPointCloud(cloud, out, translation, Quaterniond(rotation))`:
-/// p' = rotation*p + translation.
+/// Transform a cloud by a rotation + translation: p' = rotation*p +
+/// translation (rotation applied in f64, stored back to f32).
 pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) -> PointCloud {
     cloud
         .iter()
@@ -63,10 +56,9 @@ pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) 
         .collect()
 }
 
-/// `pcl::VoxelGrid` with cubic leaf size: hash points into cells on
-/// `floor(p * (1/leaf))` (f32 math, as PCL does), emit the centroid of each
-/// occupied cell, ordered by (z, y, x) cell index like PCL's sorted leaf
-/// layout.
+/// Voxel-grid downsample with cubic leaf size: hash points into cells on
+/// `floor(p * (1/leaf))` (f32 math), emit the centroid of each occupied
+/// cell, ordered by (z, y, x) cell index.
 pub fn voxel_downsample(cloud: &[[f32; 3]], leaf: f64) -> PointCloud {
     if leaf <= 0.0 || cloud.is_empty() {
         return cloud.to_vec();
@@ -90,7 +82,7 @@ pub fn voxel_downsample(cloud: &[[f32; 3]], leaf: f64) -> PointCloud {
         entry.1 += 1;
     }
     let mut keys: Vec<(i64, i64, i64)> = cells.keys().copied().collect();
-    // PCL sorts leaves by linear index i + j*div_x + k*div_x*div_y -> (z, y, x).
+    // Sort leaves by linear index i + j*div_x + k*div_x*div_y -> (z, y, x).
     keys.sort_by_key(|&(x, y, z)| (z, y, x));
     keys.iter()
         .map(|key| {
@@ -114,7 +106,7 @@ struct KdNode {
 }
 
 /// Exact 3-D kd-tree (median split, branch-and-bound queries). Distances are
-/// squared f32, matching PCL/FLANN's reporting.
+/// reported as squared f32.
 pub struct KdTree {
     points: Vec<[f32; 3]>,
     nodes: Vec<KdNode>,
@@ -202,9 +194,8 @@ impl KdTree {
     }
 
     /// k nearest neighbours, ascending by squared distance (includes the
-    /// query point itself when it is in the cloud, like PCL's kSearch).
-    /// Distance ties on the k-th slot keep the earlier find, like FLANN's
-    /// KNNResultSet (strict `dist < worstDist()` insertion).
+    /// query point itself when it is in the cloud). Distance ties on the k-th
+    /// slot keep the earlier find (strict `dist < worstDist()` insertion).
     pub fn knn(&self, query: &[f32; 3], k: usize) -> Vec<(usize, f32)> {
         if self.root < 0 || k == 0 {
             return Vec::new();
@@ -264,36 +255,32 @@ fn sq_dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 // ICP
 // ---------------------------------------------------------------------------
 
-/// Result of `icp_point_to_point`, mirroring what simple_pgo.cpp reads off
-/// `m_icp`: `hasConverged()`, `getFinalTransformation()` (rotation,
-/// translation) and `getFitnessScore()`.
+/// Result of `icp_point_to_point`: convergence flag, final transform
+/// (rotation, translation), and fitness score.
 #[derive(Debug, Clone)]
 pub struct IcpResult {
     pub converged: bool,
     pub rotation: Mat3,
     pub translation: Vec3,
-    /// PCL `getFitnessScore()`: mean squared NN distance over all source
-    /// points (f64::MAX when the target is empty).
+    /// Mean squared NN distance over all source points (f64::MAX when the
+    /// target is empty).
     pub fitness: f64,
 }
 
-/// Parameters as simple_pgo.cpp configures `m_icp` (constructor, lines
-/// 65-69): 50 iterations, 10 m correspondence gate, both epsilons 1e-6.
-/// `rotation_threshold` and `mse_threshold_absolute` are the PCL
-/// `DefaultConvergenceCriteria` defaults the C++ never overrides.
+/// ICP parameters: 50 iterations, 10 m correspondence gate, both epsilons
+/// 1e-6. `rotation_threshold` and `mse_threshold_absolute` are the
+/// convergence-criteria defaults.
 pub struct IcpParams {
     pub max_iterations: usize,
     pub max_correspondence_distance: f64,
-    /// PCL `setTransformationEpsilon`, applied to the squared translation
-    /// norm of the incremental transform (`translation_threshold_`).
+    /// Applied to the squared translation norm of the incremental transform.
     pub transformation_epsilon: f64,
-    /// PCL `rotation_threshold_` default: converged when the incremental
-    /// rotation's cos(angle) >= this (0.99999, ~0.256 deg).
+    /// Converged when the incremental rotation's cos(angle) >= this
+    /// (0.99999, ~0.256 deg).
     pub rotation_threshold: f64,
-    /// PCL `mse_threshold_absolute_` default: converged when
-    /// |cur_mse - prev_mse| < this.
+    /// Converged when |cur_mse - prev_mse| < this.
     pub mse_threshold_absolute: f64,
-    /// PCL `setEuclideanFitnessEpsilon` -> `mse_threshold_relative_`.
+    /// Relative MSE-change convergence threshold.
     pub euclidean_fitness_epsilon: f64,
 }
 
@@ -310,9 +297,9 @@ impl Default for IcpParams {
     }
 }
 
-// --- f32 4x4 transform plumbing, mirroring PCL/Eigen evaluation order ------
+// --- f32 4x4 transform plumbing (fixed per-coefficient evaluation order) ---
 
-/// Row-major f32 4x4, standing in for `Eigen::Matrix4f`.
+/// Row-major f32 4x4 transform.
 type Mat4f = [[f32; 4]; 4];
 
 fn mat4_identity() -> Mat4f {
@@ -323,8 +310,7 @@ fn mat4_identity() -> Mat4f {
     m
 }
 
-/// `final_transformation_ = transformation_ * final_transformation_`:
-/// Eigen fixed-size 4x4 f32 product, per-coefficient left-associated
+/// Fixed-size 4x4 f32 product, per-coefficient left-associated
 /// `((a0*b0 + a1*b1) + a2*b2) + a3*b3`.
 fn mat4_mul(a: &Mat4f, b: &Mat4f) -> Mat4f {
     let mut out = [[0.0f32; 4]; 4];
@@ -337,10 +323,9 @@ fn mat4_mul(a: &Mat4f, b: &Mat4f) -> Mat4f {
     out
 }
 
-/// `IterativeClosestPoint::transformCloud` (icp.hpp): per point,
-/// `pt_t = tr * [x y z 1]` as an Eigen lazy product in f32 — evaluation
-/// order `((x*c0 + y*c1) + z*c2) + c3` (w = 1, so `1*c3` is exactly `c3`).
-/// Non-finite points are left untouched, like PCL's in-place skip.
+/// ICP-internal per-point transform `pt_t = tr * [x y z 1]` in f32 —
+/// evaluation order `((x*c0 + y*c1) + z*c2) + c3` (w = 1, so `1*c3` is exactly
+/// `c3`). Non-finite points are left untouched.
 fn icp_transform_cloud(cloud: &[[f32; 3]], m: &Mat4f) -> PointCloud {
     cloud
         .iter()
@@ -358,10 +343,9 @@ fn icp_transform_cloud(cloud: &[[f32; 3]], m: &Mat4f) -> PointCloud {
         .collect()
 }
 
-/// `pcl::transformPointCloud` as used by `getFitnessScore`: PCL's SSE
-/// `Transformer<float>::se3` folds the translation innermost —
-/// `x*c0 + (y*c1 + (z*c2 + c3))` — deliberately DIFFERENT from the
-/// ICP-internal `transformCloud` order above.
+/// Per-point transform used by the fitness score: folds the translation
+/// innermost — `x*c0 + (y*c1 + (z*c2 + c3))` — deliberately DIFFERENT from the
+/// ICP-internal `icp_transform_cloud` order above.
 fn se3_transform_cloud(cloud: &[[f32; 3]], m: &Mat4f) -> PointCloud {
     cloud
         .iter()
@@ -376,30 +360,25 @@ fn se3_transform_cloud(cloud: &[[f32; 3]], m: &Mat4f) -> PointCloud {
         .collect()
 }
 
-/// Point-to-point ICP mirroring `pcl::IterativeClosestPoint::align(out,
-/// guess)` + `DefaultConvergenceCriteria`, numerically step-for-step with
-/// PCL 1.14 `IterativeClosestPoint<PointXYZI, PointXYZI>` (Scalar = float):
+/// Point-to-point ICP with `DefaultConvergenceCriteria`:
 ///
 /// - the working cloud, per-iteration delta and accumulated final transform
-///   are all f32 (Matrix4f in PCL); the guess seeds the final transform and
-///   pre-transforms the working cloud unless it is exactly identity;
+///   are all f32; the guess seeds the final transform and pre-transforms the
+///   working cloud unless it is exactly identity;
 /// - correspondences: for each (transformed) source point, the single NN in
 ///   the target, kept when the squared distance <= max_dist^2;
-/// - rigid estimation: `TransformationEstimationSVD` = Eigen f32 Umeyama
-///   (no scaling) with a two-sided Jacobi SVD of the 3x3 covariance;
-/// - convergence, checked after each iteration in PCL's order: max
-///   iterations reached (counts as converged, `failure_after_max_iter` is
-///   false by default); incremental transform small (`cos_angle >=
-///   rotation_threshold` AND `|t|^2 <= transformation_epsilon`, with
-///   `max_iterations_similar_transforms = 0` so the first hit converges);
-///   absolute then relative MSE change below `mse_threshold_absolute` /
-///   `euclidean_fitness_epsilon`;
+/// - rigid estimation: f32 Umeyama (no scaling) with a two-sided Jacobi SVD
+///   of the 3x3 covariance;
+/// - convergence, checked after each iteration: max iterations reached
+///   (counts as converged); incremental transform small (`cos_angle >=
+///   rotation_threshold` AND `|t|^2 <= transformation_epsilon`, the first hit
+///   converges); absolute then relative MSE change below
+///   `mse_threshold_absolute` / `euclidean_fitness_epsilon`;
 /// - aborts unconverged when fewer than 3 correspondences remain.
 ///
 /// The returned rotation/translation are the f32 final matrix entries widened
-/// to f64, like `getFinalTransformation().cast<double>()` in simple_pgo.cpp.
-/// The f64 guess is narrowed to f32 on entry, so an f32-exact guess (as built
-/// by the loop search) round-trips losslessly.
+/// to f64. The f64 guess is narrowed to f32 on entry, so an f32-exact guess
+/// (as built by the loop search) round-trips losslessly.
 pub fn icp_point_to_point(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
@@ -427,7 +406,7 @@ pub fn icp_point_to_point(
         guess[i][3] = guess_translation[i] as f32;
     }
 
-    // `align`: final_transformation_ = guess; pre-transform the working
+    // Seed the final transform with the guess; pre-transform the working
     // cloud only when the guess is not exactly identity.
     let mut final_m = guess;
     let mut transformed = if guess == mat4_identity() {
@@ -443,7 +422,7 @@ pub fn icp_point_to_point(
         // Correspondence estimation (source -> single NN in target). The
         // queries are independent and read-only on the tree, so they run in
         // parallel; results are collected back in source order, keeping every
-        // downstream f32 accumulation bit-identical to the serial loop.
+        // downstream f32 accumulation identical to the serial loop.
         use rayon::prelude::*;
         let nn: Vec<Option<(usize, f32)>> =
             transformed.par_iter().map(|p| tree.nearest(p)).collect();
@@ -461,7 +440,7 @@ pub fn icp_point_to_point(
             }
         }
         if src_matched.len() < 3 {
-            // PCL: CONVERGENCE_CRITERIA_NO_CORRESPONDENCES -> converged_ = false.
+            // Too few correspondences -> not converged.
             break false;
         }
 
@@ -471,14 +450,14 @@ pub fn icp_point_to_point(
         final_m = mat4_mul(&delta, &final_m);
         iterations += 1;
 
-        // --- DefaultConvergenceCriteria::hasConverged(), in PCL's order ----
-        // 1. Iteration budget (counts as converged by default).
+        // --- convergence checks, in order ----------------------------------
+        // 1. Iteration budget (counts as converged).
         if iterations >= params.max_iterations {
             break true;
         }
         // 2. Incremental transform similarity: the traces/sums are f32
-        //    arithmetic on the Matrix4f coefficients (as in PCL), promoted
-        //    to f64 only for the final comparison.
+        //    arithmetic on the 4x4 coefficients, promoted to f64 only for
+        //    the final comparison.
         let cos_angle = 0.5 * f64::from((delta[0][0] + delta[1][1] + delta[2][2]) - 1.0f32);
         let translation_sqr = f64::from(
             (delta[0][3] * delta[0][3] + delta[1][3] * delta[1][3]) + delta[2][3] * delta[2][3],
@@ -489,7 +468,7 @@ pub fn icp_point_to_point(
             break true;
         }
         // 3. MSE change on this iteration's correspondences: absolute
-        //    first, then relative (PCL checks both; either converges).
+        //    first, then relative (either converges).
         let cur_mse = sq_dists.iter().map(|&d| d as f64).sum::<f64>() / sq_dists.len() as f64;
         if (cur_mse - prev_mse).abs() < params.mse_threshold_absolute {
             break true;
@@ -511,15 +490,14 @@ pub fn icp_point_to_point(
     result
 }
 
-/// PCL `Registration::getFitnessScore()` with the default `max_range =
-/// DBL_MAX`: transform the ORIGINAL source by the f32 final transform
-/// (`pcl::transformPointCloud`, se3 order), take each point's squared NN
-/// distance in the target (f32), sum in f64, return the mean.
+/// Fitness score: transform the ORIGINAL source by the f32 final transform
+/// (se3 order), take each point's squared NN distance in the target (f32),
+/// sum in f64, return the mean.
 fn fitness_score(source: &[[f32; 3]], target_tree: &KdTree, final_m: &Mat4f) -> f64 {
     use rayon::prelude::*;
     let transformed = se3_transform_cloud(source, final_m);
     // Parallel NN, in-order collect: the f64 sum below runs serially in
-    // source order, so the result is bit-identical to the serial loop.
+    // source order, so the result is identical to the serial loop.
     let nn: Vec<Option<(usize, f32)>> = transformed
         .par_iter()
         .map(|p| target_tree.nearest(p))
@@ -540,11 +518,11 @@ fn fitness_score(source: &[[f32; 3]], target_tree: &KdTree, final_m: &Mat4f) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Eigen f32 Umeyama (TransformationEstimationSVD's backend)
+// f32 Umeyama rigid alignment (via a two-sided Jacobi SVD)
 // ---------------------------------------------------------------------------
 
-/// `Eigen::JacobiRotation<float>`: the planar rotation
-/// [[c, s], [-s, c]] used by the two-sided Jacobi SVD.
+/// A planar Jacobi rotation [[c, s], [-s, c]] used by the two-sided Jacobi
+/// SVD.
 #[derive(Clone, Copy)]
 struct JacobiRot {
     c: f32,
@@ -559,7 +537,7 @@ impl JacobiRot {
         }
     }
 
-    /// `JacobiRotation::operator*` for real scalars.
+    /// Compose two planar rotations (real-scalar product).
     fn mul(self, other: JacobiRot) -> JacobiRot {
         JacobiRot {
             c: self.c * other.c - self.s * other.s,
@@ -567,8 +545,7 @@ impl JacobiRot {
         }
     }
 
-    /// `JacobiRotation::makeJacobi(x, y, z)`: diagonalize the symmetric 2x2
-    /// [[x, y], [y, z]] (Eigen 3.4, real path).
+    /// Diagonalize the symmetric 2x2 [[x, y], [y, z]] (real path).
     fn make_jacobi(x: f32, y: f32, z: f32) -> JacobiRot {
         let deno = 2.0f32 * y.abs();
         if deno < f32::MIN_POSITIVE {
@@ -590,9 +567,7 @@ impl JacobiRot {
     }
 }
 
-/// `apply_rotation_in_the_plane` on rows p/q of a square matrix, i.e.
-/// Eigen's `m.applyOnTheLeft(p, q, j)` (scalar path — fixed size 3 is below
-/// the packet width, so Eigen takes it too).
+/// Apply a planar rotation on rows p/q of a square matrix (left-multiply).
 fn apply_rotation_rows<const N: usize>(m: &mut [[f32; N]; N], p: usize, q: usize, j: JacobiRot) {
     for i in 0..N {
         let x = m[p][i];
@@ -602,8 +577,8 @@ fn apply_rotation_rows<const N: usize>(m: &mut [[f32; N]; N], p: usize, q: usize
     }
 }
 
-/// Eigen's `m.applyOnTheRight(p, q, j)`: the kernel runs on columns p/q
-/// with `j.transpose()`.
+/// Apply a planar rotation on columns p/q of a square matrix
+/// (right-multiply, using `j.transpose()`).
 fn apply_rotation_cols<const N: usize>(m: &mut [[f32; N]; N], p: usize, q: usize, j: JacobiRot) {
     let jt = j.transpose();
     for row in m.iter_mut() {
@@ -614,7 +589,7 @@ fn apply_rotation_cols<const N: usize>(m: &mut [[f32; N]; N], p: usize, q: usize
     }
 }
 
-/// `Eigen::internal::real_2x2_jacobi_svd` on the (p,q) 2x2 block.
+/// Real 2x2 Jacobi SVD on the (p,q) 2x2 block.
 fn real_2x2_jacobi_svd(block: [[f32; 2]; 2]) -> (JacobiRot, JacobiRot) {
     let mut m = block;
     let t = m[0][0] + m[1][1];
@@ -622,7 +597,7 @@ fn real_2x2_jacobi_svd(block: [[f32; 2]; 2]) -> (JacobiRot, JacobiRot) {
     let rot1 = if d.abs() < f32::MIN_POSITIVE {
         JacobiRot { c: 1.0, s: 0.0 }
     } else {
-        // If d != 0, t/d cannot overflow (Eigen's reasoning).
+        // If d != 0, t/d cannot overflow.
         let u = t / d;
         let tmp = (1.0f32 + u * u).sqrt();
         JacobiRot {
@@ -636,10 +611,9 @@ fn real_2x2_jacobi_svd(block: [[f32; 2]; 2]) -> (JacobiRot, JacobiRot) {
     (j_left, j_right)
 }
 
-/// `Eigen::JacobiSVD<Matrix3f>(m, ComputeFullU | ComputeFullV)`: two-sided
-/// Jacobi SVD, ported statement-for-statement from Eigen 3.4 (square path,
-/// no QR preconditioning). Returns (U, V) with singular values sorted
-/// descending (the values themselves are not needed by Umeyama).
+/// Two-sided Jacobi SVD of a 3x3 f32 matrix (square path, no QR
+/// preconditioning). Returns (U, V) with singular values sorted descending
+/// (the values themselves are not needed by Umeyama).
 fn jacobi_svd_3x3(a: &[[f32; 3]; 3]) -> ([[f32; 3]; 3], [[f32; 3]; 3]) {
     let precision = 2.0f32 * f32::EPSILON;
     let consider_as_zero = f32::MIN_POSITIVE;
@@ -671,8 +645,7 @@ fn jacobi_svd_3x3(a: &[[f32; 3]; 3]) -> ([[f32; 3]; 3], [[f32; 3]; 3]) {
     let mut finished = false;
     while !finished {
         finished = true;
-        // Sweep index pairs (p,q) = (1,0), (2,0), (2,1), like Eigen's
-        // `for p in 1..size { for q in 0..p }`.
+        // Sweep index pairs (p,q) = (1,0), (2,0), (2,1).
         for p in 1..3 {
             for q in 0..p {
                 let threshold = consider_as_zero.max(precision * max_diag);
@@ -730,19 +703,18 @@ fn jacobi_svd_3x3(a: &[[f32; 3]; 3]) -> ([[f32; 3]; 3], [[f32; 3]; 3]) {
     (u, v)
 }
 
-/// Eigen's 3x3 determinant (`bruteforce_det3_helper` expansion) in f32.
+/// 3x3 f32 determinant via cofactor expansion.
 fn det3(m: &[[f32; 3]; 3]) -> f32 {
     let helper =
         |a: usize, b: usize, c: usize| -> f32 { m[0][a] * (m[1][b] * m[2][c] - m[1][c] * m[2][b]) };
     (helper(0, 1, 2) - helper(1, 0, 2)) + helper(2, 0, 1)
 }
 
-/// Eigen's L1 data-cache size as `manage_caching_sizes` sees it: CPUID
-/// deterministic cache enumeration (leaf 4 on Intel, 0x80000005 on AMD),
-/// falling back to Eigen's 32 KiB x86 default. Cached per process, like
-/// Eigen's function-local static. NOTE: on hybrid CPUs (P/E cores) the
-/// CPUID answer depends on which core the first query runs on — the same
-/// caveat applies to the C++ side.
+/// L1 data-cache size via CPUID deterministic cache enumeration (leaf 4 on
+/// Intel, 0x80000005 on AMD), falling back to a 32 KiB x86 default. Cached
+/// per process. This feeds the GEMM blocking below, so it can influence the
+/// f32 fold order. NOTE: on hybrid CPUs (P/E cores) the CPUID answer depends
+/// on which core the first query runs on.
 fn eigen_l1_cache_size() -> usize {
     static L1: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *L1.get_or_init(|| {
@@ -802,11 +774,10 @@ fn query_l1_cache_size() -> i64 {
     -1
 }
 
-/// The GEMM depth blocking Eigen applies to `dst_demean * src_demean^T`
-/// (3xK times Kx3): `evaluateProductBlockingSizesHeuristic<float, float, 1>`
-/// with m = n = 3, single thread, SSE gebp traits (mr = 8, nr = 4). The
-/// covariance accumulates per depth panel of this size, with alpha applied
-/// per panel — which changes the f32 rounding once K exceeds max_kc.
+/// GEMM depth blocking for `dst_demean * src_demean^T` (3xK times Kx3):
+/// m = n = 3, single thread, SSE gebp traits (mr = 8, nr = 4). The covariance
+/// accumulates per depth panel of this size, with alpha applied per panel —
+/// which changes the f32 rounding once K exceeds max_kc.
 fn eigen_gemm_kc(depth: usize) -> usize {
     // if (max(k, max(m,n)) < 48) return; -- with m = n = 3.
     if depth < 48 {
@@ -834,8 +805,8 @@ fn eigen_gemm_kc(depth: usize) -> usize {
 /// demean, sigma = 1/n * dst_demean * src_demean^T, Jacobi SVD, det-sign
 /// fix on the last singular direction, r = U * diag(1,1,s2) * V^T,
 /// t = dst_mean - r * src_mean. All f32; the means accumulate sequentially
-/// (Eigen redux over a strided row is not vectorized) and sigma follows
-/// Eigen's GEMM depth panels (verified bit-exact against Eigen 3.4).
+/// and sigma is summed over GEMM-style depth panels — the fold order affects
+/// the last f32 bits, so it is fixed deliberately.
 fn umeyama_rigid_f32(src: &[[f32; 3]], dst: &[[f32; 3]]) -> Mat4f {
     let n = src.len();
     let one_over_n = 1.0f32 / n as f32;
@@ -855,9 +826,10 @@ fn umeyama_rigid_f32(src: &[[f32; 3]], dst: &[[f32; 3]]) -> Mat4f {
         dst_mean[i] = dst_sum[i] * one_over_n;
     }
 
-    // sigma = one_over_n * dst_demean * src_demean^T, accumulated the way
-    // Eigen's gebp kernel does for a 3x3 result: sequentially within each
-    // depth panel of kc points, then res += alpha * panel_sum per panel.
+    // sigma = one_over_n * dst_demean * src_demean^T, accumulated for a 3x3
+    // result sequentially within each depth panel of kc points, then
+    // res += alpha * panel_sum per panel (the panel fold order affects the
+    // last f32 bits).
     let kc = eigen_gemm_kc(n);
     let mut sigma = [[0.0f32; 3]; 3];
     let mut panel_start = 0usize;
@@ -890,17 +862,16 @@ fn umeyama_rigid_f32(src: &[[f32; 3]], dst: &[[f32; 3]]) -> Mat4f {
         1.0f32
     };
 
-    // r = U * diag(1, 1, s2) * V^T: a fixed-size 3x3 Eigen product, whose
-    // per-coefficient sum is the unrolled binary-tree redux t0 + (t1 + t2).
+    // r = U * diag(1, 1, s2) * V^T: a fixed-size 3x3 product whose
+    // per-coefficient sum folds as t0 + (t1 + t2).
     let mut out = mat4_identity();
     for i in 0..3 {
         for j in 0..3 {
             out[i][j] = u[i][0] * v[j][0] + (u[i][1] * v[j][1] + (u[i][2] * s2) * v[j][2]);
         }
     }
-    // t = dst_mean - r * src_mean: Eigen evaluates `topLeftCorner(m,m) *
-    // src_mean` with runtime-sized m, so the redux is NOT unrolled here —
-    // plain sequential (t0 + t1) + t2.
+    // t = dst_mean - r * src_mean: this matrix-vector product folds
+    // sequentially as (t0 + t1) + t2 (NOT the tree fold used above).
     for i in 0..3 {
         out[i][3] = dst_mean[i]
             - ((out[i][0] * src_mean[0] + out[i][1] * src_mean[1]) + out[i][2] * src_mean[2]);
@@ -912,12 +883,11 @@ fn umeyama_rigid_f32(src: &[[f32; 3]], dst: &[[f32; 3]]) -> Mat4f {
 mod tests {
     use super::umeyama_rigid_f32;
 
-    /// Bit-exact golden test against `Eigen::umeyama(src, dst, false)` for
-    /// `Matrix<float, 3, Dynamic>` (Eigen 3.4.1, g++ -O2, x86-64 baseline).
-    /// The whole pipeline (demeaning, covariance, Jacobi SVD, sign fix) uses
-    /// only IEEE-754-exact operations (+ - * / sqrt), so these bits are
-    /// platform-portable. Regenerate with the C++ snippet in the commit
-    /// message if the scenario changes.
+    /// Golden regression test with a fixed expected output vector. The whole
+    /// pipeline (demeaning, covariance, Jacobi SVD, sign fix) uses only
+    /// IEEE-754-exact operations (+ - * / sqrt), so these bits are
+    /// platform-portable. Regenerate the golden vector if the scenario
+    /// changes.
     #[test]
     fn umeyama_matches_eigen_bit_for_bit() {
         let mut state = 42u64;
@@ -968,27 +938,24 @@ mod tests {
 // Normal estimation + degeneracy
 // ---------------------------------------------------------------------------
 
-/// `Eigen::NumTraits<float>::epsilon()`, the branch threshold PCL's f32
-/// eigen-solver uses everywhere.
+/// Branch threshold used throughout the f32 eigen-solver.
 const F32_EPS: f32 = f32::EPSILON;
 
-// The C library's float transcendentals, NOT Rust std's: `f32::atan2` et al.
-// use Rust's own libm port, which can be 1 ulp away from glibc >= 2.40's
-// correctly-rounded implementations. The C++ gsc_pgo binary resolves these
-// from the glibc it links (nix glibc 2.42), so bit-parity requires calling
-// the very same symbols.
+// Call the C library's float transcendentals, NOT Rust std's: `f32::atan2`
+// et al. use Rust's own libm port, which can be 1 ulp away from glibc's
+// correctly-rounded implementations. Going through the C symbols keeps this
+// deterministic and portable across builds that link the same libm.
 unsafe extern "C" {
     fn atan2f(y: f32, x: f32) -> f32;
     fn sinf(x: f32) -> f32;
     fn cosf(x: f32) -> f32;
 }
 
-/// `pcl::computeMeanAndCovarianceMatrix` (common/impl/centroid.hpp, indices
-/// overload, dense cloud path) with `Scalar = float`: SINGLE-PASS f32
-/// accumulation of the 9 moments, shifted by K = the first finite indexed
-/// point (the query point itself, since FLANN returns it first at distance
-/// 0). The accumulation order over `indices` and every intermediate f32
-/// rounding matter — this reproduces PCL's cancellation warts bit for bit.
+/// Mean and covariance of a neighbourhood in f32: SINGLE-PASS accumulation of
+/// the 9 moments, shifted by K = the first finite indexed point (the query
+/// point itself, returned first at distance 0). The accumulation order over
+/// `indices` and every intermediate f32 rounding affect the result, so the
+/// single-pass shifted form is kept as-is.
 fn pcl_mean_and_covariance_f32(cloud: &[[f32; 3]], indices: &[(usize, f32)]) -> [[f32; 3]; 3] {
     let mut k = [0.0f32; 3];
     for &(idx, _) in indices {
@@ -1030,9 +997,9 @@ fn pcl_mean_and_covariance_f32(cloud: &[[f32; 3]], indices: &[(usize, f32)]) -> 
     cov
 }
 
-/// `pcl::computeRoots2` (common/impl/eigen.hpp): quadratic fallback when one
-/// root is (near) zero. Note the PCL quirk: `b*b - 4.0*c` promotes to f64
-/// because of the `4.0` literal, then narrows back to f32.
+/// Quadratic fallback for the eigenvalue roots when one root is (near) zero.
+/// Note: `b*b - 4.0*c` promotes to f64 because of the `4.0` literal, then
+/// narrows back to f32.
 fn pcl_compute_roots2_f32(b: f32, c: f32) -> [f32; 3] {
     let mut d = ((b * b) as f64 - 4.0 * c as f64) as f32;
     if d < 0.0 {
@@ -1042,11 +1009,9 @@ fn pcl_compute_roots2_f32(b: f32, c: f32) -> [f32; 3] {
     [0.0, 0.5 * (b - sd), 0.5 * (b + sd)]
 }
 
-/// `pcl::computeRoots` (common/impl/eigen.hpp) in f32: closed-form roots of
-/// the characteristic cubic of a symmetric 3x3, ported branch-for-branch
-/// (including the clamps on `a_over_3`/`q`, the trig root formulas and the
-/// final sort network). `sin`/`cos`/`atan2` on f32 hit the same libm as the
-/// C++ build, so results are bit-identical on this platform.
+/// Closed-form f32 roots of the characteristic cubic of a symmetric 3x3,
+/// including the clamps on `a_over_3`/`q`, the trig root formulas and the
+/// final sort network. `sin`/`cos`/`atan2` go through the C libm (see above).
 fn pcl_compute_roots_f32(m: &[[f32; 3]; 3]) -> [f32; 3] {
     let c0 = m[0][0] * m[1][1] * m[2][2] + 2.0 * m[0][1] * m[0][2] * m[1][2]
         - m[0][0] * m[1][2] * m[1][2]
@@ -1099,7 +1064,7 @@ fn pcl_compute_roots_f32(m: &[[f32; 3]; 3]) -> [f32; 3] {
     roots
 }
 
-/// Eigen `Vector3f::cross` coefficient order.
+/// 3-vector cross product (f32).
 fn cross_f32(a: &[f32; 3], b: &[f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -1108,17 +1073,16 @@ fn cross_f32(a: &[f32; 3], b: &[f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Eigen `Vector3f::norm()`: sqrt of the unrolled-redux squared norm, which
-/// sums as `x^2 + (y^2 + z^2)` (NOT left-to-right — Eigen's fixed-size redux
-/// is a binary tree). Matters for the last-ulp of near-degenerate normals.
+/// 3-vector f32 norm: sqrt of the squared norm summed as `x^2 + (y^2 + z^2)`
+/// (NOT left-to-right). The fold order matters for the last ulp of
+/// near-degenerate normals.
 fn norm3_f32(v: &[f32; 3]) -> f32 {
     (v[0] * v[0] + (v[1] * v[1] + v[2] * v[2])).sqrt()
 }
 
-/// `pcl::detail::getLargest3x3Eigenvector` (common/impl/eigen.hpp): pick the
-/// largest-magnitude cross product of row pairs of (scaledMat - eval*I) and
-/// scale it by its norm. Ties keep the first row, like Eigen's `maxCoeff`
-/// visitor (strict `>`). The result is `row / norm` — NOT re-normalized.
+/// Pick the largest-magnitude cross product of row pairs of
+/// (scaledMat - eval*I) and scale it by its norm. Ties keep the first row
+/// (strict `>`). The result is `row / norm` — NOT re-normalized.
 fn pcl_largest_3x3_eigenvector(scaled: &[[f32; 3]; 3]) -> [f32; 3] {
     let rows = [
         cross_f32(&scaled[0], &scaled[1]),
@@ -1144,9 +1108,8 @@ fn pcl_largest_3x3_eigenvector(scaled: &[[f32; 3]; 3]) -> [f32; 3] {
     ]
 }
 
-/// Eigen `Vector3f::unitOrthogonal()` (Geometry/OrthoMethods.h), used by
-/// eigen33's equal-eigenvalue branch. `is_much_smaller` is Eigen's
-/// `isMuchSmallerThan` with float `dummy_precision()` = 1e-5.
+/// A unit vector orthogonal to `v`, used by the eigen33 equal-eigenvalue
+/// branch. `is_much_smaller` uses a float precision of 1e-5.
 fn pcl_unit_orthogonal_f32(v: &[f32; 3]) -> [f32; 3] {
     let prec = 1e-5f32;
     let is_much_smaller = |x: f32, y: f32| x.abs() <= y.abs() * prec;
@@ -1159,11 +1122,11 @@ fn pcl_unit_orthogonal_f32(v: &[f32; 3]) -> [f32; 3] {
     }
 }
 
-/// `pcl::eigen33(mat, eigenvalue, eigenvector)` (common/impl/eigen.hpp) in
-/// f32: scale the matrix by its max-abs coefficient, take the closed-form
-/// smallest root, and recover the eigenvector from row cross products, with
-/// the two equal-eigenvalue fallback branches. Returns the (possibly
-/// non-finite) smallest eigenvector, exactly as PCL leaves it.
+/// Smallest-eigenvalue eigenvector of a symmetric 3x3 in f32: scale the
+/// matrix by its max-abs coefficient, take the closed-form smallest root, and
+/// recover the eigenvector from row cross products, with the two
+/// equal-eigenvalue fallback branches. Returns the (possibly non-finite)
+/// smallest eigenvector as-is.
 fn pcl_eigen33_smallest_f32(mat: &[[f32; 3]; 3]) -> [f32; 3] {
     // Scale the matrix so its entries are in [-1,1].
     let mut scale = 0.0f32;
@@ -1200,20 +1163,16 @@ fn pcl_eigen33_smallest_f32(mat: &[[f32; 3]; 3]) -> [f32; 3] {
     }
 }
 
-/// `pcl::NormalEstimation<PointXYZI, Normal>` with `setKSearch(k)` and the
-/// default FLANN kd-tree, ported to match PCL 1.15.1 bit for bit: exact
-/// sorted k-NN (query point first at distance 0), single-pass f32
-/// covariance (`computeMeanAndCovarianceMatrix`), closed-form f32 smallest
-/// eigenvector (`solvePlaneParameters` -> `eigen33`), then
-/// `flipNormalTowardsViewpoint` with the default viewpoint (0,0,0). Normals
-/// are NaN when the neighbourhood is too small, like PCL's dense-cloud NaN
-/// marker.
+/// Per-point normal estimation with kSearch(k): exact sorted k-NN (query
+/// point first at distance 0), single-pass f32 covariance, closed-form f32
+/// smallest eigenvector, then flip toward the default viewpoint (0,0,0).
+/// Normals are NaN when the neighbourhood is too small.
 pub fn estimate_normals(cloud: &[[f32; 3]], k: usize) -> Vec<[f32; 3]> {
     use rayon::prelude::*;
     let tree = KdTree::build(cloud);
     // Each point's normal is independent (read-only tree queries), so they
     // run in parallel; the in-order collect keeps the caller's serial f64
-    // scatter accumulation bit-identical to the serial loop.
+    // scatter accumulation identical to the serial loop.
     cloud
         .par_iter()
         .map(|p| {
@@ -1235,14 +1194,13 @@ pub fn estimate_normals(cloud: &[[f32; 3]], k: usize) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Geometric degeneracy of a scan, the exact port of the anonymous-namespace
-/// `cloud_degeneracy` at the top of simple_pgo.cpp: estimate per-point
-/// normals (PCL NormalEstimation, kSearch = 10 -> smallest eigenvector of
-/// the neighbourhood covariance), accumulate the normal scatter M = sum n
-/// n^T in f64 over the finite f32 normals (no re-normalization — PCL's
-/// eigen33 vector is taken as-is), and report the two smaller normalized
-/// eigenvalues (e_min <= e_mid, as fractions of the trace). Returns (-1, -1)
-/// when the cloud has fewer than 20 points or fewer than 20 valid normals.
+/// Geometric degeneracy of a scan: estimate per-point normals (kSearch = 10
+/// -> smallest eigenvector of the neighbourhood covariance), accumulate the
+/// normal scatter M = sum n n^T in f64 over the finite f32 normals (no
+/// re-normalization — the eigen33 vector is taken as-is), and report the two
+/// smaller normalized eigenvalues (e_min <= e_mid, as fractions of the
+/// trace). Returns (-1, -1) when the cloud has fewer than 20 points or fewer
+/// than 20 valid normals.
 pub fn cloud_degeneracy(cloud: &[[f32; 3]]) -> (f32, f32) {
     if cloud.len() < 20 {
         return (-1.0, -1.0);

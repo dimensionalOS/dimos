@@ -35,8 +35,8 @@ use lcm_msgs::tf2_msgs::TFMessage;
 use crate::OdomSample;
 
 /// Interpolate the odometry pose at `ts` (slerp rotation, lerp translation).
-/// Port of interpolate_odom: `None` if the buffer is empty or `ts` predates it
-/// by more than 1 ms; clamps to the newest sample when `ts` is past it.
+/// `None` if the buffer is empty or `ts` predates it by more than 1 ms;
+/// clamps to the newest sample when `ts` is past it.
 pub fn interpolate_odom(buffer: &VecDeque<OdomSample>, ts: f64) -> Option<(Mat3, Vec3, String)> {
     let front = buffer.front()?;
     if ts <= front.ts {
@@ -112,9 +112,9 @@ pub fn frobenius_diff(a: &Mat3, b: &Mat3) -> f64 {
     sum.sqrt()
 }
 
-/// Tiny non-crypto RNG for the stable deformation-node ids (the C++ uses
-/// std::mt19937_64 seeded from random_device; the ids only need to be stable
-/// within a run and unlikely to collide, so no rand crate dependency).
+/// Tiny non-crypto RNG for the stable deformation-node ids. The ids only need
+/// to be stable within a run and unlikely to collide, so there's no rand
+/// crate dependency.
 pub struct SplitMix64(u64);
 
 impl SplitMix64 {
@@ -207,7 +207,7 @@ pub fn build_tf_message(
     }
 }
 
-// Pose-graph metadata ids (match the C++ constants).
+// Pose-graph metadata ids.
 const NODE_KEYFRAME: u64 = 0;
 const EDGE_ODOMETRY: u64 = 0;
 const EDGE_LOOP_CLOSURE: u64 = 1;
@@ -260,8 +260,8 @@ pub fn build_pose_graph(
 
 const NODE_KEYFRAME_DELTA: u64 = 0;
 
-/// Port of build_loop_closure_event: each pair is (pre-smooth node, SE(3)
-/// delta such that post = delta * pre).
+/// Build a loop-closure event: each pair is (pre-smooth node, SE(3) delta
+/// such that post = delta * pre).
 pub fn build_loop_closure_event(
     pre_poses: &[(Mat3, Vec3)],
     post_poses: &[KeyPoseWithCloud],

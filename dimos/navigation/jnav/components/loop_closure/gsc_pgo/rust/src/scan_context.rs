@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Scan Context — polar-binned lidar place-recognition descriptor.
+//! Scan Context — polar-binned lidar place-recognition descriptor
+//! (inspired by Kim & Kim 2018 and the irapkaist/scancontext reference, MIT).
 //!
-//! Faithful port of gsc_pgo's scan_context.{h,cpp} (itself a self-contained
-//! reimplementation inspired by Kim & Kim 2018 and the irapkaist/scancontext
-//! reference, MIT). Each scan becomes an (n_rings x n_sectors) matrix where
-//! cell [i, j] holds the max z among points falling in that (range, azimuth)
-//! bin. The "ring key" — the per-row mean — is the coarse feature used for
-//! fast candidate retrieval; the full matrix is then column-shifted against
-//! the candidate to measure rotation-invariant cosine distance.
+//! Each scan becomes an (n_rings x n_sectors) matrix where cell [i, j] holds
+//! the max z among points falling in that (range, azimuth) bin. The "ring
+//! key" — the per-row mean — is the coarse feature used for fast candidate
+//! retrieval; the full matrix is then column-shifted against the candidate to
+//! measure rotation-invariant cosine distance.
 //!
-//! Numeric discipline: the C++ stores the descriptor as float and does the
-//! cosine / mean arithmetic in float, but bins ranges/azimuths in double and
-//! accumulates structure statistics in double. This port keeps the same
-//! f32/f64 split so distances match the C++ bit-for-bit-ish.
+//! Numeric discipline: the descriptor is stored as float and the cosine /
+//! mean arithmetic is done in float, but ranges/azimuths are binned in double
+//! and structure statistics accumulate in double.
 
 use std::f64::consts::PI;
 
@@ -79,8 +77,7 @@ impl Descriptor {
         }
     }
 
-    /// An empty (0x0) descriptor — what the C++ stores for a node without a
-    /// cloud (`Descriptor()` default-constructed).
+    /// An empty (0x0) descriptor — used for a node without a cloud.
     pub fn empty() -> Descriptor {
         Descriptor {
             n_rings: 0,

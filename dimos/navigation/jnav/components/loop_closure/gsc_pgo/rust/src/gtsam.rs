@@ -14,14 +14,15 @@
 
 //! Safe Rust wrappers over the gtsam C shim (shim/gtsam_shim.{h,cpp}).
 //!
-//! The surface mirrors exactly what the gsc_pgo C++ core uses: an `Isam2`
-//! configured like `SimplePGO::SimplePGO` (relinearizeThreshold=0.01,
-//! relinearizeSkip=1), a `FactorGraph` holding Pose3 prior/between factors,
-//! `Values` for initial estimates and best-estimate readback, and the
-//! diagonal / gaussian-covariance / robust-Huber noise models.
+//! The surface is exactly what the PGO core needs: an `Isam2`
+//! (relinearizeThreshold=0.01, relinearizeSkip=1), a `FactorGraph` holding
+//! Pose3 prior/between factors, `Values` for initial estimates and
+//! best-estimate readback, and the diagonal / gaussian-covariance /
+//! robust-Huber noise models.
 //!
-//! All handles are RAII (`Drop` frees the C++ object). The raw pointers make
-//! every type `!Send`/`!Sync`, which matches gtsam's thread-unsafety.
+//! All handles are RAII (`Drop` frees the underlying gtsam object). The raw
+//! pointers make every type `!Send`/`!Sync`, matching gtsam's
+//! thread-unsafety.
 
 use std::os::raw::{c_char, c_void};
 
@@ -112,8 +113,7 @@ fn check(code: i32, context: &'static str) -> Result<(), GtsamError> {
     }
 }
 
-/// Rigid transform: row-major rotation matrix + translation, the same layout
-/// the C++ core's `M3D`/`V3D` (Eigen) pairs carry.
+/// Rigid transform: row-major rotation matrix + translation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose3 {
     pub rotation: [[f64; 3]; 3],
@@ -346,8 +346,8 @@ impl Drop for Values {
     }
 }
 
-/// Opaque `gtsam::ISAM2`, configured like the C++ core:
-/// relinearizeThreshold=0.01, relinearizeSkip=1.
+/// Opaque `gtsam::ISAM2`, configured with relinearizeThreshold=0.01,
+/// relinearizeSkip=1.
 pub struct Isam2 {
     handle: *mut c_void,
 }
@@ -361,8 +361,7 @@ impl Isam2 {
 
     /// `update(graph, values, removeFactorIndices)`. Returns the
     /// `newFactorsIndices` gtsam assigned to the staged factors, in graph
-    /// order — the C++ core uses these to revise (remove) location-constraint
-    /// factors later.
+    /// order — used to revise (remove) location-constraint factors later.
     pub fn update(
         &mut self,
         graph: &FactorGraph,

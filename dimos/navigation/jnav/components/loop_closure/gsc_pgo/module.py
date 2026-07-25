@@ -112,8 +112,6 @@ class PGOConfig(NativeModuleConfig):
     per_keyframe_roll_pitch_var: float = 1e-4
     per_keyframe_roll_pitch_prior: bool = False
     anchor_roll_pitch_var: float = 1e-12
-    anchor_yaw_var: float = 1e-12
-    anchor_trans_var: float = 1e-12
 
     # usually que is 1 lidar frame, only goes up after a big gtsam compute spike (backpressure) 100 is overkill but whatever
     max_scan_queue: int = 100
