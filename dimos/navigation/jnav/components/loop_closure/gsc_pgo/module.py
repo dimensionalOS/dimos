@@ -91,11 +91,13 @@ class PGOConfig(NativeModuleConfig):
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
 
-    # Skip ICP on candidates farther than this (m). 0 disables.
-    loop_candidate_max_distance_m: float = 30.0
+    # Skip ICP on candidates farther than this (m). 0 disables. Must exceed the worst
+    # expected odom drift at revisit so far-drifted large loops still reach ICP.
+    loop_candidate_max_distance_m: float = 80.0
 
-    # Robust (Huber) kernel on all loop factors (lidar + location). Off = original.
-    loop_robust_kernel: bool = False
+    # Robust (Huber) kernel on all loop factors (lidar + location). Keeps ISAM2 determinate
+    # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
+    loop_robust_kernel: bool = True
     loop_robust_huber_k: float = 1.345
 
     # enable things like April tags to be contraints in the pose graph
@@ -117,7 +119,7 @@ class PGOConfig(NativeModuleConfig):
     max_scan_queue: int = 100
 
 
-class PGO(NativeModule):
+class GscPGO(NativeModule):
     """Pose graph optimization with loop closure — Rust port of gsc_pgo."""
 
     config: PGOConfig
