@@ -17,6 +17,14 @@ import subprocess
 
 import pytest
 
+from dimos.constants import (
+    AMENT_PREFIX_CACHE_DIR,
+    CACHE_DIR,
+    DENO_CACHE_DIR,
+    DRAKE_URDF_CACHE_DIR,
+    ROBOT_ASSET_CACHE_DIR,
+    VISER_URDF_CACHE_DIR,
+)
 import dimos.utils.cache as cache_utils
 
 
@@ -25,18 +33,27 @@ def cache_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, 
     cache_dir = tmp_path / "cache"
     paths = (
         cache_dir,
-        tmp_path / "drake",
-        tmp_path / "viser",
-        tmp_path / "ament",
-        tmp_path / "state" / "deno",
+        cache_dir / "urdf",
+        cache_dir / "viser_urdf",
+        cache_dir / "ament_prefix",
+        cache_dir / "deno",
     )
     monkeypatch.setattr(cache_utils, "CACHE_DIR", paths[0])
     monkeypatch.setattr(cache_utils, "ROBOT_ASSET_CACHE_DIR", paths[0] / "robot_assets")
-    monkeypatch.setattr(cache_utils, "DRAKE_URDF_CACHE_DIR", paths[1])
-    monkeypatch.setattr(cache_utils, "VISER_URDF_CACHE_DIR", paths[2])
-    monkeypatch.setattr(cache_utils, "AMENT_PREFIX_CACHE_DIR", paths[3])
-    monkeypatch.setattr(cache_utils, "DENO_CACHE_DIR", paths[4])
     return paths
+
+
+def test_all_cache_paths_share_platform_cache_root() -> None:
+    assert all(
+        CACHE_DIR in path.parents
+        for path in (
+            ROBOT_ASSET_CACHE_DIR,
+            DENO_CACHE_DIR,
+            DRAKE_URDF_CACHE_DIR,
+            VISER_URDF_CACHE_DIR,
+            AMENT_PREFIX_CACHE_DIR,
+        )
+    )
 
 
 def test_clean_caches_removes_all_known_targets_and_preserves_other_state(
@@ -44,7 +61,7 @@ def test_clean_caches_removes_all_known_targets_and_preserves_other_state(
     tmp_path: Path,
 ) -> None:
     for path in cache_paths:
-        path.mkdir(parents=True)
+        path.mkdir(parents=True, exist_ok=True)
         (path / "cached.bin").write_bytes(b"cache")
     recording = tmp_path / "state" / "recordings" / "session.db"
     recording.parent.mkdir(parents=True)
@@ -53,7 +70,7 @@ def test_clean_caches_removes_all_known_targets_and_preserves_other_state(
     result = cache_utils.clean_caches()
 
     assert result.complete
-    assert set(result.cleaned) == {path.absolute() for path in cache_paths}
+    assert result.cleaned == [cache_paths[0].absolute()]
     assert all(not path.exists() for path in cache_paths)
     assert recording.read_bytes() == b"user data"
 
@@ -150,6 +167,7 @@ def test_clean_caches_unlinks_cache_symlink_without_traversing_destination(
     destination.mkdir()
     retained = destination / "retained.txt"
     retained.write_text("keep")
+    cache_paths[0].mkdir()
     cache_paths[1].symlink_to(destination, target_is_directory=True)
 
     result = cache_utils.clean_caches()
@@ -159,27 +177,25 @@ def test_clean_caches_unlinks_cache_symlink_without_traversing_destination(
     assert retained.read_text() == "keep"
 
 
-def test_clean_caches_continues_after_one_target_fails(
+def test_clean_caches_reports_deletion_failure(
     cache_paths: tuple[Path, ...],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for path in (cache_paths[0], cache_paths[4]):
-        path.mkdir(parents=True)
+    cache_paths[0].mkdir()
     original_remove_path = cache_utils._remove_path
 
-    def fail_for_deno(path: Path) -> None:
-        if path == cache_paths[4].absolute():
+    def fail_for_cache_root(path: Path) -> None:
+        if path == cache_paths[0].absolute():
             raise PermissionError("denied")
         original_remove_path(path)
 
-    monkeypatch.setattr(cache_utils, "_remove_path", fail_for_deno)
+    monkeypatch.setattr(cache_utils, "_remove_path", fail_for_cache_root)
 
     result = cache_utils.clean_caches()
 
     assert not result.complete
-    assert result.failed == [cache_utils.CacheIssue(cache_paths[4].absolute(), "denied")]
-    assert not cache_paths[0].exists()
-    assert cache_paths[4].exists()
+    assert result.failed == [cache_utils.CacheIssue(cache_paths[0].absolute(), "denied")]
+    assert cache_paths[0].exists()
 
 
 def _clone_test_repository(tmp_path: Path, checkout: Path) -> Path:

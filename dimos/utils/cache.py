@@ -23,12 +23,8 @@ import shutil
 import subprocess
 
 from dimos.constants import (
-    AMENT_PREFIX_CACHE_DIR,
     CACHE_DIR,
-    DENO_CACHE_DIR,
-    DRAKE_URDF_CACHE_DIR,
     ROBOT_ASSET_CACHE_DIR,
-    VISER_URDF_CACHE_DIR,
 )
 
 
@@ -77,13 +73,7 @@ def clean_caches(*, force: bool = False) -> CacheCleanResult:
 
 
 def _cache_targets() -> tuple[Path, ...]:
-    return (
-        CACHE_DIR,
-        DRAKE_URDF_CACHE_DIR,
-        VISER_URDF_CACHE_DIR,
-        AMENT_PREFIX_CACHE_DIR,
-        DENO_CACHE_DIR,
-    )
+    return (CACHE_DIR,)
 
 
 def _protected_robot_checkouts() -> dict[Path, str]:
