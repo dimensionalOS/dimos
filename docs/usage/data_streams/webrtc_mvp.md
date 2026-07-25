@@ -208,6 +208,23 @@ The index is uploaded only after the database object completes, so consumers
 never discover an index that points at an unfinished upload. Use `--name` to
 give the portable dataset a name different from its local filename.
 
+## Replay a remote memory2 dataset on Go2
+
+Point `DIMOS_REPLAY_DB` at the uploaded database object's content-addressed
+reference, then use the existing replay command:
+
+```bash
+export DIMOS_REPLAY_DB='dimos-replay://alice/go2-debug/OBJECT_ID?server=https%3A%2F%2Freplays.example.com'
+export DIMOS_REPLAY_REPOSITORY_TOKEN=...
+dimos --replay run unitree-go2
+```
+
+The object is downloaded atomically, verified against the SHA-256 object id,
+checked for the memory2 `_streams` registry, and cached below the DimOS cache
+directory. Replaying the same object again uses the verified local cache. The
+repository token is read from the environment and is not embedded in the URI,
+so references can be shared without sharing credentials.
+
 Multipart upload, range reads, signed CDN URLs, TLS, quotas, and audit logs are
 separate production-hardening work and are required before exposing private
 recordings to the public internet.

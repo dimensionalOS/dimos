@@ -33,7 +33,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory2.replay import Replay, ReplayStream, resolve_db_path
+from dimos.memory2.remote_replay import resolve_replay_dataset
+from dimos.memory2.replay import Replay, ReplayStream
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -177,7 +178,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
         store = self.register_disposable(
-            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
+            SqliteStore(path=str(resolve_replay_dataset(self.dataset)), must_exist=True)
         )
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
