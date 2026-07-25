@@ -137,8 +137,7 @@ def test_cache_clean_defaults_confirmation_to_no(
     assert f"Cache root:\n  {cache_dir}" in result.output
     assert f"- {unknown_entry} (DimOS cache entry)" in result.output
     assert f"- {deno_dir} (downloaded Deno runtime)" in result.output
-    assert "Preserved:" in result.output
-    assert "Logs, recordings, datasets, and configuration" in result.output
+    assert "Preserved:" not in result.output
     assert "Continue? [y/N]:" in result.output
     assert "Cache cleanup cancelled." in result.output
 

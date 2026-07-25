@@ -248,11 +248,11 @@ third-party model caches. It refuses to run while a DimOS blueprint is active
 and preserves cached Git checkouts containing local changes or local-only
 commits.
 
-Before deleting anything, the command displays the cache root, every top-level
-entry currently scheduled for removal, and the data it preserves. It then asks
-for confirmation with a default of `No`. Pass `--yes` to skip the prompt in
-automation. Pass `--force` to clean while DimOS is running and remove protected
-Git checkouts; `--force` still prompts unless combined with `--yes`.
+Before deleting anything, the command displays the cache root and every
+top-level entry currently present. It then asks for confirmation with a default
+of `No`. Pass `--yes` to skip the prompt in automation. Pass `--force` to clean
+while DimOS is running and remove protected Git checkouts; `--force` still
+prompts unless combined with `--yes`.
 
 ### `dimos spy`
 

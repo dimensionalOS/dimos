@@ -210,7 +210,7 @@ def cache_clean(
     typer.echo("Cache root:")
     typer.echo(f"  {CACHE_DIR}")
     typer.echo("")
-    typer.echo("Entries scheduled for removal:")
+    typer.echo("Current entries:")
     try:
         entries = sorted(CACHE_DIR.iterdir(), key=lambda path: path.name)
     except OSError as error:
@@ -223,16 +223,10 @@ def cache_clean(
     else:
         typer.echo(f"  - {CACHE_DIR} (empty cache root)")
 
-    typer.echo("")
-    typer.echo("Preserved:")
-    typer.echo("  - Logs, recordings, datasets, and configuration")
-    typer.echo("  - Caches owned by third-party tools")
     if force:
         typer.echo("")
         typer.echo("Force mode:")
         typer.echo("  - Removes robot Git checkouts with local changes or local-only commits")
-    else:
-        typer.echo("  - Robot Git checkouts with local changes or local-only commits")
 
     typer.echo("")
     if not yes and not typer.confirm("Continue?", default=False):
