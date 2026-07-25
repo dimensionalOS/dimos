@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 
 import pytest
 from pytest_mock import MockerFixture
@@ -24,6 +26,8 @@ import dimos.utils.cache as cache_utils
 def cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     cache_dir = tmp_path / "cache"
     monkeypatch.setattr(cache_utils, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(cache_utils, "_CACHE_LOCK_DIR", tmp_path / "state" / "cache-users")
+    monkeypatch.setattr(cache_utils, "_CACHE_GATE_PATH", tmp_path / "state" / "cache-clean.lock")
     return cache_dir
 
 
@@ -86,3 +90,26 @@ def test_clean_caches_reports_deletion_failure(
     )
     assert cache_root.exists()
     remove_path.assert_called_once_with(cache_root.absolute())
+
+
+def test_cleanup_guard_rejects_active_cache_user(cache_root: Path) -> None:
+    with cache_utils.cache_usage_guard():
+        with pytest.raises(cache_utils.CacheInUseError, match="DimOS caches are in use"):
+            with cache_utils.cache_cleanup_guard():
+                pass
+
+
+def test_cleanup_guard_gates_new_cache_user(cache_root: Path) -> None:
+    usage_started = threading.Event()
+
+    def use_cache() -> None:
+        with cache_utils.cache_usage_guard():
+            usage_started.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with cache_utils.cache_cleanup_guard():
+            usage = executor.submit(use_cache)
+            assert not usage_started.wait(timeout=0.05)
+
+        assert usage_started.wait(timeout=1)
+        usage.result(timeout=1)

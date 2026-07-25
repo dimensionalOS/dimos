@@ -112,6 +112,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
+    "filelock>=3.16,<4",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",

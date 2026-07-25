@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -21,7 +23,7 @@ from typer.testing import CliRunner
 
 import dimos.robot.cli.cache as cache_cli
 from dimos.robot.cli.dimos import main
-from dimos.utils.cache import CacheCleanResult, CacheIssue
+from dimos.utils.cache import CacheCleanResult, CacheInUseError, CacheIssue
 
 
 @pytest.fixture
@@ -29,6 +31,15 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "cache"
     monkeypatch.setattr(cache_cli, "CACHE_DIR", path)
     return path
+
+
+@pytest.fixture
+def cleanup_guard(mocker: MockerFixture) -> MagicMock:
+    return mocker.patch.object(
+        cache_cli,
+        "cache_cleanup_guard",
+        side_effect=contextlib.nullcontext,
+    )
 
 
 def test_clean_refuses_active_run(
@@ -84,6 +95,7 @@ def test_clean_previews_current_entries_and_defaults_confirmation_to_no(
 
 def test_clean_refuses_run_started_during_confirmation(
     cache_dir: Path,
+    cleanup_guard: MagicMock,
     mocker: MockerFixture,
 ) -> None:
     cache_dir.mkdir()
@@ -100,11 +112,35 @@ def test_clean_refuses_run_started_during_confirmation(
     assert result.output.endswith(
         "Error: DimOS run new-run is active. Stop it before cleaning caches.\n"
     )
+    cleanup_guard.assert_called_once_with()
+    clean_caches.assert_not_called()
+
+
+def test_clean_refuses_cache_in_use_during_final_guard(
+    cache_dir: Path,
+    mocker: MockerFixture,
+) -> None:
+    cache_dir.mkdir()
+    mocker.patch.object(cache_cli, "get_most_recent", return_value=None)
+    mocker.patch.object(
+        cache_cli,
+        "cache_cleanup_guard",
+        side_effect=CacheInUseError,
+    )
+    clean_caches = mocker.patch.object(cache_cli, "clean_caches")
+
+    result = CliRunner().invoke(main, ["cache", "clean", "--yes"])
+
+    assert result.exit_code == 1
+    assert result.output.endswith(
+        "Error: DimOS is starting or running. Stop it before cleaning caches.\n"
+    )
     clean_caches.assert_not_called()
 
 
 def test_clean_yes_removes_cache_without_prompting(
     cache_dir: Path,
+    cleanup_guard: MagicMock,
     mocker: MockerFixture,
 ) -> None:
     cache_dir.mkdir()
@@ -120,11 +156,13 @@ def test_clean_yes_removes_cache_without_prompting(
     assert result.exit_code == 0
     assert f"Cleaned cache: {cache_dir}" in result.output
     assert "Continue?" not in result.output
+    cleanup_guard.assert_called_once_with()
     clean_caches.assert_called_once_with()
 
 
 def test_clean_reports_deletion_failure(
     cache_dir: Path,
+    cleanup_guard: MagicMock,
     mocker: MockerFixture,
 ) -> None:
     cache_dir.mkdir()
@@ -139,6 +177,7 @@ def test_clean_reports_deletion_failure(
 
     assert result.exit_code == 1
     assert f"Failed to remove cache: {cache_dir} (denied)" in result.output
+    cleanup_guard.assert_called_once_with()
     clean_caches.assert_called_once_with()
 
 

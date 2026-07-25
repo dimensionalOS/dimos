@@ -45,6 +45,7 @@ from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_mai
 from dimos.robot.cli.cache import app as cache_app
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -305,6 +306,7 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
 
 
 @main.command()
+@cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),

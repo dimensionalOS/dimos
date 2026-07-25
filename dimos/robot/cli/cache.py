@@ -20,7 +20,7 @@ import typer
 
 from dimos.constants import CACHE_DIR
 from dimos.core.run_registry import get_most_recent
-from dimos.utils.cache import clean_caches
+from dimos.utils.cache import CacheInUseError, cache_cleanup_guard, clean_caches
 
 app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 
@@ -63,8 +63,16 @@ def clean(
         typer.echo("Cache cleanup cancelled.")
         return
 
-    _refuse_active_run()
-    result = clean_caches()
+    try:
+        with cache_cleanup_guard():
+            _refuse_active_run()
+            result = clean_caches()
+    except CacheInUseError:
+        typer.echo(
+            "Error: DimOS is starting or running. Stop it before cleaning caches.",
+            err=True,
+        )
+        raise typer.Exit(1)
     for path in result.cleaned:
         typer.echo(f"Cleaned cache: {path}")
     for issue in result.failed:
