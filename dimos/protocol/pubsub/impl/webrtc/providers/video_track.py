@@ -22,18 +22,20 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING, Any
 
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs.Image import Image
 
 _AV_FORMAT_MAP = {
-    ImageFormat.BGR: "bgr24",
-    ImageFormat.RGB: "rgb24",
-    ImageFormat.BGRA: "bgra",
-    ImageFormat.RGBA: "rgba",
-    ImageFormat.GRAY: "gray",
+    "bgr": "bgr24",
+    "rgb": "rgb24",
+    "bgra": "bgra",
+    "rgba": "rgba",
+    "gray": "gray",
 }
 
 
@@ -99,7 +101,12 @@ class CameraVideoTrack(VideoStreamTrack):
             self._first_mono = now
         pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
-        frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
+        raw_format: Any = img.format
+        format_name = str(getattr(raw_format, "value", raw_format)).lower()
+        frame = av.VideoFrame.from_ndarray(
+            img.data,
+            format=_AV_FORMAT_MAP.get(format_name, "bgr24"),
+        )
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame
