@@ -35,13 +35,7 @@ def clean(
     ),
 ) -> None:
     """Remove regenerable files cached by DimOS."""
-    active_run = get_most_recent(alive_only=True)
-    if active_run is not None:
-        typer.echo(
-            f"Error: DimOS run {active_run.run_id} is active. Stop it before cleaning caches.",
-            err=True,
-        )
-        raise typer.Exit(1)
+    _refuse_active_run()
 
     if not os.path.lexists(CACHE_DIR):
         typer.echo(f"No DimOS cache found at {CACHE_DIR}.")
@@ -69,6 +63,7 @@ def clean(
         typer.echo("Cache cleanup cancelled.")
         return
 
+    _refuse_active_run()
     result = clean_caches()
     for path in result.cleaned:
         typer.echo(f"Cleaned cache: {path}")
@@ -76,4 +71,14 @@ def clean(
         typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
 
     if not result.complete:
+        raise typer.Exit(1)
+
+
+def _refuse_active_run() -> None:
+    active_run = get_most_recent(alive_only=True)
+    if active_run is not None:
+        typer.echo(
+            f"Error: DimOS run {active_run.run_id} is active. Stop it before cleaning caches.",
+            err=True,
+        )
         raise typer.Exit(1)

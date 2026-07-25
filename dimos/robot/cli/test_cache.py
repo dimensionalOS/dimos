@@ -82,6 +82,27 @@ def test_clean_previews_current_entries_and_defaults_confirmation_to_no(
     clean_caches.assert_not_called()
 
 
+def test_clean_refuses_run_started_during_confirmation(
+    cache_dir: Path,
+    mocker: MockerFixture,
+) -> None:
+    cache_dir.mkdir()
+    mocker.patch.object(
+        cache_cli,
+        "get_most_recent",
+        side_effect=[None, SimpleNamespace(run_id="new-run")],
+    )
+    clean_caches = mocker.patch.object(cache_cli, "clean_caches")
+
+    result = CliRunner().invoke(main, ["cache", "clean"], input="y\n")
+
+    assert result.exit_code == 1
+    assert result.output.endswith(
+        "Error: DimOS run new-run is active. Stop it before cleaning caches.\n"
+    )
+    clean_caches.assert_not_called()
+
+
 def test_clean_yes_removes_cache_without_prompting(
     cache_dir: Path,
     mocker: MockerFixture,
