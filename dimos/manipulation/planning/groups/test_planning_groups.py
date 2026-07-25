@@ -82,6 +82,33 @@ def _branching_model() -> ModelDescription:
     )
 
 
+def _model_with_branched_prismatic_gripper() -> ModelDescription:
+    return ModelDescription(
+        joints=[
+            JointDescription(
+                name="arm_joint",
+                type="revolute",
+                parent_link="base",
+                child_link="wrist",
+            ),
+            JointDescription(
+                name="left_finger_joint",
+                type="prismatic",
+                parent_link="wrist",
+                child_link="left_finger",
+            ),
+            JointDescription(
+                name="right_finger_joint",
+                type="prismatic",
+                parent_link="wrist",
+                child_link="right_finger",
+            ),
+        ],
+        root_link="base",
+        links=["base", "wrist", "left_finger", "right_finger"],
+    )
+
+
 def _write_srdf(tmp_path: Path, body: str) -> Path:
     srdf_path = tmp_path / "robot.srdf"
     srdf_path.write_text(f"<robot name='test'>{body}</robot>")
@@ -217,6 +244,21 @@ def test_fallback_strips_terminal_prismatic_joints() -> None:
     assert group.joint_names == ("joint1", "joint2")
     assert group.tip_link == "link2"
     assert group.source == "fallback"
+
+
+def test_fallback_excludes_branched_terminal_prismatic_gripper_joints() -> None:
+    group = generate_fallback_planning_group(
+        model=_model_with_branched_prismatic_gripper(),
+        controllable_joint_names=[
+            "arm_joint",
+            "left_finger_joint",
+            "right_finger_joint",
+        ],
+    )
+
+    assert group.joint_names == ("arm_joint",)
+    assert group.base_link == "base"
+    assert group.tip_link == "wrist"
 
 
 def test_fallback_rejects_branching_model() -> None:
