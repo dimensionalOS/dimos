@@ -39,6 +39,7 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 def _plan(group_id: str = "arm/manipulator") -> GeneratedPlan:
     return GeneratedPlan(
         group_ids=(group_id,),
+        status=PlanningStatus.SUCCESS,
         path=[
             JointState(name=["arm/j0"], position=[0.0]),
             JointState(name=["arm/j0"], position=[1.0]),
@@ -155,7 +156,7 @@ def test_plan_to_pose_targets_propagates_failed_plan_as_false():
     assert module._state == ManipulationState.FAULT
 
 
-def test_execute_plan_selects_stored_plan_under_gate_and_reuses_it():
+def test_execute_plan_replaces_tracked_execution_and_can_then_cancel() -> None:
     module = make_module()
     plan = _plan()
     module._last_plan = plan
@@ -164,7 +165,15 @@ def test_execute_plan_selects_stored_plan_under_gate_and_reuses_it():
 
     assert module.execute_plan() is True
     assert module.execute_plan() is True
-    assert module._coordinator_client.task_invoke.call_count == 2
+    assert module.cancel() is True
+    assert module._coordinator_client is not None
+    assert [call.args[1] for call in module._coordinator_client.task_invoke.call_args_list] == [
+        "execute",
+        "cancel",
+        "execute",
+        "cancel",
+    ]
+    assert module._state is ManipulationState.IDLE
 
 
 def test_execute_and_execute_plan_race_without_consuming_latest_plan():
@@ -210,7 +219,7 @@ def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
     module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
     module._last_plan = _plan()
     module._state = ManipulationState.COMPLETED
-    module._possibly_active_tasks = {"traj_arm"}
+    assert module.execute_plan()
     cancel_started = threading.Event()
     execute_finished = threading.Event()
     release_cancel = threading.Event()
@@ -227,6 +236,7 @@ def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
         raise AssertionError("execution dispatched during cancellation")
 
     module._coordinator_client.task_invoke.side_effect = invoke
+    module._coordinator_client.task_invoke.reset_mock()
     cancelling = threading.Thread(target=lambda: cancel_result.append(module.cancel()))
     cancelling.start()
     assert cancel_started.wait(timeout=1.0)
@@ -291,16 +301,18 @@ def test_execute_plan_rejects_malformed_direct_plan_before_dispatch_without_rese
     assert module._last_plan is cached_plan
 
 
-def test_execute_plan_pre_dispatch_exception_restores_previous_state_without_faulting():
+def test_execute_plan_pre_dispatch_exception_restores_previous_state_without_faulting(mocker):
     module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
     module._last_plan = _plan()
     module._state = ManipulationState.COMPLETED
-    module._prepare_execution = MagicMock(side_effect=RuntimeError("split exploded"))
+    manager = module._get_execution_manager()
+    assert manager is not None
+    mocker.patch.object(manager, "_prepare_plan", side_effect=RuntimeError("split exploded"))
 
     assert module.execute_plan() is False
 
     assert module._state == ManipulationState.COMPLETED
-    assert module._error_message == "Failed to prepare execution: split exploded"
+    assert module._error_message == "Failed to dispatch generated plan: split exploded"
     module._coordinator_client.task_invoke.assert_not_called()
 
 
@@ -312,5 +324,4 @@ def test_execute_plan_dispatch_exception_faults_without_sticking_executing():
     assert module.execute_plan() is False
 
     assert module._state == ManipulationState.FAULT
-    assert module._error_message.startswith("Failed to dispatch trajectory: rpc exploded")
-    assert "traj_arm" in module._error_message
+    assert module._error_message.startswith("Coordinator task 'traj_arm' dispatch is unknown")

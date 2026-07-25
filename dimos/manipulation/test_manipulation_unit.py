@@ -230,16 +230,16 @@ class TestStateMachine:
 
     def test_cancel_completed_execution_cancels_coordinator_task(self):
         module = _make_module()
-        module._state = ManipulationState.COMPLETED
-        module._possibly_active_tasks = {"traj_arm"}
-        module._robots = {
-            "arm": ("arm_id", MagicMock(coordinator_task_name="traj_arm"), MagicMock())
-        }
+        config = _one_joint_config()
+        _install_generated_plan(module, config, MagicMock(), [0.0], [0.1])
         module._coordinator_client = MagicMock()
-        module._coordinator_client.task_invoke.return_value = False
+        module._coordinator_client.task_invoke.side_effect = [True, False]
+
+        assert module.execute_plan() is True
+        assert module._state == ManipulationState.COMPLETED
 
         assert module.cancel() is True
-        module._coordinator_client.task_invoke.assert_called_once_with("traj_arm", "cancel", {})
+        module._coordinator_client.task_invoke.assert_called_with("traj_arm", "cancel", {})
         assert module._state == ManipulationState.IDLE
 
     def test_reset_not_during_execution(self):
@@ -337,6 +337,9 @@ class PlanningInitializationHarness:
         )
         mocker.patch("dimos.manipulation.manipulation_module.create_manipulation_visualization")
         mocker.patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator")
+        self.mock_execution_manager = mocker.patch.object(
+            ManipulationModule, "_get_execution_manager"
+        )
 
 
 @pytest.fixture
@@ -373,6 +376,7 @@ class TestPlanningInitialization:
             kinematics_name=None,
             kinematics=kinematics,
         )
+        planning_initialization.mock_execution_manager.assert_called_once_with()
 
     def test_legacy_kinematics_name_still_selects_backend(
         self, robot_config, planning_initialization: PlanningInitializationHarness
@@ -572,9 +576,7 @@ class TestPlanningGroupApis:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module._last_plan.path == result_path
-        trajectories = module._split_plan_trajectory_by_robot(module._last_plan)
-        assert trajectories is not None
-        assert trajectories["test_arm"].points[-1].positions == [0.1, 0.2, 0.3]
+        assert module._last_plan.trajectory.points[-1].positions == [0.1, 0.2, 0.3]
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("test_arm/manipulator",)
@@ -902,6 +904,10 @@ class TestPlanningGroupApis:
             name=["left/j1", "right/k0"], position=[0.0, 1.0]
         )
 
+        assert module.execute_plan(robot_name="left") is False
+        assert "partially execute" in module.get_error()
+        mock_client.task_invoke.assert_not_called()
+
         assert module.execute_plan() is True
 
         calls = mock_client.task_invoke.call_args_list
@@ -1006,27 +1012,6 @@ class TestPlanningGroupApis:
         assert result.status == IKStatus.NO_SOLUTION
         assert module.get_error() == "IK failed: NO_SOLUTION: target is outside the workspace"
         assert module._state == ManipulationState.IDLE
-
-
-class TestJointNameTranslation:
-    """Test trajectory joint name translation for coordinator."""
-
-    def test_no_mapping_returns_original(self, robot_config, simple_trajectory):
-        """Without mapping, trajectory is returned unchanged."""
-        module = _make_module()
-
-        result = module._translate_trajectory_to_coordinator(simple_trajectory, robot_config)
-        assert result is simple_trajectory  # Same object
-
-    def test_mapping_translates_names(self, robot_config_with_mapping, simple_trajectory):
-        """With mapping, joint names are translated."""
-        module = _make_module()
-
-        result = module._translate_trajectory_to_coordinator(
-            simple_trajectory, robot_config_with_mapping
-        )
-        assert result.joint_names == ["left/joint1", "left/joint2", "left/joint3"]
-        assert len(result.points) == 2  # Points preserved
 
 
 class TestPlanningDiagnostics:
@@ -1161,7 +1146,7 @@ class TestExecute:
         traj_gen.generate.assert_not_called()
 
     def test_execute_rejected(self, robot_config, simple_trajectory):
-        """Rejected execution sets FAULT state."""
+        """A known-safe rejection restores the module's previous state."""
         module = _make_module()
         traj_gen = MagicMock()
         traj_gen.generate.return_value = simple_trajectory
@@ -1172,7 +1157,7 @@ class TestExecute:
         module._coordinator_client = mock_client
 
         assert module.execute("test_arm") is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
 
 
 class TestRobotModelConfigMapping:

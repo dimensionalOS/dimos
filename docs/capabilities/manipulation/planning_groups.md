@@ -124,6 +124,11 @@ manip.preview_plan(plan)
 manip.execute_plan(plan)
 ```
 
+See [Manipulation Plan Execution](/docs/capabilities/manipulation/plan_execution.md) for validation,
+replacement, cancellation, and failure behavior. A generated plan is the
+execution boundary: `execute_plan(robot_name=...)` may validate a matching
+single-robot plan, but it cannot filter a multi-robot plan.
+
 For robot-scoped compatibility APIs, unnamed joint vectors are interpreted in
 the selected default planning group's joint order. If names are provided, they
 may be all local model joint names or all global joint names. Missing joints,
@@ -149,9 +154,9 @@ without filling or commanding omitted joints. Controllers remain planning-group
 agnostic, and trajectory tasks still claim their full configured joint set while
 executing only the active planned subset.
 
-Multi-task dispatch is not atomic: if one trajectory task accepts and a later
-task rejects, DimOS reports the rejection but does not roll back the accepted
-task.
+Multi-task coordinator calls are sequential. If one trajectory task accepts and
+a later task rejects, DimOS cancels every task that may have accepted. It reports
+a fault when cancellation cannot confirm that all affected tasks are safe.
 
 ## Robot placement config
 

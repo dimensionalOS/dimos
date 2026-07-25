@@ -39,6 +39,12 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.manipulation.execution_manager import (
+    CoordinatorExecutionAdapter,
+    ExecutionDispatchOutcome,
+    ExecutionTarget,
+    PlanExecutionManager,
+)
 from dimos.manipulation.planning.factory import (
     KinematicsName,
     PlannerName,
@@ -46,6 +52,7 @@ from dimos.manipulation.planning.factory import (
     create_planning_specs,
     create_world,
 )
+from dimos.manipulation.planning.groups.identifiers import parse_planning_group_id
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
@@ -85,7 +92,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -155,13 +161,6 @@ class ManipulationModule(Module):
         # State machine
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
-        # State transitions are local, but coordinator calls must be serialized
-        # with cancellation.  In particular, do not let cancel race between
-        # two arms of a multi-arm dispatch.
-        self._execution_dispatch_lock = threading.Lock()
-        self._execution_generation = 0
-        self._possibly_active_tasks: set[str] = set()
-        self._cancellation_in_progress = False
         self._error_message = ""
         self._planning_epoch = 0
 
@@ -179,6 +178,8 @@ class ManipulationModule(Module):
 
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
+        self._execution_manager: PlanExecutionManager | None = None
+        self._execution_manager_client: RPCClient | None = None
 
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
@@ -188,17 +189,6 @@ class ManipulationModule(Module):
         self._tf_thread: threading.Thread | None = None
 
         logger.info("ManipulationModule initialized")
-
-    def _ensure_execution_transaction_state(self) -> None:
-        """Initialize transaction fields for lightweight test harness subclasses."""
-        if not hasattr(self, "_execution_dispatch_lock"):
-            self._execution_dispatch_lock = threading.Lock()
-        if not hasattr(self, "_execution_generation"):
-            self._execution_generation = 0
-        if not hasattr(self, "_possibly_active_tasks"):
-            self._possibly_active_tasks = set()
-        if not hasattr(self, "_cancellation_in_progress"):
-            self._cancellation_in_progress = False
 
     @rpc
     def start(self) -> None:
@@ -288,6 +278,8 @@ class ManipulationModule(Module):
             )
             self._tf_thread.start()
             logger.info("TF publishing thread started")
+
+        self._get_execution_manager()
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -422,42 +414,29 @@ class ManipulationModule(Module):
     @rpc
     def cancel(self) -> bool:
         """Cancel current motion or invalidate an in-progress plan."""
-        self._ensure_execution_transaction_state()
-        # Publish the cancellation gate before waiting for dispatch. An
-        # execution that arrives while cancellation is in flight must not
-        # become a new transaction behind the cancellation barrier.
         with self._lock:
-            self._cancellation_in_progress = True
-        # Holding this lock waits for an in-flight execute RPC to resolve and
-        # prevents another arm from being dispatched after cancellation.
-        try:
-            with self._execution_dispatch_lock:
-                with self._lock:
-                    task_names = set(self._possibly_active_tasks)
-                    is_planning = self._state == ManipulationState.PLANNING
-                    is_executing = self._state == ManipulationState.EXECUTING
-                    if not (is_planning or is_executing or task_names):
-                        return False
-                    self._execution_generation += 1
-                    if is_planning:
-                        self._planning_epoch += 1
-                    plan = self._last_plan
+            is_planning = self._state == ManipulationState.PLANNING
+            is_executing = self._state == ManipulationState.EXECUTING
+            if is_planning:
+                self._planning_epoch += 1
+            plan = self._last_plan
 
-                unresolved = self._cancel_tasks(task_names)
-                with self._lock:
-                    if unresolved:
-                        self._possibly_active_tasks = unresolved
-                        self._state = ManipulationState.FAULT
-                        self._error_message = "Failed to cancel coordinator tasks: " + ", ".join(
-                            sorted(unresolved)
-                        )
-                        logger.error(self._error_message)
-                        return False
-                    self._possibly_active_tasks.clear()
-                    self._state = ManipulationState.IDLE
-        finally:
-            with self._lock:
-                self._cancellation_in_progress = False
+        manager = self._get_execution_manager()
+        cancellation = manager.cancel() if manager is not None else None
+        had_execution = bool(cancellation and cancellation.had_tracked_tasks)
+        if not (is_planning or is_executing or had_execution):
+            return False
+
+        with self._lock:
+            if cancellation is not None and not cancellation.safe:
+                self._state = ManipulationState.FAULT
+                self._error_message = "Failed to cancel coordinator tasks: " + ", ".join(
+                    cancellation.unresolved_tasks
+                )
+                logger.error(self._error_message)
+                return False
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
         if plan is not None:
             self._dismiss_preview(plan.group_ids)
         logger.info("Motion cancelled")
@@ -576,50 +555,6 @@ class ManipulationModule(Module):
                 "use an explicit planning group ID"
             )
         return group_id
-
-    def _split_plan_trajectory_by_robot(
-        self, plan: GeneratedPlan
-    ) -> dict[RobotName, JointTrajectory] | None:
-        """Split a stored global selected-joint trajectory into robot-local subsets."""
-        trajectories: dict[RobotName, JointTrajectory] = {}
-        robot_indices: dict[RobotName, list[tuple[int, str]]] = {}
-        for index, global_name in enumerate(plan.trajectory.joint_names):
-            if "/" not in global_name:
-                logger.error("Stored trajectory joint '%s' is not globally named", global_name)
-                return None
-            robot_name, local_name = global_name.split("/", 1)
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                return None
-            _, _, config, _ = robot
-            if local_name not in config.joint_names:
-                logger.error("Stored trajectory joint '%s' is not configured", global_name)
-                return None
-            robot_indices.setdefault(robot_name, []).append((index, local_name))
-
-        for robot_name, indexed_names in robot_indices.items():
-            indices = [index for index, _ in indexed_names]
-            local_names = [name for _, name in indexed_names]
-            points = [
-                TrajectoryPoint(
-                    time_from_start=point.time_from_start,
-                    positions=[point.positions[index] for index in indices],
-                    velocities=[point.velocities[index] for index in indices],
-                )
-                for point in plan.trajectory.points
-            ]
-            trajectories[robot_name] = JointTrajectory(
-                joint_names=local_names,
-                points=points,
-                timestamp=plan.trajectory.timestamp,
-            )
-            logger.info(
-                "Stored trajectory for %s: %d selected joints, %.3fs",
-                robot_name,
-                len(local_names),
-                trajectories[robot_name].duration,
-            )
-        return trajectories
 
     @staticmethod
     def _assert_finite_sequence(values: Sequence[float], label: str) -> None:
@@ -1438,61 +1373,50 @@ class ManipulationModule(Module):
             self._coordinator_client = RPCClient(None, ControlCoordinator)
         return self._coordinator_client
 
-    def _translate_trajectory_to_coordinator(
-        self,
-        trajectory: JointTrajectory,
-        robot_config: RobotModelConfig,
-    ) -> JointTrajectory:
-        """Translate trajectory joint names from URDF to coordinator namespace.
-
-        Args:
-            trajectory: Trajectory with URDF joint names
-            robot_config: Robot config with joint name mapping
-
-        Returns:
-            Trajectory with coordinator joint names
-        """
-        if not robot_config.joint_name_mapping:
-            return trajectory  # No translation needed
-
-        # Translate joint names
-        coordinator_names = [
-            robot_config.get_coordinator_joint_name(j) for j in trajectory.joint_names
+    def _get_execution_manager(self) -> PlanExecutionManager | None:
+        """Get or create the in-process planned execution manager."""
+        targets = [
+            ExecutionTarget.from_coordinator_mapping(
+                robot_name=config.name,
+                model_joint_names=config.joint_names,
+                coordinator_task_name=config.coordinator_task_name,
+                coordinator_to_model=config.joint_name_mapping,
+            )
+            for _, config, _ in self._robots.values()
+            if config.coordinator_task_name
         ]
+        if not targets or self._world_monitor is None:
+            return None
+        client = self._get_coordinator_client()
+        if client is None:
+            return None
 
-        # Create new trajectory with translated names
-        # Note: duration is computed automatically from points in JointTrajectory.__init__
-        return JointTrajectory(
-            joint_names=coordinator_names,
-            points=trajectory.points,
-            timestamp=trajectory.timestamp,
+        manager = self._execution_manager
+        manager_client = self._execution_manager_client
+        if manager is not None and manager_client is client:
+            return manager
+
+        manager = PlanExecutionManager(
+            targets=targets,
+            current_joint_state=self._world_monitor.current_global_joint_state,
+            coordinator=CoordinatorExecutionAdapter(client),
         )
+        self._execution_manager = manager
+        self._execution_manager_client = client
+        return manager
 
-    def _execute_robot_trajectory(self, robot_name: RobotName, trajectory: JointTrajectory) -> bool:
-        """Execute one robot's local trajectory through ControlCoordinator."""
-        if (robot := self._get_robot(robot_name)) is None:
-            return False
-        resolved_name, _, config, _ = robot
-
-        if not config.coordinator_task_name:
-            logger.error(f"No coordinator_task_name for '{resolved_name}'")
-            return False
-        if (client := self._get_coordinator_client()) is None:
-            logger.error("No coordinator client")
-            return False
-
-        translated = self._translate_trajectory_to_coordinator(trajectory, config)
-        logger.info(
-            f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
-        )
-
-        result = client.task_invoke(
-            config.coordinator_task_name, "execute", {"trajectory": translated}
-        )
-        if result:
-            logger.info("Trajectory accepted")
-            return True
-        return self._fail("Coordinator rejected trajectory")
+    @staticmethod
+    def _plan_robot_names(plan: GeneratedPlan) -> tuple[RobotName, ...] | None:
+        """Return unique plan robot names in planning-group order."""
+        names: list[RobotName] = []
+        try:
+            for group_id in plan.group_ids:
+                robot_name, _ = parse_planning_group_id(group_id)
+                if robot_name not in names:
+                    names.append(robot_name)
+        except ValueError:
+            return None
+        return tuple(names)
 
     @rpc
     def execute(self, robot_name: RobotName | None = None) -> bool:
@@ -1504,229 +1428,49 @@ class ManipulationModule(Module):
         self, plan: GeneratedPlan | None = None, robot_name: RobotName | None = None
     ) -> bool:
         """Execute a generated planning-group plan through affected trajectory tasks."""
-        execution = self._begin_execution(plan)
-        if execution is None:
+        target_plan = plan or self._last_plan
+        if target_plan is None:
+            self._error_message = "Stored plan is invalid or not executable"
             return False
-        previous_state, target_plan, token = execution
-        try:
-            freshness_error = self._stored_plan_freshness_error(target_plan)
-            if freshness_error is not None:
-                self._restore_execution_gate(token, previous_state, freshness_error)
-                return False
-            prepared = self._prepare_execution(target_plan, robot_name)
-            if isinstance(prepared, str):
-                self._restore_execution_gate(token, previous_state, prepared)
-                return False
-        except Exception as exc:
-            self._restore_execution_gate(
-                token, previous_state, f"Failed to prepare execution: {exc}"
+        plan_robots = self._plan_robot_names(target_plan)
+        if robot_name is not None and plan_robots != (robot_name,):
+            self._error_message = (
+                f"Cannot partially execute generated plan for robots {plan_robots!r}"
             )
             return False
-        return self._dispatch_prepared_plan(prepared, token)
 
-    def _begin_execution(
-        self, plan: GeneratedPlan | None
-    ) -> tuple[ManipulationState, GeneratedPlan, int] | None:
-        """Enter EXECUTING if the module is idle enough to dispatch."""
-        self._ensure_execution_transaction_state()
+        manager = self._get_execution_manager()
+        if manager is None:
+            self._error_message = "Planned execution is not configured"
+            return False
         with self._lock:
-            if self._cancellation_in_progress:
-                logger.warning("Cancellation is in progress; rejecting execution")
-                return None
-            target_plan = plan or self._last_plan
-            if target_plan is None or not target_plan.path or not target_plan.trajectory.points:
-                logger.warning("Stored plan is invalid or not executable")
-                self._error_message = "Stored plan is invalid or not executable"
-                return None
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning("Manipulation state is not executable")
-                return None
+                return False
             previous_state = self._state
-            self._execution_generation += 1
-            token = self._execution_generation
             self._state = ManipulationState.EXECUTING
-            return previous_state, target_plan, token
-
-    def _restore_execution_gate(
-        self, token: int, previous_state: ManipulationState, msg: str
-    ) -> None:
-        logger.warning(msg)
-        with self._lock:
-            if self._execution_generation == token and self._state == ManipulationState.EXECUTING:
-                self._state = previous_state
-                self._error_message = msg
-
-    def _stored_plan_freshness_error(
-        self, plan: GeneratedPlan, tolerance: float = 1e-6
-    ) -> str | None:
-        """Return why current selected joints no longer match the plan start."""
-        if self._world_monitor is None:
-            return "Planning not initialized"
-        if not plan.trajectory.points:
-            return "Stored trajectory has no points"
-        first = plan.trajectory.points[0]
-        names = list(plan.trajectory.joint_names)
-        if len(names) != len(first.positions):
-            return "Stored trajectory start has malformed joint positions"
         try:
-            current = self._world_monitor.current_global_joint_state()
-        except (AttributeError, TypeError, ValueError):
-            return "Current planned joints are malformed"
-        if not isinstance(current, JointState) or len(current.name) != len(current.position):
-            return "Current planned joints are malformed"
-        values: dict[str, float] = {}
-        ordered_subset: list[tuple[str, float]] = []
-        planned = set(names)
-        for raw_name, raw_position in zip(current.name, current.position, strict=True):
-            name = str(raw_name)
-            if name in values:
-                return "Current planned joints are malformed"
-            try:
-                value = float(raw_position)
-            except (TypeError, ValueError):
-                return f"Current planned joint '{name}' is malformed"
-            if not math.isfinite(value):
-                return f"Current planned joint '{name}' is malformed"
-            values[name] = value
-            if name in planned:
-                ordered_subset.append((name, value))
-        if len(ordered_subset) != len(names):
-            return "Current planned joints are malformed"
-        for (actual_name, actual), name, expected in zip(
-            ordered_subset, names, first.positions, strict=True
-        ):
-            if actual_name != name:
-                return "Current planned joints are not in stored plan order"
-            if not math.isfinite(actual) or not math.isfinite(float(expected)):
-                return f"Current planned joint '{name}' is malformed"
-            if abs(actual - float(expected)) > tolerance:
-                return f"Current planned joint '{name}' no longer matches the stored plan start"
-        return None
-
-    def _prepare_execution(
-        self,
-        plan: GeneratedPlan,
-        robot_name: RobotName | None = None,
-    ) -> tuple[tuple[RobotName, RobotModelConfig, JointTrajectory], ...] | str:
-        """Resolve execution inputs before dispatching any coordinator task."""
-        if self._world_monitor is None:
-            return "Planning not initialized"
-        if not plan.path:
-            return "No generated plan"
-        try:
-            affected = list(self._world_monitor.planning_groups.select(plan.group_ids).robot_names)
+            result = manager.execute(target_plan)
         except Exception as exc:
-            return f"Failed to resolve generated plan: {exc}"
-        if robot_name is not None:
-            if robot_name not in affected:
-                return f"No planned path for '{robot_name}'"
-            affected = [robot_name]
-        trajectories = self._split_plan_trajectory_by_robot(plan)
-        if trajectories is None:
-            return "Failed to split stored trajectory"
-        if self._get_coordinator_client() is None:
-            return "No coordinator client"
-        prepared: list[tuple[RobotName, RobotModelConfig, JointTrajectory]] = []
-        for name in affected:
-            robot = self._get_robot(name)
-            if robot is None:
-                return f"Robot '{name}' not found"
-            _, _, config, _ = robot
-            if not config.coordinator_task_name:
-                return f"No coordinator_task_name for '{name}'"
-            traj = trajectories.get(name)
-            if traj is None:
-                return f"No planned trajectory for '{name}'"
-            prepared.append((name, config, traj))
-        return tuple(prepared)
-
-    def _dispatch_prepared_plan(
-        self,
-        prepared: Sequence[tuple[RobotName, RobotModelConfig, JointTrajectory]],
-        token: int,
-    ) -> bool:
-        """Dispatch already-validated robot trajectories; failures here fault."""
-        self._ensure_execution_transaction_state()
-        with self._execution_dispatch_lock:
-            if (client := self._get_coordinator_client()) is None:
-                return self._fault_execution(token, "No coordinator client")
-
-            for _robot_name, config, traj in prepared:
-                task_name = config.coordinator_task_name
-                if task_name is None:
-                    return self._fault_execution(token, "No coordinator_task_name")
-                with self._lock:
-                    if (
-                        self._execution_generation != token
-                        or self._state != ManipulationState.EXECUTING
-                    ):
-                        return False
-                    # Add before the RPC: a rejected or raised execute may
-                    # have been accepted remotely.
-                    self._possibly_active_tasks.add(task_name)
-                try:
-                    translated = self._translate_trajectory_to_coordinator(traj, config)
-                    logger.info(
-                        "Executing: task='%s', %d pts, %.2fs",
-                        task_name,
-                        len(translated.points),
-                        translated.duration,
-                    )
-                    result = client.task_invoke(task_name, "execute", {"trajectory": translated})
-                except Exception as exc:
-                    return self._fault_execution(token, f"Failed to dispatch trajectory: {exc}")
-                if not result:
-                    return self._fault_execution(token, "Coordinator rejected trajectory")
-
-            logger.info("Trajectory accepted")
-            with self._lock:
-                if (
-                    self._execution_generation != token
-                    or self._state != ManipulationState.EXECUTING
-                ):
-                    return False
+            result = None
+            message = f"Failed to dispatch generated plan: {exc}"
+            logger.exception(message)
+        with self._lock:
+            if self._state != ManipulationState.EXECUTING:
+                return False
+            if result is None:
+                self._state = previous_state
+                self._error_message = message
+            elif result.outcome is ExecutionDispatchOutcome.ACCEPTED:
                 self._state = ManipulationState.COMPLETED
-            return True
-
-    def _cancel_tasks(self, task_names: set[str]) -> set[str]:
-        """Cancel possibly active tasks, returning names whose safety is unknown."""
-        if not task_names:
-            return set()
-        client = self._get_coordinator_client()
-        if client is None:
-            return set(task_names)
-        unresolved: set[str] = set()
-        for task_name in task_names:
-            try:
-                result = client.task_invoke(task_name, "cancel", {})
-                # Coordinator cancel returns False when the task is already
-                # non-executing; that is a confirmed-safe result.
-                if result is None:
-                    unresolved.add(task_name)
-            except Exception:
-                unresolved.add(task_name)
-        return unresolved
-
-    def _fault_execution(self, token: int, message: str) -> bool:
-        """Rollback attempted tasks and fault, without overwriting cancellation."""
-        self._ensure_execution_transaction_state()
-        with self._lock:
-            if self._execution_generation != token:
-                return False
-            task_names = set(self._possibly_active_tasks)
-        unresolved = self._cancel_tasks(task_names)
-        with self._lock:
-            if self._execution_generation != token:
-                return False
-            if unresolved:
-                self._possibly_active_tasks = unresolved
-                message += "; unresolved coordinator tasks: " + ", ".join(sorted(unresolved))
+                self._error_message = ""
+            elif result.outcome is ExecutionDispatchOutcome.FAULT:
+                self._state = ManipulationState.FAULT
+                self._error_message = result.message
             else:
-                self._possibly_active_tasks.clear()
-            self._state = ManipulationState.FAULT
-            self._error_message = message
-        logger.error(message)
-        return False
+                self._state = previous_state
+                self._error_message = result.message
+        return bool(result and result.accepted)
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
@@ -2239,6 +1983,15 @@ class ManipulationModule(Module):
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
 
+        execution_manager = getattr(self, "_execution_manager", None)
+        if execution_manager is not None:
+            cancellation = execution_manager.cancel()
+            if not cancellation.safe:
+                logger.error(
+                    "Shutdown could not confirm coordinator task safety: %s",
+                    ", ".join(cancellation.unresolved_tasks),
+                )
+
         # Stop TF thread
         if self._tf_thread is not None:
             self._tf_stop_event.set()
@@ -2248,5 +2001,12 @@ class ManipulationModule(Module):
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
             self._world_monitor.stop_all_monitors()
+
+        coordinator_client = getattr(self, "_coordinator_client", None)
+        if coordinator_client is not None:
+            coordinator_client.stop_rpc_client()
+            self._coordinator_client = None
+            self._execution_manager = None
+            self._execution_manager_client = None
 
         super().stop()

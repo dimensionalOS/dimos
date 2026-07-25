@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -54,7 +54,7 @@ def _wait_for_robot_info(
         try:
             info = client.get_robot_info(robot_name)
             if info and info.get("planning_groups"):
-                return info
+                return cast("dict[str, Any]", info)
         except BaseException as exc:
             last_error = exc
         time.sleep(0.5)
@@ -102,11 +102,16 @@ def _wait_for_current_joints(
     deadline = time.time() + timeout
     missing = robot_names
     while time.time() < deadline:
-        missing = tuple(
-            robot_name
-            for robot_name in robot_names
-            if client.get_current_joints(robot_name) is None
-        )
+        try:
+            missing = tuple(
+                robot_name
+                for robot_name in robot_names
+                if client.get_current_joints(robot_name) is None
+            )
+        except BaseException:
+            # Robot metadata becomes visible while the planning world is still
+            # finalizing. Treat that readiness race like a missing joint state.
+            missing = robot_names
         if not missing:
             return
         time.sleep(0.1)
@@ -173,6 +178,8 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         assert client.execute_plan()
 
         _wait_for_trajectory_completion(client, "left_arm")
+        assert client.cancel()
+        _wait_for_manipulation_state(client, "IDLE")
     finally:
         coordinator_client.stop_rpc_client()
         client.stop_rpc_client()
@@ -207,6 +214,8 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         )
         assert planned, client.get_error()
         assert client.has_planned_path()
+        assert not client.execute_plan(robot_name="left_arm")
+        assert "partially execute" in client.get_error()
         assert client.execute_plan()
 
         _wait_for_trajectory_completion(client, "left_arm")
