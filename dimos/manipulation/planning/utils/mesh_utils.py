@@ -37,7 +37,7 @@ import re
 import shutil
 from typing import TYPE_CHECKING
 
-from dimos.constants import DRAKE_URDF_CACHE_DIR
+from dimos.constants import CACHE_DIR
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 # Cache directory for processed URDFs
-_CACHE_DIR = DRAKE_URDF_CACHE_DIR
+_CACHE_DIR = CACHE_DIR / "urdf"
 
 
 def prepare_urdf_for_drake(

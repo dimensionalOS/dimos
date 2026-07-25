@@ -27,12 +27,6 @@ else:
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
-ROBOT_ASSET_CACHE_DIR = CACHE_DIR / "robot_assets"
-DENO_CACHE_DIR = CACHE_DIR / "deno"
-DRAKE_URDF_CACHE_DIR = CACHE_DIR / "urdf"
-VISER_URDF_CACHE_DIR = CACHE_DIR / "viser_urdf"
-AMENT_PREFIX_CACHE_DIR = CACHE_DIR / "ament_prefix"
-
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
 if (DIMOS_PROJECT_ROOT / ".git").exists():

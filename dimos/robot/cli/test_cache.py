@@ -31,7 +31,7 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
-def test_clean_refuses_active_run_even_when_forced(
+def test_clean_refuses_active_run(
     cache_dir: Path,
     mocker: MockerFixture,
 ) -> None:
@@ -43,7 +43,7 @@ def test_clean_refuses_active_run_even_when_forced(
     )
     clean_caches = mocker.patch.object(cache_cli, "clean_caches")
 
-    result = CliRunner().invoke(main, ["cache", "clean", "--force", "--yes"])
+    result = CliRunner().invoke(main, ["cache", "clean", "--yes"])
 
     assert result.exit_code == 1
     assert result.output == (
@@ -74,7 +74,7 @@ def test_clean_previews_current_entries_and_defaults_confirmation_to_no(
     clean_caches.assert_not_called()
 
 
-def test_clean_force_forwards_option(
+def test_clean_yes_removes_cache_without_prompting(
     cache_dir: Path,
     mocker: MockerFixture,
 ) -> None:
@@ -86,33 +86,38 @@ def test_clean_force_forwards_option(
         return_value=CacheCleanResult(cleaned=[cache_dir]),
     )
 
-    result = CliRunner().invoke(main, ["cache", "clean", "--force", "--yes"])
+    result = CliRunner().invoke(main, ["cache", "clean", "--yes"])
 
     assert result.exit_code == 0
-    assert "Removes robot Git checkouts with local changes or local-only commits" in result.output
     assert f"Cleaned cache: {cache_dir}" in result.output
-    clean_caches.assert_called_once_with(force=True)
+    assert "Continue?" not in result.output
+    clean_caches.assert_called_once_with()
 
 
-def test_clean_reports_skipped_checkout(
+def test_clean_reports_deletion_failure(
     cache_dir: Path,
     mocker: MockerFixture,
 ) -> None:
     cache_dir.mkdir()
-    checkout = cache_dir / "robot_assets" / "sources" / "key" / "robot"
     mocker.patch.object(cache_cli, "get_most_recent", return_value=None)
     mocker.patch.object(
         cache_cli,
         "clean_caches",
-        return_value=CacheCleanResult(
-            skipped=[CacheIssue(checkout, "Git checkout has local changes")]
-        ),
+        return_value=CacheCleanResult(failed=[CacheIssue(cache_dir, "denied")]),
     )
 
     result = CliRunner().invoke(main, ["cache", "clean", "--yes"])
 
     assert result.exit_code == 1
-    assert f"Skipped cache: {checkout} (Git checkout has local changes)" in result.output
+    assert f"Failed to remove cache: {cache_dir} (denied)" in result.output
+
+
+def test_clean_help_does_not_offer_force() -> None:
+    result = CliRunner().invoke(main, ["cache", "clean", "--help"])
+
+    assert result.exit_code == 0
+    assert "--yes" in result.output
+    assert "--force" not in result.output
 
 
 def test_clean_without_cache_is_a_noop(

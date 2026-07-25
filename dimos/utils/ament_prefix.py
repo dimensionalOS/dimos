@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 import threading
 
-from dimos.constants import AMENT_PREFIX_CACHE_DIR
+from dimos.constants import CACHE_DIR
 
 _lock = threading.Lock()
 
@@ -55,7 +55,7 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
     global _prefix_dir
 
     if _prefix_dir is None:
-        _prefix_dir = AMENT_PREFIX_CACHE_DIR
+        _prefix_dir = CACHE_DIR / "ament_prefix"
 
     prefix = _prefix_dir
     resource_dir = prefix / "share" / "ament_index" / "resource_index" / "packages"

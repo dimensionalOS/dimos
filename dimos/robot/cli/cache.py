@@ -27,7 +27,6 @@ app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 _CACHE_ENTRY_LABELS = {
     "ament_prefix": "ament package index",
     "deno": "downloaded Deno runtime",
-    "robot_assets": "robot source and derived assets",
     "scene_meshes": "cooked scene meshes",
     "scene_sources": "normalized scene sources",
     "urdf": "prepared URDFs and convex hulls",
@@ -37,12 +36,6 @@ _CACHE_ENTRY_LABELS = {
 
 @app.command("clean")
 def clean(
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Delete cached robot Git checkouts containing local work",
-    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -81,21 +74,14 @@ def clean(
     else:
         typer.echo(f"  - {CACHE_DIR} (empty cache root)")
 
-    if force:
-        typer.echo("")
-        typer.echo("Force mode:")
-        typer.echo("  - Removes robot Git checkouts with local changes or local-only commits")
-
     typer.echo("")
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("Cache cleanup cancelled.")
         return
 
-    result = clean_caches(force=force)
+    result = clean_caches()
     for path in result.cleaned:
         typer.echo(f"Cleaned cache: {path}")
-    for issue in result.skipped:
-        typer.echo(f"Skipped cache: {issue.path} ({issue.reason})", err=True)
     for issue in result.failed:
         typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
 
