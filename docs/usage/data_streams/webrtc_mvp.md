@@ -81,3 +81,79 @@ advertise compatible codec capabilities.
 After the live path meets these gates, connect the publisher input to the Go2
 camera stream used by `dimos --replay run unitree-go2`. Add memory2 recording
 as a side subscriber so storage cannot delay the live media path.
+
+## Raw video upload/download test
+
+The repository MVP stores the original video object without ZIP packaging. An
+object is addressed by developer/organization owner, repository name, and its
+SHA-256 object id.
+
+Start a local server:
+
+```bash
+export DIMOS_REPLAY_REPOSITORY_TOKEN=local-test-token
+dimos replay-repo serve \
+  --root /tmp/dimos-replay-repository \
+  --public-read
+```
+
+Upload a video or elementary H.264/H.265 stream:
+
+```bash
+dimos replay-repo upload go2-office.mp4 \
+  --owner alice \
+  --repo go2-debug
+```
+
+The JSON result contains the immutable `object_id`. Another machine can list
+Alice's repository and download that exact object:
+
+```bash
+dimos replay-repo list --owner alice --repo go2-debug
+dimos replay-repo download OBJECT_ID \
+  --owner alice \
+  --repo go2-debug \
+  --output go2-office-copy.mp4
+```
+
+With `--public-read`, a browser can play or download videos at:
+
+```text
+http://SERVER:8765/r/alice/go2-debug
+```
+
+Set `--server-url` on all three client commands when the repository server is
+remote. The client streams the raw object to disk and verifies its SHA-256
+before making the destination visible. A non-loopback server refuses to start
+without `DIMOS_REPLAY_REPOSITORY_TOKEN`. Public read is an explicit MVP option;
+do not enable it for private recordings.
+
+## Batch transfer
+
+For a capture directory, use the batch commands. Uploads run concurrently, each
+file is retried independently, and the manifest is written atomically only after
+all objects have completed:
+
+```bash
+dimos replay-repo batch-upload ./capture \
+  --owner alice \
+  --repo go2-debug \
+  --pattern "*.mp4" \
+  --workers 4 \
+  --manifest ./capture-manifest.json
+
+dimos replay-repo batch-download ./capture-manifest.json \
+  --output-dir ./restored \
+  --workers 4
+```
+
+The manifest records the owner, repository, filename, object id, byte count,
+content type, and SHA-256. A failed item does not get advertised as completed;
+rerunning the same batch is safe because object ids are content-addressed.
+
+The current server is a local filesystem reference backend. The stable boundary
+for a production migration is the HTTP object contract plus the manifest. A
+production backend should replace the blob files with S3/R2/MinIO, metadata with
+a durable database, and direct downloads with signed CDN URLs. Multipart upload,
+range reads, TLS, quotas, and audit logs are required before exposing it to the
+public internet.

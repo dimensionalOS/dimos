@@ -846,8 +846,10 @@ map_app.command("replay-marker")(_map_replay_marker_main)
 
 from dimos.memory2.cli.app import mem_app
 from dimos.protocol.pubsub.impl.webrtc.mvp_cli import webrtc_mvp_app
+from dimos.protocol.pubsub.impl.webrtc.replay_repository_cli import replay_repository_app
 
 main.add_typer(mem_app, name="mem")
+main.add_typer(replay_repository_app, name="replay-repo")
 main.add_typer(webrtc_mvp_app, name="webrtc-mvp")
 
 
