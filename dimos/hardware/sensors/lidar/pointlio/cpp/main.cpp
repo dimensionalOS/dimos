@@ -113,6 +113,7 @@ struct PointLioConfig {
 
 namespace {
 
+using dimos::has_estimate;
 using dimos::make_header;
 using dimos::make_xyzi_cloud;
 
@@ -432,7 +433,7 @@ private:
         point_lio_->process();
 
         auto pose = point_lio_->get_pose();
-        if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
+        if (has_estimate(pose)) {
             double ts = std::chrono::duration<double>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();

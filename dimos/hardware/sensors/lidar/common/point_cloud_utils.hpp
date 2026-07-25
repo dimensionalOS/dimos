@@ -1,15 +1,17 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shared message helpers for the Livox-based lidar drivers (fastlio2, pointlio,
-// livox). Each driver sources points differently, so the PointCloud2 layout and
-// header are built here and the caller fills the packed xyzi buffer.
+// Shared helpers for the Livox-based lidar drivers (fastlio2, pointlio, livox).
+// Each driver sources points differently, so the PointCloud2 layout and header
+// are built here and the caller fills the packed xyzi buffer.
 
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
@@ -17,6 +19,19 @@
 #include "std_msgs/Time.hpp"
 
 namespace dimos {
+
+// True once the estimator has produced a real pose. The SLAM cores hand out
+// their pose through an odometry result that starts as uninitialized memory, so
+// a nonzero position does not mean the estimator has run. A real estimate
+// always carries a normalized quaternion, which uninitialized bytes do not.
+inline bool has_estimate(const std::vector<double>& pose) {
+    if (pose.size() != 7) {
+        return false;
+    }
+    const double qn = pose[3] * pose[3] + pose[4] * pose[4] + pose[5] * pose[5] +
+                      pose[6] * pose[6];
+    return std::abs(qn - 1.0) < 1e-3;
+}
 
 inline std_msgs::Time time_from_seconds(double t) {
     std_msgs::Time ts;
