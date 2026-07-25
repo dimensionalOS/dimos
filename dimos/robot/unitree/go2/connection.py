@@ -259,6 +259,15 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
 
+    def stop(self) -> None:
+        # A replay connection has no live WebRTC loop or peer to tear down, so
+        # the inherited UnitreeWebRTCConnection.stop() (which touches self.loop
+        # and self.conn) does not apply here. Clear the deadman timer slot and
+        # let the framework handle the rest of the module teardown.
+        # Fixes 'ReplayConnection' object has no attribute 'stop_timer' raised
+        # during GO2Connection hot-reload / restart (#1967).
+        self.stop_timer = None
+
 
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
