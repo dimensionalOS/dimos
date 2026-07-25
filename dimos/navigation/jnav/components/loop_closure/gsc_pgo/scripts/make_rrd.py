@@ -260,12 +260,14 @@ def build(
         return np.array(mean_positions), rotations, marker_ids
 
     streams = store.list_streams()
+    # the world-registered accumulated corrected clouds; the per-scan `*_corrected` streams are
+    # stored sensor-relative (frame `corrected_odom`), so they'd render as a blob without tf.
     corrected_lidars = sorted(
         stream_name
         for stream_name in streams
-        if "_corrected" in stream_name and "lidar" in stream_name
+        if "_corrected" in stream_name and stream_name.endswith("_accumulated")
     )
-    print("raw + corrected lidar streams:", corrected_lidars)
+    print("corrected accumulated lidar streams:", corrected_lidars)
 
     rr.init("corrected_compare")
     rr.save(str(out_path))
@@ -281,6 +283,11 @@ def build(
         rr.LineStrips3D(raw_segments, colors=raw_traj_colors),
         static=True,
     )
+    corrected_odoms = sorted(
+        stream_name
+        for stream_name in streams
+        if "_corrected" in stream_name and "odom" in stream_name
+    )
     for lidar_index, lidar_name in enumerate(corrected_lidars):
         color = PALETTE[lidar_index % len(PALETTE)]
         cloud = accumulate(lidar_name)
@@ -290,21 +297,14 @@ def build(
             static=True,
         )
         print(f"  logged {lidar_name}: {len(cloud):,} pts")
-        odom_candidates = [lidar_name.replace("lidar", stem) for stem in ("odometry", "odom")]
-        odom_name = next((name for name in odom_candidates if name in streams), "")
-        if odom_name:
-            segments, traj_colors = gradient_trajectory(traj(odom_name), color)
-            rr.log(
-                f"{lidar_name}/trajectory",
-                rr.LineStrips3D(segments, colors=traj_colors),
-                static=True,
-            )
+    if corrected_odoms:
+        segments, traj_colors = gradient_trajectory(traj(corrected_odoms[0]), PALETTE[0])
+        rr.log(
+            "corrected/trajectory",
+            rr.LineStrips3D(segments, colors=traj_colors),
+            static=True,
+        )
     # landmarks placed against the first available corrected odometry
-    corrected_odoms = sorted(
-        stream_name
-        for stream_name in streams
-        if "_corrected" in stream_name and "odom" in stream_name
-    )
     if corrected_odoms and base_to_optical is None:
         print("no CameraInfo stream or optical tf edge — skipping tag landmarks")
     elif corrected_odoms:

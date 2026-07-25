@@ -162,18 +162,23 @@ class LockstepReplay(Module):
         merged: list[tuple[float, str, Any]] = []
         store = SqliteStore(path=self.config.db, must_exist=True)
         store.start()
-        for observation in islice(
-            store.stream(self.config.odometry_stream, Odometry),
-            0,
-            None,
-            self.config.odometry_stride,
-        ):
-            merged.append((float(observation.ts), "odom", observation.data))
-        for lidar_observation in islice(
-            store.stream(self.config.lidar_stream, PointCloud2), 0, None, self.config.lidar_stride
-        ):
-            merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
-        store.stop()
+        try:
+            for observation in islice(
+                store.stream(self.config.odometry_stream, Odometry),
+                0,
+                None,
+                self.config.odometry_stride,
+            ):
+                merged.append((float(observation.ts), "odom", observation.data))
+            for lidar_observation in islice(
+                store.stream(self.config.lidar_stream, PointCloud2),
+                0,
+                None,
+                self.config.lidar_stride,
+            ):
+                merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
+        finally:
+            store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 
@@ -287,18 +292,23 @@ class RateReplay(Module):
         merged: list[tuple[float, str, Any]] = []
         store = SqliteStore(path=self.config.db, must_exist=True)
         store.start()
-        for observation in islice(
-            store.stream(self.config.odometry_stream, Odometry),
-            0,
-            None,
-            self.config.odometry_stride,
-        ):
-            merged.append((float(observation.ts), "odom", observation.data))
-        for lidar_observation in islice(
-            store.stream(self.config.lidar_stream, PointCloud2), 0, None, self.config.lidar_stride
-        ):
-            merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
-        store.stop()
+        try:
+            for observation in islice(
+                store.stream(self.config.odometry_stream, Odometry),
+                0,
+                None,
+                self.config.odometry_stride,
+            ):
+                merged.append((float(observation.ts), "odom", observation.data))
+            for lidar_observation in islice(
+                store.stream(self.config.lidar_stream, PointCloud2),
+                0,
+                None,
+                self.config.lidar_stride,
+            ):
+                merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
+        finally:
+            store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 

@@ -152,21 +152,12 @@ def accumulate_maps(
 
 
 def read_camera_info(
-    store: Any, preferred_stream: str = "camera_info"
+    store: Any, stream_name: str = "camera_info"
 ) -> tuple[np.ndarray, np.ndarray, str] | None:
-    """``(K 3x3, distortion, optical frame_id)`` from a CameraInfo stream, or None if absent.
-
-    Uses ``preferred_stream`` when present, else the first stream whose name contains
-    ``camera_info`` (the stream name is rig-dependent, e.g. ``realsense_camera_info``)."""
-    streams = store.list_streams()
-    name = (
-        preferred_stream
-        if preferred_stream in streams
-        else next((stream for stream in streams if "camera_info" in stream), "")
-    )
-    if not name:
+    """``(K 3x3, distortion, optical frame_id)`` from the ``camera_info`` stream, or None if absent."""
+    if stream_name not in store.list_streams():
         return None
-    observation = next(iter(store.stream(name, CameraInfo)), None)
+    observation = next(iter(store.stream(stream_name, CameraInfo)), None)
     if observation is None:
         return None
     info = observation.data

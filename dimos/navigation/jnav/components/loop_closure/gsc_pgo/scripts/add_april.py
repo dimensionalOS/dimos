@@ -193,8 +193,8 @@ def main() -> None:
     camera_info = read_camera_info(store, args.camera_info_stream)
     if camera_info is None:
         sys.exit(
-            f"no CameraInfo stream (looked for {args.camera_info_stream!r} or any "
-            f"'*camera_info*' stream) in {db_path} -- can't detect AprilTags."
+            f"no {args.camera_info_stream!r} CameraInfo stream in {db_path} "
+            "-- can't detect AprilTags."
         )
     camera_matrix, distortion, _optical_frame = camera_info
     marker_length = args.tag_size if args.tag_size is not None else DEFAULT_MARKER_LENGTH_METERS

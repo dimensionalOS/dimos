@@ -51,6 +51,9 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.artifacts impor
     write_deformation_nodes,
     write_pose_graph,
 )
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.db_fallback import (
+    resolve_db_path,
+)
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy import (
     normalize_go2_legacy,
 )
@@ -82,7 +85,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--db", type=Path, required=True, help="recording .db file")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        required=True,
+        help="recording .db file, or an LFS dataset name (e.g. go2_china_office.db) "
+        "which is git-pulled and decompressed from LFS when not present locally",
+    )
     parser.add_argument("--lidar", default="", help="input lidar stream (auto if unset)")
     parser.add_argument("--odom", default="", help="input odometry stream (auto if unset)")
     parser.add_argument("--tags", default="raw_april_tags", help="unfiltered AprilTag stream")
@@ -131,11 +140,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    db_path = args.db.expanduser()
+    db_path = resolve_db_path(args.db)
     if db_path.is_dir():
         sys.exit(f"--db must be a .db file, not a directory: {db_path}")
-    if not db_path.exists():
-        sys.exit(f"no db at {db_path}")
     rec_dir = db_path.parent
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
@@ -153,8 +160,10 @@ def main() -> None:
     camera_info = read_camera_info(store, args.camera_info_stream)
     if camera_info is None:
         print(
-            f"WARNING: no CameraInfo stream (looked for {args.camera_info_stream!r} or any "
-            "'*camera_info*' stream) -- AprilTag stage skipped; ICP + odom only.",
+            f"WARNING: no {args.camera_info_stream!r} CameraInfo stream "
+            "-- AprilTag stage skipped; ICP + odom only. If this is a go2 "
+            "recording, add the static front-camera intrinsics first with "
+            "scripts/add_camera_info.py, then re-run.",
             flush=True,
         )
         camera_matrix, distortion = None, None
@@ -342,7 +351,7 @@ def main() -> None:
                 args.accum_voxel,
                 args.accum_max_range,
             )
-        if args.rrd and camera_info is not None:
+        if args.rrd:
             build_and_open_rrd(db_path, lidar_stream, odom_stream, args.tags, args.world_frame)
     store.stop()
 

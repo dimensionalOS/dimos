@@ -38,6 +38,9 @@ TF_STREAM = "tf"
 LEGACY_ODOM_STREAMS = {"odom", "go2_odom"}
 GO2_CORRECTED_LIDAR_STREAM_NAME = "l1_cloud"
 GO2_CORRECTED_LIDAR_FRAME = "l1_link"
+# fallbacks when a bare PoseStamped odom carries no world/base frame in its header
+DEFAULT_WORLD_FRAME = "world"
+DEFAULT_BASE_FRAME = "base_link"
 # proper "Odometry" type instead of Pose
 GO2_CORRECTED_ODOMETRY_STREAM_NAME = "go2_odometry"
 LOG_EVERY = 5000
@@ -161,6 +164,15 @@ def normalize_go2_legacy(
     if not len(odom_rows):
         return odom_tf, odom_stream, lidar_stream
     world_frame, _, base_frame = odom_tf.partition(":")
+    # a bare PoseStamped odom has no child_frame_id, so default_odom_edge hands us an empty
+    # edge; fall back to the odom's own header frame (its parent) and the go2 base link, else
+    # go2_odometry + the static tf get written in an empty frame and every world<->l1_link
+    # lookup fails (raw map + comparison rrd come out empty).
+    if not world_frame:
+        first = next(iter(store.stream(odom_stream, PoseStamped)), None)
+        world_frame = (getattr(first.data, "frame_id", "") if first else "") or DEFAULT_WORLD_FRAME
+    if not base_frame:
+        base_frame = DEFAULT_BASE_FRAME
     print("go2 legacy recording: deriving l1_cloud / go2_odometry / l1_link tf", flush=True)
     # Ephemeral world->l1_link edge (the odom trajectory) so _write_l1_cloud un-registers
     # world-framed scans through the tf chain instead of hand-rolled quat math.
