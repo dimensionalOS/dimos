@@ -27,14 +27,17 @@ python -m dimos.protocol.pubsub.impl.webrtc.mvp_cli local --duration 5
 The result is one JSON object containing:
 
 - `signaling_connected_ms`: cold offer/answer and ICE connection time
-- `media_to_first_frame_ms`: time from an established media path to the first frame
+- `media_to_first_frame_ms`: time from accepting the media offer to the first frame
 - `latency_ms_p50` and `latency_ms_p95`: one-way frame latency
 - `sequence_gaps`: frames skipped between decoded timestamp headers
 - RTP packets received and lost
 
 The sender embeds a timestamp, sequence number, and CRC in each synthetic
 frame. This measures the encoded H.264 path instead of only measuring a
-DataChannel ping.
+DataChannel ping. The publisher offers H.264 only; startup fails instead of
+silently falling back when the local H.264 encoder is unavailable. The
+subscriber also fails if no real video frame arrives within 20 seconds or if
+none of the received frames contain valid timestamp metadata.
 
 Run the publisher at one site, for example China:
 

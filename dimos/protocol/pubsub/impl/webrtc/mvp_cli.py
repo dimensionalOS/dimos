@@ -53,6 +53,22 @@ def _required(value: str | None, name: str) -> str:
     raise typer.BadParameter(f"{name} is required")
 
 
+def _publisher_config(
+    *,
+    broker_url: str,
+    api_key: str,
+    robot_name: str,
+) -> BrokerConfig:
+    return BrokerConfig(
+        broker_url=broker_url,
+        api_key=api_key,
+        robot_name=robot_name,
+        robot_type="webrtc-mvp",
+        video_codec="h264",
+        strict_video_codec=True,
+    )
+
+
 def _operator_api(
     broker_url: str,
     operator_token: str,
@@ -75,6 +91,23 @@ def _operator_api(
     if not isinstance(data, dict):
         raise RuntimeError("Broker returned a non-object JSON response")
     return data
+
+
+async def _set_local_description_with_ice_timeout(
+    pc: Any,
+    description: Any,
+    *,
+    timeout: float = 20.0,
+) -> None:
+    async def _set_and_gather() -> None:
+        await pc.setLocalDescription(description)
+        while pc.iceGatheringState != "complete":
+            await asyncio.sleep(0.05)
+
+    try:
+        await asyncio.wait_for(_set_and_gather(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(f"ICE gathering did not complete within {timeout:g} seconds") from exc
 
 
 @webrtc_mvp_app.command("local")
@@ -123,12 +156,10 @@ def publish(
 ) -> None:
     """Publish timestamped synthetic H.264 video and print the session id."""
     key = _required(api_key, "TELEOP_API_KEY or --api-key")
-    provider = BrokerConfig(
+    provider = _publisher_config(
         broker_url=broker_url,
         api_key=key,
         robot_name=robot_name,
-        robot_type="webrtc-mvp",
-        video_codec="h264",
     ).provider()
     started = time.perf_counter()
     provider.start()
@@ -275,9 +306,7 @@ async def _subscribe(
     media_ready_at: float | None = None
     connected_at: float | None = None
     try:
-        await pc.setLocalDescription(await pc.createOffer())
-        while pc.iceGatheringState != "complete":
-            await asyncio.sleep(0.05)
+        await _set_local_description_with_ice_timeout(pc, await pc.createOffer())
         join = await asyncio.to_thread(
             _operator_api,
             broker_url,
@@ -300,8 +329,11 @@ async def _subscribe(
         video_offer = bridge.get("video_offer")
         if not isinstance(video_offer, str):
             raise RuntimeError(f"Broker returned no video offer: {bridge.get('video_status')}")
+        # Record this before applying the offer: ontrack and even the first
+        # frame can race ahead once the existing PeerConnection is connected.
+        media_ready_at = time.perf_counter()
         await pc.setRemoteDescription(RTCSessionDescription(sdp=video_offer, type="offer"))
-        await pc.setLocalDescription(await pc.createAnswer())
+        await _set_local_description_with_ice_timeout(pc, await pc.createAnswer())
         await asyncio.to_thread(
             _operator_api,
             broker_url,
@@ -310,7 +342,6 @@ async def _subscribe(
             f"/sessions/{session_id}/renegotiate-answer",
             {"sdp_answer": pc.localDescription.sdp},
         )
-        media_ready_at = time.perf_counter()
         try:
             await asyncio.wait_for(first_frame_received.wait(), timeout=20.0)
         except asyncio.TimeoutError as exc:
