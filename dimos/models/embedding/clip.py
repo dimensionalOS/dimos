@@ -21,10 +21,21 @@ from PIL import Image as PILImage
 import torch
 import torch.nn.functional as functional
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
+
+
+def _pooled(features: torch.Tensor | BaseModelOutputWithPooling) -> torch.Tensor:
+    """Return the projected embedding tensor.
+
+    transformers>=5 returns a ``BaseModelOutputWithPooling`` from
+    ``get_{image,text}_features``, with the projected embedding in
+    ``pooler_output``; earlier versions return that tensor directly.
+    """
+    return features if isinstance(features, torch.Tensor) else features.pooler_output
 
 
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
@@ -62,7 +73,7 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         # Process images
         with torch.inference_mode():
             inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
-            image_features = self._model.get_image_features(**inputs)
+            image_features = _pooled(self._model.get_image_features(**inputs))
 
             if self.config.normalize:
                 image_features = functional.normalize(image_features, dim=-1)
@@ -88,7 +99,7 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
             inputs = self._processor(
                 text=list(texts), return_tensors="pt", padding=True, truncation=True
             ).to(self.config.device)
-            text_features = self._model.get_text_features(**inputs)
+            text_features = _pooled(self._model.get_text_features(**inputs))
 
             if self.config.normalize:
                 text_features = functional.normalize(text_features, dim=-1)
