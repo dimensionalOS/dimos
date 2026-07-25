@@ -33,7 +33,7 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
-from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.constants import CACHE_DIR, CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -169,6 +169,12 @@ def cache_clean(
         "-f",
         help="Clean while DimOS is running and delete cached Git checkouts with local work",
     ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt",
+    ),
 ) -> None:
     """Remove regenerable files cached by DimOS."""
     active_run = get_most_recent(alive_only=True)
@@ -185,6 +191,34 @@ def cache_clean(
             err=True,
         )
 
+    if not os.path.lexists(CACHE_DIR):
+        typer.echo(f"No DimOS cache found at {CACHE_DIR}.")
+        return
+
+    typer.echo(f"DimOS cache directory: {CACHE_DIR}")
+    typer.echo(
+        "Removes downloaded robot assets, prepared URDFs, cooked scene meshes, "
+        "the ament index, and the downloaded Deno runtime."
+    )
+    typer.echo(
+        "Preserves logs, recordings, datasets, configuration, and caches owned "
+        "by third-party tools."
+    )
+    if force:
+        typer.echo(
+            "Force mode also removes cached robot Git checkouts with local changes "
+            "or local-only commits.",
+            err=True,
+        )
+    else:
+        typer.echo(
+            "Cached robot Git checkouts with local changes or local-only commits will be skipped."
+        )
+
+    if not yes and not typer.confirm("Continue?", default=False):
+        typer.echo("Cache cleanup cancelled.")
+        return
+
     result = clean_caches(force=force)
     for path in result.cleaned:
         typer.echo(f"Cleaned cache: {path}")
@@ -193,8 +227,6 @@ def cache_clean(
     for issue in result.failed:
         typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
 
-    if not result.cleaned and result.complete:
-        typer.echo("No DimOS caches found.")
     if not result.complete:
         raise typer.Exit(1)
 

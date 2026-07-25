@@ -246,7 +246,13 @@ dimos cache clean
 The command does not remove logs, recordings, datasets, configuration, or
 third-party model caches. It refuses to run while a DimOS blueprint is active
 and preserves cached Git checkouts containing local changes or local-only
-commits. Pass `--force` to override both protections.
+commits.
+
+Before deleting anything, the command displays the cache directory and a
+summary of what it removes, then asks for confirmation with a default of
+`No`. Pass `--yes` to skip the prompt in automation. Pass `--force` to clean
+while DimOS is running and remove protected Git checkouts; `--force` still
+prompts unless combined with `--yes`.
 
 ### `dimos spy`
 
