@@ -66,8 +66,8 @@ def create_s3_client(
 ) -> S3Client:
     """Create a boto3 S3 client without making boto3 a core dependency."""
     try:
-        import boto3
-        from botocore.config import Config
+        import boto3  # type: ignore[import-not-found,import-untyped]
+        from botocore.config import Config  # type: ignore[import-not-found,import-untyped]
     except ImportError as exc:
         raise RuntimeError(
             "S3 replay storage requires `pip install 'dimos[cloud-storage]'`"
