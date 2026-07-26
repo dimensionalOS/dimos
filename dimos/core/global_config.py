@@ -54,7 +54,10 @@ class GlobalConfig(BaseSettings):
     device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
-    replay_db: str = "go2_short"
+    replay_db: str = Field(
+        default="go2_short",
+        validation_alias=AliasChoices("DIMOS_REPLAY_DB", "replay_db"),
+    )
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
