@@ -97,7 +97,12 @@ class WebRTCPubSub(AllPubSub[str, bytes]):
                 except Exception:
                     logger.exception("subscribe_all callback error")
 
-        self._provider.subscribe(topic, _dispatch)
+        try:
+            self._provider.subscribe(topic, _dispatch)
+        except BaseException:
+            with self._lock:
+                self._all_dispatch_topics.discard(topic)
+            raise
 
     def subscribe_all(self, callback: Callable[[bytes, str], Any]) -> Callable[[], None]:
         """Receive every message delivered to any subscribed topic."""

@@ -136,3 +136,11 @@ def test_odom_degenerate_quaternion_does_not_raise(module: MapCompressModule) ->
     pose = PoseStamped(ts=1.0, position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
     module._on_odom(pose)  # must not raise
     assert _published_json(module.map_out, "odom") is None
+
+
+def test_oversized_map_dropped(module: MapCompressModule) -> None:
+    rng = np.random.default_rng(7)
+    noise = rng.choice([-1, 0, 50, 100], size=(500, 500))
+    module._on_costmap(_occupancy(noise))
+    module.map_out.publish.assert_not_called()
+    assert module._last_map_pub > 0  # throttle window consumed
