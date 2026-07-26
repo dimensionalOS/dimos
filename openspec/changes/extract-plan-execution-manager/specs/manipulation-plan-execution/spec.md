@@ -94,7 +94,7 @@ tracked from the previously accepted plan is safe to replace.
 - **THEN** the system treats the task as already safe
 - **AND** it may dispatch the replacement plan
 
-#### Scenario: Previous task safety is unknown
+#### Scenario: Previous task safety is uncertain
 
 - **GIVEN** cancellation of a tracked coordinator task returns no result or raises
   an error
@@ -116,7 +116,7 @@ every task that may have accepted it.
 - **AND** reports a safe rejection if every possibly accepted task is confirmed
   stopped
 
-#### Scenario: Dispatch outcome is unknown
+#### Scenario: Dispatch outcome is uncertain
 
 - **GIVEN** a coordinator execute call raises after the task may have accepted its
   trajectory

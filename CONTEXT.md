@@ -20,6 +20,12 @@ Confirmation that every targeted robot task accepted its part of a generated mot
 plan. It does not mean the physical motion completed.
 _Avoid_: Execution completion, motion completion
 
+**Execution uncertainty**:
+Inability to confirm whether a coordinator task accepted or stopped a motion
+command. Uncertain execution projects to a fault and blocks replacement until
+safety is confirmed.
+_Avoid_: Unknown state, generic failure
+
 **Fresh plan**:
 A generated motion plan whose initial joint state still agrees with the latest
 available robot state closely enough to dispatch safely.

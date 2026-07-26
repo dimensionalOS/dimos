@@ -82,3 +82,21 @@
 - [x] 5.7 Confirm `dimos/robot/all_blueprints.py` remains unchanged; if blueprint
   inputs changed unexpectedly, run
   `pytest dimos/robot/test_all_blueprints_generation.py`.
+
+## 6. Review Refinements
+
+- [x] 6.1 Add an owning generic control-coordinator client for task execution,
+  cancellation, task state, and gripper RPCs, with focused lifecycle tests.
+- [x] 6.2 Eagerly initialize manipulation execution dependencies during module
+  startup and remove optional/lazy coordinator and manager state.
+- [x] 6.3 Use config-boundary Pydantic validation for plan-start tolerance while
+  retaining immutable internal execution values.
+- [x] 6.4 Unify execution outcomes around accepted, rejected, and uncertain;
+  preserve safe prior module state on rejection and reserve fault for uncertainty.
+- [x] 6.5 Replace the execution manager's three-lock generation protocol with one
+  cancellation-prioritizing condition arbiter and cover its race behavior.
+- [x] 6.6 Align the glossary, ADR, capability docs, and OpenSpec artifacts with the
+  refined client boundary, lifecycle, terminology, and concurrency design.
+- [x] 6.7 Repair manipulation integration fixtures for eager dependency injection
+  and removed private execution helpers, then run focused, self-hosted, type,
+  style, OpenSpec, docs, and registry checks.

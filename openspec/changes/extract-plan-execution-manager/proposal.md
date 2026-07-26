@@ -13,8 +13,9 @@ making dispatch and cancellation outcomes explicit inside the module.
 
 - Add a plan execution manager that validates and dispatches complete generated
   plans and cancels tasks that may still be active.
-- Add a narrow coordinator execution adapter that converts generic RPC results
-  into typed dispatch and cancellation outcomes.
+- Add a generic owning control-coordinator client for task, status, and gripper
+  RPC mechanics, plus a narrow manipulation adapter that converts raw results into
+  typed execution and cancellation outcomes.
 - Add immutable per-robot execution targets with validated model-to-coordinator
   joint-name mappings.
 - Use replacement execution: confirm prior tasks safe through cancellation before
@@ -30,8 +31,9 @@ making dispatch and cancellation outcomes explicit inside the module.
 
 ## Affected DimOS Surfaces
 
-- Modules/streams: Refactors `ManipulationModule` internals; adds in-process
-  execution policy and coordinator adapter classes. No stream contract changes.
+- Modules/streams: Refactors `ManipulationModule` internals; adds an owning
+  coordinator client plus in-process execution policy and adapter classes. No
+  stream contract changes.
 - Blueprints/CLI: Existing manipulation blueprints and CLI commands remain
   source-compatible; no registry regeneration is expected.
 - Skills/MCP: Existing manipulation skills retain their signatures and boolean or

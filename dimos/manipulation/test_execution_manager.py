@@ -24,10 +24,9 @@ import pytest
 from dimos.manipulation.execution_manager import (
     CancellationResult,
     CoordinatorCancelOutcome,
-    CoordinatorDispatchOutcome,
     CoordinatorExecutionAdapter,
-    ExecutionDispatchOutcome,
     ExecutionDispatchResult,
+    ExecutionOutcome,
     ExecutionTarget,
     PlanExecutionManager,
 )
@@ -40,22 +39,25 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 @dataclass
 class FakeCoordinator:
-    execute_outcomes: list[CoordinatorDispatchOutcome] = field(default_factory=list)
+    execute_outcomes: list[ExecutionOutcome] = field(default_factory=list)
     cancel_outcomes: dict[str, CoordinatorCancelOutcome] = field(default_factory=dict)
     execute_calls: list[tuple[str, JointTrajectory]] = field(default_factory=list)
     cancel_calls: list[str] = field(default_factory=list)
     on_execute: Callable[[str], None] | None = None
+    on_cancel: Callable[[str], None] | None = None
 
-    def execute(self, task_name: str, trajectory: JointTrajectory) -> CoordinatorDispatchOutcome:
+    def execute(self, task_name: str, trajectory: JointTrajectory) -> ExecutionOutcome:
         self.execute_calls.append((task_name, trajectory))
         if self.on_execute is not None:
             self.on_execute(task_name)
         if self.execute_outcomes:
             return self.execute_outcomes.pop(0)
-        return CoordinatorDispatchOutcome.ACCEPTED
+        return ExecutionOutcome.ACCEPTED
 
     def cancel(self, task_name: str) -> CoordinatorCancelOutcome:
         self.cancel_calls.append(task_name)
+        if self.on_cancel is not None:
+            self.on_cancel(task_name)
         return self.cancel_outcomes.get(task_name, CoordinatorCancelOutcome.CANCELLED)
 
 
@@ -128,31 +130,31 @@ def _manager(
 @pytest.mark.parametrize(
     ("rpc_result", "expected"),
     [
-        (True, CoordinatorDispatchOutcome.ACCEPTED),
-        (False, CoordinatorDispatchOutcome.REJECTED),
-        (None, CoordinatorDispatchOutcome.UNKNOWN),
+        (True, ExecutionOutcome.ACCEPTED),
+        (False, ExecutionOutcome.REJECTED),
+        (None, ExecutionOutcome.UNCERTAIN),
     ],
 )
 def test_coordinator_adapter_translates_execute_result(
-    rpc_result: bool | None, expected: CoordinatorDispatchOutcome
+    rpc_result: bool | None, expected: ExecutionOutcome
 ) -> None:
-    rpc = MagicMock()
-    rpc.task_invoke.return_value = rpc_result
+    client = MagicMock()
+    client.execute_task.return_value = rpc_result
     trajectory = JointTrajectory()
 
-    result = CoordinatorExecutionAdapter(rpc).execute("traj_arm", trajectory)
+    result = CoordinatorExecutionAdapter(client).execute("traj_arm", trajectory)
 
     assert result is expected
-    rpc.task_invoke.assert_called_once_with("traj_arm", "execute", {"trajectory": trajectory})
+    client.execute_task.assert_called_once_with("traj_arm", trajectory)
 
 
-def test_coordinator_adapter_translates_execute_exception_to_unknown() -> None:
-    rpc = MagicMock()
-    rpc.task_invoke.side_effect = RuntimeError("rpc failed")
+def test_coordinator_adapter_translates_execute_exception_to_uncertain() -> None:
+    client = MagicMock()
+    client.execute_task.side_effect = RuntimeError("rpc failed")
 
-    result = CoordinatorExecutionAdapter(rpc).execute("traj_arm", JointTrajectory())
+    result = CoordinatorExecutionAdapter(client).execute("traj_arm", JointTrajectory())
 
-    assert result is CoordinatorDispatchOutcome.UNKNOWN
+    assert result is ExecutionOutcome.UNCERTAIN
 
 
 @pytest.mark.parametrize(
@@ -160,19 +162,19 @@ def test_coordinator_adapter_translates_execute_exception_to_unknown() -> None:
     [
         (True, CoordinatorCancelOutcome.CANCELLED),
         (False, CoordinatorCancelOutcome.ALREADY_STOPPED),
-        (None, CoordinatorCancelOutcome.UNKNOWN),
+        (None, CoordinatorCancelOutcome.UNCERTAIN),
     ],
 )
 def test_coordinator_adapter_translates_cancel_result(
     rpc_result: bool | None, expected: CoordinatorCancelOutcome
 ) -> None:
-    rpc = MagicMock()
-    rpc.task_invoke.return_value = rpc_result
+    client = MagicMock()
+    client.cancel_task.return_value = rpc_result
 
-    result = CoordinatorExecutionAdapter(rpc).cancel("traj_arm")
+    result = CoordinatorExecutionAdapter(client).cancel("traj_arm")
 
     assert result is expected
-    rpc.task_invoke.assert_called_once_with("traj_arm", "cancel", {})
+    client.cancel_task.assert_called_once_with("traj_arm")
 
 
 def test_execution_target_inverts_mapping_and_keeps_identity_names() -> None:
@@ -219,7 +221,7 @@ def test_execute_dispatches_complete_multi_robot_plan_with_shared_timing() -> No
 
     result = manager.execute(plan)
 
-    assert result.outcome is ExecutionDispatchOutcome.ACCEPTED
+    assert result.outcome is ExecutionOutcome.ACCEPTED
     assert result.accepted_tasks == ("traj_left", "traj_right")
     left = coordinator.execute_calls[0][1]
     right = coordinator.execute_calls[1][1]
@@ -238,7 +240,7 @@ def test_execute_rejects_unsuccessful_plan_before_dispatch() -> None:
 
     result = manager.execute(_plan(status=PlanningStatus.NO_SOLUTION))
 
-    assert result.outcome is ExecutionDispatchOutcome.REJECTED
+    assert result.outcome is ExecutionOutcome.REJECTED
     assert coordinator.execute_calls == []
 
 
@@ -258,7 +260,7 @@ def test_execute_rejects_missing_duplicate_or_mismatched_current_state(
 
     result = manager.execute(_plan())
 
-    assert result.outcome is ExecutionDispatchOutcome.REJECTED
+    assert result.outcome is ExecutionOutcome.REJECTED
     assert coordinator.execute_calls == []
 
 
@@ -268,7 +270,7 @@ def test_execute_rejects_plan_when_group_and_trajectory_robots_differ() -> None:
 
     result = manager.execute(_plan(group_ids=("other/manipulator",)))
 
-    assert result.outcome is ExecutionDispatchOutcome.REJECTED
+    assert result.outcome is ExecutionOutcome.REJECTED
     assert coordinator.execute_calls == []
 
 
@@ -286,13 +288,13 @@ def test_execute_cancels_previous_plan_before_dispatching_replacement() -> None:
 
 
 def test_execute_blocks_replacement_when_previous_task_is_unresolved() -> None:
-    coordinator = FakeCoordinator(cancel_outcomes={"traj_arm": CoordinatorCancelOutcome.UNKNOWN})
+    coordinator = FakeCoordinator(cancel_outcomes={"traj_arm": CoordinatorCancelOutcome.UNCERTAIN})
     manager = _manager(coordinator)
     assert manager.execute(_plan()).accepted
 
     result = manager.execute(_plan())
 
-    assert result.outcome is ExecutionDispatchOutcome.FAULT
+    assert result.outcome is ExecutionOutcome.UNCERTAIN
     assert result.unresolved_tasks == ("traj_arm",)
     assert len(coordinator.execute_calls) == 1
 
@@ -300,8 +302,8 @@ def test_execute_blocks_replacement_when_previous_task_is_unresolved() -> None:
 def test_execute_rolls_back_accepted_task_when_later_task_rejects() -> None:
     coordinator = FakeCoordinator(
         execute_outcomes=[
-            CoordinatorDispatchOutcome.ACCEPTED,
-            CoordinatorDispatchOutcome.REJECTED,
+            ExecutionOutcome.ACCEPTED,
+            ExecutionOutcome.REJECTED,
         ]
     )
     targets = (
@@ -323,20 +325,20 @@ def test_execute_rolls_back_accepted_task_when_later_task_rejects() -> None:
 
     result = manager.execute(plan)
 
-    assert result.outcome is ExecutionDispatchOutcome.REJECTED
+    assert result.outcome is ExecutionOutcome.REJECTED
     assert coordinator.cancel_calls == ["traj_left"]
 
 
-def test_execute_faults_when_unknown_dispatch_cannot_be_cancelled() -> None:
+def test_execute_is_uncertain_when_dispatch_cannot_be_cancelled() -> None:
     coordinator = FakeCoordinator(
-        execute_outcomes=[CoordinatorDispatchOutcome.UNKNOWN],
-        cancel_outcomes={"traj_arm": CoordinatorCancelOutcome.UNKNOWN},
+        execute_outcomes=[ExecutionOutcome.UNCERTAIN],
+        cancel_outcomes={"traj_arm": CoordinatorCancelOutcome.UNCERTAIN},
     )
     manager = _manager(coordinator)
 
     result = manager.execute(_plan())
 
-    assert result.outcome is ExecutionDispatchOutcome.FAULT
+    assert result.outcome is ExecutionOutcome.UNCERTAIN
     assert result.unresolved_tasks == ("traj_arm",)
 
 
@@ -371,8 +373,80 @@ def test_cancel_waits_for_in_flight_dispatch_and_stops_accepted_task() -> None:
 
     assert not executing.is_alive()
     assert not cancelling.is_alive()
-    assert execute_results[0].outcome is ExecutionDispatchOutcome.REJECTED
+    assert execute_results[0].outcome is ExecutionOutcome.REJECTED
     assert cancel_results[0].safe
+    assert coordinator.cancel_calls == ["traj_arm"]
+
+
+def test_cancel_stops_multi_robot_dispatch_before_the_next_robot() -> None:
+    dispatch_started = threading.Event()
+    release_dispatch = threading.Event()
+    coordinator = FakeCoordinator()
+
+    def block_first_dispatch(task_name: str) -> None:
+        if task_name == "traj_left":
+            dispatch_started.set()
+            assert release_dispatch.wait(timeout=1.0)
+
+    coordinator.on_execute = block_first_dispatch
+    targets = (
+        _target("left", "traj_left", ("j0",)),
+        _target("right", "traj_right", ("k0",)),
+    )
+    manager = _manager(
+        coordinator,
+        targets=targets,
+        current=JointState(name=["left/j0", "right/k0"], position=[0.0, 0.0]),
+    )
+    plan = _plan(
+        group_ids=("left/arm", "right/arm"),
+        names=["left/j0", "right/k0"],
+    )
+    execute_results: list[ExecutionDispatchResult] = []
+    cancel_results: list[CancellationResult] = []
+    executing = threading.Thread(target=lambda: execute_results.append(manager.execute(plan)))
+    executing.start()
+    assert dispatch_started.wait(timeout=1.0)
+
+    cancelling = threading.Thread(target=lambda: cancel_results.append(manager.cancel()))
+    cancelling.start()
+    release_dispatch.set()
+    executing.join(timeout=1.0)
+    cancelling.join(timeout=1.0)
+
+    assert not executing.is_alive()
+    assert not cancelling.is_alive()
+    assert execute_results[0].outcome is ExecutionOutcome.REJECTED
+    assert cancel_results[0].safe
+    assert [task for task, _ in coordinator.execute_calls] == ["traj_left"]
+    assert coordinator.cancel_calls == ["traj_left"]
+
+
+def test_concurrent_cancellations_serialize_and_remain_safe() -> None:
+    cancel_started = threading.Event()
+    release_cancel = threading.Event()
+    coordinator = FakeCoordinator()
+    manager = _manager(coordinator)
+    assert manager.execute(_plan()).accepted
+
+    def block_cancel(_task_name: str) -> None:
+        cancel_started.set()
+        assert release_cancel.wait(timeout=1.0)
+
+    coordinator.on_cancel = block_cancel
+    results: list[CancellationResult] = []
+    first = threading.Thread(target=lambda: results.append(manager.cancel()))
+    second = threading.Thread(target=lambda: results.append(manager.cancel()))
+    first.start()
+    assert cancel_started.wait(timeout=1.0)
+    second.start()
+    release_cancel.set()
+    first.join(timeout=1.0)
+    second.join(timeout=1.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert [result.safe for result in results] == [True, True]
     assert coordinator.cancel_calls == ["traj_arm"]
 
 
@@ -396,6 +470,6 @@ def test_concurrent_execute_fails_fast_without_queueing() -> None:
     release_dispatch.set()
     first.join(timeout=1.0)
 
-    assert second.outcome is ExecutionDispatchOutcome.REJECTED
+    assert second.outcome is ExecutionOutcome.REJECTED
     assert first_results[0].accepted
     assert len(coordinator.execute_calls) == 1

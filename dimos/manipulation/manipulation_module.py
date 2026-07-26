@@ -29,19 +29,22 @@ from enum import Enum
 import math
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.coordinator_client import ControlCoordinatorClient
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.execution_manager import (
+    DEFAULT_PLAN_START_TOLERANCE,
     CoordinatorExecutionAdapter,
-    ExecutionDispatchOutcome,
+    ExecutionOutcome,
+    ExecutionPolicy,
     ExecutionTarget,
     PlanExecutionManager,
 )
@@ -94,9 +97,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import RPCClient
-
 logger = setup_logger()
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
@@ -133,6 +133,11 @@ class ManipulationModuleConfig(ModuleConfig):
     )
     planner_name: PlannerName = "roboplan"
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
+    plan_start_tolerance: float = Field(
+        default=DEFAULT_PLAN_START_TOLERANCE,
+        ge=0.0,
+        allow_inf_nan=False,
+    )
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -176,10 +181,9 @@ class ManipulationModule(Module):
         # Robot-local paths and trajectories are derived from this plan on demand.
         self._last_plan: GeneratedPlan | None = None
 
-        # Coordinator integration (lazy initialized)
-        self._coordinator_client: RPCClient | None = None
-        self._execution_manager: PlanExecutionManager | None = None
-        self._execution_manager_client: RPCClient | None = None
+        # Coordinator integration (initialized in start())
+        self._coordinator_client: ControlCoordinatorClient
+        self._execution_manager: PlanExecutionManager
 
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
@@ -197,6 +201,7 @@ class ManipulationModule(Module):
 
         # Initialize planning stack
         self._initialize_planning()
+        self._initialize_execution()
 
         # Subscribe to joint state via port
         if self.coordinator_joint_state is not None:
@@ -278,8 +283,6 @@ class ManipulationModule(Module):
             )
             self._tf_thread.start()
             logger.info("TF publishing thread started")
-
-        self._get_execution_manager()
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -421,14 +424,13 @@ class ManipulationModule(Module):
                 self._planning_epoch += 1
             plan = self._last_plan
 
-        manager = self._get_execution_manager()
-        cancellation = manager.cancel() if manager is not None else None
-        had_execution = bool(cancellation and cancellation.had_tracked_tasks)
+        cancellation = self._execution_manager.cancel()
+        had_execution = cancellation.had_tracked_tasks
         if not (is_planning or is_executing or had_execution):
             return False
 
         with self._lock:
-            if cancellation is not None and not cancellation.safe:
+            if not cancellation.safe:
                 self._state = ManipulationState.FAULT
                 self._error_message = "Failed to cancel coordinator tasks: " + ", ".join(
                     cancellation.unresolved_tasks
@@ -1360,21 +1362,11 @@ class ManipulationModule(Module):
         )
         return True
 
-    def _get_coordinator_client(self) -> RPCClient | None:
-        """Get or create coordinator RPC client (lazy init)."""
-        if not any(
-            c.coordinator_task_name or c.gripper_hardware_id for _, c, _ in self._robots.values()
-        ):
-            return None
-        if self._coordinator_client is None:
-            from dimos.control.coordinator import ControlCoordinator
-            from dimos.core.rpc_client import RPCClient
-
-            self._coordinator_client = RPCClient(None, ControlCoordinator)
-        return self._coordinator_client
-
-    def _get_execution_manager(self) -> PlanExecutionManager | None:
-        """Get or create the in-process planned execution manager."""
+    def _initialize_execution(
+        self,
+        coordinator_client: ControlCoordinatorClient | None = None,
+    ) -> None:
+        """Initialize coordinator access and planned execution policy."""
         targets = [
             ExecutionTarget.from_coordinator_mapping(
                 robot_name=config.name,
@@ -1385,25 +1377,23 @@ class ManipulationModule(Module):
             for _, config, _ in self._robots.values()
             if config.coordinator_task_name
         ]
-        if not targets or self._world_monitor is None:
-            return None
-        client = self._get_coordinator_client()
-        if client is None:
-            return None
-
-        manager = self._execution_manager
-        manager_client = self._execution_manager_client
-        if manager is not None and manager_client is client:
-            return manager
-
-        manager = PlanExecutionManager(
-            targets=targets,
-            current_joint_state=self._world_monitor.current_global_joint_state,
-            coordinator=CoordinatorExecutionAdapter(client),
+        self._coordinator_client = (
+            coordinator_client if coordinator_client is not None else ControlCoordinatorClient()
         )
-        self._execution_manager = manager
-        self._execution_manager_client = client
-        return manager
+        self._execution_manager = PlanExecutionManager(
+            targets=targets,
+            current_joint_state=self._current_execution_joint_state,
+            coordinator=CoordinatorExecutionAdapter(self._coordinator_client),
+            policy=ExecutionPolicy(
+                plan_start_tolerance=self.config.plan_start_tolerance,
+            ),
+        )
+
+    def _current_execution_joint_state(self) -> JointState:
+        """Return the current global joint state required for safe dispatch."""
+        if self._world_monitor is None:
+            raise RuntimeError("Manipulation world monitor is not configured")
+        return self._world_monitor.current_global_joint_state()
 
     @staticmethod
     def _plan_robot_names(plan: GeneratedPlan) -> tuple[RobotName, ...] | None:
@@ -1439,10 +1429,6 @@ class ManipulationModule(Module):
             )
             return False
 
-        manager = self._get_execution_manager()
-        if manager is None:
-            self._error_message = "Planned execution is not configured"
-            return False
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning("Manipulation state is not executable")
@@ -1450,7 +1436,7 @@ class ManipulationModule(Module):
             previous_state = self._state
             self._state = ManipulationState.EXECUTING
         try:
-            result = manager.execute(target_plan)
+            result = self._execution_manager.execute(target_plan)
         except Exception as exc:
             result = None
             message = f"Failed to dispatch generated plan: {exc}"
@@ -1461,20 +1447,22 @@ class ManipulationModule(Module):
             if result is None:
                 self._state = previous_state
                 self._error_message = message
-            elif result.outcome is ExecutionDispatchOutcome.ACCEPTED:
-                self._state = ManipulationState.COMPLETED
-                self._error_message = ""
-            elif result.outcome is ExecutionDispatchOutcome.FAULT:
-                self._state = ManipulationState.FAULT
-                self._error_message = result.message
             else:
-                self._state = previous_state
-                self._error_message = result.message
+                match result.outcome:
+                    case ExecutionOutcome.ACCEPTED:
+                        self._state = ManipulationState.COMPLETED
+                        self._error_message = ""
+                    case ExecutionOutcome.REJECTED:
+                        self._state = previous_state
+                        self._error_message = result.message
+                    case ExecutionOutcome.UNCERTAIN:
+                        self._state = ManipulationState.FAULT
+                        self._error_message = result.message
         return bool(result and result.accepted)
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
-        """Get trajectory execution status via coordinator task_invoke."""
+        """Get trajectory execution status from the coordinator."""
         last_plan = self._last_plan
         if robot_name is None and last_plan is not None and last_plan.path:
             if self._world_monitor is None:
@@ -1489,12 +1477,12 @@ class ManipulationModule(Module):
         if (robot := self._get_robot(robot_name)) is None:
             return None
         _, _, config, _ = robot
-        if not config.coordinator_task_name or (client := self._get_coordinator_client()) is None:
+        if not config.coordinator_task_name:
             return None
         try:
-            state = client.task_invoke(config.coordinator_task_name, "get_state", {})
+            state = self._coordinator_client.get_task_state(config.coordinator_task_name)
             if state is not None:
-                return {"state": int(state), "task": config.coordinator_task_name}
+                return {"state": state, "task": config.coordinator_task_name}
             return None
         except Exception:
             return None
@@ -1569,11 +1557,7 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return False
-        client = self._get_coordinator_client()
-        if client is None:
-            logger.error("No coordinator client for gripper control")
-            return False
-        return bool(client.set_gripper_position(hw_id, position))
+        return self._coordinator_client.set_gripper_position(hw_id, position)
 
     @rpc
     def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
@@ -1585,10 +1569,7 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return None
-        client = self._get_coordinator_client()
-        if client is None:
-            return None
-        result = client.get_gripper_position(hw_id)
+        result = self._coordinator_client.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
     @skill
@@ -1632,7 +1613,7 @@ class ManipulationModule(Module):
     ) -> bool:
         """Wait for trajectory execution to complete.
 
-        Polls the coordinator task state via task_invoke. Falls back to waiting
+        Polls the coordinator task state. Falls back to waiting
         for the trajectory duration if the coordinator is unavailable.
 
         Args:
@@ -1662,10 +1643,9 @@ class ManipulationModule(Module):
         if robot is None:
             return True
         _, _, config, _ = robot
-        client = self._get_coordinator_client()
         trajectory = last_plan.trajectory if last_plan is not None else None
 
-        if client is None or not config.coordinator_task_name:
+        if not config.coordinator_task_name:
             # No coordinator — wait for trajectory duration as fallback
             if trajectory is not None:
                 logger.info(
@@ -1674,11 +1654,11 @@ class ManipulationModule(Module):
                 time.sleep(trajectory.duration + 0.5)
             return True
 
-        # Poll task state via task_invoke
+        # Poll task state through the shared coordinator client.
         start = time.time()
         while (time.time() - start) < timeout:
             try:
-                state = client.task_invoke(config.coordinator_task_name, "get_state", {})
+                state = self._coordinator_client.get_task_state(config.coordinator_task_name)
                 # TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4
                 if state is not None:
                     state_val = int(state)
@@ -1689,7 +1669,7 @@ class ManipulationModule(Module):
                         return False
                     # state_val == 1 means EXECUTING, keep polling
                 else:
-                    # task_invoke returned None — task not found, assume done
+                    # No task state means the task is unavailable; assume done.
                     return True
             except Exception:
                 # Fallback: wait for trajectory duration
@@ -2004,9 +1984,6 @@ class ManipulationModule(Module):
 
         coordinator_client = getattr(self, "_coordinator_client", None)
         if coordinator_client is not None:
-            coordinator_client.stop_rpc_client()
-            self._coordinator_client = None
-            self._execution_manager = None
-            self._execution_manager_client = None
+            coordinator_client.close()
 
         super().stop()

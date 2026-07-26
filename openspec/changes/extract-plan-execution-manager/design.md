@@ -64,17 +64,24 @@ The manager will receive three dependencies:
 3. A `CoordinatorExecutionPort` adapter Protocol with typed `execute` and `cancel`
    methods.
 
-A production `CoordinatorExecutionAdapter` will wrap the existing `RPCClient` and
-translate `task_invoke()` behavior:
+A generic `ControlCoordinatorClient` under `dimos.control` will own one
+`RPCClient` and expose typed task execution, cancellation, task-state, and gripper
+helpers. It preserves raw execution and cancellation results and transfers
+ownership of an injected RPC client; `close()` is idempotent and always stops the
+owned connection.
 
-- Execute `True`, `False`, and `None` become accepted, rejected, and unknown.
+A production `CoordinatorExecutionAdapter` will wrap that generic client and
+translate coordinator behavior:
+
+- Execute `True`, `False`, and `None` become accepted, rejected, and uncertain.
 - Cancel `True`, `False`, and `None` become cancelled, already stopped, and
-  unknown.
-- RPC exceptions become unknown outcomes.
+  uncertain.
+- RPC exceptions become uncertain outcomes.
 
-`ManipulationModule` will create and close the RPC client and adapter. It will
-construct the manager after robot and world-monitor initialization. During stop,
-the module will ask the manager to cancel tracked tasks before closing the adapter.
+`ManipulationModule.start()` will eagerly construct the generic client, adapter,
+and manager after planning initialization, including when no robots are configured.
+The module will not keep optional or lazy execution fields. During stop, it will
+ask the manager to cancel tracked tasks before closing the client.
 
 The module's existing `execute()` and `execute_plan()` RPCs will select the explicit
 or cached plan and delegate it to the manager. Existing boolean returns will project
@@ -100,11 +107,10 @@ coordination must remain intact.
 
 ### Validate freshness immediately before dispatch
 
-Structural validation and trajectory preparation may occur before acquiring the
-dispatch lock. Under that lock, the manager first makes prior tracked tasks safe,
-then reads the latest global joint state and compares every planned joint with the
-trajectory's first waypoint. It retains the current `1e-6` tolerance during this
-extraction.
+Structural validation and trajectory preparation may occur before claiming the
+execution operation. Under the operation arbiter, the manager first makes prior
+tracked tasks safe, then reads the latest global joint state and compares every
+planned joint with the trajectory's first waypoint using the configured tolerance.
 
 Missing, duplicate, reordered, non-finite, stale, or mismatched planned joints
 reject dispatch before any new coordinator execute call.
@@ -121,21 +127,30 @@ later replacement or explicit cancellation confirms safety.
 
 ### Serialize dispatch and prioritize cancellation
 
-Private transaction facts include a dispatch lock, cancellation gate, generation
-token, and possibly active task set. Concurrent execute calls fail fast rather than
-queue. Cancellation publishes its gate before waiting for an in-flight dispatch,
-then cancels every task that might have accepted. New execute calls fail while
-cancellation is active. Concurrent cancellation is idempotent.
+One `threading.Condition` arbitrates execution and cancellation around an active
+operation flag, cancellation-waiter count, and possibly-active task set.
+Concurrent execute calls fail fast rather than queue. A cancellation waiter
+immediately blocks new execution and waits for the current coordinator RPC to
+finish. The in-flight execution then stops before dispatching another robot and
+releases the operation slot. Multiple cancellations serialize without opening a
+dispatch gap between them.
 
 ### Compensate partial multi-task dispatch
 
 The manager validates and prepares every task trajectory before sending the first
 one. It records a task as possibly active before issuing its execute RPC because an
 exception can occur after remote acceptance. If a later task rejects or has an
-unknown outcome, the manager cancels every possibly accepted task.
+uncertain outcome, the manager cancels every possibly accepted task.
 
 A fully confirmed rollback returns a safe rejection. Any unresolved cancellation
-returns a fault result with the unresolved task names.
+returns an uncertain result with the unresolved task names. The module alone
+projects uncertainty to `ManipulationState.FAULT`.
+
+### Validate configurable policy at the configuration boundary
+
+`ManipulationModuleConfig` exposes the finite, non-negative plan-start tolerance
+as a Pydantic field. Internal execution policy, target, and result values remain
+frozen dataclasses; execution-target mappings remain deeply immutable.
 
 ### Validate name alignment at construction
 
@@ -166,16 +181,16 @@ Safety depends on these invariants:
 
 - Reject an unsuccessful, malformed, stale, or partial plan before dispatch.
 - Prepare every task before the first coordinator call.
-- Treat unknown dispatch as possibly accepted.
+- Treat uncertain dispatch as possibly accepted.
 - Cancel every possibly accepted task after partial failure.
-- Block replacement when prior task safety is unknown.
+- Block replacement when prior task safety is uncertain.
 - Give cancellation priority over new dispatch.
 
 Unit tests will use an in-memory coordinator adapter to exercise every accepted,
-rejected, already-stopped, unknown, and exception path. Integration tests will use
+rejected, already-stopped, uncertain, and exception path. Integration tests will use
 the existing mock coordinator. Manual hardware QA should execute and replace a
 single-arm plan, cancel an active plan, and exercise a dual-arm plan if suitable
-hardware is available. No physical test should intentionally create an unknown
+hardware is available. No physical test should intentionally create an uncertain
 cancellation outcome.
 
 ## Risks / Trade-offs
@@ -194,9 +209,10 @@ cancellation outcome.
 
 ## Migration / Rollout
 
-1. Add manager, result, target, policy, Protocol, and adapter types with focused
-   tests.
-2. Construct the manager from existing robot configs and world-state access.
+1. Add the generic coordinator client plus manager, result, target, policy,
+   Protocol, and adapter types with focused tests.
+2. Eagerly construct the manager from existing robot configs, world-state access,
+   and Pydantic-validated policy.
 3. Replace direct execution and cancellation logic in `ManipulationModule` with
    delegation while retaining RPC signatures and public state mapping.
 4. Move execution-policy tests to the manager interface and retain module
@@ -214,4 +230,5 @@ coordinator migration, or hardware configuration must be reversed.
 ## Open Questions
 
 None. The design intentionally defers execution observation, coordinator task
-leases, physical completion semantics, and gripper extraction to separate changes.
+leases, physical completion semantics, and moving direct gripper policy into
+planned execution to separate changes.

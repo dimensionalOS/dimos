@@ -22,8 +22,9 @@ from enum import Enum, auto
 import math
 import threading
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Protocol
 
+from dimos.control.coordinator_client import ControlCoordinatorClient
 from dimos.manipulation.planning.groups.identifiers import parse_planning_group_id
 from dimos.manipulation.planning.spec.models import GeneratedPlan, RobotName
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -34,14 +35,15 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 TaskName = str
+DEFAULT_PLAN_START_TOLERANCE = 1e-6
 
 
-class CoordinatorDispatchOutcome(Enum):
-    """Result of asking one coordinator task to execute."""
+class ExecutionOutcome(Enum):
+    """Safety-aware outcome of dispatching planned execution."""
 
     ACCEPTED = auto()
     REJECTED = auto()
-    UNKNOWN = auto()
+    UNCERTAIN = auto()
 
 
 class CoordinatorCancelOutcome(Enum):
@@ -49,22 +51,14 @@ class CoordinatorCancelOutcome(Enum):
 
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
-    UNKNOWN = auto()
-
-
-class ExecutionDispatchOutcome(Enum):
-    """Aggregate result of a planned execution request."""
-
-    ACCEPTED = auto()
-    REJECTED = auto()
-    FAULT = auto()
+    UNCERTAIN = auto()
 
 
 @dataclass(frozen=True)
 class ExecutionDispatchResult:
     """Structured result of validating and dispatching one generated plan."""
 
-    outcome: ExecutionDispatchOutcome
+    outcome: ExecutionOutcome
     message: str = ""
     accepted_tasks: tuple[TaskName, ...] = ()
     unresolved_tasks: tuple[TaskName, ...] = ()
@@ -72,7 +66,7 @@ class ExecutionDispatchResult:
     @property
     def accepted(self) -> bool:
         """Return whether every task accepted the plan."""
-        return self.outcome is ExecutionDispatchOutcome.ACCEPTED
+        return self.outcome is ExecutionOutcome.ACCEPTED
 
 
 @dataclass(frozen=True)
@@ -90,7 +84,7 @@ class CancellationResult:
 class ExecutionPolicy:
     """Configuration for planned execution validation."""
 
-    plan_start_tolerance: float = 1e-6
+    plan_start_tolerance: float = DEFAULT_PLAN_START_TOLERANCE
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.plan_start_tolerance) or self.plan_start_tolerance < 0:
@@ -172,9 +166,7 @@ class ExecutionTarget:
 class CoordinatorExecutionPort(Protocol):
     """Coordinator commands required by planned execution."""
 
-    def execute(
-        self, task_name: TaskName, trajectory: JointTrajectory
-    ) -> CoordinatorDispatchOutcome:
+    def execute(self, task_name: TaskName, trajectory: JointTrajectory) -> ExecutionOutcome:
         """Ask a coordinator task to execute a trajectory."""
         ...
 
@@ -186,36 +178,38 @@ class CoordinatorExecutionPort(Protocol):
 class CoordinatorExecutionAdapter:
     """Translate generic coordinator RPC results into typed outcomes."""
 
-    def __init__(self, rpc_client: Any) -> None:
-        self._rpc_client = rpc_client
+    def __init__(self, client: ControlCoordinatorClient) -> None:
+        self._client = client
 
-    def execute(
-        self, task_name: TaskName, trajectory: JointTrajectory
-    ) -> CoordinatorDispatchOutcome:
+    def execute(self, task_name: TaskName, trajectory: JointTrajectory) -> ExecutionOutcome:
         """Dispatch a trajectory through the existing coordinator task RPC."""
         try:
-            result = self._rpc_client.task_invoke(task_name, "execute", {"trajectory": trajectory})
+            result = self._client.execute_task(task_name, trajectory)
         except Exception:
             logger.exception("Coordinator execute RPC failed", task_name=task_name)
-            return CoordinatorDispatchOutcome.UNKNOWN
-        if result is True:
-            return CoordinatorDispatchOutcome.ACCEPTED
-        if result is False:
-            return CoordinatorDispatchOutcome.REJECTED
-        return CoordinatorDispatchOutcome.UNKNOWN
+            return ExecutionOutcome.UNCERTAIN
+        match result:
+            case True:
+                return ExecutionOutcome.ACCEPTED
+            case False:
+                return ExecutionOutcome.REJECTED
+            case _:
+                return ExecutionOutcome.UNCERTAIN
 
     def cancel(self, task_name: TaskName) -> CoordinatorCancelOutcome:
         """Cancel a trajectory through the existing coordinator task RPC."""
         try:
-            result = self._rpc_client.task_invoke(task_name, "cancel", {})
+            result = self._client.cancel_task(task_name)
         except Exception:
             logger.exception("Coordinator cancel RPC failed", task_name=task_name)
-            return CoordinatorCancelOutcome.UNKNOWN
-        if result is True:
-            return CoordinatorCancelOutcome.CANCELLED
-        if result is False:
-            return CoordinatorCancelOutcome.ALREADY_STOPPED
-        return CoordinatorCancelOutcome.UNKNOWN
+            return CoordinatorCancelOutcome.UNCERTAIN
+        match result:
+            case True:
+                return CoordinatorCancelOutcome.CANCELLED
+            case False:
+                return CoordinatorCancelOutcome.ALREADY_STOPPED
+            case _:
+                return CoordinatorCancelOutcome.UNCERTAIN
 
 
 @dataclass(frozen=True)
@@ -249,12 +243,9 @@ class PlanExecutionManager:
         self._coordinator = coordinator
         self._policy = policy or ExecutionPolicy()
 
-        self._state_lock = threading.Lock()
-        self._dispatch_lock = threading.Lock()
-        self._cancel_lock = threading.Lock()
-        self._dispatch_in_progress = False
-        self._cancellation_in_progress = False
-        self._generation = 0
+        self._operation_condition = threading.Condition()
+        self._operation_active = False
+        self._cancel_waiters = 0
         self._possibly_active_tasks: set[TaskName] = set()
 
     def execute(self, plan: GeneratedPlan) -> ExecutionDispatchResult:
@@ -263,81 +254,80 @@ class PlanExecutionManager:
         if isinstance(prepared, str):
             return self._rejected(prepared)
 
-        with self._state_lock:
-            if self._cancellation_in_progress:
+        with self._operation_condition:
+            if self._cancel_waiters:
                 return self._rejected("Cancellation is in progress")
-            if self._dispatch_in_progress:
+            if self._operation_active:
                 return self._rejected("Another execution dispatch is in progress")
-            self._dispatch_in_progress = True
-            self._generation += 1
-            token = self._generation
+            self._operation_active = True
 
         try:
-            with self._dispatch_lock:
-                with self._state_lock:
-                    if self._cancellation_in_progress or self._generation != token:
+            replacement = self._cancel_tracked_tasks()
+            if not replacement.safe:
+                return ExecutionDispatchResult(
+                    outcome=ExecutionOutcome.UNCERTAIN,
+                    message="Cannot replace unresolved coordinator tasks",
+                    unresolved_tasks=replacement.unresolved_tasks,
+                )
+
+            freshness_error = self._freshness_error(plan)
+            if freshness_error is not None:
+                return self._rejected(freshness_error)
+
+            accepted: list[TaskName] = []
+            for dispatch in prepared:
+                with self._operation_condition:
+                    if self._cancel_waiters:
                         return self._rejected("Execution was superseded by cancellation")
+                    self._possibly_active_tasks.add(dispatch.task_name)
 
-                replacement = self._cancel_tracked_tasks()
-                if not replacement.safe:
-                    return ExecutionDispatchResult(
-                        outcome=ExecutionDispatchOutcome.FAULT,
-                        message="Cannot replace unresolved coordinator tasks",
-                        unresolved_tasks=replacement.unresolved_tasks,
-                    )
-
-                freshness_error = self._freshness_error(plan)
-                if freshness_error is not None:
-                    return self._rejected(freshness_error)
-
-                accepted: list[TaskName] = []
-                for dispatch in prepared:
-                    with self._state_lock:
-                        if self._generation != token or self._cancellation_in_progress:
-                            return self._rejected("Execution was superseded by cancellation")
-                        self._possibly_active_tasks.add(dispatch.task_name)
-
-                    outcome = self._coordinator.execute(dispatch.task_name, dispatch.trajectory)
-                    if outcome is CoordinatorDispatchOutcome.ACCEPTED:
+                outcome = self._coordinator.execute(dispatch.task_name, dispatch.trajectory)
+                match outcome:
+                    case ExecutionOutcome.ACCEPTED:
                         accepted.append(dispatch.task_name)
-                    elif outcome is CoordinatorDispatchOutcome.REJECTED:
-                        with self._state_lock:
+                    case ExecutionOutcome.REJECTED:
+                        with self._operation_condition:
                             self._possibly_active_tasks.discard(dispatch.task_name)
                         return self._rollback_dispatch(
                             accepted,
                             f"Coordinator task '{dispatch.task_name}' rejected trajectory",
                         )
-                    else:
+                    case ExecutionOutcome.UNCERTAIN:
                         return self._rollback_dispatch(
                             accepted,
-                            f"Coordinator task '{dispatch.task_name}' dispatch is unknown",
+                            f"Coordinator task '{dispatch.task_name}' dispatch is uncertain",
                         )
 
-                    with self._state_lock:
-                        if self._generation != token or self._cancellation_in_progress:
-                            return self._rejected("Execution was superseded by cancellation")
+                with self._operation_condition:
+                    if self._cancel_waiters:
+                        return self._rejected("Execution was superseded by cancellation")
 
-                return ExecutionDispatchResult(
-                    outcome=ExecutionDispatchOutcome.ACCEPTED,
-                    message="Every coordinator task accepted the generated plan",
-                    accepted_tasks=tuple(accepted),
-                )
+            return ExecutionDispatchResult(
+                outcome=ExecutionOutcome.ACCEPTED,
+                message="Every coordinator task accepted the generated plan",
+                accepted_tasks=tuple(accepted),
+            )
         finally:
-            with self._state_lock:
-                self._dispatch_in_progress = False
+            with self._operation_condition:
+                self._operation_active = False
+                self._operation_condition.notify_all()
 
     def cancel(self) -> CancellationResult:
         """Cancel every task that might have accepted a generated plan."""
-        with self._cancel_lock:
-            with self._state_lock:
-                self._cancellation_in_progress = True
-                self._generation += 1
+        with self._operation_condition:
+            self._cancel_waiters += 1
             try:
-                with self._dispatch_lock:
-                    return self._cancel_tracked_tasks()
+                while self._operation_active:
+                    self._operation_condition.wait()
+                self._operation_active = True
             finally:
-                with self._state_lock:
-                    self._cancellation_in_progress = False
+                self._cancel_waiters -= 1
+        try:
+            return self._cancel_tracked_tasks()
+        finally:
+            with self._operation_condition:
+                self._operation_active = False
+                self._operation_condition.notify_all()
 
     def _prepare_plan(self, plan: GeneratedPlan) -> tuple[_PreparedDispatch, ...] | str:
         if not isinstance(plan, GeneratedPlan):
@@ -482,33 +472,34 @@ class PlanExecutionManager:
         cancellation = self._cancel_tracked_tasks()
         if cancellation.safe:
             return ExecutionDispatchResult(
-                outcome=ExecutionDispatchOutcome.REJECTED,
+                outcome=ExecutionOutcome.REJECTED,
                 message=message,
                 accepted_tasks=tuple(accepted_tasks),
             )
         return ExecutionDispatchResult(
-            outcome=ExecutionDispatchOutcome.FAULT,
-            message=f"{message}; coordinator task safety is unknown",
+            outcome=ExecutionOutcome.UNCERTAIN,
+            message=f"{message}; coordinator task safety is uncertain",
             accepted_tasks=tuple(accepted_tasks),
             unresolved_tasks=cancellation.unresolved_tasks,
         )
 
     def _cancel_tracked_tasks(self) -> CancellationResult:
-        with self._state_lock:
+        with self._operation_condition:
             tasks = tuple(sorted(self._possibly_active_tasks))
         cancelled: list[TaskName] = []
         already_stopped: list[TaskName] = []
         unresolved: list[TaskName] = []
         for task_name in tasks:
             outcome = self._coordinator.cancel(task_name)
-            if outcome is CoordinatorCancelOutcome.CANCELLED:
-                cancelled.append(task_name)
-            elif outcome is CoordinatorCancelOutcome.ALREADY_STOPPED:
-                already_stopped.append(task_name)
-            else:
-                unresolved.append(task_name)
+            match outcome:
+                case CoordinatorCancelOutcome.CANCELLED:
+                    cancelled.append(task_name)
+                case CoordinatorCancelOutcome.ALREADY_STOPPED:
+                    already_stopped.append(task_name)
+                case CoordinatorCancelOutcome.UNCERTAIN:
+                    unresolved.append(task_name)
 
-        with self._state_lock:
+        with self._operation_condition:
             self._possibly_active_tasks = set(unresolved)
         return CancellationResult(
             safe=not unresolved,
@@ -521,6 +512,6 @@ class PlanExecutionManager:
     @staticmethod
     def _rejected(message: str) -> ExecutionDispatchResult:
         return ExecutionDispatchResult(
-            outcome=ExecutionDispatchOutcome.REJECTED,
+            outcome=ExecutionOutcome.REJECTED,
             message=message,
         )

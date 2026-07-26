@@ -14,10 +14,8 @@
 
 """Tests for planned-path execution reservation and result propagation."""
 
-from collections.abc import Callable
 from pathlib import Path
 import threading
-import time
 from unittest.mock import MagicMock
 
 from dimos.manipulation._test_manipulation_helpers import make_module
@@ -79,8 +77,10 @@ def _module_with_current(current: JointState) -> ManipulationModule:
     module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
     module._world_monitor.current_global_joint_state.return_value = current
     module._world_monitor.is_state_stale.return_value = False
-    module._coordinator_client = MagicMock()
-    module._coordinator_client.task_invoke.return_value = True
+    client = MagicMock()
+    client.execute_task.return_value = True
+    client.cancel_task.return_value = False
+    module._initialize_execution(client)
     return module
 
 
@@ -101,8 +101,10 @@ def _install_current_global_state(module: ManipulationModule, current: JointStat
     module._world_monitor = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
     module._world_monitor.current_global_joint_state.return_value = current
-    module._coordinator_client = MagicMock()
-    module._coordinator_client.task_invoke.return_value = True
+    client = MagicMock()
+    client.execute_task.return_value = True
+    client.cancel_task.return_value = False
+    module._initialize_execution(client)
 
 
 def test_plan_to_pose_targets_propagates_failed_plan_as_false():
@@ -166,12 +168,11 @@ def test_execute_plan_replaces_tracked_execution_and_can_then_cancel() -> None:
     assert module.execute_plan() is True
     assert module.execute_plan() is True
     assert module.cancel() is True
-    assert module._coordinator_client is not None
-    assert [call.args[1] for call in module._coordinator_client.task_invoke.call_args_list] == [
-        "execute",
-        "cancel",
-        "execute",
-        "cancel",
+    assert [item[0] for item in module._coordinator_client.mock_calls] == [
+        "execute_task",
+        "cancel_task",
+        "execute_task",
+        "cancel_task",
     ]
     assert module._state is ManipulationState.IDLE
 
@@ -182,7 +183,6 @@ def test_execute_and_execute_plan_race_without_consuming_latest_plan():
     module._last_plan = plan
     module._state = ManipulationState.COMPLETED
     _install_current_global_state(module, JointState(name=["arm/j0"], position=[0.0]))
-    callers_ready = threading.Barrier(3)
     dispatch_started = threading.Event()
     allow_dispatch_return = threading.Event()
     results: list[bool] = []
@@ -192,27 +192,20 @@ def test_execute_and_execute_plan_race_without_consuming_latest_plan():
         assert allow_dispatch_return.wait(timeout=1.0)
         return True
 
-    def call_execute(execute: Callable[[], bool]) -> None:
-        callers_ready.wait(timeout=1.0)
-        results.append(execute())
-
-    module._coordinator_client.task_invoke.side_effect = dispatch
-    legacy = threading.Thread(target=call_execute, args=(module.execute,))
-    current = threading.Thread(target=call_execute, args=(module.execute_plan,))
+    module._coordinator_client.execute_task.side_effect = dispatch
+    legacy = threading.Thread(target=lambda: results.append(module.execute()))
     legacy.start()
-    current.start()
-    callers_ready.wait(timeout=1.0)
     assert dispatch_started.wait(timeout=1.0)
-    time.sleep(0.05)
+
+    current_result = module.execute_plan()
 
     allow_dispatch_return.set()
     legacy.join(timeout=1.0)
-    current.join(timeout=1.0)
 
     assert not legacy.is_alive()
-    assert not current.is_alive()
-    assert sorted(results) == [False, True]
-    assert module._coordinator_client.task_invoke.call_count == 1
+    assert results == [True]
+    assert current_result is False
+    assert module._coordinator_client.execute_task.call_count == 1
 
 
 def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
@@ -226,17 +219,14 @@ def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
     cancel_result: list[bool] = []
     execute_result: list[bool] = []
 
-    def invoke(task_name: str, method: str, _payload: dict[str, object]) -> bool:
+    def cancel_task(task_name: str) -> bool:
         assert task_name == "traj_arm"
-        if method == "cancel":
-            cancel_started.set()
-            assert release_cancel.wait(timeout=1.0)
-            return False
-        assert method == "execute"
-        raise AssertionError("execution dispatched during cancellation")
+        cancel_started.set()
+        assert release_cancel.wait(timeout=1.0)
+        return False
 
-    module._coordinator_client.task_invoke.side_effect = invoke
-    module._coordinator_client.task_invoke.reset_mock()
+    module._coordinator_client.cancel_task.side_effect = cancel_task
+    module._coordinator_client.reset_mock()
     cancelling = threading.Thread(target=lambda: cancel_result.append(module.cancel()))
     cancelling.start()
     assert cancel_started.wait(timeout=1.0)
@@ -249,15 +239,13 @@ def test_execute_started_during_cancel_cannot_dispatch_after_cancel():
     executing.start()
     assert execute_finished.wait(timeout=1.0)
     assert execute_result == [False]
-    assert not any(
-        call.args[1] == "execute" for call in module._coordinator_client.task_invoke.call_args_list
-    )
+    module._coordinator_client.execute_task.assert_not_called()
     release_cancel.set()
     cancelling.join(timeout=1.0)
     executing.join(timeout=1.0)
 
     assert cancel_result == [True]
-    module._coordinator_client.task_invoke.assert_called_once_with("traj_arm", "cancel", {})
+    module._coordinator_client.cancel_task.assert_called_once_with("traj_arm")
 
 
 def test_execute_plan_accepts_a_direct_plan_without_reserving_stored_plan():
@@ -267,7 +255,7 @@ def test_execute_plan_accepts_a_direct_plan_without_reserving_stored_plan():
     _install_current_global_state(module, JointState(name=["arm/j0"], position=[0.0]))
 
     assert module.execute_plan(plan=direct_plan) is True
-    module._coordinator_client.task_invoke.assert_called_once()
+    module._coordinator_client.execute_task.assert_called_once()
 
 
 def test_execute_plan_uses_current_global_state_without_consuming_cached_plan():
@@ -275,7 +263,7 @@ def test_execute_plan_uses_current_global_state_without_consuming_cached_plan():
     cached_plan = _plan("cached/manipulator")
     module._last_plan = cached_plan
     assert module.execute_plan(plan=_plan()) is True
-    module._coordinator_client.task_invoke.assert_called_once()
+    module._coordinator_client.execute_task.assert_called_once()
     assert module._last_plan is cached_plan
 
 
@@ -285,7 +273,7 @@ def test_execute_plan_rejects_missing_direct_plan_start_before_dispatch_without_
     module._last_plan = cached_plan
 
     assert module.execute_plan(plan=_plan()) is False
-    module._coordinator_client.task_invoke.assert_not_called()
+    module._coordinator_client.execute_task.assert_not_called()
     assert module._last_plan is cached_plan
 
 
@@ -297,7 +285,7 @@ def test_execute_plan_rejects_malformed_direct_plan_before_dispatch_without_rese
     module._last_plan = cached_plan
 
     assert module.execute_plan(plan=direct_plan) is False
-    module._coordinator_client.task_invoke.assert_not_called()
+    module._coordinator_client.execute_task.assert_not_called()
     assert module._last_plan is cached_plan
 
 
@@ -305,23 +293,37 @@ def test_execute_plan_pre_dispatch_exception_restores_previous_state_without_fau
     module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
     module._last_plan = _plan()
     module._state = ManipulationState.COMPLETED
-    manager = module._get_execution_manager()
-    assert manager is not None
-    mocker.patch.object(manager, "_prepare_plan", side_effect=RuntimeError("split exploded"))
+    mocker.patch.object(
+        module._execution_manager,
+        "_prepare_plan",
+        side_effect=RuntimeError("split exploded"),
+    )
 
     assert module.execute_plan() is False
 
     assert module._state == ManipulationState.COMPLETED
     assert module._error_message == "Failed to dispatch generated plan: split exploded"
-    module._coordinator_client.task_invoke.assert_not_called()
+    module._coordinator_client.execute_task.assert_not_called()
 
 
-def test_execute_plan_dispatch_exception_faults_without_sticking_executing():
+def test_execute_plan_dispatch_exception_with_safe_rollback_restores_prior_state():
     module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
     module._last_plan = _plan()
-    module._coordinator_client.task_invoke.side_effect = RuntimeError("rpc exploded")
+    module._coordinator_client.execute_task.side_effect = RuntimeError("rpc exploded")
+
+    assert module.execute_plan() is False
+
+    assert module._state == ManipulationState.IDLE
+    assert module._error_message.startswith("Coordinator task 'traj_arm' dispatch is uncertain")
+
+
+def test_execute_plan_unresolved_rollback_projects_uncertainty_to_fault():
+    module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
+    module._last_plan = _plan()
+    module._coordinator_client.execute_task.side_effect = RuntimeError("rpc exploded")
+    module._coordinator_client.cancel_task.return_value = None
 
     assert module.execute_plan() is False
 
     assert module._state == ManipulationState.FAULT
-    assert module._error_message.startswith("Coordinator task 'traj_arm' dispatch is unknown")
+    assert "safety is uncertain" in module._error_message

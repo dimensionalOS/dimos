@@ -176,6 +176,6 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch):
     assert module._plan_selected_path(("left/group",), path[0], path[-1], 1)
     RecordingGenerator.calls = []
 
-    module._get_coordinator_client = MagicMock(return_value=None)
+    module._coordinator_client.get_task_state.return_value = None
     module._wait_for_trajectory_completion("left", timeout=0.0)
     assert RecordingGenerator.calls == []
