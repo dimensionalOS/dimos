@@ -26,10 +26,17 @@ height_cost_occupancy (blueprint configs) and records, at checkpoints:
 The Rust integration test (dimos/mapping/rust/tests/golden.rs) replays
 frames.bin and asserts key-set equality / grid tolerance at each checkpoint.
 
+The voxel grid runs on ``--device`` (default CPU:0, so CUDA-less machines can
+generate golden data). The device does not change the outputs — the golden
+tests assert the Rust port matches them exactly either way.
+
 Usage:
     uv run python scripts/benchmarks/dump_golden.py
 """
 
+from __future__ import annotations
+
+import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -41,8 +48,8 @@ from dimos.mapping.pointclouds.occupancy import HeightCostConfig, height_cost_oc
 from dimos.mapping.voxels import VoxelGrid
 from dimos.memory2.store.sqlite import SqliteStore
 
-DB = "data/go2_short.db"
-OUT = Path("dimos/mapping/rust/tests/golden_data")
+DEFAULT_DB = "data/go2_short.db"
+DEFAULT_OUT = Path("dimos/mapping/rust/tests/golden_data")
 CHECKPOINTS = [5, 50, 150, 300, 460]  # multiples of emit_every=5
 
 
@@ -52,15 +59,29 @@ def write_array(path: Path, arr: np.ndarray) -> None:
         f.write(np.ascontiguousarray(arr).tobytes())
 
 
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Dump golden data for the Rust mapper ports.")
+    ap.add_argument(
+        "--device",
+        default="CPU:0",
+        help="Open3D device for VoxelGrid (default: CPU:0 so CUDA-less machines work)",
+    )
+    ap.add_argument("--db", default=DEFAULT_DB, help="memory2 SQLite replay dataset")
+    ap.add_argument("--out", default=str(DEFAULT_OUT), help="directory to write golden data into")
+    return ap.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    OUT = Path(args.out)
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / ".gitignore").write_text("*\n!.gitignore\n")  # generated data, never committed
 
-    store = SqliteStore(path=DB, must_exist=True)
+    store = SqliteStore(path=args.db, must_exist=True)
     store.start()
     lidar = store.replay().stream("lidar")
 
-    grid = VoxelGrid(voxel_size=0.05, carve_columns=True, device="CUDA:0")
+    grid = VoxelGrid(voxel_size=0.05, carve_columns=True, device=args.device)
     cost_cfg = asdict(HeightCostConfig())
 
     frames_f = open(OUT / "frames.bin", "wb")

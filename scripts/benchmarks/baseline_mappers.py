@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step-1 baseline: time the Python VoxelGridMapper + CostMapper algorithms
-on the exact frames `--replay run unitree-go2` feeds them (data/go2_short.db).
+"""Time the Python VoxelGridMapper + CostMapper algorithms on the exact frames
+`--replay run unitree-go2` feeds them (data/go2_short.db).
 
 Mirrors the unitree-go2 blueprint configuration:
   VoxelGridMapper.blueprint(emit_every=5)  -> VoxelGrid(voxel_size=0.05, carve_columns=True)
@@ -23,54 +23,85 @@ Stages timed per frame:
   add_frame  - voxelize + column-carve + insert (every frame)
   emit       - rebuild global PointCloud2 from the voxel hash map (every 5th frame)
   costmap    - height_cost_occupancy on the emitted global map (every 5th frame)
+
+``--device`` selects the Open3D device VoxelGrid runs on (the only GPU-capable
+stage; height_cost_occupancy is numba + scipy on CPU regardless). A CUDA request
+falls back to CPU when no CUDA device is present, so the *resolved* device is
+what gets recorded next to the results.
+
+Usage:
+    uv run python scripts/benchmarks/baseline_mappers.py --device CUDA:0 --out py_cuda.csv
 """
 
+from __future__ import annotations
+
+import argparse
 import csv
 from dataclasses import asdict
+import json
+from pathlib import Path
 import statistics
-import sys
 import time
+
+from bench_util import growth, machine_info, pct, resolve_open3d_device
 
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig, height_cost_occupancy
 from dimos.mapping.voxels import VoxelGrid
-from dimos.memory2.store.sqlite import SqliteStore
 
-DB = "data/go2_short.db"
 EMIT_EVERY = 5
-OUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "baseline_python.csv"
 
 
-def pct(vals, p):
-    if not vals:
-        return float("nan")
-    s = sorted(vals)
-    return s[min(len(s) - 1, round(p / 100 * (len(s) - 1)))]
-
-
-def summarize(name, vals):
-    if not vals:
+def summarize(name: str, values: list[float]) -> None:
+    if not values:
         print(f"  {name:10s}  (no samples)")
         return
     print(
-        f"  {name:10s}  n={len(vals):4d}  mean={statistics.mean(vals):8.2f}  "
-        f"p50={pct(vals, 50):8.2f}  p95={pct(vals, 95):8.2f}  max={max(vals):8.2f}  (ms)"
+        f"  {name:10s}  n={len(values):4d}  mean={statistics.mean(values):8.2f}  "
+        f"p50={pct(values, 50):8.2f}  p95={pct(values, 95):8.2f}  max={max(values):8.2f}  (ms)"
     )
 
 
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--device",
+        default="CUDA:0",
+        help="Open3D device for VoxelGrid (default: CUDA:0, falling back to CPU:0 when "
+        "no CUDA device is present). Pass CPU:0 to force the CPU path.",
+    )
+    ap.add_argument("--db", default="data/go2_short.db", help="memory2 SQLite replay dataset")
+    ap.add_argument("--out", default="baseline_python.csv", help="per-frame CSV to write")
+    return ap.parse_args()
+
+
 def main() -> None:
-    store = SqliteStore(path=DB, must_exist=True)
+    args = parse_args()
+    # Imported here so --help works without the (slow) dimos memory2 import chain.
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    resolved_device, cuda_available = resolve_open3d_device(args.device)
+    if args.device.startswith("CUDA") and not cuda_available:
+        print(
+            f"WARNING: {args.device} requested but no CUDA device is available; "
+            "running on CPU:0. These are NOT GPU numbers."
+        )
+
+    store = SqliteStore(path=args.db, must_exist=True)
     store.start()
-    replay = store.replay()
-    lidar = replay.stream("lidar")
+    lidar = store.replay().stream("lidar")
 
     n_frames = lidar.count()
-    print(f"dataset: {DB}  lidar frames: {n_frames}")
+    print(f"dataset: {args.db}  lidar frames: {n_frames}  device: {resolved_device}")
 
-    grid = VoxelGrid(voxel_size=0.05, carve_columns=True, device="CUDA:0")
+    grid = VoxelGrid(voxel_size=0.05, carve_columns=True, device=args.device)
     cost_cfg = asdict(HeightCostConfig())
 
     rows = []
-    add_ms, emit_ms, cost_ms = [], [], []
+    add_ms: list[float] = []
+    emit_ms: list[float] = []
+    cost_ms: list[float] = []
     first_ts = last_ts = None
     n_points_total = 0
     t_start = time.perf_counter()
@@ -126,12 +157,28 @@ def main() -> None:
     rec_dur = (last_ts - first_ts) if (first_ts is not None and last_ts is not None) else 0.0
     rate = (len(add_ms) - 1) / rec_dur if rec_dur > 0 else float("nan")
 
-    with open(OUT_CSV, "w", newline="") as f:
+    out_csv = Path(args.out)
+    with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
 
-    print(f"\nwrote {OUT_CSV}")
+    meta = {
+        "impl": "python",
+        "requested_device": args.device,
+        "resolved_device": resolved_device,
+        "cuda_available": cuda_available,
+        "db": args.db,
+        "n_frames": len(add_ms),
+        "emit_every": EMIT_EVERY,
+        "wall_s": round(wall, 3),
+        "final_voxels": grid.size(),
+        "machine": machine_info(),
+    }
+    meta_path = out_csv.with_suffix(".meta.json")
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+
+    print(f"\nwrote {out_csv} and {meta_path}")
     print(
         f"\nrecording: {rec_dur:.1f}s of lidar at {rate:.2f} Hz "
         f"(budget {1000 / rate:.0f} ms/frame, {EMIT_EVERY * 1000 / rate:.0f} ms/emit-cycle)"
@@ -145,20 +192,16 @@ def main() -> None:
 
     print("per-stage latency (ms):")
     summarize("add_frame", add_ms)
-    # First costmap call includes numba JIT compile; report separately.
     summarize("emit", emit_ms)
+    # First costmap call includes numba JIT compile; report separately.
     summarize("costmap", cost_ms[1:])
     if cost_ms:
         print(f"  {'costmap[0]':10s}  first call (numba JIT): {cost_ms[0]:.0f} ms")
 
-    def quarter(vals):
-        q = max(1, len(vals) // 4)
-        return statistics.mean(vals[:q]), statistics.mean(vals[-q:])
-
     print("\ngrowth (first-quarter mean -> last-quarter mean, ms):")
-    for name, vals in (("add_frame", add_ms), ("emit", emit_ms), ("costmap", cost_ms[1:])):
-        if len(vals) >= 4:
-            a, b = quarter(vals)
+    for name, values in (("add_frame", add_ms), ("emit", emit_ms), ("costmap", cost_ms[1:])):
+        a, b = growth(values)
+        if a == a:
             print(f"  {name:10s}  {a:8.2f} -> {b:8.2f}   ({b / a:.1f}x)")
 
     grid.dispose()

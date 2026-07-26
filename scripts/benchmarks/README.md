@@ -19,26 +19,38 @@ implementations on this same recording (`dimos/mapping/rust/tests/golden.rs`)
 
 | file | what it does |
 |---|---|
-| `baseline_mappers.py` | Python per-stage timings, frames pulled straight from the db |
+| `run_all.py` | runs every configuration on one machine and prints one paste-ready table |
+| `baseline_mappers.py` | Python per-stage timings on a chosen Open3D `--device` |
 | `dump_golden.py` | dumps frames + Python outputs for golden tests and the Rust bench |
 | `bench_mappers` (rust bin) | Rust per-stage timings on the identical frames |
 | `e2e_bench.py` | runs a full blueprint on the replay; measures message rates, stamp-matched per-hop latency, process-tree CPU/RSS |
 | `compare.py` | merges the CSVs/JSONs into the final report |
+| `bench_util.py` | one statistics implementation shared by all of the above |
 
 ## Reproduce
 
-```bash
-# offline compute benchmark
-uv run python scripts/benchmarks/baseline_mappers.py scripts/benchmarks/baseline_python.csv
-uv run python scripts/benchmarks/dump_golden.py
-(cd dimos/mapping/rust && cargo run --release --bin bench_mappers \
-    ../../../scripts/benchmarks/baseline_rust.csv)
+The offline comparison is one command. It dumps golden frames and builds the
+Rust binary if they are missing, runs Python on CUDA (skipped, with a warning,
+when the machine has no CUDA device), Python on CPU, and Rust, then prints a
+markdown table together with the machine it ran on:
 
-# end-to-end (one at a time; each takes ~2 min)
+```bash
+uv run python scripts/benchmarks/run_all.py
+```
+
+Individual pieces, if you want them separately:
+
+```bash
+uv run python scripts/benchmarks/baseline_mappers.py --device CUDA:0 --out py_cuda.csv
+uv run python scripts/benchmarks/dump_golden.py --device CPU:0
+(cd dimos/mapping/rust && cargo run --release --bin bench_mappers /tmp/rust.csv)
+```
+
+End-to-end through the live replay and transport (one at a time, ~2 min each):
+
+```bash
 uv run python scripts/benchmarks/e2e_bench.py unitree-go2 scripts/benchmarks/e2e_python.json
 uv run python scripts/benchmarks/e2e_bench.py unitree-go2-rust-mapping scripts/benchmarks/e2e_rust.json
-
-# report
 uv run python scripts/benchmarks/compare.py
 ```
 
@@ -73,17 +85,27 @@ so the mapper share of the delta is understated.)
 
 ## Methodology notes / caveats
 
-- **CPU-only comparison.** Open3D falls back to CPU on machines without CUDA
-  (including the benchmark machine, an Apple-silicon Mac). On a CUDA robot the
-  Python voxel mapper could use GPU; the Rust port is CPU-only by design.
+- **The GPU comparison is still open.** `VoxelGrid` defaults to
+  `device="CUDA:0"` and is the only GPU-capable stage, but Open3D falls back to
+  CPU without a CUDA device — including on the machine above, an Apple-silicon
+  Mac. So the results are CPU-vs-CPU and the voxel speedups are against the
+  fallback path, not the path a CUDA robot would run. `run_all.py` produces the
+  three-configuration table on any CUDA machine, which is what settles it. The
+  costmap side needs no such caveat: `height_cost_occupancy` is numba + scipy on
+  CPU on every machine.
+- **Numbers move between runs.** Stage timings vary roughly 10-20% with machine
+  load, and are only comparable within a single machine. Compare rows of one
+  `run_all.py` table; never compare across machines or across runs.
 - **Same algorithm, naive-first.** The Rust `carve_columns` deliberately keeps
   the Python implementation's O(map size)-per-frame full scan so the language
   comparison is apples-to-apples. An XY-indexed carve (output-identical,
   asymptotically better) is a known follow-up.
 - **Python costmap is already native.** `height_cost_occupancy` runs numba +
   scipy C kernels, so the Rust win there is modest compared to the pure-Python
-  voxel path. The first Python costmap call pays ~180 ms of numba JIT
-  compilation (excluded from stats; Rust pays this at build time).
+  voxel path. The first Python costmap call pays numba JIT compilation — ~180 ms
+  with a cold cache, ~90 ms once numba's on-disk cache (`@njit(cache=True)`) is
+  warm. It is excluded from the steady-state stats and reported on its own row;
+  Rust pays this at build time.
 - **Per-stage timings exclude transport**; the e2e run includes decode +
   compute + encode + Zenoh transport via stamp-matched arrival times observed
   by an external subscriber.
