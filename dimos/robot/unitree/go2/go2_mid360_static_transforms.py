@@ -71,6 +71,16 @@ def mount_transforms() -> list[Transform]:
     return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
 
 
+def base_link_from_camera_optical() -> Transform:
+    """Composed base_link -> camera_optical transform from the static mount tree.
+
+    The known-geometry fallback used to place AprilTags for recordings from this rig
+    that carry a ``camera_info`` stream but no tf tree (so the extrinsic can't be read
+    from the recording itself)."""
+    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+    return edges["front_camera"] + edges["camera_optical"]
+
+
 class Go2Mid360StaticTf(StaticTfPublisher):
     """Publishes the Go2/Mid-360 mount tree onto tf on a fixed interval."""
 

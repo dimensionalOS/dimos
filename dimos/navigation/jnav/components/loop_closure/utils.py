@@ -111,9 +111,7 @@ def registered_scans(
     ``tf.get(odom_parent, frame, ts)``, which walks the overridden odom edge plus
     any static sensor extrinsics. Scans already in ``odom_parent`` resolve to
     identity; scans whose frame can't be reached at their timestamp are dropped."""
-    store = SqliteStore(path=db_path, must_exist=True)
-    store.start()
-    try:
+    with SqliteStore(path=db_path, must_exist=True) as store:
         for observation in islice(store.stream(lidar_stream, PointCloud2), 0, None, stride):
             cloud = observation.data
             timestamp = float(observation.ts)
@@ -124,8 +122,6 @@ def registered_scans(
                 continue
             matrix = world_from_sensor.to_matrix()
             yield timestamp, points @ matrix[:3, :3].T + matrix[:3, 3]
-    finally:
-        store.stop()
 
 
 def accumulate_maps(
@@ -175,32 +171,30 @@ def load_tag_detections(
     if camera_stream is None or camera_stream not in streams:
         print("no camera stream — voxel agreement only")
         return []
-    db_store = SqliteStore(path=db_path, must_exist=True)
-    db_store.start()
-    if RAW_TAGS_STREAM not in db_store.list_streams():
-        camera_info = read_camera_info(db_store, camera_info_stream)
-        if camera_info is None:
-            raise SystemExit(
-                f"no {RAW_TAGS_STREAM!r} and no {camera_info_stream!r} stream — "
-                f"can't detect tags. Disable the camera stream or add camera_info."
+    with SqliteStore(path=db_path, must_exist=True) as db_store:
+        if RAW_TAGS_STREAM not in db_store.list_streams():
+            camera_info = read_camera_info(db_store, camera_info_stream)
+            if camera_info is None:
+                raise SystemExit(
+                    f"no {RAW_TAGS_STREAM!r} and no {camera_info_stream!r} stream — "
+                    f"can't detect tags. Disable the camera stream or add camera_info."
+                )
+            camera_matrix, distortion, _optical_frame = camera_info
+            ensure_april_streams(
+                db_store,
+                camera_matrix,
+                distortion,
+                image_stream=camera_stream,
             )
-        camera_matrix, distortion, _optical_frame = camera_info
-        ensure_april_streams(
-            db_store,
-            camera_matrix,
-            distortion,
-            image_stream=camera_stream,
-        )
-    detections = [
-        detection
-        for detection in read_raw_tag_stream(db_store, RAW_TAGS_STREAM)
-        if int(detection["marker_id"]) not in dynamic_tags
-    ]
+        detections = [
+            detection
+            for detection in read_raw_tag_stream(db_store, RAW_TAGS_STREAM)
+            if int(detection["marker_id"]) not in dynamic_tags
+        ]
     ids = sorted({int(detection["marker_id"]) for detection in detections})
     print(
         f"tag detections: {len(detections)} glimpses across ids {ids} (dynamic held out: {sorted(dynamic_tags)})"
     )
-    db_store.stop()
     return detections
 
 

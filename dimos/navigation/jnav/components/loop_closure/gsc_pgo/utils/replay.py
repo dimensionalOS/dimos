@@ -160,9 +160,7 @@ class LockstepReplay(Module):
 
     def _load(self) -> list[tuple[float, str, Any]]:
         merged: list[tuple[float, str, Any]] = []
-        store = SqliteStore(path=self.config.db, must_exist=True)
-        store.start()
-        try:
+        with SqliteStore(path=self.config.db, must_exist=True) as store:
             for observation in islice(
                 store.stream(self.config.odometry_stream, Odometry),
                 0,
@@ -177,8 +175,6 @@ class LockstepReplay(Module):
                 self.config.lidar_stride,
             ):
                 merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
-        finally:
-            store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 
@@ -290,9 +286,7 @@ class RateReplay(Module):
 
     def _load(self) -> list[tuple[float, str, Any]]:
         merged: list[tuple[float, str, Any]] = []
-        store = SqliteStore(path=self.config.db, must_exist=True)
-        store.start()
-        try:
+        with SqliteStore(path=self.config.db, must_exist=True) as store:
             for observation in islice(
                 store.stream(self.config.odometry_stream, Odometry),
                 0,
@@ -307,8 +301,6 @@ class RateReplay(Module):
                 self.config.lidar_stride,
             ):
                 merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
-        finally:
-            store.stop()
         merged.sort(key=lambda item: item[0])
         return merged
 

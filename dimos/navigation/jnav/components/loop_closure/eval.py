@@ -109,86 +109,86 @@ def evaluate(
     write_isometric: bool,
     write_rrd: bool,
 ) -> dict[str, Any]:
-    store = SqliteStore(path=db_path, must_exist=True)
-    store.start()
-    # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
-    odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
-        store, f"{odom_parent}:{odom_child}", odom_stream, lidar_stream
-    )
-    odom_parent, _, odom_child = odom_tf.partition(":")
-    streams = store.list_streams()
-    for required in (odom_stream, lidar_stream, "tf"):
-        if required not in streams:
-            raise SystemExit(f"no stream {required!r} in {db_path} (have: {streams})")
-
-    recording_name = recording_name or db_path.parent.name
-    module_class = load_module_class(module_path, module_name)
-    pgo_config = filter_config_for_module(module_class, pgo_config)
-
-    odom_row_list: list[tuple[float, float, float, float, float, float, float, float]] = []
-    for observation in store.stream(odom_stream, Odometry).order_by("ts"):
-        pose = observation.data.pose.pose
-        odom_row_list.append(
-            (
-                float(observation.ts),
-                pose.position.x,
-                pose.position.y,
-                pose.position.z,
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w,
-            )
+    with SqliteStore(path=db_path, must_exist=True) as store:
+        # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
+        odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
+            store, f"{odom_parent}:{odom_child}", odom_stream, lidar_stream
         )
-    odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
-    if not len(odom_rows):
-        raise SystemExit(f"odom stream {odom_stream!r} produced no poses in {db_path}")
-    lidar_count = int(store.stream(lidar_stream).count())
-    raw_times, raw_poses = odom_rows[:, 0], odom_rows[:, 1:]
-    tf = RecordingTF.from_store(store)
-    if tf is None:
-        raise SystemExit(f"no 'tf' stream in {db_path}")
-    tf.override_edge(odom_parent, odom_child, raw_times, raw_poses)
+        odom_parent, _, odom_child = odom_tf.partition(":")
+        streams = store.list_streams()
+        for required in (odom_stream, lidar_stream, "tf"):
+            if required not in streams:
+                raise SystemExit(f"no stream {required!r} in {db_path} (have: {streams})")
 
-    probe_ts = float(raw_times[len(raw_times) // 2])
-    tags_reachable = tf.get(odom_parent, tag_frame, probe_ts) is not None
-    if not tags_reachable and camera_stream is not None:
-        raise SystemExit(f"no tf path {odom_parent} <- {tag_frame} (frames: {sorted(tf.frames)})")
+        recording_name = recording_name or db_path.parent.name
+        module_class = load_module_class(module_path, module_name)
+        pgo_config = filter_config_for_module(module_class, pgo_config)
 
-    detections = load_tag_detections(
-        db_path, camera_stream, camera_info_stream, streams, dynamic_tags
-    )
+        odom_row_list: list[tuple[float, float, float, float, float, float, float, float]] = []
+        for observation in store.stream(odom_stream, Odometry).order_by("ts"):
+            pose = observation.data.pose.pose
+            odom_row_list.append(
+                (
+                    float(observation.ts),
+                    pose.position.x,
+                    pose.position.y,
+                    pose.position.z,
+                    pose.orientation.x,
+                    pose.orientation.y,
+                    pose.orientation.z,
+                    pose.orientation.w,
+                )
+            )
+        odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
+        if not len(odom_rows):
+            raise SystemExit(f"odom stream {odom_stream!r} produced no poses in {db_path}")
+        lidar_count = int(store.stream(lidar_stream).count())
+        raw_times, raw_poses = odom_rows[:, 0], odom_rows[:, 1:]
+        tf = RecordingTF.from_store(store)
+        if tf is None:
+            raise SystemExit(f"no 'tf' stream in {db_path}")
+        tf.override_edge(odom_parent, odom_child, raw_times, raw_poses)
 
-    started = time.monotonic()
-    graph, closures, replay_stats = run_module_graph(
-        db_path,
-        module_class,
-        pgo_config,
-        lidar_stream=lidar_stream,
-        odom_stream=odom_stream,
-    )
-    runtime_s = time.monotonic() - started
-    if not graph:
-        raise SystemExit(f"{module_name} produced an empty pose graph")
+        probe_ts = float(raw_times[len(raw_times) // 2])
+        tags_reachable = tf.get(odom_parent, tag_frame, probe_ts) is not None
+        if not tags_reachable and camera_stream is not None:
+            raise SystemExit(
+                f"no tf path {odom_parent} <- {tag_frame} (frames: {sorted(tf.frames)})"
+            )
 
-    raw_pose = pose_lookup(raw_times, raw_poses, tolerance=float("inf"))
-    delta_lookup = drift_delta_lookup(list(graph), raw_pose)
+        detections = load_tag_detections(
+            db_path, camera_stream, camera_info_stream, streams, dynamic_tags
+        )
 
-    raw_report, corrected_report, improvement, raw_tag_medians, corrected_tag_medians = score_tags(
-        detections, tf, odom_parent, tag_frame, delta_lookup
-    )
+        started = time.monotonic()
+        graph, closures, replay_stats = run_module_graph(
+            db_path,
+            module_class,
+            pgo_config,
+            lidar_stream=lidar_stream,
+            odom_stream=odom_stream,
+        )
+        runtime_s = time.monotonic() - started
+        if not graph:
+            raise SystemExit(f"{module_name} produced an empty pose graph")
 
-    scan_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
-    raw_map, corrected_map = accumulate_maps(
-        registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
-        delta_lookup,
-    )
-    voxel = lidar_voxel_agreement(
-        registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
-        raw_pose,
-        list(graph),
-    )
-    store.stop()
+        raw_pose = pose_lookup(raw_times, raw_poses, tolerance=float("inf"))
+        delta_lookup = drift_delta_lookup(list(graph), raw_pose)
+
+        raw_report, corrected_report, improvement, raw_tag_medians, corrected_tag_medians = (
+            score_tags(detections, tf, odom_parent, tag_frame, delta_lookup)
+        )
+
+        scan_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
+        raw_map, corrected_map = accumulate_maps(
+            registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+            delta_lookup,
+        )
+        voxel = lidar_voxel_agreement(
+            registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+            raw_pose,
+            list(graph),
+        )
 
     raw_path, corrected_path = deform_path(raw_times, raw_poses, delta_lookup)
 

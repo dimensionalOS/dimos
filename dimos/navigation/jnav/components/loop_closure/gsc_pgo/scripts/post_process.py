@@ -40,7 +40,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from gtsam import Pose3
+from gtsam import Point3, Pose3, Rot3
 import numpy as np
 
 from dimos.memory2.store.sqlite import SqliteStore
@@ -79,6 +79,7 @@ from dimos.navigation.jnav.utils.apriltags import (
     read_raw_tag_stream,
 )
 from dimos.navigation.jnav.utils.recording_tf import RecordingTF
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import base_link_from_camera_optical
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +107,13 @@ def parse_args() -> argparse.Namespace:
         default="camera_optical",
         help="optical frame the tag detections sit in; the base<-optical extrinsic is read from"
         " the tf tree (falls back to this when CameraInfo carries no frame_id)",
+    )
+    parser.add_argument(
+        "--base-optical",
+        default="",
+        help="base<-optical camera extrinsic 'x y z qx qy qz qw' (meters + quaternion), used only "
+        "when the recording has no tf tree to resolve it (e.g. hk_village-style recordings with "
+        "camera_info but no tf/json). Mid360 rig: '0.3 0 0 -0.5 0.5 -0.5 0.5'",
     )
     parser.add_argument("--tag-size", type=float, default=0.10, help="AprilTag edge length (m)")
     parser.add_argument("--dict", dest="dictionary", default="DICT_APRILTAG_36h11")
@@ -138,222 +146,262 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_base_optical(spec: str) -> Pose3 | None:
+    """Parse a ``'x y z qx qy qz qw'`` base<-optical extrinsic into a ``Pose3`` (None if empty)."""
+    if not spec.strip():
+        return None
+    values = [float(token) for token in spec.replace(",", " ").split()]
+    if len(values) != 7:
+        sys.exit(f"--base-optical needs 7 numbers 'x y z qx qy qz qw', got {len(values)}: {spec!r}")
+    x, y, z, qx, qy, qz, qw = values
+    return Pose3(Rot3.Quaternion(qw, qx, qy, qz), Point3(x, y, z))
+
+
+def _pose3_from_transform(transform: Any) -> Pose3:
+    rotation, translation = transform.rotation, transform.translation
+    return Pose3(
+        Rot3.Quaternion(rotation.w, rotation.x, rotation.y, rotation.z),
+        Point3(translation.x, translation.y, translation.z),
+    )
+
+
+def resolve_base_optical(
+    store_tf: RecordingTF | None, body_frame: str, optical_frame: str, ts: float, cli_spec: str
+) -> Pose3:
+    """base<-optical extrinsic: explicit ``--base-optical``, else the recording's tf tree, else the
+    known Go2/Mid360 rig mount geometry (with a warning) for recordings that carry ``camera_info``
+    but no tf tree to resolve the camera mount from."""
+    override = parse_base_optical(cli_spec)
+    if override is not None:
+        return override
+    tf_extrinsic = store_tf.get(body_frame, optical_frame, ts) if store_tf is not None else None
+    if tf_extrinsic is not None:
+        return Pose3(tf_extrinsic.to_matrix())
+    print(
+        f"WARNING: no tf edge {body_frame!r}<-{optical_frame!r} and no --base-optical; assuming the "
+        "Go2/Mid360 rig's static camera mount to place tags. Pass --base-optical 'x y z qx qy qz qw' "
+        "for a different rig.",
+        flush=True,
+    )
+    return _pose3_from_transform(base_link_from_camera_optical())
+
+
 def main() -> None:
     args = parse_args()
     db_path = resolve_db_path(args.db)
     if db_path.is_dir():
         sys.exit(f"--db must be a .db file, not a directory: {db_path}")
     rec_dir = db_path.parent
-    store = SqliteStore(path=db_path, must_exist=True)
-    store.start()
+    with SqliteStore(path=db_path, must_exist=True) as store:
+        # resolve stream/frame defaults from what the recording actually has
+        odom_stream, lidar_stream = resolve_streams(store.list_streams(), args.odom, args.lidar)
+        odom_tf = args.odom_tf or default_odom_edge(store, odom_stream)
+        # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
+        odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
+            store, odom_tf, odom_stream, lidar_stream
+        )
+        body_frame = odom_tf.split(":", 1)[1] if odom_tf else args.world_frame
+        ignore_tags = {int(token) for token in args.ignore_tags.replace(",", " ").split()}
 
-    # resolve stream/frame defaults from what the recording actually has
-    odom_stream, lidar_stream = resolve_streams(store.list_streams(), args.odom, args.lidar)
-    odom_tf = args.odom_tf or default_odom_edge(store, odom_stream)
-    # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
-    odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
-        store, odom_tf, odom_stream, lidar_stream
-    )
-    body_frame = odom_tf.split(":", 1)[1] if odom_tf else args.world_frame
-    ignore_tags = {int(token) for token in args.ignore_tags.replace(",", " ").split()}
+        camera_info = read_camera_info(store, args.camera_info_stream)
+        if camera_info is None:
+            print(
+                f"WARNING: no {args.camera_info_stream!r} CameraInfo stream "
+                "-- AprilTag stage skipped; ICP + odom only. If this is a go2 "
+                "recording, add the static front-camera intrinsics first with "
+                "scripts/add_camera_info.py, then re-run.",
+                flush=True,
+            )
+            camera_matrix, distortion = None, None
+            optical_frame = args.tag_frame
+        else:
+            camera_matrix, distortion, optical_frame = camera_info
+            optical_frame = optical_frame or args.tag_frame
+        tags_available = ensure_raw_tag_stream(
+            store,
+            camera_matrix,
+            distortion,
+            raw_stream=args.tags,
+            image_stream=args.camera,
+            marker_length=args.tag_size,
+            dictionary=args.dictionary,
+        )
+        if not tags_available:
+            print(
+                f"no AprilTag data ({args.tags!r} absent) -- running tag-free (odom + ICP only)",
+                flush=True,
+            )
 
-    camera_info = read_camera_info(store, args.camera_info_stream)
-    if camera_info is None:
+        store_tf = (
+            RecordingTF.from_store(store, odom_tf=odom_tf or None, odom_stream=odom_stream)
+            if args.tf
+            else None
+        )
+
+        def world_points(observation: Any) -> np.ndarray:
+            points = np.asarray(observation.data.points_f32())
+            if store_tf is None:
+                return points.astype(np.float32)
+            world, _origin = store_tf.register(
+                args.world_frame, observation.data.frame_id, float(observation.ts), points
+            )
+            return world
+
+        print(f"recording: {rec_dir}", flush=True)
         print(
-            f"WARNING: no {args.camera_info_stream!r} CameraInfo stream "
-            "-- AprilTag stage skipped; ICP + odom only. If this is a go2 "
-            "recording, add the static front-camera intrinsics first with "
-            "scripts/add_camera_info.py, then re-run.",
+            f"streams: tags={args.tags} odom={odom_stream} lidar={lidar_stream} -> {args.corrected_suffix}{args.suffix}",
             flush=True,
         )
-        camera_matrix, distortion = None, None
-        optical_frame = args.tag_frame
-    else:
-        camera_matrix, distortion, optical_frame = camera_info
-        optical_frame = optical_frame or args.tag_frame
-    tags_available = ensure_raw_tag_stream(
-        store,
-        camera_matrix,
-        distortion,
-        raw_stream=args.tags,
-        image_stream=args.camera,
-        marker_length=args.tag_size,
-        dictionary=args.dictionary,
-    )
-    if not tags_available:
-        print(
-            f"no AprilTag data ({args.tags!r} absent) -- running tag-free (odom + ICP only)",
-            flush=True,
-        )
 
-    store_tf = (
-        RecordingTF.from_store(store, odom_tf=odom_tf or None, odom_stream=odom_stream)
-        if args.tf
-        else None
-    )
-
-    def world_points(observation: Any) -> np.ndarray:
-        points = np.asarray(observation.data.points_f32())
-        if store_tf is None:
-            return points.astype(np.float32)
-        world, _origin = store_tf.register(
-            args.world_frame, observation.data.frame_id, float(observation.ts), points
-        )
-        return world
-
-    print(f"recording: {rec_dir}", flush=True)
-    print(
-        f"streams: tags={args.tags} odom={odom_stream} lidar={lidar_stream} -> {args.corrected_suffix}{args.suffix}",
-        flush=True,
-    )
-
-    # gate tags, pick keyframes, keep one best factor per keyframe x marker
-    raw_detections = read_raw_tag_stream(store, args.tags) if tags_available else []
-    detections = filter_glimpses(raw_detections, exclude_tags=ignore_tags)
-    odom_row_list: list[tuple[float, ...]] = []
-    observation: Any
-    for observation in store.stream(odom_stream).order_by("ts"):
-        odom_pose = observation.data.pose.pose
-        odom_row_list.append(
-            (
-                float(observation.ts),
-                odom_pose.position.x,
-                odom_pose.position.y,
-                odom_pose.position.z,
-                odom_pose.orientation.x,
-                odom_pose.orientation.y,
-                odom_pose.orientation.z,
-                odom_pose.orientation.w,
+        # gate tags, pick keyframes, keep one best factor per keyframe x marker
+        raw_detections = read_raw_tag_stream(store, args.tags) if tags_available else []
+        detections = filter_glimpses(raw_detections, exclude_tags=ignore_tags)
+        odom_row_list: list[tuple[float, ...]] = []
+        observation: Any
+        for observation in store.stream(odom_stream).order_by("ts"):
+            odom_pose = observation.data.pose.pose
+            odom_row_list.append(
+                (
+                    float(observation.ts),
+                    odom_pose.position.x,
+                    odom_pose.position.y,
+                    odom_pose.position.z,
+                    odom_pose.orientation.x,
+                    odom_pose.orientation.y,
+                    odom_pose.orientation.z,
+                    odom_pose.orientation.w,
+                )
             )
-        )
-    odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
-    if not len(odom_rows):
-        sys.exit(f"odom stream {odom_stream!r} is empty in {db_path}")
-    _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows)
-    best_factors = best_factor_per_keyframe_marker(detections, keyframe_times)
-    if raw_detections:
-        report_revisits(raw_detections, best_factors)
+        odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
+        if not len(odom_rows):
+            sys.exit(f"odom stream {odom_stream!r} is empty in {db_path}")
+        _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows)
+        best_factors = best_factor_per_keyframe_marker(detections, keyframe_times)
+        if raw_detections:
+            report_revisits(raw_detections, best_factors)
 
-    # base<-optical camera extrinsic, read from the tf tree (was the json's optical_in_base)
-    base_optical = Pose3()
-    if best_factors:
-        if store_tf is None:
-            sys.exit("tag placement needs tf (drop --no-tf) to read the base<-optical extrinsic")
-        extrinsic = store_tf.get(body_frame, optical_frame, float(odom_rows[0][0]))
-        if extrinsic is None:
-            sys.exit(
-                f"optical frame {optical_frame!r} not in the tf tree — can't place tags. "
-                "Check the recording's static tf or pass --tag-frame."
+        # base<-optical camera extrinsic: --base-optical override, else the tf tree (was the json's
+        # optical_in_base), else the known Go2/Mid360 rig mount geometry for tf-less recordings.
+        base_optical = Pose3()
+        if best_factors:
+            base_optical = resolve_base_optical(
+                store_tf, body_frame, optical_frame, float(odom_rows[0][0]), args.base_optical
             )
-        base_optical = Pose3(extrinsic.to_matrix())
 
-    # stage 1: tag PGO
-    print(f"building factor graph over {len(keyframe_poses)} keyframes...", flush=True)
-    graph, values, seen_markers = build_tag_graph(keyframe_poses, best_factors, base_optical)
-    print("solving stage 1 (tag PGO)...", flush=True)
-    estimate = solve(graph, values)
-    raw_keyframe_poses = list(keyframe_poses)
+        # stage 1: tag PGO
+        print(f"building factor graph over {len(keyframe_poses)} keyframes...", flush=True)
+        graph, values, seen_markers = build_tag_graph(keyframe_poses, best_factors, base_optical)
+        print("solving stage 1 (tag PGO)...", flush=True)
+        estimate = solve(graph, values)
+        raw_keyframe_poses = list(keyframe_poses)
 
-    # stage 2: ICP loop closures
-    if args.icp:
-        accepted = add_icp_closures(
-            graph,
-            estimate,
-            store,
-            lidar_stream,
-            keyframe_poses,
-            keyframe_times,
-            world_points,
-            args.closure_spacing,
-        )
-        if accepted:
-            print("solving stage 2 (tag PGO + ICP closures)...", flush=True)
-            estimate = solve(graph, estimate)
-
-    # per-keyframe corrections
-    corrections = [
-        estimate.atPose3(index).compose(raw_keyframe_poses[index].inverse())
-        for index in range(len(keyframe_poses))
-    ]
-    max_shift = max(float(np.linalg.norm(np.asarray(c.translation()))) for c in corrections)
-    print(
-        f"PGO: {len(keyframe_poses)} keyframes, {len(best_factors)} tag factors over "
-        f"{len(seen_markers)} markers, max correction shift {max_shift:.1f} m",
-        flush=True,
-    )
-
-    # persist PGO artifacts
-    write_deformation_nodes(
-        store,
-        f"tf_deformation_nodes{args.corrected_suffix}{args.suffix}",
-        keyframe_times,
-        raw_keyframe_poses,
-        estimate,
-        args.world_frame,
-        body_frame,
-    )
-    write_pose_graph(store, f"pose_graph{args.suffix}", keyframe_times, estimate, args.world_frame)
-
-    corrected_odom_out = f"{odom_stream}{args.corrected_suffix}{args.suffix}"
-    if args.write_odom:
-        write_corrected_odom(
-            store,
-            corrected_odom_out,
-            odom_rows,
-            keyframe_times,
-            corrections,
-            args.world_frame,
-            args.corrected_odom_frame,
-        )
-
-    # tf that places the corrected-odom-framed per-scan clouds back into the world; also
-    # supplies the ray origin (tf.get(corrected_odom)) for the corrected raycast.
-    corrected_store_tf = (
-        RecordingTF.from_store(
-            store,
-            odom_tf=f"{args.world_frame}:{args.corrected_odom_frame}",
-            odom_stream=corrected_odom_out,
-        )
-        if corrected_odom_out in store.list_streams()
-        else None
-    )
-
-    if args.write_lidar:
-        lidar_out = f"{lidar_stream}{args.corrected_suffix}{args.suffix}"
-        lcm_path = (rec_dir / f"{lidar_out}.pc2.lcm") if args.lcm else None
-        write_corrected_lidar(
-            store,
-            lidar_out,
-            lidar_stream,
-            odom_rows,
-            keyframe_times,
-            corrections,
-            world_points,
-            lcm_path,
-            args.lcm_voxel,
-            args.world_frame,
-            args.corrected_odom_frame,
-        )
-        if args.accum:
-            raycast_accumulate(
+        # stage 2: ICP loop closures
+        if args.icp:
+            accepted = add_icp_closures(
+                graph,
+                estimate,
                 store,
                 lidar_stream,
-                store_tf,
-                args.world_frame,
-                args.accum_voxel,
-                args.accum_max_range,
+                keyframe_poses,
+                keyframe_times,
+                world_points,
+                args.closure_spacing,
             )
-            raycast_accumulate(
+            if accepted:
+                print("solving stage 2 (tag PGO + ICP closures)...", flush=True)
+                estimate = solve(graph, estimate)
+
+        # per-keyframe corrections
+        corrections = [
+            estimate.atPose3(index).compose(raw_keyframe_poses[index].inverse())
+            for index in range(len(keyframe_poses))
+        ]
+        max_shift = max(float(np.linalg.norm(np.asarray(c.translation()))) for c in corrections)
+        print(
+            f"PGO: {len(keyframe_poses)} keyframes, {len(best_factors)} tag factors over "
+            f"{len(seen_markers)} markers, max correction shift {max_shift:.1f} m",
+            flush=True,
+        )
+
+        # persist PGO artifacts
+        write_deformation_nodes(
+            store,
+            f"tf_deformation_nodes{args.corrected_suffix}{args.suffix}",
+            keyframe_times,
+            raw_keyframe_poses,
+            estimate,
+            args.world_frame,
+            body_frame,
+        )
+        write_pose_graph(
+            store, f"pose_graph{args.suffix}", keyframe_times, estimate, args.world_frame
+        )
+
+        corrected_odom_out = f"{odom_stream}{args.corrected_suffix}{args.suffix}"
+        if args.write_odom:
+            write_corrected_odom(
+                store,
+                corrected_odom_out,
+                odom_rows,
+                keyframe_times,
+                corrections,
+                args.world_frame,
+                args.corrected_odom_frame,
+            )
+
+        # tf that places the corrected-odom-framed per-scan clouds back into the world; also
+        # supplies the ray origin (tf.get(corrected_odom)) for the corrected raycast.
+        corrected_store_tf = (
+            RecordingTF.from_store(
+                store,
+                odom_tf=f"{args.world_frame}:{args.corrected_odom_frame}",
+                odom_stream=corrected_odom_out,
+            )
+            if corrected_odom_out in store.list_streams()
+            else None
+        )
+
+        if args.write_lidar:
+            lidar_out = f"{lidar_stream}{args.corrected_suffix}{args.suffix}"
+            lcm_path = (rec_dir / f"{lidar_out}.pc2.lcm") if args.lcm else None
+            write_corrected_lidar(
                 store,
                 lidar_out,
-                corrected_store_tf,
+                lidar_stream,
+                odom_rows,
+                keyframe_times,
+                corrections,
+                world_points,
+                lcm_path,
+                args.lcm_voxel,
                 args.world_frame,
-                args.accum_voxel,
-                args.accum_max_range,
+                args.corrected_odom_frame,
             )
-        if args.rrd:
-            build_and_open_rrd(db_path, lidar_stream, odom_stream, args.tags, args.world_frame)
-    store.stop()
+            if args.accum:
+                raycast_accumulate(
+                    store,
+                    lidar_stream,
+                    store_tf,
+                    args.world_frame,
+                    args.accum_voxel,
+                    args.accum_max_range,
+                )
+                if corrected_store_tf is not None:
+                    raycast_accumulate(
+                        store,
+                        lidar_out,
+                        corrected_store_tf,
+                        args.world_frame,
+                        args.accum_voxel,
+                        args.accum_max_range,
+                    )
+                else:
+                    print(
+                        "WARNING: no corrected-odom tf (--no-odom?) -- skipping corrected lidar accumulation",
+                        flush=True,
+                    )
+            if args.rrd:
+                build_and_open_rrd(db_path, lidar_stream, odom_stream, args.tags, args.world_frame)
 
 
 if __name__ == "__main__":
