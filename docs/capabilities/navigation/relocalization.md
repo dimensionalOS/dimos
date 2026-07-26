@@ -100,12 +100,12 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
 
 ```
 Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
-relocalize skipped: n_pts=37770 < MIN_LOCAL_POINTS=50000
-relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
-relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
+relocalize skipped: sparse submap n_pts=37770 min_local_points=50000
+relocalize rejected source=ransac fitness=0.433 threshold=0.6
+relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102] source=ransac
 ```
 
-`relocalize skipped` means the live submap is still warming up- fewer than `MIN_LOCAL_POINTS` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
+`relocalize skipped` means the live submap is still warming up- fewer than `min_local_points` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. `threshold=` is the proposing prior's own `fitness_threshold`. Add `--eval` to `dimos run` to raise the skipped and rejected lines to warning level. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
 
 You can replay a different `.db` from the same physical space against the same premap to test generalization.
 
@@ -174,7 +174,6 @@ CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`
 | Field | Default | Description |
 |-------|---------|-------------|
 | `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
-| `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
 
@@ -182,14 +181,29 @@ Constants are not overridable via CLI today:
 
 | Constant | Value | Role |
 |----------|-------|------|
-| `MIN_LOCAL_POINTS` | `50_000` | Minimum live map points before attempting relocalization |
-| `RELOC_INTERVAL` | `2.0` s | Throttle between relocalization attempts |
 | `PUBLISH_INTERVAL` | `2.0` s | TF publish rate |
 
-To accept all candidates for visualization only (not for production nav):
+Each prior is an entry in `priors`, keyed by its type, and every field takes an `-o relocalizationmodule.priors.<key>.<field>=…`:
+
+| Setting | Default | Role |
+|---------|---------|------|
+| `enabled` | `true` | Run this prior. Set false to isolate the other one |
+| `fitness_threshold` | `0.6` | Minimum ICP fitness to accept a relocalization (0 to 1) |
+| `min_local_points` | `50_000` | Minimum live map points before the RANSAC prior fires |
+| `interval_s` | `2.0` s | Throttle between RANSAC prior fires |
+| `marker_map_file` | `None` | Surveyed marker map; the fiducial prior is inert without it |
+
+To accept low-fitness candidates for visualization only (not for production nav):
 
 ```bash
--o relocalizationmodule.fitness_threshold=0.0
+-o relocalizationmodule.priors.ransac.fitness_threshold=0.0
+```
+
+Naming one prior leaves the other at its default, so an override never silently drops a prior:
+
+```bash
+-o relocalizationmodule.priors.ransac.fitness_threshold=0.0 \
+-o relocalizationmodule.priors.fiducial.enabled=false
 ```
 
 ## Troubleshooting
@@ -200,7 +214,7 @@ To accept all candidates for visualization only (not for production nav):
 | File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
 | Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
 | Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |
-| Nav works but map looks misaligned | Low fitness accepted in debug mode | Raise `fitness_threshold` back to default `0.45` |
+| Nav works but map looks misaligned | Low fitness accepted in debug mode | Raise `fitness_threshold` back to default `0.6` on the prior entry |
 | PGO map looks wrong | Bad odometry in recording | Run `dimos map replay` or `summary` and re-record with smoother motion |
 
 ## Related docs

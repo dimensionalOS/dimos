@@ -17,6 +17,8 @@
 The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
 ``Detection3DArray`` per processed frame for LCM consumers.
+
+A second output, ``aggregated_detections``, carries one gated, robustly-aggregated pose per tag visit, with covariance and score. See ``AggregateTagBursts``.
 """
 
 from __future__ import annotations
@@ -38,8 +40,15 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
+from dimos.perception.fiducial.marker_aggregation import AggregationConfig
+from dimos.perception.fiducial.marker_map import MARKER_MAP_SUFFIX, marker_length_m_from_map
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
-from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
+from dimos.perception.fiducial.marker_transformer import (
+    AggregateTagBursts,
+    DetectMarkers,
+    MarkersPerFrame,
+)
+from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -53,6 +62,8 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     marker_length_m: float = Field(
         ..., gt=0.0, description="Physical square marker edge length in meters."
     )
+    # Survey marker map (.json from `dimos map global --markers --export`); the marker_length_m it stamped wins over the field above, so the two solve at one scale.
+    marker_map_file: str | None = None
     quality_window_s: float = Field(0.5, gt=0.0)
     smoothing_window: float = Field(0.0, ge=0.0)
     speed_limit_enabled: bool = False
@@ -60,6 +71,11 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
     camera_info: CameraInfo | None = None
+    ambiguity_ratio_min: float = Field(
+        2.0, ge=1.0
+    )  # 1.0 = off; runner-up reproj must be >=2x the best -- a planar tag has two poses fitting the same four corners, and the wrong one flips orientation ~180 deg
+    # per-glimpse gates + aggregation for aggregated_detections; first pose only after (min_observations - 1) * quality_window_s (1.0 s at defaults) -- the floor latency of a fix
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
@@ -69,10 +85,40 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     color_image: In[Image]
     detections: Out[Detection3DArray]
+    # One gated, aggregated pose per (marker, visit), not a per-frame mirror; same message type.
+    aggregated_detections: Out[Detection3DArray]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._warned_distortion_model = False
+        self._aggregate = AggregateTagBursts(
+            self.aggregated_detections.publish,
+            self.config.aggregation,
+            self.config.world_frame,
+        )
+
+    def _marker_length_m(self) -> float:
+        """The tag size the marker map was surveyed at; the configured one when the map carries none."""
+        if not self.config.marker_map_file:
+            return self.config.marker_length_m
+        path = resolve_named_path(self.config.marker_map_file, MARKER_MAP_SUFFIX)
+        surveyed = marker_length_m_from_map(path)
+        if surveyed is None:
+            logger.warning(
+                "marker map carries no size, using the configured one",
+                configured_m=self.config.marker_length_m,
+                marker_map_file=str(path),
+            )
+            return self.config.marker_length_m
+        if surveyed != self.config.marker_length_m:
+            # The map's poses are metric only at the size they were solved at, so it outranks the field.
+            logger.warning(
+                "marker size from map overrides the configured one",
+                surveyed_m=surveyed,
+                configured_m=self.config.marker_length_m,
+                marker_map_file=str(path),
+            )
+        return surveyed
 
     def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
         result: Stream[Any] = stream.transform(
@@ -91,14 +137,17 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             result.transform(
                 DetectMarkers(
                     camera_info=self.config.camera_info,
-                    marker_length_m=self.config.marker_length_m,
+                    marker_length_m=self._marker_length_m(),
                     aruco_dictionary=self.config.aruco_dictionary,
                     world_frame=self.config.world_frame,
                     smoothing_window=self.config.smoothing_window,
+                    ambiguity_ratio_min=self.config.ambiguity_ratio_min,
                     emit_empty_frames=True,
                 )
             ),
         )
+        # tap yields every observation unchanged, so OpenCV runs once per frame
+        markers = markers.tap(self._aggregate)
         return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
@@ -154,9 +203,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     def start(self) -> None:
         Module.start(self)
 
-        if len(self.inputs) != 1 or len(self.outputs) != 1:
+        if len(self.inputs) != 1 or len(self.outputs) != 2:
             raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
+                f"{self.__class__.__name__} must have exactly one In and two Out ports, "
                 f"found {len(self.inputs)} In and {len(self.outputs)} Out"
             )
 
@@ -171,6 +220,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             lambda image: self._append_image_with_pose(stream, image)
         )
         self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
+        # Only `detections` is wired here; `aggregated_detections` publishes from the tap in pipeline().
         self.register_disposable(
             stream_to_port(self._apply_pipeline(stream.live()), self.detections)
         )
