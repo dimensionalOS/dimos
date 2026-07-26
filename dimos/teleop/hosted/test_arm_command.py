@@ -23,6 +23,7 @@ plane.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
 import time
 from types import SimpleNamespace
@@ -37,10 +38,11 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
-def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
+def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
     """A real ArmCommandModule with only the framework ``Module.__init__``
     skipped — the quest-layer and command-plane inits (engage state, decoder
     table, estop/twist gates) run for real. Ports / coordinator ref / config
@@ -52,9 +54,6 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
             task_names={"right": "teleop_xarm"},
             control_loop_hz=50.0,
             cmd_stale_after_sec=0.5,
-            linear_scale=1.0,
-            angular_scale=1.0,
-            video_jpeg_quality=80,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
@@ -70,7 +69,9 @@ def module(monkeypatch: pytest.MonkeyPatch) -> ArmCommandModule:
         "coordinator",
     ):
         setattr(module, port, MagicMock())
-    return module
+    module._cmd.start()
+    yield module
+    module._cmd.stop()
 
 
 def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
@@ -131,12 +132,19 @@ def test_stale_pose_dropped(module: ArmCommandModule) -> None:
 
 
 def test_out_of_order_pose_dropped(module: ArmCommandModule) -> None:
-    t = time.time()
+    t = time.time() - 0.2
     module._on_cmd_raw(_pose_bytes("right", ts=t))
     module._on_cmd_raw(_pose_bytes("right", ts=t - 0.1))
     accepted = module._current_poses[Hand.RIGHT]
     module._on_cmd_raw(_pose_bytes("right", ts=t + 0.1))
     assert module._current_poses[Hand.RIGHT] is not accepted
+
+
+def test_future_stamped_pose_dropped(module: ArmCommandModule) -> None:
+    module._on_cmd_raw(_pose_bytes("right", ts=time.time() + 5.0))
+    assert module._current_poses[Hand.RIGHT] is None
+    module._on_cmd_raw(_pose_bytes("right"))
+    assert module._current_poses[Hand.RIGHT] is not None
 
 
 def test_pose_watermark_is_per_hand(module: ArmCommandModule) -> None:
@@ -238,6 +246,7 @@ def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> N
 
     assert module._estopped
     assert not module._is_engaged[Hand.RIGHT]
+    wait_until(lambda: bool(_sent_acks(module)), timeout=2.0)  # latch runs off-thread
     module.coordinator.set_estop.assert_called_once_with(True)
     _tick(module)  # primary still held — must NOT re-engage or publish
     assert not module._is_engaged[Hand.RIGHT]
@@ -245,13 +254,23 @@ def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> N
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 7, "ok": True}]
 
 
+def test_estop_nacked_when_coordinator_latch_fails(module: ArmCommandModule) -> None:
+    module.coordinator.set_estop.side_effect = RuntimeError("coordinator wedged")
+    module._on_state_json(b'{"type": "estop", "nonce": 5}')
+    wait_until(lambda: bool(_sent_acks(module)), timeout=2.0)
+    assert module._estopped  # local latch still gates operator input
+    assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 5, "ok": False}]
+
+
 def test_estop_clear_reengages_held_button_from_current_pose(module: ArmCommandModule) -> None:
     _engage_right(module)
     module._on_state_json(b'{"type": "estop", "nonce": 1}')
+    wait_until(lambda: len(_sent_acks(module)) == 1, timeout=2.0)
     module.right_controller_output.publish.reset_mock()
 
     module._on_state_json(b'{"type": "estop_clear", "nonce": 2}')
     assert not module._estopped
+    wait_until(lambda: len(_sent_acks(module)) == 2, timeout=2.0)
     module.coordinator.set_estop.assert_called_with(False)
 
     # Button still held from before the estop: the next tick re-engages and

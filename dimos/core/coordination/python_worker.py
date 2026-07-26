@@ -37,6 +37,7 @@ from dimos.core.coordination.worker_messages import (
 )
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.library_config import apply_library_config
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -366,6 +367,11 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
+        try:
+            # Disconnect provider singletons so broker sessions close promptly.
+            shutdown_all_providers()
+        except Exception:
+            logger.error("Error during worker provider shutdown", exc_info=True)
 
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
