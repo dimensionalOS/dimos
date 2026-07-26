@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
+from http import HTTPStatus
 from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
@@ -407,6 +408,9 @@ def test_upload_rejects_mismatched_response_metadata(
                 created_at="2026-07-25T00:00:00+00:00",
             ).to_dict()
 
+        status_code = HTTPStatus.NO_CONTENT
+
+    monkeypatch.setattr(requests, "head", lambda *args, **kwargs: Response())
     monkeypatch.setattr(requests, "post", lambda *args, **kwargs: Response())
 
     with pytest.raises(RuntimeError, match="metadata does not match"):

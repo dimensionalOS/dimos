@@ -524,6 +524,33 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
             self._pending_bytes[key] = pending + size_bytes
             return size_bytes
 
+    def check_upload(
+        self,
+        owner: str,
+        repository: str,
+        size_bytes: int,
+        expected_sha256: str | None,
+    ) -> None:
+        """Validate an upload without reserving bytes or reading its body."""
+        if self.max_object_bytes is not None and size_bytes > self.max_object_bytes:
+            raise ObjectTooLargeError(
+                f"object has {size_bytes} bytes; limit is {self.max_object_bytes}"
+            )
+        if self.max_repository_bytes is None:
+            return
+        key = (owner, repository)
+        with self._quota_lock:
+            existing = self.repository.list(owner, repository)
+            if expected_sha256 and any(item.object_id == expected_sha256 for item in existing):
+                return
+            used = sum(item.size_bytes for item in existing)
+            pending = self._pending_bytes.get(key, 0)
+            if used + pending + size_bytes > self.max_repository_bytes:
+                raise RepositoryQuotaError(
+                    f"repository would use {used + pending + size_bytes} bytes; "
+                    f"quota is {self.max_repository_bytes}"
+                )
+
     def release_upload(self, owner: str, repository: str, reserved_bytes: int) -> None:
         if reserved_bytes == 0:
             return
@@ -725,6 +752,44 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             if owner and repository:
                 server.release_upload(owner, repository, reserved_bytes)
 
+    def do_HEAD(self) -> None:
+        """Preflight an upload so rejected files are not sent over the wire."""
+        server = self._repository_server()
+        server.metrics.increment("requests_total")
+        if not self._check_authorized(write=True):
+            return
+        try:
+            owner, repository, object_id = self._route()
+            if object_id is not None:
+                raise RepositoryError("upload preflight must target the objects collection")
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                raise RepositoryError("Content-Length is required")
+            size_bytes = int(raw_length)
+            filename = self.headers.get("X-Dimos-Filename")
+            if filename is None:
+                raise RepositoryError("X-Dimos-Filename is required")
+            _validate_filename(unquote(filename))
+            server.check_upload(
+                owner,
+                repository,
+                size_bytes,
+                self.headers.get("X-Dimos-Sha256"),
+            )
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+        except ObjectTooLargeError as exc:
+            self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+        except RepositoryQuotaError as exc:
+            self._send_error_json(HTTPStatus.INSUFFICIENT_STORAGE, str(exc))
+        except (RepositoryError, ValueError) as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+        except OSError as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
     def do_GET(self) -> None:
         server = self._repository_server()
         server.metrics.increment("requests_total")
@@ -877,6 +942,13 @@ def _upload_file_once(
         "X-Dimos-Filename": quote(source_path.name, safe=""),
         "X-Dimos-Sha256": digest,
     }
+    preflight = requests.head(
+        _objects_url(server_url, owner, repository),
+        headers=headers,
+        timeout=30.0,
+    )
+    if preflight.status_code != HTTPStatus.NOT_IMPLEMENTED:
+        preflight.raise_for_status()
     with source_path.open("rb") as source:
         response = requests.post(
             _objects_url(server_url, owner, repository),
