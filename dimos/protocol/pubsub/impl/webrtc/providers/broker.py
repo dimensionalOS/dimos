@@ -432,8 +432,7 @@ class BrokerProvider(AsyncProviderBase):
                         logger.warning("cleanup after terminal heartbeat failed", exc_info=True)
                     with self._lock:
                         self._started = False
-                    if self._thread_stop is not None:
-                        self._thread_stop.set()
+                    asyncio.get_running_loop().stop()
                     return
             else:
                 terminal_streak = 0

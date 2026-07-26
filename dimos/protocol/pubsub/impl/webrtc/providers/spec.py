@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import concurrent.futures
 import contextlib
 import importlib.util
 import threading
@@ -121,7 +122,6 @@ class AsyncProviderBase:
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._thread_stop: threading.Event | None = None
         self._started = False
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -142,13 +142,8 @@ class AsyncProviderBase:
             if self.is_connected:
                 return
             ready = threading.Event()
-            thread_stop = threading.Event()
-            self._thread_stop = thread_stop
             self._thread = threading.Thread(
-                target=self._run_loop,
-                args=(ready, thread_stop),
-                daemon=True,
-                name=type(self).__name__,
+                target=self._run_loop, args=(ready,), daemon=True, name=type(self).__name__
             )
             self._thread.start()
             if not ready.wait(timeout=5.0):
@@ -182,23 +177,22 @@ class AsyncProviderBase:
             self._teardown()
 
     def _teardown(self) -> None:
-        if self._thread_stop is not None:
-            self._thread_stop.set()
+        if self._loop is not None:
+            with contextlib.suppress(RuntimeError):
+                self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5.0)
         self._thread = None
         self._loop = None
-        self._thread_stop = None
 
-    def _run_loop(self, ready: threading.Event, thread_stop: threading.Event) -> None:
+    def _run_loop(self, ready: threading.Event) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
         ready.set()
 
         try:
-            while not thread_stop.is_set():
-                loop.run_until_complete(asyncio.sleep(0.01))
+            loop.run_forever()
         finally:
             tasks = asyncio.all_tasks(loop)
             for task in tasks:
@@ -212,7 +206,7 @@ class AsyncProviderBase:
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
             return fut.result(timeout=timeout)
-        except TimeoutError:
+        except concurrent.futures.TimeoutError:
             fut.cancel()
             with contextlib.suppress(Exception):
                 fut.result(timeout=5.0)
