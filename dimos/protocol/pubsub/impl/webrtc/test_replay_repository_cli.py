@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from click import unstyle
 import pytest
 from typer.testing import CliRunner
 
@@ -151,7 +152,7 @@ def test_serve_rejects_missing_s3_bucket(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
-    assert "--s3-bucket is required" in result.output
+    assert "--s3-bucket is required" in unstyle(result.output)
 
 
 def test_upload_list_and_download_commands(
