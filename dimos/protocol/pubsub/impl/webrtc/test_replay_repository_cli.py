@@ -165,7 +165,7 @@ def test_serve_rejects_invalid_region(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
-    assert "--region must be china, us, or other" in result.output
+    assert "--region must be china, us, or other" in unstyle(result.output)
 
 
 def test_recommend_node_command(monkeypatch: pytest.MonkeyPatch) -> None:
