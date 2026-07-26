@@ -18,6 +18,7 @@ import json
 import threading
 from typing import Any
 
+from pydantic import Field
 import zenoh
 
 from dimos.protocol.service.spec import BaseConfig, Service
@@ -27,10 +28,38 @@ zenoh.init_log_from_env_or("warn")
 
 logger = setup_logger()
 
+# Robot-side bridges (e.g. go2web) listen here so a remote dimos can dial in
+# when multicast discovery fails. Zenoh's own default port.
+ROBOT_ZENOH_PORT = 7447
+
+
+def _default_connect_endpoints() -> list[str]:
+    """Dial known robots directly instead of trusting multicast scouting.
+
+    Many APs filter multicast between WiFi clients, so a robot that is
+    perfectly reachable over TCP never answers a scout. When the session is
+    zenoh-transported and a robot IP is configured, it becomes an explicit
+    endpoint; scouting stays on for everything else. An IP carrying its own
+    ``:port`` is used as given.
+    """
+    from dimos.core.global_config import global_config
+
+    if global_config.transport != "zenoh":
+        return []
+    ips = [global_config.robot_ip or "", *(global_config.robot_ips or "").split(",")]
+    out: list[str] = []
+    for ip in (x.strip() for x in ips):
+        if not ip:
+            continue
+        endpoint = f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}"
+        if endpoint not in out:
+            out.append(endpoint)
+    return out
+
 
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
-    connect: list[str] = []
+    connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
 
     @property
