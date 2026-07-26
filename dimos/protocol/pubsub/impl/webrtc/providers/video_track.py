@@ -22,19 +22,26 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any, Protocol
 
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
 _AV_FORMAT_MAP = {
-    ImageFormat.BGR: "bgr24",
-    ImageFormat.RGB: "rgb24",
-    ImageFormat.BGRA: "bgra",
-    ImageFormat.RGBA: "rgba",
-    ImageFormat.GRAY: "gray",
+    "bgr": "bgr24",
+    "rgb": "rgb24",
+    "bgra": "bgra",
+    "rgba": "rgba",
+    "gray": "gray",
 }
+
+
+class ImageLike(Protocol):
+    @property
+    def data(self) -> Any: ...
+
+    @property
+    def format(self) -> Any: ...
 
 
 class CameraVideoTrack(VideoStreamTrack):
@@ -49,7 +56,7 @@ class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
         self._loop: asyncio.AbstractEventLoop = loop
-        self._latest: Image | None = None
+        self._latest: ImageLike | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
@@ -65,7 +72,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._consumed_seq = self._frame_seq
         self._armed = True
 
-    def set_latest(self, img: Image) -> None:
+    def set_latest(self, img: ImageLike) -> None:
         """Publish the latest frame. Called from the producer (stream) thread.
 
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
@@ -99,7 +106,12 @@ class CameraVideoTrack(VideoStreamTrack):
             self._first_mono = now
         pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
-        frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
+        raw_format: Any = img.format
+        format_name = str(getattr(raw_format, "value", raw_format)).lower()
+        frame = av.VideoFrame.from_ndarray(
+            img.data,
+            format=_AV_FORMAT_MAP.get(format_name, "bgr24"),
+        )
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame

@@ -77,6 +77,7 @@ class BrokerConfig(ProviderConfig):
     ordered: bool = False
     max_retransmits: int | None = 0
     video_codec: str = "h264"
+    strict_video_codec: bool = False
     audio_in: bool = False
 
     def _create(self) -> BrokerProvider:
@@ -278,22 +279,30 @@ class BrokerProvider(AsyncProviderBase):
     def _prefer_video_codec(self, codec: str) -> None:
         """Reorder the video transceiver's codec preferences (e.g. h264 first).
 
-        Best-effort: unknown codec → warn and keep aiortc's default order, so a
-        misconfigured knob can't kill the connection."""
+        By default an unknown codec only warns and keeps aiortc's fallback
+        order. ``strict_video_codec`` limits the offer to the requested codec
+        and fails early when the local encoder is unavailable."""
         from aiortc import RTCRtpSender
 
         want = f"video/{codec}".lower()
         caps = RTCRtpSender.getCapabilities("video")
         preferred = [c for c in caps.codecs if c.mimeType.lower() == want]
         if not preferred:
+            if self._config.strict_video_codec:
+                raise RuntimeError(f"Required video codec {want} is not available")
             logger.warning("video_codec=%r not in local capabilities — using defaults", codec)
             return
         rest = [c for c in caps.codecs if c.mimeType.lower() != want]
+        codec_preferences = preferred if self._config.strict_video_codec else preferred + rest
         assert self._pc is not None
         for t in self._pc.getTransceivers():
             if t.kind == "video":
-                t.setCodecPreferences(preferred + rest)
-                logger.info("video codec preference: %s first", want)
+                t.setCodecPreferences(codec_preferences)
+                logger.info(
+                    "video codec preference: %s%s",
+                    want,
+                    " only" if self._config.strict_video_codec else " first",
+                )
 
     # ─── Operator → robot audio ──────────────────────────────────────
 
