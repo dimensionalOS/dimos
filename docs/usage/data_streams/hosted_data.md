@@ -199,6 +199,9 @@ dimos data upload go2-office.db \
   --server-url https://replays.example.com
 ```
 
+The JSON response includes `replay_uri`, which is the value to pass into the
+existing replay CLI.
+
 The command does not copy the database file directly. It uses SQLite's backup
 API to create a consistent standalone snapshot, including committed data still
 in the WAL, and runs `PRAGMA integrity_check` before upload. The original `.db`
@@ -221,10 +224,11 @@ Point `DIMOS_REPLAY_DB` at the uploaded database object's content-addressed
 reference, then use the existing replay command:
 
 ```bash
-export DIMOS_REPLAY_DB='dimos-replay://alice/go2-debug/OBJECT_ID?server=https%3A%2F%2Freplays.example.com'
+export DIMOS_REPLAY_DB='PASTE_REPLAY_URI_FROM_UPLOAD'
 export DIMOS_REPLAY_SERVER_URL='https://replays.example.com'
 export DIMOS_REPLAY_REPOSITORY_TOKEN=...
 dimos --replay run unitree-go2
+dimos --replay --replay-db "$DIMOS_REPLAY_DB" run unitree-go2-memory
 ```
 
 The object is downloaded atomically, verified against the SHA-256 object id,

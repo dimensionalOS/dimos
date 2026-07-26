@@ -256,9 +256,10 @@ def upload(
     """Upload a raw file or a consistent memory2 snapshot without ZIP packaging."""
     selected_server_url = choose_server_url(server_url)
     if kind is UploadKind.MEMORY2 or (kind is UploadKind.AUTO and path.suffix.lower() == ".db"):
+        from dimos.hosted_data.integrations.memory2_replay import RemoteReplayReference
         from dimos.hosted_data.integrations.memory2_upload import upload_memory2_dataset
 
-        payload = upload_memory2_dataset(
+        upload_result = upload_memory2_dataset(
             path=path,
             server_url=selected_server_url,
             owner=owner,
@@ -267,7 +268,14 @@ def upload(
             dataset=name,
             retries=retries,
             backoff_seconds=backoff_seconds,
-        ).to_dict()
+        )
+        payload = upload_result.to_dict()
+        payload["replay_uri"] = RemoteReplayReference(
+            server_url=selected_server_url,
+            owner=owner,
+            repository=repository,
+            object_id=upload_result.dataset_object.object_id,
+        ).to_uri()
     else:
         if name is not None:
             raise typer.BadParameter("--name is only valid for memory2 uploads")

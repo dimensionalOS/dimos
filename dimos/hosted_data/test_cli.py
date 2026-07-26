@@ -329,6 +329,8 @@ def test_upload_auto_detects_a_memory2_database(
     received: dict[str, Any] = {}
 
     class _Result:
+        dataset_object = _object()
+
         def to_dict(self) -> dict[str, str]:
             return {"kind": "memory2"}
 
@@ -360,7 +362,12 @@ def test_upload_auto_detects_a_memory2_database(
     )
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {"kind": "memory2"}
+    payload = json.loads(result.output)
+    assert payload["kind"] == "memory2"
+    assert payload["replay_uri"] == (
+        f"dimos-replay://alice/go2/{_Result.dataset_object.object_id}"
+        "?server=https%3A%2F%2Freplay.example"
+    )
     assert received["path"] == source
     assert received["server_url"] == "https://replay.example"
     assert received["dataset"] == "field-test"
