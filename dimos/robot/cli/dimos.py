@@ -25,6 +25,18 @@ import time
 import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
+# macOS Open3D uses LLVM libomp, which (when OMP_WAIT_POLICY is unset) still
+# actively spins for KMP_BLOCKTIME (default 200ms) after each parallel region.
+# Several point-cloud workers each owning a core-sized pool then yield-spin
+# between frames and burn whole cores in kernel time (measured: replay dropped
+# from ~1120% to ~70% CPU on a 12-core Mac with these set). Linux Open3D links
+# libgomp, whose unset default is only a short spin then sleep, so leave it
+# alone. Set before any library loads libomp; workers inherit via the
+# forkserver. User environment overrides win.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_BLOCKTIME", "0")
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
