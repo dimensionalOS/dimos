@@ -856,9 +856,11 @@ map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
 map_app.command("replay-marker")(_map_replay_marker_main)
 
+from dimos.hosted_data.cli import hosted_data_app
 from dimos.memory2.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
+main.add_typer(hosted_data_app, name="data")
 
 
 @main.command()
