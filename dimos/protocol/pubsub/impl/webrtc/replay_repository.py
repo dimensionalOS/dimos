@@ -26,7 +26,6 @@ from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -40,11 +39,13 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import requests
 
+from dimos.utils.logging_config import setup_logger
+
 _CHUNK_SIZE = 1024 * 1024
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _OBJECT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _T = TypeVar("_T")
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class RepositoryError(ValueError):
