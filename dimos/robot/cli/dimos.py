@@ -831,7 +831,7 @@ def dataprep_build(
     ),
 ) -> None:
     """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
-    from dimos.learning.dataprep.cli import build
+    from dimos.imitation.dataprep.cli import build
 
     build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
 
@@ -846,7 +846,7 @@ def dataprep_inspect(
     ),
 ) -> None:
     """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
-    from dimos.learning.dataprep.cli import inspect
+    from dimos.imitation.dataprep.cli import inspect
 
     inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
 

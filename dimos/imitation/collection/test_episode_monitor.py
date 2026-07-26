@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator
 import pytest
 import pytest_mock
 
-from dimos.learning.collection.episode_monitor import (
+from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModule,
     EpisodeStatus,
     KeyPress,

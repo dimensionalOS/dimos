@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dimos.learning.dataprep.core import (
+from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     Sample,

@@ -26,8 +26,8 @@ Simulates what happens when DimOS crashes and restarts:
 8. Repeat N cycles
 
 Usage:
-    python -m dimos.core.tests.e2e_mcp_killtest
-    python -m dimos.core.tests.e2e_mcp_killtest --cycles 5
+    python -m dimos.core.demos.demo_mcp_killtest
+    python -m dimos.core.demos.demo_mcp_killtest --cycles 5
 """
 
 from __future__ import annotations
@@ -93,8 +93,8 @@ def run_blueprint_in_process(ready_event: multiprocessing.synchronize.Event) -> 
     from dimos.agents.mcp.mcp_server import McpServer
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.demos.stress_test_module import StressTestModule
     from dimos.core.global_config import global_config
-    from dimos.core.tests.stress_test_module import StressTestModule
 
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
