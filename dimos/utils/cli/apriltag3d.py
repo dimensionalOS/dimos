@@ -751,18 +751,3 @@ def plate_size_mm(family: str, size_mm: float, margin_cells: float) -> float:
     """Outer plate edge length for the given tag size and quiet-zone margin."""
     n = _FAMILIES[family.lower()][2]
     return size_mm + 2 * margin_cells * size_mm / n
-
-
-__all__ = [
-    "TagParts",
-    "build_tag_meshes",
-    "generate_3d",
-    "hole_pad_mm",
-    "hole_spacing_mm",
-    "leg_solid",
-    "marker_solid",
-    "plate_footprint_mm",
-    "plate_size_mm",
-    "text_solid",
-    "write_3mf",
-]
