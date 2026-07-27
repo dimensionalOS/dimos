@@ -50,6 +50,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -61,7 +62,10 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.db_fallback imp
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy import (
     normalize_go2_legacy,
 )
-from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay import run_module_graph
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay import (
+    EDGE_LOOP_CLOSURE,
+    run_module_graph,
+)
 from dimos.navigation.jnav.components.loop_closure.utils import (
     MAP_MAX_SCANS,
     accumulate_maps,
@@ -91,7 +95,8 @@ DEFAULT_BASE_FRAME = "base_link"
 DEFAULT_WORLD_FRAME = "world"
 
 
-def _git_commit() -> str | None:
+def _git_state() -> tuple[str | None, bool | None]:
+    """(commit hash, unstaged-changes flag) of the repo this file lives in."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -101,7 +106,7 @@ def _git_commit() -> str | None:
             check=True,
         )
     except (OSError, subprocess.CalledProcessError):
-        return None
+        return None, None
     commit = result.stdout.strip()
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -109,7 +114,7 @@ def _git_commit() -> str | None:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    return commit + ("-dirty" if dirty else "")
+    return commit, bool(dirty)
 
 
 def evaluate(
@@ -132,6 +137,7 @@ def evaluate(
     write_rrd: bool,
     tf_failure_budget: int = 30,
 ) -> dict[str, Any]:
+    evaluate_started = time.monotonic()
     with SqliteStore(path=db_path, must_exist=True) as store:
         # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
         odom_tf, odom_stream, lidar_stream = normalize_go2_legacy(
@@ -189,7 +195,7 @@ def evaluate(
                 detections = []
 
         started = time.monotonic()
-        graph, closures, loop_edges, replay_stats = run_module_graph(
+        graph, closures, loop_edges, replay_stats, graph_detail = run_module_graph(
             db_path,
             module_class,
             pgo_config,
@@ -286,6 +292,24 @@ def evaluate(
             closure_segments,
         )
 
+    git_commit, git_unstaged_changes = _git_state()
+    node_fields = ["id", "ts", "x", "y", "z", "qx", "qy", "qz", "qw"]
+    final_pose_graph = {
+        "node_fields": node_fields,
+        "nodes": graph_detail["nodes"],
+        "edges": [
+            [start_id, end_id, "loop_closure" if metadata_id == EDGE_LOOP_CLOSURE else "odom"]
+            for start_id, end_id, metadata_id in graph_detail["edges"]
+        ],
+    }
+    raw_pose_graph = {
+        "node_fields": node_fields,
+        "nodes": [
+            [node_id, node_ts, *np.asarray(raw_pose(node_ts)).tolist()]
+            for node_id, node_ts, *_ in graph_detail["nodes"]
+        ],
+    }
+
     summary = {
         "db": str(db_path),
         "odom_stream": odom_stream,
@@ -294,6 +318,7 @@ def evaluate(
         "module": {"path": str(module_path), "name": module_name},
         "pgo_config": pgo_config,
         "dynamic_tags": sorted(dynamic_tags),
+        "argv": sys.argv,
         "replay": replay_stats,
         "scores": {
             "raw_spread_m": raw_report.mean_spread if detections else None,
@@ -309,11 +334,15 @@ def evaluate(
         "voxel_agreement": voxel,
         "raw_path": raw_path.tolist(),
         "corrected_path": corrected_path.tolist(),
+        "raw_pose_graph": raw_pose_graph,
+        "final_pose_graph": final_pose_graph,
         "topdown_png": str(png_path) if write_topdown else None,
         "isometric_png": str(iso_png_path) if write_isometric else None,
         "rrd": str(rrd_path) if write_rrd else None,
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "git_commit": _git_commit(),
+        "total_runtime_s": round(time.monotonic() - evaluate_started, 1),
+        "git_commit": git_commit,
+        "git_unstaged_changes": git_unstaged_changes,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 

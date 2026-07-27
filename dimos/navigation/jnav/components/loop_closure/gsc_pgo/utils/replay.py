@@ -89,6 +89,8 @@ class GraphCapture(Module):
         self._graph: list[GraphPose] = []
         self._closures = 0
         self._loop_edges: list[tuple[float, float]] = []
+        self._nodes: list[list[float]] = []
+        self._edges: list[list[int]] = []
 
     async def handle_pose_graph(self, msg: Graph3D) -> None:
         # Heartbeat lets the host detect when the graph has settled post-replay.
@@ -114,6 +116,21 @@ class GraphCapture(Module):
             and edge.start_id in ts_by_id
             and edge.end_id in ts_by_id
         ]
+        self._nodes = [
+            [
+                node.id,
+                node.pose.ts,
+                node.pose.position.x,
+                node.pose.position.y,
+                node.pose.position.z,
+                node.pose.orientation.x,
+                node.pose.orientation.y,
+                node.pose.orientation.z,
+                node.pose.orientation.w,
+            ]
+            for node in msg.nodes
+        ]
+        self._edges = [[edge.start_id, edge.end_id, edge.metadata_id] for edge in msg.edges]
 
     async def handle_loop_closure_event(self, msg: GraphDelta3D) -> None:
         self._closures += 1
@@ -126,6 +143,8 @@ class GraphCapture(Module):
                     "graph": self._graph,
                     "closures": self._closures,
                     "loop_edges": self._loop_edges,
+                    "nodes": self._nodes,
+                    "edges": self._edges,
                 }
             )
         )
@@ -293,10 +312,11 @@ def run_module_graph(
     odom_stream: str,
     drift_per_sec: list[float] | None = None,
     drift_t0: float = 0.0,
-) -> tuple[list[GraphPose], int, list[tuple[float, float]], dict[str, Any]]:
+) -> tuple[list[GraphPose], int, list[tuple[float, float]], dict[str, Any], dict[str, Any]]:
     """Replay the recording through the module; return its optimized pose graph
     (with orientations), loop-closure count, committed loop-edge keyframe
-    timestamp pairs, and replay stats.
+    timestamp pairs, replay stats, and the full graph detail (nodes with ids,
+    edges with metadata ids).
 
     Scans are paced on the module's corrected_odometry acks — machine-speed
     independent, and every recorded message is fed (no strides, no caps).
@@ -380,4 +400,5 @@ def run_module_graph(
     loop_edges = [
         (float(start_ts), float(end_ts)) for start_ts, end_ts in data.get("loop_edges", [])
     ]
-    return graph, int(data["closures"]), loop_edges, replay_stats  # type: ignore[return-value]
+    graph_detail = {"nodes": data.get("nodes", []), "edges": data.get("edges", [])}
+    return graph, int(data["closures"]), loop_edges, replay_stats, graph_detail  # type: ignore[return-value]
