@@ -42,7 +42,7 @@ class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
-    _similarity_threshold: float = 0.23
+    _similarity_threshold: float = 0.28
 
     _spatial_memory: SpatialMemorySpec
     _navigation: NavigationInterfaceSpec
@@ -245,6 +245,9 @@ class NavigationSkillContainer(Module):
 
         logger.info("Goal pose for semantic nav", pose=goal_pose)
         if not goal_pose:
+            similarity = 1.0 - (best_match.get("distance") or 1)
+            if similarity < self._similarity_threshold:
+                return f"No sufficiently similar location found in semantic map for '{query}'."
             return f"Found a result for '{query}' but it didn't have a valid position."
 
         message = f"Found a location in the semantic map matching '{query}'."
@@ -264,11 +267,12 @@ class NavigationSkillContainer(Module):
     def _cancel_goal_and_stop(self) -> None:
         self._navigation.cancel_goal()
 
-    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
+    @classmethod
+    def _get_goal_pose_from_result(cls, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
-        if similarity < self._similarity_threshold:
+        if similarity < cls._similarity_threshold:
             logger.warning(
-                f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})"
+                f"Match found but similarity score ({similarity:.4f}) is below threshold ({cls._similarity_threshold})"
             )
             return None
 

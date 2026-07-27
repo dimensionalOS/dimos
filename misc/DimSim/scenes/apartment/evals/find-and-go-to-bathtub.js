@@ -2,7 +2,7 @@ import { runEval } from "@dimsim/eval";
 
 await runEval({
   scene: "apartment",
-  task: "Go to the bathtub.",
+  task: "Find the bathtub and go to it. Keep searching until you find it.",
   timeoutSec: 900,
   // Start outside beside the oak, facing west along the house. The task stays
   // intentionally natural and contains no route, landmark, or tool guidance.
