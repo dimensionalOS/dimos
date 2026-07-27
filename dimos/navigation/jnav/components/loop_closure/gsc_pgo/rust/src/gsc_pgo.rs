@@ -139,6 +139,10 @@ pub struct CommittedLoop {
 /// Max buffered long jumps kept at once. Oldest is evicted FIFO past this.
 const LONG_JUMP_BUFFER_MAX_LEN: usize = 4;
 
+/// gtsam's elimination/Bayes-tree code recurses proportionally to graph size;
+/// the 2 MB default thread stack overflows on multi-thousand-keyframe runs.
+pub const GTSAM_THREAD_STACK_BYTES: usize = 64 * 1024 * 1024;
+
 /// Floor on the per-loop ICP score before it is used as a GNC factor variance,
 /// so a zero-score closure still gets a finite (very tight) noise model.
 pub(crate) const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
@@ -458,6 +462,7 @@ impl GscPgo {
             let (result_sender, result_receiver) = std::sync::mpsc::channel::<GncResult>();
             std::thread::Builder::new()
                 .name("gnc-worker".to_string())
+                .stack_size(GTSAM_THREAD_STACK_BYTES)
                 .spawn(move || gnc_worker_loop(job_receiver, result_sender))
                 .expect("spawn gnc worker thread");
             Some(GncWorker {
