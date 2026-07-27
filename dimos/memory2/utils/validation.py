@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import re
 
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Dot-separated segments: each segment is a safe SQL identifier, the whole is a
+# T15 module-path stream name (``nav_stack.voxel_mapper2.decisions``). No ``/``,
+# no leading/trailing/doubled dot, no empty segment; every SQL site that names a
+# stream quotes the identifier, so a dotted name is one atom, never a schema ref.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$")
 
 
 def validate_identifier(name: str) -> None:
-    """Reject stream names that aren't safe SQL identifiers."""
+    """Reject stream names that aren't safe (dot-separated) SQL identifiers."""
     if not _IDENT_RE.match(name):
         raise ValueError(f"Invalid stream name: {name!r}")

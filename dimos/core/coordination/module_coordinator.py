@@ -299,12 +299,37 @@ class ModuleCoordinator(Resource):
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
     ) -> None:
         streams: dict[tuple[str, type], list[tuple[str, str]]] = defaultdict(list)
+        producers: set[tuple[str, type]] = set()
+        consumers: dict[tuple[str, type], list[str]] = defaultdict(list)
 
         for bp in blueprint.active_blueprints:
             for conn in bp.streams:
                 remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
                 if isinstance(remapped_name, str):
-                    streams[remapped_name, conn.type].append((bp.name, conn.name))
+                    key = (remapped_name, conn.type)
+                    streams[key].append((bp.name, conn.name))
+                    if conn.direction == "out":
+                        producers.add(key)
+                    else:
+                        consumers[key].append(f"{bp.name}.{conn.name}")
+
+        # Dangling-subscription diagnostic: a consumer whose (name, type) has no
+        # producer in this blueprint gets a dead topic and silently no data — the
+        # classic name/type drift (e.g. a renderer input renamed out from under a
+        # graph export). Non-fatal (viewers legitimately subscribe optional topics),
+        # but surfaced in one line so a real drift can't hide among the optionals.
+        dangling = [
+            f"{sub}:{name}"
+            for (name, _type), subs in consumers.items()
+            if (name, _type) not in producers
+            for sub in subs
+        ]
+        if dangling:
+            logger.warning(
+                "dangling subscriptions — consumers with no producer (name/type drift?)",
+                count=len(dangling),
+                consumers=sorted(dangling),
+            )
 
         for remapped_name, stream_type in streams.keys():
             key = (remapped_name, stream_type)

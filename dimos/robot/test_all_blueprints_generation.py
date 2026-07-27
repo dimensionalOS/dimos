@@ -154,6 +154,7 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
+        or any(part.startswith("test_") for part in rel.split("/"))  # test dirs (e.g. fixtures)
         or rel.startswith("core/")
     )
 

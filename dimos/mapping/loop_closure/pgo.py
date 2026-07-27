@@ -435,6 +435,35 @@ class _PGOState:
             loops=tuple(self.loop_closures()),
         )
 
+    @property
+    def n_keyframes(self) -> int:
+        return len(self._key_poses)
+
+    @property
+    def n_loops(self) -> int:
+        return len(self._accepted_loops)
+
+    def correction(self, ts: float) -> Transform:
+        """The current world_corrected <- world_raw drift correction, stamped at ts."""
+        return _pose3_to_transform(
+            self._world_correction,
+            ts=ts,
+            frame_id=FRAME_WORLD_CORRECTED,
+            child_frame_id=FRAME_WORLD_RAW,
+        )
+
+    def keyframe_world_clouds(self, start: int = 0) -> Iterator[PointCloud2]:
+        """Keyframe body clouds (from ``start``) registered at their optimized poses."""
+        for kp in self._key_poses[start:]:
+            yield kp.body_cloud.transform(
+                _pose3_to_transform(
+                    kp.optimized,
+                    ts=kp.timestamp,
+                    frame_id=FRAME_WORLD_CORRECTED,
+                    child_frame_id=FRAME_BODY,
+                )
+            )
+
     def _is_keyframe(self, local_pose: gtsam.Pose3) -> bool:
         if not self._key_poses:
             return True
