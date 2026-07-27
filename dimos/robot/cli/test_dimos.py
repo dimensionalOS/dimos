@@ -25,7 +25,6 @@ import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot import external_blueprints as external
-import dimos.utils.cache as cache_utils
 from dimos.robot.cli.dimos import (
     _normalize_simulation_argv,
     _with_relay_bridge,
@@ -33,6 +32,7 @@ from dimos.robot.cli.dimos import (
     load_config_args,
     main,
 )
+import dimos.utils.cache as cache_utils
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
