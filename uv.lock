@@ -1560,6 +1560,7 @@ version = "0.0.14b1"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
+    { name = "attrs" },
     { name = "bleak" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
@@ -2044,6 +2045,7 @@ requires-dist = [
     { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
+    { name = "attrs", specifier = ">=25.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },

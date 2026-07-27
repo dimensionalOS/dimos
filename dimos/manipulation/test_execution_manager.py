@@ -27,6 +27,7 @@ from dimos.manipulation.execution_manager import (
     CoordinatorExecutionAdapter,
     ExecutionDispatchResult,
     ExecutionOutcome,
+    ExecutionPolicy,
     ExecutionTarget,
     PlanExecutionManager,
 )
@@ -198,6 +199,100 @@ def test_execution_target_rejects_ambiguous_reverse_mapping() -> None:
             "traj_arm",
             ("j0",),
             {"hardware/j0": "j0", "legacy/j0": "j0"},
+        )
+
+
+@pytest.mark.parametrize("tolerance", [-1.0, float("-inf"), float("inf"), float("nan")])
+def test_execution_policy_rejects_invalid_start_tolerance(tolerance: float) -> None:
+    with pytest.raises(ValueError, match="must be finite and non-negative"):
+        ExecutionPolicy(plan_start_tolerance=tolerance)
+
+
+@pytest.mark.parametrize(
+    ("robot_name", "task_name", "message"),
+    [
+        ("", "traj_arm", "requires a robot name"),
+        ("arm", "", "requires a task name"),
+    ],
+)
+def test_execution_target_requires_robot_and_task_names(
+    robot_name: str,
+    task_name: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ExecutionTarget(
+            robot_name=robot_name,
+            model_joint_names=("j0",),
+            coordinator_task_name=task_name,
+            model_to_coordinator={"j0": "j0"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("joint_names", "message"),
+    [
+        ((), "invalid local model joints"),
+        (("",), "invalid local model joints"),
+        (("arm/j0",), "invalid local model joints"),
+        (("j0", "j0"), "duplicate local model joints"),
+    ],
+)
+def test_execution_target_rejects_invalid_model_joint_names(
+    joint_names: tuple[str, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ExecutionTarget(
+            robot_name="arm",
+            model_joint_names=joint_names,
+            coordinator_task_name="traj_arm",
+            model_to_coordinator={name: name for name in joint_names},
+        )
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ({}, "must resolve every model joint"),
+        ({"j0": "", "j1": "hardware/j1"}, "ambiguous coordinator joints"),
+        ({"j0": "hardware/j0", "j1": "hardware/j0"}, "ambiguous coordinator joints"),
+    ],
+)
+def test_execution_target_rejects_invalid_coordinator_mapping(
+    mapping: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ExecutionTarget(
+            robot_name="arm",
+            model_joint_names=("j0", "j1"),
+            coordinator_task_name="traj_arm",
+            model_to_coordinator=mapping,
+        )
+
+
+def test_execution_target_snapshots_mapping_input() -> None:
+    mapping = {"j0": "hardware/j0"}
+
+    target = ExecutionTarget(
+        robot_name="arm",
+        model_joint_names=("j0",),
+        coordinator_task_name="traj_arm",
+        model_to_coordinator=mapping,
+    )
+    mapping["j0"] = "changed/j0"
+
+    assert dict(target.model_to_coordinator) == {"j0": "hardware/j0"}
+
+
+def test_execution_target_rejects_unknown_reverse_mapping() -> None:
+    with pytest.raises(ValueError, match="maps to unknown model joint"):
+        _target(
+            "arm",
+            "traj_arm",
+            ("j0",),
+            {"hardware/j1": "j1"},
         )
 
 

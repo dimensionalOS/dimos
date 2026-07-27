@@ -17,12 +17,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
 from enum import Enum, auto
 import math
 import threading
 from types import MappingProxyType
 from typing import Protocol
+
+import attrs
 
 from dimos.control.coordinator_client import ControlCoordinatorClient
 from dimos.manipulation.planning.groups.identifiers import parse_planning_group_id
@@ -54,7 +55,7 @@ class CoordinatorCancelOutcome(Enum):
     UNCERTAIN = auto()
 
 
-@dataclass(frozen=True)
+@attrs.frozen(slots=False)
 class ExecutionDispatchResult:
     """Structured result of validating and dispatching one generated plan."""
 
@@ -69,7 +70,7 @@ class ExecutionDispatchResult:
         return self.outcome is ExecutionOutcome.ACCEPTED
 
 
-@dataclass(frozen=True)
+@attrs.frozen(slots=False)
 class CancellationResult:
     """Safety result of cancelling tracked coordinator tasks."""
 
@@ -80,52 +81,88 @@ class CancellationResult:
     unresolved_tasks: tuple[TaskName, ...] = ()
 
 
-@dataclass(frozen=True)
+@attrs.frozen(slots=False)
 class ExecutionPolicy:
     """Configuration for planned execution validation."""
 
-    plan_start_tolerance: float = DEFAULT_PLAN_START_TOLERANCE
+    plan_start_tolerance: float = attrs.field(default=DEFAULT_PLAN_START_TOLERANCE)
 
-    def __post_init__(self) -> None:
-        if not math.isfinite(self.plan_start_tolerance) or self.plan_start_tolerance < 0:
+    @plan_start_tolerance.validator
+    def _validate_plan_start_tolerance(
+        self,
+        _attribute: attrs.Attribute[float],
+        value: float,
+    ) -> None:
+        if not math.isfinite(value) or value < 0:
             raise ValueError("plan_start_tolerance must be finite and non-negative")
 
 
-@dataclass(frozen=True)
+def _model_joint_names(value: Sequence[str]) -> tuple[str, ...]:
+    return tuple(value)
+
+
+def _immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
+    return MappingProxyType(dict(value))
+
+
+@attrs.frozen(slots=False)
 class ExecutionTarget:
     """Immutable coordinator dispatch metadata for one robot."""
 
-    robot_name: RobotName
-    model_joint_names: tuple[str, ...]
-    coordinator_task_name: TaskName
-    model_to_coordinator: Mapping[str, str] = field(repr=False)
+    robot_name: RobotName = attrs.field()
+    model_joint_names: tuple[str, ...] = attrs.field(converter=_model_joint_names)
+    coordinator_task_name: TaskName = attrs.field()
+    model_to_coordinator: Mapping[str, str] = attrs.field(
+        converter=_immutable_joint_mapping,
+        repr=False,
+    )
 
-    def __post_init__(self) -> None:
-        model_names = tuple(self.model_joint_names)
-        if not self.robot_name:
+    @robot_name.validator
+    def _validate_robot_name(
+        self,
+        _attribute: attrs.Attribute[RobotName],
+        value: RobotName,
+    ) -> None:
+        if not value:
             raise ValueError("Execution target requires a robot name")
-        if not self.coordinator_task_name:
+
+    @coordinator_task_name.validator
+    def _validate_coordinator_task_name(
+        self,
+        _attribute: attrs.Attribute[TaskName],
+        value: TaskName,
+    ) -> None:
+        if not value:
             raise ValueError(f"Execution target '{self.robot_name}' requires a task name")
-        if not model_names or any(not name or "/" in name for name in model_names):
+
+    @model_joint_names.validator
+    def _validate_model_joint_names(
+        self,
+        _attribute: attrs.Attribute[tuple[str, ...]],
+        value: tuple[str, ...],
+    ) -> None:
+        if not value or any(not name or "/" in name for name in value):
             raise ValueError(f"Execution target '{self.robot_name}' has invalid local model joints")
-        if len(set(model_names)) != len(model_names):
+        if len(set(value)) != len(value):
             raise ValueError(
                 f"Execution target '{self.robot_name}' has duplicate local model joints"
             )
 
-        mapping = dict(self.model_to_coordinator)
-        if set(mapping) != set(model_names):
+    @model_to_coordinator.validator
+    def _validate_model_to_coordinator(
+        self,
+        _attribute: attrs.Attribute[Mapping[str, str]],
+        value: Mapping[str, str],
+    ) -> None:
+        if set(value) != set(self.model_joint_names):
             raise ValueError(f"Execution target '{self.robot_name}' must resolve every model joint")
-        resolved_names = list(mapping.values())
+        resolved_names = list(value.values())
         if any(not name for name in resolved_names) or len(set(resolved_names)) != len(
             resolved_names
         ):
             raise ValueError(
                 f"Execution target '{self.robot_name}' has ambiguous coordinator joints"
             )
-
-        object.__setattr__(self, "model_joint_names", model_names)
-        object.__setattr__(self, "model_to_coordinator", MappingProxyType(mapping))
 
     @classmethod
     def from_coordinator_mapping(
@@ -212,7 +249,7 @@ class CoordinatorExecutionAdapter:
                 return CoordinatorCancelOutcome.UNCERTAIN
 
 
-@dataclass(frozen=True)
+@attrs.frozen(slots=False)
 class _PreparedDispatch:
     robot_name: RobotName
     task_name: TaskName

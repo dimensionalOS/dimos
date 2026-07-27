@@ -109,6 +109,7 @@ dependencies = [
     "pin>=3.3.0", # Pinocchio IK library
     "reactivex",
     "sortedcontainers==2.4.0",
+    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
