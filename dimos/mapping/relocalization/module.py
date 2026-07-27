@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import time
 from typing import Any
 
@@ -24,6 +25,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
 from dimos.mapping.voxels import VoxelGrid
+from dimos.memory2.locations import RelocStatus
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -63,6 +65,12 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
+        self._status = RelocStatus()
+
+    @rpc
+    def reloc_status(self) -> RelocStatus:
+        """Health of the ``world -> map`` estimate — see ``relocalization/spec.py``."""
+        return self._status
 
     @rpc
     def start(self) -> None:
@@ -73,7 +81,10 @@ class RelocalizationModule(Module):
             return
 
         path = resolve_named_path(self.config.map_file, MAP_SUFFIX)
-        self._premap = PointCloud2.lcm_decode(path.read_bytes())
+        raw = path.read_bytes()
+        map_id = hashlib.sha256(raw).hexdigest()[:16]
+        self._status = RelocStatus(map_id=map_id)
+        self._premap = PointCloud2.lcm_decode(raw)
         self._premap.frame_id = FRAME_MAP
 
         self.register_disposable(
@@ -133,6 +144,7 @@ class RelocalizationModule(Module):
             T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
         except Exception:
             logger.exception("relocalize() failed")
+            self._record_failure()
             return None
         dt = time.monotonic() - t0
         n_pts = len(msg)
@@ -142,7 +154,16 @@ class RelocalizationModule(Module):
                 f"relocalize rejected: fitness={fitness:.3f} < threshold={self.config.fitness_threshold} "
                 f"time_cost={dt:.1f}s n_pts={n_pts}"
             )
+            self._record_failure(fitness=fitness)
             return None
+
+        self._status = RelocStatus(
+            relocalized=True,
+            last_success_ts=time.time(),
+            fitness=fitness,
+            map_id=self._status.map_id,
+            consecutive_failures=0,
+        )
 
         # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
         # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
@@ -161,6 +182,17 @@ class RelocalizationModule(Module):
             f"published_t={T_inv[:3, 3].round(3).tolist()} "
         )
         return new_tf
+
+    def _record_failure(self, *, fitness: float | None = None) -> None:
+        """A failed registration leaves the last good tf republishing unchanged — this
+        counter is the only externally visible sign that it has gone stale."""
+        self._status = RelocStatus(
+            relocalized=self._status.relocalized,
+            last_success_ts=self._status.last_success_ts,
+            fitness=fitness if fitness is not None else self._status.fitness,
+            map_id=self._status.map_id,
+            consecutive_failures=self._status.consecutive_failures + 1,
+        )
 
     def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
         _, tf = pair

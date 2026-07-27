@@ -13,13 +13,16 @@
 # limitations under the License.
 
 from typing import Any
+from unittest.mock import MagicMock
 
 from langchain_core.messages import HumanMessage
+import pytest
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.memory2.locations import NotRelocalizedError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
@@ -159,3 +162,56 @@ def test_go_to_semantic_location(agent_setup) -> None:
     )
 
     assert "success" in history[-1].content.lower()
+
+
+def _locations_nav_self() -> MagicMock:
+    skill = MagicMock()
+    skill._skill_started = True
+    skill._locations = MagicMock()
+    return skill
+
+
+def test_navigate_to_location_releases_tool_when_start_fails() -> None:
+    skill = _locations_nav_self()
+    skill._locations.resolve_location.return_value = PoseStamped(
+        position=(1.0, 2.0, 0.0),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+        frame_id="world",
+    )
+    skill._start_location_navigation.side_effect = RuntimeError("set_goal failed")
+
+    with pytest.raises(RuntimeError, match="set_goal failed"):
+        NavigationSkillContainer.navigate_to_location(skill, "kitchen")
+
+    skill.start_tool.assert_called_once_with("navigate_to_location")
+    skill.stop_tool.assert_called_once_with("navigate_to_location")
+
+
+def test_navigate_to_location_releases_tool_on_resolve_error() -> None:
+    skill = _locations_nav_self()
+    known = MagicMock()
+    known.name = "kitchen"
+    skill._locations.list_locations.return_value = [known]
+    skill._locations.resolve_location.side_effect = NotRelocalizedError("no fix yet")
+
+    result = NavigationSkillContainer.navigate_to_location(skill, "kitchen")
+
+    assert "haven't recognised where I am" in result
+    skill.start_tool.assert_called_once_with("navigate_to_location")
+    skill.stop_tool.assert_called_once_with("navigate_to_location")
+
+
+def test_navigate_to_location_keeps_tool_open_when_background_starts() -> None:
+    skill = _locations_nav_self()
+    skill._locations.resolve_location.return_value = PoseStamped(
+        position=(1.0, 2.0, 0.0),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+        frame_id="world",
+    )
+
+    result = NavigationSkillContainer.navigate_to_location(skill, "kitchen")
+
+    assert "Navigating to 'kitchen'" in result
+    skill.start_tool.assert_called_once_with("navigate_to_location")
+    skill.stop_tool.assert_not_called()
+    skill._start_location_navigation.assert_called_once()
