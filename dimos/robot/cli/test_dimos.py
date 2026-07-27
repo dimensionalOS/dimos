@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import sys
 from typing import Literal
 
@@ -31,6 +32,7 @@ from dimos.robot.cli.dimos import (
     load_config_args,
     main,
 )
+import dimos.utils.cache as cache_utils
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
@@ -257,7 +259,16 @@ def test_list_blueprints_reports_external_discovery_errors(
     assert "external metadata is invalid" in result.output
 
 
-def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def isolated_cache_locks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache_utils, "_CACHE_LOCK_DIR", tmp_path / "cache-users")
+    monkeypatch.setattr(cache_utils, "_CACHE_GATE_PATH", tmp_path / "cache-clean.lock")
+
+
+def test_run_reports_external_resolution_errors(
+    isolated_cache_locks: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def raise_error(name: str):
         raise external.ExternalBlueprintError(
             "Failed to load external blueprint "
@@ -277,7 +288,7 @@ def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch)
     assert "my_test_stack.missing:demo_blueprint" in result.output
 
 
-def test_run_reports_unknown_bare_blueprint() -> None:
+def test_run_reports_unknown_bare_blueprint(isolated_cache_locks: None) -> None:
     result = CliRunner().invoke(main, ["run", "missing-bare-blueprint"])
 
     assert result.exit_code == 1
