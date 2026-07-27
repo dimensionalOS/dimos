@@ -223,7 +223,6 @@ int main() {
 
 The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks. It runs automatically after parsing. Input handlers run serialized on the dispatch thread. Each output publishes through its own worker, so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
-Handlers must not block. Anything that needs its own timing, or that can take longer than a message period, belongs on a thread the module owns. Spawn it in `setup()`, join it in `teardown()`, and have the handler hand the data off. [`dimos/navigation/cmu_nav/modules/pgo/cpp/main.cpp`](/dimos/navigation/cmu_nav/modules/pgo/cpp/main.cpp#L113) does this: its handlers only stamp the newest scan with the latest odometry, and the solve runs on its own thread.
 
 A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
 

@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Structured logging for dimos C++ native modules. One JSON object per line on
-// stderr, in the shape the Python NativeModule wrapper parses (`level`,
-// `message`, plus arbitrary structured fields). stdout is reserved, so logs
-// always go to stderr.
+// stderr, in the shape the Python NativeModule wrapper parses. stdout is reserved, so logs go to stderr.
 
 #pragma once
 
@@ -109,7 +107,7 @@ inline bool check_and_record(std::atomic<std::uint64_t>& last_ns, std::uint64_t 
 
 }  // namespace dimos::native::log
 
-// Emits at most once per `interval_ns`. Each expansion throttles independently.
+// Emits at most once per interval_ns. Each expansion throttles independently.
 #define DIMOS_LOG_THROTTLED(level, interval_ns, message, ...)                       \
     do {                                                                            \
         static std::atomic<std::uint64_t> _dimos_throttle_last_ns{0};               \

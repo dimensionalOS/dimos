@@ -29,6 +29,7 @@ import pytest
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.cmu_nav.modules.pgo.pgo import PGOConfig
 from dimos.navigation.cmu_nav.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -64,38 +65,14 @@ BURST_GLOBAL_MAP_LCM = "/burstpgo_global_map#sensor_msgs.PointCloud2"
 BURST_TF_LCM = "/burstpgo_tf#nav_msgs.Odometry"
 
 
-def _burst_stdin_blob() -> bytes:
-    """Same config shape as the rosbag test, on the burst topics."""
-    return (
-        json.dumps(
-            {
-                "topics": {
-                    "registered_scan": BURST_SCAN_LCM,
-                    "odometry": BURST_ODOM_LCM,
-                    "corrected_odometry": BURST_CORRECTED_LCM,
-                    "global_map": BURST_GLOBAL_MAP_LCM,
-                    "pgo_tf": BURST_TF_LCM,
-                },
-                "config": {
-                    "world_frame": "map",
-                    "local_frame": "odom",
-                    "key_pose_delta_deg": 10.0,
-                    "key_pose_delta_trans": 0.5,
-                    "loop_search_radius": 1.0,
-                    "loop_time_thresh": 60.0,
-                    "loop_score_thresh": 0.15,
-                    "loop_submap_half_range": 5,
-                    "submap_resolution": 0.1,
-                    "min_loop_detect_duration": 5.0,
-                    "unregister_input": True,
-                    "global_map_voxel_size": 0.1,
-                    "global_map_publish_rate": 1.0,
-                    "debug": False,
-                },
-            }
-        ).encode()
-        + b"\n"
-    )
+def _stdin_blob(topics: dict[str, str]) -> bytes:
+    """The line NativeModule.start() would write, built from PGOConfig itself.
+
+    Deriving the config means a field added or renamed on either side of the
+    boundary fails here rather than drifting.
+    """
+    blob = {"topics": topics, "config": PGOConfig().to_config_dict()}
+    return json.dumps(blob).encode() + b"\n"
 
 
 class TestPGORosbag:
@@ -135,38 +112,16 @@ class TestPGORosbag:
 
         # The port reads topics and config from one JSON stdin line and picks
         # its transport from DIMOS_TRANSPORT, matching NativeModule.start().
-        stdin_blob = (
-            json.dumps(
-                {
-                    "topics": {
-                        "registered_scan": SCAN_LCM,
-                        "odometry": ODOM_LCM,
-                        "corrected_odometry": CORRECTED_ODOM_LCM,
-                        "global_map": GLOBAL_MAP_LCM,
-                        "pgo_tf": TF_LCM,
-                    },
-                    # Config params matching pgo_unity_sim.yaml. Every PGOConfig
-                    # field must be present: the C++ side rejects missing keys.
-                    "config": {
-                        "world_frame": "map",
-                        "local_frame": "odom",
-                        "key_pose_delta_deg": 10.0,
-                        "key_pose_delta_trans": 0.5,
-                        "loop_search_radius": 1.0,
-                        "loop_time_thresh": 60.0,
-                        "loop_score_thresh": 0.15,
-                        "loop_submap_half_range": 5,
-                        "submap_resolution": 0.1,
-                        "min_loop_detect_duration": 5.0,
-                        "unregister_input": True,
-                        "global_map_voxel_size": 0.1,
-                        "global_map_publish_rate": 1.0,
-                        "debug": False,
-                    },
-                }
-            ).encode()
-            + b"\n"
+        stdin_blob = _stdin_blob(
+            {
+                "registered_scan": SCAN_LCM,
+                "odometry": ODOM_LCM,
+                "corrected_odometry": CORRECTED_ODOM_LCM,
+                "global_map": GLOBAL_MAP_LCM,
+                "pgo_tf": TF_LCM,
+            }
         )
+
         runner = NativeProcessRunner(
             binary_path=str(PGO_BIN),
             stdin_blob=stdin_blob,
@@ -286,11 +241,8 @@ class TestPGORosbag:
     def test_pgo_stays_current_under_a_scan_burst(self) -> None:
         """A burst faster than the PGO round collapses to the newest scan.
 
-        PGO holds one pending scan and replaces it when a newer one arrives, so
-        a backlog can never build up. Without that, the burst queues and the
-        correction PGO publishes trails the sensor by the length of the queue.
-        Clouds are tiny here so the burst tests the collapse rather than how
-        much a UDP socket can absorb.
+        Clouds are tiny so this measures the collapse, not what a UDP socket
+        can absorb.
         """
         if not PGO_BIN.exists():
             pytest.skip(f"PGO binary not found: {PGO_BIN}")
@@ -310,7 +262,15 @@ class TestPGORosbag:
 
         runner = NativeProcessRunner(
             binary_path=str(PGO_BIN),
-            stdin_blob=_burst_stdin_blob(),
+            stdin_blob=_stdin_blob(
+                {
+                    "registered_scan": BURST_SCAN_LCM,
+                    "odometry": BURST_ODOM_LCM,
+                    "corrected_odometry": BURST_CORRECTED_LCM,
+                    "global_map": BURST_GLOBAL_MAP_LCM,
+                    "pgo_tf": BURST_TF_LCM,
+                }
+            ),
             env={**os.environ, "DIMOS_TRANSPORT": "lcm"},
         )
 
@@ -346,7 +306,6 @@ class TestPGORosbag:
         # Each scan was stamped with a pose one metre further along, so the x of
         # the last correction says which scan PGO finished on.
         reached = corrected.messages[-1].x
-        logger.info(f"burst={burst} published={published} reached_x={reached:.1f}/{burst - 1}")
 
         # One round processes one scan, so a collapsing module publishes far
         # fewer than it received. A FIFO queue would work through every one.

@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Transport selection. The coordinator sets DIMOS_TRANSPORT for every native
-// process. The C++ SDK ships only LCM, so this is where an unsupported value
-// (notably zenoh, which is Rust/Python-only) turns into a clear error instead
-// of a confusing failure deeper in the stack.
+// process, and this SDK implements LCM only.
 
 #pragma once
 
@@ -18,7 +16,6 @@ inline void require_supported_transport(const std::string& name) {
     if (name == "lcm") {
         return;
     }
-    // TODO: Add zenoh support here
     if (name == "zenoh") {
         throw std::runtime_error(
             "DIMOS_TRANSPORT=zenoh is not supported by the C++ native SDK (LCM only). "

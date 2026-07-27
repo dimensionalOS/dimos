@@ -14,12 +14,12 @@
 
 """Python NativeModule wrapper for the FAST-LIO2 + Livox Mid-360 binary.
 
-Binds Livox SDK2 into FAST-LIO-NON-ROS for real-time LiDAR SLAM; outputs
-sensor/body-frame point clouds (register via the odometry pose) and odometry
-with covariance.
+Binds Livox SDK2 into FAST-LIO-NON-ROS for real-time LiDAR SLAM. Outputs
+sensor-frame point clouds and odometry with covariance. Consumers register
+the cloud via the odometry pose.
 
-FAST-LIO tuning lives directly on ``FastLio2Config`` and is sent to the C++
-binary as stdin JSON (no YAML).
+FAST-LIO tuning lives on FastLio2Config and is sent to the C++ binary as
+stdin JSON.
 """
 
 from __future__ import annotations

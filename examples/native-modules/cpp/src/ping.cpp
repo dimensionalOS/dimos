@@ -15,6 +15,8 @@ using dimos::native::Output;
 namespace logging = dimos::native::log;
 using geometry_msgs::Twist;
 
+constexpr std::chrono::milliseconds kPublishPeriod{200};
+
 class Ping : public Module {
 public:
     void build(Builder& builder, Config& /*config*/) override {
@@ -38,7 +40,7 @@ public:
                 msg.angular.z = 0.0;
                 data_.publish(msg);
                 ++seq;
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                std::this_thread::sleep_for(kPublishPeriod);
             }
         });
     }

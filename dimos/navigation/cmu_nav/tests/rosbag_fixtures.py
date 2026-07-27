@@ -167,12 +167,7 @@ def lcm_handle_loop(lcm: lcmlib.LCM, stop_event: threading.Event, timeout_ms: in
 
 @dataclass
 class NativeProcessRunner:
-    """Start and manage a native module C++ process for testing.
-
-    stdin_config modules read their topics and config from one JSON line on
-    stdin and pick a transport from DIMOS_TRANSPORT, so a test drives them with
-    stdin_blob plus env rather than CLI args.
-    """
+    """Start and manage a native module C++ process for testing."""
 
     binary_path: str
     args: list[str] = field(default_factory=list)

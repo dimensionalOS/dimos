@@ -1,9 +1,9 @@
-// FAST-LIO2 + Livox Mid-360 native module on the dimos C++ SDK. A pure source:
-// it binds Livox SDK2 directly into FAST-LIO-NON-ROS. SDK callbacks feed
-// CustomMsg/Imu to FastLio, which performs EKF-LOAM SLAM. Publishes
-// sensor-frame point clouds on `lidar` and odometry with covariance on
-// `odometry` (consumers register the cloud via the odometry pose). No inputs,
-// so it overrides handle() with its own processing loop.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// FAST-LIO2 + Livox Mid-360 native module. Binds Livox SDK2 into
+// FAST-LIO-NON-ROS and publishes sensor-frame point clouds on lidar plus
+// odometry with covariance on odometry. No inputs, so it overrides handle().
 
 #include <boost/make_shared.hpp>
 #include <chrono>
@@ -81,6 +81,14 @@ struct FastLio2Config {
     int host_point_data_port;
     int host_imu_data_port;
     int host_log_data_port;
+
+    void validate() const {
+        dimos::native::require_positive(frequency, "frequency");
+        dimos::native::require_positive(msr_freq, "msr_freq");
+        dimos::native::require_positive(main_freq, "main_freq");
+        dimos::native::require_positive(pointcloud_freq, "pointcloud_freq");
+        dimos::native::require_positive(odom_freq, "odom_freq");
+    }
 };
 
 namespace {
@@ -134,12 +142,12 @@ public:
         params.scan_rate = cfg_.scan_rate;
         params.time_sync_en = cfg_.time_sync_en;
         params.extrinsic_est_en = cfg_.extrinsic_est_en;
-        params.lidar_type =
-            cfg_.lidar_type == "velodyne" ? 2 : cfg_.lidar_type == "ouster" ? 3 : 1;
-        params.timestamp_unit = cfg_.timestamp_unit == "second"        ? 0
-                                : cfg_.timestamp_unit == "millisecond" ? 1
-                                : cfg_.timestamp_unit == "nanosecond"  ? 3
-                                                                       : 2;
+        params.lidar_type = dimos::native::enum_from_name(
+            cfg_.lidar_type, "lidar_type",
+            {{"livox", 1}, {"velodyne", 2}, {"ouster", 3}});
+        params.timestamp_unit = dimos::native::enum_from_name(
+            cfg_.timestamp_unit, "timestamp_unit",
+            {{"second", 0}, {"millisecond", 1}, {"microsecond", 2}, {"nanosecond", 3}});
         params.extrinsic_T = cfg_.extrinsic_t;
         params.extrinsic_R = cfg_.extrinsic_r;
 
@@ -294,10 +302,10 @@ private:
     void on_info(uint32_t handle, const LivoxLidarInfo* info) {
         if (info == nullptr) return;
 
-        char sn[17] = {};
-        std::memcpy(sn, info->sn, 16);
-        char ip[17] = {};
-        std::memcpy(ip, info->lidar_ip, 16);
+        char sn[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(sn, info->sn, livox_common::kInfoFieldLen);
+        char ip[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(ip, info->lidar_ip, livox_common::kInfoFieldLen);
         logging::info("fastlio2 device connected",
                       {logging::Field("sn", std::string(sn)),
                        logging::Field("ip", std::string(ip))});

@@ -1,7 +1,9 @@
-// Livox Mid-360 native module on the dimos C++ SDK. A pure source: it drives the
-// Livox SDK2, accumulates points from the SDK callbacks, and publishes a
-// PointCloud2 at a fixed rate on `lidar` plus Imu samples as they arrive on
-// `imu`. No inputs, so it overrides handle() with its own emit loop.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Livox Mid-360 native module. Drives Livox SDK2, accumulates points from its
+// callbacks, and publishes a PointCloud2 at a fixed rate on lidar plus Imu
+// samples on imu. No inputs, so it overrides handle() with its own emit loop.
 
 #include <chrono>
 #include <cstdint>
@@ -48,6 +50,10 @@ struct Mid360Config {
     int host_point_data_port;
     int host_imu_data_port;
     int host_log_data_port;
+
+    void validate() const {
+        dimos::native::require_positive(frequency, "frequency");
+    }
 };
 
 namespace {
@@ -111,7 +117,7 @@ public:
                        logging::Field("host_ip", cfg_.host_ip)});
     }
 
-    // Own emit loop: swap out the accumulated frame and publish at `frequency`.
+    // Own emit loop: swap out the accumulated frame and publish at frequency.
     void handle() override {
         auto last_emit = std::chrono::steady_clock::now();
         while (!shutdown_requested()) {
@@ -209,10 +215,10 @@ private:
     void on_info(uint32_t handle, const LivoxLidarInfo* info) {
         if (info == nullptr) return;
 
-        char sn[17] = {};
-        std::memcpy(sn, info->sn, 16);
-        char ip[17] = {};
-        std::memcpy(ip, info->lidar_ip, 16);
+        char sn[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(sn, info->sn, livox_common::kInfoFieldLen);
+        char ip[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(ip, info->lidar_ip, livox_common::kInfoFieldLen);
         logging::info("mid360 device connected",
                       {logging::Field("sn", std::string(sn)),
                        logging::Field("ip", std::string(ip))});
@@ -258,7 +264,8 @@ private:
     Mid360Config cfg_;
     Output<sensor_msgs::PointCloud2> lidar_;
     Output<sensor_msgs::Imu> imu_;
-    std::chrono::microseconds frame_interval_{100000};
+    // From config, set in build().
+    std::chrono::microseconds frame_interval_{};
 
     std::mutex pc_mutex_;
     std::vector<float> xyz_;

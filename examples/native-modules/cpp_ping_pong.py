@@ -52,7 +52,7 @@ class PongConfig(NativeModuleConfig):
 
 
 class PingModule(NativeModule):
-    """Publishes Twist messages at 5 Hz on `data` and logs echoes from `confirm`."""
+    """Publishes Twist messages on data and logs the echoes from confirm."""
 
     config: PingConfig
     data: Out[Twist]

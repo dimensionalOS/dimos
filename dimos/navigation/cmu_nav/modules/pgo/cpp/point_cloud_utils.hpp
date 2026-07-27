@@ -1,6 +1,8 @@
-// Point cloud utility functions for SmartNav native modules.
-// Provides PointCloud2 building/parsing helpers that work with dimos-lcm types.
-// When USE_PCL is defined, also provides PCL interop utilities.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// PointCloud2 build/parse helpers over dimos-lcm types, plus PCL interop when
+// USE_PCL is defined.
 
 #pragma once
 

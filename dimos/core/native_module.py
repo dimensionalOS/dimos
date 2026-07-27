@@ -129,7 +129,6 @@ class NativeModuleConfig(ModuleConfig):
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
-    # Base fields to send to the native process, on top of the subclass's own.
     # Native config structs reject unknown fields, so a base field only crosses
     # the boundary if that module's native struct declares it.
     base_fields: frozenset[str] = frozenset()
@@ -142,8 +141,12 @@ class NativeModuleConfig(ModuleConfig):
         Return module-specific config fields as a plain dict (for stdin JSON).
         """
         ignore_fields = self._ignore_fields()
+        # An opted-in base field is sent even when None, so the native struct
+        # reports a null it can name rather than a field that looks unset.
         return {
-            k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
+            k: v
+            for k, v in self.model_dump().items()
+            if k not in ignore_fields and (v is not None or k in self.base_fields)
         }
 
     def to_cli_args(self) -> list[str]:
@@ -232,6 +235,17 @@ class NativeModule(Module):
         cmd.extend(self.config.to_cli_args())
         cmd.extend(self.config.extra_args)
 
+        # Built before the spawn: a config that cannot be serialized must fail
+        # without leaving a child blocked on a stdin line it will never get.
+        stdin_blob: bytes | None = None
+        if self.config.stdin_config:
+            config_dict = self.config.to_config_dict()
+            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+            qos = self._collect_output_qos()
+            if qos:
+                blob["qos"] = qos
+            stdin_blob = json.dumps(blob).encode() + b"\n"
+
         env = {**os.environ, **self.config.extra_env}
 
         # set transport so native modules know which one to spawn
@@ -261,13 +275,7 @@ class NativeModule(Module):
             preexec_fn=_set_process_to_die_when_parent_dies,
         )
         assert self._process.stdin is not None
-        if self.config.stdin_config:
-            config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
-            qos = self._collect_output_qos()
-            if qos:
-                blob["qos"] = qos
-            stdin_blob = json.dumps(blob).encode() + b"\n"
+        if stdin_blob is not None:
             self._process.stdin.write(stdin_blob)
         self._process.stdin.close()
         logger.info(

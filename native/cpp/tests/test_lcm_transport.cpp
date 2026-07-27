@@ -1,10 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Only compiled when liblcm is available (see tests/CMakeLists.txt). Its job is
-// to typecheck LcmTransport's inline bodies against the real LCM headers and lib.
-// It does not open an LCM endpoint, since unit tests must not assume a multicast
-// route exists.
+// Typechecks LcmTransport's inline bodies against the real LCM headers. Opens no
+// endpoint, so it never assumes a multicast route. Compiled only when liblcm is
+// available, see tests/CMakeLists.txt.
 
 #include <doctest/doctest.h>
 

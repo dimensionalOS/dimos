@@ -1,14 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Module runtime for dimos C++ native modules. The transport receive thread
-// decodes onto per-input bounded queues (drop-newest). Handlers run serialized
-// on the handle() thread, so they touch module state without locks. One worker
-// per output drains publishes so a slow channel blocks only itself.
-//
-// A module subclasses Module, declares Output<T> members, and wires config,
-// outputs, and input handlers in build(). The default handle() dispatches inputs
-// until shutdown. A driver with its own loop overrides it.
+// Module runtime. The transport receive thread decodes onto per-input bounded
+// queues (drop-newest), handlers run serialized on the handle() thread, and one
+// worker per output drains publishes so a slow channel blocks only itself.
 
 #pragma once
 
@@ -84,7 +79,7 @@ public:
         return pending_;
     }
 
-    // Wait until a notify lands after `seq`, `stop` fires, or the timeout elapses.
+    // Wait until a notify lands after seq, stop fires, or the timeout elapses.
     void wait_for(std::uint64_t seq, std::chrono::milliseconds timeout,
                   const std::function<bool()>& stop) {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -279,9 +274,9 @@ public:
         owned_inputs_.push_back(std::move(channel));
     }
 
-    // Route each `T` on `port` to a method on `self`, decoded by the lcm codec:
-    // `builder.input<Twist>("data", &Pong::on_data, this)`. Handlers run
-    // serialized on the dispatch thread, so they touch module state without locks.
+    /// Route each `T` on `port` to a method on `self`, decoded by the lcm codec:
+    /// `builder.input<Twist>("data", &Pong::on_data, this)`. Handlers run
+    /// serialized on the dispatch thread, so they touch module state without locks.
     template <class T, class Self>
     void input(const std::string& port, void (Self::*handler)(const T&), Self* self,
                DecodeFn<T> decode = lcm_decode<T>) {
@@ -289,9 +284,9 @@ public:
                  [self, handler](T msg) { (self->*handler)(msg); });
     }
 
-    // Declare an output and return its publish handle, encoded by the lcm codec:
-    // `out_ = builder.output<Twist>("confirm")` then `out_.publish(msg)`. publish()
-    // hands off to a per-channel worker, so it never blocks the caller.
+    /// Declare an output and return its publish handle, encoded by the lcm codec:
+    /// `out_ = builder.output<Twist>("confirm")` then `out_.publish(msg)`. publish()
+    /// hands off to a per-channel worker, so it never blocks the caller.
     template <class T>
     Output<T> output(const std::string& port, EncodeFn<T> encode = lcm_encode<T>) {
         std::string topic = topic_for(port);
@@ -300,9 +295,17 @@ public:
         return Output<T>(std::move(encode), queue);
     }
 
+    // A port the coordinator did not wire is a startup error. Falling back to a
+    // bare channel name would leave the module running against a dead topic.
     std::string topic_for(const std::string& port) const {
         auto it = topics_.find(port);
-        return it != topics_.end() ? it->second : "/" + port;
+        if (it == topics_.end()) {
+            throw std::runtime_error(
+                "no topic for port '" + port +
+                "': the coordinator did not wire it. Check the port name matches "
+                "the Python module, and that its config sets stdin_config = True.");
+        }
+        return it->second;
     }
 
     const std::vector<std::pair<std::string, Dispatch>>& routes() const { return routes_; }
@@ -416,21 +419,11 @@ void run_fallible(std::unique_ptr<Transport> transport) {
     module.build(builder, config);
     config.enforce_all_consumed();
 
-    for (const auto& route : builder.routes()) {
-        transport->subscribe(route.first, route.second);
-    }
-
     std::vector<std::thread> workers;
-    workers.reserve(builder.publish_queues().size());
-    for (const auto& queue : builder.publish_queues()) {
-        workers.emplace_back(publish_worker_loop, queue.get(), transport.get());
-    }
-
-    install_signal_handlers();
-    module.bind_runtime(&builder.input_ports(), &notifier);
 
     // Stop the workers and transport before builder and notifier are destroyed,
-    // on every exit path. Declared last, destroyed first.
+    // on every exit path. Declared before anything starts a thread, so a throw
+    // part-way through startup still tears down what was already running.
     struct Shutdown {
         Builder& builder;
         std::vector<std::thread>& workers;
@@ -447,6 +440,18 @@ void run_fallible(std::unique_ptr<Transport> transport) {
             transport.reset();
         }
     } shutdown{builder, workers, transport};
+
+    for (const auto& route : builder.routes()) {
+        transport->subscribe(route.first, route.second);
+    }
+
+    workers.reserve(builder.publish_queues().size());
+    for (const auto& queue : builder.publish_queues()) {
+        workers.emplace_back(publish_worker_loop, queue.get(), transport.get());
+    }
+
+    install_signal_handlers();
+    module.bind_runtime(&builder.input_ports(), &notifier);
 
     // Run teardown on the throw path too, so the module's threads join before it
     // is destroyed. A leftover joinable std::thread would call std::terminate.

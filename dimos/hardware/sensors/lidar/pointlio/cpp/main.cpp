@@ -1,8 +1,9 @@
-// Point-LIO + Livox Mid-360 native module on the dimos C++ SDK. A pure source:
-// it binds Livox SDK2 directly into the Point-LIO core. SDK callbacks feed
-// CustomMsg/Imu to the IESKF estimator, which performs LiDAR-inertial SLAM.
-// Publishes sensor-frame point clouds on `lidar` and odometry with velocity on
-// `odometry`. No inputs, so it overrides handle() with its own processing loop.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Point-LIO + Livox Mid-360 native module. Binds Livox SDK2 into the Point-LIO
+// IESKF core and publishes sensor-frame point clouds on lidar plus odometry
+// with velocity on odometry. No inputs, so it overrides handle().
 
 #include <boost/make_shared.hpp>
 #include <chrono>
@@ -108,6 +109,14 @@ struct PointLioConfig {
     int host_point_data_port;
     int host_imu_data_port;
     int host_log_data_port;
+
+    void validate() const {
+        dimos::native::require_positive(frequency, "frequency");
+        dimos::native::require_positive(msr_freq, "msr_freq");
+        dimos::native::require_positive(main_freq, "main_freq");
+        dimos::native::require_positive(pointcloud_freq, "pointcloud_freq");
+        dimos::native::require_positive(odom_freq, "odom_freq");
+    }
 };
 
 namespace {
@@ -156,15 +165,12 @@ public:
         params.scan_rate = cfg_.scan_rate;
         params.blind = cfg_.blind;
         params.point_filter_num = cfg_.point_filter_num;
-        params.lidar_type = cfg_.lidar_type == "velodyne"   ? 2
-                            : cfg_.lidar_type == "ouster"   ? 3
-                            : cfg_.lidar_type == "hesai"    ? 4
-                            : cfg_.lidar_type == "unilidar" ? 5
-                                                            : 1;
-        params.timestamp_unit = cfg_.timestamp_unit == "second"        ? 0
-                                : cfg_.timestamp_unit == "millisecond" ? 1
-                                : cfg_.timestamp_unit == "microsecond" ? 2
-                                                                       : 3;
+        params.lidar_type = dimos::native::enum_from_name(
+            cfg_.lidar_type, "lidar_type",
+            {{"avia", 1}, {"velodyne", 2}, {"ouster", 3}, {"hesai", 4}, {"unilidar", 5}});
+        params.timestamp_unit = dimos::native::enum_from_name(
+            cfg_.timestamp_unit, "timestamp_unit",
+            {{"second", 0}, {"millisecond", 1}, {"microsecond", 2}, {"nanosecond", 3}});
         params.use_imu_as_input = cfg_.use_imu_as_input;
         params.prop_at_freq_of_imu = cfg_.prop_at_freq_of_imu;
         params.check_satu = cfg_.check_satu;
@@ -177,10 +183,9 @@ public:
         params.filter_size_surf = cfg_.filter_size_surf;
         params.filter_size_map = cfg_.filter_size_map;
         params.ivox_grid_resolution = cfg_.ivox_grid_resolution;
-        params.ivox_nearby_type = cfg_.ivox_nearby_type == "center"     ? 0
-                                  : cfg_.ivox_nearby_type == "nearby18" ? 18
-                                  : cfg_.ivox_nearby_type == "nearby26" ? 26
-                                                                        : 6;
+        params.ivox_nearby_type = dimos::native::enum_from_name(
+            cfg_.ivox_nearby_type, "ivox_nearby_type",
+            {{"center", 0}, {"nearby6", 6}, {"nearby18", 18}, {"nearby26", 26}});
         params.cube_side_length = cfg_.cube_side_length;
         params.det_range = cfg_.det_range;
         params.fov_degree = cfg_.fov_degree;
@@ -372,10 +377,10 @@ private:
     void on_info(uint32_t handle, const LivoxLidarInfo* info) {
         if (info == nullptr) return;
 
-        char sn[17] = {};
-        std::memcpy(sn, info->sn, 16);
-        char ip[17] = {};
-        std::memcpy(ip, info->lidar_ip, 16);
+        char sn[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(sn, info->sn, livox_common::kInfoFieldLen);
+        char ip[livox_common::kInfoFieldLen + 1] = {};
+        std::memcpy(ip, info->lidar_ip, livox_common::kInfoFieldLen);
         logging::info("pointlio device connected",
                       {logging::Field("sn", std::string(sn)),
                        logging::Field("ip", std::string(ip))});
@@ -403,8 +408,7 @@ private:
             }
         }
 
-        // Serialize EKF access against the SDK IMU callback (on_imu) for the
-        // rest of the iteration. feed_lidar/process/get_* all touch the estimator.
+        // Held for the rest of the iteration: every call below touches the EKF.
         std::lock_guard<std::mutex> lio_lock(lio_mutex_);
         if (!points.empty()) {
             const size_t num_points = points.size();
@@ -537,10 +541,8 @@ private:
     uint64_t frame_start_ns_ = 0;
     bool frame_has_ts_ = false;
 
-    // Serializes all Point-LIO EKF access. The estimator is not thread-safe and
-    // the SDK feeds IMU from its own callback thread while the main loop runs
-    // feed_lidar/process/get_*. Distinct from pc_mutex_, which only guards the
-    // point accumulator, so packets can accumulate while the EKF is processing.
+    // The EKF is not thread-safe and the SDK feeds IMU from its own thread.
+    // Separate from pc_mutex_, so packets accumulate while the EKF runs.
     std::mutex lio_mutex_;
 };
 

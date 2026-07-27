@@ -25,8 +25,8 @@ Usage::
         SomeConsumer.blueprint(),
     )).loop()
 
-Point-LIO tuning lives directly on ``PointLioConfig`` and is sent to the C++
-binary as stdin JSON (no YAML).
+Point-LIO tuning lives on PointLioConfig and is sent to the C++ binary as
+stdin JSON.
 """
 
 from __future__ import annotations

@@ -1,12 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Strict config access over the config object the coordinator sends on stdin.
-// Python owns every default and always sends every field, so parse<T>()
-// requires every field present and rejects unknown fields.
-//
-// A config is a plain aggregate struct. parse<T>() reflects over its fields, so
-// the struct declaration is the whole contract.
+// Strict access to the config the coordinator sends on stdin. Python owns every
+// default and sends every field, so parse<T>() requires them all and rejects
+// unknowns.
 
 #pragma once
 
@@ -14,10 +11,12 @@
 #include <pfr.hpp>
 
 #include <cstddef>
+#include <initializer_list>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace dimos::native {
@@ -62,6 +61,31 @@ void check_json_type(const nlohmann::json& value, const std::string& key) {
     }
 }
 }  // namespace config_detail
+
+/// Throw unless `value` is greater than zero. For a rate a module divides by,
+/// where a zero or negative value yields an infinite or negative period.
+inline void require_positive(double value, const char* name) {
+    if (!(value > 0.0)) {
+        throw std::runtime_error(std::string(name) + " must be greater than 0");
+    }
+}
+
+/// Map a config string onto the integer a native library expects, naming the
+/// legal values when it does not match. For a field Python constrains to a
+/// fixed set, where falling through to a default would hide a typo.
+inline int enum_from_name(const std::string& value, const char* field,
+                          std::initializer_list<std::pair<const char*, int>> table) {
+    for (const auto& entry : table) {
+        if (value == entry.first) {
+            return entry.second;
+        }
+    }
+    std::string msg = std::string(field) + " must be one of:";
+    for (const auto& entry : table) {
+        msg += std::string(" ") + entry.first;
+    }
+    throw std::runtime_error(msg + ", got '" + value + "'");
+}
 
 class Config {
 public:

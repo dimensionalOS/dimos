@@ -184,16 +184,34 @@ TEST_CASE("member-function handler and default codecs route a message") {
     CHECK(wait_until([&] { return transport.has_published("/out"); }));
 }
 
-TEST_CASE("topic_for maps declared ports and falls back to /port") {
+TEST_CASE("topic_for maps a declared port") {
     Notifier notifier;
     Builder builder({{"cmd_vel", "/robot/cmd_vel"}}, &notifier);
     CHECK(builder.topic_for("cmd_vel") == "/robot/cmd_vel");
-    CHECK(builder.topic_for("unmapped") == "/unmapped");
+}
+
+TEST_CASE("topic_for rejects a port the coordinator never wired") {
+    Notifier notifier;
+    Builder builder({{"cmd_vel", "/robot/cmd_vel"}}, &notifier);
+    try {
+        builder.topic_for("unmapped");
+        FAIL("expected an unmapped port to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()).find("unmapped") != std::string::npos);
+    }
+}
+
+TEST_CASE("declaring a port the coordinator never wired fails the build") {
+    Notifier notifier;
+    Builder builder({}, &notifier);
+    CHECK_THROWS_AS(builder.input<Bytes>("data", identity_decode, [](Bytes) {}),
+                    std::runtime_error);
+    CHECK_THROWS_AS(builder.output<Bytes>("out", identity_encode), std::runtime_error);
 }
 
 TEST_CASE("a full input queue drops newest and caps at capacity") {
     Notifier notifier;
-    Builder builder({}, &notifier);
+    Builder builder({{"data", "/data"}}, &notifier);
     std::vector<uint8_t> seen;
     builder.input<Bytes>("data", identity_decode, [&](Bytes b) { seen.push_back(b[0]); });
 
@@ -208,7 +226,7 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
     while (port->drain_one()) {
     }
     REQUIRE(seen.size() == kInputQueueCapacity);
-    // Drop-newest: the first `capacity` messages are kept, later ones dropped.
+    // Drop-newest: the first capacity messages are kept, later ones dropped.
     for (std::size_t i = 0; i < kInputQueueCapacity; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
@@ -256,7 +274,7 @@ TEST_CASE("Notifier waits out the timeout when no notification arrives") {
 
 TEST_CASE("a throwing handler is isolated and the loop keeps draining") {
     Notifier notifier;
-    Builder builder({}, &notifier);
+    Builder builder({{"data", "/data"}}, &notifier);
     int handled = 0;
     builder.input<Bytes>("data", identity_decode, [&](Bytes m) {
         if (!m.empty() && m[0] == 0) {
@@ -279,7 +297,7 @@ TEST_CASE("a throwing handler is isolated and the loop keeps draining") {
 
 TEST_CASE("a decode error drops the message and never reaches the handler") {
     Notifier notifier;
-    Builder builder({}, &notifier);
+    Builder builder({{"data", "/data"}}, &notifier);
     int handled = 0;
     builder.input<Bytes>(
         "data", [](const uint8_t*, std::size_t) -> Bytes { throw std::runtime_error("bad"); },
@@ -308,7 +326,7 @@ TEST_CASE("a full publish queue drops newest and caps at capacity") {
         seen.push_back(out[0]);
     }
     REQUIRE(seen.size() == kPublishQueueCapacity);
-    // Drop-newest: the first `capacity` pushes are kept, later ones dropped.
+    // Drop-newest: the first capacity pushes are kept, later ones dropped.
     for (std::size_t i = 0; i < kPublishQueueCapacity; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
@@ -401,7 +419,7 @@ struct ShutdownFlagGuard {
 TEST_CASE("default_handle returns without draining once shutdown is requested") {
     ShutdownFlagGuard guard;
     Notifier notifier;
-    Builder builder({}, &notifier);
+    Builder builder({{"data", "/data"}}, &notifier);
     int handled = 0;
     builder.input<Bytes>("data", identity_decode, [&](Bytes) { ++handled; });
 

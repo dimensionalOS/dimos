@@ -171,6 +171,18 @@ TEST_CASE("parse still accepts a whole number for a double field") {
     CHECK(c.scale == doctest::Approx(2.0));
 }
 
+TEST_CASE("require_positive rejects zero and negative rates") {
+    CHECK_NOTHROW(dimos::native::require_positive(0.1, "rate"));
+    CHECK_THROWS_AS(dimos::native::require_positive(0.0, "rate"), std::runtime_error);
+    CHECK_THROWS_AS(dimos::native::require_positive(-1.0, "rate"), std::runtime_error);
+    try {
+        dimos::native::require_positive(0.0, "main_freq");
+        FAIL("expected zero to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()).find("main_freq") != std::string::npos);
+    }
+}
+
 TEST_CASE("parse runs the config's validate()") {
     Config cfg(json{{"value", 999}, {"name", "x"}});
     CHECK_THROWS_AS(cfg.parse<RangedCfg>(), std::runtime_error);

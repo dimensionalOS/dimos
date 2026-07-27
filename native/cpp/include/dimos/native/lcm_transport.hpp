@@ -1,11 +1,8 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// LCM implementation of the Transport seam. A single receive thread runs the
-// LCM handle loop and demuxes each message to the callbacks registered for its
-// channel. Publishing is a direct, thread-safe lcm_publish. The per-channel
-// publish workers that decouple slow publishes live in the module runtime, not
-// here.
+// LCM implementation of the Transport seam. One receive thread runs the LCM
+// handle loop and demuxes to the callbacks registered for each channel.
 
 #pragma once
 

@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 FetchContent_Declare(pfr
   GIT_REPOSITORY https://github.com/apolukhin/pfr_non_boost.git
-  GIT_TAG 2.3.2
+  GIT_TAG b1a9798677adc191e21dd7904fb42cbe2f2889a7  # 2.3.2
 )
 FetchContent_MakeAvailable(pfr)
 
@@ -23,7 +23,7 @@ find_package(nlohmann_json QUIET)
 if(NOT nlohmann_json_FOUND)
   FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
+    GIT_TAG 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03  # v3.11.3
   )
   FetchContent_MakeAvailable(nlohmann_json)
 endif()

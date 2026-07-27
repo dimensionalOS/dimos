@@ -11,14 +11,11 @@
 
 namespace dimos {
 
-// A pose that has not been written yet holds uninitialized bytes, whose
-// quaternion part is almost never unit length.
 inline constexpr double kQuatNormTolerance = 1e-3;
 
-// True once the estimator has produced a real pose. The SLAM cores hand out
-// their pose through an odometry result that starts as uninitialized memory, so
-// a nonzero position does not mean the estimator has run. A real estimate
-// always carries a normalized quaternion, which uninitialized bytes do not.
+// True once the estimator has produced a real pose. The SLAM cores hand their
+// pose out through a result that starts as uninitialized memory, whose
+// quaternion part is almost never unit length.
 inline bool has_estimate(const std::vector<double>& pose) {
     if (pose.size() != 7) {
         return false;

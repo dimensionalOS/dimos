@@ -1,9 +1,10 @@
-// PGO native module on the dimos C++ SDK. Subscribes to registered_scan +
-// odometry, runs SimplePGO (iSAM2 + PCL ICP), and publishes corrected_odometry,
-// global_map, and the map->odom TF correction. The handlers only stamp the
-// newest scan with the latest odometry and hand it off. The PGO work runs on
-// its own thread, so a slow round never stalls the dispatch thread and the
-// correction stays at most one round behind the sensor.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// PGO native module. Runs SimplePGO over registered_scan + odometry and
+// publishes corrected_odometry, global_map, and the map->odom TF correction.
+// The solve runs on its own thread, so the correction stays at most one round
+// behind the sensor.
 
 #include <chrono>
 #include <cstdint>
@@ -47,6 +48,10 @@ struct PGOConfig {
     double global_map_voxel_size;
     double global_map_publish_rate;
     bool debug;
+
+    void validate() const {
+        dimos::native::require_positive(global_map_publish_rate, "global_map_publish_rate");
+    }
 };
 
 namespace {
@@ -89,8 +94,7 @@ public:
         pgo_cfg.min_loop_detect_duration = cfg_.min_loop_detect_duration;
         pgo_ = std::make_unique<SimplePGO>(pgo_cfg);
 
-        global_map_interval_ =
-            cfg_.global_map_publish_rate > 0 ? 1.0 / cfg_.global_map_publish_rate : 2.0;
+        global_map_interval_ = 1.0 / cfg_.global_map_publish_rate;
 
         pcl::console::setVerbosityLevel(
             cfg_.debug ? pcl::console::L_INFO : pcl::console::L_ERROR);
@@ -157,7 +161,14 @@ private:
                 scan.swap(pending_);
             }
             if (scan) {
-                process_scan(*scan);
+                try {
+                    process_scan(*scan);
+                } catch (const std::exception& e) {
+                    DIMOS_ERROR_THROTTLED(dimos::native::log::from_secs(1),
+                                          "pgo round failed",
+                                          dimos::native::log::Field(
+                                              "error", std::string(e.what())));
+                }
             }
             std::this_thread::sleep_for(kProcessPeriod);
         }
