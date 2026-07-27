@@ -206,7 +206,7 @@ visualization = [
 ]
 
 learning = [
-    # dimos.learning.dataprep dataset writers (lazy-imported per format)
+    # dimos.imitation.dataprep dataset writers (lazy-imported per format)
     "pyarrow",  # LeRobot v3.0 data/episodes parquet
     "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
     "h5py",     # HDF5 writer
@@ -233,6 +233,7 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
+    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
 
 perception = [
@@ -333,7 +334,7 @@ dds = [
 webrtc = [
     # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
     "aiortc>=1.14.0",
-    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
 ]
 
 base = [
@@ -343,6 +344,10 @@ base = [
 # All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
     "reportlab>=4.5.0",
+    # 3D-printable tag plates (--3d). manifold3d is trimesh's boolean engine; it only
+    # arrives transitively via trimesh[easy], which is excluded on linux-aarch64.
+    "trimesh>=4.0.0",
+    "manifold3d>=2.5.0",
 ]
 
 # Offline scene-package cooking + loading: USD import (usd-core), convex
@@ -441,6 +446,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
+    "roboplan",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -527,6 +533,9 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
+# Wire-protocol mirror: model field names are the wire names (camelCase,
+# pinned to protocol.ts by the golden fixtures).
+"dimos/web/relay_bridge/protocol.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
@@ -658,6 +667,7 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
 ]

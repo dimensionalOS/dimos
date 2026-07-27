@@ -19,9 +19,9 @@ import asyncio
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos, _resolve_target
 
 

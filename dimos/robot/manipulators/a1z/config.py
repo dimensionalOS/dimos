@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
@@ -75,13 +76,21 @@ def make_a1z_model_config(
     coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
+    local_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
     return RobotModelConfig(
         name=name,
         model_path=A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
         base_pose=base_pose(),
-        joint_names=joint_names(A1Z_DOF, prefix="arm_joint"),
-        end_effector_link=("gripper_eef_link" if has_gripper else "arm_link6"),
+        joint_names=local_joint_names,
         base_link="base_link",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(local_joint_names),
+                base_link="base_link",
+                tip_link=("gripper_eef_link" if has_gripper else "arm_link6"),
+            )
+        ],
         package_paths=A1Z_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
