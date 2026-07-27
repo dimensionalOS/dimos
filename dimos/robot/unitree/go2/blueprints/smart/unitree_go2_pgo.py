@@ -55,21 +55,21 @@ unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
     NormalizeGo2Lidar.blueprint(),
     GscPGO.blueprint(
-        # highly optimized for the go2 webrtc output
-        loop_robust_kernel=True,
+        # Tuned on the Go2 L1 lidar: closes small_loop's start<->end revisit while
+        # staying no-harm on huge_loop. Only keys that differ from PGOConfig defaults.
         scan_context_max_range_m=8.0,
-        scan_context_match_threshold=0.1323,
         min_descriptor_std=0.1,
-        loop_score_thresh=0.0775,
-        loop_candidate_max_distance_m=13.42,
-        loop_max_lowe_ratio=0.82,
-        loop_min_occupancy=120,
-        loop_min_degeneracy=0.15,
-        # Planar lock (no-Z L1): pin roll/pitch/Z so closures stay in-plane.
+        scan_context_match_threshold=0.1406,
+        loop_score_thresh=0.0807,
+        loop_max_lowe_ratio=0.831,
+        # small_loop's genuine revisit is ~17m apart in drifted odom, so widen the
+        # distance gate past the drift (default 200 never gates it; the old 13.42 did).
+        loop_candidate_max_distance_m=20.0,
+        # a closure only helps across accumulated drift; reject near-in-sequence pairs.
+        loop_min_id_gap=50,
+        # per-keyframe roll/pitch level prior keeps the planar go2 solve level so a
+        # closure's tilt cannot bleed x/y into z.
         per_keyframe_roll_pitch_prior=True,
-        per_keyframe_roll_pitch_var=1e-8,
-        odom_rot_roll_pitch_var=1e-10,
-        odom_trans_z_var=1e-10,
     ),
     vis_module(
         "rerun",
