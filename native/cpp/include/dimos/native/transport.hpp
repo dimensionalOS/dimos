@@ -29,11 +29,6 @@ public:
 
     /// Register `on_msg` to receive every payload delivered on `channel`.
     virtual void subscribe(const std::string& channel, Dispatch on_msg) = 0;
-
-    /// Apply publisher QoS. `qos_json` is the raw `qos` object from the stdin
-    /// config (or empty when absent). Transports without per-topic QoS (LCM)
-    /// leave this as the default no-op.
-    virtual void set_publisher_qos(const std::string& qos_json) { (void)qos_json; }
 };
 
 }  // namespace dimos::native

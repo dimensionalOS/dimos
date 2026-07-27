@@ -27,7 +27,6 @@ struct MockTransport : Transport {
     std::mutex m;
     std::vector<std::pair<std::string, Bytes>> published;
     std::unordered_map<std::string, Dispatch> subs;
-    std::string qos;
     std::atomic<bool> block_enabled{false};
     std::string block_channel;
     std::atomic<bool> release{false};
@@ -45,7 +44,6 @@ struct MockTransport : Transport {
         std::lock_guard<std::mutex> lock(m);
         subs[channel] = std::move(on_msg);
     }
-    void set_publisher_qos(const std::string& qos_json) override { qos = qos_json; }
 
     void deliver(const std::string& channel, const Bytes& bytes) {
         Dispatch cb;
@@ -342,18 +340,16 @@ TEST_CASE("publishing on a default-constructed Output throws") {
     CHECK_THROWS_AS(out.publish({1}), std::runtime_error);
 }
 
-TEST_CASE("parse_stdin_config extracts topics, config, and qos") {
+TEST_CASE("parse_stdin_config extracts topics and config, ignoring other keys") {
     StdinConfig p = parse_stdin_config(
         R"({"topics":{"data":"/d"},"config":{"x":1},"qos":{"/d":{"reliability":"reliable"}}})");
     CHECK(p.topics.at("data") == "/d");
     CHECK(p.config.at("x") == 1);
-    CHECK(p.qos.find("reliable") != std::string::npos);
 }
 
-TEST_CASE("parse_stdin_config tolerates a missing config and qos") {
+TEST_CASE("parse_stdin_config tolerates a missing config") {
     StdinConfig p = parse_stdin_config(R"({"topics":{}})");
     CHECK(p.config.is_null());
-    CHECK(p.qos.empty());
 }
 
 namespace {

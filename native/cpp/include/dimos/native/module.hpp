@@ -382,11 +382,11 @@ private:
     Notifier* notifier_ = nullptr;
 };
 
-// Parse the coordinator's stdin line into topics / config / qos.
+// Parse the coordinator's stdin line into topics / config. Other keys the
+// coordinator sends, such as qos, are ignored.
 struct StdinConfig {
     std::unordered_map<std::string, std::string> topics;
     nlohmann::json config;
-    std::string qos;
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
@@ -404,9 +404,6 @@ inline StdinConfig parse_stdin_config(const std::string& line) {
         }
     }
     out.config = blob.contains("config") ? blob["config"] : nlohmann::json();
-    if (blob.contains("qos")) {
-        out.qos = blob["qos"].dump();
-    }
     return out;
 }
 
@@ -415,8 +412,6 @@ void run_fallible(std::unique_ptr<Transport> transport) {
     std::string line;
     std::getline(std::cin, line);
     StdinConfig parsed = parse_stdin_config(line);
-
-    transport->set_publisher_qos(parsed.qos);
 
     Notifier notifier;
     Builder builder(std::move(parsed.topics), &notifier);

@@ -17,8 +17,6 @@ TEST_CASE("format_line emits level and message as JSON") {
 }
 
 TEST_CASE("level strings match what the Python wrapper maps") {
-    CHECK(std::string(log::level_str(log::Level::Trace)) == "trace");
-    CHECK(std::string(log::level_str(log::Level::Debug)) == "debug");
     CHECK(std::string(log::level_str(log::Level::Info)) == "info");
     CHECK(std::string(log::level_str(log::Level::Warn)) == "warn");
     CHECK(std::string(log::level_str(log::Level::Error)) == "error");

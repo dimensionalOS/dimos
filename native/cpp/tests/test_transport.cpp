@@ -19,7 +19,6 @@ namespace {
 struct MockTransport : Transport {
     std::vector<std::pair<std::string, std::vector<uint8_t>>> published;
     std::vector<std::pair<std::string, Dispatch>> subscriptions;
-    std::string qos;
 
     void publish(const std::string& channel, std::vector<uint8_t> data) override {
         published.emplace_back(channel, std::move(data));
@@ -27,7 +26,6 @@ struct MockTransport : Transport {
     void subscribe(const std::string& channel, Dispatch on_msg) override {
         subscriptions.emplace_back(channel, std::move(on_msg));
     }
-    void set_publisher_qos(const std::string& qos_json) override { qos = qos_json; }
 };
 
 }  // namespace
@@ -51,21 +49,10 @@ TEST_CASE("subscribed dispatch delivers raw bytes to the callback") {
     CHECK(got == payload);
 }
 
-TEST_CASE("set_publisher_qos default is a no-op") {
-    struct Bare : Transport {
-        void publish(const std::string&, std::vector<uint8_t>) override {}
-        void subscribe(const std::string&, Dispatch) override {}
-    } bare;
-    bare.set_publisher_qos(R"({"/x":{"reliability":"reliable"}})");
-    CHECK(true);
-}
-
 TEST_CASE("transports are usable through the abstract base") {
     MockTransport concrete;
     Transport& t = concrete;
-    t.set_publisher_qos("{}");
     t.publish("/c", {42});
-    CHECK(concrete.qos == "{}");
     REQUIRE(concrete.published.size() == 1);
     CHECK(concrete.published[0].second == std::vector<uint8_t>{42});
 }

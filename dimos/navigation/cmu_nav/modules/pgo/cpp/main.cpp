@@ -5,7 +5,6 @@
 // its own thread, so a slow round never stalls the dispatch thread and the
 // correction stays at most one round behind the sensor.
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -57,12 +56,8 @@ constexpr std::chrono::milliseconds kProcessPeriod{50};
 nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
                                   const std::string& frame_id,
                                   const std::string& child_frame_id) {
-    static std::atomic<int32_t> seq{0};
     nav_msgs::Odometry odom;
-    odom.header.seq = seq.fetch_add(1, std::memory_order_relaxed);
-    odom.header.stamp.sec = static_cast<int32_t>(ts);
-    odom.header.stamp.nsec = static_cast<int32_t>((ts - static_cast<int32_t>(ts)) * 1e9);
-    odom.header.frame_id = frame_id;
+    odom.header = dimos::make_header(frame_id, ts);
     odom.child_frame_id = child_frame_id;
 
     Eigen::Quaterniond q(r);

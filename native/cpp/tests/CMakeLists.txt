@@ -7,12 +7,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/doctest/doctest.git
   GIT_TAG v2.4.11
 )
-FetchContent_Declare(
-  nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(doctest nlohmann_json)
+FetchContent_MakeAvailable(doctest)
 
 add_executable(dimos_native_tests
   test_main.cpp
@@ -23,12 +18,9 @@ add_executable(dimos_native_tests
   test_module.cpp
   test_lcm_codec.cpp
 )
-find_package(Threads REQUIRED)
 target_link_libraries(dimos_native_tests PRIVATE
   dimos_native
   doctest::doctest
-  nlohmann_json::nlohmann_json
-  Threads::Threads
 )
 target_compile_options(dimos_native_tests PRIVATE -Wall -Wextra -Werror)
 
