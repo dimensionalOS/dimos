@@ -435,6 +435,11 @@ pub struct GscPgo {
     gnc_worker: Option<GncWorker>,
     gnc_sequence_dispatched: u64,
     gnc_sequence_applied: u64,
+    gnc_sequence_adopted: u64,
+    /// Newest finished GNC solve, kept for idle adoption: the per-keyframe
+    /// classification poll drains the worker channel, so without this the
+    /// batch poses would be gone by the time the pipeline goes idle.
+    latest_gnc_result: Option<GncResult>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -480,6 +485,8 @@ impl GscPgo {
             gnc_worker,
             gnc_sequence_dispatched: 0,
             gnc_sequence_applied: 0,
+            gnc_sequence_adopted: 0,
+            latest_gnc_result: None,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -1743,25 +1750,30 @@ impl GscPgo {
                 }
             }
         }
+        self.latest_gnc_result = Some(result);
         removed_any
     }
 
     /// Idle path: adopt the newest background GNC solve wholesale — batch
     /// poses written back and iSAM2 rebuilt from backbone + kept loops —
     /// because iSAM2 linearization never recovers from mass false-closure
-    /// removal. Rebuild drops location-constraint factors, so callers gate
-    /// on `use_location_constraints`.
+    /// removal. Uses the stored result if the per-keyframe classification
+    /// poll already drained the channel. Rebuild drops location-constraint
+    /// factors, so callers gate on `use_location_constraints`.
     pub fn poll_and_adopt_gnc_solution(&mut self) -> bool {
-        let mut latest_result: Option<GncResult> = None;
         if let Some(worker) = &self.gnc_worker {
             while let Ok(result) = worker.result_receiver.try_recv() {
-                latest_result = Some(result);
+                self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
+                self.latest_gnc_result = Some(result);
             }
         }
-        let Some(result) = latest_result else {
+        let Some(result) = self.latest_gnc_result.take() else {
             return false;
         };
-        self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
+        if result.sequence <= self.gnc_sequence_adopted {
+            return false;
+        }
+        self.gnc_sequence_adopted = result.sequence;
         self.apply_gnc_result(&result);
         self.rebuild_isam2_from_backbone();
         true
