@@ -62,24 +62,27 @@ The exact path is printed when the recorder starts — note it for the next step
 ## 2. Build a dataset
 
 DataPrep is an offline batch step that reads a session DB and writes a dataset.
-The obs/action stream mapping is nested, so it comes from a JSON config — start
-from [`dataprep/example_config.json`](dataprep/example_config.json) and edit the
+The obs/action stream mapping is nested, so it comes from a YAML config — start
+from [`dataprep/example_config.yaml`](dataprep/example_config.yaml) and edit the
 `source`/`output` to taste.
 
 ```bash
 # LeRobot v3.0 (default)
 dimos dataprep build \
   --source ~/.local/state/dimos/recordings/session_xarm7_20260622_120000.db \
-  --config dimos/learning/dataprep/example_config.json
+  --config dimos/learning/dataprep/example_config.yaml
 
 # HDF5 instead
-dimos dataprep build -s <session.db> -c <config.json> -f hdf5
+dimos dataprep build -s <session.db> -c <config.yaml> -f hdf5
 ```
 
 `--source` / `--output` / `--format` override whatever the config specifies, so
 you can reuse one config across runs and just swap `--source`. The dataset is
 written to the config's `output.path` (the example uses `data/datasets/session`)
 unless you pass `--output`.
+
+YAML is recommended because it permits deployment notes and comments. Existing JSON
+config files remain supported.
 
 Inspect the result (features, shapes, dtypes, episode/frame counts):
 

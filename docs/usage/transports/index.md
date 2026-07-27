@@ -62,6 +62,15 @@ Zenoh ships with DimOS by default (`eclipse-zenoh` is a base dependency), so the
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
 2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
 
+When multicast discovery cannot reach the Zenoh router, provide its endpoint explicitly. The
+setting is inherited by Python workers and native modules:
+
+```bash
+dimos --transport=zenoh --zenoh-connect=tcp/10.21.31.103:7447 run m20-simple-nav
+```
+
+The equivalent environment setting is `DIMOS_ZENOH_CONNECT=tcp/10.21.31.103:7447`.
+
 Typical **replay on macOS** (default is already Zenoh, so no transport flag is required):
 
 ```bash

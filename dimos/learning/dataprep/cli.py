@@ -18,9 +18,9 @@ DataPrep is a one-shot batch transform, not a long-lived module, so it runs
 as a plain command over the pure helpers in `dimos.learning.dataprep.core`
 and exits with a 0/1 status — no coordinator, no blocking loop.
 
-The obs/action stream maps are nested, so they come from a JSON
+The obs/action stream maps are nested, so they come from a YAML or JSON
 `DataPrepConfig` via `--config`; simple flags override `source`/`output`/
-`format` on top. See `dimos/learning/dataprep/example_config.json`.
+`format` on top. See `dimos/learning/dataprep/example_config.yaml`.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import typer
+
+from dimos.utils.config import load_config_mapping
 
 if TYPE_CHECKING:
     from dimos.learning.dataprep.core import DataPrepConfig
@@ -41,11 +43,11 @@ def _load_config(
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
 ) -> DataPrepConfig:
-    """Build a DataPrepConfig from an optional JSON file + flag overrides."""
+    """Build a DataPrepConfig from an optional YAML or JSON file plus flag overrides."""
     from dimos.learning.dataprep.core import DataPrepConfig, OutputConfig
 
     if config_path is not None:
-        cfg = DataPrepConfig.model_validate_json(Path(config_path).read_text())
+        cfg = DataPrepConfig.model_validate(load_config_mapping(config_path))
     else:
         cfg = DataPrepConfig()
 
@@ -76,7 +78,7 @@ def build(
     if not cfg.observation and not cfg.action:
         typer.echo(
             "error: no observation/action streams configured; pass --config with the "
-            "stream maps (see dimos/learning/dataprep/example_config.json)",
+            "stream maps (see dimos/learning/dataprep/example_config.yaml)",
             err=True,
         )
         raise typer.Exit(2)

@@ -22,6 +22,9 @@ target/
 # Build artifacts
 dist/
 build/
+# Rust build artifacts
+**/target/
+**/*.rs.bk
 *.so
 
 # Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)

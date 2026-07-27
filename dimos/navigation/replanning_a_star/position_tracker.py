@@ -81,3 +81,30 @@ class PositionTracker:
         distances = np.linalg.norm(recent - centroid, axis=1)
 
         return bool(np.all(distances < self._threshold))
+
+    def get_stuck_diagnostics(self) -> dict[str, float | int | None]:
+        """Return the position-window values used by the stuck check."""
+        with self._lock:
+            recent = self._get_recent_positions()
+
+        diagnostics: dict[str, float | int | None] = {
+            "stuck_window_s": self._time_window,
+            "stuck_threshold_m": self._threshold,
+            "stuck_sample_count": len(recent),
+            "stuck_centroid_x": None,
+            "stuck_centroid_y": None,
+            "stuck_max_spread_m": None,
+        }
+        if len(recent) == 0:
+            return diagnostics
+
+        centroid = recent.mean(axis=0)
+        max_spread = np.linalg.norm(recent - centroid, axis=1).max()
+        diagnostics.update(
+            {
+                "stuck_centroid_x": round(float(centroid[0]), 3),
+                "stuck_centroid_y": round(float(centroid[1]), 3),
+                "stuck_max_spread_m": round(float(max_spread), 3),
+            }
+        )
+        return diagnostics

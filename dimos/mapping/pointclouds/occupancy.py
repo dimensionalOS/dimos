@@ -138,6 +138,9 @@ class HeightCostConfig(OccupancyConfig):
     can_climb: float = 0.15
     ignore_noise: float = 0.05
     smoothing: float = 1.0
+    min_gradient_neighbors: int = 5
+    ignore_overhead_only: bool = False
+    overhead_ground_smoothing: float = 2.0
 
 
 def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
@@ -209,6 +212,29 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         height,
     )
 
+    if cfg.ignore_overhead_only and cfg.overhead_ground_smoothing > 0:
+        observed_min = ~np.isnan(min_height_map)
+        min_weights = observed_min.astype(np.float32)
+        min_filled = np.where(observed_min, min_height_map, 0.0)
+        local_floor_sum = ndimage.gaussian_filter(min_filled, sigma=cfg.overhead_ground_smoothing)
+        local_floor_weight = ndimage.gaussian_filter(
+            min_weights, sigma=cfg.overhead_ground_smoothing
+        )
+        local_floor = np.full_like(min_height_map, np.nan)
+        np.divide(
+            local_floor_sum,
+            local_floor_weight,
+            out=local_floor,
+            where=local_floor_weight > 0.01,
+        )
+        overhead_only_mask = (
+            observed_min
+            & ~np.isnan(local_floor)
+            & ((min_height_map - local_floor) > cfg.can_pass_under)
+        )
+        min_height_map = np.where(overhead_only_mask, np.nan, min_height_map)
+        max_height_map = np.where(overhead_only_mask, np.nan, max_height_map)
+
     # Step 2: Determine effective height for each cell
     # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
     # Otherwise use max (solid obstacle)
@@ -265,10 +291,19 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         cost_float = (height_change_per_cell / cfg.can_climb) * 100.0
         cost_float = np.clip(cost_float, 0, 100)
 
-        # Erode observed mask - only trust gradients where all neighbors are observed
-        # This prevents false high costs at boundaries with unknown regions
+        # Only trust gradients where enough 4-connected neighbors are observed.
+        # The default of 5 is equivalent to the old binary erosion behavior:
+        # center + north/south/east/west must all be observed. Lower values are
+        # useful for sparse voxel maps where real ground cells have small holes.
         structure = ndimage.generate_binary_structure(2, 1)  # 4-connectivity
-        valid_gradient_mask = ndimage.binary_erosion(observed_mask, structure=structure)
+        min_neighbors = int(np.clip(cfg.min_gradient_neighbors, 1, int(structure.sum())))
+        neighbor_count = ndimage.convolve(
+            observed_mask.astype(np.uint8),
+            structure.astype(np.uint8),
+            mode="constant",
+            cval=0,
+        )
+        valid_gradient_mask = neighbor_count >= min_neighbors
 
         # Convert to int8, marking cells without valid gradients as -1
         cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1)

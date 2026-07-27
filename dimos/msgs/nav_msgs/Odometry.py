@@ -232,18 +232,34 @@ class Odometry(Timestamped):
             f"  Angular Velocity: [{self.wx:.3f}, {self.wy:.3f}, {self.wz:.3f}]"
         )
 
-    def to_rerun(self) -> Archetype:
-        """Convert to rerun Transform3D for visualizing the pose."""
+    def to_rerun(self, axis_length: float = 0.5) -> Archetype:
+        """Convert to a visible rerun pose gizmo (the XYZ coordinate triad).
+
+        A bare ``rr.Transform3D`` only sets the entity's coordinate transform and
+        draws nothing (invisible), and rerun 0.32 has no ``axis_length`` on the
+        archetype. So we draw the body axes explicitly as ``Arrows3D``: red=X,
+        green=Y, blue=Z, rotated by the orientation and anchored at the position.
+        """
         import rerun as rr
 
-        return rr.Transform3D(
-            translation=[self.x, self.y, self.z],
-            rotation=rr.Quaternion(
-                xyzw=[
-                    self.orientation.x,
-                    self.orientation.y,
-                    self.orientation.z,
-                    self.orientation.w,
-                ]
-            ),
+        q = self.orientation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        # Rotation matrix from quaternion; its columns are the body axes in the
+        # parent frame.
+        rot = np.array(
+            [
+                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+            ]
+        )
+        origin = [self.x, self.y, self.z]
+        return rr.Arrows3D(
+            origins=[origin, origin, origin],
+            vectors=[
+                (rot[:, 0] * axis_length).tolist(),
+                (rot[:, 1] * axis_length).tolist(),
+                (rot[:, 2] * axis_length).tolist(),
+            ],
+            colors=[[230, 25, 25], [25, 230, 25], [25, 25, 230]],
         )

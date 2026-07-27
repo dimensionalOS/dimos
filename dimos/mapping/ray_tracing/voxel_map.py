@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 try:
-    from dimos_voxel_ray_tracing import (  # noqa: F401  (re-exported)
-        VoxelRayMapper,
-        local_bounds,
+    from dimos_voxel_ray_tracing import (
+        VoxelRayMapper,  # noqa: F401
+        local_bounds,  # noqa: F401
     )
 except ImportError as e:
     raise ImportError(

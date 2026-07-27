@@ -21,6 +21,8 @@ def min_cost_astar_cpp(
     start_y: int,
     goal_x: int,
     goal_y: int,
-    cost_threshold: int,
-    unknown_penalty: float,
+    cost_threshold: int = 100,
+    unknown_penalty: float = 0.8,
+    distance_weight: float = 0.0,
+    cell_cost_weight: float = 1.0,
 ) -> list[tuple[int, int]]: ...

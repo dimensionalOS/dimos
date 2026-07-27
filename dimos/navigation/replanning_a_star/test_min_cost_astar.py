@@ -107,6 +107,56 @@ def test_astar_unknown_penalty_allows_with_low_penalty(costmap) -> None:
         assert len(path.poses) > 0
 
 
+def _path_grid_cells(path, costmap: OccupancyGrid) -> list[tuple[int, int]]:
+    return [
+        (
+            int(costmap.world_to_grid(pose.position).x),
+            int(costmap.world_to_grid(pose.position).y),
+        )
+        for pose in path.poses
+    ]
+
+
+@pytest.mark.parametrize("use_cpp", [False, True])
+def test_astar_path_length_weight_prevents_low_cost_terminal_hook(use_cpp: bool) -> None:
+    """A short direct corridor should beat a slightly cheaper route that turns back at the goal."""
+    grid = np.full((6, 4), 100, dtype=np.int8)
+    grid[5, 0] = 0
+    grid[4, 1] = 18
+    grid[3, 1] = 22
+    grid[2, 1] = 24
+    grid[1, 1] = 27
+    grid[0, 1] = 29
+    grid[3, 2] = 19
+    grid[2, 3] = 21
+    grid[1, 2] = 25
+    costmap = OccupancyGrid(grid, resolution=1.0)
+    start = costmap.grid_to_world((0, 5))
+    goal = costmap.grid_to_world((1, 0))
+
+    legacy_path = min_cost_astar(costmap, goal, start, use_cpp=use_cpp)
+    assert legacy_path is not None
+    assert max(x for x, _ in _path_grid_cells(legacy_path, costmap)) > 1
+
+    weighted_path = min_cost_astar(
+        costmap,
+        goal,
+        start,
+        distance_weight=1.0,
+        cell_cost_weight=3.0,
+        use_cpp=use_cpp,
+    )
+    assert weighted_path is not None
+    assert _path_grid_cells(weighted_path, costmap) == [
+        (0, 5),
+        (1, 4),
+        (1, 3),
+        (1, 2),
+        (1, 1),
+        (1, 0),
+    ]
+
+
 def test_astar_python_and_cpp(costmap) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal = Vector3(6.15, 10.0)

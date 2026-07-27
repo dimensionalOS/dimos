@@ -339,15 +339,25 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
+        # Place data on the timeline by capture time, not by when the bridge got
+        # to it. Otherwise heavy messages (clouds) log late and desync from light
+        # ones (path, pose) captured at the same instant. View on the "capture"
+        # timeline for synchronized playback.
+        ts = getattr(msg, "ts", None)
+        if ts is not None:
+            rr.set_time("capture", timestamp=ts)
+
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for path, archetype in rerun_data:
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
-            # if source msg carries a frame_id, attach the entity to that TF frame
-            # should skip if archetype is a Transform3D
-            if not isinstance(rerun_data, rr.Transform3D):
+            # if source msg carries a frame_id, attach the entity to that TF frame.
+            # Skip Transform3D (it *is* the relation) and Pinhole (it carries its
+            # own explicit parent_frame -- a second Transform3D would double-parent
+            # the camera frame, which Rerun rejects).
+            if not isinstance(rerun_data, (rr.Transform3D, rr.Pinhole)):
                 frame_id = getattr(msg, "frame_id", None)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))

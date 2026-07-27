@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import sys
 from typing import Literal
 
@@ -64,6 +65,20 @@ def test_global_config_flag_applies_before_subcommand():
         assert "transport: zenoh" in result.output
     finally:
         global_config.update(transport=original)
+
+
+def test_zenoh_connect_flag_applies_before_subcommand():
+    runner = CliRunner()
+    original = global_config.zenoh_connect
+    try:
+        result = runner.invoke(
+            main,
+            ["--zenoh-connect", "tcp/10.21.31.103:7447", "show-config"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "zenoh_connect: tcp/10.21.31.103:7447" in result.output
+    finally:
+        global_config.update(zenoh_connect=original)
 
 
 def test_blueprint_arg_help():
@@ -165,6 +180,30 @@ def test_blueprint_arg_help_required():
         "      * testmodule.spam: str (default: eggs)",
         "",
     ]
+
+
+@pytest.mark.parametrize(
+    ("filename", "contents"),
+    [
+        ("config.yaml", "m20-connection:\n  host_ip: 192.168.1.100 # deployment IP\n"),
+        ("config.json", '{"m20-connection": {"host_ip": "192.168.1.100"}}'),
+    ],
+)
+def test_load_config_args_supports_yaml_and_json(
+    tmp_path: Path, filename: str, contents: str
+) -> None:
+    class ConnectionConfig(BaseModel):
+        host_ip: str
+
+    class Config(BaseModel):
+        m20_connection: ConnectionConfig = Field(alias="m20-connection")
+
+    config_path = tmp_path / filename
+    config_path.write_text(contents)
+
+    assert load_config_args(Config, (), config_path) == {
+        "m20-connection": {"host_ip": "192.168.1.100"}
+    }
 
 
 def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyPatch) -> None:

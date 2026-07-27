@@ -558,7 +558,10 @@ class ZenohTransport(PubSubTransport[T]):
         return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (ZenohTransport, (self.topic,))
+        return (
+            functools.partial(type(self), **self.zenoh.config.model_dump()),
+            (self.topic,),
+        )
 
     def start(self) -> None:
         with self._start_lock:
@@ -610,7 +613,10 @@ class pZenohTransport(PubSubTransport[T]):
         return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (pZenohTransport, (self._zenoh_topic,))
+        return (
+            functools.partial(type(self), **self.zenoh.config.model_dump()),
+            (self._zenoh_topic,),
+        )
 
     def start(self) -> None:
         with self._start_lock:

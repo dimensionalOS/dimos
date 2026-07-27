@@ -84,6 +84,10 @@ class GlobalConfig(BaseSettings):
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
+    zenoh_connect: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DIMOS_ZENOH_CONNECT", "zenoh_connect"),
+    )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True

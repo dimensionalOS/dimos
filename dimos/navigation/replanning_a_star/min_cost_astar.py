@@ -132,8 +132,15 @@ def min_cost_astar(
     start: VectorLike = (0.0, 0.0),
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
+    distance_weight: float = 0.0,
+    cell_cost_weight: float = 1.0,
     use_cpp: bool = True,
 ) -> Path | None:
+    if cost_threshold <= 0:
+        raise ValueError("cost_threshold must be positive")
+    if distance_weight < 0 or cell_cost_weight < 0:
+        raise ValueError("A* objective weights must be non-negative")
+
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
 
@@ -153,6 +160,8 @@ def min_cost_astar(
                 goal_tuple[1],
                 cost_threshold,
                 unknown_penalty,
+                distance_weight,
+                cell_cost_weight,
             )
             if not path_coords:
                 return None
@@ -166,16 +175,15 @@ def min_cost_astar(
     open_set: list[tuple[float, float, tuple[int, int]]] = []  # Priority queue for nodes to explore
     closed_set: set[tuple[int, int]] = set()  # Set of explored nodes
 
-    # Dictionary to store cost and distance from start, and parents for each node
-    # Track cumulative cell cost and path length separately
-    cost_score: dict[tuple[int, int], float] = {start_tuple: 0.0}  # Cumulative cell cost
+    # The scalar objective is distance plus normalized map cost. Keeping raw
+    # distance as a tiebreaker preserves legacy behavior when distance_weight is zero.
+    objective_score: dict[tuple[int, int], float] = {start_tuple: 0.0}
     dist_score: dict[tuple[int, int], float] = {start_tuple: 0.0}  # Cumulative path length
     parents: dict[tuple[int, int], tuple[int, int]] = {}
 
-    # Start with the starting node
-    # Priority: (total_cost + heuristic_cost, total_distance + heuristic_distance, node)
+    # Priority: (objective + admissible distance heuristic, distance tiebreaker, node)
     h_dist = _heuristic(start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1])
-    heapq.heappush(open_set, (0.0, h_dist, start_tuple))
+    heapq.heappush(open_set, (distance_weight * h_dist, h_dist, start_tuple))
 
     while open_set:
         _, _, current = heapq.heappop(open_set)
@@ -213,23 +221,25 @@ def min_cost_astar(
             else:
                 cell_cost = neighbor_val
 
-            tentative_cost = cost_score[current] + cell_cost
             tentative_dist = dist_score[current] + _movement_costs[i]
+            tentative_objective = objective_score[current] + (
+                distance_weight * _movement_costs[i]
+                + cell_cost_weight * (cell_cost / cost_threshold)
+            )
 
-            # Get the current scores for the neighbor or set to infinity if not yet explored
-            neighbor_cost = cost_score.get(neighbor, float("inf"))
+            # Get the current scores for the neighbor or set to infinity if not yet explored.
+            neighbor_objective = objective_score.get(neighbor, float("inf"))
             neighbor_dist = dist_score.get(neighbor, float("inf"))
 
-            # If this path to the neighbor is better (prioritize cost, then distance)
-            if (tentative_cost, tentative_dist) < (neighbor_cost, neighbor_dist):
+            if (tentative_objective, tentative_dist) < (neighbor_objective, neighbor_dist):
                 # Update the neighbor's scores and parent
                 parents[neighbor] = current
-                cost_score[neighbor] = tentative_cost
+                objective_score[neighbor] = tentative_objective
                 dist_score[neighbor] = tentative_dist
 
-                # Calculate priority: cost first, then distance (both with heuristic)
+                # Cell costs are non-negative, so the geometric component remains admissible.
                 h_dist = _heuristic(neighbor_x, neighbor_y, goal_tuple[0], goal_tuple[1])
-                priority_cost = tentative_cost
+                priority_cost = tentative_objective + distance_weight * h_dist
                 priority_dist = tentative_dist + h_dist
 
                 # Add the neighbor to the open set with its priority

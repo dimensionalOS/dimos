@@ -63,9 +63,9 @@ pub struct ZenohTransport {
 
 impl ZenohTransport {
     pub async fn new() -> io::Result<Self> {
-        let session = ::zenoh::open(::zenoh::Config::default())
-            .await
-            .map_err(to_io)?;
+        let endpoint = std::env::var("DIMOS_ZENOH_CONNECT").ok();
+        let config = zenoh_config(endpoint.as_deref())?;
+        let session = ::zenoh::open(config).await.map_err(to_io)?;
         Ok(Self {
             session,
             qos: OnceLock::new(),
@@ -91,6 +91,17 @@ impl ZenohTransport {
         }
         builder.await.map_err(to_io)
     }
+}
+
+fn zenoh_config(endpoint: Option<&str>) -> io::Result<::zenoh::Config> {
+    let mut config = ::zenoh::Config::default();
+    if let Some(endpoint) = endpoint.filter(|endpoint| !endpoint.is_empty()) {
+        let endpoints = serde_json::to_string(&[endpoint]).map_err(io::Error::other)?;
+        config
+            .insert_json5("connect/endpoints", &endpoints)
+            .map_err(to_io)?;
+    }
+    Ok(config)
 }
 
 impl Transport for ZenohTransport {
@@ -138,6 +149,15 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn config_uses_explicit_connect_endpoint() {
+        let config = zenoh_config(Some("tcp/10.21.31.103:7447")).expect("valid config");
+        let endpoints = config
+            .get_json("connect/endpoints")
+            .expect("connect endpoints");
+        assert!(endpoints.contains("tcp/10.21.31.103:7447"));
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn round_trip_delivers_payload() {

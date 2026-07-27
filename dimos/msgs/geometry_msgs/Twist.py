@@ -106,6 +106,22 @@ class Twist(LCMTwist):  # type: ignore[misc]
             angular=self.angular + other.angular,
         )
 
+    def __mul__(self, scalar: float) -> Twist:
+        """Scale both linear and angular velocity by a scalar: self * scalar."""
+        if not isinstance(scalar, (int, float)):
+            return NotImplemented
+        return Twist(linear=self.linear * scalar, angular=self.angular * scalar)
+
+    def __rmul__(self, scalar: float) -> Twist:
+        """Scale by a scalar from the left: scalar * self."""
+        return self.__mul__(scalar)
+
+    def __truediv__(self, scalar: float) -> Twist:
+        """Divide both linear and angular velocity by a scalar: self / scalar."""
+        if not isinstance(scalar, (int, float)):
+            return NotImplemented
+        return Twist(linear=self.linear / scalar, angular=self.angular / scalar)
+
     def __bool__(self) -> bool:
         """Boolean conversion for Twist.
 

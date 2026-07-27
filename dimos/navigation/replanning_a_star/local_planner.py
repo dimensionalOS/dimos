@@ -53,6 +53,7 @@ class LocalPlanner(Resource):
     _path_clearance: PathClearance | None = None
     _path_distancer: PathDistancer | None = None
     _current_odom: PoseStamped | None = None
+    _last_cmd_vel: Twist
 
     _pose_index: int
     _lock: RLock
@@ -95,6 +96,7 @@ class LocalPlanner(Resource):
             speed,
             self._control_frequency,
         )
+        self._last_cmd_vel = Twist()
 
     def start(self) -> None:
         pass
@@ -120,7 +122,7 @@ class LocalPlanner(Resource):
             self._thread.start()
 
     def stop_planning(self) -> None:
-        self.cmd_vel.on_next(Twist())
+        self._publish_cmd_vel(Twist())
         self._stop_planning_event.set()
 
         with self._lock:
@@ -144,6 +146,75 @@ class LocalPlanner(Resource):
         with self._lock:
             return (self._state, self._state_unique_id)
 
+    def get_path_progress_m(self) -> float | None:
+        with self._lock:
+            path_distancer = self._path_distancer
+            odom = self._current_odom
+
+        if path_distancer is None or odom is None:
+            return None
+
+        current_pos = np.array([odom.position.x, odom.position.y])
+        closest_index = path_distancer.find_closest_point_index(current_pos)
+        return path_distancer.progress_at_index_m(closest_index)
+
+    def get_last_command_linear_x_m_s(self) -> float:
+        with self._lock:
+            return self._last_cmd_vel.linear.x
+
+    def get_stuck_diagnostics(self) -> dict[str, object]:
+        """Snapshot controller state only when GlobalPlanner reports a stuck robot."""
+        with self._lock:
+            state = self._state
+            pose_index = self._pose_index
+            odom = self._current_odom
+            path_distancer = self._path_distancer
+            path_clearance = self._path_clearance
+            last_cmd_vel = Twist(self._last_cmd_vel)
+
+        diagnostics: dict[str, object] = {
+            "local_state": state,
+            "path_pose_index": pose_index,
+            "cmd_linear_x_m_s": round(last_cmd_vel.linear.x, 3),
+            "cmd_linear_y_m_s": round(last_cmd_vel.linear.y, 3),
+            "cmd_angular_z_rad_s": round(last_cmd_vel.angular.z, 3),
+            "odom_x_m": None,
+            "odom_y_m": None,
+            "odom_yaw_rad": None,
+            "path_progress_m": None,
+            "path_length_m": None,
+            "path_remaining_m": None,
+            "goal_distance_m": None,
+            "obstacle_ahead": None,
+        }
+        if odom is None:
+            return diagnostics
+
+        diagnostics.update(
+            {
+                "odom_x_m": round(odom.position.x, 3),
+                "odom_y_m": round(odom.position.y, 3),
+                "odom_yaw_rad": round(odom.orientation.euler[2], 3),
+            }
+        )
+        if path_distancer is not None:
+            current_pos = np.array([odom.position.x, odom.position.y])
+            closest_index = path_distancer.find_closest_point_index(current_pos)
+            progress_m = path_distancer.progress_at_index_m(closest_index)
+            path_length_m = path_distancer.path_length_m
+            diagnostics.update(
+                {
+                    "path_pose_index": closest_index,
+                    "path_progress_m": round(progress_m, 3),
+                    "path_length_m": round(path_length_m, 3),
+                    "path_remaining_m": round(path_length_m - progress_m, 3),
+                    "goal_distance_m": round(path_distancer.distance_to_goal(current_pos), 3),
+                }
+            )
+        if path_clearance is not None:
+            diagnostics["obstacle_ahead"] = path_clearance.is_obstacle_ahead()
+        return diagnostics
+
     def _thread_entrypoint(self) -> None:
         try:
             self._loop()
@@ -153,7 +224,7 @@ class LocalPlanner(Resource):
             self.stopped_navigating.on_next("error")
         finally:
             self._reset_state()
-            self.cmd_vel.on_next(Twist())
+            self._publish_cmd_vel(Twist())
 
     def _change_state(self, new_state: PlannerState) -> None:
         if new_state == self._state:
@@ -223,7 +294,7 @@ class LocalPlanner(Resource):
                 cmd_vel = None
 
             if cmd_vel is not None:
-                self.cmd_vel.on_next(cmd_vel)
+                self._publish_cmd_vel(cmd_vel)
 
             elapsed = time.perf_counter() - start_time
             sleep_time = max(0.0, (1.0 / self._control_frequency) - elapsed)
@@ -317,6 +388,11 @@ class LocalPlanner(Resource):
             self._path_distancer = None
             self._pose_index = 0
             self._controller.reset_errors()
+
+    def _publish_cmd_vel(self, cmd_vel: Twist) -> None:
+        with self._lock:
+            self._last_cmd_vel = Twist(cmd_vel)
+        self.cmd_vel.on_next(cmd_vel)
 
     def _send_navigation_costmap(self, path: Path, path_clearance: PathClearance) -> None:
         if "DEBUG_NAVIGATION" not in os.environ:

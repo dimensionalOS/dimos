@@ -28,6 +28,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--transport` | `lcm\|zenoh` | platform-dependent | Transport backend for streams, RPC, and TF. Defaults to `zenoh` on macOS, otherwise `lcm`. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
+| `--zenoh-connect` | endpoint | none | Explicit Zenoh endpoint, for example `tcp/10.21.31.103:7447`. Use when multicast discovery cannot reach the router. Set `DIMOS_ZENOH_CONNECT` for the equivalent environment override. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -72,15 +73,29 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config` `-c` | YAML or JSON config file; YAML is recommended because it supports comments. Environment and `-o` values override file settings. |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
 | `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
+Use YAML for deployment configuration so the file can carry operator context:
+
+```yaml
+# ~/.config/dimos.yaml
+voxelgridmapper:
+  voxel_size: 0.05 # Tune for the deployed sensor resolution.
+```
+
+Existing JSON config files remain supported. Invalid configuration syntax and
+non-mapping files are reported instead of being ignored.
+
 ```bash
 # Foreground (Ctrl-C to stop)
 dimos run unitree-go2
+
+# YAML config with deployment notes
+dimos run unitree-go2 --config ~/.config/dimos.yaml
 
 # Background (returns immediately)
 dimos run unitree-go2-agentic --daemon
