@@ -1499,12 +1499,19 @@ impl GscPgo {
             .isam2
             .update(&self.graph, &self.initial_values, &remove)
             .expect("gtsam: isam2 update");
-        self.isam2.update_empty().expect("gtsam: isam2 update");
-        if has_closure {
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
+        // Refinement passes are best-effort: on a pathological graph (e.g. many
+        // conflicting closures mid-rejection) GTSAM can throw during a forced
+        // relinearization; the estimate is still usable and later updates
+        // recover, so log and stop refining instead of killing the pipeline.
+        let refinement_passes = if has_closure { 5 } else { 1 };
+        for _ in 0..refinement_passes {
+            if let Err(gtsam_error) = self.isam2.update_empty() {
+                eprintln!(
+                    "gtsam: relinearization pass failed ({gtsam_error:?}); \
+                     skipping remaining passes"
+                );
+                break;
+            }
         }
 
         // Record the iSAM2 factor index assigned to each staged constraint
