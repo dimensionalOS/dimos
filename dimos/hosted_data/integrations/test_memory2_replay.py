@@ -250,3 +250,64 @@ def test_local_replay_uses_existing_resolver(
     monkeypatch.setattr(memory2_replay, "_resolve_local_replay", lambda _: expected)
 
     assert resolve_replay_dataset("local") == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        f"dimos-replay://bad owner/repo/{'a' * 64}?server=https%3A%2F%2Freplays.example",
+        f"dimos-replay://alice/bad%20repo/{'a' * 64}?server=https%3A%2F%2Freplays.example",
+        f"dimos-replay://alice/repo/{'a' * 64}?server=https%3A%2F%2Fuser%40example.test",
+        f"dimos-replay://alice/repo/{'a' * 64}?server=https%3A%2F%2Fexample.test%2F%3Fx%3D1",
+        f"dimos-replay://alice/repo/{'a' * 64}?server=https%3A%2F%2Fexample.test#fragment",
+        f"dimos-replay://alice/extra/repo/{'a' * 64}?server=https%3A%2F%2Fexample.test",
+    ],
+)
+def test_remote_reference_rejects_unsafe_identity_and_server(value: str) -> None:
+    with pytest.raises(ValueError):
+        RemoteReplayReference.parse(value)
+
+
+def test_configured_nodes_are_trusted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DIMOS_REPLAY_SERVER_URL", raising=False)
+    monkeypatch.setenv(
+        "DIMOS_REPLAY_NODES",
+        '[{"name":"cn","url":"https://cn.example/","region":"china"}]',
+    )
+
+    assert memory2_replay._configured_server_urls() == {"https://cn.example"}
+
+
+def test_memory2_validation_rejects_sqlite_without_streams(tmp_path: Path) -> None:
+    database = tmp_path / "ordinary.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE events (id INTEGER)")
+
+    with pytest.raises(ValueError, match="not a memory2"):
+        memory2_replay._validate_memory2_database(database)
+
+
+def test_cache_lock_timeout_and_ownership_fail_closed(tmp_path: Path) -> None:
+    lock_path = tmp_path / "cache.lock"
+    lock_path.write_text("other-owner", encoding="ascii")
+
+    assert not memory2_replay._lock_is_owned(lock_path, "expected-owner")
+    assert not memory2_replay._lock_is_owned(tmp_path / "missing.lock", "owner")
+    with pytest.raises(TimeoutError, match="timed out waiting"):
+        memory2_replay._acquire_cache_lock(lock_path, timeout_seconds=0)
+
+
+def test_cache_lock_heartbeat_stops_after_ownership_changes(tmp_path: Path) -> None:
+    class ImmediateTick:
+        def wait(self, _: float) -> bool:
+            return False
+
+    lock_path = tmp_path / "cache.lock"
+    lock_path.write_text("new-owner", encoding="ascii")
+
+    memory2_replay._heartbeat_cache_lock(
+        lock_path,
+        "old-owner",
+        ImmediateTick(),  # type: ignore[arg-type]
+    )
+    assert lock_path.read_text(encoding="ascii") == "new-owner"

@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
 from http import HTTPStatus
+from io import BytesIO
 from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
@@ -27,7 +28,9 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
+from dimos.hosted_data import repository as repository_module
 from dimos.hosted_data.repository import (
+    BatchTransferError,
     ReplayManifest,
     ReplayObject,
     ReplayRepository,
@@ -35,6 +38,7 @@ from dimos.hosted_data.repository import (
     RepositoryError,
     download_object,
     download_objects,
+    iter_repository_paths,
     list_objects,
     read_manifest,
     sha256_file,
@@ -854,3 +858,157 @@ def test_replay_object_rejects_coerced_json_types(
 
     with pytest.raises(RepositoryError, match="invalid replay object metadata"):
         ReplayObject.from_dict(data)
+
+
+def test_retry_policy_validates_input_and_retries_transient_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(RepositoryError, match="retries cannot be negative"):
+        repository_module._with_retries(lambda: None, retries=-1, backoff_seconds=0)
+    with pytest.raises(RepositoryError, match="backoff_seconds cannot be negative"):
+        repository_module._with_retries(lambda: None, retries=0, backoff_seconds=-1)
+
+    attempts = 0
+    sleeps: list[float] = []
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise requests.ConnectionError("temporary")
+        return "ok"
+
+    monkeypatch.setattr(repository_module.time, "sleep", sleeps.append)
+    assert (
+        repository_module._with_retries(
+            operation,
+            retries=2,
+            backoff_seconds=0.25,
+        )
+        == "ok"
+    )
+    assert attempts == 3
+    assert sleeps == [0.25, 0.5]
+
+    response = requests.Response()
+    response.status_code = HTTPStatus.BAD_REQUEST
+    with pytest.raises(requests.HTTPError):
+        repository_module._with_retries(
+            lambda: (_ for _ in ()).throw(requests.HTTPError(response=response)),
+            retries=3,
+            backoff_seconds=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"region": "moon"}, "region must be"),
+        ({"max_object_bytes": 0}, "max_object_bytes must be positive"),
+        ({"max_repository_bytes": 0}, "max_repository_bytes must be positive"),
+        ({"cdn_base_url": "relative/path"}, "absolute HTTP"),
+        ({"cdn_base_url": "https://user@example.test"}, "must not contain"),
+        ({"cdn_base_url": "https://example.test:bad"}, "invalid port"),
+    ],
+)
+def test_server_rejects_invalid_runtime_configuration(
+    tmp_path: Path,
+    options: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ReplayRepositoryServer(
+            ("127.0.0.1", 0),
+            ReplayRepository(tmp_path),
+            token=None,
+            **options,  # type: ignore[arg-type]
+        )
+
+
+def test_server_tracks_pending_repository_quota(tmp_path: Path) -> None:
+    server = ReplayRepositoryServer(
+        ("127.0.0.1", 0),
+        ReplayRepository(tmp_path),
+        token=None,
+        max_repository_bytes=10,
+        cdn_base_url="https://cdn.example.test:8443/base/",
+    )
+    try:
+        assert server.cdn_origin == "https://cdn.example.test:8443"
+        assert server.reserve_upload("alice", "demo", 6, None) == 6
+        with pytest.raises(repository_module.RepositoryQuotaError):
+            server.reserve_upload("alice", "demo", 5, None)
+        server.release_upload("alice", "demo", 2)
+        assert server._pending_bytes[("alice", "demo")] == 4
+        server.release_upload("alice", "demo", 4)
+        assert ("alice", "demo") not in server._pending_bytes
+        server.release_upload("alice", "demo", 0)
+    finally:
+        server.server_close()
+
+
+def test_batch_validation_and_failure_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "capture.h264"
+    source.write_bytes(b"video")
+    with pytest.raises(RepositoryError, match="workers must be at least 1"):
+        upload_files(
+            server_url="http://unused",
+            owner="alice",
+            repository="demo",
+            paths=[source],
+            workers=0,
+        )
+    with pytest.raises(RepositoryError, match="at least one source"):
+        upload_files(
+            server_url="http://unused",
+            owner="alice",
+            repository="demo",
+            paths=[],
+        )
+    with pytest.raises(FileNotFoundError):
+        upload_files(
+            server_url="http://unused",
+            owner="alice",
+            repository="demo",
+            paths=[tmp_path / "missing.mp4"],
+        )
+
+    monkeypatch.setattr(
+        repository_module,
+        "upload_file",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("provider offline")),
+    )
+    with pytest.raises(BatchTransferError, match="provider offline") as exc_info:
+        upload_files(
+            server_url="http://unused",
+            owner="alice",
+            repository="demo",
+            paths=[source],
+        )
+    assert str(source) in exc_info.value.failures
+
+
+def test_manifest_io_and_repository_path_diagnostics(tmp_path: Path) -> None:
+    repository = ReplayRepository(tmp_path / "objects")
+    payload = b"replay"
+    item = repository.put_stream(
+        owner="alice",
+        repository="demo",
+        filename="capture.h264",
+        source=BytesIO(payload),
+        size_bytes=len(payload),
+        content_type="video/h264",
+    )
+    manifest = ReplayManifest(owner="alice", repository="demo", objects=(item,))
+    path = write_manifest(tmp_path / "manifest.json", manifest)
+
+    assert read_manifest(path) == manifest
+    assert list(iter_repository_paths(repository, "alice", "demo")) == [
+        repository.get("alice", "demo", item.object_id)[1]
+    ]
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(RepositoryError, match="JSON object"):
+        read_manifest(path)

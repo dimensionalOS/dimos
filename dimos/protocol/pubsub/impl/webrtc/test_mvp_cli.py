@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -320,6 +322,336 @@ def test_publish_stops_when_the_provider_has_no_video(
         )
 
     assert provider.stopped is True
+
+
+def test_subscribe_negotiates_video_and_reports_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IceServer:
+        def __init__(
+            self,
+            *,
+            urls: str | list[str],
+            username: str | None = None,
+            credential: str | None = None,
+        ) -> None:
+            self.urls = urls
+            self.username = username
+            self.credential = credential
+
+    class SessionDescription:
+        def __init__(self, *, sdp: str, type: str) -> None:
+            self.sdp = sdp
+            self.type = type
+
+    class Frame:
+        def to_ndarray(self, *, format: str) -> str:
+            assert format == "bgr24"
+            return "pixels"
+
+    class Track:
+        kind = "video"
+
+        def __init__(self) -> None:
+            self.delivered = False
+            self.blocked = asyncio.Event()
+
+        async def recv(self) -> Frame:
+            if not self.delivered:
+                self.delivered = True
+                return Frame()
+            await self.blocked.wait()
+            raise AssertionError("blocked receive should be cancelled")
+
+    class PeerConnection:
+        iceGatheringState = "complete"  # noqa: N815
+
+        def __init__(self, config: Any) -> None:
+            assert len(config.iceServers) == 1
+            self.handlers: dict[str, Any] = {}
+            self.localDescription = SessionDescription(sdp="local-sdp", type="offer")
+            self.closed = False
+
+        def createDataChannel(self, *args: Any, **kwargs: Any) -> None:
+            assert args == ("_sctp_init",)
+            assert kwargs == {"negotiated": True, "id": 0}
+
+        def on(self, event: str) -> Any:
+            def register(callback: Any) -> Any:
+                self.handlers[event] = callback
+                return callback
+
+            return register
+
+        async def createOffer(self) -> SessionDescription:
+            return SessionDescription(sdp="offer", type="offer")
+
+        async def createAnswer(self) -> SessionDescription:
+            return SessionDescription(sdp="answer", type="answer")
+
+        async def setLocalDescription(self, description: SessionDescription) -> None:
+            self.localDescription = SessionDescription(sdp="local-sdp", type=description.type)
+
+        async def setRemoteDescription(self, description: SessionDescription) -> None:
+            if description.type == "offer":
+                self.handlers["track"](Track())
+
+        async def getStats(self) -> dict[str, Any]:
+            return {
+                "inbound-rtp-video": SimpleNamespace(
+                    kind="video",
+                    packetsReceived=11,
+                    packetsLost=2,
+                )
+            }
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class Configuration:
+        def __init__(self, *, iceServers: list[IceServer]) -> None:
+            self.iceServers = iceServers
+
+    fake_aiortc = ModuleType("aiortc")
+    fake_aiortc.RTCConfiguration = Configuration  # type: ignore[attr-defined]
+    fake_aiortc.RTCIceServer = IceServer  # type: ignore[attr-defined]
+    fake_aiortc.RTCPeerConnection = PeerConnection  # type: ignore[attr-defined]
+    fake_aiortc.RTCSessionDescription = SessionDescription  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "aiortc", fake_aiortc)
+
+    from dimos.protocol.pubsub.impl.webrtc.providers import spec
+
+    async def wait_connected(pc: Any, *, timeout: float) -> None:
+        assert isinstance(pc, PeerConnection)
+        assert timeout == 20.0
+
+    monkeypatch.setattr(spec, "wait_connected", wait_connected)
+    monkeypatch.setattr(
+        mvp_cli,
+        "decode_frame_stamp",
+        lambda frame: SimpleNamespace(
+            timestamp_ms=mvp_cli.time.time_ns() // 1_000_000 - 5,
+            sequence=7,
+        ),
+    )
+    calls: list[tuple[str, str]] = []
+
+    def operator_api(
+        broker_url: str,
+        operator_token: str,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        assert broker_url == "https://broker.example"
+        assert operator_token == "operator-token"
+        calls.append((method, path))
+        if path.endswith("turn-credentials"):
+            return {
+                "ice_servers": [
+                    {
+                        "urls": ["turn:turn.example"],
+                        "username": "user",
+                        "credential": "secret",
+                    }
+                ]
+            }
+        if path.endswith("/join"):
+            return {"sdp_answer": "answer-sdp"}
+        if path.endswith("/bridge-datachannel"):
+            return {"video_offer": "video-offer"}
+        return {}
+
+    monkeypatch.setattr(mvp_cli, "_operator_api", operator_api)
+
+    result = asyncio.run(
+        mvp_cli._subscribe(
+            session_id="session-1",
+            operator_token="operator-token",
+            broker_url="https://broker.example",
+            duration=0.0,
+        )
+    )
+
+    assert result["session_id"] == "session-1"
+    assert result["turn_configured"] is True
+    assert result["frames_decoded"] == 1
+    assert result["valid_timestamps"] == 1
+    assert result["invalid_timestamps"] == 0
+    assert result["latency_ms_p50"] == 5.0
+    assert result["packets_received"] == 11
+    assert result["packets_lost"] == 2
+    assert calls == [
+        ("GET", "/sessions/turn-credentials"),
+        ("POST", "/sessions/session-1/join"),
+        ("POST", "/sessions/session-1/bridge-datachannel"),
+        ("POST", "/sessions/session-1/renegotiate-answer"),
+        ("POST", "/sessions/session-1/leave"),
+    ]
+
+
+def test_local_loopback_negotiates_h264_and_reports_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared: dict[str, Any] = {"connections": []}
+
+    class Configuration:
+        def __init__(self, *, iceServers: list[Any]) -> None:
+            assert iceServers == []
+
+    class CameraTrack:
+        def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+            assert loop is asyncio.get_running_loop()
+            self.latest: mvp_cli._SyntheticImage | None = None
+            self.ready = asyncio.Event()
+            self.armed = False
+
+        def arm(self) -> None:
+            self.armed = True
+
+        def set_latest(self, image: mvp_cli._SyntheticImage) -> None:
+            assert self.armed is True
+            self.latest = image
+            self.ready.set()
+
+    class Frame:
+        def __init__(self, image: mvp_cli._SyntheticImage) -> None:
+            self.image = image
+
+        def to_ndarray(self, *, format: str) -> Any:
+            assert format == "bgr24"
+            return self.image.data
+
+    class RemoteTrack:
+        def __init__(self, track: CameraTrack) -> None:
+            self.track = track
+
+        async def recv(self) -> Frame:
+            await self.track.ready.wait()
+            self.track.ready.clear()
+            assert self.track.latest is not None
+            return Frame(self.track.latest)
+
+    class Transceiver:
+        kind = "video"
+
+        def __init__(self) -> None:
+            self.codecs: list[Any] = []
+
+        def setCodecPreferences(self, codecs: list[Any]) -> None:
+            self.codecs = codecs
+
+    class PeerConnection:
+        def __init__(self, config: Configuration) -> None:
+            self.role = "sender" if not shared["connections"] else "receiver"
+            shared["connections"].append(self)
+            self.handlers: dict[str, Any] = {}
+            self.transceiver = Transceiver()
+            self.localDescription = SimpleNamespace(sdp="", type="")
+            self.track: CameraTrack | None = None
+            self.closed = False
+
+        def addTrack(self, track: CameraTrack) -> None:
+            self.track = track
+            shared["track"] = track
+
+        def getTransceivers(self) -> list[Transceiver]:
+            return [self.transceiver]
+
+        def on(self, event: str) -> Any:
+            def register(callback: Any) -> Any:
+                self.handlers[event] = callback
+                return callback
+
+            return register
+
+        async def createOffer(self) -> Any:
+            return SimpleNamespace(sdp="offer", type="offer")
+
+        async def createAnswer(self) -> Any:
+            return SimpleNamespace(sdp="answer", type="answer")
+
+        async def setLocalDescription(self, description: Any) -> None:
+            self.localDescription = description
+
+        async def setRemoteDescription(self, description: Any) -> None:
+            if self.role == "receiver" and "track" in self.handlers:
+                self.handlers["track"](RemoteTrack(shared["track"]))
+
+        async def getStats(self) -> dict[str, Any]:
+            return {
+                "inbound-rtp-video": SimpleNamespace(
+                    kind="video",
+                    packetsReceived=9,
+                    packetsLost=1,
+                )
+            }
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class SenderCapabilities:
+        @staticmethod
+        def getCapabilities(kind: str) -> Any:
+            assert kind == "video"
+            return SimpleNamespace(
+                codecs=[
+                    SimpleNamespace(mimeType="video/VP8"),
+                    SimpleNamespace(mimeType="video/H264"),
+                ]
+            )
+
+    fake_aiortc = ModuleType("aiortc")
+    fake_aiortc.RTCConfiguration = Configuration  # type: ignore[attr-defined]
+    fake_aiortc.RTCPeerConnection = PeerConnection  # type: ignore[attr-defined]
+    fake_aiortc.RTCRtpSender = SenderCapabilities  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "aiortc", fake_aiortc)
+
+    fake_video_track = ModuleType(
+        "dimos.protocol.pubsub.impl.webrtc.providers.video_track"
+    )
+    fake_video_track.CameraVideoTrack = CameraTrack  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.protocol.pubsub.impl.webrtc.providers.video_track",
+        fake_video_track,
+    )
+
+    from dimos.protocol.pubsub.impl.webrtc.providers import spec
+
+    async def wait_connected(pc: Any, *, timeout: float) -> None:
+        assert isinstance(pc, PeerConnection)
+        assert timeout == 10.0
+
+    monkeypatch.setattr(spec, "wait_connected", wait_connected)
+    monkeypatch.setattr(
+        mvp_cli,
+        "decode_frame_stamp",
+        lambda frame: SimpleNamespace(
+            timestamp_ms=mvp_cli.time.time_ns() // 1_000_000,
+            sequence=3,
+        ),
+    )
+
+    result = asyncio.run(
+        mvp_cli._local_loopback(
+            duration=0.0,
+            fps=30.0,
+            width=640,
+            height=360,
+        )
+    )
+
+    assert result["mode"] == "local-loopback"
+    assert result["codec"] == "h264"
+    assert result["frames_decoded"] == 1
+    assert result["valid_timestamps"] == 1
+    assert result["packets_received"] == 9
+    assert result["packets_lost"] == 1
+    assert [codec.mimeType for codec in shared["connections"][0].transceiver.codecs] == [
+        "video/H264"
+    ]
+    assert all(connection.closed for connection in shared["connections"])
 
 
 def test_metric_helpers_handle_missing_values_rounding_and_wraparound() -> None:

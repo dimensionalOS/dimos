@@ -182,3 +182,73 @@ def test_load_nodes_and_choose_server_from_environment(
 def test_invalid_node_environment_is_rejected() -> None:
     with pytest.raises(ValueError, match="JSON array"):
         load_replay_nodes('{"name": "not-an-array"}')
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"name": "", "url": "https://example.test", "region": "other"},
+        {"name": "node", "url": "ftp://example.test", "region": "other"},
+        {"name": "node", "url": "https://user@example.test", "region": "other"},
+        {"name": "node", "url": "https://example.test?token=x", "region": "other"},
+        {"name": "node", "url": "https://example.test", "region": "europe"},
+    ],
+)
+def test_replay_node_rejects_unsafe_configuration(node: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        ReplayNode(**node)  # type: ignore[arg-type]
+
+
+def test_probe_rejects_invalid_health_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return {"status": "ok", "region": "unsupported"}
+
+    monkeypatch.setattr(hosted_nodes.requests, "get", lambda *_, **__: Response())
+    node = ReplayNode(name="candidate", url="https://example.test")
+
+    result = probe_node(node)
+
+    assert not result.healthy
+    assert result.latency_ms is None
+    assert "unsupported region" in str(result.error)
+
+
+def test_recommendation_rejects_invalid_input_and_all_failed_nodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        recommend_node((), cache_path=tmp_path / "empty.json")
+    node = ReplayNode(name="cn", url="https://cn.example", region="china")
+    with pytest.raises(ValueError, match="cannot be negative"):
+        recommend_node((node,), max_age_seconds=-1)
+
+    monkeypatch.setattr(
+        hosted_nodes,
+        "probe_node",
+        lambda candidate, **_: NodeProbe(
+            node=candidate,
+            healthy=False,
+            latency_ms=None,
+            error="offline",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="cn: offline"):
+        recommend_node((node,), cache_path=tmp_path / "failed.json")
+
+
+def test_choose_server_url_fallback_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DIMOS_REPLAY_NODES", raising=False)
+    monkeypatch.delenv("DIMOS_REPLAY_SERVER_URL", raising=False)
+    assert choose_server_url(None) == "http://127.0.0.1:8765"
+
+    monkeypatch.setenv("DIMOS_REPLAY_SERVER_URL", "https://configured.example/")
+    assert choose_server_url(None) == "https://configured.example"
