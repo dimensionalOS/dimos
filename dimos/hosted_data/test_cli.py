@@ -105,6 +105,9 @@ def test_serve_uses_environment_token(
         "max_object_bytes": None,
         "max_repository_bytes": None,
         "cdn_base_url": None,
+        "access_policy": None,
+        "signing_secret": None,
+        "discovery_nodes": (),
         "tls_certfile": None,
         "tls_keyfile": None,
     }
@@ -295,7 +298,7 @@ def test_upload_list_and_download_commands(
 
     monkeypatch.setattr(
         hosted_data_cli,
-        "download_object",
+        "download_object_resumable",
         lambda **_: destination,
     )
     download = runner.invoke(

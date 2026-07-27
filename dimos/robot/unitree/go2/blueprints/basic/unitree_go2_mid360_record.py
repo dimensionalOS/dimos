@@ -43,6 +43,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
+from dimos.robot.unitree.go2.hosted_recorder import Go2HostedRecorder
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.utils.logging_config import setup_logger
 
@@ -99,6 +100,41 @@ unitree_go2_mid360_record = autoconnect(
             (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
         ]
     ),
+).global_config(n_workers=12, robot_model="unitree_go2")
+
+
+unitree_go2_mid360_hosted_record = autoconnect(
+    MovementManager.blueprint(),
+    GO2Connection.blueprint().remappings(
+        [
+            (GO2Connection, "lidar", "go2_lidar"),
+            (GO2Connection, "odom", "go2_odom"),
+        ]
+    ),
+    Mid360.blueprint().remappings(
+        [
+            (Mid360, "lidar", "livox_lidar"),
+            (Mid360, "imu", "livox_imu"),
+        ]
+    ),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    Go2HostedRecorder.blueprint(
+        db_path=str(_RECORDING_DIR / "mem2.db"),
+        hosted_server_url=os.getenv("DIMOS_REPLAY_SERVER_URL", "http://127.0.0.1:8765"),
+        hosted_owner=os.getenv("DIMOS_REPLAY_OWNER", "local"),
+        hosted_repository=os.getenv("DIMOS_REPLAY_REPOSITORY", "go2"),
+        hosted_token=os.getenv("DIMOS_REPLAY_REPOSITORY_TOKEN"),
+    ),
+    Go2Mid360StaticTf.blueprint(),
+    KeyboardTeleop.blueprint(
+        linear_speed=_TELEOP_LINEAR_SPEED,
+        angular_speed=_TELEOP_ANGULAR_SPEED,
+    ).remappings([(KeyboardTeleop, "cmd_vel", "tele_cmd_vel")]),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
 if _RECORD_PCAP:

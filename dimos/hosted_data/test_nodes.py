@@ -179,6 +179,31 @@ def test_load_nodes_and_choose_server_from_environment(
     assert not tuple(tmp_path.iterdir())
 
 
+def test_load_nodes_from_discovery_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return {
+                "nodes": [
+                    {"name": "cn", "url": "https://cn.example", "region": "china"},
+                    {"name": "us", "url": "https://us.example", "region": "us"},
+                ]
+            }
+
+    monkeypatch.delenv("DIMOS_REPLAY_NODES", raising=False)
+    monkeypatch.setenv(
+        "DIMOS_REPLAY_DISCOVERY_URL",
+        "https://discovery.example/api/v1/nodes",
+    )
+    monkeypatch.setattr(hosted_nodes.requests, "get", lambda *_, **__: Response())
+
+    assert [node.region for node in load_replay_nodes()] == ["china", "us"]
+
+
 def test_invalid_node_environment_is_rejected() -> None:
     with pytest.raises(ValueError, match="JSON array"):
         load_replay_nodes('{"name": "not-an-array"}')

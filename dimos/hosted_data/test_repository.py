@@ -22,6 +22,7 @@ from contextlib import contextmanager
 import hashlib
 from http import HTTPStatus
 from io import BytesIO
+import json
 from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
@@ -30,6 +31,11 @@ import pytest
 import requests
 
 from dimos.hosted_data import repository as repository_module
+from dimos.hosted_data.auth import (
+    RepositoryAccessPolicy,
+    RepositoryPrincipal,
+    create_signed_download_url,
+)
 from dimos.hosted_data.repository import (
     BatchTransferError,
     ReplayManifest,
@@ -38,6 +44,7 @@ from dimos.hosted_data.repository import (
     ReplayRepositoryServer,
     RepositoryError,
     download_object,
+    download_object_resumable,
     download_objects,
     iter_repository_paths,
     list_objects,
@@ -45,6 +52,7 @@ from dimos.hosted_data.repository import (
     serve_repository,
     sha256_file,
     upload_file,
+    upload_file_resumable,
     upload_files,
     write_manifest,
 )
@@ -115,6 +123,203 @@ def test_raw_video_upload_list_download_round_trip(tmp_path: Path) -> None:
     assert result == download
     assert download.read_bytes() == source.read_bytes()
     assert sha256_file(download) == uploaded.sha256
+
+
+def test_object_head_and_video_byte_ranges(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(bytes(range(100)))
+    with _running_server(tmp_path / "objects", public_read=True) as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="video",
+            path=source,
+            token="test-token",
+        )
+        url = f"{server_url}/api/v1/repositories/alice/video/objects/{uploaded.object_id}"
+        head = requests.head(url)
+        partial = requests.get(url, headers={"Range": "bytes=10-19"})
+        suffix = requests.get(url, headers={"Range": "bytes=-5"})
+        invalid = requests.get(url, headers={"Range": "bytes=500-600"})
+
+    assert head.status_code == 200
+    assert head.headers["Accept-Ranges"] == "bytes"
+    assert head.headers["Content-Length"] == "100"
+    assert partial.status_code == HTTPStatus.PARTIAL_CONTENT
+    assert partial.headers["Content-Range"] == "bytes 10-19/100"
+    assert partial.content == bytes(range(10, 20))
+    assert suffix.content == bytes(range(95, 100))
+    assert invalid.status_code == HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE
+    assert invalid.headers["Content-Range"] == "bytes */100"
+
+
+def test_signed_download_and_repository_scoped_acl(tmp_path: Path) -> None:
+    token = "alice-token"
+    policy = RepositoryAccessPolicy(
+        (
+            RepositoryPrincipal(
+                name="alice",
+                token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+                write=("alice/replays",),
+            ),
+        )
+    )
+    source = tmp_path / "capture.mp4"
+    source.write_bytes(b"video")
+    with _running_server(
+        tmp_path / "objects",
+        token="admin-token",
+        access_policy=policy,
+        signing_secret="download-secret",
+    ) as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="replays",
+            path=source,
+            token=token,
+        )
+        denied = requests.get(
+            f"{server_url}/api/v1/repositories/bob/replays/objects",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        object_api_url = (
+            f"{server_url}/api/v1/repositories/alice/replays/objects/{uploaded.object_id}"
+        )
+        anonymous = requests.get(object_api_url)
+        signed = requests.get(
+            create_signed_download_url(
+                object_api_url,
+                secret="download-secret",
+                expires_in_seconds=60,
+            )
+        )
+        signed_collection = requests.get(
+            create_signed_download_url(
+                f"{server_url}/api/v1/repositories/alice/replays/objects",
+                secret="download-secret",
+                expires_in_seconds=60,
+            )
+        )
+
+    assert denied.status_code == HTTPStatus.UNAUTHORIZED
+    assert anonymous.status_code == HTTPStatus.UNAUTHORIZED
+    assert signed.status_code == HTTPStatus.OK
+    assert signed.content == b"video"
+    assert signed_collection.status_code == HTTPStatus.UNAUTHORIZED
+
+
+def test_resumable_upload_round_trip_and_checkpoint_cleanup(tmp_path: Path) -> None:
+    source = tmp_path / "large.mp4"
+    source.write_bytes(bytes(range(251)) * 100)
+    checkpoint = tmp_path / "upload-checkpoint.json"
+    with _running_server(tmp_path / "objects") as server_url:
+        uploaded = upload_file_resumable(
+            server_url=server_url,
+            owner="alice",
+            repository="large",
+            path=source,
+            token="test-token",
+            chunk_size_bytes=1024,
+            checkpoint=checkpoint,
+        )
+        downloaded = requests.get(
+            f"{server_url}/api/v1/repositories/alice/large/objects/{uploaded.object_id}",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert uploaded.object_id == sha256_file(source)
+    assert downloaded.content == source.read_bytes()
+    assert not checkpoint.exists()
+
+
+def test_resumable_upload_rejects_wrong_offset_and_can_resume(tmp_path: Path) -> None:
+    source = tmp_path / "resume.bin"
+    source.write_bytes(b"abcdefghij")
+    digest = sha256_file(source)
+    checkpoint = tmp_path / "resume.json"
+    headers = {"Authorization": "Bearer test-token"}
+    with _running_server(tmp_path / "objects") as server_url:
+        collection = f"{server_url}/api/v1/repositories/alice/demo/uploads"
+        created = requests.post(
+            collection,
+            headers={
+                **headers,
+                "X-Dimos-Filename": source.name,
+                "X-Dimos-Size": "10",
+                "X-Dimos-Sha256": digest,
+            },
+        ).json()
+        upload_id = created["upload_id"]
+        session_url = f"{collection}/{upload_id}"
+        assert (
+            requests.put(
+                session_url,
+                data=b"abc",
+                headers={**headers, "X-Dimos-Offset": "1"},
+            ).status_code
+            == HTTPStatus.CONFLICT
+        )
+        assert (
+            requests.put(
+                session_url,
+                data=b"abc",
+                headers={**headers, "X-Dimos-Offset": "0"},
+            ).status_code
+            == HTTPStatus.OK
+        )
+        checkpoint.write_text(
+            json.dumps(
+                {
+                    "server_url": server_url,
+                    "owner": "alice",
+                    "repository": "demo",
+                    "sha256": digest,
+                    "upload_id": upload_id,
+                }
+            ),
+            encoding="utf-8",
+        )
+        uploaded = upload_file_resumable(
+            server_url=server_url,
+            owner="alice",
+            repository="demo",
+            path=source,
+            token="test-token",
+            chunk_size_bytes=2,
+            checkpoint=checkpoint,
+        )
+
+    assert uploaded.object_id == digest
+    assert not checkpoint.exists()
+
+
+def test_resumable_download_continues_existing_partial(tmp_path: Path) -> None:
+    source = tmp_path / "source.bin"
+    source.write_bytes(bytes(range(200)))
+    output = tmp_path / "download.bin"
+    with _running_server(tmp_path / "objects") as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="demo",
+            path=source,
+            token="test-token",
+        )
+        partial = output.with_name(f".{output.name}.{uploaded.object_id[:16]}.part")
+        partial.write_bytes(source.read_bytes()[:73])
+        result = download_object_resumable(
+            server_url=server_url,
+            owner="alice",
+            repository="demo",
+            object_id=uploaded.object_id,
+            output=output,
+            token="test-token",
+        )
+
+    assert result == output
+    assert output.read_bytes() == source.read_bytes()
+    assert not partial.exists()
 
 
 def test_repository_is_scoped_by_owner_and_name(tmp_path: Path) -> None:
@@ -1063,7 +1268,7 @@ def test_http_contract_rejects_invalid_upload_and_download_routes(tmp_path: Path
 
         assert requests.post(object_url, headers=headers, data=b"x").status_code == 400
         assert requests.post(collection_url, headers=headers, data=b"x").status_code == 400
-        assert requests.head(object_url, headers=headers).status_code == 400
+        assert requests.head(object_url, headers=headers).status_code == 404
         assert requests.head(collection_url, headers=headers).status_code == 400
         assert (
             requests.head(

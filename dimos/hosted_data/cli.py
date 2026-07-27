@@ -19,10 +19,15 @@ from __future__ import annotations
 from enum import Enum
 import json
 from pathlib import Path
+from threading import Event
 
 import typer
 
 from dimos.constants import STATE_DIR
+from dimos.hosted_data.auth import (
+    RepositoryAccessPolicy,
+    create_signed_download_url,
+)
 from dimos.hosted_data.nodes import (
     choose_server_url,
     load_replay_nodes,
@@ -30,11 +35,14 @@ from dimos.hosted_data.nodes import (
 )
 from dimos.hosted_data.repository import (
     download_object,
+    download_object_resumable,
     download_objects,
     list_objects,
+    object_url,
     read_manifest,
     serve_repository,
     upload_file,
+    upload_file_resumable,
     upload_files,
     write_manifest,
 )
@@ -152,6 +160,27 @@ def serve(
         "--cdn-base-url",
         envvar="DIMOS_REPLAY_CDN_BASE_URL",
     ),
+    acl_file: Path | None = typer.Option(
+        None,
+        "--acl-file",
+        exists=True,
+        dir_okay=False,
+        envvar="DIMOS_REPLAY_ACL_FILE",
+        help="JSON repository-scoped bearer-token policy",
+    ),
+    signing_secret: str | None = typer.Option(
+        None,
+        "--signing-secret",
+        envvar="DIMOS_REPLAY_SIGNING_SECRET",
+        hide_input=True,
+        help="HMAC secret accepted by expiring download links",
+    ),
+    discovery_nodes: str | None = typer.Option(
+        None,
+        "--discovery-nodes",
+        envvar="DIMOS_REPLAY_DISCOVERY_NODES",
+        help="JSON array published by /api/v1/nodes for zero-config clients",
+    ),
     tls_certfile: Path | None = typer.Option(
         None,
         "--tls-certfile",
@@ -177,6 +206,13 @@ def serve(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
         )
     storage = None
+    access_policy = RepositoryAccessPolicy.from_file(acl_file) if acl_file else None
+    advertised_nodes: tuple[dict[str, str], ...] = ()
+    if discovery_nodes:
+        raw_nodes = json.loads(discovery_nodes)
+        if not isinstance(raw_nodes, list) or any(not isinstance(item, dict) for item in raw_nodes):
+            raise typer.BadParameter("--discovery-nodes must be a JSON array of node objects")
+        advertised_nodes = tuple(raw_nodes)
     if backend == "s3":
         if not s3_bucket:
             raise typer.BadParameter(
@@ -207,6 +243,8 @@ def serve(
                 "node": node_name,
                 "region": region,
                 "tls": tls_certfile is not None,
+                "acl": access_policy is not None,
+                "signed_downloads": signing_secret is not None,
             },
             sort_keys=True,
         )
@@ -224,6 +262,9 @@ def serve(
             max_object_bytes=max_object_bytes,
             max_repository_bytes=max_repository_bytes,
             cdn_base_url=cdn_base_url,
+            access_policy=access_policy,
+            signing_secret=signing_secret,
+            discovery_nodes=advertised_nodes,
             tls_certfile=tls_certfile,
             tls_keyfile=tls_keyfile,
         )
@@ -252,6 +293,12 @@ def upload(
     name: str | None = typer.Option(None, "--name", help="Portable memory2 dataset name"),
     retries: int = typer.Option(3, "--retries", min=0, max=10),
     backoff_seconds: float = typer.Option(0.5, "--backoff-seconds", min=0.0),
+    resumable: bool = typer.Option(
+        False,
+        "--resumable",
+        help="Use persistent multipart upload for large or unreliable transfers",
+    ),
+    chunk_size_mib: int = typer.Option(8, "--chunk-size-mib", min=1, max=1024),
 ) -> None:
     """Upload a raw file or a consistent memory2 snapshot without ZIP packaging."""
     selected_server_url = choose_server_url(server_url)
@@ -279,16 +326,97 @@ def upload(
     else:
         if name is not None:
             raise typer.BadParameter("--name is only valid for memory2 uploads")
-        payload = upload_file(
+        if resumable:
+            payload = upload_file_resumable(
+                server_url=selected_server_url,
+                owner=owner,
+                repository=repository,
+                path=path,
+                token=token,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                chunk_size_bytes=chunk_size_mib * 1024 * 1024,
+            ).to_dict()
+        else:
+            payload = upload_file(
+                server_url=selected_server_url,
+                owner=owner,
+                repository=repository,
+                path=path,
+                token=token,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+            ).to_dict()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@hosted_data_app.command("sync-memory2")
+def sync_memory2(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    owner: str = typer.Option(..., "--owner"),
+    repository: str = typer.Option(..., "--repository", "--repo"),
+    server_url: str | None = typer.Option(None, "--server-url"),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        envvar="DIMOS_REPLAY_REPOSITORY_TOKEN",
+        hide_input=True,
+    ),
+    name: str | None = typer.Option(None, "--name"),
+    interval_seconds: float = typer.Option(5.0, "--interval-seconds", min=0.1),
+    once: bool = typer.Option(False, "--once", help="Publish once instead of watching"),
+    force: bool = typer.Option(False, "--force", help="Ignore the local sync checkpoint"),
+) -> None:
+    """Continuously snapshot and publish a live Go2 memory2 recording."""
+    from dimos.hosted_data.integrations.memory2_replay import RemoteReplayReference
+    from dimos.hosted_data.integrations.memory2_sync import ContinuousMemory2Publisher
+
+    selected_server_url = choose_server_url(server_url)
+    publisher = ContinuousMemory2Publisher(
+        path=path,
+        server_url=selected_server_url,
+        owner=owner,
+        repository=repository,
+        token=token,
+        dataset=name,
+        interval_seconds=interval_seconds,
+    )
+
+    def emit(result: object) -> None:
+        dataset_object = result.dataset_object  # type: ignore[attr-defined]
+        replay_uri = RemoteReplayReference(
             server_url=selected_server_url,
             owner=owner,
             repository=repository,
-            path=path,
-            token=token,
-            retries=retries,
-            backoff_seconds=backoff_seconds,
-        ).to_dict()
-    typer.echo(json.dumps(payload, sort_keys=True))
+            object_id=dataset_object.object_id,
+        ).to_uri()
+        typer.echo(
+            json.dumps(
+                {
+                    "event": "published",
+                    "object": dataset_object.to_dict(),
+                    "replay_uri": replay_uri,
+                },
+                sort_keys=True,
+            )
+        )
+
+    if once:
+        result = publisher.publish_if_changed(force=force)
+        if result is not None:
+            emit(result)
+        else:
+            typer.echo(json.dumps({"event": "unchanged"}, sort_keys=True))
+        return
+    stop = Event()
+    try:
+        if force:
+            result = publisher.publish_if_changed(force=True)
+            if result is not None:
+                emit(result)
+        publisher.run(stop, on_publish=emit)
+    except KeyboardInterrupt:
+        stop.set()
 
 
 @hosted_data_app.command("list")
@@ -329,9 +457,15 @@ def download(
     retries: int = typer.Option(3, "--retries", min=0, max=10),
     backoff_seconds: float = typer.Option(0.5, "--backoff-seconds", min=0.0),
     overwrite: bool = typer.Option(False, "--overwrite"),
+    resume: bool = typer.Option(
+        True,
+        "--resume/--no-resume",
+        help="Keep partial data and continue with HTTP Range after interruption",
+    ),
 ) -> None:
     """Download one object and verify its SHA-256 digest."""
-    destination = download_object(
+    download_operation = download_object_resumable if resume else download_object
+    destination = download_operation(
         server_url=choose_server_url(server_url),
         owner=owner,
         repository=repository,
@@ -343,6 +477,32 @@ def download(
         backoff_seconds=backoff_seconds,
     )
     typer.echo(json.dumps({"downloaded": str(destination), "object_id": object_id}, sort_keys=True))
+
+
+@hosted_data_app.command("sign")
+def sign_download(
+    object_id: str = typer.Argument(..., help="SHA-256 object id returned by upload"),
+    owner: str = typer.Option(..., "--owner"),
+    repository: str = typer.Option(..., "--repository", "--repo"),
+    server_url: str | None = typer.Option(None, "--server-url"),
+    signing_secret: str = typer.Option(
+        ...,
+        "--signing-secret",
+        envvar="DIMOS_REPLAY_SIGNING_SECRET",
+        hide_input=True,
+    ),
+    expires_in_seconds: int = typer.Option(3600, "--expires-in", min=1),
+) -> None:
+    """Create a read-only download URL that expires automatically."""
+    selected_server_url = choose_server_url(server_url)
+    url = object_url(selected_server_url, owner, repository, object_id)
+    typer.echo(
+        create_signed_download_url(
+            url,
+            secret=signing_secret,
+            expires_in_seconds=expires_in_seconds,
+        )
+    )
 
 
 @hosted_data_app.command("batch-upload")

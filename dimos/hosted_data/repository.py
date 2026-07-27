@@ -40,6 +40,10 @@ from uuid import uuid4
 
 import requests
 
+from dimos.hosted_data.auth import (
+    RepositoryAccessPolicy,
+    verify_download_signature,
+)
 from dimos.utils.logging_config import setup_logger
 
 _CHUNK_SIZE = 1024 * 1024
@@ -47,6 +51,34 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _OBJECT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _T = TypeVar("_T")
 logger = setup_logger()
+
+
+def _parse_byte_range(value: str, size_bytes: int) -> tuple[int, int]:
+    """Parse one RFC 7233 byte range and return inclusive bounds."""
+    if not value.startswith("bytes=") or "," in value:
+        raise RepositoryError("only one byte range is supported")
+    bounds = value.removeprefix("bytes=").split("-", 1)
+    if len(bounds) != 2:
+        raise RepositoryError("invalid Range header")
+    start_text, end_text = bounds
+    if not start_text:
+        try:
+            suffix_length = int(end_text)
+        except ValueError as exc:
+            raise RepositoryError("invalid Range header") from exc
+        if suffix_length < 1:
+            raise RepositoryError("invalid Range header")
+        start = max(0, size_bytes - suffix_length)
+        end = size_bytes - 1
+    else:
+        try:
+            start = int(start_text)
+            end = int(end_text) if end_text else size_bytes - 1
+        except ValueError as exc:
+            raise RepositoryError("invalid Range header") from exc
+    if start < 0 or start >= size_bytes or end < start:
+        raise RepositoryError("requested range is outside the object")
+    return start, min(end, size_bytes - 1)
 
 
 class RepositoryError(ValueError):
@@ -469,6 +501,10 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         max_object_bytes: int | None = None,
         max_repository_bytes: int | None = None,
         cdn_base_url: str | None = None,
+        access_policy: RepositoryAccessPolicy | None = None,
+        signing_secret: str | None = None,
+        upload_root: str | Path | None = None,
+        discovery_nodes: tuple[dict[str, str], ...] = (),
     ) -> None:
         if region not in {"china", "us", "other"}:
             raise ValueError("region must be china, us, or other")
@@ -507,6 +543,20 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         self.max_repository_bytes = max_repository_bytes
         self.cdn_base_url = cdn_base_url.rstrip("/") if cdn_base_url else None
         self.cdn_origin = cdn_origin
+        self.access_policy = access_policy
+        self.signing_secret = signing_secret
+        self.discovery_nodes = discovery_nodes
+        from dimos.hosted_data.resumable import ResumableUploadManager
+
+        repository_root = getattr(repository, "root", None)
+        session_root = (
+            Path(upload_root)
+            if upload_root is not None
+            else Path(repository_root)
+            if repository_root is not None
+            else Path(tempfile.gettempdir()) / "dimos-resumable-uploads"
+        )
+        self.uploads = ResumableUploadManager(session_root / ".resumable-uploads")
         self.metrics = RepositoryMetrics()
         self._quota_lock = Lock()
         self._pending_bytes: dict[tuple[str, str], int] = {}
@@ -591,14 +641,51 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     def _repository_server(self) -> ReplayRepositoryServer:
         return cast("ReplayRepositoryServer", self.server)
 
-    def _authorized(self, *, write: bool) -> bool:
+    def _authorized(
+        self,
+        *,
+        write: bool,
+        owner: str | None = None,
+        repository: str | None = None,
+    ) -> bool:
         if not write and self._repository_server().public_read:
             return True
-        expected = self._repository_server().token
-        if expected is None:
-            return True
+        server = self._repository_server()
+        if not write and server.signing_secret is not None:
+            parsed = urlsplit(self.path)
+            query = parse_qs(parsed.query)
+            signed_object_path = re.fullmatch(
+                r"/api/v1/repositories/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/"
+                r"objects/[0-9a-f]{64}",
+                parsed.path,
+            )
+            if signed_object_path is not None and verify_download_signature(
+                parsed.path,
+                secret=server.signing_secret,
+                expires=query.get("expires", [None])[0],
+                signature=query.get("signature", [None])[0],
+            ):
+                return True
+        expected = server.token
         supplied = self.headers.get("Authorization", "")
-        return hmac.compare_digest(supplied, f"Bearer {expected}")
+        bearer = supplied.removeprefix("Bearer ") if supplied.startswith("Bearer ") else ""
+        if expected is None:
+            if server.access_policy is None:
+                return True
+        elif hmac.compare_digest(supplied, f"Bearer {expected}"):
+            return True
+        return (
+            bool(bearer)
+            and owner is not None
+            and repository is not None
+            and server.access_policy is not None
+            and server.access_policy.authorize(
+                bearer,
+                mode="write" if write else "read",
+                owner=owner,
+                repository=repository,
+            )
+        )
 
     def _route(self) -> tuple[str, str, str | None]:
         parts = [unquote(part) for part in urlsplit(self.path).path.split("/") if part]
@@ -610,6 +697,20 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         repository = _validate_name(parts[4], "repository")
         object_id = _validate_object_id(parts[6]) if len(parts) == 7 else None
         return owner, repository, object_id
+
+    def _upload_route(self) -> tuple[str, str, str | None, bool]:
+        parts = [unquote(part) for part in urlsplit(self.path).path.split("/") if part]
+        if (
+            len(parts) not in {6, 7, 8}
+            or parts[:3] != ["api", "v1", "repositories"]
+            or parts[5] != "uploads"
+            or (len(parts) == 8 and parts[7] != "complete")
+        ):
+            raise RepositoryError("unknown resumable upload route")
+        owner = _validate_name(parts[3], "owner")
+        repository = _validate_name(parts[4], "repository")
+        upload_id = parts[6] if len(parts) >= 7 else None
+        return owner, repository, upload_id, len(parts) == 8
 
     def _send_json(self, status: HTTPStatus, data: dict[str, Any]) -> None:
         payload = json.dumps(data, sort_keys=True).encode()
@@ -655,8 +756,14 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
         self.close_connection = True
 
-    def _check_authorized(self, *, write: bool) -> bool:
-        if self._authorized(write=write):
+    def _check_authorized(
+        self,
+        *,
+        write: bool,
+        owner: str | None = None,
+        repository: str | None = None,
+    ) -> bool:
+        if self._authorized(write=write, owner=owner, repository=repository):
             return True
         self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid bearer token")
         return False
@@ -667,6 +774,12 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             raise RepositoryError("unknown repository page")
         owner = _validate_name(parts[1], "owner")
         repository_name = _validate_name(parts[2], "repository")
+        if not self._check_authorized(
+            write=False,
+            owner=owner,
+            repository=repository_name,
+        ):
+            return
         objects = self._repository_server().repository.list(owner, repository_name)
         cards: list[str] = []
         for item in objects:
@@ -717,7 +830,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         server = self._repository_server()
         server.metrics.increment("requests_total")
-        if not self._check_authorized(write=True):
+        if "/uploads" in urlsplit(self.path).path:
+            self._handle_resumable_post()
             return
         reserved_bytes = 0
         owner = ""
@@ -726,6 +840,12 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             owner, repository, object_id = self._route()
             if object_id is not None:
                 raise RepositoryError("upload requests must target the objects collection")
+            if not self._check_authorized(
+                write=True,
+                owner=owner,
+                repository=repository,
+            ):
+                return
             raw_length = self.headers.get("Content-Length")
             if raw_length is None:
                 raise RepositoryError("Content-Length is required")
@@ -771,16 +891,168 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             if owner and repository:
                 server.release_upload(owner, repository, reserved_bytes)
 
-    def do_HEAD(self) -> None:
-        """Preflight an upload so rejected files are not sent over the wire."""
+    def _handle_resumable_post(self) -> None:
+        server = self._repository_server()
+        reserved_bytes = 0
+        owner = ""
+        repository = ""
+        try:
+            owner, repository, upload_id, complete = self._upload_route()
+            if not self._check_authorized(
+                write=True,
+                owner=owner,
+                repository=repository,
+            ):
+                return
+            if upload_id is None:
+                filename = self.headers.get("X-Dimos-Filename")
+                raw_size = self.headers.get("X-Dimos-Size")
+                expected_sha256 = self.headers.get("X-Dimos-Sha256")
+                if filename is None or raw_size is None or expected_sha256 is None:
+                    raise RepositoryError(
+                        "X-Dimos-Filename, X-Dimos-Size, and X-Dimos-Sha256 are required"
+                    )
+                size_bytes = int(raw_size)
+                server.check_upload(owner, repository, size_bytes, expected_sha256)
+                session = server.uploads.create(
+                    owner=owner,
+                    repository=repository,
+                    filename=unquote(filename),
+                    size_bytes=size_bytes,
+                    content_type=self.headers.get(
+                        "X-Dimos-Content-Type",
+                        "application/octet-stream",
+                    ),
+                    expected_sha256=expected_sha256,
+                )
+                self._send_json(HTTPStatus.CREATED, session.to_dict())
+                return
+            if not complete:
+                raise RepositoryError("upload completion must target /complete")
+            session = server.uploads.get(
+                upload_id,
+                owner=owner,
+                repository=repository,
+            )
+            reserved_bytes = server.reserve_upload(
+                owner,
+                repository,
+                session.size_bytes,
+                session.expected_sha256,
+            )
+            metadata = server.uploads.complete(
+                upload_id,
+                owner=owner,
+                repository=repository,
+                backend=server.repository,
+            )
+            server.metrics.increment("uploads_total")
+            server.metrics.increment("uploaded_bytes_total", metadata.size_bytes)
+            self._send_json(HTTPStatus.CREATED, metadata.to_dict())
+        except ObjectTooLargeError as exc:
+            self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+        except RepositoryQuotaError as exc:
+            self._send_error_json(HTTPStatus.INSUFFICIENT_STORAGE, str(exc))
+        except FileNotFoundError:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "upload session not found")
+        except (RepositoryError, ValueError) as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+        except OSError as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+        finally:
+            if owner and repository:
+                server.release_upload(owner, repository, reserved_bytes)
+
+    def do_PUT(self) -> None:
+        """Append one sequential chunk to a resumable upload."""
         server = self._repository_server()
         server.metrics.increment("requests_total")
-        if not self._check_authorized(write=True):
-            return
+        try:
+            owner, repository, upload_id, complete = self._upload_route()
+            if upload_id is None or complete:
+                raise RepositoryError("chunk upload must target an upload id")
+            if not self._check_authorized(
+                write=True,
+                owner=owner,
+                repository=repository,
+            ):
+                return
+            raw_length = self.headers.get("Content-Length")
+            raw_offset = self.headers.get("X-Dimos-Offset")
+            if raw_length is None or raw_offset is None:
+                raise RepositoryError("Content-Length and X-Dimos-Offset are required")
+            session = server.uploads.append(
+                upload_id,
+                owner=owner,
+                repository=repository,
+                offset=int(raw_offset),
+                source=self.rfile,
+                size_bytes=int(raw_length),
+            )
+            self._send_json(HTTPStatus.OK, session.to_dict())
+        except FileNotFoundError:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "upload session not found")
+        except (RepositoryError, ValueError) as exc:
+            self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+        except OSError as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_DELETE(self) -> None:
+        """Cancel a resumable upload and remove its partial file."""
+        server = self._repository_server()
+        server.metrics.increment("requests_total")
+        try:
+            owner, repository, upload_id, complete = self._upload_route()
+            if upload_id is None or complete:
+                raise RepositoryError("cancel must target an upload id")
+            if not self._check_authorized(
+                write=True,
+                owner=owner,
+                repository=repository,
+            ):
+                return
+            server.uploads.cancel(upload_id, owner=owner, repository=repository)
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+        except FileNotFoundError:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "upload session not found")
+        except RepositoryError as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def do_HEAD(self) -> None:
+        """Return object metadata or preflight a collection upload."""
+        server = self._repository_server()
+        server.metrics.increment("requests_total")
         try:
             owner, repository, object_id = self._route()
             if object_id is not None:
-                raise RepositoryError("upload preflight must target the objects collection")
+                if not self._check_authorized(
+                    write=False,
+                    owner=owner,
+                    repository=repository,
+                ):
+                    return
+                metadata, source = server.repository.open(owner, repository, object_id)
+                source.close()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", metadata.content_type)
+                self.send_header("Content-Length", str(metadata.size_bytes))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("X-Dimos-Sha256", metadata.sha256)
+                self.send_header("X-Dimos-Filename", quote(metadata.filename, safe=""))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            if not self._check_authorized(
+                write=True,
+                owner=owner,
+                repository=repository,
+            ):
+                return
             raw_length = self.headers.get("Content-Length")
             if raw_length is None:
                 raise RepositoryError("Content-Length is required")
@@ -804,6 +1076,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
         except RepositoryQuotaError as exc:
             self._send_error_json(HTTPStatus.INSUFFICIENT_STORAGE, str(exc))
+        except FileNotFoundError:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "object not found")
         except (RepositoryError, ValueError) as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except OSError as exc:
@@ -822,6 +1096,30 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if urlsplit(self.path).path == "/api/v1/nodes":
+            self._send_json(
+                HTTPStatus.OK,
+                {"nodes": list(server.discovery_nodes)},
+            )
+            return
+        if urlsplit(self.path).path == "/probe":
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                size = int(query.get("bytes", ["65536"])[0])
+            except ValueError:
+                size = 0
+            if size < 1 or size > 1024 * 1024:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, "probe bytes must be 1-1048576")
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"\0" * size)
+            self.close_connection = True
+            return
         if urlsplit(self.path).path == "/metrics":
             if not self._check_authorized(write=False):
                 return
@@ -831,13 +1129,34 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 "text/plain; version=0.0.4; charset=utf-8",
             )
             return
-        if not self._check_authorized(write=False):
-            return
         try:
+            if "/uploads/" in urlsplit(self.path).path:
+                owner, repository, upload_id, complete = self._upload_route()
+                if upload_id is None or complete:
+                    raise RepositoryError("upload status must target an upload id")
+                if not self._check_authorized(
+                    write=True,
+                    owner=owner,
+                    repository=repository,
+                ):
+                    return
+                session = server.uploads.get(
+                    upload_id,
+                    owner=owner,
+                    repository=repository,
+                )
+                self._send_json(HTTPStatus.OK, session.to_dict())
+                return
             if urlsplit(self.path).path.startswith("/r/"):
                 self._serve_repository_page()
                 return
             owner, repository, object_id = self._route()
+            if not self._check_authorized(
+                write=False,
+                owner=owner,
+                repository=repository,
+            ):
+                return
             if object_id is None:
                 objects = self._repository_server().repository.list(owner, repository)
                 self._send_json(
@@ -854,9 +1173,30 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 repository,
                 object_id,
             )
-            self.send_response(HTTPStatus.OK)
+            range_header = self.headers.get("Range")
+            start, end = (0, metadata.size_bytes - 1)
+            status = HTTPStatus.OK
+            if range_header is not None:
+                try:
+                    start, end = _parse_byte_range(range_header, metadata.size_bytes)
+                except RepositoryError as exc:
+                    source.close()
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Range", f"bytes */{metadata.size_bytes}")
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    logger.info("invalid replay range: %s", exc)
+                    return
+                status = HTTPStatus.PARTIAL_CONTENT
+            length = end - start + 1
+            self.send_response(status)
             self.send_header("Content-Type", metadata.content_type)
-            self.send_header("Content-Length", str(metadata.size_bytes))
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            if status is HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{metadata.size_bytes}")
             self.send_header("X-Dimos-Sha256", metadata.sha256)
             self.send_header("X-Dimos-Filename", quote(metadata.filename, safe=""))
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -873,17 +1213,27 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             try:
-                while chunk := source.read(_CHUNK_SIZE):
+                remaining_to_skip = start
+                while remaining_to_skip:
+                    skipped = source.read(min(_CHUNK_SIZE, remaining_to_skip))
+                    if not skipped:
+                        raise OSError("object body ended before requested range")
+                    remaining_to_skip -= len(skipped)
+                remaining = length
+                while remaining and (chunk := source.read(min(_CHUNK_SIZE, remaining))):
                     self.wfile.write(chunk)
+                    remaining -= len(chunk)
+                if remaining:
+                    raise OSError("object body ended inside requested range")
             finally:
                 source.close()
             server.metrics.increment("downloads_total")
-            server.metrics.increment("downloaded_bytes_total", metadata.size_bytes)
+            server.metrics.increment("downloaded_bytes_total", length)
             self.close_connection = True
         except RepositoryError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except FileNotFoundError:
-            self._send_error_json(HTTPStatus.NOT_FOUND, "object not found")
+            self._send_error_json(HTTPStatus.NOT_FOUND, "object or upload session not found")
         except OSError as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
@@ -904,6 +1254,9 @@ def serve_repository(
     max_object_bytes: int | None = None,
     max_repository_bytes: int | None = None,
     cdn_base_url: str | None = None,
+    access_policy: RepositoryAccessPolicy | None = None,
+    signing_secret: str | None = None,
+    discovery_nodes: tuple[dict[str, str], ...] = (),
     tls_certfile: str | Path | None = None,
     tls_keyfile: str | Path | None = None,
 ) -> None:
@@ -920,6 +1273,10 @@ def serve_repository(
         max_object_bytes=max_object_bytes,
         max_repository_bytes=max_repository_bytes,
         cdn_base_url=cdn_base_url,
+        access_policy=access_policy,
+        signing_secret=signing_secret,
+        upload_root=root,
+        discovery_nodes=discovery_nodes,
     ) as server:
         if tls_certfile is not None and tls_keyfile is not None:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -940,6 +1297,11 @@ def _objects_url(server_url: str, owner: str, repository: str) -> str:
         f"{server_url.rstrip('/')}/api/v1/repositories/"
         f"{quote(owner, safe='')}/{quote(repository, safe='')}/objects"
     )
+
+
+def object_url(server_url: str, owner: str, repository: str, object_id: str) -> str:
+    """Return the canonical API URL for one immutable object."""
+    return f"{_objects_url(server_url, owner, repository)}/{_validate_object_id(object_id)}"
 
 
 def _upload_file_once(
@@ -1026,6 +1388,134 @@ def upload_file(
     )
 
 
+def upload_file_resumable(
+    *,
+    server_url: str,
+    owner: str,
+    repository: str,
+    path: str | Path,
+    token: str | None = None,
+    chunk_size_bytes: int = 8 * 1024 * 1024,
+    checkpoint: str | Path | None = None,
+    retries: int = 3,
+    backoff_seconds: float = 0.5,
+) -> ReplayObject:
+    """Upload a large file in durable sequential chunks and resume after failure."""
+    if chunk_size_bytes < 1:
+        raise RepositoryError("chunk_size_bytes must be positive")
+    source_path = Path(path)
+    size_bytes = source_path.stat().st_size
+    digest = sha256_file(source_path)
+    content_type = mimetypes.guess_type(source_path.name)[0] or "application/octet-stream"
+    collection_url = _objects_url(server_url, owner, repository).replace(
+        "/objects",
+        "/uploads",
+    )
+    checkpoint_path = (
+        Path(checkpoint)
+        if checkpoint is not None
+        else source_path.with_name(f".{source_path.name}.{digest[:16]}.upload.json")
+    )
+    upload_id: str | None = None
+    if checkpoint_path.is_file():
+        try:
+            saved = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            if (
+                saved.get("server_url") == server_url.rstrip("/")
+                and saved.get("owner") == owner
+                and saved.get("repository") == repository
+                and saved.get("sha256") == digest
+            ):
+                upload_id = str(saved["upload_id"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError):
+            upload_id = None
+    headers = _api_headers(token)
+    if upload_id is None:
+        response = _with_retries(
+            lambda: requests.post(
+                collection_url,
+                headers={
+                    **headers,
+                    "X-Dimos-Filename": quote(source_path.name, safe=""),
+                    "X-Dimos-Size": str(size_bytes),
+                    "X-Dimos-Sha256": digest,
+                    "X-Dimos-Content-Type": content_type,
+                },
+                timeout=30.0,
+            ),
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+        )
+        response.raise_for_status()
+        upload_id = str(response.json()["upload_id"])
+        checkpoint_path.write_text(
+            json.dumps(
+                {
+                    "server_url": server_url.rstrip("/"),
+                    "owner": owner,
+                    "repository": repository,
+                    "sha256": digest,
+                    "upload_id": upload_id,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    session_url = f"{collection_url}/{upload_id}"
+    status_response = _with_retries(
+        lambda: requests.get(session_url, headers=headers, timeout=30.0),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+    )
+    status_response.raise_for_status()
+    status_data = status_response.json()
+    offset = int(status_data["received_bytes"])
+    if int(status_data["size_bytes"]) != size_bytes or status_data["expected_sha256"] != digest:
+        raise RuntimeError("resumable upload session does not match the local file")
+    with source_path.open("rb") as source:
+        source.seek(offset)
+        while offset < size_bytes:
+            payload = source.read(min(chunk_size_bytes, size_bytes - offset))
+
+            def put_chunk(
+                payload: bytes = payload,
+                offset: int = offset,
+            ) -> requests.Response:
+                return requests.put(
+                    session_url,
+                    data=payload,
+                    headers={
+                        **headers,
+                        "Content-Length": str(len(payload)),
+                        "X-Dimos-Offset": str(offset),
+                    },
+                    timeout=(30.0, 3600.0),
+                )
+
+            chunk_response = _with_retries(
+                put_chunk,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+            )
+            chunk_response.raise_for_status()
+            offset = int(chunk_response.json()["received_bytes"])
+    complete_response = _with_retries(
+        lambda: requests.post(
+            f"{session_url}/complete",
+            headers=headers,
+            timeout=(30.0, 3600.0),
+        ),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+    )
+    complete_response.raise_for_status()
+    uploaded = ReplayObject.from_dict(complete_response.json())
+    if uploaded.object_id != digest or uploaded.size_bytes != size_bytes:
+        raise RuntimeError("completed upload metadata does not match the local file")
+    checkpoint_path.unlink(missing_ok=True)
+    return uploaded
+
+
 def list_objects(
     *,
     server_url: str,
@@ -1064,7 +1554,7 @@ def _download_object_once(
 ) -> Path:
     """Download one object atomically and verify its SHA-256 digest."""
     object_id = _validate_object_id(object_id)
-    url = f"{_objects_url(server_url, owner, repository)}/{object_id}"
+    url = object_url(server_url, owner, repository, object_id)
     with requests.get(
         url,
         headers=_api_headers(token),
@@ -1130,6 +1620,81 @@ def download_object(
             token=token,
             overwrite=overwrite,
         ),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+    )
+
+
+def download_object_resumable(
+    *,
+    server_url: str,
+    owner: str,
+    repository: str,
+    object_id: str,
+    output: str | Path | None = None,
+    token: str | None = None,
+    overwrite: bool = False,
+    retries: int = 3,
+    backoff_seconds: float = 0.5,
+) -> Path:
+    """Resume a partial Range download and atomically publish the verified file."""
+    object_id = _validate_object_id(object_id)
+    url = object_url(server_url, owner, repository, object_id)
+    head = _with_retries(
+        lambda: requests.head(url, headers=_api_headers(token), timeout=30.0),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+    )
+    head.raise_for_status()
+    encoded_filename = head.headers.get("X-Dimos-Filename", object_id)
+    destination = (
+        Path(output) if output is not None else Path(_validate_filename(unquote(encoded_filename)))
+    )
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"{destination} already exists; pass overwrite=True to replace it")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(f".{destination.name}.{object_id[:16]}.part")
+
+    def transfer() -> Path:
+        offset = partial.stat().st_size if partial.is_file() else 0
+        headers = _api_headers(token)
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        with requests.get(
+            url,
+            headers=headers,
+            stream=True,
+            timeout=(30.0, 3600.0),
+        ) as response:
+            response.raise_for_status()
+            append = offset > 0 and response.status_code == HTTPStatus.PARTIAL_CONTENT
+            if append:
+                expected_prefix = f"bytes {offset}-"
+                if not response.headers.get("Content-Range", "").startswith(expected_prefix):
+                    raise RuntimeError("repository returned a mismatched download range")
+            else:
+                offset = 0
+            digest = hashlib.sha256()
+            if append:
+                with partial.open("rb") as existing:
+                    while chunk := existing.read(_CHUNK_SIZE):
+                        digest.update(chunk)
+            with partial.open("ab" if append else "wb") as target:
+                for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
+                    if chunk:
+                        target.write(chunk)
+                        digest.update(chunk)
+            received = digest.hexdigest()
+            if received != object_id:
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"download SHA-256 mismatch: expected {object_id}, received {received}"
+                )
+            os.replace(partial, destination)
+            return destination
+
+    return _with_retries(
+        transfer,
         retries=retries,
         backoff_seconds=backoff_seconds,
     )

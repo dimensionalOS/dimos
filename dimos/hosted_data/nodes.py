@@ -66,6 +66,7 @@ class NodeProbe:
     node: ReplayNode
     healthy: bool
     latency_ms: float | None
+    download_mbps: float | None = None
     advertised_name: str | None = None
     advertised_region: ReplayRegion | None = None
     error: str | None = None
@@ -75,6 +76,7 @@ class NodeProbe:
             "node": asdict(self.node),
             "healthy": self.healthy,
             "latency_ms": self.latency_ms,
+            "download_mbps": self.download_mbps,
             "advertised_name": self.advertised_name,
             "advertised_region": self.advertised_region,
             "error": self.error,
@@ -112,10 +114,24 @@ def probe_node(node: ReplayNode, *, timeout_seconds: float = 3.0) -> NodeProbe:
         region = str(payload.get("region", node.region))
         if region not in _REGIONS:
             raise RuntimeError(f"node advertised unsupported region {region!r}")
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        download_mbps: float | None = None
+        try:
+            probe_started = time.perf_counter()
+            probe_response = requests.get(
+                f"{node.url}/probe?bytes=65536",
+                timeout=(timeout_seconds, timeout_seconds),
+            )
+            if probe_response.status_code == 200 and len(probe_response.content) == 65536:
+                elapsed = max(time.perf_counter() - probe_started, 0.000001)
+                download_mbps = len(probe_response.content) * 8 / elapsed / 1_000_000
+        except (requests.RequestException, AttributeError):
+            pass
         return NodeProbe(
             node=node,
             healthy=True,
-            latency_ms=(time.perf_counter() - started) * 1000.0,
+            latency_ms=latency_ms,
+            download_mbps=download_mbps,
             advertised_name=str(payload.get("node", node.name)),
             advertised_region=region,  # type: ignore[arg-type]
         )
@@ -234,7 +250,10 @@ def recommend_node(
         raise RuntimeError(f"no healthy replay nodes: {details}")
     fastest = min(
         healthy,
-        key=lambda probe: probe.latency_ms if probe.latency_ms is not None else float("inf"),
+        key=lambda probe: (
+            (probe.latency_ms if probe.latency_ms is not None else float("inf"))
+            + (1000.0 / probe.download_mbps if probe.download_mbps else 0.0)
+        ),
     )
     detected_region = fastest.advertised_region or fastest.node.region
     recommendation = NodeRecommendation(
@@ -248,10 +267,19 @@ def recommend_node(
 
 
 def load_replay_nodes(value: str | None = None) -> tuple[ReplayNode, ...]:
-    """Load node definitions from DIMOS_REPLAY_NODES JSON."""
+    """Load static nodes or discover them from a trusted bootstrap URL."""
     raw = value if value is not None else os.environ.get("DIMOS_REPLAY_NODES")
     if not raw:
-        return ()
+        discovery_url = os.environ.get("DIMOS_REPLAY_DISCOVERY_URL")
+        if not discovery_url:
+            return ()
+        response = requests.get(_server_url(discovery_url), timeout=(3.0, 3.0))
+        response.raise_for_status()
+        discovered = response.json()
+        data = discovered.get("nodes") if isinstance(discovered, dict) else discovered
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise ValueError("replay discovery response must contain a nodes array")
+        return tuple(ReplayNode(**item) for item in data)
     data = json.loads(raw)
     if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
         raise ValueError("DIMOS_REPLAY_NODES must be a JSON array of node objects")

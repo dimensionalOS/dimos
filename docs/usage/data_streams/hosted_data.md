@@ -263,12 +263,70 @@ export DIMOS_REPLAY_NODES='[
 dimos data recommend
 ```
 
-The probes run concurrently. Unhealthy nodes are excluded and the lowest
-measured health-check latency is recommended. The result is keyed by the node
+For zero-configuration clients, publish the same array from either node:
+
+```bash
+export DIMOS_REPLAY_DISCOVERY_NODES="$DIMOS_REPLAY_NODES"
+dimos data serve --host 0.0.0.0 --node-name cn-beijing --region china
+
+# Client
+export DIMOS_REPLAY_DISCOVERY_URL=https://cn-replays.example.com/api/v1/nodes
+dimos data recommend
+```
+
+The probes run concurrently. Unhealthy nodes are excluded; latency and a
+64-KiB transfer probe are combined so a low-latency but severely constrained
+route does not automatically win. The result is keyed by the node
 configuration and cached for one hour; `dimos data recommend --force` refreshes
 it immediately. Upload, list, download, and batch transfer
 automatically use this recommendation when neither `--server-url` nor
 `DIMOS_REPLAY_SERVER_URL` is set.
+
+## Continuous Go2 collection
+
+`Go2HostedRecorder` records the connected Go2, Mid-360, Point-LIO, and camera
+streams into memory2 while a background worker publishes consistent snapshots
+whenever the SQLite database or WAL changes. The built-in hosted recording
+blueprint reads its target from environment variables:
+
+```bash
+export DIMOS_REPLAY_SERVER_URL=https://cn-replays.example.com
+export DIMOS_REPLAY_REPOSITORY_TOKEN=...
+export DIMOS_REPLAY_OWNER=alice
+export DIMOS_REPLAY_REPOSITORY=go2-office
+
+dimos run unitree-go2-mid360-hosted-record
+```
+
+An existing recorder can use the same background publisher without changing
+its blueprint:
+
+```bash
+dimos data sync-memory2 recordings/go2/mem2.db \
+  --owner alice --repo go2-office --interval-seconds 5
+```
+
+Every successful publication prints a new immutable object id and
+`dimos-replay://` URI. The local database remains the source of truth while it
+is being written; each remote object is an integrity-checked SQLite snapshot
+that can immediately be used by `dimos --replay`.
+
+## Large transfers
+
+Use persistent multipart upload for large videos or unreliable links:
+
+```bash
+dimos data upload go2-office.mp4 --owner alice --repo go2-office \
+  --resumable --chunk-size-mib 16
+```
+
+The client saves an upload checkpoint beside the source. The server saves the
+partial bytes and current offset below its repository root. Re-running the
+same command resumes at the acknowledged offset and deletes both checkpoints
+after SHA-256 verification. Downloads use HTTP `HEAD` and `Range` by default,
+so `dimos data download` continues a matching partial file after interruption.
+Video players can also seek because object responses support single byte
+ranges.
 
 ## Production hardening
 
@@ -283,7 +341,9 @@ dimos data serve \
   --tls-keyfile /etc/letsencrypt/live/replays.example.com/privkey.pem \
   --max-object-bytes 10737418240 \
   --max-repository-bytes 107374182400 \
-  --cdn-base-url https://cdn.example.com
+  --cdn-base-url https://cdn.example.com \
+  --acl-file /etc/dimos/replay-acl.json \
+  --signing-secret "$DIMOS_REPLAY_SIGNING_SECRET"
 ```
 
 TLS requires both files and enforces TLS 1.2 or newer. Per-object limits reject
@@ -302,21 +362,45 @@ repository, object id, and byte count. Filesystem servers remove interrupted
 `.part` files at startup, while S3-compatible servers continue to advertise
 metadata only after the immutable object finishes.
 
+The ACL stores SHA-256 token digests rather than plaintext credentials:
+
+```json
+{
+  "principals": [
+    {
+      "name": "alice",
+      "token_sha256": "SHA256_OF_ALICE_TOKEN",
+      "read": ["shared/*"],
+      "write": ["alice/*"]
+    }
+  ]
+}
+```
+
+Write permission implies read permission. The original server token remains an
+administrator credential. Create a time-limited, object-bound read URL without
+sharing either credential:
+
+```bash
+dimos data sign OBJECT_ID --owner alice --repo go2-office --expires-in 3600
+```
+
 Without process-local quotas, API nodes can be replicated behind the China/US
 load balancers with the shared S3/R2/MinIO backend. The CDN should use the API
 nodes as its origin and cache immutable object-id URLs. Shared quota
-reservations, multipart/resumable upload, and provider-native signed CDN URLs
-remain follow-up work for very large datasets.
+reservations and provider-native S3 multipart uploads remain follow-up work for
+multi-writer or petabyte-scale deployments.
 
 ## Current limitations
 
 This PR is an MVP and progresses the hosted-data design rather than closing the
 entire roadmap. The WebRTC commands currently measure a synthetic H.264 path;
-they do not continuously ingest Go2 sensor streams into memory2. A memory2
-upload is a blocking point-in-time SQLite snapshot, not a background or
-incremental upload. China/US candidates must be supplied through
-`DIMOS_REPLAY_NODES`; the hourly recommendation measures health and round-trip
-latency but does not yet discover nodes or measure bandwidth and packet loss.
+the continuous Go2 path records typed sensor streams into memory2 and publishes
+frequent consistent snapshots rather than replicating individual SQLite rows.
+Node discovery needs one trusted bootstrap URL and the recommendation does not
+yet measure UDP packet loss.
 The remote replay resolver is connected to `dimos --replay run unitree-go2`,
-not every replay consumer. Resumable multipart upload, HTTP Range/HEAD, signed
-URLs, automatic CDN deployment, and multi-tenant ACLs remain follow-up work.
+not every replay consumer. Cloud accounts, DNS, certificates, the physical US
+node, and CDN distributions must still be provisioned by the operator; this
+repository supplies the common service contract and runtime configuration but
+cannot create billable infrastructure without provider credentials.
