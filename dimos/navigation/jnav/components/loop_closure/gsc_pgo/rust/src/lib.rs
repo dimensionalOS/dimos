@@ -26,6 +26,8 @@
 //!   point-to-point ICP, and the normal-scatter degeneracy measure.
 //! - `gsc_pgo`: the `GscPgo` core itself (keyframe gating, loop search +
 //!   gates, location constraints with revision, iSAM2 smoothing).
+//! - `gnc`: the batch GNC re-solve (`solve_gnc`) and its background worker,
+//!   run alongside `GscPgo`'s iSAM2 smoother.
 //! - `msgs`: the jnav custom LCM wire formats the module executable speaks
 //!   (Graph3D / GraphDelta3D / DeformationNode encode, LocationConstraint
 //!   decode).
@@ -38,6 +40,7 @@
 //! env-var contract and flake.nix for the pinned environment
 //! (`nix develop path:. --command cargo test`).
 
+pub mod gnc;
 pub mod gsc_pgo;
 pub mod gtsam;
 pub mod mat3;

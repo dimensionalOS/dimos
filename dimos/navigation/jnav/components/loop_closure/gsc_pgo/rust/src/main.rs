@@ -501,6 +501,24 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
+                // Idle: fold in any finished background GNC classification now
+                // instead of waiting for the next keyframe, so an outlier loop
+                // committed right before the robot stopped (or the stream
+                // ended) is still removed and the corrected graph republished.
+                if pgo.poll_and_apply_gnc_classification() {
+                    pgo.smooth_and_update();
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_graph(
+                        &pgo,
+                        last_time,
+                        &frame_id,
+                        deformation_tf_id,
+                        &mut deformation_ids,
+                        &mut deformation_last,
+                        &mut deformation_rng,
+                    );
+                    continue;
+                }
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.
                 let state = self.state.lock().expect("state");
@@ -563,10 +581,27 @@ impl Worker {
                 Vec::new()
             };
 
+            // Everything below is on the pipeline thread; time it on closures to
+            // confirm the batch GNC no longer blocks here (was seconds inline).
+            let pipeline_thread_t0 = std::time::Instant::now();
+
+            // Approach B: fold in the newest background GNC classification (drops
+            // outlier loops' factors via pending removals) BEFORE the iSAM2 update
+            // so the removal takes effect this cycle. iSAM2 stays authoritative for
+            // poses — no full-graph pose overwrite on the pipeline thread.
+            pgo.poll_and_apply_gnc_classification();
             pgo.smooth_and_update();
 
             if had_loop {
-                pgo.finalize_gnc();
+                // Queue a fresh full-graph GNC classification for the closure just
+                // committed. The heavy solve runs off-thread and only feeds back
+                // inlier/outlier decisions, so this keyframe never blocks on it.
+                pgo.dispatch_gnc_async();
+                eprintln!(
+                    "gnc-main-thread: closure at {} keyframes handled in {:.1} ms",
+                    pgo.key_poses().len(),
+                    pipeline_thread_t0.elapsed().as_secs_f64() * 1000.0,
+                );
                 let msg =
                     build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
@@ -582,15 +617,12 @@ impl Worker {
             );
 
             // Pose graph on every keyframe (iSAM2 may have re-optimized prior
-            // poses on loop closure).
-            let graph = build_pose_graph(pgo.key_poses(), pgo.history_pairs(), cur_time, &frame_id);
-            self.publish(&self.pose_graph, &graph, "pose_graph");
-
-            // Same keyframes, streamed individually (new + moved nodes only).
-            self.publish_deformation_nodes(
-                pgo.key_poses(),
-                deformation_tf_id,
+            // poses on loop closure). Only GNC-kept loops are published as edges.
+            self.publish_graph(
+                &pgo,
+                cur_time,
                 &frame_id,
+                deformation_tf_id,
                 &mut deformation_ids,
                 &mut deformation_last,
                 &mut deformation_rng,
@@ -618,6 +650,37 @@ impl Worker {
                 self.publish(&self.global_map, &msg, "_global_map");
             }
         }
+    }
+
+    /// Publish the pose-graph snapshot (GNC-kept loops only as edges) plus the
+    /// per-keyframe deformation-node stream.
+    #[allow(clippy::too_many_arguments)]
+    fn publish_graph(
+        &self,
+        pgo: &GscPgo,
+        ts: f64,
+        frame_id: &str,
+        deformation_tf_id: u64,
+        deformation_ids: &mut Vec<u64>,
+        deformation_last: &mut Vec<(Mat3, Vec3)>,
+        deformation_rng: &mut SplitMix64,
+    ) {
+        let active_pairs: Vec<(usize, usize)> = pgo
+            .committed_loops()
+            .iter()
+            .filter(|committed| committed.active_in_isam2)
+            .map(|committed| (committed.target_id, committed.source_id))
+            .collect();
+        let graph = build_pose_graph(pgo.key_poses(), &active_pairs, ts, frame_id);
+        self.publish(&self.pose_graph, &graph, "pose_graph");
+        self.publish_deformation_nodes(
+            pgo.key_poses(),
+            deformation_tf_id,
+            frame_id,
+            deformation_ids,
+            deformation_last,
+            deformation_rng,
+        );
     }
 
     fn publish_corrected(
