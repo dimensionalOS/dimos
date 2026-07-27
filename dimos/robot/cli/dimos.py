@@ -54,8 +54,10 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.robot.cli.cache import app as cache_app
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -167,6 +169,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
+main.add_typer(cache_app, name="cache")
 
 
 def arg_help(
@@ -340,6 +343,7 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
 
 
 @main.command()
+@cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
