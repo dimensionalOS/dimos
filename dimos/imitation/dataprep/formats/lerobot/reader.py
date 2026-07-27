@@ -24,8 +24,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dimos.learning.dataprep.core import summarize_lengths
-from dimos.learning.dataprep.formats.lerobot.writer import CHUNK, EPISODES_DIR, FILE, META_DIR
+from dimos.imitation.dataprep.core import summarize_lengths
+from dimos.imitation.dataprep.formats.lerobot.writer import CHUNK, EPISODES_DIR, FILE, META_DIR
 
 _META_COLS = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 

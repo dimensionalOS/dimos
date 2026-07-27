@@ -19,7 +19,7 @@ Lightweight, no hardware. Used for e2e daemon/MCP lifecycle testing.
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.tests.stress_test_module import StressTestModule
+from dimos.core.demos.stress_test_module import StressTestModule
 
 demo_mcp_stress_test = autoconnect(
     StressTestModule.blueprint(),

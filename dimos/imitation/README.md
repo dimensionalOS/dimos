@@ -70,7 +70,7 @@ from [`dataprep/example_config.json`](dataprep/example_config.json) and edit the
 # LeRobot v3.0 (default)
 dimos dataprep build \
   --source ~/.local/state/dimos/recordings/session_xarm7_20260622_120000.db \
-  --config dimos/learning/dataprep/example_config.json
+  --config dimos/imitation/dataprep/example_config.json
 
 # HDF5 instead
 dimos dataprep build -s <session.db> -c <config.json> -f hdf5

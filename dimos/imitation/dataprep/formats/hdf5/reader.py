@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dimos.learning.dataprep.core import summarize_lengths
+from dimos.imitation.dataprep.core import summarize_lengths
 
 
 class _Hdf5Reader:

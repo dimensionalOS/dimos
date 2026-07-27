@@ -30,7 +30,7 @@ is using DimOS for the first time:
 10. dimos status                   (verify stopped)
 
 Usage:
-    python -m dimos.core.tests.e2e_devex_test
+    python -m dimos.core.demos.demo_devex
 """
 
 from __future__ import annotations

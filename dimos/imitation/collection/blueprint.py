@@ -27,8 +27,8 @@ from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
-from dimos.learning.collection.recorder import CollectionRecorder
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,

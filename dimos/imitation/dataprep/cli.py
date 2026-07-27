@@ -15,12 +15,12 @@
 """Implementation of the `dimos dataprep` subcommand (build + inspect).
 
 DataPrep is a one-shot batch transform, not a long-lived module, so it runs
-as a plain command over the pure helpers in `dimos.learning.dataprep.core`
+as a plain command over the pure helpers in `dimos.imitation.dataprep.core`
 and exits with a 0/1 status — no coordinator, no blocking loop.
 
 The obs/action stream maps are nested, so they come from a JSON
 `DataPrepConfig` via `--config`; simple flags override `source`/`output`/
-`format` on top. See `dimos/learning/dataprep/example_config.json`.
+`format` on top. See `dimos/imitation/dataprep/example_config.json`.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Literal
 import typer
 
 if TYPE_CHECKING:
-    from dimos.learning.dataprep.core import DataPrepConfig
+    from dimos.imitation.dataprep.core import DataPrepConfig
 
 
 def _load_config(
@@ -42,7 +42,7 @@ def _load_config(
     output_format: Literal["lerobot", "hdf5"] | None,
 ) -> DataPrepConfig:
     """Build a DataPrepConfig from an optional JSON file + flag overrides."""
-    from dimos.learning.dataprep.core import DataPrepConfig, OutputConfig
+    from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
 
     if config_path is not None:
         cfg = DataPrepConfig.model_validate_json(Path(config_path).read_text())
@@ -67,7 +67,7 @@ def build(
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
 ) -> None:
-    from dimos.learning.dataprep.build import run_dataprep
+    from dimos.imitation.dataprep.build import run_dataprep
 
     cfg = _load_config(config_path, source, output, output_format)
     if not cfg.source:
@@ -76,7 +76,7 @@ def build(
     if not cfg.observation and not cfg.action:
         typer.echo(
             "error: no observation/action streams configured; pass --config with the "
-            "stream maps (see dimos/learning/dataprep/example_config.json)",
+            "stream maps (see dimos/imitation/dataprep/example_config.json)",
             err=True,
         )
         raise typer.Exit(2)
@@ -92,7 +92,7 @@ def build(
 
 
 def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | None) -> None:
-    from dimos.learning.dataprep.build import inspect_dataset
+    from dimos.imitation.dataprep.build import inspect_dataset
 
     if dataset is None:
         typer.echo("error: no dataset given (pass a .hdf5 file or a lerobot directory)", err=True)

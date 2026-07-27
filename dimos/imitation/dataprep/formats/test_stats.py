@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.learning.dataprep.formats._stats import StreamingStats
+from dimos.imitation.dataprep.formats._stats import StreamingStats
 
 
 def test_scalar_mean_std_minmax_count() -> None:

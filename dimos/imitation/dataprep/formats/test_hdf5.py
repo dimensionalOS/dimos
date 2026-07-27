@@ -28,9 +28,9 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from dimos.learning.dataprep.core import OutputConfig, Sample
-from dimos.learning.dataprep.formats.hdf5.reader import inspect
-from dimos.learning.dataprep.formats.hdf5.writer import write
+from dimos.imitation.dataprep.core import OutputConfig, Sample
+from dimos.imitation.dataprep.formats.hdf5.reader import inspect
+from dimos.imitation.dataprep.formats.hdf5.writer import write
 
 
 def _samples(n_episodes: int = 2, n_frames: int = 3) -> Iterator[Sample]:

@@ -40,8 +40,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.learning.dataprep.core import DEFAULT_FPS, OutputConfig, Sample
-from dimos.learning.dataprep.formats._stats import stats_from_metadata
+from dimos.imitation.dataprep.core import DEFAULT_FPS, OutputConfig, Sample
+from dimos.imitation.dataprep.formats._stats import stats_from_metadata
 
 
 class _Hdf5Writer:

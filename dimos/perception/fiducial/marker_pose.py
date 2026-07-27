@@ -128,11 +128,15 @@ def rvec_tvec_to_transform(
     )
 
 
-def create_aruco_detector(dictionary_name: str) -> cv2.aruco.ArucoDetector:
+def create_aruco_detector(
+    dictionary_name: str, *, detect_inverted: bool = False
+) -> cv2.aruco.ArucoDetector:
+    """Build a detector; `detect_inverted` also accepts light-on-dark (negative) markers."""
     if not hasattr(cv2.aruco, dictionary_name):
         raise ValueError(f"Unknown ArUco dictionary {dictionary_name!r}")
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name))
     parameters = cv2.aruco.DetectorParameters()
+    parameters.detectInvertedMarker = detect_inverted
     return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 

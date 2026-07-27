@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.learning.dataprep.core import is_image_array
+from dimos.imitation.dataprep.core import is_image_array
 
 
 @dataclass

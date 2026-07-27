@@ -29,8 +29,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.learning.dataprep.build import _write_dimos_meta, run_dataprep
-from dimos.learning.dataprep.core import (
+from dimos.imitation.dataprep.build import _write_dimos_meta, run_dataprep
+from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     EpisodeExtractor,
