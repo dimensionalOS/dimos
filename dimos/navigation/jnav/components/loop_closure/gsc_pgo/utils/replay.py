@@ -209,6 +209,8 @@ class LockstepReplay(Module):
     async def _replay(self, messages: list[tuple[float, str, Any]]) -> None:
         odom_period = 1.0 / self.config.odom_publish_hz
         scans_sent = 0
+        scans_skipped_pre_odom = 0
+        first_odom_ts = next((timestamp for timestamp, kind, _ in messages if kind == "odom"), None)
         drift = np.asarray(self.config.drift_per_sec, dtype=np.float64)
         t0 = self.config.drift_t0
         apply_drift = has_drift(drift)
@@ -241,6 +243,11 @@ class LockstepReplay(Module):
                 await asyncio.sleep(odom_period)
                 continue
 
+            if first_odom_ts is None or timestamp < first_odom_ts:
+                # A scan before any odom can't be posed; the module drops it
+                # without acking, so waiting for an ack would deadlock.
+                scans_skipped_pre_odom += 1
+                continue
             points = payload.points_f32()
             frame_id = payload.frame_id or "map"
             if apply_drift:
@@ -257,6 +264,7 @@ class LockstepReplay(Module):
                     json.dumps(
                         {
                             "scans_sent": scans_sent,
+                            "scans_skipped_pre_odom": scans_skipped_pre_odom,
                             "error": (
                                 f"scan at ts {timestamp} not acked within"
                                 f" {self.config.ack_timeout_s}s — module dropped or stalled"
@@ -271,7 +279,9 @@ class LockstepReplay(Module):
                     json.dumps({"scans_sent": scans_sent})
                 )
 
-        self.config.done_path.write_text(json.dumps({"scans_sent": scans_sent}))
+        self.config.done_path.write_text(
+            json.dumps({"scans_sent": scans_sent, "scans_skipped_pre_odom": scans_skipped_pre_odom})
+        )
 
 
 def run_module_graph(
