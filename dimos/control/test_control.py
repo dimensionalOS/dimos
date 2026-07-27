@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import math
 import threading
 import time
 from typing import Any
@@ -489,6 +490,21 @@ class TestControlCoordinatorTrajectoryExecution:
 
 
 class TestJointTrajectoryTask:
+    def test_config_requires_at_least_one_joint(self):
+        with pytest.raises(ValueError):
+            JointTrajectoryTaskConfig(joint_names=[])
+
+    @pytest.mark.parametrize(
+        "tolerance",
+        [-0.01, math.nan, math.inf, -math.inf],
+    )
+    def test_config_requires_finite_non_negative_start_tolerance(self, tolerance):
+        with pytest.raises(ValueError):
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1"],
+                start_position_tolerance=tolerance,
+            )
+
     def test_initial_state(self, trajectory_task):
         assert trajectory_task.name == "test_traj"
         assert not trajectory_task.is_active()

@@ -22,12 +22,13 @@ is compute-only and relies on the coordinator for timing.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
 from typing import Any
 
+import attrs
 from pydantic import Field
 
 from dimos.control.task import (
@@ -69,6 +70,7 @@ class TrajectoryCancellationStatus(Enum):
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
     NO_TRAJECTORY_TASK = auto()
+    UNCERTAIN = auto()
 
 
 @dataclass(frozen=True)
@@ -78,8 +80,22 @@ class TrajectoryCancellationResult:
     status: TrajectoryCancellationStatus
     message: str = ""
 
+    @property
+    def safe(self) -> bool:
+        """Return whether cancellation reached a deterministic coordinator state."""
+        return self.status is not TrajectoryCancellationStatus.UNCERTAIN
 
-@dataclass
+    @property
+    def cancelled(self) -> bool:
+        """Return whether an active trajectory was cancelled."""
+        return self.status is TrajectoryCancellationStatus.CANCELLED
+
+
+def _to_joint_names(value: Sequence[str]) -> tuple[str, ...]:
+    return tuple(value)
+
+
+@attrs.frozen(slots=False)
 class JointTrajectoryTaskConfig:
     """Configuration for trajectory task.
 
@@ -90,9 +106,28 @@ class JointTrajectoryTaskConfig:
             position and the first trajectory point.
     """
 
-    joint_names: list[str]
-    priority: int = 10
-    start_position_tolerance: float = 0.05
+    joint_names: tuple[str, ...] = attrs.field(
+        converter=_to_joint_names,
+        validator=attrs.validators.deep_iterable(
+            member_validator=attrs.validators.and_(
+                attrs.validators.instance_of(str),
+                attrs.validators.min_len(1),
+            ),
+            iterable_validator=attrs.validators.min_len(1),
+        ),
+    )
+    priority: int = attrs.field(
+        default=10,
+        validator=attrs.validators.instance_of(int),
+    )
+    start_position_tolerance: float = attrs.field(
+        default=0.05,
+        converter=float,
+        validator=attrs.validators.and_(
+            attrs.validators.ge(0.0),
+            attrs.validators.lt(math.inf),
+        ),
+    )
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -127,13 +162,6 @@ class JointTrajectoryTask(BaseControlTask):
             name: Unique task name
             config: Task configuration
         """
-        if not config.joint_names:
-            raise ValueError(f"JointTrajectoryTask '{name}' requires at least one joint")
-        if (
-            not math.isfinite(config.start_position_tolerance)
-            or config.start_position_tolerance < 0.0
-        ):
-            raise ValueError("start_position_tolerance must be finite and non-negative")
         self._name = name
         self._config = config
         self._joint_names = frozenset(config.joint_names)

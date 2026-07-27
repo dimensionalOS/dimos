@@ -27,7 +27,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.execution_manager import (
-    CancellationOutcome,
     ExecutionOutcome,
     ExecutionTarget,
     PlanExecutionManager,
@@ -261,29 +260,29 @@ def test_execute_rpc_failure_is_uncertain() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "outcome", "safe"),
+    ("status", "safe", "cancelled"),
     [
         (
             TrajectoryCancellationStatus.CANCELLED,
-            CancellationOutcome.CANCELLED,
+            True,
             True,
         ),
         (
             TrajectoryCancellationStatus.ALREADY_STOPPED,
-            CancellationOutcome.ALREADY_STOPPED,
             True,
+            False,
         ),
         (
             TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-            CancellationOutcome.NO_TRAJECTORY_TASK,
             True,
+            False,
         ),
     ],
 )
 def test_cancel_preserves_coordinator_semantics(
     status: TrajectoryCancellationStatus,
-    outcome: CancellationOutcome,
     safe: bool,
+    cancelled: bool,
 ) -> None:
     client = _client()
     coordinator_result = TrajectoryCancellationResult(status, "cancel result")
@@ -291,9 +290,9 @@ def test_cancel_preserves_coordinator_semantics(
 
     result = _manager(client=client).cancel()
 
-    assert result.outcome is outcome
+    assert result is coordinator_result
     assert result.safe is safe
-    assert result.coordinator_result is coordinator_result
+    assert result.cancelled is cancelled
 
 
 def test_cancel_rpc_failure_is_uncertain() -> None:
@@ -302,8 +301,10 @@ def test_cancel_rpc_failure_is_uncertain() -> None:
 
     result = _manager(client=client).cancel()
 
-    assert result.outcome is CancellationOutcome.UNCERTAIN
+    assert result.status is TrajectoryCancellationStatus.UNCERTAIN
     assert not result.safe
+    assert not result.cancelled
+    assert "timed out" in result.message
 
 
 def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
@@ -333,5 +334,5 @@ def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
     cancel_thread.join(timeout=1.0)
 
     assert execute_results[0].outcome is ExecutionOutcome.ACCEPTED
-    assert cancel_results[0].outcome is CancellationOutcome.ALREADY_STOPPED
+    assert cancel_results[0].status is TrajectoryCancellationStatus.ALREADY_STOPPED
     client.cancel_trajectory.assert_called_once_with()

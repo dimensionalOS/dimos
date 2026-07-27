@@ -50,15 +50,6 @@ class ExecutionOutcome(Enum):
     UNCERTAIN = auto()
 
 
-class CancellationOutcome(Enum):
-    """Outcome of cancelling coordinator trajectory execution."""
-
-    CANCELLED = auto()
-    ALREADY_STOPPED = auto()
-    NO_TRAJECTORY_TASK = auto()
-    UNCERTAIN = auto()
-
-
 @attrs.frozen(slots=False)
 class ExecutionDispatchResult:
     """Structured result of mapping and dispatching one generated plan."""
@@ -71,25 +62,6 @@ class ExecutionDispatchResult:
     def accepted(self) -> bool:
         """Return whether the coordinator accepted the trajectory."""
         return self.outcome is ExecutionOutcome.ACCEPTED
-
-
-@attrs.frozen(slots=False)
-class CancellationResult:
-    """Structured result of cancelling coordinator trajectory execution."""
-
-    outcome: CancellationOutcome
-    message: str = ""
-    coordinator_result: TrajectoryCancellationResult | None = None
-
-    @property
-    def safe(self) -> bool:
-        """Return whether cancellation reached a deterministic coordinator state."""
-        return self.outcome is not CancellationOutcome.UNCERTAIN
-
-    @property
-    def cancelled(self) -> bool:
-        """Return whether an active trajectory was cancelled."""
-        return self.outcome is CancellationOutcome.CANCELLED
 
 
 def _to_model_joint_names(value: Sequence[str]) -> tuple[str, ...]:
@@ -237,30 +209,17 @@ class PlanExecutionManager:
                 coordinator_result=result,
             )
 
-    def cancel(self) -> CancellationResult:
+    def cancel(self) -> TrajectoryCancellationResult:
         """Cancel coordinator trajectory execution."""
         with self._operation_lock:
             try:
-                result = self._coordinator_client.cancel_trajectory()
+                return self._coordinator_client.cancel_trajectory()
             except Exception as exc:
                 logger.exception("Coordinator cancel RPC failed")
-                return CancellationResult(
-                    outcome=CancellationOutcome.UNCERTAIN,
+                return TrajectoryCancellationResult(
+                    status=TrajectoryCancellationStatus.UNCERTAIN,
                     message=f"Coordinator cancel RPC failed: {exc}",
                 )
-
-            outcomes = {
-                TrajectoryCancellationStatus.CANCELLED: CancellationOutcome.CANCELLED,
-                TrajectoryCancellationStatus.ALREADY_STOPPED: (CancellationOutcome.ALREADY_STOPPED),
-                TrajectoryCancellationStatus.NO_TRAJECTORY_TASK: (
-                    CancellationOutcome.NO_TRAJECTORY_TASK
-                ),
-            }
-            return CancellationResult(
-                outcome=outcomes[result.status],
-                message=result.message,
-                coordinator_result=result,
-            )
 
     def _prepare_trajectory(self, plan: GeneratedPlan) -> JointTrajectory:
         if not isinstance(plan, GeneratedPlan):
