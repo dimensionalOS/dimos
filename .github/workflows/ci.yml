@@ -243,7 +243,7 @@ jobs:
       #   run: npm run validate
 
   web:
-    timeout-minutes: 15
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -270,13 +270,51 @@ jobs:
         working-directory: web
         run: deno lint
 
-      - name: Deno check
+      - name: Deno install (validates deno.lock)
+        working-directory: web
+        run: deno install --frozen
+
+      - name: Deno check (relay + shared)
         working-directory: web
         run: deno task check
 
-      - name: Deno test
+      - name: Deno test (relay + shared)
         working-directory: web
         run: deno task test
+
+      - name: Cockpit type-check
+        working-directory: web/cockpit
+        run: deno task check
+
+      - name: Cockpit vitest
+        working-directory: web/cockpit
+        run: deno task test
+
+      - name: Cockpit build
+        working-directory: web/cockpit
+        run: deno task build
+
+      # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies (pyaudio build, JPEG encoding)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      - name: Fetch the go2_short replay dataset
+        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Install dependencies
+        run: uv sync --group tests --group browser-tests --frozen
+      - name: Install Playwright browsers  # the e2e runs in both engines
+        run: uv run playwright install --with-deps chromium firefox
+      - name: Cockpit browser e2e
+        run: uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py --no-cov
 
   tests:
     timeout-minutes: 20
@@ -339,13 +377,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
