@@ -312,6 +312,7 @@ class ReplayRepository:
         digest = hashlib.sha256()
         remaining = size_bytes
         temporary_path: Path | None = None
+        metadata_temporary_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="wb",
@@ -352,16 +353,24 @@ class ReplayRepository:
             )
             os.replace(temporary_path, object_path)
             temporary_path = None
-            metadata_temporary = metadata_path.with_suffix(".json.part")
-            metadata_temporary.write_text(
-                json.dumps(metadata.to_dict(), sort_keys=True),
+            with tempfile.NamedTemporaryFile(
+                mode="w",
                 encoding="utf-8",
-            )
-            os.replace(metadata_temporary, metadata_path)
+                prefix=f".{object_id}.",
+                suffix=".json.part",
+                dir=directory,
+                delete=False,
+            ) as metadata_temporary:
+                metadata_temporary_path = Path(metadata_temporary.name)
+                json.dump(metadata.to_dict(), metadata_temporary, sort_keys=True)
+            os.replace(metadata_temporary_path, metadata_path)
+            metadata_temporary_path = None
             return metadata
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+            if metadata_temporary_path is not None:
+                metadata_temporary_path.unlink(missing_ok=True)
 
     def get(self, owner: str, repository: str, object_id: str) -> tuple[ReplayObject, Path]:
         object_path, metadata_path = self._paths(owner, repository, object_id)

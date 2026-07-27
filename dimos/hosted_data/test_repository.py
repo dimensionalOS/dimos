@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 from http import HTTPStatus
@@ -711,6 +712,42 @@ def test_batch_preserves_names_for_duplicate_content(tmp_path: Path) -> None:
     assert len(listed) == 1
     assert [path.name for path in restored] == ["camera-left.mp4", "camera-right.mp4"]
     assert all(path.read_bytes() == b"same-video" for path in restored)
+
+
+def test_concurrent_duplicate_metadata_publication_is_atomic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = ReplayRepository(tmp_path / "objects")
+    payload = b"same-video"
+    publication_barrier = threading.Barrier(2)
+    real_replace = repository_module.os.replace
+
+    def synchronized_replace(source: str | Path, destination: str | Path) -> None:
+        if Path(destination).suffix == ".json":
+            publication_barrier.wait(timeout=5)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(repository_module.os, "replace", synchronized_replace)
+
+    def upload(filename: str) -> ReplayObject:
+        return repository.put_stream(
+            owner="alice",
+            repository="duplicates",
+            filename=filename,
+            source=BytesIO(payload),
+            size_bytes=len(payload),
+            content_type="video/mp4",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            executor.map(upload, ("camera-left.mp4", "camera-right.mp4"))
+        )
+
+    assert len({item.object_id for item in results}) == 1
+    assert len(repository.list("alice", "duplicates")) == 1
+    assert not tuple((tmp_path / "objects").rglob("*.part"))
 
 
 def test_manifest_rejects_unknown_version_and_invalid_entries() -> None:
