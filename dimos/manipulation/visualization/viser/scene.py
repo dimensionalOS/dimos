@@ -17,17 +17,22 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 import hashlib
+import math
 import os
 from pathlib import Path
 import tempfile
 from threading import RLock
 import time
-from typing import Protocol, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
+import numpy as np
+import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
@@ -88,6 +93,11 @@ REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
+OBSTACLE_NAMESPACE = "/manipulation/obstacles"
+OBSTACLE_DEFAULT_RGBA = (0.8, 0.2, 0.2, 0.8)
+OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
+OBSTACLE_FALLBACK_OPACITY = 0.55
+OBSTACLE_PROXY_COLOR = (255, 45, 25)
 
 
 class RobotDisplayMode(StrEnum):
@@ -106,7 +116,9 @@ class _ColorHandle(Protocol):
 class ViserManipulationScene:
     """Viser scene graph helpers for current robot, ghost robot, and path rendering."""
 
-    def __init__(self, server: ViserServer, viser_urdf: type[ViserUrdf]) -> None:
+    def __init__(
+        self, server: ViserServer, viser_urdf: type[ViserUrdf], preview_fps: float | None = None
+    ) -> None:
         self.server = server
         self.viser_urdf = viser_urdf
         self._configs_by_id: dict[str, RobotModelConfig] = {}
@@ -125,7 +137,202 @@ class ViserManipulationScene:
         self._animation_generations: dict[str, int] = {}
         self._collision_fallback_urdfs: dict[str, ViserUrdf] = {}
         self._robot_display_mode = RobotDisplayMode.VISUAL
+        self._obstacle_handles: dict[str, list[Any]] = {}
+        self._obstacles_visible = True
+        self._obstacle_gui_handles: list[object] = []
+        self._closed = False
+        self._ensure_obstacle_control()
         self._ensure_reference_grid()
+
+    def set_obstacles_visible(self, visible: bool) -> None:
+        """Toggle obstacle entities without discarding their scene handles."""
+        with self._scene_lock:
+            if self._closed:
+                return
+            self._obstacles_visible = bool(visible)
+            for handles in self._obstacle_handles.values():
+                for handle in handles:
+                    self._set_handle_visibility(handle, self._obstacles_visible)
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render one accepted planner obstacle under the local obstacle namespace."""
+        with self._scene_lock:
+            if self._closed:
+                return
+            self.remove_vis_obstacle(obstacle_id)
+            position, wxyz = self._obstacle_pose(obstacle)
+            color, opacity = self._obstacle_appearance(obstacle)
+            path = f"{OBSTACLE_NAMESPACE}/{obstacle_id}"
+            scene = self.server.scene
+            handles: list[Any] = []
+            try:
+                if obstacle.obstacle_type == ObstacleType.BOX:
+                    dimensions = tuple(float(value) for value in obstacle.dimensions[:3])
+                    if len(dimensions) != 3:
+                        raise ValueError("box dimensions must contain width, height, and depth")
+                    handles.append(
+                        scene.add_box(
+                            path,
+                            dimensions=dimensions,
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
+                elif obstacle.obstacle_type == ObstacleType.SPHERE:
+                    handles.append(
+                        scene.add_icosphere(
+                            path,
+                            radius=float(obstacle.dimensions[0]),
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
+                elif obstacle.obstacle_type == ObstacleType.CYLINDER:
+                    handles.append(
+                        scene.add_cylinder(
+                            path,
+                            radius=float(obstacle.dimensions[0]),
+                            height=float(obstacle.dimensions[1]),
+                            color=color,
+                            opacity=opacity,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        )
+                    )
+                elif obstacle.obstacle_type == ObstacleType.MESH:
+                    handles.append(
+                        self._add_mesh(
+                            scene,
+                            path,
+                            obstacle,
+                            color,
+                            opacity,
+                            position,
+                            wxyz,
+                            self._obstacles_visible,
+                        )
+                    )
+                else:
+                    raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
+            except Exception as error:
+                logger.warning(
+                    "Could not render obstacle %s; using proxy", obstacle_id, exc_info=True
+                )
+                handles.extend(
+                    (
+                        scene.add_box(
+                            f"{path}/mesh-failure-proxy",
+                            dimensions=(0.25, 0.25, 0.25),
+                            color=OBSTACLE_PROXY_COLOR,
+                            opacity=0.9,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._obstacles_visible,
+                        ),
+                        scene.add_label(
+                            f"{path}/mesh-failure-label",
+                            f"MESH RENDER FAILED: {error}",
+                            position=position,
+                            visible=self._obstacles_visible,
+                        ),
+                    )
+                )
+            self._obstacle_handles[obstacle_id] = handles
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove every scene entity belonging to an obstacle ID."""
+        with self._scene_lock:
+            for handle in self._obstacle_handles.pop(obstacle_id, []):
+                self._remove_scene_handle(handle)
+
+    def clear_vis_obstacles(self) -> None:
+        """Remove every obstacle entity while retaining the robot scene."""
+        with self._scene_lock:
+            for obstacle_id in list(self._obstacle_handles):
+                self.remove_vis_obstacle(obstacle_id)
+
+    def _ensure_obstacle_control(self) -> None:
+        try:
+            folder = self.server.gui.add_folder("Scene", expand_by_default=True)
+            self._obstacle_gui_handles.append(folder)
+            with folder:
+                handle = self.server.gui.add_checkbox("manipulation.obstacles", initial_value=True)
+            handle.on_update(lambda event: self.set_obstacles_visible(event.target.value))
+            self._obstacle_gui_handles.append(handle)
+        except (AttributeError, TypeError):
+            self._obstacle_gui_handles.clear()
+
+    @staticmethod
+    def _obstacle_pose(
+        obstacle: Obstacle,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+        pose = obstacle.pose
+        return (
+            (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        )
+
+    @staticmethod
+    def _obstacle_appearance(obstacle: Obstacle) -> tuple[tuple[int, int, int], float]:
+        color = obstacle.color
+        if (
+            color == OBSTACLE_DEFAULT_RGBA
+            or len(color) != 4
+            or not all(math.isfinite(float(v)) for v in color)
+            or not all(0.0 <= float(v) <= 1.0 for v in color)
+        ):
+            return OBSTACLE_FALLBACK_COLOR, OBSTACLE_FALLBACK_OPACITY
+        return (
+            round(float(color[0]) * 255),
+            round(float(color[1]) * 255),
+            round(float(color[2]) * 255),
+        ), float(color[3])
+
+    @staticmethod
+    def _add_mesh(
+        scene: Any,
+        path: str,
+        obstacle: Obstacle,
+        color: tuple[int, int, int],
+        opacity: float,
+        position: tuple[float, float, float],
+        wxyz: tuple[float, float, float, float],
+        visible: bool,
+    ) -> MeshHandle:
+        if not obstacle.mesh_path:
+            raise ValueError("mesh path is missing")
+        mesh = trimesh.load_mesh(obstacle.mesh_path, process=False)
+        if hasattr(mesh, "dump") and not hasattr(mesh, "vertices"):
+            mesh = mesh.dump(concatenate=True)
+        vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        faces = np.asarray(mesh.faces, dtype=np.int32)
+        if len(vertices) == 0 or len(faces) == 0:
+            raise ValueError("mesh contains no renderable triangles")
+        return cast(
+            "MeshHandle",
+            scene.add_mesh_simple(
+                path,
+                vertices,
+                faces,
+                color=color,
+                opacity=opacity,
+                position=position,
+                wxyz=wxyz,
+                visible=visible,
+            ),
+        )
 
     @property
     def robot_display_mode(self) -> RobotDisplayMode:
@@ -405,29 +612,39 @@ class ViserManipulationScene:
         self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)
 
     def close(self) -> None:
-        self.cancel_preview_animation()
-        for key in list(self._handles):
-            self._remove_handle(key)
-        if self._grid_handle is not None:
-            self._remove_scene_handle(self._grid_handle)
-            self._grid_handle = None
-        for urdf in self._urdfs.values():
-            self._remove_scene_handle(urdf)
-        for frame in self._root_frames.values():
-            self._remove_scene_handle(frame)
-        self._urdfs.clear()
-        self._root_frames.clear()
-        for urdf in self._collision_fallback_urdfs.values():
-            self._remove_scene_handle(urdf)
-        self._urdfs.clear()
-        self._models_by_id.clear()
-        self._joint_names_by_urdf.clear()
-        self._collision_fallback_urdfs.clear()
-        self._configs_by_id.clear()
-        self._preview_visible.clear()
-        self._target_active.clear()
-        self._target_tracks_current.clear()
-        self._robot_display_mode = RobotDisplayMode.VISUAL
+        with self._scene_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self.cancel_preview_animation()
+            for handles in self._obstacle_handles.values():
+                for handle in handles:
+                    self._remove_scene_handle(handle)
+            self._obstacle_handles.clear()
+            for key in list(self._handles):
+                self._remove_handle(key)
+            if self._grid_handle is not None:
+                self._remove_scene_handle(self._grid_handle)
+                self._grid_handle = None
+            for urdf in self._urdfs.values():
+                self._remove_scene_handle(urdf)
+            for frame in self._root_frames.values():
+                self._remove_scene_handle(frame)
+            for urdf in self._collision_fallback_urdfs.values():
+                self._remove_scene_handle(urdf)
+            for handle in self._obstacle_gui_handles:
+                self._remove_scene_handle(handle)
+            self._obstacle_gui_handles.clear()
+            self._urdfs.clear()
+            self._root_frames.clear()
+            self._models_by_id.clear()
+            self._joint_names_by_urdf.clear()
+            self._collision_fallback_urdfs.clear()
+            self._configs_by_id.clear()
+            self._preview_visible.clear()
+            self._target_active.clear()
+            self._target_tracks_current.clear()
+            self._robot_display_mode = RobotDisplayMode.VISUAL
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
         if not config.model_path:

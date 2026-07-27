@@ -311,11 +311,12 @@ jobs:
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
-      - name: Install dependency for pyaudio (Ubuntu)
+      # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
+      - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -529,10 +530,20 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Point uv at a persistent cache on the workspace mount
+        # HOME in container jobs is an ephemeral /github/home, so uv's default
+        # cache would be dropped after every run. The workspace mount (/__w,
+        # the runner's _work dir) persists on the self-hosted runner, and
+        # unlike the /root/.cache volume it is the same mount as .venv:
+        # hardlinks across two docker bind mounts fail with EXDEV even on one
+        # filesystem, making uv fall back to a minutes-long full copy.
+        if: matrix.os == 'Linux'
+        run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk above, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -643,6 +654,20 @@ jobs:
           df -h /nix || true
           nix-collect-garbage --delete-older-than 3d
           df -h /nix || true
+      - name: Prune the persistent uv cache
+        # Same story as /nix above: lock bumps accumulate superseded wheels
+        # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
+        # evicts pre-built wheels (re-downloaded on the next run) while keeping
+        # the expensive wheels built from source. uv has nothing age-based.
+        # Not always(): on a cancelled run, lingering test processes still
+        # hold the shared cache lock and prune would block on it until the
+        # job timeout.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -686,7 +711,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -757,6 +783,15 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Prune the persistent uv cache
+        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
+        # default with `uv cache dir`.
+        if: ${{ !cancelled() }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails

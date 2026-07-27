@@ -15,16 +15,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
+    CollisionObjectMessage,
     PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
@@ -86,6 +89,7 @@ class FakeWorld:
         return ([], [])
 
     def add_obstacle(self, obstacle):
+        self.calls.append(("add_obstacle", obstacle))
         return "obstacle-1"
 
     def remove_obstacle(self, obstacle_id):
@@ -101,6 +105,7 @@ class FakeWorld:
         return []
 
     def finalize(self) -> None:
+        self.calls.append(("finalize",))
         return None
 
     @property
@@ -194,6 +199,15 @@ class FakeViz:
     def close(self) -> None:
         self.calls.append(("close", None))
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: object) -> None:
+        self.calls.append(("add_vis_obstacle", obstacle_id, obstacle))
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        self.calls.append(("remove_vis_obstacle", obstacle_id))
+
+    def clear_vis_obstacles(self) -> None:
+        self.calls.append(("clear_vis_obstacles",))
+
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
@@ -248,10 +262,14 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
 
     monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
     monitor.add_robot(_robot_config())
-    monitor.sync_visualization_scene()
+    operator = object()
+    monitor.finalize(fake_viz, operator=operator)  # type: ignore[arg-type]
+    monitor.add_obstacle(object())  # type: ignore[arg-type]
 
+    assert [call[0] for call in fake_world.calls] == ["add_robot", "finalize", "add_obstacle"]
     assert fake_viz.calls[0][0] == "initialize"
     session = fake_viz.calls[0][1]
+    assert session.operator is operator
     scene = session.scene
     assert isinstance(scene, PlanningSceneInfo)
     assert scene.robots["robot-1"].name == "arm"
@@ -272,6 +290,49 @@ def test_world_monitor_forwards_raw_trajectory_preview_protocol() -> None:
         ("cancel_preview_animation",),
         ("animate_trajectory", trajectory, 2.0),
     ]
+
+
+def test_world_monitor_forwards_successful_native_obstacle_id() -> None:
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
+    obstacle = object()
+
+    # The native fake returns its owned identifier; the monitor must not derive one.
+    assert monitor.add_obstacle(obstacle) == "obstacle-1"  # type: ignore[arg-type]
+    assert fake_viz.calls[-1] == ("add_vis_obstacle", "obstacle-1", obstacle)
+
+
+def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
+    mocker: MockerFixture,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
+    update_obstacle_pose = mocker.patch.object(parent, "update_obstacle_pose", return_value=True)
+    remove_obstacle = mocker.patch.object(parent, "remove_obstacle", return_value=True)
+    parent.start_obstacle_monitor()
+    obstacle_monitor = parent.obstacle_monitor
+    assert obstacle_monitor is not None
+
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="add",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 2.0, 3.0),
+        )
+    )
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(id="source-id", operation="update", pose=pose)
+    )
+    obstacle_monitor.on_collision_object(CollisionObjectMessage(id="source-id", operation="remove"))
+
+    added_obstacle = add_obstacle.call_args.args[0]
+    assert added_obstacle.name == "source-id"
+    update_obstacle_pose.assert_called_once_with("parent-id", pose)
+    remove_obstacle.assert_called_once_with("parent-id")
 
 
 def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
@@ -506,3 +567,182 @@ def test_legacy_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> None:
     )
     with pytest.raises(ValueError, match="pose-targetable planning groups"):
         monitor2.get_jacobian(ambiguous_id, JointState(name=["j1", "j2"], position=[0.0, 0.0]))
+
+
+def test_world_monitor_obstacle_mutations_cover_failure_and_visualization_errors(
+    mocker: MockerFixture,
+) -> None:
+    world = FakeWorld()
+    viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
+    obstacle = object()
+
+    mocker.patch.object(world, "add_obstacle", return_value="")
+    assert monitor.add_obstacle(obstacle) == ""  # type: ignore[arg-type]
+    assert viz.calls == []
+
+    mocker.patch.object(world, "add_obstacle", return_value="accepted")
+    mocker.patch.object(viz, "add_vis_obstacle", side_effect=RuntimeError("renderer unavailable"))
+    assert monitor.add_obstacle(obstacle) == "accepted"  # type: ignore[arg-type]
+
+    remove = mocker.patch.object(world, "remove_obstacle", side_effect=[False, True])
+    mocker.patch.object(
+        viz, "remove_vis_obstacle", side_effect=RuntimeError("renderer unavailable")
+    )
+    assert monitor.remove_obstacle("missing") is False
+    assert monitor.remove_obstacle("accepted") is True
+    assert remove.call_count == 2
+
+
+def test_world_monitor_updates_obstacle_pose_with_backend_result(mocker: MockerFixture) -> None:
+    world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=world)  # type: ignore[arg-type]
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    update = mocker.patch.object(world, "update_obstacle_pose", side_effect=[True, False])
+
+    assert monitor.update_obstacle_pose("obstacle-id", pose) is True
+    assert monitor.update_obstacle_pose("obstacle-id", pose) is False
+    assert update.call_args_list == [
+        mocker.call("obstacle-id", pose),
+        mocker.call("obstacle-id", pose),
+    ]
+
+
+def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_error(
+    mocker: MockerFixture,
+) -> None:
+    world = FakeWorld()
+    viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source",
+            operation="add",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 2.0, 3.0),
+        )
+    )
+    detection = SimpleNamespace(
+        id="detection",
+        bbox=SimpleNamespace(
+            center=SimpleNamespace(position=Vector3(4, 5, 6), orientation=Quaternion([0, 0, 0, 1])),
+            size=Vector3(1, 1, 1),
+        ),
+    )
+    obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
+    assert obstacle_monitor.get_obstacle_count() == 2
+    clear_world = mocker.patch.object(world, "clear_obstacles")
+    mocker.patch.object(
+        viz, "clear_vis_obstacles", side_effect=RuntimeError("renderer unavailable")
+    )
+
+    monitor.clear_obstacles()
+
+    clear_world.assert_called_once_with()
+    assert obstacle_monitor.get_obstacle_count() == 0
+
+
+def test_world_monitor_routes_obstacle_sources_and_empty_monitor_operations(
+    mocker: MockerFixture,
+) -> None:
+    monitor = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    detections = [object()]
+    objects = [object()]
+
+    assert monitor.refresh_obstacles() == []
+    assert monitor.remove_object_obstacle("missing") is False
+    assert monitor.clear_perception_obstacles() == 0
+    monitor.on_collision_object(CollisionObjectMessage(id="id", operation="add"))
+    monitor.on_detections(detections)  # type: ignore[arg-type]
+    monitor.on_objects(objects)
+
+    monitor.start_obstacle_monitor()
+    obstacle_monitor = monitor.obstacle_monitor
+    assert obstacle_monitor is not None
+    refresh = mocker.patch.object(obstacle_monitor, "refresh_obstacles", return_value=[{"id": "x"}])
+    remove = mocker.patch.object(obstacle_monitor, "remove_object_obstacle", return_value=True)
+    clear = mocker.patch.object(obstacle_monitor, "clear_perception_obstacles", return_value=2)
+    on_detections = mocker.patch.object(obstacle_monitor, "on_detections")
+    on_objects = mocker.patch.object(obstacle_monitor, "on_objects")
+
+    assert monitor.refresh_obstacles(0.5) == [{"id": "x"}]
+    assert monitor.remove_object_obstacle("object-id") is True
+    assert monitor.clear_perception_obstacles() == 2
+    monitor.on_detections(detections)  # type: ignore[arg-type]
+    monitor.on_objects(objects)
+    refresh.assert_called_once_with(0.5)
+    remove.assert_called_once_with("object-id")
+    clear.assert_called_once_with()
+    on_detections.assert_called_once_with(detections)
+    on_objects.assert_called_once_with(objects)
+
+
+def test_world_obstacle_monitor_rejects_invalid_add_and_handles_update_and_callbacks(
+    mocker: MockerFixture,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    parent.start_obstacle_monitor()
+    obstacle_monitor = parent.obstacle_monitor
+    assert obstacle_monitor is not None
+    add = mocker.patch.object(parent, "add_obstacle", return_value="obstacle-id")
+    update = mocker.patch.object(parent, "update_obstacle_pose", return_value=True)
+    remove = mocker.patch.object(parent, "remove_obstacle", return_value=True)
+    callback = mocker.Mock(side_effect=RuntimeError("callback failed"))
+    obstacle_monitor.add_obstacle_callback(callback)
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+
+    obstacle_monitor.on_collision_object(CollisionObjectMessage(id="bad", operation="add"))
+    assert obstacle_monitor.get_obstacle_count() == 0
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="add",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 2.0, 3.0),
+        )
+    )
+    obstacle_monitor.on_collision_object(
+        CollisionObjectMessage(id="source-id", operation="update", pose=pose)
+    )
+    obstacle_monitor.on_collision_object(CollisionObjectMessage(id="source-id", operation="remove"))
+
+    add.assert_called_once()
+    update.assert_called_once_with("obstacle-id", pose)
+    remove.assert_called_once_with("obstacle-id")
+    assert callback.call_count == 3
+
+
+def test_world_obstacle_monitor_detection_add_update_and_stale_cleanup(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    parent.start_obstacle_monitor()
+    obstacle_monitor = parent.obstacle_monitor
+    assert obstacle_monitor is not None
+    add = mocker.patch.object(parent, "add_obstacle", return_value="first-id")
+    update = mocker.patch.object(parent, "update_obstacle_pose")
+    remove = mocker.patch.object(parent, "remove_obstacle", return_value=False)
+    timestamps = iter([1.0, 1.0, 1.0, 1.0, 1.0, 10.0])
+    monkeypatch.setattr(
+        "dimos.manipulation.planning.monitor.world_obstacle_monitor.time.time",
+        lambda: next(timestamps, 10.0),
+    )
+    center = SimpleNamespace(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    bbox = SimpleNamespace(center=center, size=Vector3(1, 2, 3))
+    detection = SimpleNamespace(id="det-1", bbox=bbox)
+
+    obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
+    obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
+    obstacle_monitor.on_detections([])
+
+    assert add.call_count == 1
+    update.assert_called_once_with("first-id", mocker.ANY)
+    remove.assert_called_once_with("first-id")
+    assert obstacle_monitor.get_obstacle_count() == 0
