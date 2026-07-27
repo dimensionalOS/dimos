@@ -86,7 +86,17 @@ mod ffi {
         ) -> i32;
         pub fn gtsam_shim_isam2_update_empty(isam2: *mut c_void) -> i32;
         pub fn gtsam_shim_isam2_calculate_best_estimate(isam2: *const c_void) -> *mut c_void;
+        pub fn gtsam_shim_isam2_error(isam2: *const c_void) -> f64;
         pub fn gtsam_shim_indices_free(indices: *mut u64);
+        pub fn gtsam_shim_gnc_optimize(
+            graph: *const c_void,
+            values: *const c_void,
+            known_inlier_indices: *const u64,
+            n_known: usize,
+            out_weights: *mut *mut f64,
+            out_n_weights: *mut usize,
+        ) -> *mut c_void;
+        pub fn gtsam_shim_doubles_free(values: *mut f64);
     }
 }
 
@@ -264,6 +274,44 @@ impl FactorGraph {
         };
         check(code, "add_between_pose3")
     }
+
+    /// Batch GNC (graduated non-convexity, TLS loss): optimize this graph from
+    /// `values`, treating `known_inliers` (factor indices, e.g. the odometry
+    /// backbone) as never-rejected and letting GNC classify the rest. Returns
+    /// the optimized `Values` plus each factor's final GNC weight (~1 inlier,
+    /// ~0 rejected), indexed by factor position in this graph.
+    pub fn gnc_optimize(
+        &self,
+        values: &Values,
+        known_inliers: &[u64],
+    ) -> Result<(Values, Vec<f64>), GtsamError> {
+        let mut out_weights: *mut f64 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let handle = unsafe {
+            ffi::gtsam_shim_gnc_optimize(
+                self.handle,
+                values.handle,
+                known_inliers.as_ptr(),
+                known_inliers.len(),
+                &mut out_weights,
+                &mut out_len,
+            )
+        };
+        if handle.is_null() {
+            return Err(GtsamError {
+                context: "gnc_optimize",
+            });
+        }
+        let weights = if out_weights.is_null() {
+            Vec::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(out_weights, out_len) };
+            let owned = slice.to_vec();
+            unsafe { ffi::gtsam_shim_doubles_free(out_weights) };
+            owned
+        };
+        Ok((Values { handle }, weights))
+    }
 }
 
 impl Default for FactorGraph {
@@ -405,6 +453,13 @@ impl Isam2 {
             });
         }
         Ok(Values { handle })
+    }
+
+    /// Total nonlinear error of all current factors at the best estimate
+    /// (½·Σ whitened residual², robust kernels applied) — how much the
+    /// constraints conflict. `NaN` on failure.
+    pub fn error(&self) -> f64 {
+        unsafe { ffi::gtsam_shim_isam2_error(self.handle) }
     }
 }
 
