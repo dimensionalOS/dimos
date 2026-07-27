@@ -39,8 +39,8 @@ logger = setup_logger()
 
 class PGOConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/gsc-pgo"
-    build_command: str | None = "nix develop path:. --command cargo build --release"
+    executable: str = "result/bin/gsc-pgo"
+    build_command: str | None = "nix build .#default --no-write-lock-file"
     stdin_config: bool = True
 
     # outputs: map → odom
@@ -94,6 +94,18 @@ class PGOConfig(NativeModuleConfig):
     # Skip ICP on candidates farther than this (m). 0 disables. Must exceed the worst
     # expected odom drift at revisit so far-drifted large loops still reach ICP.
     loop_candidate_max_distance_m: float = 200.0
+
+    # False-closure gate on graph yank (ICP-refined relative rotation vs the odom-chain
+    # estimate). A near-coincident pair (candidate distance < gate distance) cannot truly
+    # be rotated, so a large ICP rotation disagreement flags a structural-alias false match.
+    # Reject when yank rotation exceeds this many degrees. 0 disables the gate entirely.
+    loop_max_yank_rotation_deg: float = 0.0
+    loop_yank_gate_max_distance_m: float = 0.0
+
+    # Minimum keyframe-index separation for a loop closure. A closure only corrects
+    # drift accumulated over the trajectory between the pair; a near-in-sequence pair
+    # spans negligible drift, so a closure there can only inject error. 0 disables.
+    loop_min_id_gap: int = 0
 
     # Robust (Huber) kernel on all loop factors (lidar + location). Keeps ISAM2 determinate
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.

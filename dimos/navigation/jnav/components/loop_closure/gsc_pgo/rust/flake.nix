@@ -19,9 +19,14 @@
       url = "github:jeff-hykin/gtsam-extended/f4572a80b6339181693aee6029ca28153e59a993";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The crate's module binary depends on the in-repo `dimos-module` crate by
+    # path, which lives outside this flake dir. Reach it via a relative git+file
+    # ref (same approach as dimos/mapping/ray_tracing/rust/flake.nix). This will
+    # be deprecated (nix#12281) but there's no viable alternative today.
+    dimos-repo = { url = "git+file:../../../../../../..?ref=main"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, flake-utils, gtsam-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, gtsam-extended, dimos-repo, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -49,6 +54,23 @@
           TBB_LIB_DIR = "${pkgs.lib.getLib pkgs.tbb}/lib";
         };
 
+        crateSubdir = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust";
+
+        # Reassemble the crate next to the in-repo path deps it references
+        # (native/rust/dimos-module{,-macros}) so cargo's relative `path = `
+        # entries resolve inside the sandbox.
+        src = pkgs.runCommand "dimos-gsc-pgo-src" { } ''
+          mkdir -p "$out/${crateSubdir}"
+          cp -r ${./src} "$out/${crateSubdir}/src"
+          cp -r ${./shim} "$out/${crateSubdir}/shim"
+          cp ${./Cargo.toml} "$out/${crateSubdir}/Cargo.toml"
+          cp ${./Cargo.lock} "$out/${crateSubdir}/Cargo.lock"
+          cp ${./build.rs} "$out/${crateSubdir}/build.rs"
+
+          mkdir -p "$out/native/rust"
+          cp -r ${dimos-repo}/native/rust/dimos-module "$out/native/rust/dimos-module"
+          cp -r ${dimos-repo}/native/rust/dimos-module-macros "$out/native/rust/dimos-module-macros"
+        '';
       in {
         devShells.default = pkgs.mkShell {
           # clippy + rustfmt come from the same nixpkgs pin as cargo/rustc so the
@@ -59,13 +81,23 @@
           env = buildEnv;
         };
 
-        # NOTE: there is deliberately no packages.default anymore. The crate's
-        # module binary depends on the in-repo `dimos-module` crate by path
-        # (../../../../../../../native/rust/dimos-module), which a store-copied
-        # crate source cannot resolve, so `nix build` of this crate alone is
-        # impossible. Build via the dev shell instead (what module.py's
-        # build_command does):
-        #
-        #   nix develop path:. --command cargo build --release
+        packages.default = pkgs.rustPlatform.buildRustPackage ({
+          pname = "dimos-gsc-pgo";
+          version = "0.1.0";
+
+          inherit src;
+          cargoRoot = crateSubdir;
+          buildAndTestSubdir = crateSubdir;
+          cargoHash = "sha256-MBD2EdZaw0rHaPlAgLjaDF0F6wwBKKEoEpRTJAbOLGk=";
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
+
+          # Tests replay recorded databases / need runtime fixtures, so they
+          # don't belong in the sandboxed build.
+          doCheck = false;
+
+          meta.mainProgram = "gsc-pgo";
+        } // buildEnv);
       });
 }

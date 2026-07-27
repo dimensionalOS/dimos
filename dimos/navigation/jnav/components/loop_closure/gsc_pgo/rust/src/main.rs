@@ -87,6 +87,9 @@ pub struct Config {
     pub loop_min_occupancy: i32,
     pub loop_min_degeneracy: f64,
     pub loop_max_lowe_ratio: f64,
+    pub loop_max_yank_rotation_deg: f64,
+    pub loop_yank_gate_max_distance_m: f64,
+    pub loop_min_id_gap: u64,
 
     /// Transform world-frame scans to body-frame using the paired odometry.
     pub subtract_odom_from_cloud: bool,
@@ -146,6 +149,9 @@ impl Config {
             loop_min_occupancy: self.loop_min_occupancy,
             loop_min_degeneracy: self.loop_min_degeneracy,
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
+            loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
+            loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
+            loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
             use_location_constraints: self.use_location_constraints,
