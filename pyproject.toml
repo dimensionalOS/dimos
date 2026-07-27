@@ -762,6 +762,7 @@ ignore = [
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
+    "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust/src/gsc_pgo.rs",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
