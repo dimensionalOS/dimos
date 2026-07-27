@@ -55,15 +55,7 @@ unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
     NormalizeGo2Lidar.blueprint(),
     GscPGO.blueprint(
-        # Do-no-harm tune for the Go2's short-range onboard L1 lidar, found by a
-        # strictness sweep on huge_loop_go2: the sparse L1 produces
-        # geometrically-plausible FALSE closures that survive any single gate and
-        # blow up near-perfect raw odom, so every gate is tightened together. This
-        # is deliberately very conservative -- the loosest point that still does no
-        # harm (1 benign closure on the huge loop; the map barely moves) while
-        # keeping real loops closable. To allow more frequent loop closures, raise
-        # loop_score_thresh (the max ICP fitness a candidate may have; higher admits
-        # more, looser-fitting closures).
+        # highly optimized for the go2 webrtc output
         loop_robust_kernel=True,
         scan_context_max_range_m=8.0,
         scan_context_match_threshold=0.1323,
@@ -73,6 +65,11 @@ unitree_go2_pgo = autoconnect(
         loop_max_lowe_ratio=0.82,
         loop_min_occupancy=120,
         loop_min_degeneracy=0.15,
+        # Planar lock (no-Z L1): pin roll/pitch/Z so closures stay in-plane.
+        per_keyframe_roll_pitch_prior=True,
+        per_keyframe_roll_pitch_var=1e-8,
+        odom_rot_roll_pitch_var=1e-10,
+        odom_trans_z_var=1e-10,
     ),
     vis_module(
         "rerun",

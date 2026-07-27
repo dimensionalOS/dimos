@@ -18,7 +18,7 @@ This file undoes that by making a new stream (l1_cloud) that is in sensor-frame
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -122,10 +122,31 @@ def _write_l1_cloud(
 
 
 def _write_static_tf(store: Store, stamp: float, base_frame: str) -> None:
-    """Add an identity ``base_frame -> l1_link`` edge so the sensor frame joins the tf tree."""
+    """Write exactly one identity ``base_frame -> l1_link`` edge so the sensor frame joins the
+    tf tree. ``l1_link`` is only ever introduced here, so any pre-existing edge into it is a
+    leftover from an earlier normalize run; strip all of them first (rewriting the stream, the
+    only removal the store API offers) so re-runs never accumulate duplicates."""
+    tf_stream = store.stream(TF_STREAM, TFMessage)
+    kept: list[tuple[float, TFMessage, Any, dict[str, Any]]] = []
+    stale = 0
+    for observation in tf_stream:
+        message = observation.data
+        if any(edge.child_frame_id == GO2_CORRECTED_LIDAR_FRAME for edge in message.transforms):
+            stale += 1
+            continue
+        kept.append((observation.ts, message, observation.pose, dict(observation.tags or {})))
+    if stale:
+        store.delete_stream(TF_STREAM)
+        tf_stream = store.stream(TF_STREAM, TFMessage)
+        for kept_ts, kept_message, kept_pose, kept_tags in kept:
+            tf_stream.append(kept_message, ts=kept_ts, pose=kept_pose, tags=kept_tags)
     edge = Transform(frame_id=base_frame, child_frame_id=GO2_CORRECTED_LIDAR_FRAME, ts=stamp)
-    store.stream(TF_STREAM, TFMessage).append(TFMessage(edge), ts=stamp)
-    print(f"wrote static tf {base_frame} -> {GO2_CORRECTED_LIDAR_FRAME} (identity)", flush=True)
+    tf_stream.append(TFMessage(edge), ts=stamp, tags={"child_frame": GO2_CORRECTED_LIDAR_FRAME})
+    print(
+        f"wrote static tf {base_frame} -> {GO2_CORRECTED_LIDAR_FRAME} (identity); "
+        f"removed {stale} stale duplicate(s)",
+        flush=True,
+    )
 
 
 def _write_go2_odometry(store: Store, odom_rows: np.ndarray, world_frame: str) -> None:

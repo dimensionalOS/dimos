@@ -17,9 +17,16 @@ name = "gsc-pgo"
 path = "src/main.rs"
 required-features = ["native"]
 
+# Offline eval: replay a recorded db straight through GscPgo, faster than real
+# time, and dump an eval.py-shaped JSON. Bypasses the zenoh/replay scaffolding.
+[[bin]]
+name = "pgo-eval"
+path = "src/eval.rs"
+required-features = ["native"]
+
 [features]
 default = ["native"]
-native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tracing", "dep:validator"]
+native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:serde_json", "dep:rusqlite", "dep:tracing", "dep:validator"]
 
 [dependencies]
 rayon = "1"
@@ -28,6 +35,7 @@ lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "r
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 tracing = { version = "0.1", optional = true }
 validator = { version = "0.21", features = ["derive"], optional = true }
 
