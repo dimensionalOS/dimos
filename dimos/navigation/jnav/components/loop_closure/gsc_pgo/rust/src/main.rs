@@ -599,8 +599,14 @@ impl Worker {
             );
 
             // Pose graph on every keyframe (iSAM2 may have re-optimized prior
-            // poses on loop closure).
-            let graph = build_pose_graph(pgo.key_poses(), pgo.history_pairs(), cur_time, &frame_id);
+            // poses on loop closure). Only GNC-kept loops are published as edges.
+            let active_pairs: Vec<(usize, usize)> = pgo
+                .committed_loops()
+                .iter()
+                .filter(|committed| committed.active_in_isam2)
+                .map(|committed| (committed.target_id, committed.source_id))
+                .collect();
+            let graph = build_pose_graph(pgo.key_poses(), &active_pairs, cur_time, &frame_id);
             self.publish(&self.pose_graph, &graph, "pose_graph");
 
             // Same keyframes, streamed individually (new + moved nodes only).

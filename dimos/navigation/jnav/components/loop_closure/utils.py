@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from itertools import islice
+import math
 from pathlib import Path
 from typing import Any
 
@@ -69,9 +70,12 @@ def place_tags(
     corrected: dict[int, list[tuple[float, np.ndarray]]] = {}
     for detection in detections:
         timestamp = float(detection["ts"])
-        world_from_camera = tf.get(odom_parent, tag_frame, timestamp)
+        try:
+            world_from_camera = tf.get(odom_parent, tag_frame, timestamp)
+        except LookupError:
+            continue
         delta = delta_lookup(timestamp)
-        if world_from_camera is None or delta is None:
+        if delta is None:
             continue
         camera_from_tag = matrix_from_pose(np.asarray(detection["t_cam_marker"], dtype=np.float64))
         tag_in_map_raw = (world_from_camera.to_matrix() @ camera_from_tag)[:3, 3]
@@ -104,21 +108,32 @@ def registered_scans(
     stride: int,
     tf: RecordingTF,
     odom_parent: str,
+    tf_failure_budget: int = 30,
 ) -> Iterator[tuple[float, np.ndarray]]:
     """Yield ``(ts, world-frame points)`` for each scan, registered via the tf tree.
 
     Each scan's frame resolves to ``odom_parent`` through
     ``tf.get(odom_parent, frame, ts)``, which walks the overridden odom edge plus
     any static sensor extrinsics. Scans already in ``odom_parent`` resolve to
-    identity; scans whose frame can't be reached at their timestamp are dropped."""
+    identity. A few lookups normally fail at the recording boundaries (scan ts
+    outside the fed odom coverage); each failure spends one ``tf_failure_budget``
+    and exhausting it raises, so a broken tree can't silently yield an empty map."""
     with SqliteStore(path=db_path, must_exist=True) as store:
         for observation in islice(store.stream(lidar_stream, PointCloud2), 0, None, stride):
             cloud = observation.data
             timestamp = float(observation.ts)
             points = np.asarray(cloud.points_f32(), dtype=np.float64)[:, :3]
             frame_id = cloud.frame_id or odom_parent
-            world_from_sensor = tf.get(odom_parent, frame_id, timestamp)
-            if world_from_sensor is None:
+            try:
+                world_from_sensor = tf.get(odom_parent, frame_id, timestamp)
+            except LookupError as error:
+                tf_failure_budget -= 1
+                if tf_failure_budget < 0:
+                    raise LookupError(
+                        f"too many failed tf lookups registering {lidar_stream!r} scans; if "
+                        "this recording just has more startup noise than usual, raise the "
+                        f"limit with --tf-failure-budget. Last failure: {error}"
+                    ) from error
                 continue
             matrix = world_from_sensor.to_matrix()
             yield timestamp, points @ matrix[:3, :3].T + matrix[:3, 3]
@@ -175,10 +190,12 @@ def load_tag_detections(
         if RAW_TAGS_STREAM not in db_store.list_streams():
             camera_info = read_camera_info(db_store, camera_info_stream)
             if camera_info is None:
-                raise SystemExit(
-                    f"no {RAW_TAGS_STREAM!r} and no {camera_info_stream!r} stream — "
-                    f"can't detect tags. Disable the camera stream or add camera_info."
+                print(
+                    f"WARNING: no {RAW_TAGS_STREAM!r} and no {camera_info_stream!r} stream — "
+                    f"can't detect tags, voxel agreement only",
+                    flush=True,
                 )
+                return []
             camera_matrix, distortion, _optical_frame = camera_info
             ensure_april_streams(
                 db_store,
@@ -243,40 +260,181 @@ def write_topdown_png(
     raw_path: np.ndarray,
     corrected_path: np.ndarray,
     recording_name: str,
+    closure_segments: np.ndarray | None = None,
 ) -> None:
-    """Two-panel top-down (x-y) scatter: before vs after correction."""
+    """Two-panel top-down (x-y) scatter: before vs after correction.
+
+    ``closure_segments`` is ``(N, 6)`` ``[x_start, y_start, z_start, x_end, y_end, z_end]``
+    loop-closure edges on the raw path, drawn on the BEFORE panel."""
     import matplotlib
 
     matplotlib.use("Agg")
+    from matplotlib.collections import LineCollection
+    from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.pyplot as plt
 
-    figure, axes = plt.subplots(1, 2, figsize=(16, 8), sharex=True, sharey=True)
+    # single background everywhere, matching inferno's zero-density color
+    background = "#000004"
+    text_color = "#e8eaed"
+    muted_color = "#9aa0a6"
+    path_colormap = LinearSegmentedColormap.from_list("path_time", ["#8a5cff", "#ff9f43"])
+    # lidar palette avoids the path colors (purple/orange) and closure-edge red
+    heat_colormap = LinearSegmentedColormap.from_list(
+        "lidar_heat", ["#000004", "#15417e", "#1f9e89", "#a8e063", "#fdf8bf"]
+    )
+    figure, axes = plt.subplots(1, 2, figsize=(16, 8.5), sharex=True, sharey=True)
+    figure.patch.set_facecolor(background)
+    # shared bins across both panels so densities are comparable
+    stacked_xy = [cloud[:, :2] for cloud in (raw_map, corrected_map) if len(cloud)]
+    heatmap_edges: tuple[np.ndarray, np.ndarray] | None = None
+    if stacked_xy:
+        all_xy = np.vstack(stacked_xy)
+        # coarse cells so walls (vertically stacked points) accumulate visibly more
+        # heat than floor sweeps
+        heatmap_bins = 300
+        bin_width = max(np.ptp(all_xy, axis=0).max() / heatmap_bins, 1e-6)
+        heatmap_edges = (
+            np.arange(all_xy[:, 0].min(), all_xy[:, 0].max() + bin_width, bin_width),
+            np.arange(all_xy[:, 1].min(), all_xy[:, 1].max() + bin_width, bin_width),
+        )
     for axis, cloud, tags, path, title in (
-        (axes[0], raw_map, raw_tags, raw_path, "raw odom (before)"),
-        (axes[1], corrected_map, corrected_tags, corrected_path, "corrected (after)"),
+        (axes[0], raw_map, raw_tags, raw_path, "BEFORE  ·  raw odom"),
+        (axes[1], corrected_map, corrected_tags, corrected_path, "AFTER  ·  loop closed"),
     ):
-        if len(cloud):
-            axis.scatter(cloud[:, 0], cloud[:, 1], s=0.4, c="0.55", linewidths=0, rasterized=True)
-        if len(path):
-            axis.plot(path[:, 0], path[:, 1], c="tab:blue", linewidth=1.5, zorder=4)
-            axis.scatter(
-                path[0, 0], path[0, 1], s=60, c="green", marker="o", zorder=6, label="start"
+        axis.set_facecolor(background)
+        if len(cloud) and heatmap_edges is not None:
+            x_edges, y_edges = heatmap_edges
+            # voxelize first so heat = occupied z-voxels per cell (vertical structure
+            # like walls), not raw point count (biased toward oft-rescanned spots);
+            # voxels with almost no point support are stray lidar noise, drop them
+            min_points_per_voxel = 4
+            occupied_voxels, points_per_voxel = np.unique(
+                np.floor(cloud / bin_width).astype(np.int64), axis=0, return_counts=True
             )
-            axis.scatter(path[-1, 0], path[-1, 1], s=60, c="red", marker="s", zorder=6, label="end")
-            axis.legend(loc="upper right", fontsize=8)
+            occupied_voxels = occupied_voxels[points_per_voxel >= min_points_per_voxel]
+            voxel_centers = (occupied_voxels[:, :2] + 0.5) * bin_width
+            density, _, _ = np.histogram2d(
+                voxel_centers[:, 0], voxel_centers[:, 1], bins=(x_edges, y_edges)
+            )
+            # saturate at a full floor-to-ceiling stack: walls hit max heat, noise
+            # streaks of a few voxels stay dark
+            wall_height_meters = 2.5
+            axis.imshow(
+                density.T,
+                origin="lower",
+                extent=(x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]),
+                cmap=heat_colormap,
+                interpolation="nearest",
+                vmax=max(wall_height_meters / bin_width, 1.0),
+                rasterized=True,
+            )
+        if len(path):
+            # gradient along the path shows time: purple (start) -> yellow (end)
+            xy_points = path[:, :2].reshape(-1, 1, 2)
+            segments = np.concatenate([xy_points[:-1], xy_points[1:]], axis=1)
+            axis.add_collection(
+                LineCollection(
+                    segments,
+                    cmap=path_colormap,
+                    array=np.linspace(0.0, 1.0, max(len(segments), 1)),
+                    linewidth=2.0,
+                    capstyle="round",
+                    zorder=4,
+                )
+            )
+            axis.update_datalim(path[:, :2])
+            if axis is axes[0] and closure_segments is not None and len(closure_segments):
+                axis.add_collection(
+                    LineCollection(
+                        closure_segments[:, [0, 1, 3, 4]].reshape(-1, 2, 2),
+                        colors="#ff3b3b",
+                        linewidth=1.0,
+                        alpha=0.9,
+                        zorder=5,
+                    )
+                )
+            for point, label, marker in ((path[0], "start", "o"), (path[-1], "end", "s")):
+                axis.scatter(
+                    point[0],
+                    point[1],
+                    s=70,
+                    c="white",
+                    marker=marker,
+                    edgecolors=background,
+                    zorder=6,
+                )
+                axis.annotate(
+                    label,
+                    point[:2],
+                    xytext=(8, 8),
+                    textcoords="offset points",
+                    fontsize=10,
+                    color=text_color,
+                    zorder=7,
+                )
         for marker_id, positions in tags.items():
             axis.scatter(
-                positions[:, 0], positions[:, 1], s=90, marker="X", edgecolors="black", zorder=5
+                positions[:, 0], positions[:, 1], s=90, marker="X", edgecolors="white", zorder=5
             )
             centroid = positions.mean(axis=0)
-            axis.annotate(f"tag {marker_id}", centroid[:2], fontsize=9, zorder=7)
-        axis.set_title(title)
+            axis.annotate(f"tag {marker_id}", centroid[:2], fontsize=9, color=text_color, zorder=7)
+        axis.set_title(title, loc="left", fontsize=15, fontweight="bold", color=text_color, pad=12)
         axis.set_aspect("equal")
-        axis.set_xlabel("x (m)")
-    axes[0].set_ylabel("y (m)")
-    figure.suptitle(f"{recording_name}: top-down lidar map, before vs after loop closure")
-    figure.tight_layout()
-    figure.savefig(png_path, dpi=130)
+        axis.locator_params(nbins=5)
+        axis.tick_params(colors=muted_color, labelsize=8, length=3, width=0.6, direction="out")
+        for spine in axis.spines.values():
+            spine.set_visible(False)
+    # crop to the trajectory (plus room for walls) — the full cloud extent is
+    # blown out by stray long-range returns
+    stacked_paths = [path[:, :2] for path in (raw_path, corrected_path) if len(path)]
+    if stacked_paths:
+        paths_xy = np.vstack(stacked_paths)
+        low_corner = paths_xy.min(axis=0)
+        high_corner = paths_xy.max(axis=0)
+        crop_pad = np.maximum(0.15 * (high_corner - low_corner), 8.0)
+        axes[0].set_xlim(low_corner[0] - crop_pad[0], high_corner[0] + crop_pad[0])
+        axes[0].set_ylim(low_corner[1] - crop_pad[1], high_corner[1] + crop_pad[1])
+    # scale bar instead of axis ticks: pick a round length near a fifth of the width
+    x_low, x_high = axes[0].get_xlim()
+    y_low, y_high = axes[0].get_ylim()
+    rough_bar = (x_high - x_low) / 5.0
+    magnitude = 10.0 ** math.floor(math.log10(rough_bar)) if rough_bar > 0 else 1.0
+    bar_length = max(
+        (step * magnitude for step in (1.0, 2.0, 5.0) if step * magnitude <= rough_bar),
+        default=magnitude,
+    )
+    margin_fraction = 0.04
+    bar_x = x_low + (x_high - x_low) * margin_fraction
+    bar_y = y_low + (y_high - y_low) * margin_fraction
+    for axis in axes:
+        axis.plot([bar_x, bar_x + bar_length], [bar_y, bar_y], color=muted_color, linewidth=3)
+        axis.annotate(
+            f"{bar_length:g} m",
+            (bar_x + bar_length / 2.0, bar_y),
+            xytext=(0, 6),
+            textcoords="offset points",
+            ha="center",
+            fontsize=10,
+            color=muted_color,
+        )
+    figure.suptitle(
+        f"{recording_name} — top-down lidar map",
+        fontsize=17,
+        fontweight="bold",
+        color=text_color,
+        x=0.06,
+        y=0.99,
+        ha="left",
+    )
+    figure.text(
+        0.06,
+        0.945,
+        "heat = vertical structure (occupied z-voxels per cell)  ·  path colored by time (purple start → orange end)",
+        fontsize=10,
+        color=muted_color,
+    )
+    figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
+    figure.savefig(png_path, dpi=130, facecolor=background)
     plt.close(figure)
 
 
@@ -293,24 +451,50 @@ def write_isometric_png(
     raw_path: np.ndarray,
     corrected_path: np.ndarray,
     recording_name: str,
+    closure_segments: np.ndarray | None = None,
 ) -> None:
     """Two-panel isometric (3D) scatter of the lidar map: before vs after correction.
 
     Complements the top-down: false closures often tilt the map into z (horizontal
     travel bleaking into vertical), which is invisible flattened but obvious here.
-    Points are colored by height so the ground plane and any tilt read at a glance."""
+    Points are colored by height so the ground plane and any tilt read at a glance.
+    ``closure_segments`` is ``(N, 6)`` ``[x_start, y_start, z_start, x_end, y_end, z_end]``
+    loop-closure edges on the raw path, drawn on the BEFORE panel."""
     import matplotlib
 
     matplotlib.use("Agg")
+    from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
+    background = "#000004"
+    text_color = "#e8eaed"
+    muted_color = "#9aa0a6"
+    path_colormap = LinearSegmentedColormap.from_list("path_time", ["#8a5cff", "#ff9f43"])
+    heat_colormap = LinearSegmentedColormap.from_list(
+        "lidar_heat", ["#15417e", "#1f9e89", "#a8e063", "#fdf8bf"]
+    )
     figure = plt.figure(figsize=(16, 8))
+    figure.patch.set_facecolor(background)
     panels = (
-        (raw_map, raw_path, "raw odom (before)"),
-        (corrected_map, corrected_path, "corrected (after)"),
+        (raw_map, raw_path, "BEFORE  ·  raw odom"),
+        (corrected_map, corrected_path, "AFTER  ·  loop closed"),
     )
     for index, (cloud, path, title) in enumerate(panels):
         axis = figure.add_subplot(1, 2, index + 1, projection="3d")
+        axis.set_facecolor(background)
+        # manual zorder: the path and closure edges must draw over the cloud,
+        # not be depth-sorted into it
+        axis.computed_zorder = False
+        if len(cloud) and len(path):
+            # crop to the trajectory neighborhood — stray long-range returns blow
+            # out the plot range otherwise
+            xy_low = path[:, :2].min(axis=0) - 8.0
+            xy_high = path[:, :2].max(axis=0) + 8.0
+            z_low = path[:, 2].min() - 2.0
+            z_high = path[:, 2].max() + 4.0
+            inside = np.all((cloud >= [*xy_low, z_low]) & (cloud <= [*xy_high, z_high]), axis=1)
+            cloud = cloud[inside]
         if len(cloud):
             axis.scatter(
                 cloud[:, 0],
@@ -318,22 +502,77 @@ def write_isometric_png(
                 cloud[:, 2],
                 s=0.3,
                 c=cloud[:, 2],
-                cmap="viridis",
+                cmap=heat_colormap,
                 linewidths=0,
                 rasterized=True,
+                zorder=1,
             )
         if len(path):
-            axis.plot(path[:, 0], path[:, 1], path[:, 2], c="tab:red", linewidth=1.2, zorder=4)
-        axis.set_title(title)
+            # gradient along the path shows time: purple (start) -> orange (end)
+            xyz_points = path[:, :3].reshape(-1, 1, 3)
+            segments = np.concatenate([xyz_points[:-1], xyz_points[1:]], axis=1)
+            axis.add_collection3d(
+                Line3DCollection(
+                    segments,
+                    cmap=path_colormap,
+                    array=np.linspace(0.0, 1.0, max(len(segments), 1)),
+                    linewidth=2.2,
+                    capstyle="round",
+                    zorder=4,
+                )
+            )
+            if index == 0 and closure_segments is not None and len(closure_segments):
+                axis.add_collection3d(
+                    Line3DCollection(
+                        closure_segments.reshape(-1, 2, 3),
+                        colors="#ff3b3b",
+                        linewidth=1.0,
+                        alpha=0.9,
+                        zorder=5,
+                    )
+                )
+            for point, label, marker in ((path[0], "start", "o"), (path[-1], "end", "s")):
+                axis.scatter(
+                    point[0],
+                    point[1],
+                    point[2],
+                    s=60,
+                    c="white",
+                    marker=marker,
+                    edgecolors=background,
+                    zorder=6,
+                )
+                axis.text(point[0], point[1], point[2] + 1.0, label, color=text_color, fontsize=9)
+        axis.set_title(title, color=text_color, fontsize=13, fontweight="bold")
+        for named_axis in (axis.xaxis, axis.yaxis, axis.zaxis):
+            named_axis.set_pane_color((0.0, 0.0, 0.0, 0.0))
+            named_axis.label.set_color(muted_color)
+        axis.tick_params(colors=muted_color, labelsize=7)
+        axis.grid(False)
         axis.set_xlabel("x (m)")
         axis.set_ylabel("y (m)")
         axis.set_zlabel("z (m)")
         axis.view_init(elev=_ISO_ELEV_DEG, azim=_ISO_AZIM_DEG)
         if len(cloud):
             _set_equal_3d_aspect(axis, cloud)
-    figure.suptitle(f"{recording_name}: isometric lidar map, before vs after loop closure")
-    figure.tight_layout()
-    figure.savefig(png_path, dpi=130)
+    figure.suptitle(
+        f"{recording_name} — isometric lidar map",
+        fontsize=16,
+        fontweight="bold",
+        color=text_color,
+        x=0.06,
+        y=0.99,
+        ha="left",
+    )
+    figure.text(
+        0.06,
+        0.945,
+        "points colored by height  ·  path colored by time (purple start → orange end)",
+        fontsize=10,
+        color=muted_color,
+    )
+    figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
+    figure.savefig(png_path, dpi=130, facecolor=background)
     plt.close(figure)
 
 
@@ -395,11 +634,14 @@ def write_comparison_rrd(
 
 
 def _set_equal_3d_aspect(axis: Any, cloud: np.ndarray) -> None:
-    """Equal x/y/z scale so tilt isn't hidden by axis stretching."""
+    """Equal x/y/z scale so tilt isn't hidden by axis stretching.
+
+    Limits hug the data and the box aspect matches the spans, so a flat cloud
+    fills the panel instead of floating inside a mostly-empty cube."""
     mins = cloud.min(axis=0)
     maxs = cloud.max(axis=0)
-    centers = (mins + maxs) / 2.0
-    half = float((maxs - mins).max()) / 2.0 or 1.0
-    axis.set_xlim(centers[0] - half, centers[0] + half)
-    axis.set_ylim(centers[1] - half, centers[1] + half)
-    axis.set_zlim(centers[2] - half, centers[2] + half)
+    spans = np.maximum(maxs - mins, 1.0)
+    axis.set_xlim(mins[0], maxs[0])
+    axis.set_ylim(mins[1], maxs[1])
+    axis.set_zlim(mins[2], maxs[2])
+    axis.set_box_aspect(tuple(spans))

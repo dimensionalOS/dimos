@@ -108,6 +108,7 @@ def evaluate(
     write_topdown: bool,
     write_isometric: bool,
     write_rrd: bool,
+    tf_failure_budget: int = 30,
 ) -> dict[str, Any]:
     with SqliteStore(path=db_path, must_exist=True) as store:
         # legacy go2 recordings are massaged into the generic shape here; every other rig is a no-op
@@ -145,23 +146,28 @@ def evaluate(
         lidar_count = int(store.stream(lidar_stream).count())
         raw_times, raw_poses = odom_rows[:, 0], odom_rows[:, 1:]
         tf = RecordingTF.from_store(store)
-        if tf is None:
-            raise SystemExit(f"no 'tf' stream in {db_path}")
         tf.override_edge(odom_parent, odom_child, raw_times, raw_poses)
-
-        probe_ts = float(raw_times[len(raw_times) // 2])
-        tags_reachable = tf.get(odom_parent, tag_frame, probe_ts) is not None
-        if not tags_reachable and camera_stream is not None:
-            raise SystemExit(
-                f"no tf path {odom_parent} <- {tag_frame} (frames: {sorted(tf.frames)})"
-            )
 
         detections = load_tag_detections(
             db_path, camera_stream, camera_info_stream, streams, dynamic_tags
         )
+        if detections:
+            # probe mid-recording: startup detections may predate odom coverage (tolerated
+            # per-detection in place_tags), but an unreachable camera frame here means the
+            # tf tree can never place tags
+            probe_ts = float(raw_times[len(raw_times) // 2])
+            try:
+                tf.get(odom_parent, tag_frame, probe_ts)
+            except LookupError as error:
+                print(
+                    f"WARNING: no tf path {odom_parent} <- {tag_frame} — "
+                    f"skipping tag scoring, voxel agreement only ({error})",
+                    flush=True,
+                )
+                detections = []
 
         started = time.monotonic()
-        graph, closures, replay_stats = run_module_graph(
+        graph, closures, loop_edges, replay_stats = run_module_graph(
             db_path,
             module_class,
             pgo_config,
@@ -181,19 +187,45 @@ def evaluate(
 
         scan_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
         raw_map, corrected_map = accumulate_maps(
-            registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+            registered_scans(
+                db_path, lidar_stream, scan_stride, tf, odom_parent, tf_failure_budget
+            ),
             delta_lookup,
         )
         voxel = lidar_voxel_agreement(
-            registered_scans(db_path, lidar_stream, scan_stride, tf, odom_parent),
+            registered_scans(
+                db_path, lidar_stream, scan_stride, tf, odom_parent, tf_failure_budget
+            ),
             raw_pose,
             list(graph),
         )
 
     raw_path, corrected_path = deform_path(raw_times, raw_poses, delta_lookup)
+    closure_segments = np.array(
+        [
+            [
+                np.interp(start_ts, raw_times, raw_poses[:, 0]),
+                np.interp(start_ts, raw_times, raw_poses[:, 1]),
+                np.interp(start_ts, raw_times, raw_poses[:, 2]),
+                np.interp(end_ts, raw_times, raw_poses[:, 0]),
+                np.interp(end_ts, raw_times, raw_poses[:, 1]),
+                np.interp(end_ts, raw_times, raw_poses[:, 2]),
+            ]
+            for start_ts, end_ts in loop_edges
+        ]
+    ).reshape(-1, 6)
 
     out_dir = RESULTS_DIR / f"{recording_name}__{module_name}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    # cached render inputs: lets plot styling be iterated without replaying the module
+    np.savez_compressed(
+        out_dir / "topdown_inputs.npz",
+        raw_map=raw_map,
+        corrected_map=corrected_map,
+        raw_path=raw_path,
+        corrected_path=corrected_path,
+        closure_segments=closure_segments,
+    )
     png_path = out_dir / "topdown_before_after.png"
     if write_topdown:
         write_topdown_png(
@@ -205,11 +237,18 @@ def evaluate(
             raw_path,
             corrected_path,
             recording_name,
+            closure_segments,
         )
     iso_png_path = out_dir / "isometric_before_after.png"
     if write_isometric:
         write_isometric_png(
-            iso_png_path, raw_map, corrected_map, raw_path, corrected_path, recording_name
+            iso_png_path,
+            raw_map,
+            corrected_map,
+            raw_path,
+            corrected_path,
+            recording_name,
+            closure_segments,
         )
     rrd_path = out_dir / "comparison.rrd"
     if write_rrd:
@@ -308,6 +347,13 @@ def main() -> None:
     parser.add_argument("--topdown-png", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--isometric-png", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rrd", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--tf-failure-budget",
+        type=int,
+        default=30,
+        help="how many scans may fail tf registration (startup/shutdown odom-coverage noise) "
+        "before erroring out",
+    )
     args = parser.parse_args()
 
     try:
@@ -337,6 +383,7 @@ def main() -> None:
         write_topdown=args.topdown_png,
         write_isometric=args.isometric_png,
         write_rrd=args.rrd,
+        tf_failure_budget=args.tf_failure_budget,
     )
 
 

@@ -59,6 +59,8 @@ LOCKSTEP_BASE_OVERHEAD_S = 120.0
 LOCKSTEP_POLL_S = 5.0
 LOCKSTEP_DRAIN_S = 10.0
 _PROGRESS_EVERY_N_SCANS = 200
+# mirrors EDGE_LOOP_CLOSURE in rust/src/utils.rs pose-graph metadata ids
+EDGE_LOOP_CLOSURE = 1
 
 
 class ReplayStats(TypedDict):
@@ -86,6 +88,7 @@ class GraphCapture(Module):
         super().__init__(**kwargs)
         self._graph: list[GraphPose] = []
         self._closures = 0
+        self._loop_edges: list[tuple[float, float]] = []
 
     async def handle_pose_graph(self, msg: Graph3D) -> None:
         self._graph = [
@@ -101,6 +104,14 @@ class GraphCapture(Module):
             )
             for node in msg.nodes
         ]
+        ts_by_id = {node.id: node.pose.ts for node in msg.nodes}
+        self._loop_edges = [
+            (ts_by_id[edge.start_id], ts_by_id[edge.end_id])
+            for edge in msg.edges
+            if edge.metadata_id == EDGE_LOOP_CLOSURE
+            and edge.start_id in ts_by_id
+            and edge.end_id in ts_by_id
+        ]
 
     async def handle_loop_closure_event(self, msg: GraphDelta3D) -> None:
         self._closures += 1
@@ -108,7 +119,13 @@ class GraphCapture(Module):
     async def main(self) -> AsyncGenerator[None, None]:
         yield
         self.config.output_path.write_text(
-            json.dumps({"graph": self._graph, "closures": self._closures})
+            json.dumps(
+                {
+                    "graph": self._graph,
+                    "closures": self._closures,
+                    "loop_edges": self._loop_edges,
+                }
+            )
         )
 
 
@@ -346,9 +363,10 @@ def run_module_graph(
     lockstep: bool = True,
     drift_per_sec: list[float] | None = None,
     drift_t0: float = 0.0,
-) -> tuple[list[GraphPose], int, dict[str, Any]]:
+) -> tuple[list[GraphPose], int, list[tuple[float, float]], dict[str, Any]]:
     """Replay the recording through the module; return its optimized pose graph
-    (with orientations), loop-closure count, and replay stats.
+    (with orientations), loop-closure count, committed loop-edge keyframe
+    timestamp pairs, and replay stats.
 
     lockstep=True (default) paces scans on the module's corrected_odometry
     acks — machine-speed independent. lockstep=False is the legacy fixed-rate
@@ -441,4 +459,7 @@ def run_module_graph(
         raise SystemExit(f"{module_class.__name__} produced no pose graph output")
     data = json.loads(output_path.read_text())
     graph = [tuple(row) for row in data["graph"]]
-    return graph, int(data["closures"]), replay_stats  # type: ignore[return-value]
+    loop_edges = [
+        (float(start_ts), float(end_ts)) for start_ts, end_ts in data.get("loop_edges", [])
+    ]
+    return graph, int(data["closures"]), loop_edges, replay_stats  # type: ignore[return-value]
