@@ -47,8 +47,17 @@ from dimos.navigation.jnav.utils.trajectory_metrics import matrix_from_pose
 
 RAW_TAGS_STREAM = "raw_april_tags"
 
-# Cap accumulated scans so the map fits in memory / renders quickly.
+# Cap the scans fed to the voxel-agreement metric so it stays quick.
 MAP_MAX_SCANS = 400
+
+# Rendered maps keep one point per voxel instead of striding scans, so the ground
+# fills in as a surface rather than a set of isolated per-scan lidar rings.
+MAP_VOXEL_SIZE_M = 0.1
+# Deduplicating in chunks amortizes the sort over many scans.
+_VOXEL_FLUSH_POINTS = 4_000_000
+# Biases grid indices non-negative so xyz packs into one int64 (21 bits each).
+_VOXEL_INDEX_BITS = 21
+_VOXEL_INDEX_OFFSET = 1 << (_VOXEL_INDEX_BITS - 1)
 
 
 def place_tags(
@@ -139,27 +148,57 @@ def registered_scans(
             yield timestamp, points @ matrix[:3, :3].T + matrix[:3, 3]
 
 
+class _VoxelGrid:
+    """Keeps the first point seen in each voxel across a stream of scans."""
+
+    def __init__(self, voxel_size_m: float) -> None:
+        self.voxel_size_m = voxel_size_m
+        self.points = np.empty((0, 3))
+        self._keys = np.empty(0, dtype=np.int64)
+        self._pending: list[np.ndarray] = []
+        self._pending_points = 0
+
+    def add(self, points: np.ndarray) -> None:
+        self._pending.append(points)
+        self._pending_points += len(points)
+        if self._pending_points >= _VOXEL_FLUSH_POINTS:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._pending:
+            return
+        added = np.concatenate(self._pending)
+        index = np.floor(added / self.voxel_size_m).astype(np.int64) + _VOXEL_INDEX_OFFSET
+        added_keys = (
+            (index[:, 0] << (2 * _VOXEL_INDEX_BITS)) | (index[:, 1] << _VOXEL_INDEX_BITS)
+        ) | index[:, 2]
+        keys = np.concatenate([self._keys, added_keys])
+        points = np.concatenate([self.points, added])
+        _, first_seen = np.unique(keys, return_index=True)
+        self._keys, self.points = keys[first_seen], points[first_seen]
+        self._pending, self._pending_points = [], 0
+
+
 def accumulate_maps(
     scans: Iterator[tuple[float, np.ndarray]],
     delta_lookup: Any,
     *,
-    max_points_per_scan: int = 4000,
+    voxel_size_m: float = MAP_VOXEL_SIZE_M,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Stack raw + Δ-corrected map points from registered scans."""
-    raw_clouds: list[np.ndarray] = []
-    corrected_clouds: list[np.ndarray] = []
+    """Voxel-downsampled raw + Δ-corrected map points from registered scans."""
+    raw_grid = _VoxelGrid(voxel_size_m)
+    corrected_grid = _VoxelGrid(voxel_size_m)
     for timestamp, points in scans:
         delta = delta_lookup(timestamp)
         if delta is None:
             continue
-        if len(points) > max_points_per_scan:
-            points = points[:: -(-len(points) // max_points_per_scan)]
+        points = points[np.isfinite(points).all(axis=1)]
         rotation_delta, translation_delta = delta
-        raw_clouds.append(points)
-        corrected_clouds.append(points @ rotation_delta.T + translation_delta)
-    if not raw_clouds:
-        return np.empty((0, 3)), np.empty((0, 3))
-    return np.vstack(raw_clouds), np.vstack(corrected_clouds)
+        raw_grid.add(points)
+        corrected_grid.add(points @ rotation_delta.T + translation_delta)
+    raw_grid.flush()
+    corrected_grid.flush()
+    return raw_grid.points, corrected_grid.points
 
 
 def read_camera_info(
@@ -463,7 +502,7 @@ def write_isometric_png(
     import matplotlib
 
     matplotlib.use("Agg")
-    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.colors import LinearSegmentedColormap, ListedColormap
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
@@ -471,9 +510,9 @@ def write_isometric_png(
     text_color = "#e8eaed"
     muted_color = "#9aa0a6"
     path_colormap = LinearSegmentedColormap.from_list("path_time", ["#8a5cff", "#ff9f43"])
-    heat_colormap = LinearSegmentedColormap.from_list(
-        "lidar_heat", ["#15417e", "#1f9e89", "#a8e063", "#fdf8bf"]
-    )
+    # the low end of turbo only (blue -> yellow-green); the warm half collides with the
+    # orange path and red closure edges
+    heat_colormap = ListedColormap(plt.get_cmap("turbo")(np.linspace(0.0, 0.4, 256)))
     figure = plt.figure(figsize=(16, 8))
     figure.patch.set_facecolor(background)
     panels = (
@@ -496,6 +535,10 @@ def write_isometric_png(
             inside = np.all((cloud >= [*xy_low, z_low]) & (cloud <= [*xy_high, z_high]), axis=1)
             cloud = cloud[inside]
         if len(cloud):
+            # percentile limits, not min/max: the crop window reaches below the ground
+            # and a few stray high returns stretch the top, so autoscaling wastes most
+            # of the ramp on empty height
+            color_low, color_high = np.percentile(cloud[:, 2], (2.0, 98.0))
             axis.scatter(
                 cloud[:, 0],
                 cloud[:, 1],
@@ -503,6 +546,8 @@ def write_isometric_png(
                 s=0.3,
                 c=cloud[:, 2],
                 cmap=heat_colormap,
+                vmin=color_low,
+                vmax=color_high,
                 linewidths=0,
                 rasterized=True,
                 zorder=1,

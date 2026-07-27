@@ -213,16 +213,14 @@ def evaluate(
             score_tags(detections, tf, odom_parent, tag_frame, delta_lookup)
         )
 
-        scan_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
         raw_map, corrected_map = accumulate_maps(
-            registered_scans(
-                db_path, lidar_stream, scan_stride, tf, odom_parent, tf_failure_budget
-            ),
+            registered_scans(db_path, lidar_stream, 1, tf, odom_parent, tf_failure_budget),
             delta_lookup,
         )
+        metric_stride = max(1, -(-lidar_count // MAP_MAX_SCANS))
         voxel = lidar_voxel_agreement(
             registered_scans(
-                db_path, lidar_stream, scan_stride, tf, odom_parent, tf_failure_budget
+                db_path, lidar_stream, metric_stride, tf, odom_parent, tf_failure_budget
             ),
             raw_pose,
             list(graph),
