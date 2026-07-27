@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single point of teleop-input → EpisodeStatus translation.
+"""Single point of episode-control input → EpisodeStatus translation.
 
-Watches buttons / keyboard, runs the start/save/discard state machine,
+Accepts buttons, keyboard input, and agent skills; runs the start/save/discard state machine,
 publishes EpisodeStatus on every transition. RecordReplay (or whatever
 records the bus) captures that stream into session.db; DataPrep reads
 only the recorded EpisodeStatus events offline — never raw buttons or
@@ -23,6 +23,7 @@ keypresses.
 
 from __future__ import annotations
 
+from enum import StrEnum
 import threading
 import time
 from typing import Any, Literal, TypeAlias
@@ -30,6 +31,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel
 from reactivex.disposable import Disposable
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -38,9 +40,16 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# A button/keyboard press requests one of these; `toggle` resolves to
-# `start`/`save` based on the current state, so it never reaches the output.
-EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
+
+class EpisodeCommand(StrEnum):
+    """Commands accepted by the episode state machine."""
+
+    START = "start"
+    SAVE = "save"
+    DISCARD = "discard"
+    TOGGLE = "toggle"
+
+
 # What gets published as `EpisodeStatus.last_event` (`init` on boot).
 EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
 RecordingState: TypeAlias = Literal["idle", "recording"]
@@ -64,8 +73,8 @@ class KeyPress(BaseModel):
 
 class EpisodeMonitorModuleConfig(ModuleConfig):
     button_map: dict[EpisodeCommand, str] = {
-        "toggle": "B",
-        "discard": "Y",
+        EpisodeCommand.TOGGLE: "B",
+        EpisodeCommand.DISCARD: "Y",
     }
     keyboard_map: dict[EpisodeCommand, str] = {}
     default_task_label: str | None = None
@@ -86,7 +95,13 @@ class EpisodeMonitorModule(Module):
         self._saved: int = 0
         self._discarded: int = 0
         self._prev_bits: dict[str, bool] = {}  # rising-edge detection for buttons
+        # Label for the current take. Defaults to the config value so button-driven
+        # takes keep their prior behavior; set per-episode via `set_episode(..)`.
+        self._task_label: str | None = self.config.default_task_label
         self._lock = threading.Lock()
+        # Keep state mutation, snapshot creation, and publication in one ordered
+        # transition without holding the state lock during subscriber I/O.
+        self._transition_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -96,19 +111,84 @@ class EpisodeMonitorModule(Module):
         self.register_disposable(Disposable(self.keyboard.subscribe(self._on_keyboard)))
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
-        with self._lock:
-            status = self._snapshot("init", time.time())
-        self._emit(status)
+        with self._transition_lock:
+            with self._lock:
+                status = self._snapshot("init", time.time())
+            self._emit(status)
 
     @rpc
     def reset_counters(self) -> EpisodeStatus:
-        with self._lock:
-            self._state = "idle"
-            self._saved = 0
-            self._discarded = 0
-            self._prev_bits = {}
-            status = self._snapshot("init", time.time())
-        return self._emit(status)
+        with self._transition_lock:
+            with self._lock:
+                self._state = "idle"
+                self._saved = 0
+                self._discarded = 0
+                self._prev_bits = {}
+                self._task_label = self.config.default_task_label
+                status = self._snapshot("init", time.time())
+            return self._emit(status)
+
+    @rpc
+    def set_episode(self, event: EpisodeCommand, task_label: str | None = None) -> str:
+        """Drive the episode state machine from an external caller (e.g. the agent).
+
+        This is the runtime/programmatic equivalent of pressing the record button.
+        It lets a skill start, save, or discard a labeled episode without any
+        physical controller.
+
+        Args:
+            event: start, save, discard, or toggle.
+            task_label: task description applied on start. When omitted, the
+                previous label is reused for another take of the same task.
+
+        Returns:
+            A human-readable status string (also safe to surface to the agent).
+        """
+        try:
+            command = EpisodeCommand(event)
+        except (TypeError, ValueError):
+            choices = ", ".join(command.value for command in EpisodeCommand)
+            return f"error: unknown episode event '{event}'; use {choices}."
+
+        status = self._transition(command, time.time(), task_label)
+        if status is None:
+            return f"No episode is currently recording; nothing to {command.value}."
+
+        match status.last_event:
+            case "start":
+                label = f" (task: {status.task_label})" if status.task_label else ""
+                return f"Recording started{label}."
+            case "save":
+                return f"Episode saved. Total saved this session: {status.episodes_saved}."
+            case "discard":
+                return (
+                    f"Episode discarded. Total discarded this session: {status.episodes_discarded}."
+                )
+            case unexpected:
+                raise RuntimeError(f"unexpected episode transition: {unexpected}")
+
+    @skill
+    def start_recording(self, task_label: str | None = None) -> str:
+        """Start recording a labeled robot-training episode.
+
+        All configured observation and action streams are recorded until
+        `stop_recording` saves the take or `discard_recording` drops it.
+
+        Args:
+            task_label: Short task description. Omit it to reuse the previous
+                label when collecting another take of the same task.
+        """
+        return self.set_episode(EpisodeCommand.START, task_label)
+
+    @skill
+    def stop_recording(self) -> str:
+        """Stop and save the active recording episode."""
+        return self.set_episode(EpisodeCommand.SAVE)
+
+    @skill
+    def discard_recording(self) -> str:
+        """Stop and discard the active recording episode."""
+        return self.set_episode(EpisodeCommand.DISCARD)
 
     # ── port handlers ────────────────────────────────────────────────────────
 
@@ -139,32 +219,44 @@ class EpisodeMonitorModule(Module):
                 self._transition(event_name, msg.ts)
                 break
 
-    def _transition(self, event: EpisodeCommand, ts: float) -> None:
+    def _transition(
+        self,
+        event: EpisodeCommand,
+        ts: float,
+        task_label: str | None = None,
+    ) -> EpisodeStatus | None:
         """State-machine transition. Publishes EpisodeStatus on every change.
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
         so one button can begin and end a take. The resolved event is what gets
         published (DataPrep only ever sees start/save/discard).
         """
-        with self._lock:
-            if event == "toggle":
-                event = "save" if self._state == "recording" else "start"
-            if event == "start":
-                # Auto-commit any in-progress episode (matches DataPrep extractor).
-                if self._state == "recording":
+        with self._transition_lock:
+            with self._lock:
+                if event is EpisodeCommand.TOGGLE:
+                    event = (
+                        EpisodeCommand.SAVE if self._state == "recording" else EpisodeCommand.START
+                    )
+                if event is EpisodeCommand.START:
+                    # Auto-commit any in-progress episode (matches DataPrep extractor).
+                    if self._state == "recording":
+                        self._saved += 1
+                    if task_label is not None:
+                        self._task_label = task_label
+                    self._state = "recording"
+                elif event is EpisodeCommand.SAVE:
+                    if self._state != "recording":
+                        return None
                     self._saved += 1
-                self._state = "recording"
-            elif event == "save":
-                if self._state == "recording":
-                    self._saved += 1
-                self._state = "idle"
-            elif event == "discard":
-                if self._state == "recording":
+                    self._state = "idle"
+                elif event is EpisodeCommand.DISCARD:
+                    if self._state != "recording":
+                        return None
                     self._discarded += 1
-                self._state = "idle"
-            # Snapshot under the mutation's lock so the event matches the state.
-            status = self._snapshot(event, ts)
-        self._emit(status)
+                    self._state = "idle"
+                # Snapshot under the mutation's lock so the event matches the state.
+                status = self._snapshot(event.value, ts)
+            return self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
@@ -174,11 +266,11 @@ class EpisodeMonitorModule(Module):
             episodes_saved=self._saved,
             episodes_discarded=self._discarded,
             last_event=last_event,
-            task_label=self.config.default_task_label,
+            task_label=self._task_label,
         )
 
     def _emit(self, status: EpisodeStatus) -> EpisodeStatus:
-        """Publish + log a snapshot. Must run outside the lock (does I/O)."""
+        """Publish + log a snapshot. Must run outside the state lock (does I/O)."""
         self.status.publish(status)
         self._log_status(status)
         return status
