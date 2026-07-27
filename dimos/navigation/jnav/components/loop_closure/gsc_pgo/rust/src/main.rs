@@ -91,6 +91,12 @@ pub struct Config {
     pub loop_yank_gate_max_distance_m: f64,
     pub loop_min_id_gap: u64,
 
+    // Long-jump agreement buffer
+    pub loop_instant_accept_distance_m: f64,
+    pub loop_buffer_agreement_trans_m: f64,
+    pub loop_buffer_agreement_rot_deg: f64,
+    pub loop_buffer_min_agree: u64,
+
     /// Transform world-frame scans to body-frame using the paired odometry.
     pub subtract_odom_from_cloud: bool,
 
@@ -112,6 +118,10 @@ pub struct Config {
     // Robust (Huber) kernel on loop factors
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
+
+    // Final batch GNC (TLS) re-solve over the committed closures.
+    pub loop_gnc_final: bool,
+    pub loop_gnc_var_scale: f64,
 
     // Location constraints
     pub use_location_constraints: bool,
@@ -152,8 +162,14 @@ impl Config {
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
+            loop_instant_accept_distance_m: self.loop_instant_accept_distance_m,
+            loop_buffer_agreement_trans_m: self.loop_buffer_agreement_trans_m,
+            loop_buffer_agreement_rot_deg: self.loop_buffer_agreement_rot_deg,
+            loop_buffer_min_agree: self.loop_buffer_min_agree,
             loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
+            loop_gnc_final: self.loop_gnc_final,
+            loop_gnc_var_scale: self.loop_gnc_var_scale,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
@@ -550,6 +566,7 @@ impl Worker {
             pgo.smooth_and_update();
 
             if had_loop {
+                pgo.finalize_gnc();
                 let msg =
                     build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_event, &msg, "loop_closure_event");

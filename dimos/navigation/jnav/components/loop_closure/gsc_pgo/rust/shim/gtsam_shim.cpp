@@ -9,7 +9,10 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/linear/NoiseModel.h>
+#include <gtsam/nonlinear/GncOptimizer.h>
+#include <gtsam/nonlinear/GncParams.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
@@ -17,6 +20,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -290,6 +294,69 @@ gtsam_shim_values* gtsam_shim_isam2_calculate_best_estimate(const gtsam_shim_isa
     } catch (...) {
         return nullptr;
     }
+}
+
+double gtsam_shim_isam2_error(const gtsam_shim_isam2* isam2) {
+    if (isam2 == nullptr) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    try {
+        const gtsam::ISAM2* solver = unwrap(isam2);
+        return solver->getFactorsUnsafe().error(solver->calculateBestEstimate());
+    } catch (...) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+// ---- Batch GNC ------------------------------------------------------------------
+
+gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
+                                           const gtsam_shim_values* values,
+                                           const uint64_t* known_inlier_indices,
+                                           size_t n_known, double** out_weights,
+                                           size_t* out_n_weights) {
+    if (out_weights != nullptr) {
+        *out_weights = nullptr;
+    }
+    if (out_n_weights != nullptr) {
+        *out_n_weights = 0;
+    }
+    if (graph == nullptr || values == nullptr) {
+        return nullptr;
+    }
+    if (known_inlier_indices == nullptr && n_known != 0) {
+        return nullptr;
+    }
+    try {
+        using GncLMParams = gtsam::GncParams<gtsam::LevenbergMarquardtParams>;
+        GncLMParams params;
+        params.setLossType(gtsam::GncLossType::TLS);
+        if (n_known > 0) {
+            GncLMParams::IndexVector known(known_inlier_indices, known_inlier_indices + n_known);
+            params.setKnownInliers(known);
+        }
+        gtsam::GncOptimizer<GncLMParams> optimizer(*unwrap(graph), *unwrap(values), params);
+        gtsam::Values result = optimizer.optimize();
+        if (out_weights != nullptr && out_n_weights != nullptr) {
+            const gtsam::Vector weights = optimizer.getWeights();
+            const size_t n = static_cast<size_t>(weights.size());
+            double* copy = static_cast<double*>(std::malloc(n * sizeof(double)));
+            if (copy != nullptr) {
+                for (size_t i = 0; i < n; i++) {
+                    copy[i] = weights(static_cast<Eigen::Index>(i));
+                }
+                *out_weights = copy;
+                *out_n_weights = n;
+            }
+        }
+        return wrap(new gtsam::Values(result));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void gtsam_shim_doubles_free(double* values) {
+    std::free(values);
 }
 
 void gtsam_shim_indices_free(uint64_t* indices) {

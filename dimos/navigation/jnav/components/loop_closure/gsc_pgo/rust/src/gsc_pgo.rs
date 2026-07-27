@@ -109,15 +109,55 @@ pub struct LoopPair {
     pub noise: NoiseModel,
 }
 
+/// The relative-pose data of a committed loop, retained after the run so an
+/// offline pass can rebuild the graph and probe each edge. The live `LoopPair`
+/// is drained into iSAM2 and dropped; this is the plain-data residue.
+#[derive(Clone, Copy)]
+pub struct CommittedLoop {
+    pub source_id: usize,
+    pub target_id: usize,
+    pub rotation_offset: Mat3,
+    pub translation_offset: Vec3,
+    pub score: f64,
+    /// Final GNC weight from `finalize_gnc` (~1 inlier / kept, ~0 rejected).
+    /// 1.0 until the batch GNC pass runs (or if `loop_gnc_final` is off).
+    pub gnc_weight: f64,
+}
+
+/// Max buffered long jumps kept at once. Oldest is evicted FIFO past this.
+const LONG_JUMP_BUFFER_MAX_LEN: usize = 4;
+
+/// Floor on the per-loop ICP score before it is used as a GNC factor variance,
+/// so a zero-score closure still gets a finite (very tight) noise model.
+const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
+
+/// A would-be long-jump loop closure parked in the buffer. It carries the same
+/// constraint a `LoopPair` does, plus the rigid map-correction SE3 it implies so
+/// buffered jumps can be tested for mutual agreement before any is committed.
+struct PendingJump {
+    pair: LoopPair,
+    /// Position-independent translation of the implied rigid correction SE3
+    /// (`t` in `refined = R * odom + t`). Comparable across jumps taken at
+    /// different points, so a shared drift correction reads as agreement.
+    correction_translation: Vec3,
+    /// Rotation of the implied rigid correction SE3 (`R`).
+    correction_rotation: Mat3,
+    /// Index into `loop_diagnostics` so the outcome can be rewritten to
+    /// "accept_buffered" when this jump is promoted.
+    diag_index: usize,
+}
+
 /// Per-search loop-closure diagnostics
 /// one record every time `search_for_loop_pairs` evaluates a keyframe, capturing the metric at each
 /// gate and the outcome (accepted, or the name of the gate that rejected it).
 /// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
 #[derive(Debug, Clone)]
 pub struct LoopCandidateDiag {
-    /// Outcome: "accepted" or the rejecting gate — one of "throttle_min_duration",
-    /// "no_structure", "low_occupancy", "no_candidate", "lowe_reject",
-    /// "distance_reject", "degeneracy_reject", "icp_reject".
+    /// Outcome: a short accepted jump is "accepted"; a long jump is "buffered"
+    /// while parked and "accept_buffered" once agreement promotes it. Otherwise
+    /// the rejecting gate — one of "throttle_min_duration", "no_structure",
+    /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
+    /// "degeneracy_reject", "icp_reject", "yank_reject".
     pub outcome: &'static str,
     pub source_id: usize,
     pub source_time: f64,
@@ -236,9 +276,35 @@ pub struct Config {
     /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
     /// corrects nothing and can only inject error (structural alias). 0 disables.
     pub loop_min_id_gap: u64,
+    /// Long-jump buffer: an accepted closure whose candidate_distance is within
+    /// this many meters is committed to the graph instantly. A longer jump is
+    /// parked in a buffer and only committed once enough independent jumps agree
+    /// on the same correction (see the `loop_buffer_agreement_*` gates and
+    /// `loop_buffer_min_agree`). <= 0 disables the buffer (every accept instant).
+    pub loop_instant_accept_distance_m: f64,
+    /// Agreement gate: the two jumps' implied rigid map-correction SE3 must have
+    /// translations (position-independent `t`) within this many meters.
+    pub loop_buffer_agreement_trans_m: f64,
+    /// Agreement gate: the two jumps' implied correction rotations must match
+    /// within this many degrees.
+    pub loop_buffer_agreement_rot_deg: f64,
+    /// Number of mutually-agreeing buffered jumps required before the whole
+    /// agreeing set is promoted to real graph constraints.
+    pub loop_buffer_min_agree: u64,
     /// Robust (M-estimator) kernel wrapping all loop factors.
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
+    /// After the incremental run, re-solve the whole graph once with a batch GNC
+    /// (graduated non-convexity, TLS loss) optimizer that jointly classifies the
+    /// committed loop closures inlier/outlier against the global residual — the
+    /// odometry backbone is pinned as a known inlier. This rejects the mutually
+    /// conflicting closures that Huber merely down-weights, so a loop that only
+    /// under-closes incrementally actually snaps shut.
+    pub loop_gnc_final: bool,
+    /// GNC loop-factor variance is `score * loop_gnc_var_scale`. The raw ICP
+    /// score gives a variance (~1e-3) tight enough that GNC over-rejects; scaling
+    /// it up loosens each loop so GNC keeps the true consensus set.
+    pub loop_gnc_var_scale: f64,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
     /// by GscPgo itself).
     pub use_location_constraints: bool,
@@ -282,8 +348,14 @@ impl Default for Config {
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
             loop_min_id_gap: 0,
+            loop_instant_accept_distance_m: 0.0,
+            loop_buffer_agreement_trans_m: 1.0,
+            loop_buffer_agreement_rot_deg: 10.0,
+            loop_buffer_min_agree: 2,
             loop_robust_kernel: false,
             loop_robust_huber_k: 1.345,
+            loop_gnc_final: true,
+            loop_gnc_var_scale: 10.0,
             use_location_constraints: false,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -315,7 +387,9 @@ pub struct GscPgo {
     scan_context_config: scan_context::Config,
     key_poses: Vec<KeyPoseWithCloud>,
     history_pairs: Vec<(usize, usize)>,
+    committed_loops: Vec<CommittedLoop>,
     cache_pairs: Vec<LoopPair>,
+    pending_long_jumps: Vec<PendingJump>,
     scan_context_descriptors: Vec<scan_context::Descriptor>,
     scan_context_ring_keys: Vec<scan_context::RingKey>,
     rotation_offset: Mat3,
@@ -362,7 +436,9 @@ impl GscPgo {
             scan_context_config,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
+            committed_loops: Vec::new(),
             cache_pairs: Vec::new(),
+            pending_long_jumps: Vec::new(),
             scan_context_descriptors: Vec::new(),
             scan_context_ring_keys: Vec::new(),
             rotation_offset: mat3::identity(),
@@ -387,6 +463,158 @@ impl GscPgo {
     /// All per-search loop-closure diagnostic records accumulated so far.
     pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
         &self.loop_diagnostics
+    }
+
+    /// Total nonlinear error of the current factor graph at the best estimate
+    /// (½·Σ whitened residual², robust kernels applied) — how much all the
+    /// constraints conflict. `NaN` on failure.
+    pub fn graph_error(&self) -> f64 {
+        self.isam2.error()
+    }
+
+    /// Rebuild the odometry backbone (anchor prior + odom between-factors, plus
+    /// the optional per-keyframe roll/pitch prior) into a fresh graph/values.
+    /// Shared by the counterfactual edge-error probe and the batch GNC re-solve.
+    /// Loop factors are added by the caller. `local_init` seeds every node (and
+    /// the anchor prior) from the raw dead-reckoned local pose instead of the
+    /// incrementally-corrected global — GNC's TLS loss is non-convex and must
+    /// start from the odom backbone, not the under-closed Huber estimate, or it
+    /// settles into the wrong inlier set on long trajectories.
+    fn build_backbone(&self, graph: &mut FactorGraph, values: &mut Values, local_init: bool) {
+        const ANCHOR_YAW_VAR: f64 = 1e-12;
+        const ANCHOR_TRANS_VAR: f64 = 1e-12;
+        for (idx, key_pose) in self.key_poses.iter().enumerate() {
+            let init_pose = if local_init {
+                Pose3 {
+                    rotation: key_pose.rotation_local,
+                    translation: key_pose.translation_local,
+                }
+            } else {
+                Pose3 {
+                    rotation: key_pose.rotation_global,
+                    translation: key_pose.translation_global,
+                }
+            };
+            values
+                .insert_pose3(idx as u64, &init_pose)
+                .expect("gtsam: counterfactual init value");
+            if idx == 0 {
+                let prior_var = [
+                    self.config.anchor_roll_pitch_var,
+                    self.config.anchor_roll_pitch_var,
+                    ANCHOR_YAW_VAR,
+                    ANCHOR_TRANS_VAR,
+                    ANCHOR_TRANS_VAR,
+                    ANCHOR_TRANS_VAR,
+                ];
+                let noise = NoiseModel::diagonal_variances(&prior_var);
+                graph
+                    .add_prior_pose3(0, &init_pose, &noise)
+                    .expect("gtsam: counterfactual anchor prior");
+                continue;
+            }
+            let last = &self.key_poses[idx - 1];
+            let last_rotation_transpose = mat3::transpose(&last.rotation_local);
+            let rotation_between =
+                mat3::mat_mul(&last_rotation_transpose, &key_pose.rotation_local);
+            let translation_between = mat3::mat_vec(
+                &last_rotation_transpose,
+                &mat3::sub(&key_pose.translation_local, &last.translation_local),
+            );
+            let odom_noise = NoiseModel::diagonal_variances(&[
+                self.config.odom_rot_roll_pitch_var,
+                self.config.odom_rot_roll_pitch_var,
+                self.config.odom_rot_yaw_var,
+                self.config.odom_trans_xy_var,
+                self.config.odom_trans_xy_var,
+                self.config.odom_trans_z_var,
+            ]);
+            graph
+                .add_between_pose3(
+                    (idx - 1) as u64,
+                    idx as u64,
+                    &Pose3 {
+                        rotation: rotation_between,
+                        translation: translation_between,
+                    },
+                    &odom_noise,
+                )
+                .expect("gtsam: counterfactual odom between factor");
+            if self.config.per_keyframe_roll_pitch_prior {
+                let grav_var = [
+                    self.config.per_keyframe_roll_pitch_var,
+                    self.config.per_keyframe_roll_pitch_var,
+                    FREE_VARIANCE,
+                    FREE_VARIANCE,
+                    FREE_VARIANCE,
+                    FREE_VARIANCE,
+                ];
+                let grav_noise = NoiseModel::diagonal_variances(&grav_var);
+                graph
+                    .add_prior_pose3(idx as u64, &init_pose, &grav_noise)
+                    .expect("gtsam: counterfactual per-keyframe prior");
+            }
+        }
+    }
+
+    /// For each committed loop, rebuild a fresh pose graph and report the total
+    /// GTSAM error assuming that one edge were accepted at high confidence
+    /// (`high_confidence_variance` on all six tangent components, no robust
+    /// kernel so the conflict is not down-weighted).
+    ///
+    /// With `full_consensus` every other committed loop is present at its real
+    /// noise, so the error reflects how much the tested edge fights the rest of
+    /// the closures. Otherwise only the odometry backbone plus the tested edge
+    /// are present, so the error reflects how much it fights dead-reckoning.
+    /// Returned in `committed_loops` order.
+    pub fn counterfactual_edge_errors(
+        &self,
+        high_confidence_variance: f64,
+        full_consensus: bool,
+    ) -> Vec<f64> {
+        let high_conf_var = [high_confidence_variance; 6];
+        let mut errors = Vec::with_capacity(self.committed_loops.len());
+        for tested in 0..self.committed_loops.len() {
+            let mut graph = FactorGraph::new();
+            let mut values = Values::new();
+            self.build_backbone(&mut graph, &mut values, false);
+            for (edge_idx, loop_edge) in self.committed_loops.iter().enumerate() {
+                let is_tested = edge_idx == tested;
+                if !full_consensus && !is_tested {
+                    continue;
+                }
+                let variances = if is_tested {
+                    high_conf_var
+                } else {
+                    [loop_edge.score; 6]
+                };
+                let base = NoiseModel::diagonal_variances(&variances);
+                let robust;
+                let noise: &NoiseModel = if self.config.loop_robust_kernel && !is_tested {
+                    robust = NoiseModel::robust_huber(self.config.loop_robust_huber_k, &base);
+                    &robust
+                } else {
+                    &base
+                };
+                graph
+                    .add_between_pose3(
+                        loop_edge.target_id as u64,
+                        loop_edge.source_id as u64,
+                        &Pose3 {
+                            rotation: loop_edge.rotation_offset,
+                            translation: loop_edge.translation_offset,
+                        },
+                        noise,
+                    )
+                    .expect("gtsam: counterfactual loop between factor");
+            }
+            let mut isam2 = Isam2::new();
+            isam2
+                .update(&graph, &values, &[])
+                .expect("gtsam: counterfactual isam2 update");
+            errors.push(isam2.error());
+        }
+        errors
     }
 
     pub fn config(&self) -> &Config {
@@ -446,6 +674,11 @@ impl GscPgo {
 
     pub fn history_pairs(&self) -> &[(usize, usize)] {
         &self.history_pairs
+    }
+
+    /// The relative-pose data of every committed loop, in commit order.
+    pub fn committed_loops(&self) -> &[CommittedLoop] {
+        &self.committed_loops
     }
 
     pub fn key_poses(&self) -> &[KeyPoseWithCloud] {
@@ -1020,20 +1253,113 @@ impl GscPgo {
             return;
         }
 
-        diag.outcome = "accepted";
-        self.loop_diagnostics.push(diag);
-
         // Original isotropic noise = ICP fitness on all 6 DOF.
         let noise = NoiseModel::diagonal_variances(&[score; 6]);
-        self.cache_pairs.push(LoopPair {
+        let pair = LoopPair {
             source_id: cur_idx,
             target_id: loop_idx,
             rotation_offset,
             translation_offset,
             score,
             noise,
+        };
+
+        // Short jumps carry almost no drift correction and are trusted on their
+        // own; commit them instantly. A long jump could be a single spurious
+        // yank, so it is parked in the buffer until enough independent jumps
+        // agree on the same correction.
+        let buffer_active = self.config.loop_instant_accept_distance_m > 0.0;
+        if !buffer_active || diag.candidate_distance <= self.config.loop_instant_accept_distance_m {
+            diag.outcome = "accepted";
+            self.loop_diagnostics.push(diag);
+            self.commit_loop_pair(pair);
+            return;
+        }
+
+        // The rigid map-correction this constraint implies, as an SE3 transform
+        // (R, t) mapping current odom pose -> ICP-refined pose:
+        //   refined = R * odom + t   =>   t = refined - R * odom
+        // Recovering t this way makes it position-independent: jumps taken from
+        // different points along a return leg that imply the SAME rigid drift
+        // correction share the same (R, t), even when their raw
+        // (refined - odom) offsets differ because of the rotation. That is what
+        // lets independent revisit jumps reinforce each other.
+        let correction_rotation = mat3::mat_mul(
+            &rotation_refined,
+            &mat3::transpose(&self.key_poses[cur_idx].rotation_global),
+        );
+        let correction_translation = mat3::sub(
+            &translation_refined,
+            &mat3::mat_vec(
+                &correction_rotation,
+                &self.key_poses[cur_idx].translation_global,
+            ),
+        );
+        diag.outcome = "buffered";
+        let diag_index = self.loop_diagnostics.len();
+        self.loop_diagnostics.push(diag);
+        self.pending_long_jumps.push(PendingJump {
+            pair,
+            correction_translation,
+            correction_rotation,
+            diag_index,
         });
-        self.history_pairs.push((loop_idx, cur_idx));
+        self.try_promote_pending();
+        while self.pending_long_jumps.len() > LONG_JUMP_BUFFER_MAX_LEN {
+            self.pending_long_jumps.remove(0);
+        }
+    }
+
+    /// Commit an accepted loop pair to the graph (between-factor cache) and the
+    /// history used for closure throttling.
+    fn commit_loop_pair(&mut self, pair: LoopPair) {
+        self.history_pairs.push((pair.target_id, pair.source_id));
+        self.committed_loops.push(CommittedLoop {
+            source_id: pair.source_id,
+            target_id: pair.target_id,
+            rotation_offset: pair.rotation_offset,
+            translation_offset: pair.translation_offset,
+            score: pair.score,
+            gnc_weight: 1.0,
+        });
+        self.cache_pairs.push(pair);
+    }
+
+    /// After a long jump is parked, check whether the newest buffered jump now
+    /// has at least `loop_buffer_min_agree` mutually-agreeing peers (itself
+    /// included). If so, promote all agreeing jumps to real constraints and mark
+    /// their diagnostics "accept_buffered".
+    fn try_promote_pending(&mut self) {
+        let min_agree = self.config.loop_buffer_min_agree.max(1) as usize;
+        if self.pending_long_jumps.len() < min_agree {
+            return;
+        }
+        let (anchor_translation, anchor_rotation) = {
+            let anchor = self.pending_long_jumps.last().unwrap();
+            (anchor.correction_translation, anchor.correction_rotation)
+        };
+        let trans_tol = self.config.loop_buffer_agreement_trans_m;
+        let rot_tol = self.config.loop_buffer_agreement_rot_deg;
+        let agreeing: Vec<usize> = (0..self.pending_long_jumps.len())
+            .filter(|&index| {
+                let jump = &self.pending_long_jumps[index];
+                mat3::norm(&mat3::sub(
+                    &anchor_translation,
+                    &jump.correction_translation,
+                )) <= trans_tol
+                    && mat3::angular_distance(&anchor_rotation, &jump.correction_rotation)
+                        .to_degrees()
+                        <= rot_tol
+            })
+            .collect();
+        if agreeing.len() < min_agree {
+            return;
+        }
+        for &index in agreeing.iter().rev() {
+            let jump = self.pending_long_jumps.remove(index);
+            self.loop_diagnostics[jump.diag_index].outcome = "accept_buffered";
+            self.commit_loop_pair(jump.pair);
+        }
     }
 
     /// Ensure a graph variable for `to_id` (initialized from this node's
@@ -1214,6 +1540,68 @@ impl GscPgo {
 
         self.timing.gtsam_s += smooth_t0.elapsed().as_secs_f64();
         self.timing.smooth_calls += 1;
+    }
+
+    /// Final batch re-solve over the whole trajectory: rebuild the odometry
+    /// backbone plus every committed loop closure and run GNC (TLS loss) with the
+    /// backbone pinned as known inliers. GNC jointly classifies the closures
+    /// against the global residual, rejecting the mutually conflicting ones that
+    /// the incremental Huber pass merely down-weights (so a loop that only
+    /// under-closes incrementally actually snaps shut). The best estimate is
+    /// written back to every keyframe and each closure's GNC weight is stored.
+    /// No-op when `loop_gnc_final` is off or no closures were committed.
+    pub fn finalize_gnc(&mut self) {
+        if !self.config.loop_gnc_final || self.committed_loops.is_empty() {
+            return;
+        }
+        let gnc_t0 = std::time::Instant::now();
+        let mut graph = FactorGraph::new();
+        let mut values = Values::new();
+        self.build_backbone(&mut graph, &mut values, true);
+        let known_inliers: Vec<u64> = (0..graph.len() as u64).collect();
+        let backbone_len = known_inliers.len();
+        for loop_edge in &self.committed_loops {
+            let variance =
+                loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
+            let noise = NoiseModel::diagonal_variances(&[variance; 6]);
+            graph
+                .add_between_pose3(
+                    loop_edge.target_id as u64,
+                    loop_edge.source_id as u64,
+                    &Pose3 {
+                        rotation: loop_edge.rotation_offset,
+                        translation: loop_edge.translation_offset,
+                    },
+                    &noise,
+                )
+                .expect("gtsam: gnc loop between factor");
+        }
+        let (estimate_values, weights) = graph
+            .gnc_optimize(&values, &known_inliers)
+            .expect("gtsam: gnc optimize");
+        for (idx, key_pose) in self.key_poses.iter_mut().enumerate() {
+            let pose = estimate_values
+                .pose3(idx as u64)
+                .expect("gtsam: keyframe missing from gnc estimate");
+            key_pose.rotation_global = pose.rotation;
+            key_pose.translation_global = pose.translation;
+        }
+        for (edge_idx, loop_edge) in self.committed_loops.iter_mut().enumerate() {
+            let weight_idx = backbone_len + edge_idx;
+            if weight_idx < weights.len() {
+                loop_edge.gnc_weight = weights[weight_idx];
+            }
+        }
+        let last_item = self.key_poses.last().unwrap();
+        self.rotation_offset = mat3::mat_mul(
+            &last_item.rotation_global,
+            &mat3::transpose(&last_item.rotation_local),
+        );
+        self.translation_offset = mat3::sub(
+            &last_item.translation_global,
+            &mat3::mat_vec(&self.rotation_offset, &last_item.translation_local),
+        );
+        self.timing.gtsam_s += gnc_t0.elapsed().as_secs_f64();
     }
 
     /// Direct access to the ICP used for loop verification — handy for
