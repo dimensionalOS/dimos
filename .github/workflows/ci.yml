@@ -147,6 +147,27 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
 
+  cpp:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      # need liblcm installed for testing transport
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+      - name: Configure
+        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/native-cpp -j
+      - name: Test
+        run: ctest --test-dir build/native-cpp --output-on-failure
+
   md-babel:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -814,6 +835,7 @@ jobs:
     needs:
     - lint
     - rust
+    - cpp
     - md-babel
     - docs-validate
     - web
