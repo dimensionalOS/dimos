@@ -159,20 +159,21 @@ def build(
     # base<-optical camera extrinsic, read from the tf tree (was the json's optical_in_base)
     camera_info = read_camera_info(store)
     base_to_optical = None
-    if camera_info is not None and store_tf is not None:
+    if camera_info is not None:
         optical_frame = camera_info[2] or "camera_optical"
-        extrinsic = store_tf.get(body_frame, optical_frame)
-        if extrinsic is not None:
-            base_to_optical = Pose3(extrinsic.to_matrix())
+        try:
+            base_to_optical = Pose3(store_tf.get(body_frame, optical_frame).to_matrix())
+        except LookupError:
+            pass
 
     def tf_world_points(
-        observation: Any, tf: RecordingTF | None, world: str, fallback_frame: str
+        observation: Any, tf: RecordingTF, world: str, fallback_frame: str
     ) -> np.ndarray:
         points = np.asarray(observation.data.points_f32())
-        scan_frame = getattr(observation.data, "frame_id", "") or fallback_frame
-        transform = tf.get(world, scan_frame, float(observation.ts), None) if tf else None
-        if transform is None or not len(points):
+        if not len(points):
             return points
+        scan_frame = getattr(observation.data, "frame_id", "") or fallback_frame
+        transform = tf.get(world, scan_frame, float(observation.ts), None)
         rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
         offset = transform.translation
         translation = np.array([offset.x, offset.y, offset.z], float)

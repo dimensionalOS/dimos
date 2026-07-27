@@ -28,6 +28,22 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import TBuffer
+
+
+class PastOnlyTBuffer(TBuffer):
+    """Latch the newest transform at-or-before the query time, never a future one."""
+
+    def get(self, time_point: float | None = None, time_tolerance: float = 1.0) -> Transform | None:
+        if time_point is None:
+            return self.last()
+        exact = self.load(time_point)
+        if exact is not None:
+            return exact
+        latched = self.find_before(time_point)
+        if latched is None or time_point - latched.ts > time_tolerance:
+            return None
+        return latched
 
 
 class RecordingTF(StreamTF):
@@ -39,19 +55,35 @@ class RecordingTF(StreamTF):
     of the ``tf`` stream rather than into ``tf_static``, so a windowed lookup at
     any later time drops those edges and the transform chain breaks. Loading the
     full stream once keeps them buffered for the entire run; the only time-varying
-    edge (``odom->base_link``) is densely sampled, so a nearest lookup
-    (``time_tolerance=None``) reproduces the pose at each query time.
+    edge (``odom->base_link``) is densely sampled, so latching the newest sample
+    at-or-before the query time (``PastOnlyTBuffer``, never a future sample)
+    reproduces the pose at each query time.
 
-    An optional edge override replaces one edge with a fed trajectory so tf
-    reflects the poses being scored. It re-parents the child (drops every existing
-    edge into that child) so the fed edge is the only route to it, matching a
-    shortest-path lookup. The override is applied lazily on first lookup, so
+    An optional edge override replaces the recorded localization with a fed
+    trajectory so tf reflects the poses being scored. It drops every time-varying
+    recorded edge (the recorded localization chain) while keeping static edges
+    (sensor mounts, including edges into the override child), so every lookup
+    routes through the fed edge plus static mounts — recorded and fed
+    localization never mix. The override is applied lazily on first lookup, so
     recordings whose scans are already world-framed never pay for it. Provide it
     at construction (``odom_tf`` + ``odom_stream``) or later via ``override_edge``.
+
+    ``get`` raises ``LookupError`` (showing the loaded tree) instead of returning
+    ``None``: an unresolvable edge means the tf tree is broken, not a soft miss.
     """
 
     _override_edge: tuple[str, str] | None = None
     _override_transforms: Callable[[], list[Transform]] | None = None
+
+    def receive_transform(self, *args: Transform) -> None:
+        # same as MultiTBuffer.receive_transform but with past-only buffers
+        with self._cv:
+            for transform in args:
+                key = (transform.frame_id, transform.child_frame_id)
+                if key not in self.buffers:
+                    self.buffers[key] = PastOnlyTBuffer(self.buffer_size)
+                self.buffers[key].add(transform)
+            self._cv.notify_all()
 
     @classmethod
     def from_store(
@@ -61,9 +93,7 @@ class RecordingTF(StreamTF):
         *,
         odom_tf: str | None = None,
         odom_stream: str | None = None,
-    ) -> RecordingTF | None:
-        if stream not in store.list_streams():
-            return None
+    ) -> RecordingTF:
         recording_tf = cls(store.stream(stream, TFMessage))
         if odom_tf and odom_stream and odom_stream in store.list_streams():
             parent, _, child = odom_tf.partition(":")
@@ -85,8 +115,9 @@ class RecordingTF(StreamTF):
         """Replace the ``parent->child`` edge with a sampled trajectory.
 
         ``times`` is ``(N,)`` and ``poses`` is ``(N, 7)`` as ``[x, y, z, qx, qy, qz, qw]``.
-        Re-parents ``child`` so the fed edge is its only parent. Applied immediately if
-        the stream is already loaded, otherwise on the next lookup.
+        Drops all recorded time-varying edges so the fed edge is the only
+        localization. Applied immediately if the stream is already loaded,
+        otherwise on the next lookup.
         """
         times = np.asarray(times, float)
         poses = np.asarray(poses, float)
@@ -106,31 +137,33 @@ class RecordingTF(StreamTF):
             with self._cv:
                 self._apply_override()
 
-    def register(
-        self, world_frame: str, scan_frame: str, ts: float, points: np.ndarray
-    ) -> tuple[np.ndarray, tuple[float, float, float] | None]:
-        """Bring one scan's ``points`` into ``world_frame`` via tf.
-
-        Returns ``(world_points_f32, sensor_origin)`` where the origin is the tf
-        translation (the sensor position, i.e. the ray origin). Origin is ``None``
-        when the tf chain ``world_frame <- scan_frame`` can't be resolved at ``ts``
-        — the caller skips that scan rather than falling back to a guess.
-        """
-        if not len(points):
-            return points.astype(np.float32), None
-        transform = self.get(world_frame, scan_frame, ts, None)
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> Transform:
+        transform = super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
         if transform is None:
-            return points.astype(np.float32), None
-        rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
-        translation = np.array(
-            [transform.translation.x, transform.translation.y, transform.translation.z], float
-        )
-        world = points @ rotation.T + translation
-        return world.astype(np.float32), (
-            float(translation[0]),
-            float(translation[1]),
-            float(translation[2]),
-        )
+            edges = ", ".join(sorted(f"{parent}->{child}" for parent, child in self.buffers))
+            tolerance = time_tolerance if time_tolerance is not None else self.buffer_size
+            raise LookupError(
+                "tf lookup failed:\n"
+                f"  tree: {edges or '<none>'}\n"
+                f"  timestamp: {time_point}\n"
+                f"  tolerance: {tolerance}\n"
+                f"  failed query: {parent_frame!r} <- {child_frame!r}"
+            )
+        return transform
 
     @property
     def frames(self) -> set[str]:
@@ -155,8 +188,37 @@ class RecordingTF(StreamTF):
             self._covered = (-math.inf, math.inf)
 
     def _apply_override(self) -> None:
-        _parent, child = self._override_edge  # type: ignore[misc]
-        for key in [edge for edge in self.buffers if edge[1] == child]:
+        for key in [edge for edge in self.buffers if not _edge_is_static(self.buffers[edge])]:
             self.buffers.pop(key, None)
         assert self._override_transforms is not None
         self.receive_transform(*self._override_transforms())
+
+
+_STATIC_POSE_TOLERANCE = 1e-6
+
+
+def _pose_vector(transform: Transform) -> np.ndarray:
+    translation, rotation = transform.translation, transform.rotation
+    return np.array(
+        [
+            translation.x,
+            translation.y,
+            translation.z,
+            rotation.x,
+            rotation.y,
+            rotation.z,
+            rotation.w,
+        ]
+    )
+
+
+def _edge_is_static(buffer: TBuffer) -> bool:
+    samples = iter(buffer)
+    first = next(samples, None)
+    if first is None:
+        return True
+    reference = _pose_vector(first)
+    return all(
+        np.allclose(_pose_vector(sample), reference, atol=_STATIC_POSE_TOLERANCE)
+        for sample in samples
+    )
