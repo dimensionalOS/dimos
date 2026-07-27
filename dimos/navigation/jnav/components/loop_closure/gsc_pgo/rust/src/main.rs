@@ -536,6 +536,23 @@ impl Worker {
                     );
                     continue;
                 }
+                // Deferred half of adoption: the iSAM2 rebuild blocks this
+                // thread for tens of seconds, so it only runs once no newer
+                // solve is pending — republishes stay alive until the final
+                // solve's poses are already out the door.
+                if !pgo.gnc_in_flight() && pgo.rebuild_isam2_if_stale() {
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_graph(
+                        &pgo,
+                        last_time,
+                        &frame_id,
+                        deformation_tf_id,
+                        &mut deformation_ids,
+                        &mut deformation_last,
+                        &mut deformation_rng,
+                    );
+                    continue;
+                }
                 if pgo.gnc_in_flight()
                     && last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval
                 {

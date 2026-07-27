@@ -440,6 +440,10 @@ pub struct GscPgo {
     /// classification poll drains the worker channel, so without this the
     /// batch poses would be gone by the time the pipeline goes idle.
     latest_gnc_result: Option<GncResult>,
+    /// Set when batch poses were adopted without rebuilding iSAM2 yet; the
+    /// rebuild is deferred so the pipeline thread can publish the adopted
+    /// poses before blocking on the (40-90s) rebuild.
+    isam2_stale: bool,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -487,6 +491,7 @@ impl GscPgo {
             gnc_sequence_applied: 0,
             gnc_sequence_adopted: 0,
             latest_gnc_result: None,
+            isam2_stale: false,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -1755,10 +1760,11 @@ impl GscPgo {
     }
 
     /// Idle path: adopt the newest background GNC solve wholesale — batch
-    /// poses written back and iSAM2 rebuilt from backbone + kept loops —
-    /// because iSAM2 linearization never recovers from mass false-closure
-    /// removal. Uses the stored result if the per-keyframe classification
-    /// poll already drained the channel. Rebuild drops location-constraint
+    /// poses written back, iSAM2 marked stale — because iSAM2 linearization
+    /// never recovers from mass false-closure removal. Uses the stored result
+    /// if the per-keyframe classification poll already drained the channel.
+    /// The caller publishes right after, then triggers the deferred rebuild
+    /// via `rebuild_isam2_if_stale`. Rebuild drops location-constraint
     /// factors, so callers gate on `use_location_constraints`.
     pub fn poll_and_adopt_gnc_solution(&mut self) -> bool {
         if let Some(worker) = &self.gnc_worker {
@@ -1775,6 +1781,18 @@ impl GscPgo {
         }
         self.gnc_sequence_adopted = result.sequence;
         self.apply_gnc_result(&result);
+        self.isam2_stale = true;
+        true
+    }
+
+    /// Deferred half of adoption: rebuild iSAM2 from the adopted poses. Call
+    /// only when no newer GNC solve is in flight — the rebuild blocks the
+    /// pipeline thread for tens of seconds, and doing it while a solve is
+    /// pending would silence republishes right when they matter most.
+    pub fn rebuild_isam2_if_stale(&mut self) -> bool {
+        if !self.isam2_stale {
+            return false;
+        }
         self.rebuild_isam2_from_backbone();
         true
     }
@@ -1865,6 +1883,7 @@ impl GscPgo {
                     self.committed_loops[edge_index].active_in_isam2 = true;
                 }
             }
+            self.isam2_stale = false;
             return;
         }
     }
