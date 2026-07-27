@@ -394,7 +394,7 @@ def test_blob_upload_rejects_a_memory2_name(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
-    assert "--name is only valid for memory2 uploads" in result.output
+    assert "--name is only valid for memory2 uploads" in unstyle(result.output)
 
 
 def test_live_transport_is_nested_below_data() -> None:
