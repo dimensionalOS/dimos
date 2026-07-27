@@ -267,7 +267,6 @@ all_modules = {
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
-    "rate-replay": "dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay.RateReplay",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",
     "receiver-module": "dimos.utils.demo_image_encoding.ReceiverModule",

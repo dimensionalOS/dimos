@@ -46,27 +46,27 @@ from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
 from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose, has_drift
 
-# Fixed-rate replay pacing + sizing caps.
-REPLAY_PUBLISH_HZ = 50.0
-REPLAY_DRAIN_MARGIN_S = 30.0
-MAX_REPLAY_SCANS = 4000
-MAX_REPLAY_ODOM = 16000
-
-# Run cap scales with the workload: a per-scan budget (well above any sane
-# processing time, below the 30s ack timeout) plus fixed startup overhead.
+# Watchdog for a hung run: a generous per-scan budget (well above any sane
+# processing time) plus fixed startup overhead. Hitting it raises — never a
+# silent partial result.
 LOCKSTEP_PER_SCAN_BUDGET_S = 2.0
 LOCKSTEP_BASE_OVERHEAD_S = 120.0
 LOCKSTEP_POLL_S = 5.0
-LOCKSTEP_DRAIN_S = 10.0
+# After the last scan is acked the module may still fold a background GNC
+# classification (a full-graph solve, seconds) into the pose graph, so wait
+# until the pose_graph stream has been quiet for longer than one solve rather
+# than sleeping a fixed time.
+GRAPH_SETTLE_QUIET_S = 5.0
+GRAPH_SETTLE_MAX_S = 60.0
+GRAPH_SETTLE_POLL_S = 0.5
 _PROGRESS_EVERY_N_SCANS = 200
 # mirrors EDGE_LOOP_CLOSURE in rust/src/utils.rs pose-graph metadata ids
 EDGE_LOOP_CLOSURE = 1
 
 
-class ReplayStats(TypedDict):
-    timeouts: int
+class ReplayStats(TypedDict, total=False):
     scans_sent: int
-    skipped_scan_ts: list[float]
+    error: str
 
 
 class GraphCaptureConfig(ModuleConfig):
@@ -91,6 +91,8 @@ class GraphCapture(Module):
         self._loop_edges: list[tuple[float, float]] = []
 
     async def handle_pose_graph(self, msg: Graph3D) -> None:
+        # Heartbeat lets the host detect when the graph has settled post-replay.
+        Path(str(self.config.output_path) + ".heartbeat").touch()
         self._graph = [
             (
                 node.pose.ts,
@@ -134,7 +136,7 @@ class LockstepReplayConfig(ModuleConfig):
     lidar_stream: str = "lidar"
     odometry_stream: str = "odom"
     lidar_stride: int = 1
-    odometry_stride: int = 2
+    odometry_stride: int = 1
     odom_publish_hz: float = 500.0
     ack_timeout_s: float = 30.0
     done_path: Path = Path("replay-done.json")
@@ -150,11 +152,12 @@ class LockstepReplay(Module):
     """Closed-loop replay: after each scan, wait for the module's
     corrected_odometry ack before sending the next.
 
-    Every module under test sees 100% of the (strided) scans regardless of
-    machine speed — wall clock varies, the data the module processes doesn't.
+    Every module under test sees 100% of the scans regardless of machine
+    speed — wall clock varies, the data the module processes doesn't.
     Odometry messages are cheap latest-state updates and stay fire-and-forget
-    (lightly paced). Writes a done-marker JSON (ack timeout count) at the end
-    so the host knows when to tear down.
+    (lightly paced). Writes a done-marker JSON at the end so the host knows
+    when to tear down; a scan that is never acked is an error (skipping it
+    would silently thin the data), reported through the same marker.
 
     odom and lidar are merged into one time-sorted stream, so playback runs in
     bursts: all odoms whose timestamps fall before the next scan are emitted
@@ -205,14 +208,10 @@ class LockstepReplay(Module):
 
     async def _replay(self, messages: list[tuple[float, str, Any]]) -> None:
         odom_period = 1.0 / self.config.odom_publish_hz
-        timeouts = 0
         scans_sent = 0
         drift = np.asarray(self.config.drift_per_sec, dtype=np.float64)
         t0 = self.config.drift_t0
         apply_drift = has_drift(drift)
-        # Timestamps of scans the module never acked — the frames it (likely)
-        # skipped. Recorded for reproducibility of partial runs.
-        skipped_scan_ts: list[float] = []
         for timestamp, kind, payload in messages:
             if kind == "odom":
                 pose = payload.pose.pose
@@ -254,103 +253,25 @@ class LockstepReplay(Module):
             try:
                 await asyncio.wait_for(self._ack_event.wait(), timeout=self.config.ack_timeout_s)
             except TimeoutError:
-                timeouts += 1
-                skipped_scan_ts.append(timestamp)
+                self.config.done_path.write_text(
+                    json.dumps(
+                        {
+                            "scans_sent": scans_sent,
+                            "error": (
+                                f"scan at ts {timestamp} not acked within"
+                                f" {self.config.ack_timeout_s}s — module dropped or stalled"
+                            ),
+                        }
+                    )
+                )
+                return
             if scans_sent % _PROGRESS_EVERY_N_SCANS == 0:
-                # Periodic progress so a capped run still reports coverage.
+                # Periodic progress so a watchdogged run still reports coverage.
                 Path(str(self.config.done_path) + ".progress").write_text(
-                    json.dumps(self._stats(timeouts, scans_sent, skipped_scan_ts))
+                    json.dumps({"scans_sent": scans_sent})
                 )
 
-        self.config.done_path.write_text(
-            json.dumps(self._stats(timeouts, scans_sent, skipped_scan_ts))
-        )
-
-    @staticmethod
-    def _stats(timeouts: int, scans_sent: int, skipped_scan_ts: list[float]) -> ReplayStats:
-        return {
-            "timeouts": timeouts,
-            "scans_sent": scans_sent,
-            "skipped_scan_ts": skipped_scan_ts,
-        }
-
-
-class RateReplayConfig(ModuleConfig):
-    db: Path = Path("mem2.db")
-    lidar_stream: str = "lidar"
-    odometry_stream: str = "odom"
-    lidar_stride: int = 1
-    odometry_stride: int = 2
-    publish_hz: float = 40.0
-
-
-class RateReplay(Module):
-    """Legacy fixed-rate replay: publishes world-frame lidar + odometry at a set
-    Hz with timestamps preserved (no ack pacing — wall-clock dependent).
-
-    Works for both odometry payload shapes found in recordings: ``Odometry``
-    (go2 ``fastlio_odometry``) and ``PoseStamped`` (hk_village ``odom``).
-    """
-
-    config: RateReplayConfig
-
-    cloud: Out[PointCloud2]
-    odometry: Out[Odometry]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.done = False
-
-    def _load(self) -> list[tuple[float, str, Any]]:
-        merged: list[tuple[float, str, Any]] = []
-        with SqliteStore(path=self.config.db, must_exist=True) as store:
-            for observation in islice(
-                store.stream(self.config.odometry_stream, Odometry),
-                0,
-                None,
-                self.config.odometry_stride,
-            ):
-                merged.append((float(observation.ts), "odom", observation.data))
-            for lidar_observation in islice(
-                store.stream(self.config.lidar_stream, PointCloud2),
-                0,
-                None,
-                self.config.lidar_stride,
-            ):
-                merged.append((float(lidar_observation.ts), "lidar", lidar_observation.data))
-        merged.sort(key=lambda item: item[0])
-        return merged
-
-    async def main(self) -> AsyncGenerator[None, None]:
-        messages = await asyncio.to_thread(self._load)
-        self._task = asyncio.create_task(self._replay(messages))
-        yield
-        self._task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._task
-
-    async def _replay(self, messages: list[tuple[float, str, Any]]) -> None:
-        period = 1.0 / self.config.publish_hz
-        for timestamp, kind, payload in messages:
-            if kind == "odom":
-                self.odometry.publish(
-                    Odometry(
-                        ts=timestamp,
-                        frame_id="map",
-                        child_frame_id="base_link",
-                        pose=payload.pose.pose,
-                    )
-                )
-            else:
-                self.cloud.publish(
-                    PointCloud2.from_numpy(
-                        payload.points_f32(),
-                        frame_id=payload.frame_id or "map",
-                        timestamp=timestamp,
-                    )
-                )
-            await asyncio.sleep(period)
-        self.done = True
+        self.config.done_path.write_text(json.dumps({"scans_sent": scans_sent}))
 
 
 def run_module_graph(
@@ -360,7 +281,6 @@ def run_module_graph(
     *,
     lidar_stream: str,
     odom_stream: str,
-    lockstep: bool = True,
     drift_per_sec: list[float] | None = None,
     drift_t0: float = 0.0,
 ) -> tuple[list[GraphPose], int, list[tuple[float, float]], dict[str, Any]]:
@@ -368,92 +288,80 @@ def run_module_graph(
     (with orientations), loop-closure count, committed loop-edge keyframe
     timestamp pairs, and replay stats.
 
-    lockstep=True (default) paces scans on the module's corrected_odometry
-    acks — machine-speed independent. lockstep=False is the legacy fixed-rate
-    wall-clock replay. drift_per_sec injects a constant-velocity world offset
-    into the replayed odom+lidar (see LockstepReplayConfig)."""
+    Scans are paced on the module's corrected_odometry acks — machine-speed
+    independent, and every recorded message is fed (no strides, no caps).
+    drift_per_sec injects a constant-velocity world offset into the replayed
+    odom+lidar (see LockstepReplayConfig)."""
     drift_per_sec = drift_per_sec or [0.0, 0.0, 0.0]
     output_path = Path(tempfile.gettempdir()) / f"jnav_lc_eval_{db_path.parent.name}.json"
     output_path.unlink(missing_ok=True)
+    heartbeat_path = Path(str(output_path) + ".heartbeat")
+    heartbeat_path.unlink(missing_ok=True)
     done_path = Path(tempfile.gettempdir()) / f"jnav_lc_eval_done_{db_path.parent.name}.json"
     done_path.unlink(missing_ok=True)
-    Path(str(done_path) + ".progress").unlink(missing_ok=True)
+    progress_path = Path(str(done_path) + ".progress")
+    progress_path.unlink(missing_ok=True)
     counts_store = SqliteStore(path=db_path, must_exist=True)
     counts_store.start()
     lidar_count = int(counts_store.stream(lidar_stream).count())
     odom_count = int(counts_store.stream(odom_stream).count())
     counts_store.stop()
-    lidar_stride = max(1, -(-lidar_count // MAX_REPLAY_SCANS))
-    odometry_stride = max(1, -(-odom_count // MAX_REPLAY_ODOM))
-    n_messages = odom_count // odometry_stride
-    n_messages += lidar_count // lidar_stride
 
-    if lockstep:
-        replay_blueprint = LockstepReplay.blueprint(
+    blueprint = autoconnect(
+        LockstepReplay.blueprint(
             db=db_path,
             lidar_stream=lidar_stream,
             odometry_stream=odom_stream,
-            lidar_stride=lidar_stride,
-            odometry_stride=odometry_stride,
             done_path=done_path,
             drift_per_sec=drift_per_sec,
             drift_t0=drift_t0,
-        )
-    else:
-        replay_blueprint = RateReplay.blueprint(
-            db=db_path,
-            lidar_stream=lidar_stream,
-            odometry_stream=odom_stream,
-            lidar_stride=lidar_stride,
-            odometry_stride=odometry_stride,
-            publish_hz=REPLAY_PUBLISH_HZ,
-        )
-
-    blueprint = autoconnect(
-        replay_blueprint,
+        ),
         module_class.blueprint(**config_overrides),  # type: ignore[attr-defined]
         GraphCapture.blueprint(output_path=output_path),
     )
     coordinator = ModuleCoordinator.build(blueprint)
-    mode = "lockstep" if lockstep else f"fixed-rate {REPLAY_PUBLISH_HZ}Hz"
     print(
-        f"replaying {n_messages} messages through {module_class.__name__}"
-        f" ({mode}, lidar stride {lidar_stride}, odom stride {odometry_stride})"
+        f"replaying {odom_count + lidar_count} messages"
+        f" ({lidar_count} scans) through {module_class.__name__} (lockstep)"
     )
-    replay_stats: dict[str, Any] = {"mode": mode}
+    replay_stats: dict[str, Any] = {}
     try:
-        if lockstep:
-            # Per-frame budget: the cap scales with how many scans are fed.
-            n_scans = lidar_count // lidar_stride
-            max_run_s = n_scans * LOCKSTEP_PER_SCAN_BUDGET_S + LOCKSTEP_BASE_OVERHEAD_S
-            started = time.monotonic()
-            while not done_path.exists():
-                elapsed = time.monotonic() - started
-                if elapsed > max_run_s:
-                    replay_stats["hit_max_run_s"] = max_run_s
-                    print(
-                        f"lockstep replay hit the per-frame cap"
-                        f" ({n_scans} scans x {LOCKSTEP_PER_SCAN_BUDGET_S}s"
-                        f" + {LOCKSTEP_BASE_OVERHEAD_S}s = {round(max_run_s)}s) — stopping early"
-                    )
-                    break
-                if int(elapsed) % 60 < LOCKSTEP_POLL_S and elapsed > LOCKSTEP_POLL_S:
-                    print(f"  ... lockstep replay running ({round(elapsed)}s)")
-                time.sleep(LOCKSTEP_POLL_S)
-            progress_path = Path(str(done_path) + ".progress")
-            if done_path.exists():
-                replay_stats.update(json.loads(done_path.read_text()))
-            elif progress_path.exists():
-                # Capped run: last periodic progress still tells us coverage
-                # and which frames the module never acked.
-                replay_stats.update(json.loads(progress_path.read_text()))
-                replay_stats["partial"] = True
-            progress_path.unlink(missing_ok=True)
-            time.sleep(LOCKSTEP_DRAIN_S)
-        else:
-            time.sleep(n_messages / REPLAY_PUBLISH_HZ + REPLAY_DRAIN_MARGIN_S)
+        max_run_s = lidar_count * LOCKSTEP_PER_SCAN_BUDGET_S + LOCKSTEP_BASE_OVERHEAD_S
+        started = time.monotonic()
+        while not done_path.exists():
+            elapsed = time.monotonic() - started
+            if elapsed > max_run_s:
+                coverage = ""
+                if progress_path.exists():
+                    coverage = f" (last progress: {progress_path.read_text()})"
+                raise RuntimeError(
+                    f"lockstep replay exceeded its watchdog budget"
+                    f" ({lidar_count} scans x {LOCKSTEP_PER_SCAN_BUDGET_S}s"
+                    f" + {LOCKSTEP_BASE_OVERHEAD_S}s = {round(max_run_s)}s);"
+                    f" the module is likely hung{coverage}"
+                )
+            if int(elapsed) % 60 < LOCKSTEP_POLL_S and elapsed > LOCKSTEP_POLL_S:
+                print(f"  ... lockstep replay running ({round(elapsed)}s)")
+            time.sleep(LOCKSTEP_POLL_S)
+        replay_stats.update(json.loads(done_path.read_text()))
+        progress_path.unlink(missing_ok=True)
+        if "error" in replay_stats:
+            raise RuntimeError(f"lockstep replay failed: {replay_stats['error']}")
+
+        # Let the pose graph settle (background GNC classification may still be
+        # in flight) before tearing the modules down.
+        settle_started = time.monotonic()
+        while time.monotonic() - settle_started < GRAPH_SETTLE_MAX_S:
+            if heartbeat_path.exists():
+                quiet_s = time.time() - heartbeat_path.stat().st_mtime
+            else:
+                quiet_s = time.monotonic() - settle_started
+            if quiet_s >= GRAPH_SETTLE_QUIET_S:
+                break
+            time.sleep(GRAPH_SETTLE_POLL_S)
     finally:
         coordinator.stop()
+        heartbeat_path.unlink(missing_ok=True)
 
     if not output_path.exists():
         raise SystemExit(f"{module_class.__name__} produced no pose graph output")
