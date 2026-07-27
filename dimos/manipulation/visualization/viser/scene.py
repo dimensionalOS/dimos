@@ -30,6 +30,7 @@ import numpy as np
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
+from dimos.constants import CACHE_DIR
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
@@ -76,7 +77,7 @@ except ImportError as e:
 
 logger = setup_logger()
 
-_VISER_URDF_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_viser_urdf_cache"
+_VISER_URDF_CACHE_DIR = CACHE_DIR / "viser_urdf"
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)

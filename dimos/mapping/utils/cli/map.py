@@ -379,6 +379,12 @@ def main(
     marker_size: float = typer.Option(
         0.1, "--marker-size", help="Physical marker edge length in meters (--markers only)"
     ),
+    marker_inverted: bool = typer.Option(
+        False,
+        "--marker-inverted",
+        help="Also detect colour-inverted (light-on-dark) markers, e.g. a 3D print "
+        "whose filaments were swapped",
+    ),
     marker_max_speed: float = typer.Option(
         0.5,
         "--marker-max-speed",
@@ -616,6 +622,7 @@ def main(
             camera_info=cam_info,
             marker_length_m=marker_size,
             smoothing_window=marker_smoothing,
+            detect_inverted=marker_inverted,
         )
         # Keep the sharpest frame per --marker-quality-window window, then
         # drop frames where the robot was moving (linear + rotational) faster
