@@ -54,6 +54,10 @@ namespace {
 
 using dimos::make_header;
 using dimos::make_xyzi_cloud;
+using dimos::xyzi_point;
+
+// How often the emit loop checks whether the frame interval has elapsed.
+constexpr std::chrono::milliseconds kEmitPollInterval{10};
 
 double packet_timestamp(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -111,7 +115,7 @@ public:
     void handle() override {
         auto last_emit = std::chrono::steady_clock::now();
         while (!shutdown_requested()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(kEmitPollInterval);
             auto now = std::chrono::steady_clock::now();
             if (now - last_emit >= frame_interval_) {
                 emit_frame();
@@ -241,7 +245,7 @@ private:
         sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
-            float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);
+            float* dst = xyzi_point(pc, i);
             dst[0] = xyz[i * 3 + 0];
             dst[1] = xyz[i * 3 + 1];
             dst[2] = xyz[i * 3 + 2];

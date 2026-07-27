@@ -8,10 +8,8 @@
 #pragma once
 
 #include <atomic>
-#include <cmath>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
@@ -19,19 +17,6 @@
 #include "std_msgs/Time.hpp"
 
 namespace dimos {
-
-// True once the estimator has produced a real pose. The SLAM cores hand out
-// their pose through an odometry result that starts as uninitialized memory, so
-// a nonzero position does not mean the estimator has run. A real estimate
-// always carries a normalized quaternion, which uninitialized bytes do not.
-inline bool has_estimate(const std::vector<double>& pose) {
-    if (pose.size() != 7) {
-        return false;
-    }
-    const double qn = pose[3] * pose[3] + pose[4] * pose[4] + pose[5] * pose[5] +
-                      pose[6] * pose[6];
-    return std::abs(qn - 1.0) < 1e-3;
-}
 
 inline std_msgs::Time time_from_seconds(double t) {
     std_msgs::Time ts;
@@ -50,9 +35,12 @@ inline std_msgs::Header make_header(const std::string& frame_id, double ts) {
     return h;
 }
 
-// Empty XYZI PointCloud2 (x/y/z/intensity float32, point_step 16) sized for
-// num_points. The caller writes 4 floats per point into
-// reinterpret_cast<float*>(pc.data.data()).
+// x, y, z, intensity, each a float32.
+inline constexpr int32_t kXyziFieldCount = 4;
+inline constexpr int32_t kXyziPointStep = kXyziFieldCount * sizeof(float);
+
+// Empty XYZI PointCloud2 sized for num_points. The caller fills each point
+// through xyzi_point() below.
 inline sensor_msgs::PointCloud2 make_xyzi_cloud(const std::string& frame_id, double ts,
                                                 int num_points) {
     sensor_msgs::PointCloud2 pc;
@@ -62,26 +50,31 @@ inline sensor_msgs::PointCloud2 make_xyzi_cloud(const std::string& frame_id, dou
     pc.is_bigendian = 0;
     pc.is_dense = 1;
 
-    pc.fields_length = 4;
-    pc.fields.resize(4);
-    auto make_field = [](const std::string& name, int32_t offset) {
+    pc.fields_length = kXyziFieldCount;
+    pc.fields.resize(kXyziFieldCount);
+    auto make_field = [](const std::string& name, int32_t index) {
         sensor_msgs::PointField f;
         f.name = name;
-        f.offset = offset;
+        f.offset = index * static_cast<int32_t>(sizeof(float));
         f.datatype = sensor_msgs::PointField::FLOAT32;
         f.count = 1;
         return f;
     };
     pc.fields[0] = make_field("x", 0);
-    pc.fields[1] = make_field("y", 4);
-    pc.fields[2] = make_field("z", 8);
-    pc.fields[3] = make_field("intensity", 12);
+    pc.fields[1] = make_field("y", 1);
+    pc.fields[2] = make_field("z", 2);
+    pc.fields[3] = make_field("intensity", 3);
 
-    pc.point_step = 16;
+    pc.point_step = kXyziPointStep;
     pc.row_step = pc.point_step * num_points;
     pc.data_length = pc.row_step;
     pc.data.resize(pc.data_length);
     return pc;
+}
+
+// The x/y/z/intensity slot of point i in a cloud from make_xyzi_cloud.
+inline float* xyzi_point(sensor_msgs::PointCloud2& pc, int i) {
+    return reinterpret_cast<float*>(pc.data.data() + i * kXyziPointStep);
 }
 
 }  // namespace dimos

@@ -13,8 +13,7 @@
 
 namespace dimos::native {
 
-/// Throw unless `name` is a transport this SDK implements. Mirrors the Rust
-/// runtime, which also treats an unset or unknown value as fatal.
+/// Throw unless `name` is a transport this SDK implements.
 inline void require_supported_transport(const std::string& name) {
     if (name == "lcm") {
         return;

@@ -1,10 +1,10 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Structured logging for dimos C++ native modules. Mirrors the Rust SDK: one
-// JSON object per line on stderr, in the shape the Python NativeModule wrapper
-// parses (`level`, `message`, plus arbitrary structured fields). stdout is
-// reserved, so logs always go to stderr.
+// Structured logging for dimos C++ native modules. One JSON object per line on
+// stderr, in the shape the Python NativeModule wrapper parses (`level`,
+// `message`, plus arbitrary structured fields). stdout is reserved, so logs
+// always go to stderr.
 
 #pragma once
 
@@ -32,9 +32,8 @@ inline const char* level_str(Level level) {
     return "info";
 }
 
-/// A single structured key/value pair. Callers pass strings, integers, floats,
-/// or bools uniformly. A non-finite double serializes to null, since JSON has
-/// no inf/nan literals and the Python log reader must be able to parse the line.
+/// A structured key/value pair. A non-finite double serializes to null, since
+/// JSON has no inf/nan literals.
 class Field {
 public:
     Field(std::string key, const char* value) : key_(std::move(key)), value_(value) {}
@@ -64,8 +63,8 @@ inline std::string format_line(Level level, const std::string& message,
 }
 
 inline std::mutex& stderr_mutex() {
-    static std::mutex m;
-    return m;
+    static std::mutex mutex;
+    return mutex;
 }
 
 inline void emit(Level level, const std::string& message,
@@ -97,9 +96,8 @@ inline constexpr std::uint64_t from_secs(std::uint64_t secs) {
     return secs * 1'000'000'000ull;
 }
 
-/// Returns true (recording the current time) only on the first call or once at
-/// least `interval_ns` has elapsed since the last true. One thread wins per
-/// window via compare_exchange, matching the Rust `check_and_record`.
+/// True at most once per `interval_ns`, recording the time. One thread wins
+/// each window.
 inline bool check_and_record(std::atomic<std::uint64_t>& last_ns, std::uint64_t interval_ns) {
     std::uint64_t now = monotonic_ns();
     std::uint64_t last = last_ns.load(std::memory_order_relaxed);
@@ -111,9 +109,7 @@ inline bool check_and_record(std::atomic<std::uint64_t>& last_ns, std::uint64_t 
 
 }  // namespace dimos::native::log
 
-// Throttled log at a single call site: emits at most once per `interval_ns`.
-// The per-site state lives in a function-local static, so each expansion of
-// this macro throttles independently, exactly like the Rust throttling macros.
+// Emits at most once per `interval_ns`. Each expansion throttles independently.
 #define DIMOS_LOG_THROTTLED(level, interval_ns, message, ...)                       \
     do {                                                                            \
         static std::atomic<std::uint64_t> _dimos_throttle_last_ns{0};               \

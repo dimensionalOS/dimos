@@ -27,8 +27,7 @@ struct RangedCfg {
     }
 };
 
-// 70 fields: past the 64-field ceiling of nlohmann's field-list macros, which
-// is why parse() reflects over the struct instead of using them.
+// Past nlohmann's 64-field macro ceiling.
 struct WideCfg {
     std::int64_t f00; std::int64_t f01; std::int64_t f02; std::int64_t f03;
     std::int64_t f04; std::int64_t f05; std::int64_t f06; std::int64_t f07;
@@ -48,6 +47,12 @@ struct WideCfg {
     std::int64_t f60; std::int64_t f61; std::int64_t f62; std::int64_t f63;
     std::int64_t f64; std::int64_t f65; std::int64_t f66; std::int64_t f67;
     std::int64_t f68; std::int64_t f69;
+};
+
+struct MixedCfg {
+    std::int64_t count;
+    bool enabled;
+    double scale;
 };
 
 json wide_json() {
@@ -124,12 +129,54 @@ TEST_CASE("parse rejects a wrong-typed field and names it") {
     }
 }
 
+TEST_CASE("parse rejects a bool where an integer is declared") {
+    Config cfg(json{{"count", true}, {"enabled", true}, {"scale", 1.0}});
+    try {
+        cfg.parse<MixedCfg>();
+        FAIL("expected a bool in an integer field to throw");
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("field 'count'") != std::string::npos);
+        CHECK(msg.find("expected an integer") != std::string::npos);
+    }
+}
+
+TEST_CASE("parse rejects a fractional number where an integer is declared") {
+    Config cfg(json{{"count", 1.9}, {"enabled", true}, {"scale", 1.0}});
+    try {
+        cfg.parse<MixedCfg>();
+        FAIL("expected 1.9 in an integer field to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()).find("field 'count'") != std::string::npos);
+    }
+}
+
+TEST_CASE("parse rejects a number where a bool is declared") {
+    Config cfg(json{{"count", 1}, {"enabled", 1}, {"scale", 1.0}});
+    try {
+        cfg.parse<MixedCfg>();
+        FAIL("expected 1 in a bool field to throw");
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("field 'enabled'") != std::string::npos);
+        CHECK(msg.find("expected a boolean") != std::string::npos);
+    }
+}
+
+TEST_CASE("parse still accepts a whole number for a double field") {
+    Config cfg(json{{"count", 3}, {"enabled", false}, {"scale", 2}});
+    MixedCfg c = cfg.parse<MixedCfg>();
+    CHECK(c.count == 3);
+    CHECK(c.enabled == false);
+    CHECK(c.scale == doctest::Approx(2.0));
+}
+
 TEST_CASE("parse runs the config's validate()") {
     Config cfg(json{{"value", 999}, {"name", "x"}});
     CHECK_THROWS_AS(cfg.parse<RangedCfg>(), std::runtime_error);
 }
 
-TEST_CASE("parse handles a struct past the old 64-field macro limit") {
+TEST_CASE("parse handles a struct past the 64-field macro limit") {
     Config cfg(wide_json());
     WideCfg c = cfg.parse<WideCfg>();
     CHECK(c.f00 == 0);

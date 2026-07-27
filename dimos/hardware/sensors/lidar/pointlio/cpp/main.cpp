@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "estimator_pose.hpp"
 #include "livox_sdk_config.hpp"
 #include "point_cloud_utils.hpp"
 
@@ -114,6 +115,7 @@ namespace {
 using dimos::has_estimate;
 using dimos::make_header;
 using dimos::make_xyzi_cloud;
+using dimos::xyzi_point;
 
 uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -240,12 +242,12 @@ public:
     // Own processing loop at ~main_freq: drain accumulated points into a
     // CustomMsg at frame rate, run a Point-LIO step, publish rate-limited.
     void handle() override {
-        auto last_emit = std::chrono::steady_clock::now();
-        auto last_pc_publish = last_emit;
-        auto last_odom_publish = last_emit;
+        last_emit_ = std::chrono::steady_clock::now();
+        last_pc_publish_ = last_emit_;
+        last_odom_publish_ = last_emit_;
         while (!shutdown_requested()) {
             auto now = std::chrono::steady_clock::now();
-            step(now, last_emit, last_pc_publish, last_odom_publish);
+            step(now);
             auto elapsed = std::chrono::steady_clock::now() - now;
             if (elapsed < process_period_) {
                 std::this_thread::sleep_for(process_period_ - elapsed);
@@ -382,11 +384,8 @@ private:
         EnableLivoxLidarImuData(handle, nullptr, nullptr);
     }
 
-    // One iteration of the main loop, rate-limited by the bookmark arguments.
-    void step(std::chrono::steady_clock::time_point now,
-              std::chrono::steady_clock::time_point& last_emit,
-              std::chrono::steady_clock::time_point& last_pc_publish,
-              std::chrono::steady_clock::time_point& last_odom_publish) {
+    // One iteration of the main loop, rate-limited by the last_*_ bookmarks.
+    void step(std::chrono::steady_clock::time_point now) {
         // At frame rate, drain accumulated raw points into a CustomMsg and feed
         // Point-LIO. Hold pc_mutex_ across the rate-limit check + swap so a
         // callback can't slip a packet in between the decision and the swap.
@@ -394,13 +393,13 @@ private:
         uint64_t frame_start = 0;
         {
             std::lock_guard<std::mutex> lock(pc_mutex_);
-            if (now - last_emit >= frame_interval_) {
+            if (now - last_emit_ >= frame_interval_) {
                 if (!accumulated_points_.empty()) {
                     points.swap(accumulated_points_);
                     frame_start = frame_start_ns_;
                     frame_has_ts_ = false;
                 }
-                last_emit = now;
+                last_emit_ = now;
             }
         }
 
@@ -438,11 +437,11 @@ private:
 
             // get_body_cloud is the loop's costliest step, so build it only when
             // a publish is due.
-            if (now - last_pc_publish >= pc_interval_) {
+            if (now - last_pc_publish_ >= pc_interval_) {
                 auto body_cloud = point_lio_->get_body_cloud();
                 if (body_cloud && !body_cloud->empty()) {
                     publish_pointcloud(body_cloud, ts);
-                    last_pc_publish = now;
+                    last_pc_publish_ = now;
                     if (cfg_.debug) {
                         logging::info(
                             "pointlio publish lidar",
@@ -455,9 +454,9 @@ private:
             }
 
             // Pose + covariance at odom_freq.
-            if (now - last_odom_publish >= odom_interval_) {
+            if (now - last_odom_publish_ >= odom_interval_) {
                 publish_odometry(point_lio_->get_odometry(), ts);
-                last_odom_publish = now;
+                last_odom_publish_ = now;
                 if (cfg_.debug) {
                     logging::info("pointlio publish odom",
                                   {logging::Field("x", pose[0]),
@@ -476,7 +475,7 @@ private:
         sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
-            float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);
+            float* dst = xyzi_point(pc, i);
             dst[0] = cloud->points[i].x;
             dst[1] = cloud->points[i].y;
             dst[2] = cloud->points[i].z;
@@ -521,10 +520,16 @@ private:
     Output<nav_msgs::Odometry> odometry_;
     std::unique_ptr<PointLio> point_lio_;
 
-    std::chrono::microseconds frame_interval_{100000};
-    std::chrono::microseconds pc_interval_{100000};
-    std::chrono::microseconds odom_interval_{20000};
-    std::chrono::microseconds process_period_{200};
+    // All four come from config, set in build().
+    std::chrono::microseconds frame_interval_{};
+    std::chrono::microseconds pc_interval_{};
+    std::chrono::microseconds odom_interval_{};
+    std::chrono::microseconds process_period_{};
+
+    // Rate-limit bookmarks, owned by the handle() loop.
+    std::chrono::steady_clock::time_point last_emit_;
+    std::chrono::steady_clock::time_point last_pc_publish_;
+    std::chrono::steady_clock::time_point last_odom_publish_;
 
     // Frame accumulator (Livox SDK raw -> CustomMsg)
     std::mutex pc_mutex_;

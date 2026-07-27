@@ -260,7 +260,7 @@ private:
 
     double last_message_time_ = 0.0;
     double last_global_map_time_ = 0.0;
-    double global_map_interval_ = 2.0;
+    double global_map_interval_ = 0.0;  // from config
 };
 
 int main() {

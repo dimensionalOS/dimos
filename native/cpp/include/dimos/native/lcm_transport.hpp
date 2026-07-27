@@ -3,9 +3,9 @@
 //
 // LCM implementation of the Transport seam. A single receive thread runs the
 // LCM handle loop and demuxes each message to the callbacks registered for its
-// channel, mirroring the Rust LcmTransport. Publishing is a direct, thread-safe
-// lcm_publish. The per-channel publish workers that decouple slow publishes live
-// in the module runtime, not here.
+// channel. Publishing is a direct, thread-safe lcm_publish. The per-channel
+// publish workers that decouple slow publishes live in the module runtime, not
+// here.
 
 #pragma once
 
@@ -119,7 +119,7 @@ private:
 };
 
 /// Construct the transport named by `DIMOS_TRANSPORT`. Errors clearly for zenoh
-/// (Rust-only) or any unknown/unset value, mirroring the Rust runtime.
+/// or any unknown/unset value.
 inline std::unique_ptr<Transport> make_transport_from_env() {
     const char* env = std::getenv("DIMOS_TRANSPORT");
     std::string name = env != nullptr ? env : "";

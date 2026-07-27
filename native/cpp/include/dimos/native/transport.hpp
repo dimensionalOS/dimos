@@ -1,9 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Transport seam for dimos C++ native modules. Mirrors the Rust
-// `dimos_module::Transport` trait: the runtime talks to the wire only through
-// this interface, so the pub/sub protocol is the sole coupling point.
+// Transport seam for dimos C++ native modules. The runtime talks to the wire
+// only through this interface, so the pub/sub protocol is the sole coupling
+// point.
 
 #pragma once
 

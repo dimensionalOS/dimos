@@ -46,6 +46,21 @@ void validate_if_present(const T& value) {
         value.validate();
     }
 }
+
+// nlohmann would silently coerce true or 1.9 into an integral field.
+template <class F>
+void check_json_type(const nlohmann::json& value, const std::string& key) {
+    const char* expected = nullptr;
+    if constexpr (std::is_same_v<F, bool>) {
+        expected = value.is_boolean() ? nullptr : "a boolean";
+    } else if constexpr (std::is_integral_v<F>) {
+        expected = value.is_number_integer() ? nullptr : "an integer";
+    }
+    if (expected != nullptr) {
+        throw std::runtime_error("config: field '" + key + "': expected " + expected +
+                                 ", got " + value.type_name());
+    }
+}
 }  // namespace config_detail
 
 class Config {
@@ -83,9 +98,8 @@ public:
         }
     }
 
-    /// Deserialize the whole config into a plain aggregate struct, enforcing
-    /// the one-to-one key check (every field present, no unknowns) and the
-    /// struct's optional validate(). Missing fields throws an error.
+    /// Deserialize into a plain aggregate struct, enforcing the one-to-one key
+    /// check (every field present, no unknowns) and the optional validate().
     template <class T>
     T parse() {
         static_assert(std::is_aggregate_v<T>,
@@ -99,6 +113,7 @@ public:
             if (it == obj_.end()) {
                 throw std::runtime_error("config: missing required field '" + key + "'");
             }
+            config_detail::check_json_type<std::decay_t<decltype(field)>>(*it, key);
             try {
                 field = it->template get<std::decay_t<decltype(field)>>();
             } catch (const std::exception& e) {

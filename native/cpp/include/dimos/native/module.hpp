@@ -1,10 +1,10 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Module runtime for dimos C++ native modules, mirroring the Rust SDK. The
-// transport receive thread decodes onto per-input bounded queues (drop-newest).
-// Handlers run serialized on the handle() thread, a lock-free &mut self. One
-// worker per output drains publishes so a slow channel blocks only itself.
+// Module runtime for dimos C++ native modules. The transport receive thread
+// decodes onto per-input bounded queues (drop-newest). Handlers run serialized
+// on the handle() thread, so they touch module state without locks. One worker
+// per output drains publishes so a slow channel blocks only itself.
 //
 // A module subclasses Module, declares Output<T> members, and wires config,
 // outputs, and input handlers in build(). The default handle() dispatches inputs
@@ -65,15 +65,13 @@ inline void install_signal_handlers() {
     std::signal(SIGTERM, dimos_native_handle_signal);
 }
 
-// Wakes the handle() dispatch loop when an input receives a message. The
-// counter, bumped under the lock, lets the loop snapshot before draining and
-// still see a notify that lands mid-round, so the wakeup is never lost.
-// Single waiter, the dispatch loop.
+// Wakes the handle() dispatch loop. The counter lets the loop snapshot before
+// draining, so a notify landing mid-round is never lost. Single waiter.
 class Notifier {
 public:
     void notify() {
         {
-            std::lock_guard<std::mutex> lock(m_);
+            std::lock_guard<std::mutex> lock(mutex_);
             ++pending_;
         }
         cv_.notify_one();
@@ -82,19 +80,19 @@ public:
     // Snapshot the notification count. Take this before a drain round so a
     // message that arrives during the round still blocks the following wait.
     std::uint64_t seq() {
-        std::lock_guard<std::mutex> lock(m_);
+        std::lock_guard<std::mutex> lock(mutex_);
         return pending_;
     }
 
     // Wait until a notify lands after `seq`, `stop` fires, or the timeout elapses.
     void wait_for(std::uint64_t seq, std::chrono::milliseconds timeout,
                   const std::function<bool()>& stop) {
-        std::unique_lock<std::mutex> lock(m_);
+        std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait_for(lock, timeout, [&] { return pending_ != seq || stop(); });
     }
 
 private:
-    std::mutex m_;
+    std::mutex mutex_;
     std::condition_variable cv_;
     std::uint64_t pending_ = 0;
 };
@@ -134,16 +132,14 @@ public:
     bool drain_one() override {
         T msg;
         {
-            std::lock_guard<std::mutex> lock(m_);
+            std::lock_guard<std::mutex> lock(mutex_);
             if (queue_.empty()) {
                 return false;
             }
             msg = std::move(queue_.front());
             queue_.pop_front();
         }
-        // Isolate a throwing handler like make_dispatch isolates a bad decode:
-        // log, drop this message, keep the dispatch loop alive. Mirrors the
-        // Rust runtime, which catch_unwinds each handler.
+        // A throwing handler drops its message, not the dispatch loop.
         try {
             handler_(std::move(msg));
         } catch (const std::exception& e) {
@@ -161,7 +157,7 @@ public:
 private:
     void push(T msg) {
         {
-            std::lock_guard<std::mutex> lock(m_);
+            std::lock_guard<std::mutex> lock(mutex_);
             if (queue_.size() >= kInputQueueCapacity) {
                 std::uint64_t n = dropped_.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (log::check_and_record(last_warn_ns_, log::from_secs(1))) {
@@ -182,7 +178,7 @@ private:
     DecodeFn<T> decode_;
     HandlerFn<T> handler_;
     Notifier* notifier_;
-    std::mutex m_;
+    std::mutex mutex_;
     std::deque<T> queue_;
     std::atomic<std::uint64_t> dropped_{0};
     std::atomic<std::uint64_t> last_warn_ns_{0};
@@ -195,7 +191,7 @@ public:
 
     void push(std::vector<uint8_t> data) {
         {
-            std::lock_guard<std::mutex> lock(m_);
+            std::lock_guard<std::mutex> lock(mutex_);
             if (stopped_) {
                 return;
             }
@@ -218,7 +214,7 @@ public:
     // Worker blocks here until a message is available or the queue is stopped
     // and drained. Returns false only when there is nothing left to publish.
     bool pop(std::vector<uint8_t>& out) {
-        std::unique_lock<std::mutex> lock(m_);
+        std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this] { return stopped_ || !queue_.empty(); });
         if (!queue_.empty()) {
             out = std::move(queue_.front());
@@ -230,7 +226,7 @@ public:
 
     void stop() {
         {
-            std::lock_guard<std::mutex> lock(m_);
+            std::lock_guard<std::mutex> lock(mutex_);
             stopped_ = true;
         }
         cv_.notify_all();
@@ -240,7 +236,7 @@ public:
 
 private:
     std::string channel_;
-    std::mutex m_;
+    std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<std::vector<uint8_t>> queue_;
     bool stopped_ = false;
@@ -352,7 +348,7 @@ protected:
     }
 
     // Default main body: round-robin drain inputs (fair, one per input per round)
-    // until shutdown. With no inputs, just wait for shutdown like Rust's pending.
+    // until shutdown. With no inputs, just wait for shutdown.
     void default_handle() {
         constexpr auto kPoll = std::chrono::milliseconds(100);
         while (!shutdown_requested()) {
@@ -468,8 +464,7 @@ void run_fallible(std::unique_ptr<Transport> transport) {
 }
 
 /// Run module `M` over `transport`, reading config from stdin and blocking until
-/// shutdown. Any startup error is logged and the process exits non-zero, matching
-/// the Rust runtime.
+/// shutdown. Any startup error is logged and the process exits non-zero.
 template <class M>
 void run(std::unique_ptr<Transport> transport) {
     try {

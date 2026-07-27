@@ -82,18 +82,21 @@ autoconnect(
 The module reads one line of JSON on stdin: the LCM topics for its `lidar` and
 `imu` output ports plus the full config. `DIMOS_TRANSPORT` selects the transport.
 
+Every config field is required. Python owns the defaults and always sends them,
+so build the blob from `Mid360Config` rather than by hand. `host_ip` is the only
+field without a default, since `Mid360` normally resolves it from the NIC on the
+lidar's subnet:
+
 ```bash
-echo '{"topics": {"lidar": "/lidar#sensor_msgs.PointCloud2", "imu": "/imu#sensor_msgs.Imu"},
-       "config": {"host_ip": "192.168.1.5", "lidar_ip": "192.168.1.155", "frequency": 10.0,
-                  "enable_imu": true, "frame_id": "lidar_link", "imu_frame_id": "imu_link",
-                  "cmd_data_port": 56100, "push_msg_port": 56200, "point_data_port": 56300,
-                  "imu_data_port": 56400, "log_data_port": 56500, "host_cmd_data_port": 56101,
-                  "host_push_msg_port": 56201, "host_point_data_port": 56301,
-                  "host_imu_data_port": 56401, "host_log_data_port": 56501}}' \
-    | DIMOS_TRANSPORT=lcm ./result/bin/mid360_native
+python -c '
+import json
+from dimos.hardware.sensors.lidar.livox.module import Mid360Config
+print(json.dumps({
+    "topics": {"lidar": "/lidar#sensor_msgs.PointCloud2", "imu": "/imu#sensor_msgs.Imu"},
+    "config": Mid360Config(host_ip="192.168.1.5").to_config_dict(),
+}))' | DIMOS_TRANSPORT=lcm ./result/bin/mid360_native
 ```
 
-Every config field is required -- Python owns the defaults and always sends them.
 Topic strings include the `#type` suffix, the actual LCM channel name dimos
 subscribers use. Normally `Mid360` builds this blob for you.
 
