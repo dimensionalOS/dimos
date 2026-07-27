@@ -159,6 +159,11 @@ def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backen
 
     assert isinstance(config.visualization, ViserVisualizationConfig)
     assert [robot.name for robot in config.robots] == ["left_arm", "right_arm"]
+    assert [robot.gripper_hardware_id for robot in config.robots] == [
+        "left_arm",
+        "right_arm",
+    ]
+    assert [robot.xacro_args["add_gripper"] for robot in config.robots] == ["true", "true"]
     assert [hardware.hardware_id for hardware in coordinator_kwargs["hardware"]] == [
         "left_arm",
         "right_arm",

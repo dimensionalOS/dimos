@@ -134,6 +134,42 @@ Deno.test("msgFromUnknown validates shape and rejects unknown/malformed", () => 
   assertEquals(msgFromUnknown({ t: "hello", v: 1 }), null); // missing role
   assertEquals(msgFromUnknown(null), null);
   assertEquals(msgFromUnknown([1, 2]), null);
+  // Prototype-chain keys must not resolve through Object.prototype (the
+  // mirrored protocol.py rejects these; test_protocol.py asserts the same).
+  assertEquals(msgFromUnknown({ t: "toString" }), null);
+  assertEquals(msgFromUnknown({ t: "constructor" }), null);
+  assertEquals(msgFromUnknown({ t: "hasOwnProperty" }), null);
+});
+
+Deno.test("msgFromUnknown validates nested session-message shapes", () => {
+  const robot = { id: "go2-lab", name: "Go2 Lab", model: "unitree-go2" };
+  const spec = { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 };
+  // hello stays valid without the optional robot/manifest (viewer form).
+  assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "viewer" }) !== null, true);
+  const full = { t: "hello", v: 1, role: "robot", robot, manifest: { channels: [spec] } };
+  assertEquals(msgFromUnknown(full) !== null, true);
+  // Optional means absent-or-valid: explicit null is rejected.
+  assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "robot", robot: null }), null);
+  assertEquals(msgFromUnknown({ ...full, robot: { id: 5, name: "x", model: "m" } }), null);
+  assertEquals(
+    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, maxHz: "20" }] } }),
+    null,
+  );
+  assertEquals(
+    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, delivery: "bogus" }] } }),
+    null,
+  );
+  assertEquals(msgFromUnknown({ ...full, manifest: { channels: robot } }), null);
+  assertEquals(msgFromUnknown({ t: "robots", robots: [robot] }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "robots", robots: {} }), null);
+  assertEquals(msgFromUnknown({ t: "robots", robots: [{ id: "a", name: "b" }] }), null);
+  assertEquals(msgFromUnknown({ t: "robots" }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec] }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "manifest", channels: [spec] }), null);
+  assertEquals(msgFromUnknown({ t: "watch" }), null);
+  assertEquals(msgFromUnknown({ t: "subs", chs: ["a", "b"], n: 1 }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "subs", chs: ["a", 5], n: 1 }), null);
+  assertEquals(msgFromUnknown({ t: "subs", chs: ["a"] }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {

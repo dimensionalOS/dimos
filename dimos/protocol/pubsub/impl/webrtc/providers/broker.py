@@ -27,7 +27,7 @@ Channels (topic == DataChannel name):
 Media rides the same session: a sendonly camera track (``set_video_frame``)
 and, opt-in (``audio_in``), the operator's mic (``set_audio_frame_callback``).
 The aiortc/CF quirks (MAX_BUNDLE, the id=0 throwaway channel) are documented
-in ``dimos/teleop/quest_hosted/README.md``. Config via ``transports.broker.*``.
+in ``dimos/teleop/hosted/README.md``. Config via ``transports.broker.*``.
 """
 
 from __future__ import annotations
@@ -53,6 +53,9 @@ logger = setup_logger()
 
 # Default hosted-teleop broker endpoint.
 DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
+
+# Mirrors cloudflare.py — CF silently drops DataChannel messages above ~64 KB.
+MAX_MSG_SIZE = 32 * 1024
 
 if TYPE_CHECKING:
     import aiohttp
@@ -141,7 +144,8 @@ class BrokerProvider(AsyncProviderBase):
         self._dcs: dict[str, RTCDataChannel] = {}
         self._dc_ids: dict[str, int | None] = {}
         self._callbacks: dict[str, list[Callable[[bytes, str], None]]] = defaultdict(list)
-        self._dropped_publish_warned = False
+        self._dropped_publish_warned: set[str] = set()
+        self._last_hb_error = ""
         # Built in _connect (on the loop thread, for cross-thread set_latest).
         self._video_track: CameraVideoTrack | None = None
         # Operator-audio sink; None drops frames until set_audio_frame_callback().
@@ -198,8 +202,7 @@ class BrokerProvider(AsyncProviderBase):
         # Roll back partial state on failure so a retry doesn't leak.
         try:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
-            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds —
-            # see dimos/teleop/quest_hosted/README.md before changing.
+            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds.
             self._pc = RTCPeerConnection(
                 RTCConfiguration(
                     iceServers=await self._fetch_ice_servers(),
@@ -307,7 +310,9 @@ class BrokerProvider(AsyncProviderBase):
         def _on_track(track: Any) -> None:
             if track.kind != "audio":
                 return
-            logger.debug("operator audio track received")
+            logger.info("operator audio track received")
+            if self._audio_task is not None:
+                self._audio_task.cancel()
             self._audio_task = asyncio.get_running_loop().create_task(self._read_audio_track(track))
 
     async def _read_audio_track(self, track: Any) -> None:
@@ -329,19 +334,27 @@ class BrokerProvider(AsyncProviderBase):
                 except Exception:
                     # A raising sink is a bug in the wired module, not the wire.
                     logger.warning("audio sink callback error", exc_info=True)
-        except Exception:
-            logger.debug("operator audio track ended")
+        except Exception as e:
+            logger.info("operator audio track ended (%s)", type(e).__name__)
 
     async def _disconnect(self) -> None:
         if self._hb_task is not None:
             self._hb_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._hb_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("heartbeat task died with error", exc_info=True)
             self._hb_task = None
         if self._audio_task is not None:
             self._audio_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._audio_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("audio reader died with error", exc_info=True)
             self._audio_task = None
         if self._http and self.session_id:
             import aiohttp
@@ -350,24 +363,37 @@ class BrokerProvider(AsyncProviderBase):
             # non-network exception here is a bug we want to hear about.
             # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) on
             # the session's total timeout, so suppress that explicitly too.
-            with contextlib.suppress(aiohttp.ClientError, asyncio.TimeoutError):
+            try:
                 async with self._http.delete(
                     f"{self._broker_url}/api/v1/sessions/{self.session_id}",
                     headers=self._headers,
                 ) as r:
                     await r.read()
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                logger.exception("Broker session DELETE failed")
         for name in list(self._dcs):
-            self._close_channel(name)
+            try:
+                self._close_channel(name)
+            except Exception:
+                logger.warning("closing channel %s failed", name, exc_info=True)
         # Forget the broker's channel ids: after a reconnect the heartbeat
         # must re-open channels even if the broker hands out the same SCTP
         # ids (stale entries would make it skip _open_channel with _dcs empty).
         self._dc_ids.clear()
         if self._pc:
-            await self._pc.close()
+            try:
+                await self._pc.close()
+            except Exception:
+                logger.warning("PeerConnection close failed", exc_info=True)
             self._pc = None
         self._video_track = None
         if self._http:
-            await self._http.close()
+            try:
+                await self._http.close()
+            except Exception:
+                logger.warning("http client close failed", exc_info=True)
             self._http = None
         self.session_id = None
 
@@ -399,13 +425,21 @@ class BrokerProvider(AsyncProviderBase):
                         status,
                     )
                     self._notify_operator_lost()
+                    self._hb_task = None  # we ARE this task; skip the self-cancel
+                    try:
+                        await self._disconnect()
+                    except Exception:
+                        logger.warning("cleanup after terminal heartbeat failed", exc_info=True)
+                    with self._lock:
+                        self._started = False
+                    asyncio.get_running_loop().stop()
                     return
             else:
                 terminal_streak = 0
             if status is not None and status != 200:
                 if not fail_warned:
                     fail_warned = True
-                    logger.warning("Heartbeat failing: %d", status)
+                    logger.warning("Heartbeat failing: %d %s", status, self._last_hb_error)
             else:
                 fail_warned = False
             await asyncio.sleep(interval)
@@ -420,7 +454,8 @@ class BrokerProvider(AsyncProviderBase):
             json={},
         ) as r:
             if r.status != 200:
-                logger.debug("Heartbeat non-200: %d %s", r.status, (await r.text())[:200])
+                # Stashed for the deduplicated warning — per-tick logging would flood.
+                self._last_hb_error = (await r.text())[:200]
                 return r.status
             ack = await r.json(content_type=None)
         # state_reliable_back first so the state_reliable ping handler can
@@ -578,11 +613,18 @@ class BrokerProvider(AsyncProviderBase):
                 return
             ch = self._dcs.get(topic)
             if ch is None or ch.readyState != "open":
-                if not self._dropped_publish_warned:
-                    self._dropped_publish_warned = True
+                if topic not in self._dropped_publish_warned:
+                    self._dropped_publish_warned.add(topic)
                     logger.info("Dropping %s publish: no operator connected", topic)
                 return
-            self._dropped_publish_warned = False
+            self._dropped_publish_warned.discard(topic)
+            if len(data) > MAX_MSG_SIZE:
+                logger.warning(
+                    "%s publish is %d bytes (> %d) — CF will drop it",
+                    topic,
+                    len(data),
+                    MAX_MSG_SIZE,
+                )
 
             channel: RTCDataChannel = ch  # narrowed non-None above; capture for the closure
 
