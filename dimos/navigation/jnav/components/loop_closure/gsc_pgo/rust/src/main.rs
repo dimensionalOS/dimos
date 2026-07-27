@@ -563,10 +563,27 @@ impl Worker {
                 Vec::new()
             };
 
+            // Everything below is on the pipeline thread; time it on closures to
+            // confirm the batch GNC no longer blocks here (was seconds inline).
+            let pipeline_thread_t0 = std::time::Instant::now();
+
+            // Approach B: fold in the newest background GNC classification (drops
+            // outlier loops' factors via pending removals) BEFORE the iSAM2 update
+            // so the removal takes effect this cycle. iSAM2 stays authoritative for
+            // poses — no full-graph pose overwrite on the pipeline thread.
+            pgo.poll_and_apply_gnc_classification();
             pgo.smooth_and_update();
 
             if had_loop {
-                pgo.finalize_gnc();
+                // Queue a fresh full-graph GNC classification for the closure just
+                // committed. The heavy solve runs off-thread and only feeds back
+                // inlier/outlier decisions, so this keyframe never blocks on it.
+                pgo.dispatch_gnc_async();
+                eprintln!(
+                    "gnc-main-thread: closure at {} keyframes handled in {:.1} ms",
+                    pgo.key_poses().len(),
+                    pipeline_thread_t0.elapsed().as_secs_f64() * 1000.0,
+                );
                 let msg =
                     build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
