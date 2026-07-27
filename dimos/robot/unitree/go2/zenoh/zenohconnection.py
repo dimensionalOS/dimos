@@ -45,7 +45,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.config import camera_info_static
 
 # Mount geometry measured on this rig (metres). Not go2_mid360_static_transforms — that
 # is the recording rig: different lidar angle, tree hung off base_link.
@@ -81,7 +81,7 @@ class GO2Zenoh(StaticTfPublisher):
     # Ours: nothing on the robot emits intrinsics.
     camera_info: Out[CameraInfo]
 
-    _camera_info: CameraInfo = _camera_info_static()
+    _camera_info: CameraInfo = camera_info_static()
 
     @rpc
     def start(self) -> None:

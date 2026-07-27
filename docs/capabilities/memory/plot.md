@@ -357,10 +357,7 @@ m.data.save("assets/plants_peak_detections.png")
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
     ImageDetections3DPC,
 )
-from dimos.robot.unitree.go2.connection import (
-    _camera_info_static as go2_camerainfo,
-    BASE_TO_OPTICAL,
-)
+from dimos.robot.unitree.go2.config import Go2Config, camera_info_static
 from dimos.memory2.vis.space.elements import Box3D
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -369,7 +366,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 # TODO We need a nicer way to get optical transform for image streams
 # depending on the source
 def world_to_optical(base_pose):
-    return -(Transform.from_pose("base_link", base_pose) + BASE_TO_OPTICAL)
+    return -(Transform.from_pose("base_link", base_pose) + Go2Config.static_transforms["camera_link"] + Go2Config.static_transforms["camera_optical"])
 
 drawing = Space()
 
@@ -377,7 +374,7 @@ drawing.add(global_map)
 
 drawing.add(detections)
 
-camera_info = go2_camerainfo()
+camera_info = camera_info_static()
 
 detections3d = (detections
     .map_data(lambda obs: ImageDetections3DPC.from_2d(

@@ -37,6 +37,9 @@ class JointDescription:
     effort_limit: float | None = None
     parent_link: str = ""
     child_link: str = ""
+    # Joint origin in the parent link's frame. Defaults to identity.
+    origin_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    origin_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass
@@ -139,6 +142,13 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
             velocity = _float_or_none(limit_elem.get("velocity"))
             effort = _float_or_none(limit_elem.get("effort"))
 
+        origin_xyz = (0.0, 0.0, 0.0)
+        origin_rpy = (0.0, 0.0, 0.0)
+        origin_elem = joint_elem.find("origin")
+        if origin_elem is not None:
+            origin_xyz = _parse_triple(origin_elem.get("xyz", "0 0 0"))
+            origin_rpy = _parse_triple(origin_elem.get("rpy", "0 0 0"))
+
         joints.append(
             JointDescription(
                 name=name,
@@ -149,6 +159,8 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
                 effort_limit=effort,
                 parent_link=parent_link,
                 child_link=child_link,
+                origin_xyz=origin_xyz,
+                origin_rpy=origin_rpy,
             )
         )
 
@@ -237,3 +249,10 @@ def _float_or_none(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _parse_triple(value: str) -> tuple[float, float, float]:
+    parts = value.split()
+    if len(parts) != 3:
+        raise ValueError(f"Expected 3 floats, got {value!r}")
+    return (float(parts[0]), float(parts[1]), float(parts[2]))

@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -55,28 +55,46 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
     assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
 
 
-def test_odom_to_tf_unprefixed_by_default() -> None:
-    odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
-    assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
-    assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
-    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
-        "camera_link",
-        "camera_optical",
-    )
+UNPREFIXED_FRAME_MAPPING = {
+    "body": "base_link",
+    "parent": "world",
+    "camera_link": "camera_link",
+    "camera_optical": "camera_optical",
+}
 
 
-def test_odom_to_tf_prefixed() -> None:
-    """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
-    odom parent frame stays global so all robots hang off one tree root."""
-    odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
-    assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
-    assert (camera_link.frame_id, camera_link.child_frame_id) == (
-        "robot0/base_link",
-        "robot0/camera_link",
-    )
-    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
-        "robot0/camera_link",
-        "robot0/camera_optical",
-    )
+def test_no_namespacing_by_default(stub_webrtc: MagicMock) -> None:
+    g = GlobalConfig(robot_ip="127.0.0.1")
+    connection = GO2Connection(g=g)
+    try:
+        assert connection.frame_mapping == UNPREFIXED_FRAME_MAPPING
+        assert connection.namespaced("base_link") == "base_link"
+    finally:
+        connection._close_module()
+
+
+def test_namespace_prefixes_published_frames(stub_webrtc: MagicMock) -> None:
+    """.namespace() sets frame_id_prefix; frame_mapping stays in natural names,
+    but everything the module publishes (TF transforms + message headers) is
+    prefixed so two Go2s don't collide in the shared TF tree."""
+    g = GlobalConfig(robot_ip="127.0.0.1")
+    connection = GO2Connection(g=g, frame_id_prefix="robot0")
+    try:
+        # the remap table itself is left in natural, unprefixed names
+        assert connection.frame_mapping == UNPREFIXED_FRAME_MAPPING
+        # message-header helper prefixes (and is idempotent)
+        assert connection.namespaced("camera_optical") == "robot0/camera_optical"
+        assert connection.namespaced("robot0/camera_optical") == "robot0/camera_optical"
+        # transforms get their frame ids prefixed at the tf publish boundary
+        published: list[Transform] = []
+        connection._tf = SimpleNamespace(  # type: ignore[assignment]
+            publish=lambda *transforms: published.extend(transforms),
+            stop=lambda: None,
+        )
+        connection.tf.publish(Transform(frame_id="world", child_frame_id="base_link"))
+        assert (published[0].frame_id, published[0].child_frame_id) == (
+            "robot0/world",
+            "robot0/base_link",
+        )
+    finally:
+        connection._close_module()
