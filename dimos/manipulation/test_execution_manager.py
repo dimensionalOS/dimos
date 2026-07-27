@@ -27,6 +27,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.execution_manager import (
+    ExecutionDispatchResult,
     ExecutionOutcome,
     ExecutionTarget,
     PlanExecutionManager,
@@ -124,7 +125,7 @@ def test_execution_target_inverts_coordinator_mapping() -> None:
         ),
     ],
 )
-def test_execution_target_rejects_ambiguous_configuration(
+def test_execution_target_rejects_invalid_configuration(
     model_joint_names: tuple[str, ...],
     mapping: dict[str, str],
     message: str,
@@ -314,25 +315,39 @@ def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
 
     def execute_trajectory(_trajectory: JointTrajectory) -> TrajectoryExecutionResult:
         execute_started.set()
-        assert release_execute.wait(timeout=1.0)
+        if not release_execute.wait(timeout=1.0):
+            raise TimeoutError("test did not release execute RPC")
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
     client.execute_trajectory.side_effect = execute_trajectory
     manager = _manager(client=client)
-    execute_results = []
-    cancel_results = []
+    execute_results: list[ExecutionDispatchResult] = []
+    cancel_results: list[TrajectoryCancellationResult] = []
 
     execute_thread = Thread(target=lambda: execute_results.append(manager.execute(_plan())))
     cancel_thread = Thread(target=lambda: cancel_results.append(manager.cancel()))
     execute_thread.start()
-    assert execute_started.wait(timeout=1.0)
-    cancel_thread.start()
+    execute_was_started = execute_started.wait(timeout=1.0)
+    cancel_was_started = False
+    cancel_called_before_release = False
+    try:
+        if execute_was_started:
+            cancel_thread.start()
+            cancel_was_started = True
+            cancel_called_before_release = client.cancel_trajectory.called
+    finally:
+        release_execute.set()
+        execute_thread.join(timeout=1.0)
+        if cancel_was_started:
+            cancel_thread.join(timeout=1.0)
 
-    client.cancel_trajectory.assert_not_called()
-    release_execute.set()
-    execute_thread.join(timeout=1.0)
-    cancel_thread.join(timeout=1.0)
-
+    assert execute_was_started
+    assert not execute_thread.is_alive()
+    assert cancel_was_started
+    assert not cancel_thread.is_alive()
+    assert not cancel_called_before_release
+    assert len(execute_results) == 1
     assert execute_results[0].outcome is ExecutionOutcome.ACCEPTED
+    assert len(cancel_results) == 1
     assert cancel_results[0].status is TrajectoryCancellationStatus.ALREADY_STOPPED
     client.cancel_trajectory.assert_called_once_with()

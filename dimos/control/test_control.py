@@ -472,21 +472,24 @@ class TestControlCoordinatorTrajectoryExecution:
         assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
         assert cancel_result.status is TrajectoryCancellationStatus.NO_TRAJECTORY_TASK
 
-    def test_execute_uses_current_hardware_positions(
+    def test_execute_rejects_trajectory_when_hardware_start_differs(
         self,
         make_coordinator,
         connected_hardware,
+        mock_adapter,
         trajectory_task,
         simple_trajectory,
     ):
         coordinator = make_coordinator()
-        coordinator._hardware["test_arm"] = connected_hardware
+        mock_adapter.read_joint_positions.return_value = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
+        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
         coordinator.add_task(trajectory_task, task_type="trajectory")
 
         result = coordinator.execute_trajectory(simple_trajectory)
 
-        assert result.status is TrajectoryExecutionStatus.ACCEPTED
-        assert coordinator.cancel_trajectory().status is TrajectoryCancellationStatus.CANCELLED
+        assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
+        assert "arm/joint1" in result.message
+        assert not trajectory_task.is_active()
 
 
 class TestJointTrajectoryTask:
@@ -518,7 +521,6 @@ class TestJointTrajectoryTask:
         assert "arm/joint3" in claim.joints
 
     def test_execute_trajectory(self, trajectory_task, simple_trajectory):
-        time.perf_counter()
         result = trajectory_task.execute(
             simple_trajectory, trajectory_start_positions(simple_trajectory)
         )

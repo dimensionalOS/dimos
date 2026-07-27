@@ -14,7 +14,6 @@
 
 """Shared lightweight test harnesses for manipulation module tests."""
 
-import threading
 from unittest.mock import MagicMock
 
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -23,36 +22,19 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation.manipulation_module import (
-    ManipulationModule,
-    ManipulationState,
-)
-
-
-class ManipulationModuleHarness(ManipulationModule):
-    """Manipulation module initialized only with state needed by unit tests."""
-
-    def __init__(self) -> None:
-        self._state = ManipulationState.IDLE
-        self._lock = threading.Lock()
-        self._error_message = ""
-        self._planning_epoch = 0
-        self._robots = {}
-        self._last_plan = None
-        self._world_monitor = None
-        self._planner = None
-        self._kinematics = None
-        self.config = MagicMock(planning_timeout=10.0)
-        coordinator_client = MagicMock()
-        coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
-            TrajectoryExecutionStatus.ACCEPTED
-        )
-        coordinator_client.cancel_trajectory.return_value = TrajectoryCancellationResult(
-            TrajectoryCancellationStatus.ALREADY_STOPPED
-        )
-        self._initialize_execution(coordinator_client)
+from dimos.manipulation.manipulation_module import ManipulationModule
 
 
 def make_module() -> ManipulationModule:
     """Create a lightweight ManipulationModule harness for behavior tests."""
-    return ManipulationModuleHarness()
+    module = ManipulationModule()
+    module.stop()
+    coordinator_client = MagicMock()
+    coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.ACCEPTED
+    )
+    coordinator_client.cancel_trajectory.return_value = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.ALREADY_STOPPED
+    )
+    module._initialize_execution(coordinator_client)
+    return module

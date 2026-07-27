@@ -34,6 +34,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 
 pytestmark = [pytest.mark.self_hosted_large]
 
@@ -54,7 +55,7 @@ def _wait_for_robot_info(
             info = client.get_robot_info(robot_name)
             if info and info.get("planning_groups"):
                 return cast("dict[str, Any]", info)
-        except BaseException as exc:
+        except Exception as exc:
             last_error = exc
         time.sleep(0.5)
     raise TimeoutError(f"Timed out waiting for {robot_name!r} robot info") from last_error
@@ -106,7 +107,7 @@ def _wait_for_current_joints(
                 for robot_name in robot_names
                 if client.get_current_joints(robot_name) is None
             )
-        except BaseException:
+        except Exception:
             # Robot metadata becomes visible while the planning world is still
             # finalizing. Treat that readiness race like a missing joint state.
             missing = robot_names
@@ -166,7 +167,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         left_id = _planning_group_id(left_info)
 
         tasks = coordinator_client.list_tasks()
-        assert len(tasks) == 1
+        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, ("left_arm",))
 
@@ -197,7 +198,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         right_id = _planning_group_id(right_info)
 
         tasks = coordinator_client.list_tasks()
-        assert len(tasks) == 1
+        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, ("left_arm", "right_arm"))
 

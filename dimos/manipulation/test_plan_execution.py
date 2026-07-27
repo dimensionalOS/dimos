@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Tests for ManipulationModule plan-execution result projection."""
+
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -92,18 +94,14 @@ def _client(
     return client
 
 
-def test_execute_plan_replaces_through_repeated_single_dispatch() -> None:
-    client = _client(cancel_status=TrajectoryCancellationStatus.CANCELLED)
+def test_execute_plan_can_dispatch_cached_plan_repeatedly() -> None:
+    client = _client()
     module = _module_with_client(client)
     module._last_plan = _plan()
 
     assert module.execute_plan()
     assert module.execute_plan()
     assert client.execute_trajectory.call_count == 2
-
-    assert module.cancel()
-    client.cancel_trajectory.assert_called_once_with()
-    assert module._state is ManipulationState.IDLE
 
 
 def test_direct_plan_does_not_replace_cached_plan() -> None:

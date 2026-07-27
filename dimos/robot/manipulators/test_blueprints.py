@@ -28,7 +28,14 @@ from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
 from dimos.robot.manipulators.common.blueprints import eef_twist_task, planner
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.robot.manipulators.common.topics import (
+    DEFAULT_TRAJECTORY_TASK_NAME,
+    EEF_TWIST_TASK_NAME,
+)
+from dimos.robot.manipulators.openarm.blueprints.planner import (
+    openarm_mock_planner_coordinator,
+    openarm_planner_coordinator,
+)
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     keyboard_teleop_openarm,
     keyboard_teleop_openarm_mock,
@@ -171,6 +178,21 @@ def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backen
     assert coordinator_kwargs["tasks"][0].joint_names == [
         *(f"left_arm/joint{index}" for index in range(1, 7)),
         *(f"right_arm/joint{index}" for index in range(1, 7)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [openarm_mock_planner_coordinator, openarm_planner_coordinator],
+)
+def test_bimanual_openarm_planners_use_one_trajectory_task(blueprint: Blueprint) -> None:
+    coordinator_kwargs = _module_kwargs(blueprint, ControlCoordinator)
+    hardware = coordinator_kwargs["hardware"]
+    tasks = coordinator_kwargs["tasks"]
+
+    assert [task.name for task in tasks] == [DEFAULT_TRAJECTORY_TASK_NAME]
+    assert tasks[0].joint_names == [
+        joint_name for component in hardware for joint_name in component.joints
     ]
 
 

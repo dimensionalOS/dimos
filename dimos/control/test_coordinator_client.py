@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,7 +33,7 @@ def rpc_client() -> MagicMock:
 
 
 @pytest.fixture
-def coordinator_client(rpc_client: MagicMock) -> ControlCoordinatorClient:
+def coordinator_client(rpc_client: MagicMock) -> Iterator[ControlCoordinatorClient]:
     client = ControlCoordinatorClient(rpc_client)
     yield client
     client.close()

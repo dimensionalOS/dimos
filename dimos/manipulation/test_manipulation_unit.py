@@ -112,22 +112,6 @@ def robot_config_with_mapping():
     )
 
 
-@pytest.fixture
-def simple_trajectory():
-    """Create a simple trajectory for testing."""
-    return JointTrajectory(
-        joint_names=["joint1", "joint2", "joint3"],
-        points=[
-            TrajectoryPoint(
-                positions=[0.0, 0.0, 0.0], velocities=[0.0, 0.0, 0.0], time_from_start=0.0
-            ),
-            TrajectoryPoint(
-                positions=[0.5, 0.5, 0.5], velocities=[0.0, 0.0, 0.0], time_from_start=1.0
-            ),
-        ],
-    )
-
-
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
@@ -254,7 +238,7 @@ class TestStateMachine:
         assert module._state == ManipulationState.COMPLETED
 
         assert module.cancel() is True
-        module._coordinator_client.cancel_trajectory.assert_called_with()
+        module._coordinator_client.cancel_trajectory.assert_called_once_with()
         assert module._state == ManipulationState.IDLE
 
     def test_reset_not_during_execution(self):
@@ -377,12 +361,9 @@ class TestPlanningInitialization:
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
-        module.start()
-        try:
+        with module:
             initialize_planning.assert_called_once_with()
             initialize_execution.assert_called_once_with()
-        finally:
-            module.stop()
 
     def test_kinematics_config_is_passed_to_factory(
         self, robot_config, planning_initialization: PlanningInitializationHarness
@@ -687,9 +668,7 @@ class TestPlanningGroupApis:
         _, planner_kwargs = module._planner.plan_selected_joint_path.call_args
         assert planner_kwargs["goal"] is ik_goal
 
-    def test_failed_plan_materialization_clears_generated_plan(
-        self, robot_config, simple_trajectory
-    ):
+    def test_failed_plan_materialization_clears_generated_plan(self, robot_config):
         module = _make_module()
         registry = PlanningGroupRegistry([robot_config])
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -739,56 +718,6 @@ class TestPlanningGroupApis:
         assert module._state == ManipulationState.FAULT
         assert module._last_plan is None
         assert module.has_planned_path() is False
-
-    def test_execute_plan_dispatches_each_affected_robot(self, robot_config, simple_trajectory):
-        module = _make_module()
-        registry = PlanningGroupRegistry([robot_config])
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = simple_trajectory
-        module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
-        module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = registry
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
-        )
-        module._world_monitor.current_global_joint_state.return_value = JointState(
-            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-            position=[0.0, 0.0, 0.0],
-        )
-        module._last_plan = GeneratedPlan(
-            trajectory=_generated_plan_trajectory(
-                ["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                [0.0, 0.0, 0.0],
-                [0.1, 0.2, 0.3],
-            ),
-            group_ids=("test_arm/manipulator",),
-            status=PlanningStatus.SUCCESS,
-            path=[
-                JointState(
-                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                    position=[0.0, 0.0, 0.0],
-                ),
-                JointState(
-                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                    position=[0.1, 0.2, 0.3],
-                ),
-            ],
-        )
-        mock_client = _coordinator_client()
-        module._initialize_execution(mock_client)
-
-        assert module.execute_plan() is True
-
-        mock_client.execute_trajectory.assert_called_once()
-        trajectory = mock_client.execute_trajectory.call_args.args[0]
-        assert trajectory.joint_names == simple_trajectory.joint_names
-        assert [point.positions for point in trajectory.points] == [
-            [0.0, 0.0, 0.0],
-            [0.1, 0.2, 0.3],
-        ]
-        traj_gen.generate.assert_not_called()
-        assert module._state == ManipulationState.COMPLETED
 
     def test_execute_plan_dispatches_selected_subsets_once_with_shared_clock_and_mapping(self):
         left = RobotModelConfig(
@@ -984,42 +913,6 @@ class TestExecute:
         """Execute fails without planned trajectory."""
         module = _make_module()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}
-
-        assert module.execute() is False
-        assert module._state == ManipulationState.IDLE
-
-    def test_execute_success(self, robot_config, simple_trajectory):
-        """Successful execute calls the typed coordinator client."""
-        module = _make_module()
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = simple_trajectory
-        _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
-
-        mock_client = _coordinator_client()
-        module._initialize_execution(mock_client)
-
-        assert module.execute() is True
-        assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_trajectory.assert_called_once()
-        trajectory = mock_client.execute_trajectory.call_args.args[0]
-        assert trajectory.joint_names == simple_trajectory.joint_names
-        assert [point.positions for point in trajectory.points] == [
-            [0.0, 0.0, 0.0],
-            [0.1, 0.2, 0.3],
-        ]
-        traj_gen.generate.assert_not_called()
-
-    def test_execute_rejected(self, robot_config, simple_trajectory):
-        """A known-safe rejection restores the module's previous state."""
-        module = _make_module()
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = simple_trajectory
-        _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
-
-        mock_client = _coordinator_client(
-            execute_status=TrajectoryExecutionStatus.INVALID_TRAJECTORY
-        )
-        module._initialize_execution(mock_client)
 
         assert module.execute() is False
         assert module._state == ManipulationState.IDLE
