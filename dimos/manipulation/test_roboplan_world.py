@@ -698,6 +698,43 @@ def test_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     assert world.update_obstacle_pose("missing", named.pose) is False
 
 
+def test_complete_update_rejects_invalid_obstacle_values(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    valid = Obstacle(
+        name="shape",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    invalid_obstacles = [
+        (replace(valid, name=""), "name must be non-empty"),
+        (replace(valid, dimensions=(0.1, -0.2, 0.3)), "finite and positive"),
+        (
+            replace(valid, obstacle_type=ObstacleType.MESH, dimensions=(), mesh_path=None),
+            "requires mesh_path",
+        ),
+        (replace(valid, color=(1.0, 0.0, 0.0)), "four finite values"),
+        (
+            replace(
+                valid,
+                pose=PoseStamped(
+                    position=[np.nan, 0.0, 0.0],
+                    orientation=[0.0, 0.0, 0.0, 1.0],
+                ),
+            ),
+            "finite values",
+        ),
+    ]
+
+    for invalid, message in invalid_obstacles:
+        with pytest.raises(ValueError, match=message):
+            world.update_obstacle(invalid)
+
+    assert world.get_obstacles() == []
+
+
 def test_complete_replacement_and_defensive_obstacle_snapshots(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -855,6 +892,31 @@ def test_native_update_failure_invalidates_world(
             robot_id,
             JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
         )
+
+
+def test_native_pose_update_failure_invalidates_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    monkeypatch.setattr(
+        world._scene,
+        "updateGeometryPlacement",
+        lambda *_args: (_ for _ in ()).throw(ValueError("native pose update failed")),
+    )
+
+    with pytest.raises(ValueError, match="native pose update failed"):
+        world.update_obstacle_pose("box", obstacle.pose)
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.get_obstacles()
 
 
 def test_collision_config_and_edge_checks(

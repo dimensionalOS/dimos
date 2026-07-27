@@ -691,6 +691,46 @@ def test_obstacle_monitor_routes_complete_and_rejects_incomplete_updates(
     pose_update.assert_not_called()
 
 
+def test_obstacle_monitor_adds_complete_unknown_update_and_stops_on_failed_updates(
+    mocker: MockerFixture,
+) -> None:
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    add = mocker.patch.object(parent, "add_obstacle", return_value="world-id")
+    full_update = mocker.patch.object(parent, "update_obstacle", return_value=False)
+    pose_update = mocker.patch.object(parent, "update_obstacle_pose", return_value=False)
+    parent.start_obstacle_monitor()
+    monitor = parent.obstacle_monitor
+    assert monitor is not None
+    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+
+    monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="update",
+            primitive_type="box",
+            pose=pose,
+            dimensions=(1.0, 1.0, 1.0),
+        )
+    )
+    monitor.on_collision_object(
+        CollisionObjectMessage(
+            id="source-id",
+            operation="update",
+            primitive_type="sphere",
+            pose=pose,
+            dimensions=(0.4,),
+        )
+    )
+    monitor.on_collision_object(
+        CollisionObjectMessage(id="source-id", operation="update", pose=pose)
+    )
+    monitor.on_collision_object(CollisionObjectMessage(id="source-id", operation="update"))
+
+    add.assert_called_once()
+    full_update.assert_called_once()
+    pose_update.assert_called_once_with("world-id", pose)
+
+
 def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_error(
     mocker: MockerFixture,
 ) -> None:

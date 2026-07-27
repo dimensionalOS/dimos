@@ -223,6 +223,10 @@ class TestObstacleUpdates:
         assert obstacle.color == (0.1, 0.2, 0.3, 0.9)
         assert obstacle.pose.position.x == pytest.approx(1.0)
 
+        assert module.update_obstacle("default-color", pose, "box", [1.0, 1.0, 1.0])
+        default_obstacle = module._world_monitor.update_obstacle.call_args.args[0]
+        assert default_obstacle.color == (0.8, 0.2, 0.2, 0.8)
+
     def test_pose_update_forwards_only_name_and_pose(self) -> None:
         module = _make_module()
         module._world_monitor = MagicMock(spec=WorldMonitor)
@@ -249,6 +253,24 @@ class TestObstacleUpdates:
             module.update_obstacle("shape", Pose(), "capsule", [1.0])
 
         module._world_monitor.update_obstacle.assert_not_called()
+
+    def test_complete_update_rejects_incomplete_mesh_and_invalid_color(self) -> None:
+        module = _make_module()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        with pytest.raises(ValueError, match="mesh_path required"):
+            module.update_obstacle("mesh", Pose(), "mesh")
+        with pytest.raises(ValueError, match="four values"):
+            module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0], color=[1.0])
+
+        module._world_monitor.update_obstacle.assert_not_called()
+
+    def test_updates_fail_when_world_monitor_is_unavailable(self) -> None:
+        module = _make_module()
+        module._world_monitor = None
+
+        assert module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0]) is False
+        assert module.update_obstacle_pose("box", Pose()) is False
 
 
 class TestStateMachine:

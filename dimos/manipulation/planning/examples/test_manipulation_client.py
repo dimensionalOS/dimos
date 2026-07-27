@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.examples import manipulation_client
@@ -48,6 +49,38 @@ def test_update_box_calls_complete_obstacle_rpc(mocker: MockerFixture) -> None:
     assert dimensions == [0.4, 0.5, 0.6]
     assert mesh_path is None
     assert color == [0.1, 0.2, 0.3, 0.9]
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "dimensions", "shape"),
+    [
+        ("update_sphere", [0.4], "sphere"),
+        ("update_cylinder", [0.4, 0.8], "cylinder"),
+    ],
+)
+def test_update_round_shape_helpers_call_complete_obstacle_rpc(
+    mocker: MockerFixture,
+    helper_name: str,
+    dimensions: list[float],
+    shape: str,
+) -> None:
+    client = MagicMock()
+    client.update_obstacle.return_value = True
+    mocker.patch.object(manipulation_client, "_client", client)
+    helper = getattr(manipulation_client, helper_name)
+
+    result = helper("shape", 1.0, 2.0, 3.0, *dimensions)
+
+    assert result is True
+    client.update_obstacle.assert_called_once_with(
+        "shape",
+        mocker.ANY,
+        shape,
+        dimensions,
+        None,
+        None,
+    )
+    assert client.update_obstacle.call_args.args[1].position == Vector3(1.0, 2.0, 3.0)
 
 
 def test_update_obstacle_exposes_generic_mesh_replacement(mocker: MockerFixture) -> None:
