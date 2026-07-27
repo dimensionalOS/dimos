@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import time
 from typing import Any
 
@@ -88,6 +89,27 @@ RESULTS_DIR = Path(__file__).resolve().parent / "eval_results"
 DEFAULT_TAG_FRAME = "camera_optical"
 DEFAULT_BASE_FRAME = "base_link"
 DEFAULT_WORLD_FRAME = "world"
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    commit = result.stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=Path(__file__).resolve().parent,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return commit + ("-dirty" if dirty else "")
 
 
 def evaluate(
@@ -291,6 +313,7 @@ def evaluate(
         "isometric_png": str(iso_png_path) if write_isometric else None,
         "rrd": str(rrd_path) if write_rrd else None,
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "git_commit": _git_commit(),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
