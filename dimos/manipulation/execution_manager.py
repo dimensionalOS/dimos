@@ -37,6 +37,10 @@ logger = setup_logger()
 
 TaskName = str
 DEFAULT_PLAN_START_TOLERANCE = 1e-6
+_NON_EMPTY_STRING = attrs.validators.and_(
+    attrs.validators.instance_of(str),
+    attrs.validators.min_len(1),
+)
 
 
 class ExecutionOutcome(Enum):
@@ -97,11 +101,11 @@ class ExecutionPolicy:
             raise ValueError("plan_start_tolerance must be finite and non-negative")
 
 
-def _model_joint_names(value: Sequence[str]) -> tuple[str, ...]:
+def _to_model_joint_names(value: Sequence[str]) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
+def _to_immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
     return MappingProxyType(dict(value))
 
 
@@ -109,31 +113,22 @@ def _immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
 class ExecutionTarget:
     """Immutable coordinator dispatch metadata for one robot."""
 
-    robot_name: RobotName = attrs.field()
-    model_joint_names: tuple[str, ...] = attrs.field(converter=_model_joint_names)
-    coordinator_task_name: TaskName = attrs.field()
+    robot_name: RobotName = attrs.field(validator=_NON_EMPTY_STRING)
+    model_joint_names: tuple[str, ...] = attrs.field(
+        converter=_to_model_joint_names,
+        validator=attrs.validators.deep_iterable(
+            member_validator=attrs.validators.instance_of(str),
+        ),
+    )
+    coordinator_task_name: TaskName = attrs.field(validator=_NON_EMPTY_STRING)
     model_to_coordinator: Mapping[str, str] = attrs.field(
-        converter=_immutable_joint_mapping,
+        converter=_to_immutable_joint_mapping,
+        validator=attrs.validators.deep_mapping(
+            key_validator=attrs.validators.instance_of(str),
+            value_validator=attrs.validators.instance_of(str),
+        ),
         repr=False,
     )
-
-    @robot_name.validator
-    def _validate_robot_name(
-        self,
-        _attribute: attrs.Attribute[RobotName],
-        value: RobotName,
-    ) -> None:
-        if not value:
-            raise ValueError("Execution target requires a robot name")
-
-    @coordinator_task_name.validator
-    def _validate_coordinator_task_name(
-        self,
-        _attribute: attrs.Attribute[TaskName],
-        value: TaskName,
-    ) -> None:
-        if not value:
-            raise ValueError(f"Execution target '{self.robot_name}' requires a task name")
 
     @model_joint_names.validator
     def _validate_model_joint_names(

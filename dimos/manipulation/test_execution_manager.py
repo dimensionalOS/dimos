@@ -17,6 +17,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import threading
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -209,18 +210,18 @@ def test_execution_policy_rejects_invalid_start_tolerance(tolerance: float) -> N
 
 
 @pytest.mark.parametrize(
-    ("robot_name", "task_name", "message"),
+    ("robot_name", "task_name", "field_name"),
     [
-        ("", "traj_arm", "requires a robot name"),
-        ("arm", "", "requires a task name"),
+        ("", "traj_arm", "robot_name"),
+        ("arm", "", "coordinator_task_name"),
     ],
 )
 def test_execution_target_requires_robot_and_task_names(
     robot_name: str,
     task_name: str,
-    message: str,
+    field_name: str,
 ) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=field_name):
         ExecutionTarget(
             robot_name=robot_name,
             model_joint_names=("j0",),
@@ -284,6 +285,40 @@ def test_execution_target_snapshots_mapping_input() -> None:
     mapping["j0"] = "changed/j0"
 
     assert dict(target.model_to_coordinator) == {"j0": "hardware/j0"}
+
+
+def test_execution_target_snapshots_model_joint_names_input() -> None:
+    model_joint_names = ["j0"]
+
+    target = ExecutionTarget(
+        robot_name="arm",
+        model_joint_names=model_joint_names,
+        coordinator_task_name="traj_arm",
+        model_to_coordinator={"j0": "hardware/j0"},
+    )
+    model_joint_names[0] = "changed/j0"
+
+    assert target.model_joint_names == ("j0",)
+
+
+def test_execution_target_rejects_non_string_model_joint_name() -> None:
+    with pytest.raises(TypeError, match="model_joint_names"):
+        ExecutionTarget(
+            robot_name="arm",
+            model_joint_names=cast("tuple[str, ...]", ("j0", 1)),
+            coordinator_task_name="traj_arm",
+            model_to_coordinator={"j0": "hardware/j0"},
+        )
+
+
+def test_execution_target_rejects_non_string_coordinator_joint_name() -> None:
+    with pytest.raises(TypeError, match="model_to_coordinator"):
+        ExecutionTarget(
+            robot_name="arm",
+            model_joint_names=("j0",),
+            coordinator_task_name="traj_arm",
+            model_to_coordinator=cast("dict[str, str]", {"j0": 1}),
+        )
 
 
 def test_execution_target_rejects_unknown_reverse_mapping() -> None:
