@@ -14,8 +14,6 @@
 
 """Durable named locations, anchored to the cross-run ``map`` frame.
 
-See ``saved_locations.md`` for the design. The short version:
-
 ``world`` is per-run — its origin is wherever the robot booted — so a pose saved
 in one run is meaningless in the next. ``map`` is durable, published as a tf edge
 ``world -> map`` by :class:`~dimos.mapping.relocalization.module.RelocalizationModule`.
@@ -128,7 +126,7 @@ class RelocStatus:
     This cannot be inferred from tf: ``RelocalizationModule`` republishes its last
     good transform at a fixed interval, restamped to now, so a failing
     registration still looks perfectly fresh in the tf tree. The module has to
-    report this out of band — see ``saved_locations.md`` §2.3.
+    report this out of band. 
     """
 
     relocalized: bool = False
@@ -259,7 +257,7 @@ class LocationStore:
     planner: the A* planner ignores ``goal.frame_id`` entirely and consumes goal
     coordinates raw against the costmap, so nothing downstream is frame-aware.
     Callers resolve into the costmap frame at dispatch and re-issue the goal if
-    the ``world -> map`` estimate shifts (``saved_locations.md`` §2.2).
+    the ``world -> map`` estimate shifts.
     """
 
     def __init__(
