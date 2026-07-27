@@ -7,6 +7,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -352,6 +355,36 @@ TEST_CASE("parse_stdin_config tolerates a missing config") {
     CHECK(p.config.is_null());
 }
 
+TEST_CASE("parse_stdin_config treats an empty line as an empty blob") {
+    StdinConfig p = parse_stdin_config("");
+    CHECK(p.topics.empty());
+    CHECK(p.config.is_null());
+}
+
+TEST_CASE("parse_stdin_config rejects a blob that is not an object") {
+    CHECK_THROWS_AS(parse_stdin_config("[1,2]"), std::runtime_error);
+    CHECK_THROWS_AS(parse_stdin_config("7"), std::runtime_error);
+}
+
+TEST_CASE("parse_stdin_config rejects malformed JSON") {
+    CHECK_THROWS(parse_stdin_config("{not json"));
+}
+
+TEST_CASE("parse_stdin_config skips a topic whose value is not a string") {
+    StdinConfig p = parse_stdin_config(R"({"topics":{"good":"/g","bad":7}})");
+    CHECK(p.topics.at("good") == "/g");
+    CHECK(p.topics.count("bad") == 0);
+}
+
+TEST_CASE("PublishQueue drops a push that arrives after stop") {
+    PublishQueue queue("/out");
+    queue.stop();
+    queue.push({1, 2, 3});
+
+    Bytes out;
+    CHECK_FALSE(queue.pop(out));
+}
+
 namespace {
 struct WaitModule : Module {
     void build(Builder&, Config&) override {}
@@ -382,4 +415,107 @@ TEST_CASE("default_handle returns without draining once shutdown is requested") 
     m.invoke_default_handle();  // returns immediately, loop body never runs
 
     CHECK(handled == 0);
+}
+
+namespace {
+
+// run_fallible destroys the transport before returning, so the run's wire
+// interactions are recorded somewhere that outlives it.
+struct RunRecord {
+    std::vector<std::string> subscribed;
+    std::vector<std::string> published;
+    bool setup_ran = false;
+    bool handle_ran = false;
+    bool teardown_ran = false;
+    std::string data_topic;
+    int config_x = 0;
+};
+RunRecord g_run;
+
+struct RecordingTransport : Transport {
+    void publish(const std::string& channel, Bytes) override {
+        g_run.published.push_back(channel);
+    }
+    void subscribe(const std::string& channel, Dispatch) override {
+        g_run.subscribed.push_back(channel);
+    }
+};
+
+struct RunConfig {
+    int x;
+};
+
+struct RunModule : Module {
+    void build(Builder& builder, Config& config) override {
+        g_run.config_x = config.parse<RunConfig>().x;
+        g_run.data_topic = builder.topic_for("data");
+        builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+        out_ = builder.output<Bytes>("out", identity_encode);
+    }
+    void setup() override { g_run.setup_ran = true; }
+    void handle() override {
+        g_run.handle_ran = true;
+        out_.publish({7});
+    }
+    void teardown() override { g_run.teardown_ran = true; }
+
+    Output<Bytes> out_;
+};
+
+struct ThrowingHandleModule : Module {
+    void build(Builder&, Config&) override {}
+    void handle() override { throw std::runtime_error("handle blew up"); }
+    void teardown() override { g_run.teardown_ran = true; }
+};
+
+// run_fallible reads its config off std::cin, so a test feeds it one line.
+struct StdinLine {
+    std::istringstream buf;
+    std::streambuf* prev;
+    explicit StdinLine(const std::string& line)
+        : buf(line + "\n"), prev(std::cin.rdbuf(buf.rdbuf())) {}
+    ~StdinLine() { std::cin.rdbuf(prev); }
+};
+
+}  // namespace
+
+TEST_CASE("run_fallible wires stdin topics and config, then runs the lifecycle") {
+    ShutdownFlagGuard guard;
+    g_run = RunRecord{};
+    StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5}})");
+
+    run_fallible<RunModule>(std::make_unique<RecordingTransport>());
+
+    CHECK(g_run.config_x == 5);
+    CHECK(g_run.data_topic == "/d");
+    CHECK(g_run.setup_ran);
+    CHECK(g_run.handle_ran);
+    CHECK(g_run.teardown_ran);
+    // Inputs reach the wire, and the worker drains the publish before the
+    // queues are stopped and joined.
+    CHECK(g_run.subscribed == std::vector<std::string>{"/d"});
+    CHECK(g_run.published == std::vector<std::string>{"/o"});
+}
+
+TEST_CASE("run_fallible runs teardown when handle throws, and rethrows") {
+    ShutdownFlagGuard guard;
+    g_run = RunRecord{};
+    StdinLine line("{}");
+
+    CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>()),
+                    std::runtime_error);
+    CHECK(g_run.teardown_ran);
+}
+
+TEST_CASE("run_fallible rejects a config field the module never parsed") {
+    ShutdownFlagGuard guard;
+    g_run = RunRecord{};
+    StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5,"stray":1}})");
+
+    CHECK_THROWS_AS(run_fallible<RunModule>(std::make_unique<RecordingTransport>()),
+                    std::runtime_error);
+    // enforce_all_consumed runs after build and before setup, so the module
+    // never starts and teardown is not owed.
+    CHECK_FALSE(g_run.setup_ran);
+    CHECK_FALSE(g_run.teardown_ran);
 }

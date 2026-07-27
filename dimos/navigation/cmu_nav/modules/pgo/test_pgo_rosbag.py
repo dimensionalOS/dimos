@@ -35,6 +35,8 @@ from dimos.navigation.cmu_nav.tests.rosbag_fixtures import (
     feed_at_original_timing,
     lcm_handle_loop,
     load_rosbag_window,
+    make_odometry_msg,
+    make_pointcloud_msg,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -44,6 +46,7 @@ pytestmark = [pytest.mark.self_hosted]
 
 _PROCESS_STARTUP_SEC = 2.0
 _POST_FEED_DRAIN_SEC = 3.0
+_BURST_DRAIN_SEC = 2.0
 
 PGO_BIN = Path(__file__).parent / "cpp" / "result" / "bin" / "pgo"
 
@@ -53,6 +56,46 @@ ODOM_LCM = "/rbpgo_odom#nav_msgs.Odometry"
 CORRECTED_ODOM_LCM = "/rbpgo_corr_odom#nav_msgs.Odometry"
 GLOBAL_MAP_LCM = "/rbpgo_global_map#sensor_msgs.PointCloud2"
 TF_LCM = "/rbpgo_tf#nav_msgs.Odometry"
+
+BURST_SCAN_LCM = "/burstpgo_scan#sensor_msgs.PointCloud2"
+BURST_ODOM_LCM = "/burstpgo_odom#nav_msgs.Odometry"
+BURST_CORRECTED_LCM = "/burstpgo_corr_odom#nav_msgs.Odometry"
+BURST_GLOBAL_MAP_LCM = "/burstpgo_global_map#sensor_msgs.PointCloud2"
+BURST_TF_LCM = "/burstpgo_tf#nav_msgs.Odometry"
+
+
+def _burst_stdin_blob() -> bytes:
+    """Same config shape as the rosbag test, on the burst topics."""
+    return (
+        json.dumps(
+            {
+                "topics": {
+                    "registered_scan": BURST_SCAN_LCM,
+                    "odometry": BURST_ODOM_LCM,
+                    "corrected_odometry": BURST_CORRECTED_LCM,
+                    "global_map": BURST_GLOBAL_MAP_LCM,
+                    "pgo_tf": BURST_TF_LCM,
+                },
+                "config": {
+                    "world_frame": "map",
+                    "local_frame": "odom",
+                    "key_pose_delta_deg": 10.0,
+                    "key_pose_delta_trans": 0.5,
+                    "loop_search_radius": 1.0,
+                    "loop_time_thresh": 60.0,
+                    "loop_score_thresh": 0.15,
+                    "loop_submap_half_range": 5,
+                    "submap_resolution": 0.1,
+                    "min_loop_detect_duration": 5.0,
+                    "unregister_input": True,
+                    "global_map_voxel_size": 0.1,
+                    "global_map_publish_rate": 1.0,
+                    "debug": False,
+                },
+            }
+        ).encode()
+        + b"\n"
+    )
 
 
 class TestPGORosbag:
@@ -239,3 +282,78 @@ class TestPGORosbag:
         )
         assert last_map_points > 0, "Final global map has zero points"
         assert mean_map_points > 100, f"Global map too sparse: mean {mean_map_points:.0f} points"
+
+    def test_pgo_stays_current_under_a_scan_burst(self) -> None:
+        """A burst faster than the PGO round collapses to the newest scan.
+
+        PGO holds one pending scan and replaces it when a newer one arrives, so
+        a backlog can never build up. Without that, the burst queues and the
+        correction PGO publishes trails the sensor by the length of the queue.
+        Clouds are tiny here so the burst tests the collapse rather than how
+        much a UDP socket can absorb.
+        """
+        if not PGO_BIN.exists():
+            pytest.skip(f"PGO binary not found: {PGO_BIN}")
+
+        burst = 60
+        cloud = np.tile(np.array([[1.0, 0.0, 0.0, 10.0]], dtype=np.float32), (32, 1))
+
+        lcm_instance = lcmlib.LCM()
+        corrected = LcmCollector(topic=BURST_CORRECTED_LCM, msg_type=Odometry)
+        corrected.start(lcm_instance)
+
+        stop_event = threading.Event()
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm_instance, stop_event), daemon=True
+        )
+        handle_thread.start()
+
+        runner = NativeProcessRunner(
+            binary_path=str(PGO_BIN),
+            stdin_blob=_burst_stdin_blob(),
+            env={**os.environ, "DIMOS_TRANSPORT": "lcm"},
+        )
+
+        try:
+            runner.start(capture_stderr=True)
+            assert runner.is_running, "PGO binary failed to start"
+            time.sleep(_PROCESS_STARTUP_SEC)
+
+            # Walk forward a metre per step so each scan carries a distinct,
+            # increasing stamp and PGO's out-of-order gate accepts every one.
+            for i in range(burst):
+                ts = 1000.0 + i * 0.1
+                lcm_instance.publish(
+                    BURST_ODOM_LCM,
+                    make_odometry_msg(
+                        np.array([float(i), 0.0, 0.0]),
+                        np.array([0.0, 0.0, 0.0, 1.0]),
+                        ts=ts,
+                    ).lcm_encode(),
+                )
+                lcm_instance.publish(BURST_SCAN_LCM, make_pointcloud_msg(cloud, ts=ts).lcm_encode())
+
+            time.sleep(_BURST_DRAIN_SEC)
+        finally:
+            runner.stop()
+            stop_event.set()
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            corrected.stop(lcm_instance)
+
+        published = len(corrected.messages)
+        assert published > 0, "PGO produced no corrected odometry for the burst"
+
+        # Each scan was stamped with a pose one metre further along, so the x of
+        # the last correction says which scan PGO finished on.
+        reached = corrected.messages[-1].x
+        logger.info(f"burst={burst} published={published} reached_x={reached:.1f}/{burst - 1}")
+
+        # One round processes one scan, so a collapsing module publishes far
+        # fewer than it received. A FIFO queue would work through every one.
+        assert published < burst // 2, (
+            f"PGO published {published} of {burst} burst scans, so the backlog was not shed"
+        )
+        # It ended on the newest scan fed, not on one buried in a backlog.
+        assert reached >= burst - 2, (
+            f"PGO's last correction is at x={reached:.1f}, behind the final scan at x={burst - 1}"
+        )
