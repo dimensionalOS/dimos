@@ -109,6 +109,80 @@ pub struct LoopPair {
     pub noise: NoiseModel,
 }
 
+/// Per-search loop-closure diagnostics
+/// one record every time `search_for_loop_pairs` evaluates a keyframe, capturing the metric at each
+/// gate and the outcome (accepted, or the name of the gate that rejected it).
+/// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
+#[derive(Debug, Clone)]
+pub struct LoopCandidateDiag {
+    /// Outcome: "accepted" or the rejecting gate — one of "throttle_min_duration",
+    /// "no_structure", "low_occupancy", "no_candidate", "lowe_reject",
+    /// "distance_reject", "degeneracy_reject", "icp_reject".
+    pub outcome: &'static str,
+    pub source_id: usize,
+    pub source_time: f64,
+    pub source_xyz: Vec3,
+    /// Candidate target keyframe, or -1 if no candidate was found.
+    pub target_id: i64,
+    pub target_time: f64,
+    pub target_xyz: Vec3,
+    pub from_scan_context: bool,
+    /// Scan-context descriptor structure std and occupied-cell count of the
+    /// source keyframe (the feature-poverty + occupancy gate inputs).
+    pub descriptor_structure: f32,
+    pub descriptor_occupancy: i32,
+    /// Best / second-best scan-context distances and their Lowe ratio
+    /// (best/second). NaN when the candidate came from the position fallback.
+    pub scan_context_best: f32,
+    pub scan_context_second: f32,
+    pub lowe_ratio: f32,
+    /// Global distance between source and candidate keyframe (the
+    /// candidate-distance gate input).
+    pub candidate_distance: f64,
+    /// Minimum degeneracy (observability) of the source submap, -1 if not
+    /// computed on this path.
+    pub degeneracy_min: f32,
+    pub icp_converged: bool,
+    /// ICP fitness (the score-threshold gate input); NaN if ICP did not run.
+    pub icp_fitness: f64,
+    /// Magnitude of the ICP translation correction, NaN if ICP did not run.
+    pub icp_translation_norm: f64,
+    /// How far the accepted constraint pulls the graph away from the current
+    /// odom-chain estimate: translation (m) and rotation (deg) between the
+    /// ICP-refined relative pose and the current relative pose. A large yank on
+    /// a plausible-distance candidate is the signature of a bad closure that
+    /// disagrees with odometry. NaN if ICP did not run.
+    pub yank_translation: f64,
+    pub yank_rotation_deg: f64,
+}
+
+impl LoopCandidateDiag {
+    fn new(source_id: usize, source_time: f64, source_xyz: Vec3) -> LoopCandidateDiag {
+        LoopCandidateDiag {
+            outcome: "no_candidate",
+            source_id,
+            source_time,
+            source_xyz,
+            target_id: -1,
+            target_time: f64::NAN,
+            target_xyz: [f64::NAN; 3],
+            from_scan_context: false,
+            descriptor_structure: f32::NAN,
+            descriptor_occupancy: -1,
+            scan_context_best: f32::NAN,
+            scan_context_second: f32::NAN,
+            lowe_ratio: f32::NAN,
+            candidate_distance: f64::NAN,
+            degeneracy_min: -1.0,
+            icp_converged: false,
+            icp_fitness: f64::NAN,
+            icp_translation_norm: f64::NAN,
+            yank_translation: f64::NAN,
+            yank_rotation_deg: f64::NAN,
+        }
+    }
+}
+
 /// The key -> PoseStamped frame bookkeeping (`m_node_poses`): GTSAM nodes
 /// carry no frame; this records the odometry frame each node was created in.
 #[derive(Debug, Clone)]
@@ -147,6 +221,21 @@ pub struct Config {
     /// candidate can't be trusted to pick the right keyframe. Reject when the
     /// ratio exceeds this. 0 disables. Only applies to scan-context candidates.
     pub loop_max_lowe_ratio: f64,
+    /// False-closure gate on the graph yank (ICP-refined relative rotation vs the
+    /// current odom-chain estimate). A pair the graph places within
+    /// `loop_yank_gate_max_distance_m` is nearly coincident, so a large ICP
+    /// rotation disagreement is physically impossible = a structural-alias false
+    /// match. Reject when yank rotation exceeds this many degrees. 0 disables.
+    pub loop_max_yank_rotation_deg: f64,
+    /// Only apply `loop_max_yank_rotation_deg` when the candidate distance is
+    /// below this (near-coincident pairs, where odom rotation is trustworthy).
+    /// 0 disables the whole yank-rotation gate.
+    pub loop_yank_gate_max_distance_m: f64,
+    /// Minimum keyframe-index separation between the two ends of a loop closure.
+    /// A closure only corrects drift accumulated over the trajectory between the
+    /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
+    /// corrects nothing and can only inject error (structural alias). 0 disables.
+    pub loop_min_id_gap: u64,
     /// Robust (M-estimator) kernel wrapping all loop factors.
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
@@ -190,6 +279,9 @@ impl Default for Config {
             loop_min_occupancy: 80,
             loop_min_degeneracy: 0.05,
             loop_max_lowe_ratio: 0.0,
+            loop_max_yank_rotation_deg: 0.0,
+            loop_yank_gate_max_distance_m: 0.0,
+            loop_min_id_gap: 0,
             loop_robust_kernel: false,
             loop_robust_huber_k: 1.345,
             use_location_constraints: false,
@@ -240,6 +332,7 @@ pub struct GscPgo {
     pending_removals: Vec<u64>,
     location_closure: bool,
     timing: TimingStats,
+    loop_diagnostics: Vec<LoopCandidateDiag>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -287,7 +380,13 @@ impl GscPgo {
             pending_removals: Vec::new(),
             location_closure: false,
             timing: TimingStats::default(),
+            loop_diagnostics: Vec::new(),
         }
+    }
+
+    /// All per-search loop-closure diagnostic records accumulated so far.
+    pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
+        &self.loop_diagnostics
     }
 
     pub fn config(&self) -> &Config {
@@ -660,17 +759,25 @@ impl GscPgo {
         if self.key_poses.len() < 10 {
             return;
         }
+
+        let cur_idx = self.key_poses.len() - 1;
+        let mut diag = LoopCandidateDiag::new(
+            cur_idx,
+            self.key_poses[cur_idx].time,
+            self.key_poses[cur_idx].translation_global,
+        );
+
         if self.config.min_loop_detect_duration > 0.0 {
             if let Some(&(_, last_source)) = self.history_pairs.last() {
                 let current_time = self.key_poses.last().unwrap().time;
                 let last_time = self.key_poses[last_source].time;
                 if current_time - last_time < self.config.min_loop_detect_duration {
+                    diag.outcome = "throttle_min_duration";
+                    self.loop_diagnostics.push(diag);
                     return;
                 }
             }
         }
-
-        let cur_idx = self.key_poses.len() - 1;
 
         // Feature-poverty gate: a scan with no spatially-spread structure
         // can't reliably place itself; skip loop search entirely.
@@ -679,16 +786,20 @@ impl GscPgo {
             && !self.scan_context_descriptors.last().unwrap().is_empty()
         {
             let descriptor = self.scan_context_descriptors.last().unwrap();
+            diag.descriptor_structure = scan_context::descriptor_structure(descriptor);
+            diag.descriptor_occupancy = scan_context::descriptor_occupancy(descriptor) as i32;
             if self.config.min_descriptor_std > 0.0
-                && scan_context::descriptor_structure(descriptor)
-                    < self.config.min_descriptor_std as f32
+                && diag.descriptor_structure < self.config.min_descriptor_std as f32
             {
+                diag.outcome = "no_structure";
+                self.loop_diagnostics.push(diag);
                 return;
             }
             if self.config.loop_min_occupancy > 0
-                && (scan_context::descriptor_occupancy(descriptor) as i32)
-                    < self.config.loop_min_occupancy
+                && diag.descriptor_occupancy < self.config.loop_min_occupancy
             {
+                diag.outcome = "low_occupancy";
+                self.loop_diagnostics.push(diag);
                 return;
             }
         }
@@ -710,9 +821,37 @@ impl GscPgo {
             loop_idx = self.search_by_position();
         }
         if loop_idx < 0 {
+            diag.outcome = "no_candidate";
+            self.loop_diagnostics.push(diag);
             return;
         }
         let loop_idx = loop_idx as usize;
+
+        diag.from_scan_context = from_scan_context;
+        diag.target_id = loop_idx as i64;
+        diag.target_time = self.key_poses[loop_idx].time;
+        diag.target_xyz = self.key_poses[loop_idx].translation_global;
+        diag.candidate_distance = mat3::norm(&mat3::sub(
+            &self.key_poses[cur_idx].translation_global,
+            &self.key_poses[loop_idx].translation_global,
+        ));
+
+        // Arc-separation gate: a closure only corrects drift accumulated over the
+        // trajectory between the pair. Too few keyframes apart = negligible drift
+        // to correct, so the "closure" can only inject error (structural alias).
+        if self.config.loop_min_id_gap > 0
+            && (cur_idx.abs_diff(loop_idx) as u64) < self.config.loop_min_id_gap
+        {
+            diag.outcome = "id_gap_reject";
+            self.loop_diagnostics.push(diag);
+            return;
+        }
+
+        if from_scan_context && sc_second > 1e-6 {
+            diag.scan_context_best = sc_best;
+            diag.scan_context_second = sc_second;
+            diag.lowe_ratio = sc_best / sc_second;
+        }
 
         // Aliasing gate: reject scan-context matches whose best and second-best
         // distances are near-tied (Lowe ratio -> 1). Runs before the expensive
@@ -722,18 +861,18 @@ impl GscPgo {
             && sc_second > 1e-6
             && (sc_best / sc_second) as f64 > self.config.loop_max_lowe_ratio
         {
+            diag.outcome = "lowe_reject";
+            self.loop_diagnostics.push(diag);
             return;
         }
 
         // Positional-plausibility gate on scan-context false matches.
-        if self.config.loop_candidate_max_distance_m > 0.0 {
-            let candidate_distance = mat3::norm(&mat3::sub(
-                &self.key_poses[cur_idx].translation_global,
-                &self.key_poses[loop_idx].translation_global,
-            ));
-            if candidate_distance > self.config.loop_candidate_max_distance_m {
-                return;
-            }
+        if self.config.loop_candidate_max_distance_m > 0.0
+            && diag.candidate_distance > self.config.loop_candidate_max_distance_m
+        {
+            diag.outcome = "distance_reject";
+            self.loop_diagnostics.push(diag);
+            return;
         }
 
         // Seed ICP from the place-recognition match: the source keyframe is put
@@ -805,24 +944,31 @@ impl GscPgo {
             &IcpParams::default(),
         );
         self.timing.icp_s += t0.elapsed().as_secs_f64();
+        diag.icp_converged = icp.converged;
+        diag.icp_fitness = icp.fitness;
+        diag.icp_translation_norm = mat3::norm(&icp.translation);
 
         // Observability gate: a planar/degenerate source scan leaves the
-        // alignment unconstrained in-plane — fitness lies.
-        let mut degeneracy_min = -1.0f32;
-        if self.config.loop_min_degeneracy > 0.0 {
-            let t0 = std::time::Instant::now();
-            (degeneracy_min, _) = cloud_degeneracy(&source_cloud);
-            self.timing.degeneracy_s += t0.elapsed().as_secs_f64();
-        }
+        // alignment unconstrained in-plane — fitness lies. Computed for every
+        // candidate that reaches ICP (not just when the gate is on) so the
+        // metric is always available to compare good vs bad closures.
+        let t0 = std::time::Instant::now();
+        let (degeneracy_min, _) = cloud_degeneracy(&source_cloud);
+        self.timing.degeneracy_s += t0.elapsed().as_secs_f64();
+        diag.degeneracy_min = degeneracy_min;
 
         if self.config.loop_min_degeneracy > 0.0
             && degeneracy_min >= 0.0
             && (degeneracy_min as f64) < self.config.loop_min_degeneracy
         {
+            diag.outcome = "degeneracy_reject";
+            self.loop_diagnostics.push(diag);
             return;
         }
 
         if !icp.converged || icp.fitness > self.config.loop_score_thresh {
+            diag.outcome = "icp_reject";
+            self.loop_diagnostics.push(diag);
             return;
         }
 
@@ -842,6 +988,41 @@ impl GscPgo {
                 &self.key_poses[loop_idx].translation_global,
             ),
         );
+
+        // Graph yank: how far this constraint pulls the source keyframe from the
+        // current odom-chain estimate (relative pose loop->cur, in the loop's
+        // frame). A large yank on a plausible-distance candidate = a closure that
+        // disagrees with odometry = the signature of a false closure.
+        let current_relative_rotation = mat3::mat_mul(
+            &loop_rotation_transpose,
+            &self.key_poses[cur_idx].rotation_global,
+        );
+        let current_relative_translation = mat3::mat_vec(
+            &loop_rotation_transpose,
+            &mat3::sub(
+                &self.key_poses[cur_idx].translation_global,
+                &self.key_poses[loop_idx].translation_global,
+            ),
+        );
+        diag.yank_translation = mat3::norm(&mat3::sub(
+            &translation_offset,
+            &current_relative_translation,
+        ));
+        diag.yank_rotation_deg =
+            mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
+
+        if self.config.loop_max_yank_rotation_deg > 0.0
+            && diag.candidate_distance < self.config.loop_yank_gate_max_distance_m
+            && diag.yank_rotation_deg > self.config.loop_max_yank_rotation_deg
+        {
+            diag.outcome = "yank_reject";
+            self.loop_diagnostics.push(diag);
+            return;
+        }
+
+        diag.outcome = "accepted";
+        self.loop_diagnostics.push(diag);
+
         // Original isotropic noise = ICP fitness on all 6 DOF.
         let noise = NoiseModel::diagonal_variances(&[score; 6]);
         self.cache_pairs.push(LoopPair {
