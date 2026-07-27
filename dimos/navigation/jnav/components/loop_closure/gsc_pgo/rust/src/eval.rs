@@ -114,18 +114,18 @@ impl Default for EvalConfig {
             keyframe_min_distance_meters: 0.5,
             loop_search_radius: 3.0,
             loop_time_thresh: 5.0,
-            loop_score_thresh: 0.0807,
+            loop_score_thresh: 0.15,
             loop_submap_half_range: 5,
             submap_resolution: 0.1,
             min_loop_detect_duration: 2.0,
-            min_descriptor_std: 0.1,
+            min_descriptor_std: 0.0,
             loop_min_occupancy: 80,
             loop_min_degeneracy: 0.05,
-            loop_max_lowe_ratio: 0.831,
-            loop_candidate_max_distance_m: 20.0,
+            loop_max_lowe_ratio: 0.0,
+            loop_candidate_max_distance_m: 0.0,
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
-            loop_min_id_gap: 50,
+            loop_min_id_gap: 0,
             loop_instant_accept_distance_m: 0.0,
             loop_buffer_agreement_trans_m: 1.0,
             loop_buffer_agreement_rot_deg: 10.0,
@@ -134,9 +134,9 @@ impl Default for EvalConfig {
             use_scan_context: true,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
-            scan_context_max_range_m: 8.0,
+            scan_context_max_range_m: 0.0,
             scan_context_top_k: 10,
-            scan_context_match_threshold: 0.1406,
+            scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
@@ -144,7 +144,7 @@ impl Default for EvalConfig {
             loop_gnc_var_scale: 10.0,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
-            per_keyframe_roll_pitch_prior: true,
+            per_keyframe_roll_pitch_prior: false,
             per_keyframe_roll_pitch_var: 1e-4,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -324,6 +324,19 @@ struct Args {
     output: PathBuf,
     scan_stride: usize,
     odom_stride: usize,
+    /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
+    /// points, for lidar streams not already expressed in the odom body frame.
+    lidar_tf: Option<[f64; 7]>,
+}
+
+fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
+    let values: Vec<f64> = text
+        .split(',')
+        .map(|part| part.trim().parse::<f64>().map_err(|e| format!("{e}")))
+        .collect::<Result<_, _>>()?;
+    values
+        .try_into()
+        .map_err(|_| "--lidar-tf needs 7 comma-separated values: x,y,z,qx,qy,qz,qw".to_string())
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -334,6 +347,7 @@ fn parse_args() -> Result<Args, String> {
     let mut output = None;
     let mut scan_stride = 1usize;
     let mut odom_stride = 1usize;
+    let mut lidar_tf = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -346,6 +360,7 @@ fn parse_args() -> Result<Args, String> {
             "--output" | "-o" => output = Some(PathBuf::from(value()?)),
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -358,6 +373,7 @@ fn parse_args() -> Result<Args, String> {
         output: output.ok_or("--output is required")?,
         scan_stride: scan_stride.max(1),
         odom_stride: odom_stride.max(1),
+        lidar_tf,
     })
 }
 
@@ -436,7 +452,12 @@ fn run() -> Result<(), String> {
         "odom child",
     )?;
     let lidar_frame = unique_frame(scans.iter().map(|row| row.frame_id.clone()), "lidar stream")?;
-    check_same_frame(&lidar_frame, &odom_body_frame)?;
+    if args.lidar_tf.is_none() {
+        check_same_frame(&lidar_frame, &odom_body_frame)?;
+    }
+    let lidar_tf = args
+        .lidar_tf
+        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
 
     let odom_rows: Vec<[f64; 8]> = odoms
         .iter()
@@ -468,6 +489,9 @@ fn run() -> Result<(), String> {
         scans_processed += 1;
 
         let mut cloud = scan.points.clone();
+        if let Some((rotation, translation)) = &lidar_tf {
+            cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
+        }
         if config.subtract_odom_from_cloud && !cloud.is_empty() {
             let rotation_inverse = mat3::transpose(&latest.rotation);
             let negated = [
