@@ -34,6 +34,7 @@ dimos-viewer = false
 dimos-lcm = false
 lcm-dimos-fork = false
 pyrealsense2-extended = false
+md-babel-py = false
 roboplan = false
 
 [manifest]
@@ -2245,7 +2246,7 @@ tests = [
     { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
-    { name = "md-babel-py", specifier = ">=1.2.0" },
+    { name = "md-babel-py", specifier = ">=1.3.2" },
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "ollama", specifier = ">=0.6.0" },
@@ -2295,7 +2296,7 @@ tests-self-hosted = [
     { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
     { name = "mcap", specifier = ">=1.2.0" },
-    { name = "md-babel-py", specifier = ">=1.2.0" },
+    { name = "md-babel-py", specifier = ">=1.3.2" },
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "ollama", specifier = ">=0.6.0" },
@@ -4666,11 +4667,11 @@ wheels = [
 
 [[package]]
 name = "md-babel-py"
-version = "1.2.0"
+version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a8/1a/3c63129fc2fef99ff3282a5d04bb179d004f887f8c919d3642a1a904c6bc/md_babel_py-1.2.0.tar.gz", hash = "sha256:946987e1473c78812acb02f0dfb9f92b513fbdfaf58b29ce5e529e7a88794262", size = 35734, upload-time = "2026-05-15T13:19:27.783Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/78/685153560effd6ddd685f9a222e073e9c41af1f814d89544dc0a73c54036/md_babel_py-1.3.2.tar.gz", hash = "sha256:65c8f9d0ab2d26baf69ee81a69aa2f454dd1ce59a69d8b032429f124ae7b17f2", size = 44490, upload-time = "2026-07-24T21:20:55.362Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/94/1703920cba5bc4e66453e6cd65f14cb5bf3cea4e21bc690d636c24ac0f1c/md_babel_py-1.2.0-py3-none-any.whl", hash = "sha256:190373a0f5daf77c0fdc01e7486c761676d9b35cb31aca41193a1f6612334186", size = 30090, upload-time = "2026-05-15T13:19:26.593Z" },
+    { url = "https://files.pythonhosted.org/packages/22/da/3ad639054836f212b730ecf7fc5cc57d3a63937c2d0d8be25d2eeb72b3a2/md_babel_py-1.3.2-py3-none-any.whl", hash = "sha256:6534f753c3cf6ba51d7fddf164795fbeabeff130dcb5892188eeada3f0a94b27", size = 34408, upload-time = "2026-07-24T21:20:54.085Z" },
 ]
 
 [[package]]

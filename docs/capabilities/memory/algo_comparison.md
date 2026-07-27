@@ -1,7 +1,7 @@
 
 Example on how we can use memory to compare two algos on a real data.
 
-```python
+```python output=none
 import time
 
 from dimos.memory2.store.sqlite import SqliteStore
@@ -82,17 +82,18 @@ delta_plot.add(
 
 delta_plot.to_svg("assets/plot_brightness_algo_delta.svg")
 
+
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_brightness_algo.svg)
+![output](assets/plot_brightness_algo.svg)
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_brightness_algo_delta.svg)
+![output](assets/plot_brightness_algo_delta.svg)
 
 We see that new algo is strictly better.
 
 Above example loads the same data and iterates it for each plot line, it's a bit slow but readable and easy to write during development. Below is an example that generates the same results but more efficiently
 
-```python
+```python output=none
 import time
 
 from dimos.memory2.store.sqlite import SqliteStore
@@ -155,3 +156,7 @@ delta_plot.add(metrics.map_data(lambda o: o.data["delta"]),
 delta_plot.add(HLine(y=0, style=Style.dashed, color=color.red))
 delta_plot.to_svg("assets/plot_brightness_algo_delta.svg")
 ```
+
+![output](assets/plot_brightness_algo.svg)
+
+![output](assets/plot_brightness_algo_delta.svg)

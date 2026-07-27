@@ -25,10 +25,10 @@ for name, stream in store.streams.items():
 ```
 
 ```results
-Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
-Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
-Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
-Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
+Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s, 14.23 Hz, 133.76 MiB)
+Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s, 0.92 Hz, 12.14 MiB)
+Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s, 7.70 Hz, 320.76 MiB)
+Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s, 18.68 Hz, 458.97 KiB)
 ```
 
 Any stream is drawable
@@ -46,7 +46,7 @@ drawing.to_svg("assets/color_image.svg")
 
 our drawing system applies turbo color scheme to timestamps by default
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/color_image.svg)
+![output](assets/color_image.svg)
 
 we can create new streams by querying existing streams, and we can save, further transform or draw those
 
@@ -65,7 +65,7 @@ drawing.add(
 drawing.to_svg("assets/speed.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/speed.svg)
+![output](assets/speed.svg)
 
 we can do all kinds of things with this, for example map out room lighting
 
@@ -85,7 +85,7 @@ drawing.add(
 drawing.to_svg("assets/brightness.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/brightness.svg)
+![output](assets/brightness.svg)
 
 So knowing above, we can create embeddings for the full stream,
 
@@ -132,7 +132,7 @@ drawing.add(store.streams.color_image_embedded.search(search_vector))
 drawing.to_svg("assets/embedding.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/embedding.svg)
+![output](assets/embedding.svg)
 
 We don't really have to deal with the whole global map actually, let's get top 10 embeddings, and render only lidar around those.
 
@@ -160,10 +160,10 @@ drawing.to_svg("assets/embedding_focused.svg")
 
 ```results
 Stream("color_image_embedded") | vector_search(k=30)
-13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+21:08:33.697 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/embedding_focused.svg)
+![output](assets/embedding_focused.svg)
 
 <details>
 <summary>Python</summary>
@@ -201,8 +201,8 @@ def plot_mosaic(frames, path, cols=5):
 
 let's view those images
 
-```python title="Python" session=mem
+```python title="Python" session=mem output=none
 plot_mosaic(matches.map(lambda obs: obs.data).to_list(), "assets/grid.png")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/grid.png)
+![output](assets/grid.png)

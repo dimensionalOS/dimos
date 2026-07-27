@@ -26,7 +26,7 @@ for i in range(14):
 color_check.to_svg("assets/plot_colors.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_colors.svg)
+![output](assets/plot_colors.svg)
 
 named colors can also be used explicitly. when you pin a series to one of
 the named colors, the auto-cycle excludes it for the remaining series, so
@@ -48,7 +48,7 @@ p.add(HLine(y=0, style=Style.dashed, opacity=0.5, color="#ff0000"))
 p.to_svg("assets/plot_named.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_named.svg)
+![output](assets/plot_named.svg)
 
 ## speed plot
 
@@ -88,13 +88,13 @@ plot.add(
 plot.to_svg("assets/plot_robot_data.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_robot_data.svg)
+![output](assets/plot_robot_data.svg)
 
 ## Semantic search
 
 Let's find some plants!
 
-```python session=robotdata
+```python session=robotdata output=none
 from dimos.memory2.vis.plot.elements import Series, HLine, Style
 from dimos.memory2.vis import color
 from dimos.memory2.transform import normalize, smooth_time
@@ -138,10 +138,10 @@ plot.to_svg("assets/plot_plantness.svg")
 ```results
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("materialize")
-Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
+Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s, 0.92 Hz)
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness.svg)
+![output](assets/plot_plantness.svg)
 
 We can be pretty sure the robot saw some plants by peaks at beginning and end of data, but this graph doesn't look great, why?
 
@@ -149,7 +149,7 @@ Embeddings are calculated according to some minimum picture brightness. Complete
 
 Let's investigate how our embedding stream relates to image brightness:
 
-```python session=robotdata
+```python session=robotdata output=none
 
 plot = Plot()
 
@@ -169,12 +169,13 @@ plot.add(HLine(y=0.15, style=Style.dashed, color=color.red))
 plot.to_svg("assets/plot_plantness_brightness.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness_brightness.svg)
+![output](assets/plot_plantness_brightness.svg)
+
 We see that stuff isn't embedded below some minimum brightness.
 
 Let's now fill the gaps in our semantic graph a bit, looks super ugly above, we will tell plotter to consider unmapped values as zero and connect values that are within 7.5 seconds, smooth with 5 second time window, and normalize the data
 
-```python session=robotdata
+```python session=robotdata output=none
 
 plot = Plot()
 
@@ -185,20 +186,20 @@ plot.add(
       label="plant-ness",
       color=color.green,
       gap_fill=0.0,
-      connect=7.5
+      connect=1.5
 )
 
 plot.to_svg("assets/plot_plantness_gap_fill.svg")
 
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness_gap_fill.svg)
+![output](assets/plot_plantness_gap_fill.svg)
 
 Looks better, these are some very obvious peaks, I'm curious let's see what was captured then.
 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
-```python skip session=robotdata
+```python skip session=robotdata output=none
 from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.vis.space.space import Space
 from dimos.memory2.transform import peaks
@@ -259,11 +260,11 @@ t= 245.6s score=0.224 prominence=0.028
 t= 279.6s score=0.230 prominence=0.030
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness_autopeaks.svg)
+![output](assets/plot_plantness_autopeaks_map.svg)
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plants_auto.png)
+![output](assets/plot_plantness_autopeaks.svg)
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness_autopeaks_map.svg)
+![output](assets/plants_auto.png)
 
 ## Which peaks are significant?
 
@@ -273,7 +274,7 @@ We got 15 peaks back, we ran a detector on all of them so we can start projectin
 
 Once we put the surviving peaks on the timeline we get two very obvious plants.
 
-```python skip session=robotdata
+```python skip session=robotdata output=none
 from dimos.memory2.transform import significant
 
 plot = Plot()
@@ -293,9 +294,9 @@ m.data.save("assets/plants_meaningful.png")
 plot.to_svg("assets/plot_plantness_significant.svg")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plot_plantness_significant.svg)
+![output](assets/plot_plantness_significant.svg)
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plants_meaningful.png)
+![output](assets/plants_meaningful.png)
 
 Rule of thumb: keep a small absolute floor on `peaks(prominence=...)` to
 reject shape-noise, then let `significant()` pick the statistical cutoff.
@@ -306,7 +307,7 @@ Let's focus on those two peaks. load all images in the vicinity of a detection,
 
 We'll also pull all lidar frames in their vicinity and reconstruct global maps for those areas.
 
-```python skip session=robotdata
+```python skip session=robotdata output=none
 
 from dimos.memory2.vis.space.elements import Point
 from dimos.memory2.transform import QualityWindow
@@ -348,8 +349,8 @@ m = mosaic(detections)
 m.data.save("assets/plants_peak_detections.png")
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/peak_space.svg)
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/plants_peak_detections.png)
+![output](assets/peak_space.svg)
+![output](assets/plants_peak_detections.png)
 
 ## 3D Projection
 
@@ -403,7 +404,7 @@ drawing.to_svg("assets/peak_detections.svg")
 
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/memory/assets/peak_detections.svg)
+![output](assets/peak_detections.svg)
 
 # TODO further steps
 
