@@ -122,6 +122,23 @@ def test_ice_gathering_success_completes_without_waiting() -> None:
     )
 
 
+def test_ice_gathering_loop_times_out_when_state_never_completes() -> None:
+    class PeerConnection:
+        iceGatheringState = "gathering"  # noqa: N815
+
+        async def setLocalDescription(self, description: object) -> None:
+            del description
+
+    with pytest.raises(RuntimeError, match="ICE gathering did not complete"):
+        asyncio.run(
+            mvp_cli._set_local_description_with_ice_timeout(
+                PeerConnection(),
+                object(),
+                timeout=0.001,
+            )
+        )
+
+
 def test_local_command_emits_loopback_result(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -659,3 +676,16 @@ def test_metric_helpers_handle_missing_values_rounding_and_wraparound() -> None:
     assert mvp_cli._rounded_percentile([1.111, 2.222, 3.333], 0.5) == 2.22
     assert mvp_cli._sequence_gaps([10, 11, 14]) == 2
     assert mvp_cli._sequence_gaps([65534, 1]) == 2
+
+
+def test_main_invokes_the_webrtc_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    def fake_app() -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(mvp_cli, "webrtc_mvp_app", fake_app)
+    mvp_cli.main()
+
+    assert called

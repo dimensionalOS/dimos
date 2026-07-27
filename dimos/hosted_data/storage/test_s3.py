@@ -350,3 +350,47 @@ def test_s3_open_and_list_reject_malformed_provider_responses() -> None:
     client.objects.pop(("replays", object_key))
     with pytest.raises(FileNotFoundError):
         repository.open("alice", "demo", metadata.object_id)
+
+
+def test_s3_propagates_provider_errors_and_rejects_unclosable_bodies() -> None:
+    class ProviderErrorClient(_FakeS3Client):
+        def get_object(self, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("provider unavailable")
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        S3ReplayRepository(bucket="replays", client=ProviderErrorClient())._read_metadata(
+            "alice",
+            "demo",
+            "a" * 64,
+        )
+
+    class UnclosableClient(_FakeS3Client):
+        def get_object(self, **kwargs: Any) -> dict[str, Any]:
+            response = super().get_object(**kwargs)
+            if str(kwargs["Key"]).endswith(".blob"):
+                return {"Body": object()}
+            return response
+
+    client = UnclosableClient()
+    repository = S3ReplayRepository(bucket="replays", client=client)
+    payload = b"video"
+    metadata = repository.put_stream(
+        owner="alice",
+        repository="demo",
+        filename="capture.mp4",
+        source=BytesIO(payload),
+        size_bytes=len(payload),
+        content_type="video/mp4",
+    )
+    with pytest.raises(RuntimeError, match="closable Body"):
+        repository.open("alice", "demo", metadata.object_id)
+
+
+def test_s3_list_ignores_non_object_entries() -> None:
+    class MixedListClient(_FakeS3Client):
+        def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
+            return {"Contents": [None, {"Key": "orphan.blob"}], "IsTruncated": False}
+
+    repository = S3ReplayRepository(bucket="replays", client=MixedListClient())
+
+    assert repository.list("alice", "demo") == []

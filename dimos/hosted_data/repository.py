@@ -351,7 +351,12 @@ class ReplayRepository:
                 content_type=content_type or "application/octet-stream",
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
-            os.replace(temporary_path, object_path)
+            try:
+                os.replace(temporary_path, object_path)
+            except OSError:
+                if not object_path.is_file():
+                    raise
+                temporary_path.unlink(missing_ok=True)
             temporary_path = None
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -363,7 +368,12 @@ class ReplayRepository:
             ) as metadata_temporary:
                 metadata_temporary_path = Path(metadata_temporary.name)
                 json.dump(metadata.to_dict(), metadata_temporary, sort_keys=True)
-            os.replace(metadata_temporary_path, metadata_path)
+            try:
+                os.replace(metadata_temporary_path, metadata_path)
+            except OSError:
+                if not metadata_path.is_file():
+                    raise
+                metadata_temporary_path.unlink(missing_ok=True)
             metadata_temporary_path = None
             return metadata
         finally:

@@ -471,3 +471,45 @@ def test_batch_upload_rejects_an_empty_directory(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "no files matched" in result.output
+
+
+def test_serve_rejects_unknown_backend() -> None:
+    result = runner.invoke(hosted_data_cli.hosted_data_app, ["serve", "--backend", "unknown"])
+
+    assert result.exit_code == 2
+    assert "--backend must be filesystem or s3" in unstyle(result.output)
+
+
+def test_serve_handles_operator_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        hosted_data_cli,
+        "serve_repository",
+        lambda **_: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    result = runner.invoke(hosted_data_cli.hosted_data_app, ["serve"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["event"] == "ready"
+
+
+def test_recommend_requires_configured_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DIMOS_REPLAY_NODES", raising=False)
+
+    result = runner.invoke(hosted_data_cli.hosted_data_app, ["recommend"])
+
+    assert result.exit_code == 2
+    assert "DIMOS_REPLAY_NODES is not configured" in unstyle(result.output)
+
+
+def test_main_invokes_the_hosted_data_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    def fake_app() -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(hosted_data_cli, "hosted_data_app", fake_app)
+    hosted_data_cli.main()
+
+    assert called

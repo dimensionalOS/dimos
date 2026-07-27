@@ -42,6 +42,7 @@ from dimos.hosted_data.repository import (
     iter_repository_paths,
     list_objects,
     read_manifest,
+    serve_repository,
     sha256_file,
     upload_file,
     upload_files,
@@ -1047,3 +1048,265 @@ def test_manifest_io_and_repository_path_diagnostics(tmp_path: Path) -> None:
     path.write_text("[]", encoding="utf-8")
     with pytest.raises(RepositoryError, match="JSON object"):
         read_manifest(path)
+
+
+def test_http_contract_rejects_invalid_upload_and_download_routes(tmp_path: Path) -> None:
+    digest = "a" * 64
+    with _running_server(
+        tmp_path / "objects",
+        max_object_bytes=1,
+        max_repository_bytes=1,
+    ) as server_url:
+        headers = {"Authorization": "Bearer test-token"}
+        object_url = f"{server_url}/api/v1/repositories/alice/demo/objects/{digest}"
+        collection_url = f"{server_url}/api/v1/repositories/alice/demo/objects"
+
+        assert requests.post(object_url, headers=headers, data=b"x").status_code == 400
+        assert requests.post(collection_url, headers=headers, data=b"x").status_code == 400
+        assert requests.head(object_url, headers=headers).status_code == 400
+        assert requests.head(collection_url, headers=headers).status_code == 400
+        assert (
+            requests.head(
+                collection_url,
+                headers={**headers, "X-Dimos-Filename": "large.mp4", "Content-Length": "2"},
+            ).status_code
+            == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+        )
+        assert requests.get(object_url, headers=headers).status_code == 404
+        assert requests.get(f"{server_url}/api/v1/unknown", headers=headers).status_code == 400
+        assert requests.get(f"{server_url}/metrics").status_code == 401
+
+
+def test_server_quota_preflight_and_duplicate_reservation(tmp_path: Path) -> None:
+    repository = ReplayRepository(tmp_path / "objects")
+    payload = b"x"
+    item = repository.put_stream(
+        owner="alice",
+        repository="demo",
+        filename="existing.mp4",
+        source=BytesIO(payload),
+        size_bytes=1,
+        content_type="video/mp4",
+    )
+    server = ReplayRepositoryServer(
+        ("127.0.0.1", 0),
+        repository,
+        token=None,
+        max_object_bytes=1,
+        max_repository_bytes=1,
+    )
+    try:
+        assert server.reserve_upload("alice", "demo", 1, item.object_id) == 0
+        server.check_upload("alice", "demo", 1, item.object_id)
+        with pytest.raises(repository_module.ObjectTooLargeError):
+            server.reserve_upload("alice", "demo", 2, None)
+        with pytest.raises(repository_module.ObjectTooLargeError):
+            server.check_upload("alice", "demo", 2, None)
+        with pytest.raises(repository_module.RepositoryQuotaError):
+            server.check_upload("alice", "demo", 1, None)
+    finally:
+        server.server_close()
+
+
+def test_batch_download_reports_validation_and_worker_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = ReplayObject(
+        owner="alice",
+        repository="demo",
+        object_id="a" * 64,
+        filename="capture.mp4",
+        size_bytes=1,
+        sha256="a" * 64,
+        content_type="video/mp4",
+        created_at="2026-07-27T00:00:00+00:00",
+    )
+    manifest = ReplayManifest(owner="alice", repository="demo", objects=(item,))
+    with pytest.raises(RepositoryError, match="workers must be at least 1"):
+        download_objects(
+            server_url="http://unused",
+            manifest=manifest,
+            output_dir=tmp_path,
+            workers=0,
+        )
+
+    monkeypatch.setattr(
+        repository_module,
+        "download_object",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("download unavailable")),
+    )
+    with pytest.raises(BatchTransferError, match="download unavailable"):
+        download_objects(
+            server_url="http://unused",
+            manifest=manifest,
+            output_dir=tmp_path,
+        )
+
+
+def test_serve_repository_requires_a_complete_tls_pair(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="provided together"):
+        serve_repository(
+            root=tmp_path,
+            host="127.0.0.1",
+            port=0,
+            token=None,
+            tls_certfile=tmp_path / "certificate.pem",
+        )
+
+
+def test_serve_repository_wraps_tls_before_serving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+
+    class FakeServer:
+        socket = object()
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            events.append((args, kwargs))
+
+        def __enter__(self) -> FakeServer:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def serve_forever(self) -> None:
+            events.append("served")
+
+    class FakeContext:
+        minimum_version: object = None
+
+        def __init__(self, protocol: object) -> None:
+            events.append(protocol)
+
+        def load_cert_chain(self, certfile: str, keyfile: str) -> None:
+            events.append((certfile, keyfile))
+
+        def wrap_socket(self, socket: object, *, server_side: bool) -> object:
+            events.append((socket, server_side))
+            return "tls-socket"
+
+    monkeypatch.setattr(repository_module, "ReplayRepositoryServer", FakeServer)
+    monkeypatch.setattr(repository_module.ssl, "SSLContext", FakeContext)
+    certificate = tmp_path / "certificate.pem"
+    key = tmp_path / "key.pem"
+
+    serve_repository(
+        root=tmp_path,
+        host="127.0.0.1",
+        port=8765,
+        token=None,
+        tls_certfile=certificate,
+        tls_keyfile=key,
+    )
+
+    assert (str(certificate), str(key)) in events
+    assert "served" in events
+
+
+def test_additional_http_quota_and_authorization_errors(tmp_path: Path) -> None:
+    with _running_server(
+        tmp_path / "objects",
+        max_object_bytes=1,
+        max_repository_bytes=1,
+    ) as server_url:
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Dimos-Filename": "capture.mp4",
+            "Content-Type": "video/mp4",
+        }
+        collection = f"{server_url}/api/v1/repositories/alice/demo/objects"
+        assert requests.post(collection, headers=headers, data=b"xx").status_code == 413
+        assert (
+            requests.get(
+                f"{server_url}/api/v1/repositories/alice/demo/not-objects",
+                headers=headers,
+            ).status_code
+            == 400
+        )
+        assert requests.get(f"{server_url}/r/alice/demo/extra", headers=headers).status_code == 400
+        assert (
+            requests.head(
+                collection,
+                headers={"Authorization": "Bearer wrong", "X-Dimos-Filename": "capture.mp4"},
+            ).status_code
+            == 401
+        )
+
+
+def test_download_rejects_existing_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    destination = tmp_path / "existing.mp4"
+    destination.write_bytes(b"keep")
+
+    with _running_server(tmp_path / "objects") as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="alice",
+            repository="demo",
+            path=source,
+            token="test-token",
+        )
+        with pytest.raises(FileExistsError):
+            download_object(
+                server_url=server_url,
+                owner="alice",
+                repository="demo",
+                object_id=uploaded.object_id,
+                output=destination,
+                token="test-token",
+            )
+
+
+def test_duplicate_manifest_names_receive_digest_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    items = tuple(
+        ReplayObject(
+            owner="alice",
+            repository="demo",
+            object_id=character * 64,
+            filename="capture.mp4",
+            size_bytes=1,
+            sha256=character * 64,
+            content_type="video/mp4",
+            created_at="2026-07-27T00:00:00+00:00",
+        )
+        for character in ("a", "b")
+    )
+    outputs: list[Path] = []
+
+    def fake_download(**kwargs: object) -> Path:
+        output = Path(str(kwargs["output"]))
+        outputs.append(output)
+        return output
+
+    monkeypatch.setattr(repository_module, "download_object", fake_download)
+    download_objects(
+        server_url="http://unused",
+        manifest=ReplayManifest(owner="alice", repository="demo", objects=items),
+        output_dir=tmp_path,
+    )
+
+    assert [path.name for path in outputs] == ["capture.mp4", "bbbbbbbbbbbb-capture.mp4"]
+
+
+def test_manifest_write_cleans_temporary_file_after_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = ReplayManifest(owner="alice", repository="demo", objects=())
+    monkeypatch.setattr(
+        repository_module.os,
+        "replace",
+        lambda *_: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        write_manifest(tmp_path / "manifest.json", manifest)
+    assert not tuple(tmp_path.glob("*.part"))

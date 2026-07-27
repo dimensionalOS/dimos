@@ -21,7 +21,9 @@ from contextlib import closing, contextmanager
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import threading
+from types import ModuleType
 
 import pytest
 
@@ -311,3 +313,102 @@ def test_cache_lock_heartbeat_stops_after_ownership_changes(tmp_path: Path) -> N
         ImmediateTick(),  # type: ignore[arg-type]
     )
     assert lock_path.read_text(encoding="ascii") == "new-owner"
+
+
+def test_cache_lock_release_removes_the_current_owner(tmp_path: Path) -> None:
+    lock_path = tmp_path / "cache.lock"
+    lock = memory2_replay._acquire_cache_lock(lock_path)
+
+    memory2_replay._release_cache_lock(lock)
+
+    assert not lock_path.exists()
+
+
+def test_cache_lock_creation_cleans_up_after_initialization_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "cache.lock"
+    monkeypatch.setattr(
+        memory2_replay.os,
+        "write",
+        lambda *_: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        memory2_replay._acquire_cache_lock(lock_path)
+    assert not lock_path.exists()
+
+
+def test_resolver_rechecks_cache_after_acquiring_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _memory2_database(tmp_path / "source.db")
+    reference = _reference(source)
+    monkeypatch.setenv("DIMOS_REPLAY_SERVER_URL", reference.server_url)
+    destination = (
+        tmp_path / "cache" / reference.owner / reference.repository / f"{reference.object_id}.db"
+    )
+    real_acquire = memory2_replay._acquire_cache_lock
+
+    def populate_then_lock(path: Path) -> memory2_replay._CacheLock:
+        destination.write_bytes(source.read_bytes())
+        return real_acquire(path)
+
+    monkeypatch.setattr(memory2_replay, "_acquire_cache_lock", populate_then_lock)
+    monkeypatch.setattr(
+        memory2_replay,
+        "download_object",
+        lambda **_: pytest.fail("valid cache must avoid a second download"),
+    )
+
+    assert (
+        resolve_replay_dataset(reference.to_uri(), cache_dir=tmp_path / "cache")
+        == destination
+    )
+
+
+def test_cache_lock_waits_once_then_acquires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "cache.lock"
+    lock_path.write_text("current-owner", encoding="ascii")
+    monkeypatch.setattr(memory2_replay.time, "sleep", lambda _: lock_path.unlink())
+
+    lock = memory2_replay._acquire_cache_lock(lock_path, timeout_seconds=1)
+    memory2_replay._release_cache_lock(lock)
+
+    assert not lock_path.exists()
+
+
+def test_cache_heartbeat_stops_when_touch_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ImmediateTick:
+        def wait(self, _: float) -> bool:
+            return False
+
+    lock_path = tmp_path / "cache.lock"
+    monkeypatch.setattr(memory2_replay, "_lock_is_owned", lambda *_: True)
+    monkeypatch.setattr(Path, "touch", lambda *_: (_ for _ in ()).throw(OSError("disk")))
+
+    memory2_replay._heartbeat_cache_lock(
+        lock_path,
+        "owner",
+        ImmediateTick(),  # type: ignore[arg-type]
+    )
+
+
+def test_local_resolver_delegates_to_memory2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = tmp_path / "local.db"
+    replay_module = ModuleType("dimos.memory2.replay")
+    replay_module.resolve_db_path = lambda dataset: expected  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dimos.memory2.replay", replay_module)
+
+    assert memory2_replay._resolve_local_replay("local") == expected

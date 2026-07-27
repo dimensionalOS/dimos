@@ -125,6 +125,7 @@ def test_upload_publishes_snapshot_then_completed_index(
     assert uploaded_index["dataset"] == "field-test"
     assert uploaded_index["object"]["object_id"] == result.dataset_object.object_id
     assert result.index_object.filename == "field-test.memory2.json"
+    assert result.to_dict()["dataset_object"]["object_id"] == result.dataset_object.object_id
 
 
 def test_rejects_non_memory2_database(tmp_path: Path) -> None:
@@ -147,3 +148,22 @@ def test_rejects_dataset_name_with_directories(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="plain name"):
         index_memory2_snapshot(source, dataset="../escape")
+
+
+def test_snapshot_and_index_validate_paths(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.db"
+    with pytest.raises(FileNotFoundError):
+        snapshot_sqlite_database(missing, tmp_path / "snapshot.db")
+    with pytest.raises(FileNotFoundError):
+        index_memory2_snapshot(missing)
+
+    wrong_suffix = tmp_path / "capture.sqlite"
+    wrong_suffix.write_bytes(b"sqlite")
+    with pytest.raises(ValueError, match="requires a .db"):
+        snapshot_sqlite_database(wrong_suffix, tmp_path / "snapshot.db")
+
+    source = tmp_path / "source.db"
+    writer = _make_memory2_database(source)
+    writer.close()
+    with pytest.raises(ValueError, match="must differ"):
+        snapshot_sqlite_database(source, source)

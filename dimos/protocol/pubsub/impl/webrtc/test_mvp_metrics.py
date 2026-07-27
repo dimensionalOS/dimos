@@ -123,3 +123,13 @@ def test_frame_stamp_rejects_corruption() -> None:
 def test_percentile_empty_and_median() -> None:
     assert percentile([], 0.5) is None
     assert percentile([10.0, 20.0, 30.0], 0.5) == 20.0
+
+
+def test_frame_stamp_rejects_small_frames_and_bad_crc() -> None:
+    with pytest.raises(ValueError, match="Frame must be at least"):
+        make_stamped_frame(width=10, height=10, sequence=1)
+    assert decode_frame_stamp(np.zeros((10, 10), dtype=np.uint8)) is None
+
+    frame = make_stamped_frame(width=640, height=360, sequence=2, timestamp_ms=1000)
+    frame[:48, 88 * 6 : 89 * 6] = 255 - frame[:48, 88 * 6 : 89 * 6]
+    assert decode_frame_stamp(frame) is None

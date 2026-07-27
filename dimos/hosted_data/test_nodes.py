@@ -252,3 +252,54 @@ def test_choose_server_url_fallback_and_environment(
 
     monkeypatch.setenv("DIMOS_REPLAY_SERVER_URL", "https://configured.example/")
     assert choose_server_url(None) == "https://configured.example"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"node_fingerprint": "stale-configuration"},
+        {"measured_at": 0.0},
+        {"selected": {"name": "other", "url": "https://other.example", "region": "us"}},
+        {"detected_region": "unsupported"},
+    ],
+)
+def test_cached_recommendation_rejects_stale_or_untrusted_data(
+    tmp_path: Path,
+    mutation: dict[str, object],
+) -> None:
+    node = ReplayNode(name="cn", url="https://cn.example", region="china")
+    cache = tmp_path / "recommendation.json"
+    data: dict[str, object] = {
+        "node_fingerprint": hosted_nodes._node_fingerprint((node,)),
+        "measured_at": 100.0,
+        "selected": {"name": "cn", "url": node.url, "region": "china"},
+        "detected_region": "china",
+    }
+    data.update(mutation)
+    cache.write_text(json.dumps(data), encoding="utf-8")
+
+    assert (
+        hosted_nodes._read_cached_recommendation(
+            cache,
+            nodes=(node,),
+            now=200.0,
+            max_age_seconds=150.0,
+        )
+        is None
+    )
+
+
+def test_cached_recommendation_ignores_malformed_json(tmp_path: Path) -> None:
+    cache = tmp_path / "recommendation.json"
+    cache.write_text("{", encoding="utf-8")
+    node = ReplayNode(name="cn", url="https://cn.example", region="china")
+
+    assert (
+        hosted_nodes._read_cached_recommendation(
+            cache,
+            nodes=(node,),
+            now=1.0,
+            max_age_seconds=3600.0,
+        )
+        is None
+    )
