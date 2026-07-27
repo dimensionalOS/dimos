@@ -24,6 +24,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::gnc::{
+    build_odometry_backbone, gnc_worker_loop, solve_gnc, BackboneKeyframe, BackboneNoise, GncJob,
+    GncResult, GncWorker,
+};
 use crate::gtsam::{symbol_key, FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{
@@ -34,7 +38,7 @@ use crate::scan_context;
 
 /// Variance that leaves a Pose3 tangent component effectively free while still
 /// contributing a tiny bit of information (keeps the linear system non-singular).
-const FREE_VARIANCE: f64 = 1e8;
+pub(crate) const FREE_VARIANCE: f64 = 1e8;
 
 /// A pose paired with a timestamp.
 #[derive(Debug, Clone)]
@@ -122,6 +126,14 @@ pub struct CommittedLoop {
     /// Final GNC weight from `finalize_gnc` (~1 inlier / kept, ~0 rejected).
     /// 1.0 until the batch GNC pass runs (or if `loop_gnc_final` is off).
     pub gnc_weight: f64,
+    /// Live path (Approach B): the iSAM2 factor index of this loop's between
+    /// factor, captured the update it was inserted, so a later background GNC
+    /// classification can remove it via `removeFactorIndices` if it is judged an
+    /// outlier. `None` until the containing update commits.
+    pub isam2_factor_index: Option<u64>,
+    /// Live path (Approach B): whether this loop's between factor is currently in
+    /// the iSAM2 graph. Set false once removed as a GNC-classified outlier.
+    pub active_in_isam2: bool,
 }
 
 /// Max buffered long jumps kept at once. Oldest is evicted FIFO past this.
@@ -129,7 +141,12 @@ const LONG_JUMP_BUFFER_MAX_LEN: usize = 4;
 
 /// Floor on the per-loop ICP score before it is used as a GNC factor variance,
 /// so a zero-score closure still gets a finite (very tight) noise model.
-const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
+pub(crate) const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
+
+/// Approach B: a background GNC weight below this classifies the loop as an
+/// outlier, so its between factor is dropped from iSAM2. GNC's TLS weights are
+/// near 0 (reject) or near 1 (keep), so the midpoint is a safe cut.
+const LOOP_GNC_INLIER_THRESHOLD: f64 = 0.5;
 
 /// A would-be long-jump loop closure parked in the buffer. It carries the same
 /// constraint a `LoopPair` does, plus the rigid map-correction SE3 it implies so
@@ -407,6 +424,11 @@ pub struct GscPgo {
     location_closure: bool,
     timing: TimingStats,
     loop_diagnostics: Vec<LoopCandidateDiag>,
+    /// Background batch-GNC worker (spawned only when `loop_gnc_final` is on).
+    /// The live path dispatches a re-solve here after each closure instead of
+    /// blocking on it inline; `None` disables the async path (offline harness
+    /// still calls the blocking `finalize_gnc`).
+    gnc_worker: Option<GncWorker>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -431,9 +453,24 @@ impl GscPgo {
             match_threshold: config.scan_context_match_threshold,
             lidar_height_m: config.scan_context_lidar_height_m,
         };
+        let gnc_worker = if config.loop_gnc_final {
+            let (job_sender, job_receiver) = std::sync::mpsc::channel::<GncJob>();
+            let (result_sender, result_receiver) = std::sync::mpsc::channel::<GncResult>();
+            std::thread::Builder::new()
+                .name("gnc-worker".to_string())
+                .spawn(move || gnc_worker_loop(job_receiver, result_sender))
+                .expect("spawn gnc worker thread");
+            Some(GncWorker {
+                job_sender,
+                result_receiver,
+            })
+        } else {
+            None
+        };
         GscPgo {
             config,
             scan_context_config,
+            gnc_worker,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -481,80 +518,30 @@ impl GscPgo {
     /// start from the odom backbone, not the under-closed Huber estimate, or it
     /// settles into the wrong inlier set on long trajectories.
     fn build_backbone(&self, graph: &mut FactorGraph, values: &mut Values, local_init: bool) {
-        const ANCHOR_YAW_VAR: f64 = 1e-12;
-        const ANCHOR_TRANS_VAR: f64 = 1e-12;
-        for (idx, key_pose) in self.key_poses.iter().enumerate() {
-            let init_pose = if local_init {
-                Pose3 {
-                    rotation: key_pose.rotation_local,
-                    translation: key_pose.translation_local,
-                }
-            } else {
-                Pose3 {
-                    rotation: key_pose.rotation_global,
-                    translation: key_pose.translation_global,
-                }
-            };
-            values
-                .insert_pose3(idx as u64, &init_pose)
-                .expect("gtsam: counterfactual init value");
-            if idx == 0 {
-                let prior_var = [
-                    self.config.anchor_roll_pitch_var,
-                    self.config.anchor_roll_pitch_var,
-                    ANCHOR_YAW_VAR,
-                    ANCHOR_TRANS_VAR,
-                    ANCHOR_TRANS_VAR,
-                    ANCHOR_TRANS_VAR,
-                ];
-                let noise = NoiseModel::diagonal_variances(&prior_var);
-                graph
-                    .add_prior_pose3(0, &init_pose, &noise)
-                    .expect("gtsam: counterfactual anchor prior");
-                continue;
-            }
-            let last = &self.key_poses[idx - 1];
-            let last_rotation_transpose = mat3::transpose(&last.rotation_local);
-            let rotation_between =
-                mat3::mat_mul(&last_rotation_transpose, &key_pose.rotation_local);
-            let translation_between = mat3::mat_vec(
-                &last_rotation_transpose,
-                &mat3::sub(&key_pose.translation_local, &last.translation_local),
-            );
-            let odom_noise = NoiseModel::diagonal_variances(&[
-                self.config.odom_rot_roll_pitch_var,
-                self.config.odom_rot_roll_pitch_var,
-                self.config.odom_rot_yaw_var,
-                self.config.odom_trans_xy_var,
-                self.config.odom_trans_xy_var,
-                self.config.odom_trans_z_var,
-            ]);
-            graph
-                .add_between_pose3(
-                    (idx - 1) as u64,
-                    idx as u64,
-                    &Pose3 {
-                        rotation: rotation_between,
-                        translation: translation_between,
-                    },
-                    &odom_noise,
-                )
-                .expect("gtsam: counterfactual odom between factor");
-            if self.config.per_keyframe_roll_pitch_prior {
-                let grav_var = [
-                    self.config.per_keyframe_roll_pitch_var,
-                    self.config.per_keyframe_roll_pitch_var,
-                    FREE_VARIANCE,
-                    FREE_VARIANCE,
-                    FREE_VARIANCE,
-                    FREE_VARIANCE,
-                ];
-                let grav_noise = NoiseModel::diagonal_variances(&grav_var);
-                graph
-                    .add_prior_pose3(idx as u64, &init_pose, &grav_noise)
-                    .expect("gtsam: counterfactual per-keyframe prior");
-            }
-        }
+        let backbone_keyframes: Vec<BackboneKeyframe> = self
+            .key_poses
+            .iter()
+            .map(|key_pose| BackboneKeyframe {
+                rotation_local: key_pose.rotation_local,
+                translation_local: key_pose.translation_local,
+                initial_rotation: if local_init {
+                    key_pose.rotation_local
+                } else {
+                    key_pose.rotation_global
+                },
+                initial_translation: if local_init {
+                    key_pose.translation_local
+                } else {
+                    key_pose.translation_global
+                },
+            })
+            .collect();
+        build_odometry_backbone(
+            graph,
+            values,
+            &backbone_keyframes,
+            &BackboneNoise::from_config(&self.config),
+        );
     }
 
     /// For each committed loop, rebuild a fresh pose graph and report the total
@@ -1321,6 +1308,8 @@ impl GscPgo {
             translation_offset: pair.translation_offset,
             score: pair.score,
             gnc_weight: 1.0,
+            isam2_factor_index: None,
+            active_in_isam2: true,
         });
         self.cache_pairs.push(pair);
     }
@@ -1460,8 +1449,16 @@ impl GscPgo {
         let smooth_t0 = std::time::Instant::now();
         let cache_pairs = std::mem::take(&mut self.cache_pairs);
         let has_loop = !cache_pairs.is_empty();
+        // Each cache pair was pushed to `committed_loops` in lockstep with
+        // `commit_loop_pair`, so the drained pairs are exactly the tail of
+        // `committed_loops`. Record, per pair, its committed index and the graph
+        // position of its between factor so the iSAM2 factor index it is assigned
+        // can be captured after the update (Approach B: background GNC can then
+        // remove an outlier loop's factor by that index).
+        let first_new_loop_index = self.committed_loops.len() - cache_pairs.len();
+        let mut loop_factor_positions: Vec<(usize, usize)> = Vec::with_capacity(cache_pairs.len());
         // 添加回环因子 (add the loop factors)
-        for pair in &cache_pairs {
+        for (offset, pair) in cache_pairs.iter().enumerate() {
             let robust;
             let noise: &NoiseModel = if self.config.loop_robust_kernel {
                 robust = NoiseModel::robust_huber(self.config.loop_robust_huber_k, &pair.noise);
@@ -1469,6 +1466,7 @@ impl GscPgo {
             } else {
                 &pair.noise
             };
+            loop_factor_positions.push((first_new_loop_index + offset, self.graph.len()));
             self.graph
                 .add_between_pose3(
                     pair.target_id as u64,
@@ -1512,6 +1510,15 @@ impl GscPgo {
         self.staged_constraint_factors.clear();
         self.location_closure = false;
 
+        // Approach B: remember each newly-inserted loop factor's iSAM2 index so a
+        // background GNC classification can later remove it if it is an outlier.
+        for (committed_index, graph_pos) in &loop_factor_positions {
+            if *graph_pos < new_factor_indices.len() {
+                self.committed_loops[*committed_index].isam2_factor_index =
+                    Some(new_factor_indices[*graph_pos]);
+            }
+        }
+
         self.graph.clear();
         self.initial_values.clear();
 
@@ -1542,54 +1549,62 @@ impl GscPgo {
         self.timing.smooth_calls += 1;
     }
 
-    /// Final batch re-solve over the whole trajectory: rebuild the odometry
-    /// backbone plus every committed loop closure and run GNC (TLS loss) with the
-    /// backbone pinned as known inliers. GNC jointly classifies the closures
-    /// against the global residual, rejecting the mutually conflicting ones that
-    /// the incremental Huber pass merely down-weights (so a loop that only
-    /// under-closes incrementally actually snaps shut). The best estimate is
-    /// written back to every keyframe and each closure's GNC weight is stored.
-    /// No-op when `loop_gnc_final` is off or no closures were committed.
-    pub fn finalize_gnc(&mut self) {
-        if !self.config.loop_gnc_final || self.committed_loops.is_empty() {
-            return;
+    /// Snapshot everything the batch GNC re-solve needs into a `Send` job: the
+    /// keyframes' local poses (backbone + local seed) and the committed loops.
+    fn build_gnc_job(&self) -> GncJob {
+        let keyframes = self
+            .key_poses
+            .iter()
+            .map(|key_pose| BackboneKeyframe {
+                rotation_local: key_pose.rotation_local,
+                translation_local: key_pose.translation_local,
+                initial_rotation: key_pose.rotation_local,
+                initial_translation: key_pose.translation_local,
+            })
+            .collect();
+        GncJob {
+            keyframes,
+            loops: self.committed_loops.clone(),
+            backbone_noise: BackboneNoise::from_config(&self.config),
+            loop_gnc_var_scale: self.config.loop_gnc_var_scale,
         }
-        let gnc_t0 = std::time::Instant::now();
-        let mut graph = FactorGraph::new();
-        let mut values = Values::new();
-        self.build_backbone(&mut graph, &mut values, true);
-        let known_inliers: Vec<u64> = (0..graph.len() as u64).collect();
-        let backbone_len = known_inliers.len();
-        for loop_edge in &self.committed_loops {
-            let variance =
-                loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
-            let noise = NoiseModel::diagonal_variances(&[variance; 6]);
-            graph
-                .add_between_pose3(
-                    loop_edge.target_id as u64,
-                    loop_edge.source_id as u64,
-                    &Pose3 {
-                        rotation: loop_edge.rotation_offset,
-                        translation: loop_edge.translation_offset,
-                    },
-                    &noise,
-                )
-                .expect("gtsam: gnc loop between factor");
+    }
+
+    /// Write a finished GNC re-solve back into the keyframes and loop weights.
+    /// The result covers the first `result.keyframe_globals.len()` keyframes;
+    /// any keyframes added while the solve ran (async path) keep their local
+    /// dead-reckoned shape but are rigidly re-anchored onto the corrected tail so
+    /// the trajectory stays continuous.
+    fn apply_gnc_result(&mut self, result: &GncResult) {
+        let solved_count = result.keyframe_globals.len();
+        for (idx, (rotation_global, translation_global)) in
+            result.keyframe_globals.iter().enumerate()
+        {
+            self.key_poses[idx].rotation_global = *rotation_global;
+            self.key_poses[idx].translation_global = *translation_global;
         }
-        let (estimate_values, weights) = graph
-            .gnc_optimize(&values, &known_inliers)
-            .expect("gtsam: gnc optimize");
-        for (idx, key_pose) in self.key_poses.iter_mut().enumerate() {
-            let pose = estimate_values
-                .pose3(idx as u64)
-                .expect("gtsam: keyframe missing from gnc estimate");
-            key_pose.rotation_global = pose.rotation;
-            key_pose.translation_global = pose.translation;
+        for (edge_idx, weight) in result.loop_weights.iter().enumerate() {
+            if edge_idx < self.committed_loops.len() {
+                self.committed_loops[edge_idx].gnc_weight = *weight;
+            }
         }
-        for (edge_idx, loop_edge) in self.committed_loops.iter_mut().enumerate() {
-            let weight_idx = backbone_len + edge_idx;
-            if weight_idx < weights.len() {
-                loop_edge.gnc_weight = weights[weight_idx];
+        if solved_count >= 1 && solved_count < self.key_poses.len() {
+            let anchor = &self.key_poses[solved_count - 1];
+            let correction_rotation = mat3::mat_mul(
+                &anchor.rotation_global,
+                &mat3::transpose(&anchor.rotation_local),
+            );
+            let correction_translation = mat3::sub(
+                &anchor.translation_global,
+                &mat3::mat_vec(&correction_rotation, &anchor.translation_local),
+            );
+            for key_pose in &mut self.key_poses[solved_count..] {
+                key_pose.rotation_global =
+                    mat3::mat_mul(&correction_rotation, &key_pose.rotation_local);
+                key_pose.translation_global = mat3::add(
+                    &mat3::mat_vec(&correction_rotation, &key_pose.translation_local),
+                    &correction_translation,
+                );
             }
         }
         let last_item = self.key_poses.last().unwrap();
@@ -1601,7 +1616,86 @@ impl GscPgo {
             &last_item.translation_global,
             &mat3::mat_vec(&self.rotation_offset, &last_item.translation_local),
         );
-        self.timing.gtsam_s += gnc_t0.elapsed().as_secs_f64();
+    }
+
+    /// Blocking full-trajectory batch GNC re-solve: rebuild the odometry backbone
+    /// plus every committed loop closure and run GNC (TLS loss) with the backbone
+    /// pinned as known inliers. GNC jointly classifies the closures against the
+    /// global residual, rejecting the mutually conflicting ones that the
+    /// incremental Huber pass merely down-weights (so a loop that only
+    /// under-closes incrementally actually snaps shut). The best estimate is
+    /// written back to every keyframe and each closure's GNC weight is stored.
+    /// Used by the offline harness, which runs it once at the end (all keyframes
+    /// present, no more added, so the pose overwrite is safe). The live path uses
+    /// `dispatch_gnc_async` + `poll_and_apply_gnc_classification` instead: iSAM2
+    /// stays authoritative for poses and GNC only classifies loops off-thread.
+    /// No-op when `loop_gnc_final` is off or no closures exist.
+    pub fn finalize_gnc(&mut self) {
+        if !self.config.loop_gnc_final || self.committed_loops.is_empty() {
+            return;
+        }
+        let solve_t0 = std::time::Instant::now();
+        let job = self.build_gnc_job();
+        let result = solve_gnc(&job);
+        self.apply_gnc_result(&result);
+        self.timing.gtsam_s += solve_t0.elapsed().as_secs_f64();
+    }
+
+    /// Live path: queue a fresh batch GNC re-solve on the background worker and
+    /// return immediately. The heavy full-graph solve runs off the pipeline
+    /// thread; the worker coalesces bursts, so a storm of closures collapses to a
+    /// single solve. No-op when the async worker is disabled or no closures exist.
+    pub fn dispatch_gnc_async(&mut self) {
+        if self.committed_loops.is_empty() {
+            return;
+        }
+        let job = self.build_gnc_job();
+        if let Some(worker) = &self.gnc_worker {
+            let _ = worker.job_sender.send(job);
+        }
+    }
+
+    /// Live path (Approach B): fold in the newest finished background GNC
+    /// classification, if any (dropping superseded results). iSAM2 stays
+    /// authoritative for poses — this NEVER overwrites keyframe globals. It only
+    /// reads GNC's per-loop weights and, for any loop GNC now judges an outlier,
+    /// queues removal of that loop's iSAM2 between factor (applied on the next
+    /// `smooth_and_update` via `removeFactorIndices`). Returns whether any loop
+    /// was newly removed. Cheap — a channel drain plus a weight scan — so it is
+    /// safe to call every keyframe without blocking the pipeline thread.
+    ///
+    /// Removal is one-way for now: a loop dropped as an outlier is not re-added if
+    /// a later GNC pass reclassifies it as an inlier (re-adding needs the original
+    /// ICP noise model, which the plain-data `CommittedLoop` does not retain).
+    /// GNC's joint full-graph classification is stable, so this is a safe first
+    /// cut; re-admission is a future refinement.
+    pub fn poll_and_apply_gnc_classification(&mut self) -> bool {
+        let mut latest_result: Option<GncResult> = None;
+        if let Some(worker) = &self.gnc_worker {
+            while let Ok(result) = worker.result_receiver.try_recv() {
+                latest_result = Some(result);
+            }
+        }
+        let Some(result) = latest_result else {
+            return false;
+        };
+        let mut removed_any = false;
+        for (edge_index, weight) in result.loop_weights.iter().enumerate() {
+            if edge_index >= self.committed_loops.len() {
+                break;
+            }
+            self.committed_loops[edge_index].gnc_weight = *weight;
+            let is_outlier = *weight < LOOP_GNC_INLIER_THRESHOLD;
+            let loop_edge = &self.committed_loops[edge_index];
+            if is_outlier && loop_edge.active_in_isam2 {
+                if let Some(factor_index) = loop_edge.isam2_factor_index {
+                    self.pending_removals.push(factor_index);
+                    self.committed_loops[edge_index].active_in_isam2 = false;
+                    removed_any = true;
+                }
+            }
+        }
+        removed_any
     }
 
     /// Direct access to the ICP used for loop verification — handy for
