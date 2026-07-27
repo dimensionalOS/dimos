@@ -363,10 +363,7 @@ def test_resolver_rechecks_cache_after_acquiring_lock(
         lambda **_: pytest.fail("valid cache must avoid a second download"),
     )
 
-    assert (
-        resolve_replay_dataset(reference.to_uri(), cache_dir=tmp_path / "cache")
-        == destination
-    )
+    assert resolve_replay_dataset(reference.to_uri(), cache_dir=tmp_path / "cache") == destination
 
 
 def test_cache_lock_waits_once_then_acquires(
