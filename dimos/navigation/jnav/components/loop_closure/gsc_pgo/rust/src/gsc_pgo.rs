@@ -1495,14 +1495,30 @@ impl GscPgo {
         // factor removal reshapes the graph just as much as an insertion — both
         // need the extra relinearization passes below.
         let has_closure = has_loop || self.location_closure || !remove.is_empty();
-        let new_factor_indices = self
+        let new_factor_indices = match self
             .isam2
             .update(&self.graph, &self.initial_values, &remove)
-            .expect("gtsam: isam2 update");
-        // Refinement passes are best-effort: on a pathological graph (e.g. many
-        // conflicting closures mid-rejection) GTSAM can throw during a forced
-        // relinearization; the estimate is still usable and later updates
-        // recover, so log and stop refining instead of killing the pipeline.
+        {
+            Ok(indices) => indices,
+            // On a pathological graph (many conflicting closures mid-rejection)
+            // GTSAM can throw and leave iSAM2 unusable; rebuilding from the
+            // backbone + still-inlier loops is the only recovery. Location
+            // constraints would be silently dropped by the rebuild, so with
+            // them enabled this stays fatal.
+            Err(gtsam_error) => {
+                if self.config.use_location_constraints {
+                    panic!("gtsam: isam2 update: {gtsam_error:?}");
+                }
+                eprintln!("gtsam: isam2 update failed ({gtsam_error:?}); rebuilding from backbone");
+                self.graph.clear();
+                self.initial_values.clear();
+                self.staged_constraint_factors.clear();
+                self.rebuild_isam2_from_backbone();
+                Vec::new()
+            }
+        };
+        // Refinement passes are best-effort: the estimate is still usable if a
+        // forced relinearization throws, so log and stop refining.
         let refinement_passes = if has_closure { 5 } else { 1 };
         for _ in 0..refinement_passes {
             if let Err(gtsam_error) = self.isam2.update_empty() {
@@ -1747,7 +1763,15 @@ impl GscPgo {
         };
         self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
         self.apply_gnc_result(&result);
+        self.rebuild_isam2_from_backbone();
+        true
+    }
 
+    /// Discard the incremental iSAM2 and rebuild it from the odometry backbone
+    /// plus every committed loop whose GNC weight still marks it an inlier
+    /// (unclassified loops carry 1.0 and re-enter — the next GNC vets them),
+    /// seeded at the current keyframe globals.
+    fn rebuild_isam2_from_backbone(&mut self) {
         let mut graph = FactorGraph::new();
         let mut values = Values::new();
         let backbone: Vec<BackboneKeyframe> = self
@@ -1807,7 +1831,6 @@ impl GscPgo {
                 self.committed_loops[edge_index].active_in_isam2 = true;
             }
         }
-        true
     }
 
     /// Direct access to the ICP used for loop verification — handy for
