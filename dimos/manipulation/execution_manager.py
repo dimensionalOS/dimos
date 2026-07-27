@@ -127,7 +127,7 @@ class ExecutionTarget:
         *,
         robot_name: RobotName,
         model_joint_names: Sequence[str],
-        #TODO: unify coordinator joint name with planner
+        # TODO: unify coordinator joint name with planner
         coordinator_to_model: Mapping[str, str],
     ) -> ExecutionTarget:
         """Validate and invert a coordinator-to-model joint mapping."""
