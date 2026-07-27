@@ -282,7 +282,12 @@ def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
     return fallback
 
 
-def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
+def load_config_args(
+    config: type[BaseModel],
+    args: Iterable[str],
+    path: Path,
+    cli_g_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         kwargs = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -307,11 +312,31 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
             d = d.setdefault(p, {})
         d[parts[-1]] = v
 
+    if cli_g_overrides:
+        # Explicit CLI flags (--transport, --local-relay, ...) win for their
+        # own keys but must not wipe the rest of the g subtree built above.
+        kwargs.setdefault("g", {}).update(cli_g_overrides)
+
     # We don't need this config, but this atleast validates the user input first.
     # This will help catch misspellings and similar mistakes.
     config(**kwargs)
 
     return kwargs  # type: ignore[no-any-return]
+
+
+def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
+    """Append one relay bridge to an enabled CLI run after blueprint resolution."""
+    if not (global_config.local_relay or global_config.relay_url):
+        return blueprint
+
+    try:
+        from dimos.web.relay_bridge.relay_bridge_module import with_relay_bridge
+    except ImportError as e:
+        raise RuntimeError(
+            "--local-relay/--relay-url need the web extra: `uv sync --extra web --inexact`"
+        ) from e
+
+    return with_relay_bridge(blueprint)
 
 
 @main.command()
@@ -323,6 +348,14 @@ def run(
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    local_relay: bool | None = typer.Option(
+        None,
+        "--local-relay/--no-local-relay",
+        help="Spawn a local cockpit relay and bridge this robot to it",
+    ),
+    relay_url: str | None = typer.Option(
+        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -346,6 +379,16 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
+
+    # These flags are accepted on `run` itself, not just as global options.
+    run_overrides = {
+        name: value
+        for name, value in (("local_relay", local_relay), ("relay_url", relay_url))
+        if value is not None
+    }
+    if run_overrides:
+        cli_config_overrides.update(run_overrides)
+        global_config.update(**run_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -372,6 +415,8 @@ def run(
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
+    blueprint = _with_relay_bridge(blueprint)
+
     if show_help:
         print("Blueprint arguments:")
         print("  Override with --option/-o module.field=value.")
@@ -380,9 +425,7 @@ def run(
         return
 
     blueprint_config = blueprint.config()
-    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
-    if cli_config_overrides:
-        kwargs["g"] = cli_config_overrides
+    kwargs = load_config_args(blueprint_config, blueprint_args, config_path, cli_config_overrides)
 
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
