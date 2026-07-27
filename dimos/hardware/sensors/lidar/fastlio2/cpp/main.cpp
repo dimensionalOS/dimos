@@ -5,7 +5,6 @@
 // `odometry` (consumers register the cloud via the odometry pose). No inputs,
 // so it overrides handle() with its own processing loop.
 
-#include <atomic>
 #include <boost/make_shared.hpp>
 #include <chrono>
 #include <cstdint>
@@ -24,7 +23,6 @@
 
 #include "nav_msgs/Odometry.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
-#include "sensor_msgs/PointField.hpp"
 #include "std_msgs/Header.hpp"
 
 // FAST-LIO (header-only core, compiled sources linked via CMake)

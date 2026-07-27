@@ -3,7 +3,6 @@
 // PointCloud2 at a fixed rate on `lidar` plus Imu samples as they arrive on
 // `imu`. No inputs, so it overrides handle() with its own emit loop.
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -20,7 +19,6 @@
 
 #include "sensor_msgs/Imu.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
-#include "sensor_msgs/PointField.hpp"
 #include "std_msgs/Header.hpp"
 
 using dimos::native::Builder;
