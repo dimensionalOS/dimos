@@ -3,9 +3,11 @@
 // streams (verified; the 2.6.10 incoming-uni bug is server-side receive
 // only), so this covers the full forwarding path without a browser.
 import { assert, assertEquals } from "@std/assert";
+import { fileURLToPath } from "node:url";
 import {
   type ChannelSpec,
   ControlFrameReader,
+  DataFrameStreamReader,
   decodeDatagram,
   encodeControlFrame,
   encodeDataFrame,
@@ -15,7 +17,6 @@ import {
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
-import { readDataFrameBytes } from "./forward.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -87,26 +88,32 @@ function datagramQueue(readable: ReadableStream<Uint8Array>): () => Promise<Msg>
   };
 }
 
-/** Collect forwarded data frames arriving on relay-initiated uni streams. */
+/**
+ * Collect forwarded data frames arriving on relay-initiated uni streams
+ * (one frame per latest stream; back-to-back frames on a reliable channel's
+ * persistent stream).
+ */
 function frameQueue(
   wt: WebTransport,
 ): () => Promise<{ header: FrameHeader; payload: Uint8Array }> {
   const queue: { header: FrameHeader; payload: Uint8Array }[] = [];
   const waiters: ((f: { header: FrameHeader; payload: Uint8Array }) => void)[] = [];
+  const deliver = (frame: { header: FrameHeader; payload: Uint8Array }) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(frame);
+    else queue.push(frame);
+  };
   (async () => {
     for await (const stream of wt.incomingUnidirectionalStreams) {
-      readDataFrameBytes(stream)
-        .then((bytes) => {
-          const headerLen = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
-          const header = JSON.parse(
-            new TextDecoder().decode(bytes.subarray(8, 8 + headerLen)),
-          ) as FrameHeader;
-          const payload = bytes.subarray(8 + headerLen);
-          const waiter = waiters.shift();
-          if (waiter) waiter({ header, payload });
-          else queue.push({ header, payload });
-        })
-        .catch(() => {});
+      (async () => {
+        const frames = new DataFrameStreamReader();
+        const reader = (stream as ReadableStream<Uint8Array>).getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value && value.byteLength) frames.push(value).forEach(deliver);
+          if (done) break;
+        }
+      })().catch(() => {});
     }
   })().catch(() => {});
   return () => {
@@ -359,6 +366,43 @@ Deno.test({
     await within(bare.closed.catch(() => {}), "bare robot session close");
   });
 
+  await t.step("robot hello with an invalid manifest -> invalid_manifest + close", async () => {
+    const dup = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(dup.ready, "dup-manifest robot connect");
+    const dupDatagrams = datagramQueue(dup.datagrams.readable);
+    const dupWriter = dup.datagrams.writable.getWriter();
+    await dupWriter.write(encodeDatagram({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
+      manifest: { channels: [CHANNELS[0], CHANNELS[0]] },
+    }));
+    const err = await within(dupDatagrams(), "invalid_manifest error");
+    assertEquals(err.t, "error");
+    assertEquals((err as { code: string }).code, "invalid_manifest");
+    await within(dup.closed.catch(() => {}), "dup-manifest robot close");
+  });
+
+  await t.step("robot hello with the previous protocol version -> error + close", async () => {
+    // A v1 bridge would misread the v2 persistent reliable stream as one
+    // frame; the handshake must fail loudly instead.
+    const old = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(old.ready, "old-version robot connect");
+    const oldDatagrams = datagramQueue(old.datagrams.readable);
+    const oldWriter = old.datagrams.writable.getWriter();
+    await oldWriter.write(encodeDatagram({
+      t: "hello",
+      v: 1,
+      role: "robot",
+      robot: { id: "old-bot", name: "Old Bot", model: "test" },
+    }));
+    const err = await within(oldDatagrams(), "old-version error");
+    assertEquals(err.t, "error");
+    assertEquals((err as { code: string }).code, "version_mismatch");
+    await within(old.closed.catch(() => {}), "old-version robot close");
+  });
+
   await t.step("hello with a wrong version -> error + close", async () => {
     const bad = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
     await within(bad.ready, "bad-version viewer connect");
@@ -425,4 +469,39 @@ Deno.test({
   viewer.close();
   robot.close();
   await relay.shutdown();
+});
+
+Deno.test({
+  name: "relay serves the cockpit dist when configured",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const index = await (await fetch(`${httpBase}/`)).text();
+    assert(index.includes("fake cockpit index"));
+    const asset = await fetch(`${httpBase}/assets/app.js`);
+    assertEquals(asset.status, 200);
+    assertEquals(asset.headers.get("content-type"), "application/javascript");
+    await asset.body?.cancel();
+    // The debug page still resolves from relay/static/ behind the cockpit.
+    const page = await (await fetch(`${httpBase}/debug.html`)).text();
+    assert(page.includes("DimOS relay debug"));
+    // The traversal guard covers the cockpit root too.
+    const res = await fetch(`${httpBase}//etc/passwd`);
+    await res.body?.cancel();
+    assertEquals(res.status, 400);
+    // A symlink whose target lies outside the root must not be followed
+    // (readFile follows symlinks; the containment check compares realpaths).
+    const escape = await fetch(`${httpBase}/escape.txt`);
+    await escape.body?.cancel();
+    assertEquals(escape.status, 400);
+    // A symlink staying inside the root still serves.
+    const alias = await (await fetch(`${httpBase}/alias.txt`)).text();
+    assert(alias.includes("fake cockpit index"));
+  } finally {
+    await relay.shutdown();
+  }
 });
