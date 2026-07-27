@@ -30,7 +30,7 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use dimos_gsc_pgo::gsc_pgo::{
-    CloudWithPose, Config as PgoConfig, GscPgo, LoopCandidateDiag, PoseWithTime,
+    CloudWithPose, CommittedLoop, Config as PgoConfig, GscPgo, LoopCandidateDiag, PoseWithTime,
 };
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
@@ -70,6 +70,11 @@ struct EvalConfig {
     loop_yank_gate_max_distance_m: f64,
     loop_min_id_gap: u64,
 
+    loop_instant_accept_distance_m: f64,
+    loop_buffer_agreement_trans_m: f64,
+    loop_buffer_agreement_rot_deg: f64,
+    loop_buffer_min_agree: u64,
+
     subtract_odom_from_cloud: bool,
 
     use_scan_context: bool,
@@ -82,6 +87,8 @@ struct EvalConfig {
 
     loop_robust_kernel: bool,
     loop_robust_huber_k: f64,
+    loop_gnc_final: bool,
+    loop_gnc_var_scale: f64,
 
     use_location_constraints: bool,
 
@@ -119,6 +126,10 @@ impl Default for EvalConfig {
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
             loop_min_id_gap: 0,
+            loop_instant_accept_distance_m: 0.0,
+            loop_buffer_agreement_trans_m: 1.0,
+            loop_buffer_agreement_rot_deg: 10.0,
+            loop_buffer_min_agree: 2,
             subtract_odom_from_cloud: false,
             use_scan_context: true,
             scan_context_num_rings: 20,
@@ -129,6 +140,8 @@ impl Default for EvalConfig {
             scan_context_lidar_height_m: 2.0,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
+            loop_gnc_final: true,
+            loop_gnc_var_scale: 10.0,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
@@ -161,8 +174,14 @@ impl EvalConfig {
         pgo.loop_max_yank_rotation_deg = self.loop_max_yank_rotation_deg;
         pgo.loop_yank_gate_max_distance_m = self.loop_yank_gate_max_distance_m;
         pgo.loop_min_id_gap = self.loop_min_id_gap;
+        pgo.loop_instant_accept_distance_m = self.loop_instant_accept_distance_m;
+        pgo.loop_buffer_agreement_trans_m = self.loop_buffer_agreement_trans_m;
+        pgo.loop_buffer_agreement_rot_deg = self.loop_buffer_agreement_rot_deg;
+        pgo.loop_buffer_min_agree = self.loop_buffer_min_agree;
         pgo.loop_robust_kernel = self.loop_robust_kernel;
         pgo.loop_robust_huber_k = self.loop_robust_huber_k;
+        pgo.loop_gnc_final = self.loop_gnc_final;
+        pgo.loop_gnc_var_scale = self.loop_gnc_var_scale;
         pgo.use_location_constraints = self.use_location_constraints;
         pgo.odom_rot_roll_pitch_var = self.odom_rot_roll_pitch_var;
         pgo.odom_rot_yaw_var = self.odom_rot_yaw_var;
@@ -207,6 +226,33 @@ struct LoopDiag {
     icp_translation_norm: f64,
     yank_translation: f64,
     yank_rotation_deg: f64,
+}
+
+/// A committed loop's ICP-refined relative pose (target frame -> source), so an
+/// offline PCM pass can compose it with odometry. `rotation` is row-major 3x3.
+#[derive(Serialize)]
+struct CommittedLoopEdge {
+    source_id: usize,
+    target_id: usize,
+    rotation: [[f64; 3]; 3],
+    translation: [f64; 3],
+    score: f64,
+    /// Final GNC weight (~1 kept / green, ~0 rejected / red). 1.0 when the batch
+    /// GNC pass is disabled.
+    gnc_weight: f64,
+}
+
+impl From<&CommittedLoop> for CommittedLoopEdge {
+    fn from(edge: &CommittedLoop) -> CommittedLoopEdge {
+        CommittedLoopEdge {
+            source_id: edge.source_id,
+            target_id: edge.target_id,
+            rotation: edge.rotation_offset,
+            translation: edge.translation_offset,
+            score: edge.score,
+            gnc_weight: edge.gnc_weight,
+        }
+    }
 }
 
 impl From<&LoopCandidateDiag> for LoopDiag {
@@ -262,6 +308,12 @@ struct EvalOutput {
     /// One record per loop-search evaluation (accepted + rejected), with the
     /// metric at each gate and the source/target locations.
     loop_diagnostics: Vec<LoopDiag>,
+    /// Total nonlinear error of the final factor graph (½·Σ whitened residual²,
+    /// robust kernels applied) — how much all the constraints conflict.
+    graph_error: f64,
+    /// Every committed loop's refined relative pose (target->source), in commit
+    /// order — the raw constraints an offline consistency pass needs.
+    committed_loop_edges: Vec<CommittedLoopEdge>,
 }
 
 struct Args {
@@ -447,6 +499,7 @@ fn run() -> Result<(), String> {
         }
         pgo.smooth_and_update();
     }
+    pgo.finalize_gnc();
     let runtime_s = started.elapsed().as_secs_f64();
 
     let graph: Vec<[f64; 8]> = pgo
@@ -483,6 +536,12 @@ fn run() -> Result<(), String> {
     }
     let loop_diagnostics: Vec<LoopDiag> =
         pgo.loop_diagnostics().iter().map(LoopDiag::from).collect();
+    let graph_error = pgo.graph_error();
+    let committed_loop_edges: Vec<CommittedLoopEdge> = pgo
+        .committed_loops()
+        .iter()
+        .map(CommittedLoopEdge::from)
+        .collect();
 
     let output = EvalOutput {
         db: args.db.display().to_string(),
@@ -504,6 +563,8 @@ fn run() -> Result<(), String> {
         realtime_factor,
         gate_counts,
         loop_diagnostics,
+        graph_error,
+        committed_loop_edges,
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;

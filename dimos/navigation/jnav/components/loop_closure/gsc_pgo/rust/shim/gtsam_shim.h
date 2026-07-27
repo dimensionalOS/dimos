@@ -95,8 +95,28 @@ int gtsam_shim_isam2_update(gtsam_shim_isam2* isam2,
 int gtsam_shim_isam2_update_empty(gtsam_shim_isam2* isam2);
 // calculateBestEstimate() -> new Values (caller destroys).
 gtsam_shim_values* gtsam_shim_isam2_calculate_best_estimate(const gtsam_shim_isam2* isam2);
+// Total nonlinear error of all current factors at the best estimate
+// (0.5 * sum of squared whitened residuals, robust kernels applied) — i.e. how
+// much the constraints conflict. Returns NaN on failure.
+double gtsam_shim_isam2_error(const gtsam_shim_isam2* isam2);
 
 void gtsam_shim_indices_free(uint64_t* indices);
+
+// ---- Batch GNC (graduated non-convexity) ------------------------------------
+// GncOptimizer<LevenbergMarquardtOptimizer> with TLS loss over `graph` starting
+// from `values`. `known_inlier_indices` (length n_known) are factor indices GNC
+// must never reject (the odometry backbone + anchor prior); the loop factors are
+// left for GNC to classify. Returns the optimized Values (caller destroys with
+// gtsam_shim_values_destroy) or NULL on failure. When out_weights/out_n_weights
+// are non-NULL, writes a caller-owned array of length graph.size() with each
+// factor's final GNC weight (~1 inlier, ~0 rejected); free with
+// gtsam_shim_doubles_free. known_inlier_indices may be NULL when n_known is 0.
+gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
+                                           const gtsam_shim_values* values,
+                                           const uint64_t* known_inlier_indices,
+                                           size_t n_known, double** out_weights,
+                                           size_t* out_n_weights);
+void gtsam_shim_doubles_free(double* values);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -107,10 +107,29 @@ class PGOConfig(NativeModuleConfig):
     # spans negligible drift, so a closure there can only inject error. 0 disables.
     loop_min_id_gap: int = 0
 
+    # Long-jump agreement buffer. A closure whose candidate distance is within
+    # loop_instant_accept_distance_m is committed to the graph instantly; a longer
+    # jump is parked in a buffer (max 4, FIFO) and only committed once
+    # loop_buffer_min_agree buffered jumps agree on the same rigid map-correction:
+    # implied-correction translation within loop_buffer_agreement_trans_m and
+    # rotation within loop_buffer_agreement_rot_deg. <= 0 disables the buffer.
+    loop_instant_accept_distance_m: float = 0.0
+    loop_buffer_agreement_trans_m: float = 1.0
+    loop_buffer_agreement_rot_deg: float = 10.0
+    loop_buffer_min_agree: int = 2
+
     # Robust (Huber) kernel on all loop factors (lidar + location). Keeps ISAM2 determinate
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
     loop_robust_kernel: bool = True
     loop_robust_huber_k: float = 1.345
+
+    # After each loop closure, re-solve the whole graph once with a batch GNC (graduated
+    # non-convexity, TLS loss) optimizer, pinning the odometry backbone as known inliers. GNC
+    # rejects the mutually conflicting closures that Huber only down-weights, so a loop that
+    # under-closes incrementally actually snaps shut. loop_gnc_var_scale loosens each loop's
+    # score-derived variance so GNC keeps the true consensus set instead of over-rejecting.
+    loop_gnc_final: bool = True
+    loop_gnc_var_scale: float = 10.0
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False
