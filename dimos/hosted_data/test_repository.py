@@ -741,9 +741,7 @@ def test_concurrent_duplicate_metadata_publication_is_atomic(
         )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = tuple(
-            executor.map(upload, ("camera-left.mp4", "camera-right.mp4"))
-        )
+        results = tuple(executor.map(upload, ("camera-left.mp4", "camera-right.mp4")))
 
     assert len({item.object_id for item in results}) == 1
     assert len(repository.list("alice", "duplicates")) == 1
