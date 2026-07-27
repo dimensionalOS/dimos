@@ -607,9 +607,7 @@ def test_local_loopback_negotiates_h264_and_reports_metrics(
     fake_aiortc.RTCRtpSender = SenderCapabilities  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "aiortc", fake_aiortc)
 
-    fake_video_track = ModuleType(
-        "dimos.protocol.pubsub.impl.webrtc.providers.video_track"
-    )
+    fake_video_track = ModuleType("dimos.protocol.pubsub.impl.webrtc.providers.video_track")
     fake_video_track.CameraVideoTrack = CameraTrack  # type: ignore[attr-defined]
     monkeypatch.setitem(
         sys.modules,
