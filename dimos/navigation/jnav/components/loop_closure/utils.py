@@ -599,8 +599,10 @@ def write_comparison_rrd(
     raw_path: np.ndarray,
     corrected_path: np.ndarray,
     recording_name: str,
+    closure_segments: np.ndarray | None = None,
 ) -> None:
-    """Rerun rrd: raw vs corrected lidar cloud (z-shaded), trajectories, and tag medians."""
+    """Rerun rrd: raw vs corrected lidar cloud (z-shaded), trajectories, tag medians, and
+    loop-closure edges (on the raw trajectory, like the top-down BEFORE panel)."""
     import rerun as rr
 
     rr.init(f"eval_{recording_name}")
@@ -618,6 +620,12 @@ def write_comparison_rrd(
         if len(path):
             segments = np.stack([path[:-1], path[1:]], axis=1)
             rr.log(f"{name}/trajectory", rr.LineStrips3D(segments, colors=path_color), static=True)
+    if closure_segments is not None and len(closure_segments):
+        rr.log(
+            "raw/loop_closures",
+            rr.LineStrips3D(closure_segments.reshape(-1, 2, 3), colors=[255, 59, 59]),
+            static=True,
+        )
     for name, tags in (("raw", raw_tags), ("corrected", corrected_tags)):
         centers = [positions.mean(axis=0) for positions in tags.values()]
         if centers:

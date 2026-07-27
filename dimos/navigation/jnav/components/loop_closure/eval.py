@@ -261,6 +261,7 @@ def evaluate(
             raw_path,
             corrected_path,
             recording_name,
+            closure_segments,
         )
 
     summary = {
