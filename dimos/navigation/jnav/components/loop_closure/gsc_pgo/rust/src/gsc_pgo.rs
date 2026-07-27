@@ -433,6 +433,8 @@ pub struct GscPgo {
     /// blocking on it inline; `None` disables the async path (offline harness
     /// still calls the blocking `finalize_gnc`).
     gnc_worker: Option<GncWorker>,
+    gnc_sequence_dispatched: u64,
+    gnc_sequence_applied: u64,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -476,6 +478,8 @@ impl GscPgo {
             config,
             scan_context_config,
             gnc_worker,
+            gnc_sequence_dispatched: 0,
+            gnc_sequence_applied: 0,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -1485,11 +1489,12 @@ impl GscPgo {
                 .expect("gtsam: add loop between factor");
         }
         drop(cache_pairs);
-        // A re-sighted location closes a loop just like a lidar closure.
-        let has_closure = has_loop || self.location_closure;
-
         // Smooth and map; removeFactorIndices applies constraint revision.
         let remove = std::mem::take(&mut self.pending_removals);
+        // A re-sighted location closes a loop just like a lidar closure, and a
+        // factor removal reshapes the graph just as much as an insertion — both
+        // need the extra relinearization passes below.
+        let has_closure = has_loop || self.location_closure || !remove.is_empty();
         let new_factor_indices = self
             .isam2
             .update(&self.graph, &self.initial_values, &remove)
@@ -1572,6 +1577,7 @@ impl GscPgo {
             loops: self.committed_loops.clone(),
             backbone_noise: BackboneNoise::from_config(&self.config),
             loop_gnc_var_scale: self.config.loop_gnc_var_scale,
+            sequence: self.gnc_sequence_dispatched,
         }
     }
 
@@ -1640,9 +1646,11 @@ impl GscPgo {
             return;
         }
         let solve_t0 = std::time::Instant::now();
+        self.gnc_sequence_dispatched += 1;
         let job = self.build_gnc_job();
         let result = solve_gnc(&job);
         self.apply_gnc_result(&result);
+        self.gnc_sequence_applied = result.sequence;
         self.timing.gtsam_s += solve_t0.elapsed().as_secs_f64();
     }
 
@@ -1654,10 +1662,21 @@ impl GscPgo {
         if self.committed_loops.is_empty() {
             return;
         }
+        if self.gnc_worker.is_some() {
+            self.gnc_sequence_dispatched += 1;
+        }
         let job = self.build_gnc_job();
         if let Some(worker) = &self.gnc_worker {
             let _ = worker.job_sender.send(job);
         }
+    }
+
+    /// Whether a dispatched background GNC classification has not yet been
+    /// applied — i.e. the latest full-graph verdict is still pending. The
+    /// harness (and any shutdown path) should keep the pipeline alive while
+    /// this is true or stale outlier loops stay committed.
+    pub fn gnc_in_flight(&self) -> bool {
+        self.gnc_sequence_applied < self.gnc_sequence_dispatched
     }
 
     /// Live path (Approach B): fold in the newest finished background GNC
@@ -1684,6 +1703,7 @@ impl GscPgo {
         let Some(result) = latest_result else {
             return false;
         };
+        self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
         let mut removed_any = false;
         for (edge_index, weight) in result.loop_weights.iter().enumerate() {
             if edge_index >= self.committed_loops.len() {

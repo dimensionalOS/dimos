@@ -448,6 +448,11 @@ impl Worker {
         // Backstop for the Condvar wait so the stop flag is still observed even
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
+        // While a background GNC solve is in flight during idle, republish the
+        // graph at this cadence so downstream consumers (e.g. the eval harness
+        // settle heartbeat) know the final verdict is still pending.
+        let gnc_wait_publish_interval = Duration::from_secs(2);
+        let mut last_gnc_wait_publish = std::time::Instant::now();
 
         // Per-node deformation stream state: a stable random id per keyframe
         // plus its last published pose (re-publish only on new/moved nodes).
@@ -519,6 +524,21 @@ impl Worker {
                         &mut deformation_rng,
                     );
                     continue;
+                }
+                if pgo.gnc_in_flight()
+                    && last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval
+                {
+                    last_gnc_wait_publish = std::time::Instant::now();
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_graph(
+                        &pgo,
+                        last_time,
+                        &frame_id,
+                        deformation_tf_id,
+                        &mut deformation_ids,
+                        &mut deformation_last,
+                        &mut deformation_rng,
+                    );
                 }
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.

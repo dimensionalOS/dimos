@@ -53,11 +53,12 @@ LOCKSTEP_PER_SCAN_BUDGET_S = 2.0
 LOCKSTEP_BASE_OVERHEAD_S = 120.0
 LOCKSTEP_POLL_S = 5.0
 # After the last scan is acked the module may still fold a background GNC
-# classification (a full-graph solve, seconds) into the pose graph, so wait
-# until the pose_graph stream has been quiet for longer than one solve rather
-# than sleeping a fixed time.
+# classification into the pose graph. While that solve is in flight the module
+# republishes the graph every ~2s (touching the heartbeat), so waiting for
+# quiet is safe; the solve itself can take minutes on 4k+ keyframe graphs,
+# hence the generous cap.
 GRAPH_SETTLE_QUIET_S = 5.0
-GRAPH_SETTLE_MAX_S = 60.0
+GRAPH_SETTLE_MAX_S = 1800.0
 GRAPH_SETTLE_POLL_S = 0.5
 _PROGRESS_EVERY_N_SCANS = 200
 # mirrors EDGE_LOOP_CLOSURE in rust/src/utils.rs pose-graph metadata ids
