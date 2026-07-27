@@ -329,7 +329,7 @@ def write_aggregated_lcm(
 def raycast_accumulate(
     store: Store,
     in_stream: str,
-    store_tf: RecordingTF | None,
+    store_tf: RecordingTF,
     world_frame: str,
     voxel: float,
     max_range: float,
@@ -345,14 +345,18 @@ def raycast_accumulate(
     last_ts = 0.0
     start_time = time.time()
     for observation in store.stream(in_stream, PointCloud2):
-        if store_tf is None:
-            continue
         raw_points = np.asarray(observation.data.points_f32())
-        points, origin = store_tf.register(
-            world_frame, observation.data.frame_id, float(observation.ts), raw_points
-        )
-        if origin is None or not len(points):
+        if not len(raw_points):
             continue
+        scan_frame = observation.data.frame_id
+        transform = store_tf.get(world_frame, scan_frame, float(observation.ts), None)
+        rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
+        origin = (
+            float(transform.translation.x),
+            float(transform.translation.y),
+            float(transform.translation.z),
+        )
+        points = (raw_points @ rotation.T + np.asarray(origin)).astype(np.float32)
         mapper.add_frame(points, origin)
         last_ts = float(observation.ts)
         scan_count += 1

@@ -50,10 +50,7 @@ def _is_go2_legacy(store: Store, odom_stream: str) -> bool:
     """True when ``odom_stream`` is a go2-legacy bare-``Pose`` odom (not ``Odometry``)."""
     if odom_stream not in LEGACY_ODOM_STREAMS:
         return False
-    observation = next(iter(store.stream(odom_stream, PoseStamped)), None)
-    if observation is None:
-        return False
-    return not isinstance(observation.data, Odometry)
+    return store.stream(odom_stream).data_type is PoseStamped
 
 
 def _odom_pose_rows(store: Store, odom_stream: str) -> np.ndarray:
@@ -98,7 +95,6 @@ def _write_l1_cloud(
         xyzquat = odom_rows[latched][1:]
         if observation.data.frame_id == world_frame:
             world_to_sensor = tf.get(GO2_CORRECTED_LIDAR_FRAME, world_frame, scan_ts)
-            assert world_to_sensor is not None
             matrix = world_to_sensor.to_matrix()
             l1_points = (source_points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
         else:

@@ -79,7 +79,6 @@ from dimos.navigation.jnav.utils.apriltags import (
     read_raw_tag_stream,
 )
 from dimos.navigation.jnav.utils.recording_tf import RecordingTF
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import base_link_from_camera_optical
 
 
 def parse_args() -> argparse.Namespace:
@@ -139,7 +138,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-lcm", dest="lcm", action="store_false")
     parser.add_argument("--no-rrd", dest="rrd", action="store_false")
     parser.add_argument("--no-accum", dest="accum", action="store_false")
-    parser.add_argument("--no-tf", dest="tf", action="store_false")
     parser.add_argument("--lcm-voxel", type=float, default=0.05)
     parser.add_argument("--accum-voxel", type=float, default=0.05)
     parser.add_argument("--accum-max-range", type=float, default=20.0)
@@ -157,33 +155,20 @@ def parse_base_optical(spec: str) -> Pose3 | None:
     return Pose3(Rot3.Quaternion(qw, qx, qy, qz), Point3(x, y, z))
 
 
-def _pose3_from_transform(transform: Any) -> Pose3:
-    rotation, translation = transform.rotation, transform.translation
-    return Pose3(
-        Rot3.Quaternion(rotation.w, rotation.x, rotation.y, rotation.z),
-        Point3(translation.x, translation.y, translation.z),
-    )
-
-
 def resolve_base_optical(
-    store_tf: RecordingTF | None, body_frame: str, optical_frame: str, ts: float, cli_spec: str
+    store_tf: RecordingTF, body_frame: str, optical_frame: str, ts: float, cli_spec: str
 ) -> Pose3:
-    """base<-optical extrinsic: explicit ``--base-optical``, else the recording's tf tree, else the
-    known Go2/Mid360 rig mount geometry (with a warning) for recordings that carry ``camera_info``
-    but no tf tree to resolve the camera mount from."""
+    """base<-optical extrinsic: explicit ``--base-optical``, else the recording's tf tree."""
     override = parse_base_optical(cli_spec)
     if override is not None:
         return override
-    tf_extrinsic = store_tf.get(body_frame, optical_frame, ts) if store_tf is not None else None
-    if tf_extrinsic is not None:
-        return Pose3(tf_extrinsic.to_matrix())
-    print(
-        f"WARNING: no tf edge {body_frame!r}<-{optical_frame!r} and no --base-optical; assuming the "
-        "Go2/Mid360 rig's static camera mount to place tags. Pass --base-optical 'x y z qx qy qz qw' "
-        "for a different rig.",
-        flush=True,
-    )
-    return _pose3_from_transform(base_link_from_camera_optical())
+    try:
+        return Pose3(store_tf.get(body_frame, optical_frame, ts).to_matrix())
+    except LookupError as error:
+        sys.exit(
+            f"cannot resolve the camera extrinsic {body_frame!r} <- {optical_frame!r} from the "
+            f"tf tree; pass --base-optical 'x y z qx qy qz qw' for this rig. ({error})"
+        )
 
 
 def main() -> None:
@@ -232,20 +217,17 @@ def main() -> None:
                 flush=True,
             )
 
-        store_tf = (
-            RecordingTF.from_store(store, odom_tf=odom_tf or None, odom_stream=odom_stream)
-            if args.tf
-            else None
-        )
+        store_tf = RecordingTF.from_store(store, odom_tf=odom_tf or None, odom_stream=odom_stream)
 
         def world_points(observation: Any) -> np.ndarray:
             points = np.asarray(observation.data.points_f32())
-            if store_tf is None:
-                return points.astype(np.float32)
-            world, _origin = store_tf.register(
-                args.world_frame, observation.data.frame_id, float(observation.ts), points
+            scan_frame = observation.data.frame_id
+            transform = store_tf.get(args.world_frame, scan_frame, float(observation.ts), None)
+            rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
+            translation = np.array(
+                [transform.translation.x, transform.translation.y, transform.translation.z], float
             )
-            return world
+            return (points @ rotation.T + translation).astype(np.float32)
 
         print(f"recording: {rec_dir}", flush=True)
         print(
@@ -349,18 +331,6 @@ def main() -> None:
                 args.corrected_odom_frame,
             )
 
-        # tf that places the corrected-odom-framed per-scan clouds back into the world; also
-        # supplies the ray origin (tf.get(corrected_odom)) for the corrected raycast.
-        corrected_store_tf = (
-            RecordingTF.from_store(
-                store,
-                odom_tf=f"{args.world_frame}:{args.corrected_odom_frame}",
-                odom_stream=corrected_odom_out,
-            )
-            if corrected_odom_out in store.list_streams()
-            else None
-        )
-
         if args.write_lidar:
             lidar_out = f"{lidar_stream}{args.corrected_suffix}{args.suffix}"
             lcm_path = (rec_dir / f"{lidar_out}.pc2.lcm") if args.lcm else None
@@ -386,7 +356,14 @@ def main() -> None:
                     args.accum_voxel,
                     args.accum_max_range,
                 )
-                if corrected_store_tf is not None:
+                if corrected_odom_out in store.list_streams():
+                    # tf that places the corrected-odom-framed per-scan clouds back into the
+                    # world; also supplies the ray origin for the corrected raycast.
+                    corrected_store_tf = RecordingTF.from_store(
+                        store,
+                        odom_tf=f"{args.world_frame}:{args.corrected_odom_frame}",
+                        odom_stream=corrected_odom_out,
+                    )
                     raycast_accumulate(
                         store,
                         lidar_out,
@@ -397,7 +374,7 @@ def main() -> None:
                     )
                 else:
                     print(
-                        "WARNING: no corrected-odom tf (--no-odom?) -- skipping corrected lidar accumulation",
+                        "WARNING: no corrected odom stream (--no-odom?) -- skipping corrected lidar accumulation",
                         flush=True,
                     )
             if args.rrd:
