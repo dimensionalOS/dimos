@@ -54,23 +54,7 @@ def _render_pose_graph(graph: Graph3D) -> RerunMulti:
 unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
     NormalizeGo2Lidar.blueprint(),
-    GscPGO.blueprint(
-        # Tuned on the Go2 L1 lidar: closes small_loop's start<->end revisit while
-        # staying no-harm on huge_loop. Only keys that differ from PGOConfig defaults.
-        scan_context_max_range_m=8.0,
-        min_descriptor_std=0.1,
-        scan_context_match_threshold=0.1406,
-        loop_score_thresh=0.0807,
-        loop_max_lowe_ratio=0.831,
-        # small_loop's genuine revisit is ~17m apart in drifted odom, so widen the
-        # distance gate past the drift (default 200 never gates it; the old 13.42 did).
-        loop_candidate_max_distance_m=20.0,
-        # a closure only helps across accumulated drift; reject near-in-sequence pairs.
-        loop_min_id_gap=50,
-        # per-keyframe roll/pitch level prior keeps the planar go2 solve level so a
-        # closure's tilt cannot bleed x/y into z.
-        per_keyframe_roll_pitch_prior=True,
-    ),
+    GscPGO.blueprint(),
     vis_module(
         "rerun",
         rerun_config={"visual_override": {_POSE_GRAPH_PATH: _render_pose_graph}},
