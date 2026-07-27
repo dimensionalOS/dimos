@@ -433,6 +433,17 @@ pub struct GscPgo {
     /// blocking on it inline; `None` disables the async path (offline harness
     /// still calls the blocking `finalize_gnc`).
     gnc_worker: Option<GncWorker>,
+    gnc_sequence_dispatched: u64,
+    gnc_sequence_applied: u64,
+    gnc_sequence_adopted: u64,
+    /// Newest finished GNC solve, kept for idle adoption: the per-keyframe
+    /// classification poll drains the worker channel, so without this the
+    /// batch poses would be gone by the time the pipeline goes idle.
+    latest_gnc_result: Option<GncResult>,
+    /// Set when batch poses were adopted without rebuilding iSAM2 yet; the
+    /// rebuild is deferred so the pipeline thread can publish the adopted
+    /// poses before blocking on the (40-90s) rebuild.
+    isam2_stale: bool,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -476,6 +487,11 @@ impl GscPgo {
             config,
             scan_context_config,
             gnc_worker,
+            gnc_sequence_dispatched: 0,
+            gnc_sequence_applied: 0,
+            gnc_sequence_adopted: 0,
+            latest_gnc_result: None,
+            isam2_stale: false,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -1485,21 +1501,45 @@ impl GscPgo {
                 .expect("gtsam: add loop between factor");
         }
         drop(cache_pairs);
-        // A re-sighted location closes a loop just like a lidar closure.
-        let has_closure = has_loop || self.location_closure;
-
         // Smooth and map; removeFactorIndices applies constraint revision.
         let remove = std::mem::take(&mut self.pending_removals);
-        let new_factor_indices = self
+        // A re-sighted location closes a loop just like a lidar closure, and a
+        // factor removal reshapes the graph just as much as an insertion — both
+        // need the extra relinearization passes below.
+        let has_closure = has_loop || self.location_closure || !remove.is_empty();
+        let new_factor_indices = match self
             .isam2
             .update(&self.graph, &self.initial_values, &remove)
-            .expect("gtsam: isam2 update");
-        self.isam2.update_empty().expect("gtsam: isam2 update");
-        if has_closure {
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
-            self.isam2.update_empty().expect("gtsam: isam2 update");
+        {
+            Ok(indices) => indices,
+            // On a pathological graph (many conflicting closures mid-rejection)
+            // GTSAM can throw and leave iSAM2 unusable; rebuilding from the
+            // backbone + still-inlier loops is the only recovery. Location
+            // constraints would be silently dropped by the rebuild, so with
+            // them enabled this stays fatal.
+            Err(gtsam_error) => {
+                if self.config.use_location_constraints {
+                    panic!("gtsam: isam2 update: {gtsam_error:?}");
+                }
+                eprintln!("gtsam: isam2 update failed ({gtsam_error:?}); rebuilding from backbone");
+                self.graph.clear();
+                self.initial_values.clear();
+                self.staged_constraint_factors.clear();
+                self.rebuild_isam2_from_backbone();
+                Vec::new()
+            }
+        };
+        // Refinement passes are best-effort: the estimate is still usable if a
+        // forced relinearization throws, so log and stop refining.
+        let refinement_passes = if has_closure { 5 } else { 1 };
+        for _ in 0..refinement_passes {
+            if let Err(gtsam_error) = self.isam2.update_empty() {
+                eprintln!(
+                    "gtsam: relinearization pass failed ({gtsam_error:?}); \
+                     skipping remaining passes"
+                );
+                break;
+            }
         }
 
         // Record the iSAM2 factor index assigned to each staged constraint
@@ -1572,6 +1612,7 @@ impl GscPgo {
             loops: self.committed_loops.clone(),
             backbone_noise: BackboneNoise::from_config(&self.config),
             loop_gnc_var_scale: self.config.loop_gnc_var_scale,
+            sequence: self.gnc_sequence_dispatched,
         }
     }
 
@@ -1640,9 +1681,11 @@ impl GscPgo {
             return;
         }
         let solve_t0 = std::time::Instant::now();
+        self.gnc_sequence_dispatched += 1;
         let job = self.build_gnc_job();
         let result = solve_gnc(&job);
         self.apply_gnc_result(&result);
+        self.gnc_sequence_applied = result.sequence;
         self.timing.gtsam_s += solve_t0.elapsed().as_secs_f64();
     }
 
@@ -1654,10 +1697,21 @@ impl GscPgo {
         if self.committed_loops.is_empty() {
             return;
         }
+        if self.gnc_worker.is_some() {
+            self.gnc_sequence_dispatched += 1;
+        }
         let job = self.build_gnc_job();
         if let Some(worker) = &self.gnc_worker {
             let _ = worker.job_sender.send(job);
         }
+    }
+
+    /// Whether a dispatched background GNC classification has not yet been
+    /// applied — i.e. the latest full-graph verdict is still pending. The
+    /// harness (and any shutdown path) should keep the pipeline alive while
+    /// this is true or stale outlier loops stay committed.
+    pub fn gnc_in_flight(&self) -> bool {
+        self.gnc_sequence_applied < self.gnc_sequence_dispatched
     }
 
     /// Live path (Approach B): fold in the newest finished background GNC
@@ -1684,6 +1738,7 @@ impl GscPgo {
         let Some(result) = latest_result else {
             return false;
         };
+        self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
         let mut removed_any = false;
         for (edge_index, weight) in result.loop_weights.iter().enumerate() {
             if edge_index >= self.committed_loops.len() {
@@ -1700,7 +1755,137 @@ impl GscPgo {
                 }
             }
         }
+        self.latest_gnc_result = Some(result);
         removed_any
+    }
+
+    /// Idle path: adopt the newest background GNC solve wholesale — batch
+    /// poses written back, iSAM2 marked stale — because iSAM2 linearization
+    /// never recovers from mass false-closure removal. Uses the stored result
+    /// if the per-keyframe classification poll already drained the channel.
+    /// The caller publishes right after, then triggers the deferred rebuild
+    /// via `rebuild_isam2_if_stale`. Rebuild drops location-constraint
+    /// factors, so callers gate on `use_location_constraints`.
+    pub fn poll_and_adopt_gnc_solution(&mut self) -> bool {
+        if let Some(worker) = &self.gnc_worker {
+            while let Ok(result) = worker.result_receiver.try_recv() {
+                self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
+                self.latest_gnc_result = Some(result);
+            }
+        }
+        let Some(result) = self.latest_gnc_result.take() else {
+            return false;
+        };
+        if result.sequence <= self.gnc_sequence_adopted {
+            return false;
+        }
+        self.gnc_sequence_adopted = result.sequence;
+        self.apply_gnc_result(&result);
+        self.isam2_stale = true;
+        true
+    }
+
+    /// Deferred half of adoption: rebuild iSAM2 from the adopted poses. Call
+    /// only when no newer GNC solve is in flight — the rebuild blocks the
+    /// pipeline thread for tens of seconds, and doing it while a solve is
+    /// pending would silence republishes right when they matter most.
+    pub fn rebuild_isam2_if_stale(&mut self) -> bool {
+        if !self.isam2_stale {
+            return false;
+        }
+        self.rebuild_isam2_from_backbone();
+        true
+    }
+
+    /// Discard the incremental iSAM2 and rebuild it from the odometry backbone
+    /// plus every committed loop whose GNC weight still marks it an inlier
+    /// (unclassified loops carry 1.0 and re-enter — the next GNC vets them),
+    /// seeded at the current keyframe globals. Loop factors keep the same
+    /// robust kernel the live path uses. If GTSAM throws even on the fresh
+    /// graph (mid-rejection it can hold hundreds of conflicting false
+    /// closures), fall back to the backbone alone — pure odometry always
+    /// solves, and the next GNC adoption restores the vetted loops.
+    fn rebuild_isam2_from_backbone(&mut self) {
+        for include_loops in [true, false] {
+            let mut graph = FactorGraph::new();
+            let mut values = Values::new();
+            let backbone: Vec<BackboneKeyframe> = self
+                .key_poses
+                .iter()
+                .map(|key_pose| BackboneKeyframe {
+                    rotation_local: key_pose.rotation_local,
+                    translation_local: key_pose.translation_local,
+                    initial_rotation: key_pose.rotation_global,
+                    initial_translation: key_pose.translation_global,
+                })
+                .collect();
+            build_odometry_backbone(
+                &mut graph,
+                &mut values,
+                &backbone,
+                &BackboneNoise::from_config(&self.config),
+            );
+            let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
+            if include_loops {
+                for (edge_index, loop_edge) in self.committed_loops.iter().enumerate() {
+                    if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
+                        continue;
+                    }
+                    let variance =
+                        loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
+                    let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
+                    let robust;
+                    let noise: &NoiseModel = if self.config.loop_robust_kernel {
+                        robust =
+                            NoiseModel::robust_huber(self.config.loop_robust_huber_k, &gaussian);
+                        &robust
+                    } else {
+                        &gaussian
+                    };
+                    kept_loop_positions.push((edge_index, graph.len()));
+                    graph
+                        .add_between_pose3(
+                            loop_edge.target_id as u64,
+                            loop_edge.source_id as u64,
+                            &Pose3 {
+                                rotation: loop_edge.rotation_offset,
+                                translation: loop_edge.translation_offset,
+                            },
+                            noise,
+                        )
+                        .expect("gtsam: rebuild loop between factor");
+                }
+            }
+            let mut rebuilt_isam2 = Isam2::new();
+            let new_factor_indices = match rebuilt_isam2.update(&graph, &values, &[]) {
+                Ok(indices) => indices,
+                Err(gtsam_error) if include_loops => {
+                    eprintln!(
+                        "gtsam: isam2 rebuild with loops failed ({gtsam_error:?}); \
+                         retrying backbone-only"
+                    );
+                    continue;
+                }
+                Err(gtsam_error) => panic!("gtsam: backbone-only isam2 rebuild: {gtsam_error:?}"),
+            };
+            self.isam2 = rebuilt_isam2;
+            self.pending_removals.clear();
+            self.graph.clear();
+            self.initial_values.clear();
+            for loop_edge in &mut self.committed_loops {
+                loop_edge.active_in_isam2 = false;
+                loop_edge.isam2_factor_index = None;
+            }
+            for (edge_index, graph_position) in kept_loop_positions {
+                if graph_position < new_factor_indices.len() {
+                    self.committed_loops[edge_index].isam2_factor_index =
+                        Some(new_factor_indices[graph_position]);
+                    self.committed_loops[edge_index].active_in_isam2 = true;
+                }
+            }
+            self.isam2_stale = false;
+            return;
+        }
     }
 
     /// Direct access to the ICP used for loop verification — handy for

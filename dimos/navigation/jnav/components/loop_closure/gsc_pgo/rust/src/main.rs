@@ -448,6 +448,11 @@ impl Worker {
         // Backstop for the Condvar wait so the stop flag is still observed even
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
+        // While a background GNC solve is in flight during idle, republish the
+        // graph at this cadence so downstream consumers (e.g. the eval harness
+        // settle heartbeat) know the final verdict is still pending.
+        let gnc_wait_publish_interval = Duration::from_secs(2);
+        let mut last_gnc_wait_publish = std::time::Instant::now();
 
         // Per-node deformation stream state: a stable random id per keyframe
         // plus its last published pose (re-publish only on new/moved nodes).
@@ -502,12 +507,23 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
-                // Idle: fold in any finished background GNC classification now
-                // instead of waiting for the next keyframe, so an outlier loop
-                // committed right before the robot stopped (or the stream
-                // ended) is still removed and the corrected graph republished.
-                if pgo.poll_and_apply_gnc_classification() {
-                    pgo.smooth_and_update();
+                // Idle: fold in any finished background GNC solve now instead
+                // of waiting for the next keyframe, so the map snaps into
+                // place when the robot pauses (or the stream ends). Adopting
+                // the batch solution (poses + rebuilt iSAM2) recovers from
+                // incremental divergence; with location constraints in use the
+                // rebuild would drop their factors, so fall back to
+                // classification-only there.
+                let gnc_folded = if self.config.use_location_constraints {
+                    let applied = pgo.poll_and_apply_gnc_classification();
+                    if applied {
+                        pgo.smooth_and_update();
+                    }
+                    applied
+                } else {
+                    pgo.poll_and_adopt_gnc_solution()
+                };
+                if gnc_folded {
                     let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
                     self.publish_graph(
                         &pgo,
@@ -519,6 +535,38 @@ impl Worker {
                         &mut deformation_rng,
                     );
                     continue;
+                }
+                // Deferred half of adoption: the iSAM2 rebuild blocks this
+                // thread for tens of seconds, so it only runs once no newer
+                // solve is pending — republishes stay alive until the final
+                // solve's poses are already out the door.
+                if !pgo.gnc_in_flight() && pgo.rebuild_isam2_if_stale() {
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_graph(
+                        &pgo,
+                        last_time,
+                        &frame_id,
+                        deformation_tf_id,
+                        &mut deformation_ids,
+                        &mut deformation_last,
+                        &mut deformation_rng,
+                    );
+                    continue;
+                }
+                if pgo.gnc_in_flight()
+                    && last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval
+                {
+                    last_gnc_wait_publish = std::time::Instant::now();
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_graph(
+                        &pgo,
+                        last_time,
+                        &frame_id,
+                        deformation_tf_id,
+                        &mut deformation_ids,
+                        &mut deformation_last,
+                        &mut deformation_rng,
+                    );
                 }
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.

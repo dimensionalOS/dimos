@@ -153,6 +153,9 @@ pub(crate) struct GncJob {
     pub(crate) loops: Vec<CommittedLoop>,
     pub(crate) backbone_noise: BackboneNoise,
     pub(crate) loop_gnc_var_scale: f64,
+    /// Monotonic dispatch counter, echoed in the result so the pipeline can
+    /// tell whether a newer solve is still in flight (worker coalesces jobs).
+    pub(crate) sequence: u64,
 }
 
 /// The result of one batch GNC re-solve: the corrected global pose of every
@@ -160,6 +163,7 @@ pub(crate) struct GncJob {
 pub(crate) struct GncResult {
     pub(crate) keyframe_globals: Vec<(Mat3, Vec3)>,
     pub(crate) loop_weights: Vec<f64>,
+    pub(crate) sequence: u64,
 }
 
 /// Run one batch GNC re-solve. Pure function of the job — no shared state — so it
@@ -208,6 +212,7 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
     GncResult {
         keyframe_globals,
         loop_weights,
+        sequence: job.sequence,
     }
 }
 
