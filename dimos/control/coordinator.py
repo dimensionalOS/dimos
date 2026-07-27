@@ -92,6 +92,8 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
+    # Transitional: goes away once every consumer reads per-robot streams.
+    publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
@@ -312,6 +314,24 @@ class ControlCoordinator(Module):
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
+    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
+        name = f"{hardware_id}_joints"
+        port = getattr(self, name, None)
+        if isinstance(port, Out):
+            return port
+        if not name.isidentifier():
+            raise ValueError(
+                f"publish_robot_joint_states is on but hardware_id {hardware_id!r} cannot name "
+                f"an output port — rename it so `{name}` is a valid Python identifier"
+            )
+        raise ValueError(
+            f"publish_robot_joint_states is on but hardware {hardware_id!r} has no output "
+            f"port — add `{name}: Out[JointState]` to your coordinator subclass"
+        )
+
+    def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
+        self._robot_joint_port(hardware_id).publish(msg)
+
     @rpc
     def add_hardware(
         self,
@@ -335,6 +355,9 @@ class ControlCoordinator(Module):
                 f"hardware_type={component.hardware_type.value} but got "
                 f"{type(adapter).__name__}"
             )
+
+        if self.config.publish_robot_joint_states:
+            self._robot_joint_port(component.hardware_id)
 
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
@@ -869,6 +892,17 @@ class ControlCoordinator(Module):
             logger.warning("Coordinator already running")
             return
 
+        if type(self) is not ControlCoordinator and self.config.instance_name is None:
+            logger.warning(
+                f"Coordinator subclass {type(self).__name__} has no instance_name, so it "
+                f"serves RPCs under '{type(self).__name__}' — the shipped clients look for "
+                "'ControlCoordinator'. Pass instance_name='ControlCoordinator' in the blueprint."
+            )
+
+        if self.config.publish_robot_joint_states:
+            for component in self.config.hardware:
+                self._robot_joint_port(component.hardware_id)
+
         super().start()
 
         # Setup hardware and tasks from config (if any)
@@ -879,6 +913,9 @@ class ControlCoordinator(Module):
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
         )
+        publish_robot_cb = (
+            self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -887,6 +924,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )
