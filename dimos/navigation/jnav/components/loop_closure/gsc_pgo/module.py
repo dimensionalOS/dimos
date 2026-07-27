@@ -56,13 +56,13 @@ class PGOConfig(NativeModuleConfig):
     # Loop closure knobs
     loop_search_radius: float = 3.0
     loop_time_thresh: float = 5.0
-    loop_score_thresh: float = 0.0807
+    loop_score_thresh: float = 0.15
     loop_submap_half_range: int = 5
     submap_resolution: float = 0.1
     min_loop_detect_duration: float = 2.0
     # Feature-poverty gate: skip loop search when the scan's descriptor vertical-structure std is below this
     # 0 disables
-    min_descriptor_std: float = 0.1
+    min_descriptor_std: float = 0.0
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
     loop_min_occupancy: int = 80
@@ -71,7 +71,7 @@ class PGOConfig(NativeModuleConfig):
     loop_min_degeneracy: float = 0.05
     # In self-similar spaces make higher in self-similar places to prevent false positives
     # 0 disables
-    loop_max_lowe_ratio: float = 0.831
+    loop_max_lowe_ratio: float = 0.0
 
     # basically only needed because of the go2, and partly b/c we don't have rust tf.get yet
     subtract_odom_from_cloud: bool = False
@@ -86,15 +86,17 @@ class PGOConfig(NativeModuleConfig):
     scan_context_num_sectors: int = 60
     # Ring range in meters; keep near the lidar's useful range (a fixed 80 m
     # collapses a short-range Go2 L1 to one ring). 0 = auto-scale from the
-    # first scan's extent.
-    scan_context_max_range_m: float = 8.0
+    # first scan's extent, which adapts across sensors (Go2 L1 vs mid360).
+    scan_context_max_range_m: float = 0.0
     scan_context_top_k: int = 10
-    scan_context_match_threshold: float = 0.1406
+    scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
 
     # Skip ICP on candidates farther than this (m). 0 disables. Must exceed the worst
-    # expected odom drift at revisit so far-drifted large loops still reach ICP.
-    loop_candidate_max_distance_m: float = 20.0
+    # expected odom drift at revisit so far-drifted large loops still reach ICP
+    # (a 200 m cap discarded ~700 genuine revisits on huge_loop with drifted fastlio
+    # odom); ICP fitness + GNC already reject the structural aliases this gated.
+    loop_candidate_max_distance_m: float = 0.0
 
     # False-closure gate on graph yank (ICP-refined relative rotation vs the odom-chain
     # estimate). A near-coincident pair (candidate distance < gate distance) cannot truly
@@ -106,7 +108,7 @@ class PGOConfig(NativeModuleConfig):
     # Minimum keyframe-index separation for a loop closure. A closure only corrects
     # drift accumulated over the trajectory between the pair; a near-in-sequence pair
     # spans negligible drift, so a closure there can only inject error. 0 disables.
-    loop_min_id_gap: int = 50
+    loop_min_id_gap: int = 0
 
     # Long-jump agreement buffer. A closure whose candidate distance is within
     # loop_instant_accept_distance_m is committed to the graph instantly; a longer
@@ -144,7 +146,7 @@ class PGOConfig(NativeModuleConfig):
     odom_trans_xy_var: float = 1e-4
     odom_trans_z_var: float = 1e-6
     per_keyframe_roll_pitch_var: float = 1e-4
-    per_keyframe_roll_pitch_prior: bool = True
+    per_keyframe_roll_pitch_prior: bool = False
     anchor_roll_pitch_var: float = 1e-12
 
     # usually que is 1 lidar frame, only goes up after a big gtsam compute spike (backpressure) 100 is overkill but whatever
