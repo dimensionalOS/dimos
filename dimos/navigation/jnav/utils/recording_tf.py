@@ -59,10 +59,12 @@ class RecordingTF(StreamTF):
     at-or-before the query time (``PastOnlyTBuffer``, never a future sample)
     reproduces the pose at each query time.
 
-    An optional edge override replaces one edge with a fed trajectory so tf
-    reflects the poses being scored. It re-parents the child (drops every existing
-    edge into that child) so the fed edge is the only route to it, matching a
-    shortest-path lookup. The override is applied lazily on first lookup, so
+    An optional edge override replaces the recorded localization with a fed
+    trajectory so tf reflects the poses being scored. It drops every time-varying
+    recorded edge (the recorded localization chain) while keeping static edges
+    (sensor mounts, including edges into the override child), so every lookup
+    routes through the fed edge plus static mounts — recorded and fed
+    localization never mix. The override is applied lazily on first lookup, so
     recordings whose scans are already world-framed never pay for it. Provide it
     at construction (``odom_tf`` + ``odom_stream``) or later via ``override_edge``.
 
@@ -113,8 +115,9 @@ class RecordingTF(StreamTF):
         """Replace the ``parent->child`` edge with a sampled trajectory.
 
         ``times`` is ``(N,)`` and ``poses`` is ``(N, 7)`` as ``[x, y, z, qx, qy, qz, qw]``.
-        Re-parents ``child`` so the fed edge is its only parent. Applied immediately if
-        the stream is already loaded, otherwise on the next lookup.
+        Drops all recorded time-varying edges so the fed edge is the only
+        localization. Applied immediately if the stream is already loaded,
+        otherwise on the next lookup.
         """
         times = np.asarray(times, float)
         poses = np.asarray(poses, float)
@@ -185,8 +188,37 @@ class RecordingTF(StreamTF):
             self._covered = (-math.inf, math.inf)
 
     def _apply_override(self) -> None:
-        _parent, child = self._override_edge  # type: ignore[misc]
-        for key in [edge for edge in self.buffers if edge[1] == child]:
+        for key in [edge for edge in self.buffers if not _edge_is_static(self.buffers[edge])]:
             self.buffers.pop(key, None)
         assert self._override_transforms is not None
         self.receive_transform(*self._override_transforms())
+
+
+_STATIC_POSE_TOLERANCE = 1e-6
+
+
+def _pose_vector(transform: Transform) -> np.ndarray:
+    translation, rotation = transform.translation, transform.rotation
+    return np.array(
+        [
+            translation.x,
+            translation.y,
+            translation.z,
+            rotation.x,
+            rotation.y,
+            rotation.z,
+            rotation.w,
+        ]
+    )
+
+
+def _edge_is_static(buffer: TBuffer) -> bool:
+    samples = iter(buffer)
+    first = next(samples, None)
+    if first is None:
+        return True
+    reference = _pose_vector(first)
+    return all(
+        np.allclose(_pose_vector(sample), reference, atol=_STATIC_POSE_TOLERANCE)
+        for sample in samples
+    )
