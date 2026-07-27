@@ -45,7 +45,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.control.components import HardwareId, JointName, TaskName
+    from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
@@ -72,7 +72,7 @@ class TickLoop:
     4. NOTIFY: Send preemption notifications to affected tasks
     5. ROUTE: Convert joint-centric commands to hardware-centric
     6. WRITE: Send commands to hardware
-    7. PUBLISH: Output aggregated JointState
+    7. PUBLISH: Output aggregated JointState, plus one stream per robot
 
     Args:
         tick_rate: Control loop frequency in Hz
@@ -81,7 +81,8 @@ class TickLoop:
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
-        publish_callback: Optional callback to publish JointState
+        publish_callback: Optional callback to publish the merged JointState
+        publish_robot_callback: Optional callback, called with (hardware_id, msg)
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -95,6 +96,7 @@ class TickLoop:
         task_lock: threading.Lock,
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
+        publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -105,6 +107,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._publish_robot_callback = publish_robot_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -174,7 +177,7 @@ class TickLoop:
         self._last_tick_time = t_now
         self._tick_count += 1
 
-        joint_states = self._read_all_hardware()
+        joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
         state = CoordinatorState(joints=joint_states, imu=imu_states, t_now=t_now, dt=dt)
 
@@ -191,6 +194,9 @@ class TickLoop:
         if self._publish_callback:
             self._publish_joint_state(joint_states)
 
+        if self._publish_robot_callback:
+            self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
+
         # Optional logging
         if self._log_ticks:
             active = len([c for c in commands if c[2] is not None])
@@ -200,11 +206,14 @@ class TickLoop:
                 f"{active} active tasks"
             )
 
-    def _read_all_hardware(self) -> JointStateSnapshot:
+    def _read_all_hardware(
+        self,
+    ) -> tuple[JointStateSnapshot, dict[HardwareId, dict[JointName, JointReading]]]:
         """Read state from all hardware interfaces."""
         joint_positions: dict[str, float] = {}
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
+        per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
 
         with self._hardware_lock:
             for hw in self._hardware.values():
@@ -214,15 +223,18 @@ class TickLoop:
                         joint_positions[joint_name] = joint_state.position
                         joint_velocities[joint_name] = joint_state.velocity
                         joint_efforts[joint_name] = joint_state.effort
+                    if self._publish_robot_callback:
+                        per_hardware[hw.hardware_id] = state
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
 
-        return JointStateSnapshot(
+        snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
             timestamp=time.time(),
         )
+        return snapshot, per_hardware
 
     def _read_all_imu(self) -> dict[str, IMUState]:
         """Poll IMU from every whole-body hardware in the pool.
@@ -414,3 +426,27 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_robot_joint_states(
+        self,
+        per_hardware: dict[HardwareId, dict[JointName, JointReading]],
+        timestamp: float,
+    ) -> None:
+        publish = self._publish_robot_callback
+        if publish is None:
+            return
+
+        for hw_id, state in per_hardware.items():
+            names = list(state.keys())
+            msg = JointState(
+                ts=timestamp,
+                frame_id=hw_id,
+                name=names,
+                position=[state[n].position for n in names],
+                velocity=[state[n].velocity for n in names],
+                effort=[state[n].effort for n in names],
+            )
+            try:
+                publish(hw_id, msg)
+            except Exception as e:
+                logger.error(f"Failed to publish joint state for {hw_id}: {e}")

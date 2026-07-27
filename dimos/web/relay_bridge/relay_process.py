@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Spawn the Deno relay as a child process (used by tests and the smoke demo;
-T2 grows this into the RelayBridge module's managed relay process)."""
-
 from __future__ import annotations
 
 import collections
@@ -25,6 +22,7 @@ from pathlib import Path
 import queue
 import subprocess
 import threading
+import time
 from typing import IO
 
 from dimos.utils.deno import ensure_deno
@@ -85,19 +83,40 @@ class RelayProcess:
         ]
         for thread in self._threads:
             thread.start()
-        try:
-            self.info = self._ready_queue.get(timeout=self._timeout)
-        except queue.Empty:
-            code = self._process.poll()
-            self.stop()
-            stderr = "\n".join(self._stderr_tail)
-            state = f"exited with {code}" if code is not None else "still running"
-            raise RuntimeError(
-                f"relay produced no ready line within {self._timeout} s ({state}); "
-                f"stderr tail:\n{stderr}"
-            ) from None
+        deadline = time.monotonic() + self._timeout
+        while self.info is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                code = self._process.poll()
+                self.stop()
+                stderr = "\n".join(self._stderr_tail)
+                state = f"exited with {code}" if code is not None else "still running"
+                raise RuntimeError(
+                    f"relay produced no ready line within {self._timeout} s ({state}); "
+                    f"stderr tail:\n{stderr}"
+                )
+            try:
+                self.info = self._ready_queue.get(timeout=min(0.1, remaining))
+            except queue.Empty:
+                code = self._process.poll()
+                if code is None:
+                    continue
+                self.stop()
+                stderr = "\n".join(self._stderr_tail)
+                raise RuntimeError(
+                    f"relay exited with {code} before producing a ready line; "
+                    f"stderr tail:\n{stderr}"
+                ) from None
         logger.info(f"relay ready: {self.info}")
         return self.info
+
+    def poll(self) -> int | None:
+        """Child exit code; None while running (or after stop()/before start())."""
+        return None if self._process is None else self._process.poll()
+
+    def is_running(self) -> bool:
+        """True while a started child is alive."""
+        return self._process is not None and self._process.poll() is None
 
     def stop(self) -> None:
         if self._process is None:
