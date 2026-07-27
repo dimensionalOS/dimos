@@ -19,6 +19,11 @@ import { MAGIC_SHORT, SHORT_HEADER_SIZE } from "../vendor/lcm/types.ts";
 import { serveDir } from "@std/http/file-server";
 import { ServerLidar } from "./lidar.ts";
 import { ServerPhysics } from "./physics.ts";
+import { applyEvalReset } from "./eval-reset.ts";
+import type {
+  EvalAbortMessage,
+  EvalResetMessage,
+} from "../../evals/protocol.ts";
 
 // Magic prefix for Rapier world snapshot (ASCII "DSSN")
 const SNAPSHOT_MAGIC = 0x4453534E;
@@ -67,12 +72,24 @@ interface ChannelState {
   name: string;
   controlClients: Set<WebSocket>;
   activeControlClient: WebSocket | null;
+  browserControlClient: WebSocket | null;
   sensorClients: Set<WebSocket>;
   lcm: LCM | null;
   sentSeqs: Set<number>;
   serverLidar: ServerLidar | null;
   serverPhysics: ServerPhysics | null;
   embodiment: Record<string, any> | null;
+  activeEval: { runId: string; controller: WebSocket } | null;
+  evalBrowser: { runId: string; socket: WebSocket } | null;
+  pendingEvalCommand: {
+    runId: string;
+    type: "runEval" | "evalStart";
+    data: string;
+    controller: WebSocket;
+    delivered: Set<WebSocket>;
+  } | null;
+  lastPoseBroadcastAt: number;
+  lastPoseBroadcast: { x: number; y: number; z: number; yaw: number } | null;
 }
 
 export async function startBridgeServer(options: BridgeServerOptions) {
@@ -156,12 +173,18 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       name,
       controlClients: new Set(),
       activeControlClient: null,
+      browserControlClient: null,
       sensorClients: new Set(),
       lcm: null,
       sentSeqs: new Set(),
       serverLidar: null,
       serverPhysics: null,
       embodiment: null,
+      activeEval: null,
+      evalBrowser: null,
+      pendingEvalCommand: null,
+      lastPoseBroadcastAt: 0,
+      lastPoseBroadcast: null,
     };
 
     if (!evalOnly) {
@@ -169,23 +192,23 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       await state.lcm.start();
       console.log(`[bridge] channel "${name || "default"}" LCM on ${lcmUrl}`);
 
-      // LCM → WS: forward external packets to this channel's active control client
+      // Consume looped-back packets so sentSeqs remains bounded. Server-side
+      // physics owns cmd_vel/odom, and the browser control client only handles
+      // JSON commands and poses; forwarding arbitrary binary LCM packets here
+      // creates head-of-line blocking for evalStart/reset messages.
       state.lcm.subscribePacket((packet: Uint8Array) => {
         if (packet.length < 8) return;
         const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
         const magic = view.getUint32(0, false);
-        if (magic !== MAGIC_SHORT) return;
-
         const seq = view.getUint32(4, false);
         if (state.sentSeqs.has(seq)) {
           state.sentSeqs.delete(seq);
           return;
         }
         if (state.sentSeqs.size > 1000) state.sentSeqs.clear();
-
-        const copy = packet.slice();
-        const client = state.activeControlClient;
-        if (client && client.readyState === WebSocket.OPEN) client.send(copy);
+        if (magic !== MAGIC_SHORT) return;
+        // External LCM packets are consumed by their server-side subscribers.
+        // DimosBridge intentionally has no binary control-frame handler.
       });
     }
 
@@ -234,6 +257,8 @@ export async function startBridgeServer(options: BridgeServerOptions) {
 
       chState.serverLidar = new ServerLidar(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined, sensorRates?.lidar);
       chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
+      chState.lastPoseBroadcastAt = 0;
+      chState.lastPoseBroadcast = null;
 
       chState.serverPhysics.setOnPoseUpdate((x, y, z, yaw) => {
         const t0 = PROFILE ? performance.now() : 0;
@@ -241,10 +266,52 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         const qy = Math.sin(yaw / 2);
         chState.serverLidar!.updatePose(x, y, z, 0, qy, 0, qw);
 
+        // Physics and odometry stay at 50 Hz, but a CPU-rendered browser
+        // cannot consume an unbounded stream of unchanged visual poses.
+        // Coalesce normal updates to 10 Hz while delivering reset-sized jumps
+        // immediately so eval start poses appear without visible lag.
+        const now = performance.now();
+        const previous = chState.lastPoseBroadcast;
+        const positionDelta = previous
+          ? Math.hypot(
+            x - previous.x,
+            y - previous.y,
+            z - previous.z,
+          )
+          : Infinity;
+        const yawDelta = previous ? Math.abs(yaw - previous.yaw) : Infinity;
+        if (positionDelta < 0.01 && yawDelta < 0.005) {
+          return;
+        }
+        const positionJump = positionDelta >= 0.5;
+        const yawJump = yawDelta >= 0.25;
+        if (
+          !positionJump &&
+          !yawJump &&
+          now - chState.lastPoseBroadcastAt < 200
+        ) {
+          return;
+        }
+        chState.lastPoseBroadcastAt = now;
+        chState.lastPoseBroadcast = { x, y, z, yaw };
+
         const msg = JSON.stringify({ type: "pose", x, y, z, yaw });
-        const client = chState.activeControlClient;
-        if (client && client.readyState === WebSocket.OPEN) {
-          try { client.send(msg); } catch { /* ignore */ }
+        // Pose packets are tiny and already coalesced above.  Broadcasting to
+        // every live control client avoids visual/scoring stalls when a
+        // short-lived eval runner overlaps a reconnecting browser socket.
+        // Consumers that do not handle pose messages simply ignore them.
+        const poseClients = new Set(chState.controlClients);
+        if (chState.browserControlClient) {
+          poseClients.add(chState.browserControlClient);
+        }
+        if (chState.activeControlClient) {
+          poseClients.add(chState.activeControlClient);
+        }
+        for (const client of poseClients) {
+          if (client.readyState !== WebSocket.OPEN) continue;
+          try {
+            client.send(msg);
+          } catch { /* ignore */ }
         }
         if (PROFILE) {
           const dt = performance.now() - t0;
@@ -256,6 +323,13 @@ export async function startBridgeServer(options: BridgeServerOptions) {
 
       chState.serverPhysics.start();
       chState.serverLidar.start();
+      const readyMessage = JSON.stringify({ type: "physicsReady" });
+      for (const client of chState.controlClients) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        try {
+          client.send(readyMessage);
+        } catch { /* reconnect registration retries this notification */ }
+      }
     } catch (e) {
       console.error(`[bridge:${chState.name || "default"}] server systems init error:`, e);
     }
@@ -272,13 +346,23 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       const channelParam = url.searchParams.get("channel");
       const chState = resolveChannel(channelParam);
       const isSensor = ch !== "control";
+      const isBrowserControl = !isSensor &&
+        url.searchParams.get("client") === "browser";
       const logPrefix = `[bridge:${chState.name || "default"}]`;
 
       if (isSensor) {
         // ── SENSOR WebSocket ──────────────────────────────────────────
-        socket.onopen = () => { chState.sensorClients.add(socket); };
-        socket.onclose = () => { chState.sensorClients.delete(socket); };
-        socket.onerror = () => chState.sensorClients.delete(socket);
+        socket.onopen = () => {
+          chState.sensorClients.add(socket);
+        };
+        socket.onclose = () => {
+          chState.sensorClients.delete(socket);
+        };
+        // A WebSocket error does not guarantee that the connection has
+        // closed.  Keep live sockets registered until onclose; otherwise a
+        // transient error can leave an open browser socket receiving direct
+        // traffic but excluded from later broadcasts.
+        socket.onerror = () => {};
 
         // Chunked snapshot reassembly state (DSC1 protocol).
         // Browser ships the Rapier snapshot in many small frames so a
@@ -290,103 +374,269 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           parts: Uint8Array[];
         } | null = null;
 
+        let sensorMessageQueue = Promise.resolve();
         socket.onmessage = (event: MessageEvent) => {
-          if (!(event.data instanceof ArrayBuffer) || !chState.lcm) return;
-          const packet = new Uint8Array(event.data);
+          // Chrome and Deno can negotiate binary WebSocket messages as an
+          // ArrayBuffer, Blob, or typed view. Decode all three and serialize
+          // Blob conversion so snapshot chunks remain in wire order.
+          sensorMessageQueue = sensorMessageQueue.then(async () => {
+            if (!chState.lcm) return;
+            const data = event.data;
+            const packet = data instanceof ArrayBuffer
+              ? new Uint8Array(data)
+              : data instanceof Blob
+              ? new Uint8Array(await data.arrayBuffer())
+              : ArrayBuffer.isView(data)
+              ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+              : null;
+            if (!packet) return;
 
-          // While reassembling a chunked snapshot, treat every binary frame
-          // on this socket as the next chunk in order.
-          if (chunkedSnapshot) {
-            chunkedSnapshot.parts.push(packet);
-            chunkedSnapshot.received += packet.byteLength;
-            if (chunkedSnapshot.received >= chunkedSnapshot.total) {
-              const combined = new Uint8Array(chunkedSnapshot.received);
-              let off = 0;
-              for (const p of chunkedSnapshot.parts) { combined.set(p, off); off += p.byteLength; }
-              const snapshot = combined.subarray(0, chunkedSnapshot.total);
-              const spawn = chunkedSnapshot.spawn;
-              chunkedSnapshot = null;
-              initServerSystems(chState, snapshot, spawn);
-            }
-            return;
-          }
-
-          // Check for Rapier snapshot
-          if (packet.length > 4) {
-            const dv = new DataView(packet.buffer, packet.byteOffset);
-            const magic = dv.getUint32(0, false);
-
-            if (magic === 0x44534331) { // "DSC1" — chunked prelude
-              const total = dv.getUint32(4, true);
-              const sx = dv.getFloat32(8, true);
-              const sy = dv.getFloat32(12, true);
-              const sz = dv.getFloat32(16, true);
-              chunkedSnapshot = {
-                total,
-                spawn: { x: sx, y: sy, z: sz },
-                received: 0,
-                parts: [],
-              };
+            // While reassembling a chunked snapshot, treat every binary frame
+            // on this socket as the next chunk in order.
+            if (chunkedSnapshot) {
+              chunkedSnapshot.parts.push(packet);
+              chunkedSnapshot.received += packet.byteLength;
+              if (chunkedSnapshot.received >= chunkedSnapshot.total) {
+                const combined = new Uint8Array(chunkedSnapshot.received);
+                let off = 0;
+                for (const p of chunkedSnapshot.parts) {
+                  combined.set(p, off);
+                  off += p.byteLength;
+                }
+                const snapshot = combined.subarray(0, chunkedSnapshot.total);
+                const spawn = chunkedSnapshot.spawn;
+                console.log(
+                  `${logPrefix} snapshot received bytes=${snapshot.byteLength}`,
+                );
+                chunkedSnapshot = null;
+                initServerSystems(chState, snapshot, spawn);
+              }
               return;
             }
 
-            if (magic === 0x44535332) { // "DSS2"
-              const sx = dv.getFloat32(4, true);
-              const sy = dv.getFloat32(8, true);
-              const sz = dv.getFloat32(12, true);
-              const snapshot = packet.slice(16);
-              initServerSystems(chState, snapshot, { x: sx, y: sy, z: sz });
-              return;
+            // Check for Rapier snapshot
+            if (packet.length > 4) {
+              const dv = new DataView(packet.buffer, packet.byteOffset);
+              const magic = dv.getUint32(0, false);
+
+              if (magic === 0x44534331) { // "DSC1" — chunked prelude
+                const total = dv.getUint32(4, true);
+                const sx = dv.getFloat32(8, true);
+                const sy = dv.getFloat32(12, true);
+                const sz = dv.getFloat32(16, true);
+                console.log(`${logPrefix} snapshot prelude bytes=${total}`);
+                chunkedSnapshot = {
+                  total,
+                  spawn: { x: sx, y: sy, z: sz },
+                  received: 0,
+                  parts: [],
+                };
+                return;
+              }
+
+              if (magic === 0x44535332) { // "DSS2"
+                const sx = dv.getFloat32(4, true);
+                const sy = dv.getFloat32(8, true);
+                const sz = dv.getFloat32(12, true);
+                const snapshot = packet.slice(16);
+                initServerSystems(chState, snapshot, { x: sx, y: sy, z: sz });
+                return;
+              }
+
+              if (magic === SNAPSHOT_MAGIC) { // "DSSN"
+                const snapshot = packet.slice(4);
+                initServerSystems(chState, snapshot);
+                return;
+              }
             }
 
-            if (magic === SNAPSHOT_MAGIC) { // "DSSN"
-              const snapshot = packet.slice(4);
-              initServerSystems(chState, snapshot);
-              return;
+            const t0 = PROFILE ? performance.now() : 0;
+            try {
+              const decoded = decodePacket(packet);
+              if (decoded && decoded.type === "small") {
+                chState.sentSeqs.add(chState.lcm.getNextSeq());
+                chState.lcm.publishRaw(decoded.channel, decoded.data).catch(
+                  () => {},
+                );
+              }
+            } catch { /* ignore */ }
+            if (PROFILE) {
+              const dt = performance.now() - t0;
+              profRelay.n++;
+              profRelay.sum += dt;
+              profRelay.bytes += packet.byteLength;
+              if (dt > profRelay.max) profRelay.max = dt;
             }
-          }
-
-          const t0 = PROFILE ? performance.now() : 0;
-          try {
-            const decoded = decodePacket(packet);
-            if (decoded && decoded.type === "small") {
-              chState.sentSeqs.add(chState.lcm.getNextSeq());
-              chState.lcm.publishRaw(decoded.channel, decoded.data).catch(() => {});
-            }
-          } catch { /* ignore */ }
-          if (PROFILE) {
-            const dt = performance.now() - t0;
-            profRelay.n++;
-            profRelay.sum += dt;
-            profRelay.bytes += packet.byteLength;
-            if (dt > profRelay.max) profRelay.max = dt;
-          }
+          }).catch((error) => {
+            console.error(`${logPrefix} sensor message error:`, error);
+          });
         };
       } else {
         // ── CONTROL WebSocket ─────────────────────────────────────────
-        socket.onopen = () => {
-          if (!chState.activeControlClient || chState.activeControlClient.readyState !== WebSocket.OPEN) {
+        const replayPendingEval = (force = false) => {
+          const pending = chState.pendingEvalCommand;
+          if (
+            !isBrowserControl ||
+            chState.browserControlClient !== socket ||
+            !pending ||
+            (!force && pending.delivered.has(socket)) ||
+            socket.readyState !== WebSocket.OPEN
+          ) {
+            return;
+          }
+          try {
+            socket.send(pending.data);
+            pending.delivered.add(socket);
+          } catch { /* retry on the next browser heartbeat */ }
+        };
+        const registerControlSocket = () => {
+          if (isBrowserControl) {
+            // A reconnecting stale tab must not steal authority from a live
+            // browser and receive/replay its pending eval command. A browser
+            // that sends a fresh embodimentConfig below can explicitly claim
+            // authority after completing scene initialization.
+            if (
+              !chState.browserControlClient ||
+              chState.browserControlClient.readyState !== WebSocket.OPEN
+            ) {
+              chState.browserControlClient = socket;
+              chState.activeControlClient = socket;
+            }
+          } else if (
+            !chState.activeControlClient ||
+            chState.activeControlClient.readyState !== WebSocket.OPEN
+          ) {
             chState.activeControlClient = socket;
           }
           chState.controlClients.add(socket);
-          // quiet
+          replayPendingEval();
+          if (
+            isBrowserControl &&
+            chState.serverPhysics &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            try {
+              socket.send(JSON.stringify({ type: "physicsReady" }));
+            } catch { /* retry on the next registration/heartbeat */ }
+          }
         };
-        socket.onerror = () => chState.controlClients.delete(socket);
+        // Deno may complete the server side of an upgraded WebSocket before
+        // an `onopen` callback assigned after upgradeWebSocket() is observed.
+        // Membership is safe to establish immediately: relays already guard
+        // on readyState, Set insertion is idempotent, and onclose remains the
+        // authoritative cleanup event.
+        registerControlSocket();
+        socket.onopen = registerControlSocket;
+        // Do not evict on a transient error.  onclose is the authoritative
+        // lifecycle event and performs all membership/active-client cleanup.
+        socket.onerror = () => {};
 
         socket.onclose = () => {
           chState.controlClients.delete(socket);
-          if (chState.activeControlClient === socket) chState.activeControlClient = null;
+          if (chState.activeControlClient === socket) {
+            chState.activeControlClient = null;
+          }
+          if (chState.browserControlClient === socket) {
+            chState.browserControlClient = null;
+          }
+          if (chState.evalBrowser?.socket === socket) {
+            chState.evalBrowser = null;
+          }
+          if (chState.activeEval?.controller === socket) {
+            const runId = chState.activeEval.runId;
+            chState.serverPhysics?.clearMotion();
+            chState.activeEval = null;
+            const abort: EvalAbortMessage = {
+              type: "evalAbort",
+              runId,
+              reason: "eval controller websocket closed",
+              failureStage: "socket",
+            };
+            const encoded = JSON.stringify(abort);
+            for (const client of chState.controlClients) {
+              if (client.readyState === WebSocket.OPEN) {
+                try {
+                  client.send(encoded);
+                } catch { /* ignore */ }
+              }
+            }
+          }
+          if (chState.pendingEvalCommand?.controller === socket) {
+            chState.pendingEvalCommand = null;
+            chState.serverPhysics?.clearMotion();
+          }
           // quiet
         };
 
         socket.onmessage = (event: MessageEvent) => {
           // Text messages: handle special types, relay the rest
           if (typeof event.data === "string") {
+            let relayType = "";
+            let relayRunId = "";
             try {
               const msg = JSON.parse(event.data);
+              relayType = typeof msg.type === "string" ? msg.type : "";
+              relayRunId = typeof msg.runId === "string" ? msg.runId : "";
+
+              if (msg.type === "heartbeat") {
+                registerControlSocket();
+                try {
+                  const pending = chState.pendingEvalCommand;
+                  const evalBrowser = chState.evalBrowser;
+                  const pendingTarget = pending?.type === "runEval"
+                    ? chState.browserControlClient
+                    : evalBrowser && evalBrowser.runId === pending?.runId
+                    ? evalBrowser.socket
+                    : null;
+                  socket.send(JSON.stringify({
+                    type: "heartbeatAck",
+                    ts: msg.ts,
+                    command: pending && socket === pendingTarget
+                      ? JSON.parse(pending.data)
+                      : undefined,
+                  }));
+                } catch { /* ignore */ }
+                return;
+              }
+
+              if (msg.type === "runEval" || msg.type === "evalStart") {
+                if (msg.type === "runEval") {
+                  chState.evalBrowser = null;
+                }
+                chState.pendingEvalCommand = {
+                  runId: relayRunId,
+                  type: msg.type,
+                  data: event.data,
+                  controller: socket,
+                  delivered: new Set(),
+                };
+              } else if (
+                msg.type === "evalReady" &&
+                chState.pendingEvalCommand?.type === "runEval" &&
+                chState.pendingEvalCommand.runId === relayRunId
+              ) {
+                // Pin the complete correlated lifecycle to the browser that
+                // actually acknowledged this run. Later reconnects must not
+                // receive evalStart or terminate scoring in a different tab.
+                chState.evalBrowser = { runId: relayRunId, socket };
+                chState.pendingEvalCommand = null;
+              } else if (
+                (msg.type === "evalResult" ||
+                  msg.type === "evalAbort" ||
+                  msg.type === "evalCleanup") &&
+                chState.pendingEvalCommand?.runId === relayRunId
+              ) {
+                chState.pendingEvalCommand = null;
+              }
 
               // -- Embodiment config: store & reconfigure running systems --
               if (msg.type === "embodimentConfig") {
+                // This message originates from the rendered DimSim client and
+                // is also an application-level browser identity signal.  It
+                // covers runtimes where the server-side WebSocket `onopen`
+                // event or URL marker is not observed reliably.
+                chState.browserControlClient = socket;
+                chState.activeControlClient = socket;
                 chState.embodiment = msg.config ?? msg;
                 console.log(`${logPrefix} embodiment config stored:`, JSON.stringify(chState.embodiment));
                 if (chState.serverPhysics) chState.serverPhysics.reconfigure(chState.embodiment as any);
@@ -410,16 +660,135 @@ export async function startBridgeServer(options: BridgeServerOptions) {
                 return; // don't relay teleport commands
               }
 
+              // -- Correlated eval reset: server physics is authoritative. --
+              if (msg.type === "evalReset") {
+                const ack = applyEvalReset(
+                  chState.serverPhysics,
+                  msg as EvalResetMessage,
+                );
+                if (ack.ok) {
+                  chState.activeEval = { runId: ack.runId, controller: socket };
+                  console.log(
+                    `${logPrefix} eval reset ${ack.runId} to ` +
+                      `(${ack.pose!.x},${ack.pose!.y},${ack.pose!.z}) yaw=${
+                        ack.pose!.yaw
+                      }`,
+                  );
+                  // Deliver the authoritative pose explicitly even when the
+                  // reset matches the last broadcast.  This lets a newly
+                  // reconnected browser synchronize before the first camera
+                  // observation without waiting for later motion.
+                  const resetPose = JSON.stringify({
+                    type: "pose",
+                    x: ack.pose!.x,
+                    y: ack.pose!.y,
+                    z: ack.pose!.z,
+                    yaw: (ack.pose!.yaw * Math.PI) / 180,
+                  });
+                  for (const client of chState.controlClients) {
+                    if (client.readyState !== WebSocket.OPEN) continue;
+                    try {
+                      client.send(resetPose);
+                    } catch { /* ignore */ }
+                  }
+                }
+                try {
+                  socket.send(JSON.stringify(ack));
+                } catch { /* ignore */ }
+                return;
+              }
+
+              // Terminal cleanup always zeros bridge motion.  Abort is relayed
+              // so the browser can release its pending workflow promise.
+              if (msg.type === "evalAbort" || msg.type === "evalCleanup") {
+                if (
+                  !chState.activeEval ||
+                  chState.activeEval.runId === msg.runId
+                ) {
+                  chState.serverPhysics?.clearMotion();
+                  chState.activeEval = null;
+                }
+                if (msg.type === "evalCleanup") return;
+              }
+
+              if (
+                msg.type === "evalResult" &&
+                chState.activeEval?.runId === msg.runId
+              ) {
+                chState.serverPhysics?.clearMotion();
+                chState.activeEval = null;
+              }
+
               // Relay-only: server physics is built from the boot snapshot.
               if (msg.type === "physicsColliderAdd" || msg.type === "physicsColliderRemove") {
                 // handled by the browser; just relay
               }
             } catch { /* not JSON, relay as-is */ }
 
-            for (const client of chState.controlClients) {
+            // The active control socket is the authoritative browser/render
+            // client.  Include it explicitly so command delivery cannot be
+            // lost if auxiliary membership bookkeeping ever drifts while the
+            // socket remains open (it may still be receiving direct poses).
+            const isEvalCommand = !isBrowserControl &&
+              (
+                relayType === "runEval" ||
+                relayType === "evalStart" ||
+                relayType === "evalAbort"
+              );
+            const evalCommandTarget = relayType === "runEval"
+              ? chState.browserControlClient
+              : chState.evalBrowser?.runId === relayRunId
+              ? chState.evalBrowser.socket
+              : null;
+            // Eval commands have exactly one destination: the most recently
+            // identified browser/render client. Broadcasting them to every
+            // control socket lets a stale browser race the authoritative one
+            // and return an evalReady/evalResult from an older bundle.
+            const relayClients = isEvalCommand
+              ? new Set(
+                evalCommandTarget ? [evalCommandTarget] : [],
+              )
+              : new Set(chState.controlClients);
+            if (!isEvalCommand && chState.activeControlClient) {
+              relayClients.add(chState.activeControlClient);
+            }
+            if (!isEvalCommand && chState.browserControlClient) {
+              relayClients.add(chState.browserControlClient);
+            }
+            if (
+              relayType === "runEval" ||
+              relayType === "evalStart" ||
+              relayType === "evalAbort"
+            ) {
+              console.log(
+                `${logPrefix} relay ${relayType} runId=${relayRunId} ` +
+                  `clients=${relayClients.size} browserOpen=${
+                    chState.browserControlClient?.readyState === WebSocket.OPEN
+                  }`,
+              );
+            }
+            for (const client of relayClients) {
               if (client !== socket && client.readyState === WebSocket.OPEN) {
-                try { client.send(event.data); } catch { /* ignore */ }
+                try {
+                  client.send(event.data);
+                  if (
+                    chState.pendingEvalCommand?.runId === relayRunId &&
+                    chState.pendingEvalCommand.type === relayType
+                  ) {
+                    chState.pendingEvalCommand.delivered.add(client);
+                  }
+                } catch { /* ignore */ }
               }
+            }
+            if (
+              (
+                relayType === "evalResult" ||
+                relayType === "evalAbort" ||
+                relayType === "evalCleanup"
+              ) &&
+              chState.evalBrowser?.runId === relayRunId
+            ) {
+              chState.evalBrowser = null;
             }
             return;
           }

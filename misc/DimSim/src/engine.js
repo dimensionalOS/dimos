@@ -4428,7 +4428,7 @@ simCameraModeToggleBtn?.addEventListener("click", () => {
   updateSimCameraModeToggleUi();
   if (simUserCameraMode === "user") {
     if (agentCameraFollow) disableAgentCameraFollow();
-  } else if (agentTask.active) {
+  } else if (agentTask.active || dimosMode) {
     enableAgentCameraFollow();
   }
 });
@@ -5576,6 +5576,13 @@ if (dimosMode) {
       const spawnPos = sceneCfg.spawnPoint || { x: 2, y: 0.5, z: 3 };
       agent.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
       renderAgentTaskUi(); // update UI: hide spawn button, enable task controls
+      // A saved Agent camera preference can be restored before the external
+      // agent exists. In that case the earlier follow attempt is a no-op even
+      // though the button already says "Camera: Agent". Attach now that the
+      // externally-driven agent has been created.
+      if (simUserCameraMode === "agent") {
+        enableAgentCameraFollow(agent.id);
+      }
       // Server-side physics: agent pose is driven by ServerPhysics (Deno).
       // Browser just receives position updates and moves the visual avatar.
       let _dimosYaw = 0;
@@ -5589,11 +5596,19 @@ if (dimosMode) {
       // 3. Set up fixed-size offscreen capture for dimos.
       // Keep sensor cost independent of the headed browser window size.
       const _dimosCapW = 640, _dimosCapH = 288;
-      const _dimosCapTarget = new THREE.WebGLRenderTarget(_dimosCapW, _dimosCapH, {
-        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false,
-      });
-      // Go2 depth camera: 87° horizontal. At 640x288 (2.22:1 aspect), that's 46° vertical.
+      const _dimosCapTarget = new THREE.WebGLRenderTarget(
+        _dimosCapW,
+        _dimosCapH,
+        {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          depthBuffer: true,
+          stencilBuffer: false,
+        },
+      );
+      // Go2 depth camera: 87° horizontal. At 640x288 (2.22:1 aspect), that's
+      // 46° vertical.
       const _dimosFov = window.__dimosCameraFov || 46;
       const _dimosCapCam = new THREE.PerspectiveCamera(_dimosFov, _dimosCapW / _dimosCapH, camera.near, camera.far);
       const _dimosCapBuf = new Uint8Array(_dimosCapW * _dimosCapH * 4);
@@ -5809,9 +5824,26 @@ if (dimosMode) {
       //   prelude:  [DSC1 4B BE][total u32 LE][sx f32 LE][sy f32 LE][sz f32 LE]   (20B)
       //   chunks:   raw bytes, in order, until `total` accumulated bridge-side.
       const SNAPSHOT_CHUNK_SIZE = 256 * 1024;
-      const _waitSensorWs = () => {
-        if (bridge.wsSensors && bridge.wsSensors.readyState === WebSocket.OPEN) {
+      const SNAPSHOT_MAX_BUFFERED = 4 * 1024 * 1024;
+      const _waitSensorWs = async () => {
+        if (
+          bridge.wsSensors && bridge.wsSensors.readyState === WebSocket.OPEN
+        ) {
           try {
+            // A browser reload can reconnect to bridge physics that is already
+            // initialized for this scene. Give the control handshake a brief
+            // chance to say so instead of uploading a redundant multi-MB
+            // Rapier snapshot and starving camera publication.
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            if (bridge._serverPhysicsReady) {
+              bridge.resumePublishing();
+              return;
+            }
+            // Snapshot transfer is the one-time prerequisite for authoritative
+            // server physics.  RGB readbacks are expensive under software
+            // WebGL and can starve this transfer for minutes, so pause image
+            // publication until the snapshot socket has fully drained.
+            bridge.pausePublishing();
             const snapshot = rapierWorld.takeSnapshot();
             const [sx, sy, sz] = agent.getPosition?.() || [2, 0.5, 3];
             const total = snapshot.byteLength;
@@ -5826,26 +5858,48 @@ if (dimosMode) {
             bridge.wsSensors.send(prelude.buffer);
 
             let sent = 0;
-            let chunkN = 0;
             const sendNextChunk = () => {
+              if (bridge._serverPhysicsReady) {
+                bridge.resumePublishing();
+                return;
+              }
               if (bridge.wsSensors.readyState !== WebSocket.OPEN) {
                 console.warn("[DimosBridge] sensor WS closed mid-snapshot");
+                bridge.resumePublishing();
                 return;
               }
-              // Backpressure: don't outpace the WS pump.
-              if (bridge.wsSensors.bufferedAmount > 4 * SNAPSHOT_CHUNK_SIZE) {
-                setTimeout(sendNextChunk, 50);
+              // Queue a bounded batch per callback. Background Chrome tabs
+              // throttle setTimeout heavily; sending one chunk per callback
+              // turns a ~27MB apartment snapshot into a multi-minute upload.
+              // The 4MiB cap still gives the WebSocket pump explicit
+              // backpressure and avoids the old unbounded single-frame stall.
+              while (
+                sent < total &&
+                bridge.wsSensors.bufferedAmount <= SNAPSHOT_MAX_BUFFERED
+              ) {
+                const end = Math.min(sent + SNAPSHOT_CHUNK_SIZE, total);
+                bridge.wsSensors.send(snapshot.subarray(sent, end));
+                sent = end;
+              }
+              if (sent >= total) {
+                const resumeWhenDrained = () => {
+                  if (
+                    bridge.wsSensors?.readyState !== WebSocket.OPEN ||
+                    bridge.wsSensors.bufferedAmount === 0
+                  ) {
+                    bridge.resumePublishing();
+                    return;
+                  }
+                  setTimeout(resumeWhenDrained, 50);
+                };
+                resumeWhenDrained();
                 return;
               }
-              const end = Math.min(sent + SNAPSHOT_CHUNK_SIZE, total);
-              bridge.wsSensors.send(snapshot.subarray(sent, end));
-              sent = end;
-              chunkN++;
-              if (sent >= total) return;
-              setTimeout(sendNextChunk, 0); // yield to event loop
+              setTimeout(sendNextChunk, 50); // yield to the WebSocket pump
             };
             sendNextChunk();
           } catch (e) {
+            bridge.resumePublishing();
             console.warn("[DimosBridge] snapshot send failed:", e);
           }
         } else {
@@ -5888,12 +5942,27 @@ if (dimosMode) {
           return { assets: enriched };
         },
         getAgentPose: () => {
+          const serverPose = bridge._serverPose;
+          if (
+            serverPose &&
+            [serverPose.x, serverPose.y, serverPose.z, serverPose.yaw].every(
+              Number.isFinite,
+            )
+          ) {
+            return {
+              x: serverPose.x,
+              y: serverPose.y,
+              z: serverPose.z,
+              yaw: serverPose.yaw,
+              pitch: 0,
+            };
+          }
           const pos = agent.getPosition?.();
           if (!pos) return null;
-          const camOffset = 0.3;
-          const cx = pos[0] + Math.sin(_dimosYaw) * camOffset;
-          const cz = pos[2] + Math.cos(_dimosYaw) * camOffset;
-          return { x: cx, y: pos[1], z: cz, yaw: _dimosYaw, pitch: 0 };
+          // Eval distance rubrics score the robot body, matching startPose and
+          // authoritative server odometry.  The observation camera's forward
+          // offset is a sensor detail, not robot progress.
+          return { x: pos[0], y: pos[1], z: pos[2], yaw: _dimosYaw, pitch: 0 };
         },
       });
       // Register the singleton so workflow files importing `runEval` from

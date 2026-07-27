@@ -427,14 +427,20 @@ html[data-mode="sim"] .side-panel {
   font-size: 10px;
   padding: 1px 5px;
 }
-/* Dimos-only: hide the sim side panel + command bar + top-left status
-   pill (the small "Click to look around" + B/G chip is the human-player
-   prompt; the agent is driven externally).  Bottom-left WASD shortcuts
-   stay visible. */
+/* Dimos-only: hide the sim side panel + top-left status pill (the small
+   "Click to look around" + B/G chip is the human-player prompt; the agent is
+   driven externally). Keep a camera-only command bar so a headed browser can
+   switch between the independent user view and the external robot camera. */
 body.dimos-mode #agent-panel,
 body.dimos-mode #sim-panel-open,
-body.dimos-mode #agent-command-bar,
 body.dimos-mode .status-floating {
+  display: none !important;
+}
+body.dimos-mode #agent-command-bar {
+  display: flex !important;
+  width: auto;
+}
+body.dimos-mode #agent-command-bar > :not(#sim-camera-toggle) {
   display: none !important;
 }
 /* Floating status for sim mode */

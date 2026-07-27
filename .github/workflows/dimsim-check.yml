@@ -47,3 +47,6 @@ jobs:
 
       - name: Type-check CLI
         run: cd cli && deno check cli.ts
+
+      - name: Run Deno tests
+        run: deno test -A --unstable-net --config cli/deno.json cli evals

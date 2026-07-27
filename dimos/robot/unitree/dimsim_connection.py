@@ -16,7 +16,7 @@ from collections.abc import Callable
 import functools
 from typing import Any
 
-from reactivex import Observable, Subject
+from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
@@ -51,36 +51,58 @@ class DimSimConnection:
     def __init__(self, global_config: GlobalConfig) -> None:
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
         self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._unsubscribe_odom: Callable[[], None] | None = None
+        self._lidar_transport: PubSubTransport[PointCloud2] = make_transport("/lidar", PointCloud2)
+        self._video_transport: PubSubTransport[Image] = make_transport("/color_image", Image)
+        self._unsubscribes: list[Callable[[], None]] = []
+        self._latest_sensor_ts = {
+            "odom": float("-inf"),
+            "lidar": float("-inf"),
+            "video": float("-inf"),
+        }
         self._tf = tf_backend()()
 
     def start(self) -> None:
         self._dimsim_process.start()
-        self._odom_transport.start()
-        self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
+        for transport in (
+            self._odom_transport,
+            self._lidar_transport,
+            self._video_transport,
+        ):
+            transport.start()
+        self._unsubscribes = [
+            self._odom_transport.subscribe(self._handle_odom),
+            self._lidar_transport.subscribe(self._handle_lidar),
+            self._video_transport.subscribe(self._handle_video),
+        ]
         self._tf.start()
 
     def stop(self) -> None:
         self._tf.stop()
-        if self._unsubscribe_odom is not None:
-            self._unsubscribe_odom()
-        self._odom_transport.stop()
+        for unsubscribe in self._unsubscribes:
+            unsubscribe()
+        self._unsubscribes.clear()
+        for transport in (
+            self._video_transport,
+            self._lidar_transport,
+            self._odom_transport,
+        ):
+            transport.stop()
         self._dimsim_process.stop()
 
     @functools.cache
-    def lidar_stream(self) -> Observable[PointCloud2]:
+    def lidar_stream(self) -> Subject[PointCloud2]:
         return Subject()
 
     @functools.cache
-    def odom_stream(self) -> Observable[PoseStamped]:
+    def odom_stream(self) -> Subject[PoseStamped]:
         return Subject()
 
     @functools.cache
-    def video_stream(self) -> Observable[Image]:
+    def video_stream(self) -> Subject[Image]:
         return Subject()
 
     @functools.cache
-    def lowstate_stream(self) -> Observable[Any]:
+    def lowstate_stream(self) -> Subject[Any]:
         return Subject()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -118,7 +140,25 @@ class DimSimConnection:
         return {}
 
     def _handle_odom(self, msg: PoseStamped) -> None:
+        if not self._is_new_sensor_sample("odom", msg.ts):
+            return
         self._tf.publish(*_odom_to_tf(msg))
+        self.odom_stream().on_next(msg)
+
+    def _handle_lidar(self, msg: PointCloud2) -> None:
+        if self._is_new_sensor_sample("lidar", msg.ts):
+            self.lidar_stream().on_next(msg)
+
+    def _handle_video(self, msg: Image) -> None:
+        if self._is_new_sensor_sample("video", msg.ts):
+            self.video_stream().on_next(msg)
+
+    def _is_new_sensor_sample(self, stream: str, timestamp: float) -> bool:
+        """Reject the same packet when GO2 republishes it on the bridge topic."""
+        if timestamp <= self._latest_sensor_ts[stream]:
+            return False
+        self._latest_sensor_ts[stream] = timestamp
+        return True
 
 
 def _odom_to_tf(odom: PoseStamped) -> list[Transform]:

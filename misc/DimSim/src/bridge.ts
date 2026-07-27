@@ -56,6 +56,8 @@ export interface DimosBridgeOptions {
   sensorEnable?: Partial<SensorEnable>;
 }
 
+const CONTROL_HEARTBEAT_TIMEOUT_MS = 30_000;
+
 export class DimosBridge {
   wsUrl: string;
   agent: any;
@@ -74,6 +76,9 @@ export class DimosBridge {
 
   _timers: Record<string, ReturnType<typeof setInterval>>;
   _connected: boolean;
+  _publishingPaused: boolean;
+  _controlHeartbeatTimer: ReturnType<typeof setInterval> | null;
+  _lastControlHeartbeatAck: number;
 
   constructor({ wsUrl, agent, sensorSources, rates, sensorEnable }: DimosBridgeOptions) {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -88,86 +93,201 @@ export class DimosBridge {
     this.wsDepth = null;
     this._timers = {};
     this._connected = false;
+    this._publishingPaused = false;
+    this._lastRgbPublishedAt = 0;
+    this._serverPhysicsReady = false;
+    this._controlHeartbeatTimer = null;
+    this._lastControlHeartbeatAck = 0;
   }
 
   connect(): void {
     // Read channel from URL param (for multi-page parallel evals)
     const channel = new URLSearchParams(location.search).get("channel") || "";
     const channelSuffix = channel ? `&channel=${channel}` : "";
+    const isLive = (socket: WebSocket | null): boolean =>
+      socket !== null &&
+      (socket.readyState === WebSocket.CONNECTING ||
+        socket.readyState === WebSocket.OPEN);
 
     // Control socket: JSON commands out, server pose + embodiment config in
-    this.wsControl = new WebSocket(this.wsUrl + "?ch=control" + channelSuffix);
-    this.wsControl.binaryType = "arraybuffer";
+    if (!isLive(this.wsControl)) {
+      const control = new WebSocket(
+        this.wsUrl + "?ch=control&client=browser" + channelSuffix,
+      );
+      this.wsControl = control;
+      control.binaryType = "arraybuffer";
 
-    this.wsControl.onopen = () => {
-      console.log("[DimosBridge] control WS connected");
-      this._connected = true;
-      this._startPublishing();
-      this._flushPendingCommands();
-    };
+      control.onopen = () => {
+        if (this.wsControl !== control) {
+          control.close();
+          return;
+        }
+        console.log("[DimosBridge] control WS connected");
+        this._connected = true;
+        this._startControlHeartbeat(control);
+        this._startPublishing();
+        this._flushPendingCommands();
+      };
 
-    this.wsControl.onmessage = (event: MessageEvent) => {
-      // Text messages: server-side physics pose updates + embodiment config
-      if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "pose") {
-            this._handleServerPose(msg.x, msg.y, msg.z, msg.yaw);
-          } else if (msg.type === "embodimentConfig") {
-            this._handleEmbodimentConfig(msg);
-          }
-        } catch {}
-      }
-    };
+      // Keep the bridge's transport handler independent from consumers such
+      // as EvalHarness. Replacing `onmessage` in a consumer can otherwise
+      // disable heartbeat acknowledgements and authoritative pose updates,
+      // causing a reconnect loop while an eval appears to keep running.
+      control.addEventListener("message", (event: MessageEvent) => {
+        // Text messages: server-side physics pose updates + embodiment config
+        if (typeof event.data === "string") {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "heartbeatAck") {
+              this._lastControlHeartbeatAck = Date.now();
+              if (msg.command) {
+                queueMicrotask(() => {
+                  if (this.wsControl !== control) return;
+                  control.dispatchEvent(
+                    new MessageEvent("message", {
+                      data: JSON.stringify(msg.command),
+                    }),
+                  );
+                });
+              }
+            } else if (msg.type === "pose") {
+              this._handleServerPose(msg.x, msg.y, msg.z, msg.yaw);
+            } else if (msg.type === "physicsReady") {
+              this._serverPhysicsReady = true;
+            } else if (msg.type === "embodimentConfig") {
+              this._handleEmbodimentConfig(msg);
+            }
+          } catch {}
+        }
+      });
 
-    this.wsControl.onclose = () => {
-      console.log("[DimosBridge] control WS disconnected, reconnecting in 2s...");
-      this._connected = false;
-      this._stopPublishing();
-      setTimeout(() => this.connect(), 2000);
-    };
+      control.onclose = () => {
+        if (this.wsControl !== control) return;
+        this._stopControlHeartbeat();
+        console.log(
+          "[DimosBridge] control WS disconnected, reconnecting in 2s...",
+        );
+        this._connected = false;
+        this._serverPhysicsReady = false;
+        this._stopPublishing();
+        setTimeout(() => {
+          if (this.wsControl === control) this.connect();
+        }, 2000);
+      };
 
-    this.wsControl.onerror = () => {};
+      control.onerror = () => {};
+    }
 
     // Sensor socket: Rapier snapshots out (no incoming expected)
-    this.wsSensors = new WebSocket(this.wsUrl + "?ch=sensors" + channelSuffix);
-    this.wsSensors.binaryType = "arraybuffer";
+    if (!isLive(this.wsSensors)) {
+      const sensors = new WebSocket(
+        this.wsUrl + "?ch=sensors" + channelSuffix,
+      );
+      this.wsSensors = sensors;
+      sensors.binaryType = "arraybuffer";
+      sensors.onopen = () => {
+        if (this.wsSensors === sensors) {
+          console.log("[DimosBridge] sensor WS connected");
+        }
+      };
+      sensors.onclose = () => {
+        if (this.wsSensors !== sensors) return;
+        console.log("[DimosBridge] sensor WS disconnected");
+        setTimeout(() => {
+          if (this.wsSensors === sensors) this.connect();
+        }, 2000);
+      };
+      sensors.onerror = () => {};
+    }
 
-    this.wsSensors.onopen = () => {
-      console.log("[DimosBridge] sensor WS connected");
-    };
+    if (!isLive(this.wsRgb)) {
+      const rgb = new WebSocket(this.wsUrl + "?ch=rgb" + channelSuffix);
+      this.wsRgb = rgb;
+      rgb.binaryType = "arraybuffer";
+      rgb.onclose = () => {
+        if (this.wsRgb !== rgb) return;
+        console.log("[DimosBridge] RGB WS disconnected");
+        setTimeout(() => {
+          if (this.wsRgb === rgb) this.connect();
+        }, 2000);
+      };
+      rgb.onerror = () => {};
+    }
 
-    this.wsSensors.onclose = () => {
-      console.log("[DimosBridge] sensor WS disconnected");
-    };
-
-    this.wsSensors.onerror = () => {};
-
-    this.wsRgb = new WebSocket(this.wsUrl + "?ch=rgb" + channelSuffix);
-    this.wsRgb.binaryType = "arraybuffer";
-    this.wsRgb.onclose = () => {
-      console.log("[DimosBridge] RGB WS disconnected");
-    };
-    this.wsRgb.onerror = () => {};
-
-    this.wsDepth = new WebSocket(this.wsUrl + "?ch=depth" + channelSuffix);
-    this.wsDepth.binaryType = "arraybuffer";
-    this.wsDepth.onclose = () => {
-      console.log("[DimosBridge] depth WS disconnected");
-    };
-    this.wsDepth.onerror = () => {};
+    if (!isLive(this.wsDepth)) {
+      const depth = new WebSocket(
+        this.wsUrl + "?ch=depth" + channelSuffix,
+      );
+      this.wsDepth = depth;
+      depth.binaryType = "arraybuffer";
+      depth.onclose = () => {
+        if (this.wsDepth !== depth) return;
+        console.log("[DimosBridge] depth WS disconnected");
+        setTimeout(() => {
+          if (this.wsDepth === depth) this.connect();
+        }, 2000);
+      };
+      depth.onerror = () => {};
+    }
   }
 
   // -- Incoming messages ------------------------------------------------------
+
+  _startControlHeartbeat(control: WebSocket): void {
+    this._stopControlHeartbeat();
+    this._lastControlHeartbeatAck = Date.now();
+    this._controlHeartbeatTimer = setInterval(() => {
+      if (this.wsControl !== control) {
+        this._stopControlHeartbeat();
+        return;
+      }
+      if (
+        control.readyState !== WebSocket.OPEN ||
+        Date.now() - this._lastControlHeartbeatAck >
+          CONTROL_HEARTBEAT_TIMEOUT_MS
+      ) {
+        this.wsControl = null;
+        this._stopControlHeartbeat();
+        try {
+          control.close();
+        } catch { /* ignore */ }
+        this.connect();
+        return;
+      }
+      try {
+        control.send(JSON.stringify({ type: "heartbeat", ts: Date.now() }));
+      } catch { /* watchdog reconnects on the next tick */ }
+      // Background Chrome tabs can throttle the completion-scheduled camera
+      // setTimeout for a minute or more even while WebSocket heartbeats remain
+      // reliable. Use that live heartbeat as a bounded sensor fallback.
+      const cameraFallbackMs = Math.max(5_000, this.rates.images * 3);
+      if (
+        !this._publishingPaused &&
+        this.rates.images > 0 &&
+        Date.now() - this._lastRgbPublishedAt >= cameraFallbackMs
+      ) {
+        this._publishImages();
+      }
+    }, 3000);
+  }
+
+  _stopControlHeartbeat(): void {
+    if (this._controlHeartbeatTimer) {
+      clearInterval(this._controlHeartbeatTimer);
+      this._controlHeartbeatTimer = null;
+    }
+  }
 
   /** Handle server-side physics pose update (Three.js Y-up frame). */
   _handleServerPose(x: number, y: number, z: number, yaw: number): void {
     if (!this.agent) return;
     // Move the agent body to the server-authoritative position
     if (this.agent.body) {
+      this.agent.body.setTranslation?.({ x, y, z }, true);
       this.agent.body.setNextKinematicTranslation({ x, y, z });
     }
     if (this.agent.group) {
+      this.agent.group.position?.set?.(x, y, z);
       this.agent.group.rotation.y = yaw;
     }
     // Update engine's _dimosYaw for sensor capture / odom pose reading
@@ -179,6 +299,8 @@ export class DimosBridge {
   }
 
   _serverPose: { x: number; y: number; z: number; yaw: number } | null = null;
+  _serverPhysicsReady = false;
+  _lastRgbPublishedAt = 0;
 
   _handleEmbodimentConfig(msg: any): void {
     console.log("[DimosBridge] embodiment config received:", msg.embodimentType || "quadruped");
@@ -206,10 +328,30 @@ export class DimosBridge {
   // -- Outgoing sensor data ---------------------------------------------------
 
   _startPublishing(): void {
+    // Reconnects and explicit resume calls must not create duplicate timers.
+    this._stopPublishing();
+    if (this._publishingPaused) return;
     // Images default 5 Hz (configurable via rates.images).
     // Odom and lidar are published server-side via LCM directly.
     if (this.rates.images > 0) {
-      this._timers["images"] = setInterval(() => this._publishImages(), this.rates.images);
+      const publishImages = () => {
+        if (this._publishingPaused) return;
+        this._publishImages();
+        // Schedule from completion instead of using setInterval. Software
+        // WebGL capture can overrun its nominal period; setInterval then runs
+        // another expensive capture immediately and starves control/eval
+        // messages for tens of seconds.
+        if (!this._publishingPaused && this.rates.images > 0) {
+          this._timers["images"] = setTimeout(
+            publishImages,
+            this.rates.images,
+          );
+        }
+      };
+      this._timers["images"] = setTimeout(
+        publishImages,
+        this.rates.images,
+      );
     }
   }
 
@@ -233,6 +375,16 @@ export class DimosBridge {
     this._timers = {};
   }
 
+  pausePublishing(): void {
+    this._publishingPaused = true;
+    this._stopPublishing();
+  }
+
+  resumePublishing(): void {
+    this._publishingPaused = false;
+    this._startPublishing();
+  }
+
   /** Send on a sensor WebSocket (images — large data). */
   _sendSensor(ws: WebSocket | null, channel: string, msg: any): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -247,16 +399,21 @@ export class DimosBridge {
       const frame = this.sensors.captureRgb();
       if (!frame) return;
 
-      this._sendSensor(this.wsRgb, CH_IMAGE, new sensor_msgs.Image({
-        header,
-        height: frame.height,
-        width: frame.width,
-        encoding: "jpeg",
-        is_bigendian: 0,
-        step: 0,  // not applicable for compressed format
-        data_length: frame.data.length,
-        data: frame.data,
-      }));
+      this._sendSensor(
+        this.wsRgb,
+        CH_IMAGE,
+        new sensor_msgs.Image({
+          header,
+          height: frame.height,
+          width: frame.width,
+          encoding: "jpeg",
+          is_bigendian: 0,
+          step: 0, // not applicable for compressed format
+          data_length: frame.data.length,
+          data: frame.data,
+        }),
+      );
+      this._lastRgbPublishedAt = Date.now();
     } catch (e) {
       console.warn("[DimosBridge] RGB publish error:", e);
     }
