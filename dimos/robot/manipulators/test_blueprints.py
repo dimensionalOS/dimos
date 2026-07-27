@@ -87,7 +87,6 @@ def test_quest_piper_teleop_routes_to_declarative_teleop_task() -> None:
 def test_piper_teleop_blueprints_declare_viser_manipulation() -> None:
     for blueprint in (keyboard_teleop_piper, coordinator_teleop_piper):
         kwargs = _manipulation_kwargs(blueprint)
-        assert kwargs["robots"][0].coordinator_task_name == "traj_arm"
         assert kwargs["visualization"] == {"backend": "viser"}
 
 
@@ -168,9 +167,10 @@ def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backen
         "left_arm",
         "right_arm",
     ]
-    assert [task.name for task in coordinator_kwargs["tasks"]] == [
-        "traj_left_arm",
-        "traj_right_arm",
+    assert [task.name for task in coordinator_kwargs["tasks"]] == ["traj_arm"]
+    assert coordinator_kwargs["tasks"][0].joint_names == [
+        *(f"left_arm/joint{index}" for index in range(1, 7)),
+        *(f"right_arm/joint{index}" for index in range(1, 7)),
     ]
 
 

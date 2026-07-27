@@ -127,8 +127,8 @@ manip.execute_plan(plan)
 
 See [Manipulation Plan Execution](/docs/capabilities/manipulation/plan_execution.md) for validation,
 replacement, cancellation, and failure behavior. A generated plan is the
-execution boundary: `execute_plan(robot_name=...)` may validate a matching
-single-robot plan, but it cannot filter a multi-robot plan.
+execution boundary: execution never filters a multi-robot plan. To execute one
+robot, first plan only that robot's planning group.
 
 For robot-scoped compatibility APIs, unnamed joint vectors are interpreted in
 the selected default planning group's joint order. If names are provided, they

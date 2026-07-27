@@ -22,6 +22,12 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.manipulation._test_manipulation_helpers import make_module as _make_module
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -48,6 +54,17 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
+def _coordinator_client(
+    *,
+    execute_status: TrajectoryExecutionStatus = TrajectoryExecutionStatus.ACCEPTED,
+    cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
+) -> MagicMock:
+    client = MagicMock()
+    client.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
+    client.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    return client
+
+
 @pytest.fixture
 def robot_config():
     """Create a robot config for testing."""
@@ -67,7 +84,6 @@ def robot_config():
         ],
         max_velocity=1.0,
         max_acceleration=2.0,
-        coordinator_task_name="traj_arm",
     )
 
 
@@ -93,7 +109,6 @@ def robot_config_with_mapping():
             "left/joint2": "joint2",
             "left/joint3": "joint3",
         },
-        coordinator_task_name="traj_left",
     )
 
 
@@ -125,7 +140,6 @@ def _one_joint_config(name: str = "arm") -> RobotModelConfig:
                 name="manipulator", joint_names=("j0",), base_link="base_link", tip_link="ee"
             )
         ],
-        coordinator_task_name=f"traj_{name}",
     )
 
 
@@ -233,16 +247,14 @@ class TestStateMachine:
         module = _make_module()
         config = _one_joint_config()
         _install_generated_plan(module, config, MagicMock(), [0.0], [0.1])
-        client = MagicMock()
-        client.execute_task.return_value = True
-        client.cancel_task.return_value = False
+        client = _coordinator_client(cancel_status=TrajectoryCancellationStatus.CANCELLED)
         module._initialize_execution(client)
 
         assert module.execute_plan() is True
         assert module._state == ManipulationState.COMPLETED
 
         assert module.cancel() is True
-        module._coordinator_client.cancel_task.assert_called_with("traj_arm")
+        module._coordinator_client.cancel_trajectory.assert_called_with()
         assert module._state == ManipulationState.IDLE
 
     def test_reset_not_during_execution(self):
@@ -355,14 +367,6 @@ class TestPlanningInitialization:
         config = ManipulationModuleConfig()
 
         assert isinstance(config.kinematics, PinkKinematicsConfig)
-
-    @pytest.mark.parametrize("tolerance", [-1.0, float("nan"), float("inf")])
-    def test_plan_start_tolerance_must_be_finite_and_non_negative(
-        self,
-        tolerance: float,
-    ) -> None:
-        with pytest.raises(ValueError):
-            ManipulationModuleConfig(plan_start_tolerance=tolerance)
 
     def test_start_eagerly_initializes_planning_and_execution(
         self,
@@ -771,15 +775,13 @@ class TestPlanningGroupApis:
                 ),
             ],
         )
-        mock_client = MagicMock()
-        mock_client.execute_task.return_value = True
+        mock_client = _coordinator_client()
         module._initialize_execution(mock_client)
 
         assert module.execute_plan() is True
 
-        mock_client.execute_task.assert_called_once()
-        task_name, trajectory = mock_client.execute_task.call_args.args
-        assert task_name == "traj_arm"
+        mock_client.execute_trajectory.assert_called_once()
+        trajectory = mock_client.execute_trajectory.call_args.args[0]
         assert trajectory.joint_names == simple_trajectory.joint_names
         assert [point.positions for point in trajectory.points] == [
             [0.0, 0.0, 0.0],
@@ -788,77 +790,7 @@ class TestPlanningGroupApis:
         traj_gen.generate.assert_not_called()
         assert module._state == ManipulationState.COMPLETED
 
-    def test_execute_plan_rejects_stale_planned_robot_without_consuming_plan(self):
-        module = _make_module()
-        config = _one_joint_config()
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
-        module._state = ManipulationState.COMPLETED
-        module._world_monitor.current_global_joint_state.return_value = JointState(
-            name=[], position=[]
-        )
-        module._world_monitor.is_state_stale.return_value = True
-        mock_client = MagicMock()
-        module._initialize_execution(mock_client)
-
-        assert module.execute_plan() is False
-
-        assert module._last_plan is not None
-        assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_task.assert_not_called()
-
-    def test_execute_plan_rejects_duplicate_current_global_joints_without_consuming_plan(self):
-        module = _make_module()
-        config = _one_joint_config()
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
-        module._state = ManipulationState.COMPLETED
-        module._world_monitor.current_global_joint_state.return_value = JointState(
-            name=["arm/j0", "arm/j0"], position=[0.0, 0.0]
-        )
-        mock_client = MagicMock()
-        module._initialize_execution(mock_client)
-
-        assert module.execute_plan() is False
-
-        assert module._last_plan is not None
-        assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_task.assert_not_called()
-
-    def test_execute_plan_rejects_reordered_current_global_joints_without_consuming_plan(self):
-        module = _make_module()
-        config = RobotModelConfig(
-            name="arm",
-            model_path=Path("/path"),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-            joint_names=["j0", "j1"],
-            base_link="base_link",
-            planning_groups=[
-                PlanningGroupDefinition(
-                    name="manipulator",
-                    joint_names=("j0", "j1"),
-                    base_link="base_link",
-                    tip_link="ee",
-                )
-            ],
-            coordinator_task_name="traj_arm",
-        )
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0, 1.0], [0.5, 1.5])
-        module._state = ManipulationState.COMPLETED
-        module._world_monitor.current_global_joint_state.return_value = JointState(
-            name=["arm/j1", "arm/j0"], position=[1.0, 0.0]
-        )
-        mock_client = MagicMock()
-        module._initialize_execution(mock_client)
-
-        assert module.execute_plan() is False
-
-        assert module._last_plan is not None
-        assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_task.assert_not_called()
-
-    def test_execute_plan_dispatches_selected_subsets_with_shared_clock_and_mapping(self):
+    def test_execute_plan_dispatches_selected_subsets_once_with_shared_clock_and_mapping(self):
         left = RobotModelConfig(
             name="left",
             model_path=Path("/path"),
@@ -870,7 +802,6 @@ class TestPlanningGroupApis:
                 )
             ],
             joint_name_mapping={"left_coord_j1": "j1"},
-            coordinator_task_name="traj_left",
         )
         right = RobotModelConfig(
             name="right",
@@ -882,7 +813,6 @@ class TestPlanningGroupApis:
                     name="elbow", joint_names=("k0",), base_link="base", tip_link="ee"
                 )
             ],
-            coordinator_task_name="traj_right",
         )
         module = _make_module()
         module._robots = {
@@ -914,8 +844,7 @@ class TestPlanningGroupApis:
                 ],
             ),
         )
-        mock_client = MagicMock()
-        mock_client.execute_task.return_value = True
+        mock_client = _coordinator_client()
         module._initialize_execution(mock_client)
         module._world_monitor.get_current_joint_state.side_effect = lambda robot_id: {
             "left_id": JointState(name=["j0", "j1"], position=[9.0, 0.0]),
@@ -925,25 +854,14 @@ class TestPlanningGroupApis:
             name=["left/j1", "right/k0"], position=[0.0, 1.0]
         )
 
-        assert module.execute_plan(robot_name="left") is False
-        assert "partially execute" in module.get_error()
-        mock_client.execute_task.assert_not_called()
-
         assert module.execute_plan() is True
 
-        calls = mock_client.execute_task.call_args_list
-        left_payload = calls[0].args[1]
-        right_payload = calls[1].args[1]
-        assert calls[0].args[0] == "traj_left"
-        assert left_payload.joint_names == ["left_coord_j1"]
-        assert [point.time_from_start for point in left_payload.points] == [0.0, 2.5]
-        assert [point.positions for point in left_payload.points] == [[0.0], [0.5]]
-        assert [point.velocities for point in left_payload.points] == [[0.0], [0.2]]
-        assert calls[1].args[0] == "traj_right"
-        assert right_payload.joint_names == ["k0"]
-        assert [point.time_from_start for point in right_payload.points] == [0.0, 2.5]
-        assert [point.positions for point in right_payload.points] == [[1.0], [1.5]]
-        assert [point.velocities for point in right_payload.points] == [[0.0], [0.4]]
+        mock_client.execute_trajectory.assert_called_once()
+        payload = mock_client.execute_trajectory.call_args.args[0]
+        assert payload.joint_names == ["left_coord_j1", "k0"]
+        assert [point.time_from_start for point in payload.points] == [0.0, 2.5]
+        assert [point.positions for point in payload.points] == [[0.0, 1.0], [0.5, 1.5]]
+        assert [point.velocities for point in payload.points] == [[0.0, 0.0], [0.2, 0.4]]
 
     def test_pose_wrappers_fail_safely_without_unique_pose_group(self, robot_config):
         no_pose_config = RobotModelConfig(
@@ -1070,77 +988,6 @@ class TestExecute:
         assert module.execute() is False
         assert module._state == ManipulationState.IDLE
 
-    def test_execute_requires_task_name(self):
-        """Execute fails without coordinator_task_name."""
-        module = _make_module()
-        config_no_task = RobotModelConfig(
-            name="arm",
-            model_path=Path("/path"),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-            joint_names=["j1"],
-            planning_groups=[
-                PlanningGroupDefinition(
-                    name="manipulator", joint_names=("j1",), base_link="base_link", tip_link="ee"
-                )
-            ],
-        )
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (1.0, [0.1]))
-        _install_generated_plan(module, config_no_task, traj_gen, [0.0], [0.1])
-
-        assert module.execute("arm") is False
-        assert module._state == ManipulationState.IDLE
-
-    def test_execute_plan_requires_task_name_without_sticking_executing(self, robot_config):
-        module = _make_module()
-        config_no_task = RobotModelConfig(
-            name="test_arm",
-            model_path=robot_config.model_path,
-            base_pose=robot_config.base_pose,
-            joint_names=robot_config.joint_names,
-            base_link=robot_config.base_link,
-            planning_groups=robot_config.planning_groups,
-            gripper_hardware_id="test_gripper",
-        )
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory(
-            (0.0, [0.0, 0.0, 0.0]), (1.0, [0.1, 0.2, 0.3])
-        )
-        module._robots = {"test_arm": ("id", config_no_task, traj_gen)}
-        module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([config_no_task])
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
-        )
-        module._world_monitor.current_global_joint_state.return_value = JointState(
-            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-            position=[0.0, 0.0, 0.0],
-        )
-        module._initialize_execution(MagicMock())
-        module._last_plan = GeneratedPlan(
-            trajectory=_generated_plan_trajectory(
-                ["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                [0.0, 0.0, 0.0],
-                [0.1, 0.2, 0.3],
-            ),
-            group_ids=("test_arm/manipulator",),
-            status=PlanningStatus.SUCCESS,
-            path=[
-                JointState(
-                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                    position=[0.0, 0.0, 0.0],
-                ),
-                JointState(
-                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                    position=[0.1, 0.2, 0.3],
-                ),
-            ],
-        )
-
-        assert module.execute_plan() is False
-        assert module._state == ManipulationState.IDLE
-
     def test_execute_success(self, robot_config, simple_trajectory):
         """Successful execute calls the typed coordinator client."""
         module = _make_module()
@@ -1148,15 +995,13 @@ class TestExecute:
         traj_gen.generate.return_value = simple_trajectory
         _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
 
-        mock_client = MagicMock()
-        mock_client.execute_task.return_value = True
+        mock_client = _coordinator_client()
         module._initialize_execution(mock_client)
 
-        assert module.execute("test_arm") is True
+        assert module.execute() is True
         assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_task.assert_called_once()
-        task_name, trajectory = mock_client.execute_task.call_args.args
-        assert task_name == "traj_arm"
+        mock_client.execute_trajectory.assert_called_once()
+        trajectory = mock_client.execute_trajectory.call_args.args[0]
         assert trajectory.joint_names == simple_trajectory.joint_names
         assert [point.positions for point in trajectory.points] == [
             [0.0, 0.0, 0.0],
@@ -1171,11 +1016,12 @@ class TestExecute:
         traj_gen.generate.return_value = simple_trajectory
         _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
 
-        mock_client = MagicMock()
-        mock_client.execute_task.return_value = False
+        mock_client = _coordinator_client(
+            execute_status=TrajectoryExecutionStatus.INVALID_TRAJECTORY
+        )
         module._initialize_execution(mock_client)
 
-        assert module.execute("test_arm") is False
+        assert module.execute() is False
         assert module._state == ManipulationState.IDLE
 
 

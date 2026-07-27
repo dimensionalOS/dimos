@@ -86,7 +86,6 @@ def _get_xarm7_config() -> RobotModelConfig:
             "arm/joint6": "joint6",
             "arm/joint7": "joint7",
         },
-        coordinator_task_name="traj_arm",
     )
 
 
@@ -220,7 +219,6 @@ class TestManipulationModuleIntegration:
         assert info["name"] == "test_arm"
         assert len(info["joint_names"]) == 7
         assert info["end_effector_link"] == "link7"
-        assert info["coordinator_task_name"] == "traj_arm"
         assert info["has_joint_name_mapping"] is True
         groups = info["planning_groups"]
         assert len(groups) == 1

@@ -36,15 +36,25 @@ from dimos.robot.manipulators.common.topics import (
 
 def trajectory_task(
     hardware: HardwareComponent,
-    *,
+    *additional_hardware: HardwareComponent,
     name: str | None = None,
     priority: int = 10,
+    start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
+    hardware_components = (hardware, *additional_hardware)
     return TaskConfig(
-        name=name or trajectory_task_name(hardware.hardware_id),
+        name=name
+        or (
+            trajectory_task_name(hardware.hardware_id)
+            if not additional_hardware
+            else DEFAULT_TRAJECTORY_TASK_NAME
+        ),
         type="trajectory",
-        joint_names=hardware.joints,
+        joint_names=[
+            joint_name for component in hardware_components for joint_name in component.joints
+        ],
         priority=priority,
+        params={"start_position_tolerance": start_position_tolerance},
     )
 
 

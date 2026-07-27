@@ -54,9 +54,11 @@ _mock_right = HardwareComponent(
 coordinator_dual_mock = ControlCoordinator.blueprint(
     hardware=[_mock_left, _mock_right],
     tasks=[
-        TaskConfig(name="traj_left", type="trajectory", joint_names=_mock_left.joints, priority=10),
         TaskConfig(
-            name="traj_right", type="trajectory", joint_names=_mock_right.joints, priority=10
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[*_mock_left.joints, *_mock_right.joints],
+            priority=10,
         ),
     ],
 )

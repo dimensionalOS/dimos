@@ -17,6 +17,12 @@
 import threading
 from unittest.mock import MagicMock
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
@@ -36,11 +42,15 @@ class ManipulationModuleHarness(ManipulationModule):
         self._world_monitor = None
         self._planner = None
         self._kinematics = None
-        self.config = MagicMock(
-            planning_timeout=10.0,
-            plan_start_tolerance=1e-6,
+        self.config = MagicMock(planning_timeout=10.0)
+        coordinator_client = MagicMock()
+        coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
+            TrajectoryExecutionStatus.ACCEPTED
         )
-        self._initialize_execution(MagicMock())
+        coordinator_client.cancel_trajectory.return_value = TrajectoryCancellationResult(
+            TrajectoryCancellationStatus.ALREADY_STOPPED
+        )
+        self._initialize_execution(coordinator_client)
 
 
 def make_module() -> ManipulationModule:

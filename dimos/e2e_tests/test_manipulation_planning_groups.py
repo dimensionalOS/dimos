@@ -34,7 +34,6 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 pytestmark = [pytest.mark.self_hosted_large]
 
@@ -62,19 +61,18 @@ def _wait_for_robot_info(
 
 
 def _wait_for_trajectory_completion(
-    client: RPCClient,
-    robot_name: str,
+    coordinator_client: RPCClient,
     *,
     timeout: float = 10.0,
 ) -> None:
     deadline = time.time() + timeout
-    last_status: dict[str, Any] | None = None
+    last_active: list[str] = []
     while time.time() < deadline:
-        last_status = client.get_trajectory_status(robot_name)
-        if last_status is not None and last_status.get("state") == TrajectoryState.COMPLETED:
+        last_active = coordinator_client.get_active_tasks()
+        if not last_active:
             return
         time.sleep(0.1)
-    raise TimeoutError(f"{robot_name!r} trajectory did not complete; last={last_status}")
+    raise TimeoutError(f"Trajectory did not complete; active={last_active}")
 
 
 def _wait_for_manipulation_state(
@@ -168,7 +166,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         left_id = _planning_group_id(left_info)
 
         tasks = coordinator_client.list_tasks()
-        assert left_info["coordinator_task_name"] in tasks
+        assert len(tasks) == 1
 
         _prepare_for_planning(client, ("left_arm",))
 
@@ -177,9 +175,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         assert client.has_planned_path()
         assert client.execute_plan()
 
-        _wait_for_trajectory_completion(client, "left_arm")
-        assert client.cancel()
-        _wait_for_manipulation_state(client, "IDLE")
+        _wait_for_trajectory_completion(coordinator_client)
     finally:
         coordinator_client.stop_rpc_client()
         client.stop_rpc_client()
@@ -189,7 +185,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
 ) -> None:
-    """Plan one generated plan over both arms and dispatch both JTC tasks."""
+    """Plan one generated plan over both arms and dispatch through one trajectory task."""
     _start_openarm_mock_planner(start_blueprint, lcm_spy)
 
     client = RPCClient(None, ManipulationModule)
@@ -201,8 +197,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         right_id = _planning_group_id(right_info)
 
         tasks = coordinator_client.list_tasks()
-        assert left_info["coordinator_task_name"] in tasks
-        assert right_info["coordinator_task_name"] in tasks
+        assert len(tasks) == 1
 
         _prepare_for_planning(client, ("left_arm", "right_arm"))
 
@@ -214,12 +209,9 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         )
         assert planned, client.get_error()
         assert client.has_planned_path()
-        assert not client.execute_plan(robot_name="left_arm")
-        assert "partially execute" in client.get_error()
         assert client.execute_plan()
 
-        _wait_for_trajectory_completion(client, "left_arm")
-        _wait_for_trajectory_completion(client, "right_arm")
+        _wait_for_trajectory_completion(coordinator_client)
     finally:
         coordinator_client.stop_rpc_client()
         client.stop_rpc_client()

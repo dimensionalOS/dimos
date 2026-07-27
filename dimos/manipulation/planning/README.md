@@ -71,7 +71,6 @@ config = RobotModelConfig(
     end_effector_link="link7",
     base_link="link_base",
     joint_name_mapping={"arm_joint1": "joint1", ...},  # coordinator <-> URDF
-    coordinator_task_name="traj_arm",
 )
 
 module = ManipulationModule(
@@ -100,7 +99,6 @@ module.execute()  # Sends to coordinator
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
 | `joint_name_mapping` | Coordinator → URDF name mapping |
-| `coordinator_task_name` | Task name for execution RPC |
 | `package_paths` | ROS package paths for meshes |
 | `xacro_args` | Xacro arguments (e.g., `{"dof": "7"}`) |
 

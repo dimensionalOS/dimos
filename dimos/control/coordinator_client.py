@@ -17,6 +17,10 @@
 from typing import cast
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryExecutionResult,
+)
 from dimos.core.rpc_client import RPCClient
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -30,28 +34,19 @@ class ControlCoordinatorClient:
         )
         self._closed = False
 
-    def execute_task(self, task_name: str, trajectory: JointTrajectory) -> bool | None:
-        """Ask a coordinator task to execute a trajectory."""
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task."""
         return cast(
-            "bool | None",
-            self._rpc_client.task_invoke(
-                task_name,
-                "execute",
-                {"trajectory": trajectory},
-            ),
+            "TrajectoryExecutionResult",
+            self._rpc_client.execute_trajectory(trajectory),
         )
 
-    def cancel_task(self, task_name: str) -> bool | None:
-        """Ask a coordinator task to cancel its active command."""
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
         return cast(
-            "bool | None",
-            self._rpc_client.task_invoke(task_name, "cancel", {}),
+            "TrajectoryCancellationResult",
+            self._rpc_client.cancel_trajectory(),
         )
-
-    def get_task_state(self, task_name: str) -> int | None:
-        """Return the coordinator task state, if the task reports one."""
-        result = self._rpc_client.task_invoke(task_name, "get_state", {})
-        return int(result) if result is not None else None
 
     def set_gripper_position(self, hardware_id: str, position: float) -> bool:
         """Set the position of a coordinator-owned gripper."""

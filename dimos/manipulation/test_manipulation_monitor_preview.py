@@ -60,7 +60,6 @@ def robot_config_with_mapping() -> RobotModelConfig:
             "left/joint2": "joint2",
             "left/joint3": "joint3",
         },
-        coordinator_task_name="traj_left",
     )
 
 
@@ -76,7 +75,6 @@ def _one_joint_config(name: str = "arm") -> RobotModelConfig:
                 name="manipulator", joint_names=("j0",), base_link="base_link", tip_link="ee"
             )
         ],
-        coordinator_task_name=f"traj_{name}",
     )
 
 
@@ -262,7 +260,6 @@ class TestOnJointState:
                 )
             ],
             joint_name_mapping={"left/j1": "j1", "left/j2": "j2"},
-            coordinator_task_name="traj_left",
         )
         right_config = RobotModelConfig(
             name="right",
@@ -276,7 +273,6 @@ class TestOnJointState:
                 )
             ],
             joint_name_mapping={"right/j1": "j1", "right/j2": "j2"},
-            coordinator_task_name="traj_right",
         )
         module = _make_module_with_monitor(left_config, right_config)
 

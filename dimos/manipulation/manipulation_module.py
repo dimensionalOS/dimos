@@ -41,10 +41,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.execution_manager import (
-    DEFAULT_PLAN_START_TOLERANCE,
-    CoordinatorExecutionAdapter,
     ExecutionOutcome,
-    ExecutionPolicy,
     ExecutionTarget,
     PlanExecutionManager,
 )
@@ -55,7 +52,6 @@ from dimos.manipulation.planning.factory import (
     create_planning_specs,
     create_world,
 )
-from dimos.manipulation.planning.groups.identifiers import parse_planning_group_id
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
@@ -133,11 +129,6 @@ class ManipulationModuleConfig(ModuleConfig):
     )
     planner_name: PlannerName = "roboplan"
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
-    plan_start_tolerance: float = Field(
-        default=DEFAULT_PLAN_START_TOLERANCE,
-        ge=0.0,
-        allow_inf_nan=False,
-    )
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -425,15 +416,15 @@ class ManipulationModule(Module):
             plan = self._last_plan
 
         cancellation = self._execution_manager.cancel()
-        had_execution = cancellation.had_tracked_tasks
+        had_execution = cancellation.cancelled
         if not (is_planning or is_executing or had_execution):
             return False
 
         with self._lock:
             if not cancellation.safe:
                 self._state = ManipulationState.FAULT
-                self._error_message = "Failed to cancel coordinator tasks: " + ", ".join(
-                    cancellation.unresolved_tasks
+                self._error_message = cancellation.message or (
+                    "Failed to confirm coordinator trajectory cancellation"
                 )
                 logger.error(self._error_message)
                 return False
@@ -1202,7 +1193,6 @@ class ManipulationModule(Module):
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
             "has_joint_name_mapping": bool(config.joint_name_mapping),
-            "coordinator_task_name": config.coordinator_task_name,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
             "init_joints": list(init.position)
@@ -1371,62 +1361,29 @@ class ManipulationModule(Module):
             ExecutionTarget.from_coordinator_mapping(
                 robot_name=config.name,
                 model_joint_names=config.joint_names,
-                coordinator_task_name=config.coordinator_task_name,
                 coordinator_to_model=config.joint_name_mapping,
             )
             for _, config, _ in self._robots.values()
-            if config.coordinator_task_name
         ]
         self._coordinator_client = (
             coordinator_client if coordinator_client is not None else ControlCoordinatorClient()
         )
         self._execution_manager = PlanExecutionManager(
             targets=targets,
-            current_joint_state=self._current_execution_joint_state,
-            coordinator=CoordinatorExecutionAdapter(self._coordinator_client),
-            policy=ExecutionPolicy(
-                plan_start_tolerance=self.config.plan_start_tolerance,
-            ),
+            coordinator_client=self._coordinator_client,
         )
 
-    def _current_execution_joint_state(self) -> JointState:
-        """Return the current global joint state required for safe dispatch."""
-        if self._world_monitor is None:
-            raise RuntimeError("Manipulation world monitor is not configured")
-        return self._world_monitor.current_global_joint_state()
-
-    @staticmethod
-    def _plan_robot_names(plan: GeneratedPlan) -> tuple[RobotName, ...] | None:
-        """Return unique plan robot names in planning-group order."""
-        names: list[RobotName] = []
-        try:
-            for group_id in plan.group_ids:
-                robot_name, _ = parse_planning_group_id(group_id)
-                if robot_name not in names:
-                    names.append(robot_name)
-        except ValueError:
-            return None
-        return tuple(names)
-
     @rpc
-    def execute(self, robot_name: RobotName | None = None) -> bool:
+    def execute(self) -> bool:
         """Compatibility wrapper for execute_plan()."""
-        return self.execute_plan(robot_name=robot_name)
+        return self.execute_plan()
 
     @rpc
-    def execute_plan(
-        self, plan: GeneratedPlan | None = None, robot_name: RobotName | None = None
-    ) -> bool:
-        """Execute a generated planning-group plan through affected trajectory tasks."""
+    def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
+        """Execute a generated planning-group plan through the coordinator."""
         target_plan = plan or self._last_plan
         if target_plan is None:
             self._error_message = "Stored plan is invalid or not executable"
-            return False
-        plan_robots = self._plan_robot_names(target_plan)
-        if robot_name is not None and plan_robots != (robot_name,):
-            self._error_message = (
-                f"Cannot partially execute generated plan for robots {plan_robots!r}"
-            )
             return False
 
         with self._lock:
@@ -1459,33 +1416,6 @@ class ManipulationModule(Module):
                         self._state = ManipulationState.FAULT
                         self._error_message = result.message
         return bool(result and result.accepted)
-
-    @rpc
-    def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
-        """Get trajectory execution status from the coordinator."""
-        last_plan = self._last_plan
-        if robot_name is None and last_plan is not None and last_plan.path:
-            if self._world_monitor is None:
-                return None
-            statuses = {
-                name: self.get_trajectory_status(name)
-                for name in self._world_monitor.planning_groups.select(
-                    last_plan.group_ids
-                ).robot_names
-            }
-            return {"robots": statuses}
-        if (robot := self._get_robot(robot_name)) is None:
-            return None
-        _, _, config, _ = robot
-        if not config.coordinator_task_name:
-            return None
-        try:
-            state = self._coordinator_client.get_task_state(config.coordinator_task_name)
-            if state is not None:
-                return {"state": state, "task": config.coordinator_task_name}
-            return None
-        except Exception:
-            return None
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
@@ -1608,81 +1538,17 @@ class ManipulationModule(Module):
             return SkillResult.ok("Gripper closed")
         return SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper")
 
-    def _wait_for_trajectory_completion(
-        self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
-    ) -> bool:
-        """Wait for trajectory execution to complete.
-
-        Polls the coordinator task state. Falls back to waiting
-        for the trajectory duration if the coordinator is unavailable.
-
-        Args:
-            robot_name: Robot to monitor
-            timeout: Maximum wait time in seconds
-            poll_interval: Time between status checks
-
-        Returns:
-            True if trajectory completed successfully
-        """
+    def _wait_for_trajectory_completion(self, timeout: float = 60.0) -> bool:
+        """Wait for the duration of the last accepted trajectory."""
         last_plan = self._last_plan
-        if robot_name is None and last_plan is not None and last_plan.path:
-            try:
-                assert self._world_monitor is not None
-                affected = self._world_monitor.planning_groups.select(
-                    last_plan.group_ids
-                ).robot_names
-            except Exception as exc:
-                logger.warning("Failed to resolve generated plan while waiting: %s", exc)
-                return False
-            return all(
-                self._wait_for_trajectory_completion(name, timeout, poll_interval)
-                for name in affected
-            )
-
-        robot = self._get_robot(robot_name)
-        if robot is None:
+        if last_plan is None:
             return True
-        _, _, config, _ = robot
-        trajectory = last_plan.trajectory if last_plan is not None else None
-
-        if not config.coordinator_task_name:
-            # No coordinator — wait for trajectory duration as fallback
-            if trajectory is not None:
-                logger.info(
-                    f"No coordinator status — waiting {trajectory.duration:.1f}s for trajectory"
-                )
-                time.sleep(trajectory.duration + 0.5)
-            return True
-
-        # Poll task state through the shared coordinator client.
-        start = time.time()
-        while (time.time() - start) < timeout:
-            try:
-                state = self._coordinator_client.get_task_state(config.coordinator_task_name)
-                # TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4
-                if state is not None:
-                    state_val = int(state)
-                    if state_val in (0, 2):  # IDLE or COMPLETED
-                        return True
-                    if state_val in (3, 4):  # ABORTED or FAULT
-                        logger.warning(f"Trajectory failed: state={state}")
-                        return False
-                    # state_val == 1 means EXECUTING, keep polling
-                else:
-                    # No task state means the task is unavailable; assume done.
-                    return True
-            except Exception:
-                # Fallback: wait for trajectory duration
-                if trajectory is not None:
-                    remaining = trajectory.duration - (time.time() - start)
-                    if remaining > 0:
-                        logger.info(f"Status poll failed — waiting {remaining:.1f}s for trajectory")
-                        time.sleep(remaining + 0.5)
-                return True
-            time.sleep(poll_interval)
-
-        logger.warning(f"Trajectory execution timed out after {timeout}s")
-        return False
+        wait_time = last_plan.trajectory.duration + 0.5
+        if wait_time > timeout:
+            logger.warning(f"Trajectory duration exceeds timeout of {timeout}s")
+            return False
+        time.sleep(wait_time)
+        return True
 
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
@@ -1715,10 +1581,10 @@ class ManipulationModule(Module):
         self.preview_path(preview_duration, robot_name)
 
         logger.info("Executing trajectory...")
-        if not self.execute(robot_name):
+        if not self.execute():
             return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
 
-        if not self._wait_for_trajectory_completion(robot_name):
+        if not self._wait_for_trajectory_completion():
             return SkillResult.fail("EXECUTION_TIMEOUT", "Trajectory execution timed out")
 
         return SkillResult.ok()
@@ -1968,8 +1834,8 @@ class ManipulationModule(Module):
             cancellation = execution_manager.cancel()
             if not cancellation.safe:
                 logger.error(
-                    "Shutdown could not confirm coordinator task safety: %s",
-                    ", ".join(cancellation.unresolved_tasks),
+                    "Shutdown could not confirm coordinator trajectory safety: %s",
+                    cancellation.message,
                 )
 
         # Stop TF thread

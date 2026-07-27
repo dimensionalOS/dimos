@@ -12,11 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.coordinator_client import ControlCoordinatorClient
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
@@ -32,40 +38,37 @@ def coordinator_client(rpc_client: MagicMock) -> ControlCoordinatorClient:
     client.close()
 
 
-def test_task_commands_preserve_raw_results(
+def test_trajectory_commands_preserve_semantic_results(
     coordinator_client: ControlCoordinatorClient,
     rpc_client: MagicMock,
 ) -> None:
     trajectory = JointTrajectory()
-    rpc_client.task_invoke.side_effect = [True, None]
+    execute_result = TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+    cancel_result = TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
+    rpc_client.execute_trajectory.return_value = execute_result
+    rpc_client.cancel_trajectory.return_value = cancel_result
 
-    execute_result = coordinator_client.execute_task("trajectory", trajectory)
-    cancel_result = coordinator_client.cancel_task("trajectory")
+    actual_execute = coordinator_client.execute_trajectory(trajectory)
+    actual_cancel = coordinator_client.cancel_trajectory()
 
-    assert execute_result is True
-    assert cancel_result is None
-    assert rpc_client.task_invoke.call_args_list == [
-        call("trajectory", "execute", {"trajectory": trajectory}),
-        call("trajectory", "cancel", {}),
-    ]
+    assert actual_execute is execute_result
+    assert actual_cancel is cancel_result
+    rpc_client.execute_trajectory.assert_called_once_with(trajectory)
+    rpc_client.cancel_trajectory.assert_called_once_with()
 
 
-def test_status_and_gripper_commands_delegate_with_typed_results(
+def test_gripper_commands_delegate_with_typed_results(
     coordinator_client: ControlCoordinatorClient,
     rpc_client: MagicMock,
 ) -> None:
-    rpc_client.task_invoke.return_value = 2
     rpc_client.set_gripper_position.return_value = True
     rpc_client.get_gripper_position.return_value = 0.25
 
-    state = coordinator_client.get_task_state("trajectory")
     set_result = coordinator_client.set_gripper_position("gripper", 0.25)
     position = coordinator_client.get_gripper_position("gripper")
 
-    assert state == 2
     assert set_result is True
     assert position == 0.25
-    rpc_client.task_invoke.assert_called_once_with("trajectory", "get_state", {})
     rpc_client.set_gripper_position.assert_called_once_with("gripper", 0.25)
     rpc_client.get_gripper_position.assert_called_once_with("gripper")
 

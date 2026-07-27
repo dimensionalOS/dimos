@@ -57,10 +57,7 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
     coordinator(
         hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
-        tasks=[
-            trajectory_task(_mock_left_xarm6_hw),
-            trajectory_task(_mock_right_xarm6_hw),
-        ],
+        tasks=[trajectory_task(_mock_left_xarm6_hw, _mock_right_xarm6_hw)],
     ),
 )
 
@@ -101,10 +98,10 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[
         TaskConfig(
-            name="traj_left", type="trajectory", joint_names=_xarm7_left.joints, priority=10
-        ),
-        TaskConfig(
-            name="traj_right", type="trajectory", joint_names=_xarm6_right.joints, priority=10
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
+            priority=10,
         ),
     ],
 )

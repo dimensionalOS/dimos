@@ -73,7 +73,6 @@ def make_a1z_model_config(
     *,
     has_gripper: bool = True,
     joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     local_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
@@ -100,7 +99,6 @@ def make_a1z_model_config(
             joint_prefix=joint_prefix,
             urdf_joint_prefix="arm_",
         ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name if has_gripper else None,
         home_joints=home_joints or [0.0] * A1Z_DOF,
     )
