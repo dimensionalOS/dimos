@@ -507,12 +507,23 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
-                // Idle: fold in any finished background GNC classification now
-                // instead of waiting for the next keyframe, so an outlier loop
-                // committed right before the robot stopped (or the stream
-                // ended) is still removed and the corrected graph republished.
-                if pgo.poll_and_apply_gnc_classification() {
-                    pgo.smooth_and_update();
+                // Idle: fold in any finished background GNC solve now instead
+                // of waiting for the next keyframe, so the map snaps into
+                // place when the robot pauses (or the stream ends). Adopting
+                // the batch solution (poses + rebuilt iSAM2) recovers from
+                // incremental divergence; with location constraints in use the
+                // rebuild would drop their factors, so fall back to
+                // classification-only there.
+                let gnc_folded = if self.config.use_location_constraints {
+                    let applied = pgo.poll_and_apply_gnc_classification();
+                    if applied {
+                        pgo.smooth_and_update();
+                    }
+                    applied
+                } else {
+                    pgo.poll_and_adopt_gnc_solution()
+                };
+                if gnc_folded {
                     let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
                     self.publish_graph(
                         &pgo,

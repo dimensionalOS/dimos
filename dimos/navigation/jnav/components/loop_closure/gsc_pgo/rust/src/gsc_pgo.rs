@@ -1730,6 +1730,86 @@ impl GscPgo {
         removed_any
     }
 
+    /// Idle path: adopt the newest background GNC solve wholesale — batch
+    /// poses written back and iSAM2 rebuilt from backbone + kept loops —
+    /// because iSAM2 linearization never recovers from mass false-closure
+    /// removal. Rebuild drops location-constraint factors, so callers gate
+    /// on `use_location_constraints`.
+    pub fn poll_and_adopt_gnc_solution(&mut self) -> bool {
+        let mut latest_result: Option<GncResult> = None;
+        if let Some(worker) = &self.gnc_worker {
+            while let Ok(result) = worker.result_receiver.try_recv() {
+                latest_result = Some(result);
+            }
+        }
+        let Some(result) = latest_result else {
+            return false;
+        };
+        self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
+        self.apply_gnc_result(&result);
+
+        let mut graph = FactorGraph::new();
+        let mut values = Values::new();
+        let backbone: Vec<BackboneKeyframe> = self
+            .key_poses
+            .iter()
+            .map(|key_pose| BackboneKeyframe {
+                rotation_local: key_pose.rotation_local,
+                translation_local: key_pose.translation_local,
+                initial_rotation: key_pose.rotation_global,
+                initial_translation: key_pose.translation_global,
+            })
+            .collect();
+        build_odometry_backbone(
+            &mut graph,
+            &mut values,
+            &backbone,
+            &BackboneNoise::from_config(&self.config),
+        );
+        // Post-snapshot loops still carry weight 1.0 and re-enter; next GNC vets them.
+        let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
+        for (edge_index, loop_edge) in self.committed_loops.iter().enumerate() {
+            if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
+                continue;
+            }
+            let variance =
+                loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
+            let noise = NoiseModel::diagonal_variances(&[variance; 6]);
+            kept_loop_positions.push((edge_index, graph.len()));
+            graph
+                .add_between_pose3(
+                    loop_edge.target_id as u64,
+                    loop_edge.source_id as u64,
+                    &Pose3 {
+                        rotation: loop_edge.rotation_offset,
+                        translation: loop_edge.translation_offset,
+                    },
+                    &noise,
+                )
+                .expect("gtsam: adopt loop between factor");
+        }
+        let mut rebuilt_isam2 = Isam2::new();
+        let new_factor_indices = rebuilt_isam2
+            .update(&graph, &values, &[])
+            .expect("gtsam: adopt isam2 rebuild");
+        self.isam2 = rebuilt_isam2;
+        self.pending_removals.clear();
+        self.graph.clear();
+        self.initial_values.clear();
+        for loop_edge in &mut self.committed_loops {
+            loop_edge.active_in_isam2 = false;
+            loop_edge.isam2_factor_index = None;
+        }
+        for (edge_index, graph_position) in kept_loop_positions {
+            if graph_position < new_factor_indices.len() {
+                self.committed_loops[edge_index].isam2_factor_index =
+                    Some(new_factor_indices[graph_position]);
+                self.committed_loops[edge_index].active_in_isam2 = true;
+            }
+        }
+        true
+    }
+
     /// Direct access to the ICP used for loop verification — handy for
     /// standalone experiments; the loop path calls `icp_point_to_point`
     /// with these same defaults.
