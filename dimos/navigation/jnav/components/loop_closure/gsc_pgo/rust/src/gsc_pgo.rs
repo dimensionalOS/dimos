@@ -1770,66 +1770,90 @@ impl GscPgo {
     /// Discard the incremental iSAM2 and rebuild it from the odometry backbone
     /// plus every committed loop whose GNC weight still marks it an inlier
     /// (unclassified loops carry 1.0 and re-enter — the next GNC vets them),
-    /// seeded at the current keyframe globals.
+    /// seeded at the current keyframe globals. Loop factors keep the same
+    /// robust kernel the live path uses. If GTSAM throws even on the fresh
+    /// graph (mid-rejection it can hold hundreds of conflicting false
+    /// closures), fall back to the backbone alone — pure odometry always
+    /// solves, and the next GNC adoption restores the vetted loops.
     fn rebuild_isam2_from_backbone(&mut self) {
-        let mut graph = FactorGraph::new();
-        let mut values = Values::new();
-        let backbone: Vec<BackboneKeyframe> = self
-            .key_poses
-            .iter()
-            .map(|key_pose| BackboneKeyframe {
-                rotation_local: key_pose.rotation_local,
-                translation_local: key_pose.translation_local,
-                initial_rotation: key_pose.rotation_global,
-                initial_translation: key_pose.translation_global,
-            })
-            .collect();
-        build_odometry_backbone(
-            &mut graph,
-            &mut values,
-            &backbone,
-            &BackboneNoise::from_config(&self.config),
-        );
-        // Post-snapshot loops still carry weight 1.0 and re-enter; next GNC vets them.
-        let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
-        for (edge_index, loop_edge) in self.committed_loops.iter().enumerate() {
-            if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
-                continue;
+        for include_loops in [true, false] {
+            let mut graph = FactorGraph::new();
+            let mut values = Values::new();
+            let backbone: Vec<BackboneKeyframe> = self
+                .key_poses
+                .iter()
+                .map(|key_pose| BackboneKeyframe {
+                    rotation_local: key_pose.rotation_local,
+                    translation_local: key_pose.translation_local,
+                    initial_rotation: key_pose.rotation_global,
+                    initial_translation: key_pose.translation_global,
+                })
+                .collect();
+            build_odometry_backbone(
+                &mut graph,
+                &mut values,
+                &backbone,
+                &BackboneNoise::from_config(&self.config),
+            );
+            let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
+            if include_loops {
+                for (edge_index, loop_edge) in self.committed_loops.iter().enumerate() {
+                    if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
+                        continue;
+                    }
+                    let variance =
+                        loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
+                    let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
+                    let robust;
+                    let noise: &NoiseModel = if self.config.loop_robust_kernel {
+                        robust =
+                            NoiseModel::robust_huber(self.config.loop_robust_huber_k, &gaussian);
+                        &robust
+                    } else {
+                        &gaussian
+                    };
+                    kept_loop_positions.push((edge_index, graph.len()));
+                    graph
+                        .add_between_pose3(
+                            loop_edge.target_id as u64,
+                            loop_edge.source_id as u64,
+                            &Pose3 {
+                                rotation: loop_edge.rotation_offset,
+                                translation: loop_edge.translation_offset,
+                            },
+                            noise,
+                        )
+                        .expect("gtsam: rebuild loop between factor");
+                }
             }
-            let variance =
-                loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
-            let noise = NoiseModel::diagonal_variances(&[variance; 6]);
-            kept_loop_positions.push((edge_index, graph.len()));
-            graph
-                .add_between_pose3(
-                    loop_edge.target_id as u64,
-                    loop_edge.source_id as u64,
-                    &Pose3 {
-                        rotation: loop_edge.rotation_offset,
-                        translation: loop_edge.translation_offset,
-                    },
-                    &noise,
-                )
-                .expect("gtsam: adopt loop between factor");
-        }
-        let mut rebuilt_isam2 = Isam2::new();
-        let new_factor_indices = rebuilt_isam2
-            .update(&graph, &values, &[])
-            .expect("gtsam: adopt isam2 rebuild");
-        self.isam2 = rebuilt_isam2;
-        self.pending_removals.clear();
-        self.graph.clear();
-        self.initial_values.clear();
-        for loop_edge in &mut self.committed_loops {
-            loop_edge.active_in_isam2 = false;
-            loop_edge.isam2_factor_index = None;
-        }
-        for (edge_index, graph_position) in kept_loop_positions {
-            if graph_position < new_factor_indices.len() {
-                self.committed_loops[edge_index].isam2_factor_index =
-                    Some(new_factor_indices[graph_position]);
-                self.committed_loops[edge_index].active_in_isam2 = true;
+            let mut rebuilt_isam2 = Isam2::new();
+            let new_factor_indices = match rebuilt_isam2.update(&graph, &values, &[]) {
+                Ok(indices) => indices,
+                Err(gtsam_error) if include_loops => {
+                    eprintln!(
+                        "gtsam: isam2 rebuild with loops failed ({gtsam_error:?}); \
+                         retrying backbone-only"
+                    );
+                    continue;
+                }
+                Err(gtsam_error) => panic!("gtsam: backbone-only isam2 rebuild: {gtsam_error:?}"),
+            };
+            self.isam2 = rebuilt_isam2;
+            self.pending_removals.clear();
+            self.graph.clear();
+            self.initial_values.clear();
+            for loop_edge in &mut self.committed_loops {
+                loop_edge.active_in_isam2 = false;
+                loop_edge.isam2_factor_index = None;
             }
+            for (edge_index, graph_position) in kept_loop_positions {
+                if graph_position < new_factor_indices.len() {
+                    self.committed_loops[edge_index].isam2_factor_index =
+                        Some(new_factor_indices[graph_position]);
+                    self.committed_loops[edge_index].active_in_isam2 = true;
+                }
+            }
+            return;
         }
     }
 
