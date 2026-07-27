@@ -76,6 +76,7 @@ class PointLioConfig(NativeModuleConfig):
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build .#pointlio_native"
     stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))

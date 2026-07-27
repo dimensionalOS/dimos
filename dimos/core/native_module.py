@@ -129,20 +129,26 @@ class NativeModuleConfig(ModuleConfig):
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
+    # Base fields to send to the native process, on top of the subclass's own.
+    # Native config structs reject unknown fields, so a base field only crosses
+    # the boundary if that module's native struct declares it.
+    base_fields: frozenset[str] = frozenset()
+
+    def _ignore_fields(self) -> set[str]:
+        return set(NativeModuleConfig.model_fields) - self.base_fields
+
     def to_config_dict(self) -> dict[str, Any]:
         """
         Return module-specific config fields as a plain dict (for stdin JSON).
         """
-        # frame_id is a base field, but native modules stamp it onto their
-        # output message headers, so it passes through like to_cli_args keeps it.
-        ignore_fields = {f for f in NativeModuleConfig.model_fields if f != "frame_id"}
+        ignore_fields = self._ignore_fields()
         return {
             k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
         }
 
     def to_cli_args(self) -> list[str]:
         """Convert subclass config fields to CLI args (--name value)."""
-        ignore_fields = {f for f in NativeModuleConfig.model_fields if f != "frame_id"}
+        ignore_fields = self._ignore_fields()
         args: list[str] = []
         for f in self.__class__.model_fields:
             if f in ignore_fields:

@@ -65,6 +65,7 @@ class FastLio2Config(NativeModuleConfig):
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
     stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
     # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
     # DIMOS_FASTLIO_HOST_IP.
