@@ -41,7 +41,7 @@ use std::time::Duration;
 
 use dimos_gsc_pgo::gsc_pgo::{
     CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, LocationConstraintObs,
-    PoseWithTime,
+    PoseWithTime, GTSAM_THREAD_STACK_BYTES,
 };
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::msgs::{
@@ -289,6 +289,7 @@ impl GscPgoModule {
         // module's whole life instead of a tokio task.
         let thread = std::thread::Builder::new()
             .name("gsc-pgo-worker".into())
+            .stack_size(GTSAM_THREAD_STACK_BYTES)
             .spawn(move || worker.run())
             .expect("spawn PGO worker thread");
         self.worker = Some(WorkerHandle { stop, thread });
