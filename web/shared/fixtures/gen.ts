@@ -24,7 +24,18 @@ function b64(bytes: Uint8Array): string {
 }
 
 const controlMsgs: Record<string, Msg> = {
-  hello_robot: { t: "hello", v: 1, role: "robot" },
+  hello_robot: {
+    t: "hello",
+    v: 1,
+    role: "robot",
+    robot: { id: "go2-lab", name: "Go2 Laborator β", model: "unitree-go2" },
+    manifest: {
+      channels: [
+        { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
+        { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+      ],
+    },
+  },
   hello_viewer: { t: "hello", v: 1, role: "viewer" },
   welcome: { t: "welcome", v: 1 },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
@@ -34,6 +45,24 @@ const controlMsgs: Record<string, Msg> = {
     code: "version_mismatch",
     message: "protocol v1 required, versiune neacceptată",
   },
+  robots_two: {
+    t: "robots",
+    robots: [
+      { id: "go2-lab", name: "Go2 Laborator β", model: "unitree-go2" },
+      { id: "arm-01", name: "Braț 01", model: "xarm7" },
+    ],
+  },
+  robots_empty: { t: "robots", robots: [] },
+  watch: { t: "watch", robotId: "go2-lab" },
+  manifest_reply: {
+    t: "manifest",
+    robotId: "go2-lab",
+    channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 }],
+  },
+  sub: { t: "sub", ch: "color_image" },
+  unsub: { t: "unsub", ch: "color_image" },
+  subs_snapshot: { t: "subs", chs: ["color_image", "odom"], n: 3 },
+  subs_empty: { t: "subs", chs: [], n: 4 },
 };
 
 const teleopMsgs: Record<string, Msg> = {

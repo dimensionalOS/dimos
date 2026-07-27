@@ -120,6 +120,8 @@ def module(xarm7_config):
     mod = ManipulationModule(
         robots=[xarm7_config],
         planning_timeout=10.0,
+        world_backend="drake",
+        planner_name="rrt_connect",
         visualization={"backend": "none"},
     )
     mod.coordinator_joint_state = None

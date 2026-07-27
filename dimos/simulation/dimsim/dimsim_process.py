@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 import subprocess
 import threading
-import time
 from typing import IO
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -47,7 +46,6 @@ class DimSimProcess:
 
         if headless:
             ensure_playwright_chromium(deno_path)
-        _kill_port_holder(port)
 
         render = os.environ.get("DIMSIM_RENDER", "").strip()
         if not render:
@@ -111,25 +109,6 @@ class DimSimProcess:
         ]:
             t = threading.Thread(target=_reader, args=(stream, label), daemon=True)
             t.start()
-
-
-def _kill_port_holder(port: int) -> None:
-    """Kill any process listening on the given port."""
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        pids = result.stdout.strip()
-        if pids:
-            for pid in pids.splitlines():
-                logger.info(f"Killing stale process {pid} on port {port}")
-                subprocess.run(["kill", pid], timeout=5)
-            time.sleep(0.5)
-    except Exception as e:
-        logger.warning(f"Failed to check/kill port {port}: {e}")
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:

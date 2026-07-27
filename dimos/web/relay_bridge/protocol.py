@@ -32,10 +32,19 @@ ProtocolError and kills only the affected stream.
 """
 
 from dataclasses import dataclass
+import json
 import struct
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 from dimos.utils.logging_config import setup_logger
 
@@ -71,10 +80,50 @@ class _WireModel(BaseModel):
 # seq=1 as 1.0, breaking byte-exact encoding against the golden fixtures.
 
 
+class RobotInfo(_WireModel):
+    id: str
+    name: str
+    model: str
+
+
+class ChannelSpec(_WireModel):
+    """One robot->viewer stream (see ChannelSpec in protocol.ts).
+
+    Field names are the wire names, hence the camelCase.
+    """
+
+    ch: str
+    encoding: str
+    delivery: Delivery
+    maxHz: int | float
+
+
+class RobotManifest(_WireModel):
+    channels: list[ChannelSpec]
+
+
+# Sentinel validation context passed by every wire-decode path: lets Hello
+# tell wire input apart from local construction, mirroring `robot?: RobotInfo`
+# in protocol.ts -- absent is fine, but neither encoder ever emits null, so an
+# explicit null on the wire is a protocol violation. Locally, robot=None just
+# means absent (and encoders omit None fields).
+_WIRE_CTX: dict[str, Any] = {}
+
+
 class Hello(_WireModel):
     t: Literal["hello"] = "hello"
     v: int | float
     role: Role
+    # role=robot only: identity + channel manifest, registered by the relay.
+    robot: RobotInfo | None = None
+    manifest: RobotManifest | None = None
+
+    @field_validator("robot", "manifest", mode="before")
+    @classmethod
+    def _reject_wire_null(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None and info.context is _WIRE_CTX:
+            raise ValueError("explicit null (absent optional fields are omitted)")
+        return value
 
 
 class Welcome(_WireModel):
@@ -100,6 +149,47 @@ class Error(_WireModel):
     message: str
 
 
+# Session messages (T2): robot registration, viewer watch + per-channel
+# subscriptions, and the relay->robot subscription snapshot.
+class Robots(_WireModel):
+    t: Literal["robots"] = "robots"
+    robots: list[RobotInfo]
+
+
+class Watch(_WireModel):
+    t: Literal["watch"] = "watch"
+    robotId: str
+
+
+class Manifest(_WireModel):
+    t: Literal["manifest"] = "manifest"
+    robotId: str
+    channels: list[ChannelSpec]
+
+
+class Sub(_WireModel):
+    t: Literal["sub"] = "sub"
+    ch: str
+
+
+class Unsub(_WireModel):
+    t: Literal["unsub"] = "unsub"
+    ch: str
+
+
+class Subs(_WireModel):
+    """Relay->robot: the full set of channels with >= 1 subscribed viewer.
+
+    A snapshot (not a delta) because it rides lossy datagrams: any single
+    delivery heals the state. `n` is monotonic per robot; receivers ignore
+    stale/reordered snapshots.
+    """
+
+    t: Literal["subs"] = "subs"
+    chs: list[str]
+    n: int | float
+
+
 # Teleop datagrams (carried from T6 on; declared so the wire format is pinned
 # by fixtures from day one).
 class Twist(_WireModel):
@@ -116,7 +206,21 @@ class Stop(_WireModel):
     ts: int | float
 
 
-Msg = Hello | Welcome | Ping | Pong | Error | Twist | Stop
+Msg = (
+    Hello
+    | Welcome
+    | Ping
+    | Pong
+    | Error
+    | Robots
+    | Watch
+    | Manifest
+    | Sub
+    | Unsub
+    | Subs
+    | Twist
+    | Stop
+)
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8
 # decoding, JSON parsing, and shape checks together, discriminated on "t".
@@ -126,8 +230,9 @@ _MSG_TA: TypeAdapter[Msg] = TypeAdapter(Annotated[Msg, Field(discriminator="t")]
 class FrameHeader(_WireModel):
     """Data-plane frame header.
 
-    `delivery` tells the relay how to forward without a manifest (T1 only; the
-    T2+ manifest replaces it). `meta` carries encoding-specific extras.
+    `delivery` tells the relay how to forward frames on channels the robot's
+    manifest does not declare (the manifest's delivery wins when present).
+    `meta` carries encoding-specific extras.
     """
 
     ch: str
@@ -144,21 +249,26 @@ class DataFrame:
 
 
 def msg_from_dict(data: dict[str, Any]) -> Msg:
+    # Through JSON, not validate_python: strict python-mode validation wants
+    # model instances for nested fields (hello.robot), but callers hold
+    # parsed-JSON dicts.
     try:
-        return _MSG_TA.validate_python(data)
+        return _MSG_TA.validate_json(json.dumps(data), context=_WIRE_CTX)
     except ValidationError as e:
         raise ProtocolError(f"invalid message: {e}") from e
 
 
 def _msg_from_json(data: bytes) -> Msg:
     try:
-        return _MSG_TA.validate_json(data)
+        return _MSG_TA.validate_json(data, context=_WIRE_CTX)
     except ValidationError as e:
         raise ProtocolError(f"invalid message: {e}") from e
 
 
 def encode_control_frame(msg: Msg) -> bytes:
-    body = msg.model_dump_json().encode()
+    # exclude_none: absent optional fields are omitted, matching
+    # JSON.stringify dropping undefined (no field is ever null on the wire).
+    body = msg.model_dump_json(exclude_none=True).encode()
     return struct.pack("<I", len(body)) + body
 
 
@@ -191,13 +301,13 @@ class ControlFrameReader:
 
 
 def encode_datagram(msg: Msg) -> bytes:
-    return msg.model_dump_json().encode()
+    return msg.model_dump_json(exclude_none=True).encode()
 
 
 def decode_datagram(data: bytes) -> Msg | None:
     """Returns None for datagrams that are not our JSON messages."""
     try:
-        return _MSG_TA.validate_json(data)
+        return _MSG_TA.validate_json(data, context=_WIRE_CTX)
     except ValidationError:
         return None
 

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import sys
 from typing import Literal
 
@@ -24,7 +25,14 @@ import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot import external_blueprints as external
-from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
+from dimos.robot.cli.dimos import (
+    _normalize_simulation_argv,
+    _with_relay_bridge,
+    arg_help,
+    load_config_args,
+    main,
+)
+import dimos.utils.cache as cache_utils
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
@@ -144,6 +152,48 @@ def test_blueprint_arg_help_extra_args():
     ]
 
 
+def test_load_config_args_merges_cli_g_overrides(tmp_path):
+    """CLI flags (--transport, --local-relay, ...) must merge into the g
+    subtree built from config file / G__* env / -o g.* args, not replace it:
+    a replace silently reverts every other g.* key to its default."""
+
+    class Config(ModuleConfig):
+        pass
+
+    class TestModuleG(Module):
+        config: Config
+
+    blueprint = TestModuleG.blueprint()
+    kwargs = load_config_args(
+        blueprint.config(),
+        ["g.robot_id=go2-lab", "g.local_relay=false"],
+        tmp_path / "config.json",
+        cli_g_overrides={"local_relay": True},
+    )
+    assert kwargs["g"]["robot_id"] == "go2-lab"  # survives the CLI overrides
+    assert kwargs["g"]["local_relay"] is True  # the explicit flag wins its own key
+
+
+def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
+    class Config(ModuleConfig):
+        pass
+
+    class TestModule(Module):
+        config: Config
+
+    original_local_relay = global_config.local_relay
+    original_relay_url = global_config.relay_url
+    global_config.update(local_relay=False, relay_url=None)
+    try:
+        source = TestModule.blueprint()
+        assert _with_relay_bridge(source) is source
+    finally:
+        global_config.update(
+            local_relay=original_local_relay,
+            relay_url=original_relay_url,
+        )
+
+
 def test_blueprint_arg_help_required():
     """Test required arguments."""
 
@@ -209,7 +259,16 @@ def test_list_blueprints_reports_external_discovery_errors(
     assert "external metadata is invalid" in result.output
 
 
-def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def isolated_cache_locks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache_utils, "_CACHE_LOCK_DIR", tmp_path / "cache-users")
+    monkeypatch.setattr(cache_utils, "_CACHE_GATE_PATH", tmp_path / "cache-clean.lock")
+
+
+def test_run_reports_external_resolution_errors(
+    isolated_cache_locks: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def raise_error(name: str):
         raise external.ExternalBlueprintError(
             "Failed to load external blueprint "
@@ -229,7 +288,7 @@ def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch)
     assert "my_test_stack.missing:demo_blueprint" in result.output
 
 
-def test_run_reports_unknown_bare_blueprint() -> None:
+def test_run_reports_unknown_bare_blueprint(isolated_cache_locks: None) -> None:
     result = CliRunner().invoke(main, ["run", "missing-bare-blueprint"])
 
     assert result.exit_code == 1

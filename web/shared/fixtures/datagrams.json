@@ -5,9 +5,30 @@
       "message": {
         "t": "hello",
         "v": 1,
-        "role": "robot"
+        "role": "robot",
+        "robot": {
+          "id": "go2-lab",
+          "name": "Go2 Laborator β",
+          "model": "unitree-go2"
+        },
+        "manifest": {
+          "channels": [
+            {
+              "ch": "color_image",
+              "encoding": "jpeg.v1",
+              "delivery": "latest",
+              "maxHz": 15.5
+            },
+            {
+              "ch": "odom",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5
+            }
+          ]
+        }
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoicm9ib3QifQ=="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41fSx7ImNoIjoib2RvbSIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41fV19fQ=="
     },
     {
       "name": "hello_viewer",
@@ -52,6 +73,94 @@
         "message": "protocol v1 required, versiune neacceptată"
       },
       "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2MSByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
+    },
+    {
+      "name": "robots_two",
+      "message": {
+        "t": "robots",
+        "robots": [
+          {
+            "id": "go2-lab",
+            "name": "Go2 Laborator β",
+            "model": "unitree-go2"
+          },
+          {
+            "id": "arm-01",
+            "name": "Braț 01",
+            "model": "xarm7"
+          }
+        ]
+      },
+      "b64": "eyJ0Ijoicm9ib3RzIiwicm9ib3RzIjpbeyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSx7ImlkIjoiYXJtLTAxIiwibmFtZSI6IkJyYcibIDAxIiwibW9kZWwiOiJ4YXJtNyJ9XX0="
+    },
+    {
+      "name": "robots_empty",
+      "message": {
+        "t": "robots",
+        "robots": []
+      },
+      "b64": "eyJ0Ijoicm9ib3RzIiwicm9ib3RzIjpbXX0="
+    },
+    {
+      "name": "watch",
+      "message": {
+        "t": "watch",
+        "robotId": "go2-lab"
+      },
+      "b64": "eyJ0Ijoid2F0Y2giLCJyb2JvdElkIjoiZ28yLWxhYiJ9"
+    },
+    {
+      "name": "manifest_reply",
+      "message": {
+        "t": "manifest",
+        "robotId": "go2-lab",
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ]
+      },
+      "b64": "eyJ0IjoibWFuaWZlc3QiLCJyb2JvdElkIjoiZ28yLWxhYiIsImNoYW5uZWxzIjpbeyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dfQ=="
+    },
+    {
+      "name": "sub",
+      "message": {
+        "t": "sub",
+        "ch": "color_image"
+      },
+      "b64": "eyJ0Ijoic3ViIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    },
+    {
+      "name": "unsub",
+      "message": {
+        "t": "unsub",
+        "ch": "color_image"
+      },
+      "b64": "eyJ0IjoidW5zdWIiLCJjaCI6ImNvbG9yX2ltYWdlIn0="
+    },
+    {
+      "name": "subs_snapshot",
+      "message": {
+        "t": "subs",
+        "chs": [
+          "color_image",
+          "odom"
+        ],
+        "n": 3
+      },
+      "b64": "eyJ0Ijoic3VicyIsImNocyI6WyJjb2xvcl9pbWFnZSIsIm9kb20iXSwibiI6M30="
+    },
+    {
+      "name": "subs_empty",
+      "message": {
+        "t": "subs",
+        "chs": [],
+        "n": 4
+      },
+      "b64": "eyJ0Ijoic3VicyIsImNocyI6W10sIm4iOjR9"
     },
     {
       "name": "twist",

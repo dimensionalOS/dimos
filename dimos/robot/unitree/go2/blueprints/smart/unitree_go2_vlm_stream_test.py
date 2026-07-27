@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.agents.testing.vlm_stream_tester import VlmStreamTester
 from dimos.agents.vlm_agent import VLMAgent
-from dimos.agents.vlm_stream_tester import VlmStreamTester
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 

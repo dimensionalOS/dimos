@@ -36,11 +36,28 @@ from urllib.parse import urlparse
 import cv2
 import numpy as np
 
-from dimos.web.relay_bridge.protocol import DataFrame
+from dimos.web.relay_bridge.protocol import (
+    ChannelSpec,
+    DataFrame,
+    Manifest,
+    RobotInfo,
+    RobotManifest,
+    Sub,
+    Subs,
+    Watch,
+)
 from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient
 
 WIDTH, HEIGHT = 640, 480
+
+ROBOT = RobotInfo(id="smoke", name="Smoke Demo", model="synthetic")
+MANIFEST = RobotManifest(
+    channels=[
+        ChannelSpec(ch="color_image", encoding="jpeg.v1", delivery="latest", maxHz=60.0),
+        ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
+    ]
+)
 
 
 def make_jpeg(seq: int) -> bytes:
@@ -91,14 +108,60 @@ class ViewerStats:
         return " | ".join(parts) or "(nothing received yet)"
 
 
+async def _attach_viewer(viewer: RelayClient) -> None:
+    """watch the demo robot; the watch rides a lossy datagram, so it is
+    resent until the manifest reply proves it landed. Subs are driven by
+    _wait_subscribed, which resends them until the robot leg confirms."""
+    await viewer.hello()
+    deadline = time.monotonic() + 10
+    while True:
+        viewer.send_control(Watch(robotId=ROBOT.id))
+        with contextlib.suppress(asyncio.TimeoutError):
+            msg = await asyncio.wait_for(viewer._session.control_msgs.get(), 0.5)
+            while not isinstance(msg, Manifest):
+                msg = await asyncio.wait_for(viewer._session.control_msgs.get(), 0.5)
+            break
+        if time.monotonic() > deadline:
+            raise TimeoutError("viewer could not watch the demo robot")
+
+
+async def _wait_subscribed(robot: RelayClient, viewer: RelayClient, timeout: float = 10.0) -> None:
+    """Resend subs until the relay reports both channels wanted.
+
+    Subs ride lossy datagrams too, and the relay's subs snapshot to the robot
+    is the only proof of delivery: a one-shot Sub lost on a remote path would
+    never be healed. Polls the raw control queue - wait_for around the
+    control_messages() generator would close it permanently on timeout.
+    """
+    wanted = {spec.ch for spec in MANIFEST.channels}
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for spec in MANIFEST.channels:
+            viewer.send_control(Sub(ch=spec.ch))
+        window = min(time.monotonic() + 0.5, deadline)
+        while time.monotonic() < window:
+            if robot.is_closed:
+                raise RuntimeError("relay session closed before viewers subscribed")
+            with contextlib.suppress(asyncio.TimeoutError):
+                msg = await asyncio.wait_for(
+                    robot._session.control_msgs.get(), window - time.monotonic()
+                )
+                if isinstance(msg, Subs) and wanted <= set(msg.chs):
+                    return
+    raise TimeoutError(
+        f"relay never reported viewers subscribed to {sorted(wanted)} within {timeout} s"
+    )
+
+
 async def run(url: str, secs: float) -> None:
     stats = ViewerStats()
     async with (
         await RelayClient.connect(url, "robot") as robot,
         await RelayClient.connect(url, "viewer") as viewer,
     ):
-        await robot.hello()
-        await viewer.hello()
+        await robot.hello(robot=ROBOT, manifest=MANIFEST)
+        await _attach_viewer(viewer)
+        await _wait_subscribed(robot, viewer)
         rtt = await viewer.ping()
         print(f"connected; datagram RTT {rtt * 1000:.1f} ms")
 

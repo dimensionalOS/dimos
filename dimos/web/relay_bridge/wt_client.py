@@ -35,14 +35,34 @@ from dimos.web.relay_bridge.protocol import (
     Delivery,
     FrameHeader,
     Hello,
+    Msg,
     Ping,
     ProtocolError,
+    RobotInfo,
+    RobotManifest,
     Role,
+    encode_datagram,
 )
 
 logger = setup_logger()
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# aioquic never drops an unsendable datagram: max_datagram_size is fixed at
+# 1200 B (no PMTUD) and _write_application retries _datagrams_pending[0]
+# forever, so a datagram that cannot fit one packet (~1165 B encoded) wedges
+# every datagram queued behind it - hello resends, pings, all send_control.
+# Refuse to queue one; 1100 keeps margin under the real cliff.
+_HELLO_DATAGRAM_MAX_BYTES = 1100
+
+
+class RelayRejectedError(ProtocolError):
+    """The relay explicitly rejected this client's hello handshake."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"relay rejected hello: {code}: {message}")
 
 
 class RelayClient:
@@ -60,6 +80,7 @@ class RelayClient:
         self._ping_n = itertools.count(1)
         self._seq: dict[str, itertools.count[int]] = {}
         self._writers: list[LatestChannelWriter] = []
+        self._close_task: asyncio.Task[None] | None = None
 
     @classmethod
     async def connect(
@@ -86,7 +107,15 @@ class RelayClient:
             insecure = is_loopback
         if insecure and not is_loopback:
             raise ValueError(f"insecure=True is only allowed for loopback hosts, got {host!r}")
-        path = parsed.path if parsed.path not in ("", "/") else f"/{role}"
+        expected_path = f"/{role}"
+        if parsed.path in ("", "/"):
+            path = expected_path
+        elif parsed.path == expected_path:
+            path = parsed.path
+        else:
+            raise ValueError(
+                f"relay URL path must be {expected_path!r} for role={role}, got {parsed.path!r}"
+            )
 
         ctx = aioquic_connect(
             host,
@@ -116,30 +145,59 @@ class RelayClient:
         await self.close()
 
     async def close(self) -> None:
+        # Assign before the first await so concurrent watchdog/supervisor/
+        # teardown callers share one context-manager exit. Shielding keeps a
+        # cancelled caller from cancelling the shutdown itself; later callers
+        # still await its completion (or receive its exception).
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
         for writer in self._writers:
             writer.stop()
         self._writers.clear()
         await self._ctx.__aexit__(None, None, None)
 
-    async def hello(self, timeout: float = 5.0) -> None:
+    async def hello(
+        self,
+        timeout: float = 5.0,
+        *,
+        robot: RobotInfo | None = None,
+        manifest: RobotManifest | None = None,
+    ) -> None:
         """Send hello datagrams until the relay's welcome arrives.
 
-        Datagrams are lossy, so the hello is repeated every 200 ms. Raises
-        ProtocolError if the relay answers with an error (version mismatch),
-        TimeoutError if nothing answers within `timeout`.
+        Robot sessions carry their identity and channel manifest in the hello
+        (the relay registers the robot from it). Datagrams are lossy, so the
+        hello is repeated every 200 ms. Raises ProtocolError if the encoded
+        hello exceeds the datagram budget or the relay answers with an error
+        (version mismatch, missing robot id), TimeoutError if nothing answers
+        within `timeout`.
         """
+        msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest)
+        size = len(encode_datagram(msg))
+        if size > _HELLO_DATAGRAM_MAX_BYTES:
+            raise ProtocolError(
+                f"hello datagram is {size} B (limit {_HELLO_DATAGRAM_MAX_BYTES}); an "
+                "oversized datagram wedges aioquic's whole datagram queue - trim the manifest"
+            )
         deadline = time.monotonic() + timeout
         while True:
-            self._session.send_msg(Hello(v=PROTOCOL_VERSION, role=self.role))
+            self._session.send_msg(msg)
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._session.welcomed.wait(), 0.2)
             if self._session.relay_error is not None:
                 err = self._session.relay_error
-                raise ProtocolError(f"relay rejected hello: {err.code}: {err.message}")
+                raise RelayRejectedError(err.code, err.message)
             if self._session.welcomed.is_set():
                 return
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"no welcome from relay within {timeout} s")
+
+    def send_control(self, msg: Msg) -> None:
+        """Send one control message to the relay (datagram: lossy, ordered-less)."""
+        self._session.send_msg(msg)
 
     async def ping(self, timeout: float = 5.0) -> float:
         """Datagram ping; returns the round-trip time in seconds."""
@@ -217,10 +275,37 @@ class RelayClient:
         finally:
             closed.cancel()
 
+    async def control_messages(self) -> AsyncIterator[Msg]:
+        """Control messages pushed by the relay (subs snapshots, robots, ...).
+
+        Same contract as :meth:`frames`: buffered messages drain before the
+        close is honored, and cancelling the consumer never orphans the queue
+        getter. Ends when the session closes.
+        """
+        closed = asyncio.ensure_future(self._session.wait_closed())
+        try:
+            while True:
+                get = asyncio.ensure_future(self._session.control_msgs.get())
+                try:
+                    await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
+                    if not get.done():
+                        return
+                    msg = get.result()
+                finally:
+                    get.cancel()
+                yield msg
+        finally:
+            closed.cancel()
+
     @property
     def frames_dropped(self) -> int:
         """Frames dropped locally because the consumer lagged (drop-oldest)."""
         return self._session.frames_dropped
+
+    @property
+    def control_dropped(self) -> int:
+        """Control messages dropped locally under consumer lag (drop-oldest)."""
+        return self._session.control_dropped
 
 
 class LatestChannelWriter:

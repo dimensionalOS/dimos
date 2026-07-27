@@ -311,11 +311,12 @@ jobs:
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
-      - name: Install dependency for pyaudio (Ubuntu)
+      # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
+      - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -529,13 +530,15 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
-      - name: Point uv at the persistent cache volume
+      - name: Point uv at a persistent cache on the workspace mount
         # HOME in container jobs is an ephemeral /github/home, so uv's default
-        # cache would be dropped after every run. /root/.cache is bind-mounted
-        # from the runner host (see container.volumes above), so downloaded
-        # wheels survive between jobs.
+        # cache would be dropped after every run. The workspace mount (/__w,
+        # the runner's _work dir) persists on the self-hosted runner, and
+        # unlike the /root/.cache volume it is the same mount as .venv:
+        # hardlinks across two docker bind mounts fail with EXDEV even on one
+        # filesystem, making uv fall back to a minutes-long full copy.
         if: matrix.os == 'Linux'
-        run: echo "UV_CACHE_DIR=/root/.cache/uv" >> "$GITHUB_ENV"
+        run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
