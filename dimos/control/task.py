@@ -327,6 +327,13 @@ class BaseControlTask(ControlTask):
     in tasks that don't need them. Only override what your task uses.
     """
 
+    _name: str
+
+    @property
+    def name(self) -> str:
+        """Unique task identifier, backed by ``self._name``."""
+        return self._name
+
     def on_buttons(self, msg: Buttons) -> bool:
         """No-op default."""
         return False

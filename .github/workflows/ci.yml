@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -47,13 +48,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
         run: uv run mypy
+
+      # The deno-fmt pre-commit hook needs deno on PATH.
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
@@ -114,7 +127,7 @@ jobs:
             (cd "$crate" && cargo test --workspace --all-features --locked)
           done
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install dependency for pyaudio
@@ -150,10 +163,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libturbojpeg portaudio19-dev
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
       - name: Install Python dependencies
@@ -216,7 +229,7 @@ jobs:
       - name: Pull docs LFS assets only
         run: git lfs pull --include="docs/assets/**" --exclude=""
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
@@ -228,6 +241,42 @@ jobs:
       # - name: Validate Mintlify docs
       #   working-directory: docs
       #   run: npm run validate
+
+  web:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+
+      - name: Deno fmt
+        working-directory: web
+        run: deno fmt --check
+
+      - name: Deno lint
+        working-directory: web
+        run: deno lint
+
+      - name: Deno check
+        working-directory: web
+        run: deno task check
+
+      - name: Deno test
+        working-directory: web
+        run: deno task test
 
   tests:
     timeout-minutes: 20
@@ -254,11 +303,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6.3.0
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
@@ -266,8 +315,6 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          # portaudio for pyaudio; libturbojpeg for image codecs (the arm
-          # runner image doesn't ship it, x64 only has it by accident)
           sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -321,7 +368,7 @@ jobs:
     # Check whether the modules-for-this-config marker cache
     # already exists. Used to skip cmu-nav-natives without using the cachix environment.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -350,15 +397,19 @@ jobs:
           lookup-only: true
 
   cmu-nav-natives:
-    # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
     # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
     # reaches a `run:` step here could exfiltrate the token, letting an attacker
     # push poisoned binaries to the Cachix cache — which subsequent CI runs and
-    # every dev with the substituter configured would unwittingly install. The
-    # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
+    # every dev with the substituter configured would unwittingly install.
+    # Allowed only on trusted events: push, merge_group (a maintainer must
+    # approve + queue the PR), and same-repo PRs — NEVER on fork `pull_request`s.
+    # The `if:` guard below is the only thing keeping forks out — DO NOT REMOVE.
+    # merge_group runs the PR's *merged* workflow with secrets, so .github/
+    # changes must be reviewed before a fork PR is queued.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
     needs: cmu-nav-natives-marker
     timeout-minutes: 300
@@ -373,7 +424,7 @@ jobs:
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install minimal dimos for module discovery
@@ -406,7 +457,7 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build cmu_nav native modules
         env:
-          BUILD_WORKERS: "2"
+          BUILD_WORKERS: "1"
         run: uv run bin/build-cmu-nav-natives
       - name: Write marker file
         run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
@@ -420,10 +471,12 @@ jobs:
           key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
 
   self-hosted-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
+    # Runs on push, merge_group (trusted — a maintainer must approve + queue the
+    # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
+    # self-hosted runner to untrusted code from external contributors.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
       contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
@@ -439,6 +492,9 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              # Hard-cap container RAM so a runaway test OOMs inside the container, not
+              # as a host global-OOM that takes out sshd/tmux.
+              options: --memory=6g --memory-swap=6g
               # Persist Nix state on the self-hosted runner's filesystem so
               # the ~3 GB module closures survive between jobs.
               volumes:
@@ -473,10 +529,20 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Point uv at a persistent cache on the workspace mount
+        # HOME in container jobs is an ephemeral /github/home, so uv's default
+        # cache would be dropped after every run. The workspace mount (/__w,
+        # the runner's _work dir) persists on the self-hosted runner, and
+        # unlike the /root/.cache volume it is the same mount as .venv:
+        # hardlinks across two docker bind mounts fail with EXDEV even on one
+        # filesystem, making uv fall back to a minutes-long full copy.
+        if: matrix.os == 'Linux'
+        run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk above, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -530,7 +596,8 @@ jobs:
           extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           always-allow-substitutes = true
           build-users-group =
-          max-jobs = auto
+          # Substitute-only: everything should be compiled already and stored in Cachix.
+          max-jobs = 0
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch cmu_nav native modules from Cachix
@@ -586,6 +653,20 @@ jobs:
           df -h /nix || true
           nix-collect-garbage --delete-older-than 3d
           df -h /nix || true
+      - name: Prune the persistent uv cache
+        # Same story as /nix above: lock bumps accumulate superseded wheels
+        # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
+        # evicts pre-built wheels (re-downloaded on the next run) while keeping
+        # the expensive wheels built from source. uv has nothing age-based.
+        # Not always(): on a cancelled run, lingering test processes still
+        # hold the shared cache lock and prune would block on it until the
+        # job timeout.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -615,10 +696,22 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Fetch DimSim LFS assets only
+        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
+        # glbs are pointer stubs and the browser sim fails to load them. Pull
+        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
+        # multi-GB data/.lfs/* objects (some missing on the server → 404).
+        # persist-credentials is false above, so supply the token for this pull.
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
+          git lfs pull --include="misc/DimSim/**"
+          git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -689,6 +782,15 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Prune the persistent uv cache
+        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
+        # default with `uv cache dir`.
+        if: ${{ !cancelled() }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
@@ -713,6 +815,7 @@ jobs:
     - rust
     - md-babel
     - docs-validate
+    - web
     - tests
     - cmu-nav-natives
     - self-hosted-tests

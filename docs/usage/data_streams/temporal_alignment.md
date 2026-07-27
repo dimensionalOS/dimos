@@ -162,7 +162,7 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline.png)
 
 If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
 
@@ -187,7 +187,7 @@ Aligned pairs: 23 out of 58 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline2.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline2.png)
 
 ## Combine Frame Alignment with a Quality Filter
 
@@ -230,7 +230,7 @@ Aligned pairs: 1 out of 6 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline3.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline3.png)
 
 We are very picky but data is high quality. Best frame, with closest lidar match in this window.
 

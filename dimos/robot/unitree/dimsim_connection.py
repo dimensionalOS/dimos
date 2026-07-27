@@ -95,10 +95,23 @@ class DimSimConnection:
     def balance_stand(self) -> bool:
         return True
 
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
+    def stop_movement(self) -> None:
+        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
         pass
 
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
+
     def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:

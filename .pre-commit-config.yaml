@@ -49,11 +49,14 @@ repos:
         args: [--fix=lf]
         exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
+        exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
       - id: check-yaml
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
+        # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`
+        exclude: ^(misc/DimSim/public/sims/|web/)
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1
@@ -94,6 +97,7 @@ repos:
         always_run: true
         pass_filenames: false
         entry: python bin/hooks/largefiles_check
+        args: [--all]
         language: python
         additional_dependencies: ['tomli']
 
@@ -148,4 +152,11 @@ repos:
           '
         language: system
         types: [rust]
+        pass_filenames: false
+
+      - id: deno-fmt
+        name: deno fmt (web/)
+        entry: bash -c 'cd web && deno fmt'
+        language: system
+        files: ^web/
         pass_filenames: false

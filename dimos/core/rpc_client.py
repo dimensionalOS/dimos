@@ -104,6 +104,7 @@ class RPCClient:
         self,
         actor_instance: Actor | None,
         actor_class: type[ModuleBase],
+        remote_name: str | None = None,
         *,
         rpc: RPCSpec | None = None,
     ) -> None:
@@ -115,7 +116,7 @@ class RPCClient:
             self.rpc = rpc
             self._owns_rpc = False
         self.actor_class = actor_class
-        self.remote_name = actor_class.__name__
+        self.remote_name = remote_name or actor_class.__name__
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self._unsub_fns: list = []  # type: ignore[type-arg]
@@ -139,10 +140,12 @@ class RPCClient:
             self.rpc = None  # type: ignore[assignment]
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Return the class and the arguments needed to reconstruct the object
+        # Return the class and the arguments needed to reconstruct the object.
+        # remote_name must be included or proxies pickled into workers would
+        # fall back to class-name RPC topics.
         return (
             self.__class__,
-            (self.actor_instance, self.actor_class),
+            (self.actor_instance, self.actor_class, self.remote_name),
         )
 
     # passthrough

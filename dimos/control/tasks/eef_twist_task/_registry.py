@@ -15,3 +15,10 @@
 TASK_FACTORIES = {
     "eef_twist": "dimos.control.tasks.eef_twist_task.eef_twist_task:create_task",
 }
+
+TASK_CONSUMES = {
+    "eef_twist": {
+        "coordinator_ee_twist_command": ("on_ee_twist_command", "by_task_name"),
+        "gripper_command": ("on_gripper_command", "broadcast"),
+    },
+}

@@ -88,6 +88,7 @@ class CameraConfig:
     fps: float = 15.0
     max_geom: int | None = 10000
     geom_groups: tuple[int, ...] | None = None
+    base_body_name: str | None = None
 
 
 @dataclass
@@ -98,6 +99,8 @@ class CameraFrame:
     cam_mat: NDArray[np.float64]
     fovy: float
     timestamp: float
+    base_pos: NDArray[np.float64] | None = None
+    base_mat: NDArray[np.float64] | None = None
 
 
 @dataclass
@@ -127,6 +130,7 @@ class _CameraRendererState:
     depth_renderer: mujoco.Renderer
     scene_option: mujoco.MjvOption | None
     interval: float
+    base_body_id: int | None = None
     last_render_time: float = 0.0
 
 
@@ -390,6 +394,13 @@ class MujocoEngine(SimulationEngine):
                     if 0 <= group < len(geomgroup):
                         geomgroup[group] = 1
             interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
+            base_body_id = None
+            if cfg.base_body_name:
+                body_id = mujoco.mj_name2id(
+                    self._model, mujoco.mjtObj.mjOBJ_BODY, cfg.base_body_name
+                )
+                if body_id >= 0:
+                    base_body_id = int(body_id)
             cam_renderers[cfg.name] = _CameraRendererState(
                 cfg=cfg,
                 cam_id=cam_id,
@@ -397,6 +408,7 @@ class MujocoEngine(SimulationEngine):
                 depth_renderer=depth_renderer,
                 scene_option=scene_option,
                 interval=interval,
+                base_body_id=base_body_id,
             )
         return cam_renderers
 
@@ -456,6 +468,16 @@ class MujocoEngine(SimulationEngine):
                 cam_mat=self._data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
                 timestamp=now,
+                base_pos=(
+                    self._data.xpos[state.base_body_id].copy()
+                    if state.base_body_id is not None
+                    else None
+                ),
+                base_mat=(
+                    self._data.xmat[state.base_body_id].copy().reshape(3, 3)
+                    if state.base_body_id is not None
+                    else None
+                ),
             )
             with self._camera_lock:
                 self._camera_frames[state.cfg.name] = frame

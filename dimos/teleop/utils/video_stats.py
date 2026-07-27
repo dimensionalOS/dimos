@@ -14,14 +14,9 @@
 
 """Operator-side video health snapshot, sampled in the browser via getStats().
 
-Same trick as ``Buttons`` (which rides on ``UInt32`` with bit packing): we
-don't need a new LCM type, we ride on ``sensor_msgs.Joy`` with positional
-``axes[]`` slots for each metric. That keeps the message wire-compatible with
-the existing dimos_lcm stack while exposing named fields in Python.
-
-This is a teleop-only construct (not a general sensor message), so it lives
-beside the other teleop helpers in ``teleop/utils`` rather than in
-``dimos.msgs.sensor_msgs``.
+Rides on ``sensor_msgs.Joy`` positional ``axes[]`` (like ``Buttons`` on
+``UInt32``) to stay wire-compatible with dimos_lcm without a new LCM type.
+Teleop-only, so it lives in ``teleop/utils``, not ``dimos.msgs``.
 """
 
 from __future__ import annotations
@@ -52,21 +47,14 @@ _AXES = (
     "decode_ms",
     "frames_dropped",
     "freezes",
+    "e2e_latency_ms",
 )
 
 
 class VideoStats(Timestamped):
-    """One snapshot of operator-side video health.
-
-    Sampled by the operator's browser from ``pc.getStats()`` once per second
-    and shipped to the robot, where ``HostedTeleopModule`` publishes it on
-    an ``Out[VideoStats]`` port. The recorder captures it like any other
-    typed stream — no sidecar file needed.
-
-    All fields are floats on the wire (Joy ``axes[]`` is ``float32[]``);
-    ``width``, ``height``, ``frames_dropped``, ``freezes`` are integer-valued
-    but stored as floats. float32 is exact for integers up to 2^24.
-    """
+    """One operator-side video-health snapshot (browser getStats, ~1 Hz),
+    shipped to the robot and published on an ``Out[VideoStats]`` port. Integer
+    fields ride the float32 ``axes[]`` — exact up to 2^24."""
 
     msg_name = "sensor_msgs.VideoStats"
 
@@ -81,6 +69,7 @@ class VideoStats(Timestamped):
     decode_ms: float
     frames_dropped: int
     freezes: int
+    e2e_latency_ms: float
 
     def __init__(
         self,
@@ -95,6 +84,7 @@ class VideoStats(Timestamped):
         decode_ms: float = 0.0,
         frames_dropped: int = 0,
         freezes: int = 0,
+        e2e_latency_ms: float = 0.0,
     ) -> None:
         self.ts = ts if ts != 0 else time.time()
         self.frame_id = frame_id
@@ -107,6 +97,7 @@ class VideoStats(Timestamped):
         self.decode_ms = float(decode_ms)
         self.frames_dropped = int(frames_dropped)
         self.freezes = int(freezes)
+        self.e2e_latency_ms = float(e2e_latency_ms)
 
     @classmethod
     def from_dict(cls, d: dict[str, float | int]) -> VideoStats:
@@ -128,6 +119,7 @@ class VideoStats(Timestamped):
             decode_ms=float(d.get("decode_ms") or 0.0),
             frames_dropped=int(d.get("frames_dropped") or 0),
             freezes=int(d.get("freezes") or 0),
+            e2e_latency_ms=float(d.get("e2e_latency_ms") or 0.0),
         )
 
     def _as_axes(self) -> list[float]:
@@ -142,6 +134,7 @@ class VideoStats(Timestamped):
             self.decode_ms,
             float(self.frames_dropped),
             float(self.freezes),
+            self.e2e_latency_ms,
         ]
 
     def lcm_encode(self) -> bytes:
@@ -173,6 +166,7 @@ class VideoStats(Timestamped):
             decode_ms=axes[6],
             frames_dropped=int(axes[7]),
             freezes=int(axes[8]),
+            e2e_latency_ms=axes[9],
         )
 
     def __str__(self) -> str:
@@ -180,6 +174,7 @@ class VideoStats(Timestamped):
             f"VideoStats({self.width}x{self.height} {self.fps:.1f}fps "
             f"{self.kbps:.0f}kbps loss={self.loss_pct:.2f}% "
             f"jbuf={self.jitter_buffer_ms:.0f}ms decode={self.decode_ms:.1f}ms "
+            f"e2e={self.e2e_latency_ms:.0f}ms "
             f"dropped={self.frames_dropped} freezes={self.freezes})"
         )
 
@@ -200,4 +195,5 @@ class VideoStats(Timestamped):
             and math.isclose(self.decode_ms, other.decode_ms, rel_tol=1e-4, abs_tol=1e-5)
             and self.frames_dropped == other.frames_dropped
             and self.freezes == other.freezes
+            and math.isclose(self.e2e_latency_ms, other.e2e_latency_ms, rel_tol=1e-4, abs_tol=1e-5)
         )
