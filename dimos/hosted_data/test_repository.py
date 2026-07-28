@@ -140,7 +140,7 @@ def test_public_status_page_and_health_capabilities(tmp_path: Path) -> None:
     assert "Service online" in page.text
     assert "HTTP HEAD and byte ranges" in page.text
     assert "Expiring signed downloads" in page.text
-    assert 'src="/assets/hosted-data.js?v=4"' in page.text
+    assert 'src="/assets/hosted-data.js?v=6"' in page.text
     assert 'id="browser-browse-button"' in page.text
     assert page.headers["Content-Security-Policy"].startswith("default-src 'none'")
     assert "script-src 'self'" in page.headers["Content-Security-Policy"]
@@ -473,6 +473,46 @@ def test_public_read_never_allows_anonymous_upload(tmp_path: Path) -> None:
     assert objects == []
 
 
+def test_public_write_allows_anonymous_resumable_upload(tmp_path: Path) -> None:
+    payload = b"public demo video"
+
+    with _running_server(
+        tmp_path / "objects",
+        public_read=True,
+        public_write=True,
+    ) as server_url:
+        collection = f"{server_url}/api/v1/repositories/demo/videos/uploads"
+        created = requests.post(
+            collection,
+            headers={
+                "X-Dimos-Filename": "anonymous.mp4",
+                "X-Dimos-Size": str(len(payload)),
+                "X-Dimos-Content-Type": "video/mp4",
+            },
+            timeout=5.0,
+        )
+        session_url = f"{collection}/{created.json()['upload_id']}"
+        uploaded = requests.put(
+            session_url,
+            data=payload,
+            headers={"X-Dimos-Offset": "0"},
+            timeout=5.0,
+        )
+        completed = requests.post(f"{session_url}/complete", timeout=5.0)
+        objects = requests.get(
+            f"{server_url}/api/v1/repositories/demo/videos/objects",
+            timeout=5.0,
+        )
+        page = requests.get(server_url, timeout=5.0)
+
+    assert created.status_code == HTTPStatus.CREATED
+    assert uploaded.status_code == HTTPStatus.OK
+    assert completed.status_code == HTTPStatus.CREATED
+    assert objects.json()["objects"][0]["filename"] == "anonymous.mp4"
+    assert 'id="browser-token" type="hidden"' in page.text
+    assert "without a token" in page.text
+
+
 def test_repository_rejects_upload_checksum_mismatch(tmp_path: Path) -> None:
     payload = b"not-the-claimed-object"
     headers = {
@@ -531,6 +571,7 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
     assert "minimumChunkSize = 256 * 1024" in script.text
     assert "demoFileLimit = 16 * 1024 * 1024" in script.text
     assert "demoChunkSize = 1024 * 1024" in script.text
+    assert "authorizationHeaders" in script.text
     assert "/uploads" in script.text
     assert "<video controls" in page.text
     assert "share.mp4" in page.text
