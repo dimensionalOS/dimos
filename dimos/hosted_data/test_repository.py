@@ -527,7 +527,8 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
     assert script.headers["X-Content-Type-Options"] == "nosniff"
     assert script.headers["Cache-Control"] == "no-store"
     assert "browser-upload-form" in script.text
-    assert "chunkSize = 1024 * 1024" in script.text
+    assert "maximumChunkSize = 4 * 1024 * 1024" in script.text
+    assert "minimumChunkSize = 256 * 1024" in script.text
     assert "/uploads" in script.text
     assert "<video controls" in page.text
     assert "share.mp4" in page.text

@@ -201,7 +201,8 @@ UPLOAD_SCRIPT = r"""
   const progress = byId("browser-upload-progress");
   const status = byId("browser-upload-status");
   const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-  const chunkSize = 1024 * 1024;
+  const maximumChunkSize = 4 * 1024 * 1024;
+  const minimumChunkSize = 256 * 1024;
   const pause = (milliseconds) => new Promise((resolve) =>
     window.setTimeout(resolve, milliseconds));
 
@@ -286,6 +287,7 @@ UPLOAD_SCRIPT = r"""
     }));
     const sessionUrl = `${collection}/${encodeURIComponent(created.upload_id)}`;
     let offset = Number(created.received_bytes || 0);
+    let chunkSize = maximumChunkSize;
     let consecutiveFailures = 0;
 
     while (offset < file.size) {
@@ -311,11 +313,12 @@ UPLOAD_SCRIPT = r"""
       } catch (error) {
         consecutiveFailures += 1;
         if (
-          consecutiveFailures >= 4 ||
+          consecutiveFailures >= 6 ||
           (error.status > 0 && error.status < 500 && error.status !== 409)
         ) {
           throw error;
         }
+        const proxyFailure = error.status === 0 || error.status >= 500;
         await pause(300 * consecutiveFailures);
         try {
           const state = await requestJson("GET", sessionUrl, {
@@ -325,10 +328,22 @@ UPLOAD_SCRIPT = r"""
           if (serverOffset < chunkStart || serverOffset > chunkEnd) {
             throw new Error("Server returned an invalid upload offset.");
           }
+          if (
+            proxyFailure &&
+            serverOffset === chunkStart &&
+            chunkSize > minimumChunkSize
+          ) {
+            chunkSize = Math.max(minimumChunkSize, Math.floor(chunkSize / 2));
+            status.textContent = `Proxy interrupted the upload. Retrying ${file.name} with ` +
+              `${Math.round(chunkSize / 1024)}KB chunks...`;
+          }
           offset = serverOffset;
         } catch (statusError) {
           if (statusError.message === "Server returned an invalid upload offset.") {
             throw statusError;
+          }
+          if (proxyFailure && chunkSize > minimumChunkSize) {
+            chunkSize = Math.max(minimumChunkSize, Math.floor(chunkSize / 2));
           }
         }
       }
@@ -416,7 +431,7 @@ def render_upload_panel(owner: str = "", repository: str = "") -> str:
     </div>
   </form>
   <p id="browser-upload-status" class="upload-status">Ready. The token stays in this tab.</p>
-  <p class="hint">For large or interrupted transfers, use the resumable DimOS CLI.</p>
+  <p class="hint">Uploads use adaptive resumable chunks. The DimOS CLI remains available for automation.</p>
 </section>"""
 
 
