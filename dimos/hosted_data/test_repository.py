@@ -592,7 +592,7 @@ def test_admin_can_delete_legacy_object_without_a_capability(tmp_path: Path) -> 
     assert response.status_code == HTTPStatus.NO_CONTENT
 
 
-def test_repository_rejects_upload_checksum_mismatch(tmp_path: Path) -> None:    payload = b"not-the-claimed-object"
+def test_repository_rejects_upload_checksum_mismatch(tmp_path: Path) -> None:`n    payload = b"not-the-claimed-object"
     headers = {
         "Authorization": "Bearer test-token",
         "Content-Length": str(len(payload)),
