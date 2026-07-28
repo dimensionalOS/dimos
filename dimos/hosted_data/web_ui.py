@@ -207,6 +207,9 @@ UPLOAD_SCRIPT = r"""
   const demoChunkSize = 1024 * 1024;
   const pause = (milliseconds) => new Promise((resolve) =>
     window.setTimeout(resolve, milliseconds));
+  const authorizationHeaders = () => token.value
+    ? {"Authorization": `Bearer ${token.value}`}
+    : {};
 
   const repositoryUrl = () => {
     const query = new URLSearchParams({
@@ -278,10 +281,10 @@ UPLOAD_SCRIPT = r"""
   const uploadOne = async (file, index, total) => {
     const collection = `/api/v1/repositories/${encodeURIComponent(owner.value.trim())}/` +
       `${encodeURIComponent(repository.value.trim())}/uploads`;
-    const authorization = `Bearer ${token.value}`;
+
     const created = await withRetries(() => requestJson("POST", collection, {
       headers: {
-        "Authorization": authorization,
+        ...authorizationHeaders(),
         "X-Dimos-Filename": encodeURIComponent(file.name),
         "X-Dimos-Size": String(file.size),
         "X-Dimos-Content-Type": file.type || "application/octet-stream",
@@ -299,7 +302,7 @@ UPLOAD_SCRIPT = r"""
         const updated = await requestJson("PUT", sessionUrl, {
           body: file.slice(chunkStart, chunkEnd),
           headers: {
-            "Authorization": authorization,
+            ...authorizationHeaders(),
             "Content-Type": "application/octet-stream",
             "X-Dimos-Offset": String(chunkStart),
           },
@@ -324,7 +327,7 @@ UPLOAD_SCRIPT = r"""
         await pause(300 * consecutiveFailures);
         try {
           const state = await requestJson("GET", sessionUrl, {
-            headers: {"Authorization": authorization},
+            headers: authorizationHeaders(),
           });
           const serverOffset = Number(state.received_bytes);
           if (serverOffset < chunkStart || serverOffset > chunkEnd) {
@@ -352,7 +355,7 @@ UPLOAD_SCRIPT = r"""
     }
 
     return withRetries(() => requestJson("POST", `${sessionUrl}/complete`, {
-      headers: {"Authorization": authorization},
+      headers: authorizationHeaders(),
     }));
   };
 
@@ -401,13 +404,25 @@ def _document(*, title: str, node_name: str, content: str) -> str:
     </div>
   </nav>
   <main class="shell">{content}</main>
-  <script src="/assets/hosted-data.js?v=4" defer></script>
+  <script src="/assets/hosted-data.js?v=6" defer></script>
 </body>
 </html>"""
 
 
-def render_upload_panel(owner: str = "", repository: str = "") -> str:
+def render_upload_panel(
+    owner: str = "",
+    repository: str = "",
+    *,
+    auth_required: bool = True,
+) -> str:
     """Render a same-origin upload form without embedding or storing its token."""
+    if auth_required:
+        token_control = """
+    {token_control}"""
+        initial_status = "Ready. The token is used only for this upload."
+    else:
+        token_control = '<input id="browser-token" type="hidden" value="">'
+        initial_status = "Ready. This demo node accepts uploads without a token."
     return f"""
 <section class="panel" aria-labelledby="upload-title">
   <h2 id="upload-title">Upload data</h2>
@@ -432,7 +447,7 @@ def render_upload_panel(owner: str = "", repository: str = "") -> str:
       <progress id="browser-upload-progress" max="100" value="0"></progress>
     </div>
   </form>
-  <p id="browser-upload-status" class="upload-status">Ready. The token stays in this tab.</p>
+  <p id="browser-upload-status" class="upload-status">{initial_status}</p>
   <p class="hint">Uploads use adaptive resumable chunks. The DimOS CLI remains available for automation.</p>
 </section>"""
 
@@ -446,6 +461,7 @@ def render_status_page(
     owner: str = "",
     repository: str = "",
     objects: Iterable[RepositoryObjectView] = (),
+    public_write: bool = False,
 ) -> str:
     """Render the public service status and upload page."""
     capability_items = "".join(f"<li>{escape(capability)}</li>" for capability in capabilities)
@@ -471,7 +487,7 @@ def render_status_page(
     <li><span class="label">API</span><span class="value">Hosted data v1</span></li>
   </ul>
 </section>
-{render_upload_panel(owner, repository)}
+{render_upload_panel(owner, repository, auth_required=not public_write)}
 {repository_panel}
 <section class="panel">
   <h2>Capabilities</h2>
