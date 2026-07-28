@@ -89,6 +89,11 @@ def serve(
         "--public-read",
         help="Let anyone list, play, and download objects; uploads still require the token",
     ),
+    public_write: bool = typer.Option(
+        False,
+        "--public-write",
+        help="Let anyone upload objects; intended for bounded demo nodes",
+    ),
     backend: str = typer.Option(
         "filesystem",
         "--backend",
@@ -201,7 +206,11 @@ def serve(
         raise typer.BadParameter("--region must be china, us, or other")
     if (tls_certfile is None) != (tls_keyfile is None):
         raise typer.BadParameter("--tls-certfile and --tls-keyfile must be provided together")
-    if host not in {"127.0.0.1", "::1", "localhost"} and not token:
+    if (
+        host not in {"127.0.0.1", "::1", "localhost"}
+        and not token
+        and not public_write
+    ):
         raise typer.BadParameter(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
         )
@@ -240,6 +249,7 @@ def serve(
                 "backend": backend,
                 "auth": token is not None,
                 "public_read": public_read,
+                "public_write": public_write,
                 "node": node_name,
                 "region": region,
                 "tls": tls_certfile is not None,
@@ -256,6 +266,7 @@ def serve(
             port=port,
             token=token,
             public_read=public_read,
+            public_write=public_write,
             repository=storage,
             node_name=node_name,
             region=region,
