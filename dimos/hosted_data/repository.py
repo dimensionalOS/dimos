@@ -947,10 +947,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 filename = self.headers.get("X-Dimos-Filename")
                 raw_size = self.headers.get("X-Dimos-Size")
                 expected_sha256 = self.headers.get("X-Dimos-Sha256")
-                if filename is None or raw_size is None or expected_sha256 is None:
-                    raise RepositoryError(
-                        "X-Dimos-Filename, X-Dimos-Size, and X-Dimos-Sha256 are required"
-                    )
+                if filename is None or raw_size is None:
+                    raise RepositoryError("X-Dimos-Filename and X-Dimos-Size are required")
                 size_bytes = int(raw_size)
                 server.check_upload(owner, repository, size_bytes, expected_sha256)
                 session = server.uploads.create(

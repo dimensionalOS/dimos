@@ -48,7 +48,7 @@ class UploadSession:
     filename: str
     size_bytes: int
     content_type: str
-    expected_sha256: str
+    expected_sha256: str | None
     received_bytes: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,7 +68,10 @@ class UploadSession:
             size_bytes = int(data["size_bytes"])
             received_bytes = int(data.get("received_bytes", 0))
             content_type = str(data["content_type"])
-            expected_sha256 = _validate_object_id(str(data["expected_sha256"]))
+            raw_sha256 = data.get("expected_sha256")
+            expected_sha256 = (
+                _validate_object_id(str(raw_sha256)) if raw_sha256 is not None else None
+            )
         except (KeyError, TypeError, ValueError) as exc:
             raise RepositoryError("invalid resumable upload metadata") from exc
         if size_bytes < 0 or received_bytes < 0 or received_bytes > size_bytes:
@@ -128,7 +131,7 @@ class ResumableUploadManager:
         filename: str,
         size_bytes: int,
         content_type: str,
-        expected_sha256: str,
+        expected_sha256: str | None,
     ) -> UploadSession:
         if size_bytes < 0:
             raise RepositoryError("size_bytes cannot be negative")
@@ -139,7 +142,9 @@ class ResumableUploadManager:
             filename=_validate_filename(filename),
             size_bytes=size_bytes,
             content_type=content_type or "application/octet-stream",
-            expected_sha256=_validate_object_id(expected_sha256),
+            expected_sha256=(
+                _validate_object_id(expected_sha256) if expected_sha256 is not None else None
+            ),
         )
         with self._lock:
             self._write(session)

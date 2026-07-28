@@ -269,6 +269,45 @@ def test_resumable_upload_round_trip_and_checkpoint_cleanup(tmp_path: Path) -> N
     assert not checkpoint.exists()
 
 
+def test_browser_resumable_upload_computes_digest_on_server(tmp_path: Path) -> None:
+    payload = bytes(range(251)) * 10_000
+    headers = {"Authorization": "Bearer test-token"}
+    with _running_server(tmp_path / "objects") as server_url:
+        collection = f"{server_url}/api/v1/repositories/alice/browser/uploads"
+        created_response = requests.post(
+            collection,
+            headers={
+                **headers,
+                "X-Dimos-Filename": "browser-video.mp4",
+                "X-Dimos-Size": str(len(payload)),
+                "X-Dimos-Content-Type": "video/mp4",
+            },
+            timeout=5.0,
+        )
+        created = created_response.json()
+        session_url = f"{collection}/{created['upload_id']}"
+        offset = 0
+        while offset < len(payload):
+            chunk = payload[offset : offset + 1024 * 1024]
+            updated = requests.put(
+                session_url,
+                data=chunk,
+                headers={**headers, "X-Dimos-Offset": str(offset)},
+                timeout=5.0,
+            ).json()
+            offset = int(updated["received_bytes"])
+        completed = requests.post(
+            f"{session_url}/complete",
+            headers=headers,
+            timeout=5.0,
+        )
+
+    assert created_response.status_code == HTTPStatus.CREATED
+    assert created["expected_sha256"] is None
+    assert completed.status_code == HTTPStatus.CREATED
+    assert completed.json()["object_id"] == hashlib.sha256(payload).hexdigest()
+
+
 def test_resumable_upload_rejects_wrong_offset_and_can_resume(tmp_path: Path) -> None:
     source = tmp_path / "resume.bin"
     source.write_bytes(b"abcdefghij")
@@ -488,6 +527,8 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
     assert script.headers["X-Content-Type-Options"] == "nosniff"
     assert script.headers["Cache-Control"] == "no-store"
     assert "browser-upload-form" in script.text
+    assert "chunkSize = 1024 * 1024" in script.text
+    assert "/uploads" in script.text
     assert "<video controls" in page.text
     assert "share.mp4" in page.text
     assert 'value="alice"' in page.text

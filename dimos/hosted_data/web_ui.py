@@ -201,6 +201,9 @@ UPLOAD_SCRIPT = r"""
   const progress = byId("browser-upload-progress");
   const status = byId("browser-upload-status");
   const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  const chunkSize = 1024 * 1024;
+  const pause = (milliseconds) => new Promise((resolve) =>
+    window.setTimeout(resolve, milliseconds));
 
   const repositoryUrl = () => {
     const query = new URLSearchParams({
@@ -225,20 +228,18 @@ UPLOAD_SCRIPT = r"""
     if (namesAreValid()) window.location.assign(repositoryUrl());
   });
 
-  const uploadOne = (file, index, total) => new Promise((resolve, reject) => {
+  const requestJson = (method, target, options = {}) => new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    const target = `/api/v1/repositories/${encodeURIComponent(owner.value.trim())}/` +
-      `${encodeURIComponent(repository.value.trim())}/objects`;
-    request.open("POST", target);
-    request.setRequestHeader("Authorization", `Bearer ${token.value}`);
-    request.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-    request.setRequestHeader("X-Dimos-Filename", encodeURIComponent(file.name));
-    request.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-      progress.value = ((index + event.loaded / event.total) / total) * 100;
-      status.textContent = `Uploading ${file.name} (${Math.round(event.loaded / event.total * 100)}%)`;
+    request.open(method, target);
+    for (const [name, value] of Object.entries(options.headers || {})) {
+      request.setRequestHeader(name, value);
+    }
+    if (options.onProgress) request.upload.onprogress = options.onProgress;
+    request.onerror = () => {
+      const error = new Error("Network error while uploading.");
+      error.status = 0;
+      reject(error);
     };
-    request.onerror = () => reject(new Error("Network error while uploading."));
     request.onload = () => {
       let payload = {};
       try {
@@ -246,11 +247,97 @@ UPLOAD_SCRIPT = r"""
       } catch (_) {
         // The HTTP status still provides a useful fallback.
       }
-      if (request.status >= 200 && request.status < 300) resolve(payload);
-      else reject(new Error(payload.error || `Upload failed (HTTP ${request.status}).`));
+      if (request.status >= 200 && request.status < 300) {
+        resolve(payload);
+        return;
+      }
+      const error = new Error(payload.error || `Upload failed (HTTP ${request.status}).`);
+      error.status = request.status;
+      reject(error);
     };
-    request.send(file);
+    request.send(options.body || null);
   });
+
+  const withRetries = async (operation) => {
+    let lastError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (error.status > 0 && error.status < 500) throw error;
+        if (attempt < 3) await pause(300 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  };
+
+  const uploadOne = async (file, index, total) => {
+    const collection = `/api/v1/repositories/${encodeURIComponent(owner.value.trim())}/` +
+      `${encodeURIComponent(repository.value.trim())}/uploads`;
+    const authorization = `Bearer ${token.value}`;
+    const created = await withRetries(() => requestJson("POST", collection, {
+      headers: {
+        "Authorization": authorization,
+        "X-Dimos-Filename": encodeURIComponent(file.name),
+        "X-Dimos-Size": String(file.size),
+        "X-Dimos-Content-Type": file.type || "application/octet-stream",
+      },
+    }));
+    const sessionUrl = `${collection}/${encodeURIComponent(created.upload_id)}`;
+    let offset = Number(created.received_bytes || 0);
+    let consecutiveFailures = 0;
+
+    while (offset < file.size) {
+      const chunkEnd = Math.min(offset + chunkSize, file.size);
+      const chunkStart = offset;
+      try {
+        const updated = await requestJson("PUT", sessionUrl, {
+          body: file.slice(chunkStart, chunkEnd),
+          headers: {
+            "Authorization": authorization,
+            "Content-Type": "application/octet-stream",
+            "X-Dimos-Offset": String(chunkStart),
+          },
+          onProgress: (event) => {
+            if (!event.lengthComputable) return;
+            const fileProgress = (chunkStart + event.loaded) / Math.max(file.size, 1);
+            progress.value = ((index + fileProgress) / total) * 100;
+            status.textContent = `Uploading ${file.name} (${Math.round(fileProgress * 100)}%)`;
+          },
+        });
+        offset = Number(updated.received_bytes);
+        consecutiveFailures = 0;
+      } catch (error) {
+        consecutiveFailures += 1;
+        if (
+          consecutiveFailures >= 4 ||
+          (error.status > 0 && error.status < 500 && error.status !== 409)
+        ) {
+          throw error;
+        }
+        await pause(300 * consecutiveFailures);
+        try {
+          const state = await requestJson("GET", sessionUrl, {
+            headers: {"Authorization": authorization},
+          });
+          const serverOffset = Number(state.received_bytes);
+          if (serverOffset < chunkStart || serverOffset > chunkEnd) {
+            throw new Error("Server returned an invalid upload offset.");
+          }
+          offset = serverOffset;
+        } catch (statusError) {
+          if (statusError.message === "Server returned an invalid upload offset.") {
+            throw statusError;
+          }
+        }
+      }
+    }
+
+    return withRetries(() => requestJson("POST", `${sessionUrl}/complete`, {
+      headers: {"Authorization": authorization},
+    }));
+  };
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
