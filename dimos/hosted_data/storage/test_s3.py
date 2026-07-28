@@ -148,7 +148,8 @@ def test_s3_repository_deletes_metadata_and_blob() -> None:
         repository.open("alice", "go2", uploaded.object_id)
 
 
-def test_s3_repository_deduplicates_by_digest() -> None:`n    client = _FakeS3Client()
+def test_s3_repository_deduplicates_by_digest() -> None:
+    client = _FakeS3Client()
     repository = S3ReplayRepository(bucket="replays", client=client)
     payload = b"same-content"
 
