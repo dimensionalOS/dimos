@@ -143,7 +143,7 @@ def test_log_scene_uses_archetypes_without_score_keyword(monkeypatch: Any) -> No
             self.kwargs = kwargs
 
     monkeypatch.setattr(
-        "dimos.manipulation.graspgenx_demo.visualization._archetypes",
+        "dimos.manipulation.demo_graspgenx.visualization._archetypes",
         lambda: (Archetype, Archetype),
     )
     logger = SimpleNamespace(log=lambda path, value, **kwargs: calls.append((path, value, kwargs)))
@@ -183,7 +183,7 @@ def test_recording_save_logs_flush_disconnect_and_rename_in_order(
         __import__("sys").modules, "rerun", SimpleNamespace(RecordingStream=Recording)
     )
     monkeypatch.setattr(
-        "dimos.manipulation.graspgenx_demo.visualization._default_blueprint",
+        "dimos.manipulation.demo_graspgenx.visualization._default_blueprint",
         lambda: "scene-and-best-grasp",
     )
     from .visualization import recording_path_for_yaml

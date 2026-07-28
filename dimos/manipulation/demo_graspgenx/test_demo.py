@@ -1,13 +1,12 @@
 # Copyright 2026 Dimensional Inc.
-"""Headless acceptance coverage for the direct-process contributor tool."""
+"""Hermetic coverage for the direct-process contributor tool."""
 
-import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-import dimos.manipulation.graspgenx_demo.demo as demo
+import dimos.manipulation.demo_graspgenx.demo as demo
 from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
@@ -96,35 +95,6 @@ def test_recorded_scene_and_roi_are_deterministic() -> None:
     assert not np.any(included[labels != 0])
     assert crop.frame_id == "world" and crop.ts == first.ts
     np.testing.assert_array_equal(crop.points_f32(), crop_again.points_f32())
-
-
-@pytest.mark.self_hosted
-def test_real_graspgenx_cuda_smoke() -> None:
-    """Run the real adapter on the stored banana scene when explicitly enabled."""
-    checkpoint = os.environ.get("DIMOS_GRASPGENX_CHECKPOINT")
-    if os.environ.get("DIMOS_GRASPGENX_GPU_SMOKE") != "1" or not checkpoint:
-        pytest.skip("set DIMOS_GRASPGENX_GPU_SMOKE=1 and DIMOS_GRASPGENX_CHECKPOINT to opt in")
-    checkpoint_root = Path(checkpoint).expanduser()
-    if not (checkpoint_root / "gen").is_dir() or not (checkpoint_root / "dis").is_dir():
-        pytest.skip("DIMOS_GRASPGENX_CHECKPOINT must contain local gen/ and dis/ directories")
-    import torch  # type: ignore[import-not-found]
-
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for the opt-in GraspGenX smoke test")
-    config = deployment_config()
-    module = GraspGenXModule(config)
-    try:
-        module.start()
-        sampler = module._sampler
-        assert sampler is not None and sampler.model is not None
-        assert next(sampler.model.parameters()).device.type == "cuda"
-        crop = ObjectPointCloudExtractor(DEFAULT_ROI).extract(load_ycb_scene())
-        result = module.propose_grasps(crop)
-        assert 1 <= len(result) <= config.max_candidates
-        assert result.header.frame_id == crop.frame_id
-        assert result.header.timestamp == crop.ts
-    finally:
-        module.stop()
 
 
 def test_fake_backend_smoke_and_yaml_round_trip(tmp_path: Path) -> None:
@@ -261,7 +231,7 @@ def test_failure_after_construction_stops_adapter_once(
 
     adapter = Adapter()
     monkeypatch.setattr(
-        "dimos.manipulation.graspgenx_demo.demo.run_demo",
+        "dimos.manipulation.demo_graspgenx.demo.run_demo",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("inference")),
     )
     with pytest.raises(RuntimeError, match="inference"):

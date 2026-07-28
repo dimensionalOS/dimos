@@ -53,7 +53,7 @@ enabled) atomic RRD, and exits with success or failure status:
 ```bash
 export DIMOS_GRASPGENX_CHECKPOINT=/path/to/checkpoint
 export DIMOS_GRASPGENX_OUTPUT=./graspgenx-ycb-demo.yaml  # optional
-uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo
+uv run --extra graspgenx python -m dimos.manipulation.demo_graspgenx
 ```
 
 The contributor tool can run headless or with its optional Rerun recording. Rerun writes
@@ -62,8 +62,8 @@ validity. Select headless mode explicitly:
 Use the tool's direct-process viewer option rather than global DimOS CLI options:
 
 ```bash
-uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo --viewer none
-uv run --extra graspgenx python -m dimos.manipulation.graspgenx_demo --viewer rerun
+uv run --extra graspgenx python -m dimos.manipulation.demo_graspgenx --viewer none
+uv run --extra graspgenx python -m dimos.manipulation.demo_graspgenx --viewer rerun
 ```
 
 Headless mode creates no Rerun objects or recording files. Viewer launch
@@ -186,7 +186,7 @@ stack. There is no runtime switching or named asset selection.
 
 The checked-in `ycb_banana_scene.npz` is a Git-LFS-backed binary and must be hydrated
 before running tests or building a wheel/sdist. Hydrate only this object with
-`git lfs pull --include="dimos/manipulation/graspgenx_demo/fixtures/ycb_banana_scene.npz"`.
+`git lfs pull --include="dimos/manipulation/demo_graspgenx/fixtures/ycb_banana_scene.npz"`.
 The adjacent JSON remains normal Git text so its provenance stays diffable. Together,
 they record the source banana OBJ,
 source commit/hash, area-weighted barycentric sampling seed, transform, counts, frame,
@@ -216,10 +216,10 @@ and quaternion `orientation`).
 
 ```bash
 uv run pytest dimos/manipulation/grasping/test_grasp_gen_x.py \
-  dimos/manipulation/graspgenx_demo/test_demo.py \
-  dimos/manipulation/graspgenx_demo/test_visualization.py
-uv run ruff check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo
-uv run ruff format --check dimos/manipulation/grasping dimos/manipulation/graspgenx_demo
+  dimos/manipulation/demo_graspgenx/test_demo.py \
+  dimos/manipulation/demo_graspgenx/test_visualization.py
+uv run ruff check dimos/manipulation/grasping dimos/manipulation/demo_graspgenx
+uv run ruff format --check dimos/manipulation/grasping dimos/manipulation/demo_graspgenx
 ```
 
 An optional real-GPU acceptance run uses the direct contributor command with a real checkpoint.
