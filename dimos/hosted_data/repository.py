@@ -874,6 +874,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             )
             object_views.append(
                 RepositoryObjectView(
+                    object_id=item.object_id,
                     filename=item.filename,
                     size_bytes=item.size_bytes,
                     sha256=item.sha256,
