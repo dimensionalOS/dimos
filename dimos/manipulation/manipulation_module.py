@@ -29,7 +29,7 @@ from enum import Enum
 import math
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import Field
 
@@ -104,6 +104,15 @@ RobotInfoValue: TypeAlias = (
     str | bool | float | list[str] | list[float] | list[PlanningGroup] | None
 )
 RobotInfoPayload: TypeAlias = dict[str, RobotInfoValue]
+
+ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
+
+_SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
+    "box": ObstacleType.BOX,
+    "sphere": ObstacleType.SPHERE,
+    "cylinder": ObstacleType.CYLINDER,
+    "mesh": ObstacleType.MESH,
+}
 
 
 class ManipulationState(Enum):
@@ -1773,14 +1782,7 @@ class ManipulationModule(Module):
         if not self._world_monitor:
             return ""
 
-        # Map shape string to ObstacleType
-        shape_map = {
-            "box": ObstacleType.BOX,
-            "sphere": ObstacleType.SPHERE,
-            "cylinder": ObstacleType.CYLINDER,
-            "mesh": ObstacleType.MESH,
-        }
-        obstacle_type = shape_map.get(shape)
+        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
         if obstacle_type is None:
             logger.warning(f"Unknown obstacle shape: {shape}")
             return ""
@@ -1804,7 +1806,7 @@ class ManipulationModule(Module):
         self,
         name: str,
         pose: Pose,
-        shape: str,
+        shape: ObstacleShape,
         dimensions: list[float] | None = None,
         mesh_path: str | None = None,
         color: list[float] | None = None,
@@ -1813,13 +1815,7 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return False
 
-        shape_map = {
-            "box": ObstacleType.BOX,
-            "sphere": ObstacleType.SPHERE,
-            "cylinder": ObstacleType.CYLINDER,
-            "mesh": ObstacleType.MESH,
-        }
-        obstacle_type = shape_map.get(shape)
+        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
         if obstacle_type is None:
             raise ValueError(f"Unknown obstacle shape: {shape}")
         if obstacle_type == ObstacleType.MESH and not mesh_path:
