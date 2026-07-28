@@ -44,6 +44,7 @@ def detect_markers_in_image(
     marker_length_m: float,
     aruco_dictionary: str,
     world_frame: str = "world",
+    detect_inverted: bool = False,
     detector: Any | None = None,
     camera_matrix: np.ndarray | None = None,
     dist_coeffs: np.ndarray | None = None,
@@ -59,7 +60,7 @@ def detect_markers_in_image(
         return []
 
     if detector is None:
-        detector = create_aruco_detector(aruco_dictionary)
+        detector = create_aruco_detector(aruco_dictionary, detect_inverted=detect_inverted)
     if (camera_matrix is None) != (dist_coeffs is None):
         raise ValueError("camera_matrix and dist_coeffs must be provided together")
     if camera_matrix is None or dist_coeffs is None:

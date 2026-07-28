@@ -15,7 +15,7 @@
 """SDP-string workarounds for the aiortc + Cloudflare Realtime SFU combo.
 
 Pure functions, easy to unit-test in isolation. The *why* lives in
-``dimos/teleop/quest_hosted/README.md`` — these are the workarounds; the
+``dimos/teleop/hosted/README.md`` — these are the workarounds; the
 README explains the bugs.
 """
 

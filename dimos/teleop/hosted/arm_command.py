@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.quest.quest_extensions import ArmTeleopConfig, ArmTeleopModule
 from dimos.teleop.quest.quest_types import Hand
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
@@ -53,18 +54,20 @@ class ArmCommandModule(ArmTeleopModule):
 
     coordinator: ControlCoordinator
 
-    # Broker-bound (bind Cloudflare* transports to these in the blueprint).
-    cmd_raw: In[bytes]  # cmd_unreliable: LCM PoseStamped/Joy/TwistStamped, dispatched
-    state_json: In[bytes]  # state_reliable JSON (fanned; estop/gripper here)
-    cmd_ack: Out[bytes]  # → state_reliable_back (command acks)
-    robot_state: Out[bytes]  # robot-authoritative UI state → stats module telemetry
+    cmd_raw: In[bytes]
+    state_json: In[bytes]
+    cmd_ack: Out[bytes]
+    robot_state: Out[bytes]
 
-    coordinator_ee_twist_command: Out[TwistStamped]  # browser keyboard EE-twist
-    gripper_command: Out[Bool]  # gripper toggle
+    coordinator_ee_twist_command: Out[TwistStamped]
+    gripper_command: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._estopped = False
+        self._cmd = SerializedCommandExecutor(
+            lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
+        )
         self._last_twist_ts = 0.0
         self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
@@ -82,6 +85,7 @@ class ArmCommandModule(ArmTeleopModule):
     @rpc
     def start(self) -> None:
         super().start()
+        self._cmd.start()
         for stream, cb in (
             (self.cmd_raw, self._on_cmd_raw),
             (self.state_json, self._on_state_json),
@@ -89,25 +93,27 @@ class ArmCommandModule(ArmTeleopModule):
             self.register_disposable(Disposable(stream.subscribe(cb)))
         self._publish_robot_state()
 
+    @rpc
+    def stop(self) -> None:
+        self._cmd.stop()
+        super().stop()
+
     # ─── Inbound command plane (operator → robot) ─────────────────────
 
     def _on_cmd_raw(self, data: Any) -> None:
-        """Fingerprint-dispatch LCM bytes from cmd_unreliable via the decoder
-        table inherited from QuestTeleopModule (PoseStamped, Joy) plus the
-        TwistStamped decoder registered in __init__."""
+        """Fingerprint-dispatch LCM bytes (Pose/Joy inherited, Twist added here)."""
         if isinstance(data, str):
             data = data.encode()
         decoder = self._decoders.get(data[:8])
         if decoder is None:
-            return  # foreign / undecodable frame — skip
+            return
         try:
             decoder(data)
         except Exception:
             logger.warning("cmd_raw decode failed", exc_info=True)
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Controller pose → robot frame. Drops unexpected frame_ids, plus stale
-        and out-of-order poses (cmd_unreliable is unordered/lossy)."""
+        """Controller pose → robot frame; stale/future/out-of-order dropped."""
         msg = PoseStamped.lcm_decode(data)
         try:
             hand = self._resolve_hand(msg.frame_id)
@@ -122,6 +128,12 @@ class ArmCommandModule(ArmTeleopModule):
             if now - self._last_stale_warn >= 1.0:
                 self._last_stale_warn = now
                 logger.warning("dropping stale pose: age=%.2fs — operator link lagging", age)
+            return
+        if age < 0:  # future-stamped: don't advance the watermark (would freeze the hand)
+            now = time.monotonic()
+            if now - self._last_future_warn >= 1.0:
+                self._last_future_warn = now
+                logger.warning("dropping future-stamped pose — operator clock sync likely off")
             return
         if ts <= self._last_pose_ts[hand]:
             return
@@ -164,9 +176,7 @@ class ArmCommandModule(ArmTeleopModule):
         )
 
     def _on_state_json(self, data: Any) -> None:
-        """Dispatch the state kinds this module owns (estop / gripper); ignore
-        the rest — the stats / camera modules own their kinds on this shared
-        channel."""
+        """Dispatch estop/gripper kinds; other kinds belong to other modules."""
         if isinstance(data, str):
             data = data.encode()
         if not data.startswith(b"{"):
@@ -188,7 +198,6 @@ class ArmCommandModule(ArmTeleopModule):
             self.gripper_command.publish(Bool(data=bool(msg.get("closed", False))))
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
-        """Publish a cmd_ack on the broker-back channel."""
         try:
             self.cmd_ack.publish(json.dumps({"type": "cmd_ack", "nonce": nonce, "ok": ok}).encode())
         except Exception:
@@ -197,8 +206,7 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── E-STOP gating over the inherited control loop ────────────────
 
     def _handle_engage(self) -> None:
-        """While E-STOP is latched, refuse engagement and drop any lingering
-        engage, so no motion happens until the latch clears."""
+        """Refuse engagement (and drop lingering engages) while latched."""
         if self._estopped:
             for hand in Hand:
                 if self._is_engaged[hand]:
@@ -214,36 +222,35 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── E-STOP / operator-loss hooks ─────────────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
-        """Latch FIRST (gates operator input), halt the coordinator's tasks so the
-        arm stops being commanded, then disengage."""
+        """Latch FIRST (gates operator input), disengage, then latch the
+        coordinator off-thread; the ack carries the coordinator result."""
         self._estopped = True
         logger.warning("E-STOP latched by operator")
-        self._set_coordinator_estop(True)
         with self._lock:
             self._disengage()
-        self._publish_robot_state()  # UI must show estopped:true immediately
-        self._send_ack(nonce, True)
+        self._publish_robot_state()
+        self._cmd.submit("estop", nonce, self._apply_coordinator_latch, urgent=True)
 
     def _handle_estop_clear(self, nonce: Any) -> None:
-        """Re-arm. If the engage button is still held, the next tick re-engages
-        and recaptures the current pose as the new baseline, so the arm resumes
-        tracking from where it is (delta zero) — no jump."""
+        """Re-arm; a still-held engage re-engages next tick and rebaselines (no
+        jump). Safe local-first: while the coordinator stays latched, tasks are
+        inert, so a failed clear (nacked) can't move the arm."""
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
-        self._set_coordinator_estop(False)
         self._publish_robot_state()
-        self._send_ack(nonce, True)
+        self._cmd.submit("estop_clear", nonce, self._apply_coordinator_latch, urgent=True)
 
-    def _set_coordinator_estop(self, estopped: bool) -> None:
-        """Latch/clear E-STOP on the coordinator's tasks (best-effort RPC)."""
+    def _apply_coordinator_latch(self, _epoch: int) -> bool:
+        estopped = self._estopped
         try:
             self.coordinator.set_estop(estopped)
+            return True
         except Exception:
             logger.exception("coordinator.set_estop(%s) failed", estopped)
+            return False
 
     def _on_operator_lost(self) -> None:
-        """Command plane gone: disengage so a stale engage can't keep streaming
-        the last delta into the coordinator when the operator reconnects."""
+        """Disengage so a stale engage can't keep streaming the last delta."""
         logger.warning("operator link lost — disengaging")
         with self._lock:
             self._disengage()
@@ -252,8 +259,6 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── Robot-authoritative state → stats module telemetry ───────────
 
     def _publish_robot_state(self) -> None:
-        """Push per-hand engage state + estopped on robot_state (LCM) so the
-        stats module's telemetry frame reflects reality."""
         with self._lock:
             state = {
                 "estopped": self._estopped,
