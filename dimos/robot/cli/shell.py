@@ -153,6 +153,9 @@ def shell() -> None:
 
     try:
         _print_shell_banner()
-        start_ipython(argv=[], user_ns=_shell_namespace(app))  # type: ignore[no-untyped-call]
+        start_ipython(  # type: ignore[no-untyped-call]
+            argv=["--no-banner", "--no-tip"],
+            user_ns=_shell_namespace(app),
+        )
     finally:
         app.stop()
