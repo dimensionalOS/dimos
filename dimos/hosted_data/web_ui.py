@@ -25,6 +25,7 @@ from html import escape
 class RepositoryObjectView:
     """Display-safe input for one repository object."""
 
+    object_id: str
     filename: str
     size_bytes: int
     sha256: str
