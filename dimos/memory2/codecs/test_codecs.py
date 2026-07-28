@@ -123,25 +123,30 @@ def _jpeg_eq(original: Any, decoded: Any) -> bool:
     return bool(np.mean(np.abs(decoded.data.astype(float) - expected.astype(float))) < 5)
 
 
-def _jpeg_case() -> Case | None:
+def _turbojpeg_available() -> bool:
     try:
         from turbojpeg import TurboJPEG
 
         TurboJPEG()  # fail fast if native lib is missing
     except (ImportError, RuntimeError):
+        return False
+    return True
+
+
+def _jpeg_case() -> Case | None:
+    if not _turbojpeg_available():
         return None
 
-    from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import get_data
+    import numpy as np
 
-    db_path = get_data("go2_short.db")
-
-    with SqliteStore(path=str(db_path)) as store:
-        video = store.stream("color_image", Image)
-        frames = [obs.data for obs in video.limit(3).to_list()]
-
-    if not frames:
-        return None
+    # smooth gradients survive lossy jpeg within the eq tolerance
+    frames = []
+    for shift in (0, 90, 180):
+        arr = np.zeros((48, 64, 3), np.uint8)
+        arr[..., 0] = np.linspace(0, 255, 64, dtype=np.uint8)
+        arr[..., 1] = np.linspace(0, 255, 48, dtype=np.uint8)[:, None]
+        arr[..., 2] = shift
+        frames.append(Image(data=arr, format=ImageFormat.RGB, frame_id="cam", ts=1.0))
 
     return Case(
         name="jpeg",
@@ -151,14 +156,28 @@ def _jpeg_case() -> Case | None:
     )
 
 
-testcases = [
-    c
-    for c in [_pickle_case(), _lcm_case(), _lz4_pickle_case(), _lz4_lcm_case(), _jpeg_case()]
-    if c is not None
-]
+_case_factories = {
+    "pickle": _pickle_case,
+    "lcm": _lcm_case,
+    "lz4+pickle": _lz4_pickle_case,
+    "lz4+lcm": _lz4_lcm_case,
+    "jpeg": _jpeg_case,
+}
+
+case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm"]
+if _turbojpeg_available():
+    case_params.append("jpeg")
 
 
-@pytest.mark.parametrize("case", testcases, ids=lambda c: c.name)
+@pytest.fixture
+def case(request: pytest.FixtureRequest) -> Case:
+    resolved = _case_factories[request.param]()
+    if resolved is None:
+        pytest.skip(f"no usable data for the {request.param} case")
+    return resolved
+
+
+@pytest.mark.parametrize("case", case_params, indirect=True)
 class TestCodecRoundtrip:
     """Every codec must perfectly roundtrip its values."""
 

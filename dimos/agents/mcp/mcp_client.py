@@ -229,7 +229,7 @@ class McpClient(Module):
         tools = self._fetch_tools()
 
         if self.config.model_fixture is not None:
-            from dimos.agents.testing import MockModel
+            from dimos.agents.testing.mock_model import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
         else:
