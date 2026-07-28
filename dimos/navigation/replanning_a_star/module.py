@@ -52,6 +52,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     goal_reached: Out[Bool]
     navigation_state: Out[String]  # TODO: set it
+    recovery_event: Out[String]
     nav_cmd_vel: Out[Twist]
     path: Out[Path]
     navigation_costmap: Out[OccupancyGrid]
@@ -113,6 +114,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self.register_disposable(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
         self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
+        self.register_disposable(
+            self._planner.recovery_event.subscribe(
+                lambda event: self.recovery_event.publish(String(event.to_json()))
+            )
+        )
 
         if "DEBUG_NAVIGATION" in os.environ:
             self.register_disposable(

@@ -22,9 +22,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -53,6 +55,41 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
     """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
     g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
     assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
+
+
+def test_readonly_connection_blocks_motion_commands() -> None:
+    """Studio read-only mode rejects commands at the final robot module."""
+    module = object.__new__(GO2Connection)
+    module.config = SimpleNamespace(movement_enabled=False)
+    module.connection = MagicMock()
+
+    assert module.move(Twist()) is False
+    assert module.standup() is False
+    assert module.liedown() is False
+    assert module.balance_stand() is False
+    assert module.set_rage_mode(True) is False
+    assert module.sport_command(1016) is False
+    assert module.switch_joystick(True) is False
+    assert module.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": 1016}) == {
+        "status": "blocked",
+        "message": "Movement is disabled by DimOS Studio",
+    }
+    module.connection.assert_not_called()
+    module.connection.move.assert_not_called()
+    module.connection.publish_request.assert_not_called()
+
+
+def test_readonly_connection_still_allows_sensor_configuration() -> None:
+    """Non-motion requests such as obstacle avoidance remain available."""
+    module = object.__new__(GO2Connection)
+    module.config = SimpleNamespace(movement_enabled=False)
+    module.connection = MagicMock()
+    module.connection.publish_request.return_value = {"status": "ok"}
+
+    assert module.publish_request(RTC_TOPIC["OBSTACLES_AVOID"], {"api_id": 1001}) == {
+        "status": "ok"
+    }
+    module.connection.publish_request.assert_called_once()
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:

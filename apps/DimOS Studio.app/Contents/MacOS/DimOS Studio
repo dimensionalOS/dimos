@@ -1,0 +1,8 @@
+#!/bin/zsh
+
+set -e
+
+EXECUTABLE_DIR="${0:A:h}"
+PROJECT_DIR="${EXECUTABLE_DIR}/../../../.."
+
+exec "${PROJECT_DIR}/scripts/open_dimos_studio.command"

@@ -16,6 +16,7 @@ import time
 from typing import Any
 
 import numpy as np
+from pydantic import Field
 import reactivex as rx
 from reactivex import Subject, combine_latest, operators as ops
 
@@ -50,6 +51,7 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     fitness_threshold: float = 0.45
     use_carving: bool = True
+    min_local_points: int = Field(default=MIN_LOCAL_POINTS, ge=1)
 
 
 class RelocalizationModule(Module):
@@ -114,12 +116,13 @@ class RelocalizationModule(Module):
         now = time.monotonic()
         if now - self._last_skip_log > 5.0:
             logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} < MIN_LOCAL_POINTS={MIN_LOCAL_POINTS}"
+                "relocalize skipped: "
+                f"n_pts={len(msg)} < min_local_points={self.config.min_local_points}"
             )
             self._last_skip_log = now
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= MIN_LOCAL_POINTS
+        return len(msg) >= self.config.min_local_points
 
     def _publish_tf(self, tf: Transform | None) -> None:
         if tf is None:

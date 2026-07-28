@@ -44,7 +44,9 @@ class PController:
     _min_angular_velocity: float = 0.2
     _k_angular: float = 0.5
     _max_angular_accel: float = 2.0
-    _rotation_threshold: float = 90 * (math.pi / 180)
+    # Turn in place sooner for large heading corrections instead of continuing
+    # to push forward while the route bends sharply around an obstacle.
+    _rotation_threshold: float = 70 * (math.pi / 180)
 
     def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         self._global_config = global_config

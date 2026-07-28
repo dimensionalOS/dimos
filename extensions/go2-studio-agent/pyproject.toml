@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-go2-studio"
+version = "0.1.0"
+description = "User-editable Go2 Agent skills for DimOS Studio"
+requires-python = ">=3.12"
+
+[project.entry-points."dimos.blueprints"]
+go2 = "dimos_go2_studio.blueprint:go2_studio_agentic"
+
+[tool.setuptools.packages.find]
+where = ["src"]
