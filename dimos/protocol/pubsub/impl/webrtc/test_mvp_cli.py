@@ -443,6 +443,8 @@ def test_subscribe_negotiates_video_and_reports_metrics(
         assert timeout == 20.0
 
     monkeypatch.setattr(spec, "wait_connected", wait_connected)
+    fixed_time_ns = 1_785_238_000_000_000_000
+    monkeypatch.setattr(mvp_cli.time, "time_ns", lambda: fixed_time_ns)
     monkeypatch.setattr(
         mvp_cli,
         "decode_frame_stamp",
