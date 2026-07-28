@@ -711,32 +711,15 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     def _delete_authorized(self, owner: str, repository: str, object_id: str) -> bool:
         """Authorize deletion without inheriting anonymous public-write access."""
         server = self._repository_server()
-        supplied = self.headers.get("Authorization", "")
-        bearer = supplied.removeprefix("Bearer ") if supplied.startswith("Bearer ") else ""
-        if server.token is not None and hmac.compare_digest(
-            supplied,
-            f"Bearer {server.token}",
-        ):
-            return True
-        if (
-            bearer
-            and server.access_policy is not None
-            and server.access_policy.authorize(
-                bearer,
-                mode="write",
-                owner=owner,
-                repository=repository,
-            )
-        ):
-            return True
-        capability = self.headers.get("X-Dimos-Delete-Token", "")
-        return server.delete_capabilities.verify(
-            owner,
-            repository,
-            object_id,
-            capability,
+        return server.delete_capabilities.authorize(
+            owner=owner,
+            repository=repository,
+            object_id=object_id,
+            authorization=self.headers.get("Authorization", ""),
+            capability=self.headers.get("X-Dimos-Delete-Token", ""),
+            admin_token=server.token,
+            access_policy=server.access_policy,
         )
-
     def _check_delete_authorized(
         self,
         owner: str,
