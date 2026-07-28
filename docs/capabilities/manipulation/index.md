@@ -153,10 +153,12 @@ tool, or CLI motion command yet.
 
 ### Cartesian control IK
 
-Cartesian and keyboard EEF-twist tasks use the direct URDF/Xacro model from
-`RobotModelConfig`. The configuration supplies package paths, Xacro arguments,
-the named end-effector frame, and coordinator-to-model joint mapping. Invalid
-models, frames, or mappings fail at startup.
+Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
+direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
+package paths, Xacro arguments, the named end-effector frame, and
+coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
+startup; teleop configuration does not use a separate model path or numeric
+end-effector joint ID.
 
 Each control tick starts from measured joints, applies model position and
 velocity limits, and holds the measured position when a solve cannot produce a
@@ -166,16 +168,27 @@ does not use `WorldSpec` or provide world-obstacle avoidance.
 For a custom robot, pass the typed model configuration to the helper:
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
 
 task = cartesian_ik_task(
     hardware,
     robot_model=robot_model,
 )
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
 ```
 
-Validate Cartesian and twist behavior in simulation or replay before hardware
-use.
+Teleop pose commands are deltas from an end-effector pose captured from measured
+joints at engagement. Disengage, timeout, stop, clear, or E-STOP discards that
+baseline; commands received during E-STOP are rejected rather than replayed
+after clear.
+
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
 
 Install the manipulation dependencies:
 

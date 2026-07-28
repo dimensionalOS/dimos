@@ -31,7 +31,6 @@ from dimos.robot.manipulators.common.blueprints import (
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
-    PIPER_FK_MODEL,
     PIPER_SIM_PATH,
     make_piper_hardware,
     make_piper_model_config,
@@ -99,10 +98,9 @@ coordinator_teleop_piper = autoconnect(
         tasks=[
             teleop_ik_task(
                 _piper_teleop_hw,
-                model_path=PIPER_FK_MODEL,
-                ee_joint_id=6,
                 hand="left",
                 name="teleop_piper",
+                robot_model=_piper_model,
                 params={
                     "gripper_joint": make_gripper_joints("arm")[0],
                     "gripper_open_pos": 1.0,

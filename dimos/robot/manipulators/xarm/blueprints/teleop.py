@@ -28,9 +28,7 @@ from dimos.robot.manipulators.common.blueprints import (
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
-    XARM6_FK_MODEL,
     XARM6_SIM_PATH,
-    XARM7_FK_MODEL,
     XARM7_SIM_PATH,
     XARM_GRIPPER_PARAMS,
     make_xarm6_model_config,
@@ -164,10 +162,9 @@ coordinator_teleop_xarm7 = autoconnect(
         tasks=[
             teleop_ik_task(
                 _xarm7_teleop_hw,
-                model_path=XARM7_FK_MODEL,
-                ee_joint_id=7,
                 hand="right",
                 name="teleop_xarm",
+                robot_model=_xarm7_control_model,
                 priority=20,
                 params=XARM_GRIPPER_PARAMS,
             ),
@@ -188,10 +185,9 @@ coordinator_teleop_xarm6 = autoconnect(
         tasks=[
             teleop_ik_task(
                 _xarm6_teleop_hw,
-                model_path=XARM6_FK_MODEL,
-                ee_joint_id=6,
                 hand="right",
                 name="teleop_xarm",
+                robot_model=_xarm6_control_model,
                 priority=20,
                 params=XARM_GRIPPER_PARAMS,
             ),

@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
 from dimos.control.components import HardwareComponent
@@ -126,16 +125,16 @@ def eef_twist_task(
 def teleop_ik_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     hand: str,
     name: str,
+    robot_model: RobotModelConfig,
     priority: int = 10,
-    params: dict[str, Any] | None = None,
+    control_ik: Mapping[str, object] | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> TaskConfig:
-    task_params: dict[str, Any] = {
-        "model_path": model_path,
-        "ee_joint_id": ee_joint_id,
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
+    task_params: dict[str, object] = {
+        "control_ik": resolved_control_ik,
         "hand": hand,
     }
     if params:
