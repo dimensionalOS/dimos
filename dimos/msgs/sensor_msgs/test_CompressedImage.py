@@ -115,7 +115,6 @@ def test_to_rerun_is_encoded_image(rgb_image) -> None:
 
 
 def test_jxl_roundtrip_is_lossless_gray16() -> None:
-    pytest.importorskip("imagecodecs")
     data = np.arange(100 * 80, dtype=np.uint16).reshape(100, 80)
     src = Image(data=data, format=ImageFormat.GRAY16, frame_id="d", ts=1.0)
     ci = CompressedImage.from_image(src, format="jxl")
@@ -126,7 +125,6 @@ def test_jxl_roundtrip_is_lossless_gray16() -> None:
 
 
 def test_jxl_roundtrip_is_lossless_float_depth() -> None:
-    pytest.importorskip("imagecodecs")
     data = np.linspace(0.1, 10.0, 100 * 80, dtype=np.float32).reshape(100, 80)
     src = Image(data=data, format=ImageFormat.DEPTH, frame_id="d", ts=2.0)
     ci = CompressedImage.from_image(src, format="jxl")
@@ -138,7 +136,6 @@ def test_jxl_roundtrip_is_lossless_float_depth() -> None:
 
 
 def test_jxl_lossy_rgb_honors_quality(rgb_image) -> None:
-    pytest.importorskip("imagecodecs")
     ci = CompressedImage.from_image(rgb_image, format="jxl", quality=90)
     assert 0 < len(ci.data) < rgb_image.data.nbytes // 4
     img = ci.decode()
@@ -148,14 +145,12 @@ def test_jxl_lossy_rgb_honors_quality(rgb_image) -> None:
 
 
 def test_jxl_effort_trades_cpu_for_size(rgb_image) -> None:
-    pytest.importorskip("imagecodecs")
     fast = CompressedImage.from_image(rgb_image, format="jxl", effort=1)
     thorough = CompressedImage.from_image(rgb_image, format="jxl", effort=7)
     assert len(thorough.data) <= len(fast.data)
 
 
 def test_jxl_rejects_float64() -> None:
-    pytest.importorskip("imagecodecs")
     depth = Image(data=np.zeros((10, 10), dtype=np.float64), format=ImageFormat.DEPTH)
     with pytest.raises(ValueError, match="JXL cannot encode"):
         CompressedImage.from_image(depth, format="jxl")
