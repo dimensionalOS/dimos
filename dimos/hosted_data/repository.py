@@ -43,6 +43,7 @@ from dimos.hosted_data.auth import (
     RepositoryAccessPolicy,
     verify_download_signature,
 )
+from dimos.hosted_data.delete_capabilities import DeleteCapabilityStore
 from dimos.hosted_data.web_ui import (
     UPLOAD_SCRIPT,
     RepositoryObjectView,
@@ -309,6 +310,8 @@ class ReplayRepositoryBackend(Protocol):
 
     def list(self, owner: str, repository: str) -> list[ReplayObject]: ...
 
+    def delete(self, owner: str, repository: str, object_id: str) -> ReplayObject: ...
+
 
 class ReplayRepository:
     """Filesystem-backed immutable object repository."""
@@ -445,6 +448,13 @@ class ReplayRepository:
         ]
         return sorted(objects, key=lambda item: item.created_at, reverse=True)
 
+    def delete(self, owner: str, repository: str, object_id: str) -> ReplayObject:
+        """Delete one completed object and its metadata."""
+        metadata, object_path = self.get(owner, repository, object_id)
+        _, metadata_path = self._paths(owner, repository, object_id)
+        metadata_path.unlink()
+        object_path.unlink(missing_ok=True)
+        return metadata
     def recover_incomplete_uploads(self) -> int:
         """Remove temporary files left by an interrupted server process."""
         if not self.root.exists():
@@ -466,7 +476,7 @@ class RepositoryMetrics:
             "requests_total": 0,
             "errors_total": 0,
             "uploads_total": 0,
-            "downloads_total": 0,
+            "downloads_total": 0,`n            "deletions_total": 0,
             "uploaded_bytes_total": 0,
             "downloaded_bytes_total": 0,
             "recovered_parts_total": 0,
@@ -563,6 +573,9 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
             else Path(tempfile.gettempdir()) / "dimos-resumable-uploads"
         )
         self.uploads = ResumableUploadManager(session_root / ".resumable-uploads")
+        self.delete_capabilities = DeleteCapabilityStore(
+            session_root / ".delete-capabilities"
+        )
         self.metrics = RepositoryMetrics()
         self._quota_lock = Lock()
         self._pending_bytes: dict[tuple[str, str], int] = {}
@@ -695,6 +708,45 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             )
         )
 
+    def _delete_authorized(self, owner: str, repository: str, object_id: str) -> bool:
+        """Authorize deletion without inheriting anonymous public-write access."""
+        server = self._repository_server()
+        supplied = self.headers.get("Authorization", "")
+        bearer = supplied.removeprefix("Bearer ") if supplied.startswith("Bearer ") else ""
+        if server.token is not None and hmac.compare_digest(
+            supplied,
+            f"Bearer {server.token}",
+        ):
+            return True
+        if (
+            bearer
+            and server.access_policy is not None
+            and server.access_policy.authorize(
+                bearer,
+                mode="write",
+                owner=owner,
+                repository=repository,
+            )
+        ):
+            return True
+        capability = self.headers.get("X-Dimos-Delete-Token", "")
+        return server.delete_capabilities.verify(
+            owner,
+            repository,
+            object_id,
+            capability,
+        )
+
+    def _check_delete_authorized(
+        self,
+        owner: str,
+        repository: str,
+        object_id: str,
+    ) -> bool:
+        if self._delete_authorized(owner, repository, object_id):
+            return True
+        self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid delete capability")
+        return False
     def _route(self) -> tuple[str, str, str | None]:
         parts = [unquote(part) for part in urlsplit(self.path).path.split("/") if part]
         if len(parts) not in {6, 7} or parts[:3] != ["api", "v1", "repositories"]:
@@ -927,7 +979,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 metadata.object_id,
                 metadata.size_bytes,
             )
-            self._send_json(HTTPStatus.CREATED, metadata.to_dict())
+            response = metadata.to_dict()`n            response["delete_token"] = server.delete_capabilities.issue(`n                owner, repository, metadata.object_id`n            )`n            self._send_json(HTTPStatus.CREATED, response)
         except ObjectTooLargeError as exc:
             self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
         except RepositoryQuotaError as exc:
@@ -995,7 +1047,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             )
             server.metrics.increment("uploads_total")
             server.metrics.increment("uploaded_bytes_total", metadata.size_bytes)
-            self._send_json(HTTPStatus.CREATED, metadata.to_dict())
+            response = metadata.to_dict()`n            response["delete_token"] = server.delete_capabilities.issue(`n                owner, repository, metadata.object_id`n            )`n            self._send_json(HTTPStatus.CREATED, response)
         except ObjectTooLargeError as exc:
             self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
         except RepositoryQuotaError as exc:
@@ -1045,30 +1097,41 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
     def do_DELETE(self) -> None:
-        """Cancel a resumable upload and remove its partial file."""
+        """Cancel a partial upload or delete a completed object."""
         server = self._repository_server()
         server.metrics.increment("requests_total")
         try:
-            owner, repository, upload_id, complete = self._upload_route()
-            if upload_id is None or complete:
-                raise RepositoryError("cancel must target an upload id")
-            if not self._check_authorized(
-                write=True,
-                owner=owner,
-                repository=repository,
-            ):
-                return
-            server.uploads.cancel(upload_id, owner=owner, repository=repository)
+            if "/uploads" in urlsplit(self.path).path:
+                owner, repository, upload_id, complete = self._upload_route()
+                if upload_id is None or complete:
+                    raise RepositoryError("cancel must target an upload id")
+                if not self._check_authorized(
+                    write=True,
+                    owner=owner,
+                    repository=repository,
+                ):
+                    return
+                server.uploads.cancel(upload_id, owner=owner, repository=repository)
+            else:
+                owner, repository, object_id = self._route()
+                if object_id is None:
+                    raise RepositoryError("delete must target an object id")
+                if not self._check_delete_authorized(owner, repository, object_id):
+                    return
+                server.repository.delete(owner, repository, object_id)
+                server.delete_capabilities.revoke(owner, repository, object_id)
+                server.metrics.increment("deletions_total")
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Content-Length", "0")
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
         except FileNotFoundError:
-            self._send_error_json(HTTPStatus.NOT_FOUND, "upload session not found")
+            self._send_error_json(HTTPStatus.NOT_FOUND, "upload or object not found")
         except RepositoryError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-
+        except OSError as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
     def do_HEAD(self) -> None:
         """Return object metadata or preflight a collection upload."""
         server = self._repository_server()
