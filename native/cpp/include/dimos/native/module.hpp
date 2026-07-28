@@ -1,9 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Module runtime. The transport receive thread decodes onto per-input bounded
-// queues (drop-newest), handlers run serialized on the handle() thread, and one
-// worker per output drains publishes so a slow channel blocks only itself.
+// C++ native module framework.
 
 #pragma once
 
@@ -274,9 +272,7 @@ public:
         owned_inputs_.push_back(std::move(channel));
     }
 
-    /// Route each `T` on `port` to a method on `self`, decoded by the lcm codec:
-    /// `builder.input<Twist>("data", &Pong::on_data, this)`. Handlers run
-    /// serialized on the dispatch thread, so they touch module state without locks.
+    /// Handlers run serialized, so they touch module state without locks.
     template <class T, class Self>
     void input(const std::string& port, void (Self::*handler)(const T&), Self* self,
                DecodeFn<T> decode = lcm_decode<T>) {
@@ -284,9 +280,7 @@ public:
                  [self, handler](T msg) { (self->*handler)(msg); });
     }
 
-    /// Declare an output and return its publish handle, encoded by the lcm codec:
-    /// `out_ = builder.output<Twist>("confirm")` then `out_.publish(msg)`. publish()
-    /// hands off to a per-channel worker, so it never blocks the caller.
+    /// publish() hands off to a per-channel worker, so it never blocks.
     template <class T>
     Output<T> output(const std::string& port, EncodeFn<T> encode = lcm_encode<T>) {
         std::string topic = topic_for(port);

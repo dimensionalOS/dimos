@@ -1,9 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shared helpers for the Livox-based lidar drivers (fastlio2, pointlio, livox).
-// Each driver sources points differently, so the PointCloud2 layout and header
-// are built here and the caller fills the packed xyzi buffer.
+// Shared helpers for livox-based lidar drivers.
 
 #pragma once
 

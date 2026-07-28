@@ -290,9 +290,8 @@ private:
         uint64_t ts_ns = packet_timestamp_ns(data);
         uint16_t dot_num = data->dot_num;
 
-        // Per-point intra-packet offset (matches livox_ros_driver2). Without it
-        // all points share one timestamp and per-point deskew is lost.
-        // time_interval unit is 0.1us, so *100 -> ns.
+        // Per-point intra-packet offset, needed for deskew. time_interval is
+        // 0.1us units, so *100 -> ns.
         const uint64_t point_interval_ns =
             dot_num > 0 ? static_cast<uint64_t>(data->time_interval) * 100 / dot_num : 0;
 

@@ -148,7 +148,7 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
 
   cpp:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout

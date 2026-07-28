@@ -233,9 +233,7 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
 }
 
 TEST_CASE("Notifier does not lose a notification delivered before the wait") {
-    // The race the counter closes: a notify that lands after the loop snapshots
-    // seq but before it starts waiting. A bare wait_for would block the full
-    // timeout. The predicate sees the count moved and returns at once.
+    // A notify landing between the snapshot and the wait must not be lost.
     Notifier notifier;
     std::uint64_t seq = notifier.seq();
     notifier.notify();

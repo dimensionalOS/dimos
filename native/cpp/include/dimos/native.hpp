@@ -1,8 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Umbrella header for the dimos C++ native module SDK. A module includes this,
-// subclasses Module, and calls run_with_transport<M>() from main().
+// Umbrella header for the dimos C++ native module SDK.
 
 #pragma once
 

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Structured logging for dimos C++ native modules. One JSON object per line on
-// stderr, in the shape the Python NativeModule wrapper parses. stdout is reserved, so logs go to stderr.
+// stderr, in the shape the Python NativeModule wrapper parses. stdout is
+// reserved, so logs go to stderr.
 
 #pragma once
 

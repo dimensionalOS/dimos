@@ -1,8 +1,5 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Pose readiness check shared by the SLAM-backed lidar drivers (fastlio2,
-// pointlio).
 
 #pragma once
 
