@@ -418,9 +418,9 @@ def render_upload_panel(
     """Render a same-origin upload form without embedding or storing its token."""
     if auth_required:
         token_control = (
-            '<label>Upload token'
+            "<label>Upload token"
             '<input id="browser-token" type="password" required autocomplete="off">'
-            '</label>'
+            "</label>"
         )
         initial_status = "Ready. The token is used only for this upload."
     else:
