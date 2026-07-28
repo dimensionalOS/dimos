@@ -237,7 +237,8 @@ UPLOAD_SCRIPT = r"""
       validName.test(repository.value.trim());
     if (!valid) {
       status.classList.add("error");
-      status.textContent = "Owner and repository names may use letters, numbers, dots, underscores, and hyphens.";
+      status.textContent = "Owner and repository names may use letters, numbers, " +
+        "dots, underscores, and hyphens.";
     }
     return valid;
   };
@@ -502,7 +503,8 @@ def render_upload_panel(
     </div>
   </form>
   <p id="browser-upload-status" class="upload-status">{initial_status}</p>
-  <p class="hint">Uploads use adaptive resumable chunks. The DimOS CLI remains available for automation.</p>
+  <p class="hint">Uploads use adaptive resumable chunks.
+    The DimOS CLI remains available for automation.</p>
 </section>"""
 
 
