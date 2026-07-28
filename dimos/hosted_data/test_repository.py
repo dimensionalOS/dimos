@@ -140,7 +140,7 @@ def test_public_status_page_and_health_capabilities(tmp_path: Path) -> None:
     assert "Service online" in page.text
     assert "HTTP HEAD and byte ranges" in page.text
     assert "Expiring signed downloads" in page.text
-    assert 'src="/assets/hosted-data.js"' in page.text
+    assert 'src="/assets/hosted-data.js?v=4"' in page.text
     assert 'id="browser-browse-button"' in page.text
     assert page.headers["Content-Security-Policy"].startswith("default-src 'none'")
     assert "script-src 'self'" in page.headers["Content-Security-Policy"]
@@ -529,6 +529,8 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
     assert "browser-upload-form" in script.text
     assert "maximumChunkSize = 4 * 1024 * 1024" in script.text
     assert "minimumChunkSize = 256 * 1024" in script.text
+    assert "demoFileLimit = 16 * 1024 * 1024" in script.text
+    assert "demoChunkSize = 1024 * 1024" in script.text
     assert "/uploads" in script.text
     assert "<video controls" in page.text
     assert "share.mp4" in page.text

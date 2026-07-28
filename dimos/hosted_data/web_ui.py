@@ -203,6 +203,8 @@ UPLOAD_SCRIPT = r"""
   const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
   const maximumChunkSize = 4 * 1024 * 1024;
   const minimumChunkSize = 256 * 1024;
+  const demoFileLimit = 16 * 1024 * 1024;
+  const demoChunkSize = 1024 * 1024;
   const pause = (milliseconds) => new Promise((resolve) =>
     window.setTimeout(resolve, milliseconds));
 
@@ -287,7 +289,7 @@ UPLOAD_SCRIPT = r"""
     }));
     const sessionUrl = `${collection}/${encodeURIComponent(created.upload_id)}`;
     let offset = Number(created.received_bytes || 0);
-    let chunkSize = maximumChunkSize;
+    let chunkSize = file.size <= demoFileLimit ? demoChunkSize : maximumChunkSize;
     let consecutiveFailures = 0;
 
     while (offset < file.size) {
@@ -399,7 +401,7 @@ def _document(*, title: str, node_name: str, content: str) -> str:
     </div>
   </nav>
   <main class="shell">{content}</main>
-  <script src="/assets/hosted-data.js" defer></script>
+  <script src="/assets/hosted-data.js?v=4" defer></script>
 </body>
 </html>"""
 
