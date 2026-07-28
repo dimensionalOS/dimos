@@ -26,6 +26,12 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
     kinematics_config_from_name,
 )
+from dimos.manipulation.planning.planners.config import (
+    ManipulationPlannerConfig,
+    RoboPlanPlannerConfig,
+    RRTConnectPlannerConfig,
+    planner_config_from_name,
+)
 from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
@@ -138,33 +144,42 @@ def create_kinematics(
 
 def create_planner(
     name: str = "roboplan",
+    config: ManipulationPlannerConfig | None = None,
     world: WorldSpec | None = None,
     world_backend: str | None = None,
     **kwargs: Any,
 ) -> PlannerSpec:
-    """Create motion planner. name='rrt_connect'|'roboplan'.
+    """Create a motion planner from a typed config or legacy name.
 
     RoboPlan-native planning is scene/backend-coupled, so `name='roboplan'`
     returns the RoboPlan world object itself as the planner.
     """
-    if name == "rrt_connect":
+    if config is None:
+        config = planner_config_from_name(name)
+
+    if isinstance(config, RRTConnectPlannerConfig):
         from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 
         return RRTConnectPlanner(**kwargs)
-    if name == "roboplan":
+    if isinstance(config, RoboPlanPlannerConfig):
         if world_backend != "roboplan" or world is None:
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
         if not isinstance(world, PlannerSpec):
             raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
+        from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
+
+        if isinstance(world, RoboPlanWorld):
+            world.set_planner_config(config)
         return world
 
-    raise ValueError(f"Unknown planner: {name}. Available: {list(SUPPORTED_PLANNERS)}")
+    raise TypeError(f"Unsupported planner config: {type(config).__name__}")
 
 
 def create_planning_specs(
     world: WorldSpec,
     world_backend: str = "roboplan",
-    planner_name: str = "roboplan",
+    planner_name: str | None = None,
+    planner: ManipulationPlannerConfig | None = None,
     kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
 ) -> PlanningSpecs:
@@ -175,17 +190,21 @@ def create_planning_specs(
         kinematics = kinematics_config_from_name(kinematics_name)
     if kinematics is None:
         kinematics = kinematics_config_from_name(DEFAULT_KINEMATICS_NAME)
+    if planner_name is not None:
+        planner = planner_config_from_name(planner_name)
+    if planner is None:
+        planner = RoboPlanPlannerConfig()
 
     validate_backend_combination(
         world_backend=world_backend,
-        planner_name=planner_name,
+        planner_name=planner.backend,
         kinematics_name=kinematics.backend,
     )
 
     return PlanningSpecs(
         world_monitor=WorldMonitor(world=world),
         kinematics=create_kinematics(config=kinematics),
-        planner=create_planner(name=planner_name, world=world, world_backend=world_backend),
+        planner=create_planner(config=planner, world=world, world_backend=world_backend),
     )
 
 
@@ -193,7 +212,8 @@ def create_planning_stack(
     robot_config: Any,
     world_backend: str = "roboplan",
     visualization: ManipulationVisualizationConfig | None = None,
-    planner_name: str = "roboplan",
+    planner_name: str | None = None,
+    planner: ManipulationPlannerConfig | None = None,
     kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
@@ -203,6 +223,7 @@ def create_planning_stack(
         world=world,
         world_backend=world_backend,
         planner_name=planner_name,
+        planner=planner,
         kinematics_name=kinematics_name,
         kinematics=kinematics,
     )

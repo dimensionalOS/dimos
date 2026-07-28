@@ -57,6 +57,10 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.planners.config import (
+    ManipulationPlannerConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -125,7 +129,9 @@ class ManipulationModuleConfig(ModuleConfig):
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
     )
-    planner_name: PlannerName = "roboplan"
+    planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
+    # Deprecated: use planner.backend instead.
+    planner_name: PlannerName | None = None
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
@@ -229,6 +235,7 @@ class ManipulationModule(Module):
             world=world,
             world_backend=self.config.world_backend,
             planner_name=self.config.planner_name,
+            planner=self.config.planner,
             kinematics_name=self.config.kinematics_name,
             kinematics=self.config.kinematics,
         )

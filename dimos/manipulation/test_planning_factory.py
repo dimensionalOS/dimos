@@ -28,6 +28,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
+    create_planning_specs,
     create_planning_stack,
     create_world,
     validate_backend_combination,
@@ -38,6 +39,11 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanLinearCartesianConfig,
+    RoboPlanPlannerConfig,
+    RRTConnectPlannerConfig,
+)
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.protocols import PlannerSpec
@@ -161,7 +167,11 @@ def test_create_planning_stack_defaults_to_roboplan(
     assert result == (world, kinematics, planner, "robot-id")
     mock_world.assert_called_once_with(backend="roboplan", visualization=None)
     mock_kinematics.assert_called_once_with(config=PinkKinematicsConfig())
-    mock_planner.assert_called_once_with(name="roboplan", world=world, world_backend="roboplan")
+    mock_planner.assert_called_once_with(
+        config=RoboPlanPlannerConfig(),
+        world=world,
+        world_backend="roboplan",
+    )
     world.add_robot.assert_called_once_with(robot_config)
     world.finalize.assert_called_once()
 
@@ -215,10 +225,57 @@ def test_start_uses_configured_planner_and_kinematics(
     create_planning_specs_mock.assert_called_once_with(
         world=world,
         world_backend="roboplan",
-        planner_name="roboplan",
+        planner_name=None,
+        planner=RoboPlanPlannerConfig(),
         kinematics_name=None,
         kinematics=module.config.kinematics,
     )
     assert module._planner is planner
     assert module._kinematics is kinematics
     assert module._robots["arm"][0] == "robot-id"
+
+
+def test_module_config_parses_typed_roboplan_planner() -> None:
+    module = ManipulationModule(
+        planner={
+            "backend": "roboplan",
+            "linear_cartesian": {"dt": 0.02, "max_linear_speed": 0.2},
+        }
+    )
+    try:
+        assert module.config.planner == RoboPlanPlannerConfig(
+            linear_cartesian=RoboPlanLinearCartesianConfig(
+                dt=0.02,
+                max_linear_speed=0.2,
+            )
+        )
+        assert module.config.planner_name is None
+    finally:
+        module.stop()
+
+
+def test_legacy_planner_name_overrides_typed_planner(
+    mocker: MockerFixture,
+) -> None:
+    world = mocker.MagicMock()
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=mocker.MagicMock(),
+    )
+    create_planner_mock = mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=mocker.MagicMock(),
+    )
+
+    create_planning_specs(
+        world=world,
+        world_backend="roboplan",
+        planner=RRTConnectPlannerConfig(),
+        planner_name="roboplan",
+    )
+
+    create_planner_mock.assert_called_once_with(
+        config=RoboPlanPlannerConfig(),
+        world=world,
+        world_backend="roboplan",
+    )

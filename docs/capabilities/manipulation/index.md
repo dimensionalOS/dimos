@@ -83,7 +83,8 @@ execute()               # Execute via coordinator
 Manipulation planning separates the world backend from the planner algorithm:
 
 - `world_backend` selects the robot/world/collision representation.
-- `planner_name` selects the path-planning algorithm.
+- `planner.backend` selects the path-planning algorithm. The legacy
+  `planner_name` field remains available as a compatibility shim.
 - `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
   field remains available as a compatibility shim.
 
@@ -97,12 +98,12 @@ Select the legacy Drake world and generic RRT planner explicitly when needed:
 ```bash
 dimos run xarm7-planner-coordinator \
   -o manipulationmodule.world_backend=drake \
-  -o manipulationmodule.planner_name=rrt_connect
+  -o manipulationmodule.planner.backend=rrt_connect
 ```
 
 Valid combinations:
 
-| `world_backend` | `planner_name` | `kinematics.backend` | Status |
+| `world_backend` | `planner.backend` | `kinematics.backend` | Status |
 |-----------------|----------------|-------------------|--------|
 | `roboplan` | `roboplan` | `pink` or `jacobian` | Default path; RoboPlan-native planner |
 | `drake` | `rrt_connect` | `pink` | Legacy Drake world |
@@ -111,9 +112,39 @@ Valid combinations:
 | `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
 
 Invalid combinations fail during startup instead of waiting for the first plan
-request. For example, `planner_name=roboplan` requires
+request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
+
+RoboPlan's typed planner config contains its linear Cartesian planner options:
+
+```python skip
+from dimos.manipulation.manipulation_module import ManipulationModuleConfig
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanLinearCartesianConfig,
+    RoboPlanPlannerConfig,
+)
+
+config = ManipulationModuleConfig(
+    planner=RoboPlanPlannerConfig(
+        linear_cartesian=RoboPlanLinearCartesianConfig(
+            max_linear_speed=0.1,
+            max_angular_speed=0.5,
+            max_position_error=0.005,
+            max_orientation_error=0.01,
+        )
+    )
+)
+```
+
+The remaining settings cover sample time, linear/angular acceleration limits,
+joint velocity/acceleration scaling, joint-limit tolerance and gain, and
+per-step attempts. DimOS always selects RoboPlan's bounded-speed mode so the
+official planner checks Cartesian tracking throughout generation.
+
+Linear Cartesian planning is an internal planner capability in this release. It
+does not yet add a caller-facing `ManipulationModule` RPC, skill, MCP tool, or
+CLI motion command.
 
 Install the manipulation dependencies:
 

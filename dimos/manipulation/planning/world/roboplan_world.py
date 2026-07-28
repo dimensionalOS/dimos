@@ -21,17 +21,20 @@ the optional dependency installed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from pathlib import Path
 from threading import RLock
 import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 try:
+    import roboplan.cartesian_planning as roboplan_cartesian
     import roboplan.core as roboplan_core
     import roboplan.rrt as roboplan_rrt
 except ImportError as exc:
@@ -43,10 +46,16 @@ except ImportError as exc:
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanLinearCartesianConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
+    CartesianDelta,
+    CartesianTarget,
     Obstacle,
     PlanningGroupID,
     PlanningResult,
@@ -74,6 +83,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 _WORLD_FRAME = "dimos_world"
+_CARTESIAN_COLLISION_STEP_SIZE = 0.05
 
 
 @dataclass
@@ -109,6 +119,11 @@ class RoboPlanWorld:
         self._finalized = False
         self._live_context = RoboPlanContext()
         self._lock = RLock()
+        self._planner_config = RoboPlanPlannerConfig()
+
+    def set_planner_config(self, config: RoboPlanPlannerConfig) -> None:
+        """Configure scene-backed planning before requests are evaluated."""
+        self._planner_config = config
 
     # Robot Management
 
@@ -499,11 +514,327 @@ class RoboPlanWorld:
             max_iterations,
         )
 
+    def plan_linear_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+    ) -> PlanningResult:
+        """Plan synchronized linear TCP tracks with official RoboPlan Cartesian planning."""
+        started = time.time()
+        if world is not self:
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="RoboPlan-native planner requires its RoboPlanWorld instance",
+            )
+        validation_error = self._validate_linear_cartesian_request(
+            selection, targets, auxiliary_groups
+        )
+        if validation_error is not None:
+            return validation_error
+        if not self._is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        try:
+            normalized_start = normalize_selection_target(selection, start, "start")
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
+
+        start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
+        current_by_name = self._current_global_positions()
+        if any(
+            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
+            for name in selection.joint_names
+        ):
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="Requested start state does not match current scene state",
+            )
+
+        group = self._require_model().groups.get(frozenset(selection.group_ids))
+        if group is None:
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="RoboPlan has no generated group for this selection",
+            )
+
+        try:
+            with self.scratch_context() as ctx:
+                self._apply_selected_state(ctx, normalized_start)
+                cartesian_path = self._build_cartesian_path(ctx, selection, targets)
+                trajectory = self._run_cartesian_planner(
+                    ctx,
+                    group,
+                    cartesian_path,
+                )
+            path, timestamps = self._path_from_cartesian_trajectory(
+                selection,
+                group,
+                trajectory,
+            )
+        except (KeyError, RuntimeError, ValueError) as exc:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - started,
+                message=f"RoboPlan Cartesian planning failed: {exc}",
+            )
+
+        if not path:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - started,
+                message="RoboPlan Cartesian planning failed: returned an empty trajectory",
+            )
+        if not self._combined_path_collision_free(path):
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - started,
+                message="RoboPlan Cartesian trajectory failed DimOS collision post-validation",
+            )
+        return PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=path,
+            planning_time=time.time() - started,
+            path_length=compute_path_length(path),
+            message="RoboPlan linear Cartesian path found",
+            timestamps=timestamps,
+        )
+
     def get_name(self) -> str:
         """Get planner name."""
         return "RoboPlan"
 
     # Internals
+
+    def _validate_linear_cartesian_request(
+        self,
+        selection: PlanningGroupSelection,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        auxiliary_groups: Sequence[PlanningGroupID],
+    ) -> PlanningResult | None:
+        if not selection.groups:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message="No planning groups selected",
+            )
+        if not targets:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message="Linear Cartesian planning requires at least one target group",
+            )
+        auxiliary_ids = tuple(auxiliary_groups)
+        if len(set(auxiliary_ids)) != len(auxiliary_ids):
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message="Auxiliary planning groups must be unique",
+            )
+        target_ids = set(targets)
+        auxiliary_set = set(auxiliary_ids)
+        if target_ids & auxiliary_set:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message="Target and auxiliary planning groups must be disjoint",
+            )
+        selected_ids = set(selection.group_ids)
+        if target_ids | auxiliary_set != selected_ids:
+            return PlanningResult(
+                status=PlanningStatus.INVALID_GOAL,
+                message=(
+                    "Target and auxiliary planning groups must exactly cover the "
+                    "planning-group selection"
+                ),
+            )
+
+        groups_by_id = {group.id: group for group in selection.groups}
+        for group_id, target in targets.items():
+            group = groups_by_id[group_id]
+            if group.tip_link is None:
+                return PlanningResult(
+                    status=PlanningStatus.INVALID_GOAL,
+                    message=f"Planning group '{group_id}' has no TCP tip link",
+                )
+            if not isinstance(target, (PoseStamped, CartesianDelta)):
+                return PlanningResult(
+                    status=PlanningStatus.INVALID_GOAL,
+                    message=(
+                        f"Cartesian target for '{group_id}' must be a PoseStamped or CartesianDelta"
+                    ),
+                )
+            if target.frame_id != "world":
+                return PlanningResult(
+                    status=PlanningStatus.UNSUPPORTED,
+                    message="Linear Cartesian planning supports only world-frame targets",
+                )
+        return None
+
+    def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
+        positions = dict(zip(state.name, state.position, strict=True))
+        for robot_id, robot in self._robots.items():
+            q = ctx.q_by_robot[robot_id].copy()
+            for index, local_name in enumerate(robot.config.joint_names):
+                global_name = f"{robot.config.name}/{local_name}"
+                if global_name in positions:
+                    q[index] = positions[global_name]
+            ctx.q_by_robot[robot_id] = q
+
+    def _build_cartesian_path(
+        self,
+        ctx: RoboPlanContext,
+        selection: PlanningGroupSelection,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+    ) -> Any:
+        model = self._require_model()
+        base_frames: list[str] = []
+        tip_frames: list[str] = []
+        tracks: list[list[NDArray[np.float64]]] = []
+        for group in selection.groups:
+            target = targets.get(group.id)
+            if target is None:
+                continue
+            if group.tip_link is None:
+                raise ValueError(f"Planning group '{group.id}' has no TCP tip link")
+            start_pose = self.get_group_ee_pose(ctx, group.id)
+            start_matrix = np.asarray(pose_to_matrix(start_pose), dtype=np.float64)
+            target_matrix = self._resolve_cartesian_target(start_matrix, target)
+            base_frames.append(_WORLD_FRAME)
+            tip_frames.append(model.native_link(group.robot_name, group.tip_link))
+            tracks.append([start_matrix, target_matrix])
+        return roboplan_core.CartesianPath(base_frames, tip_frames, tracks)
+
+    def _resolve_cartesian_target(
+        self,
+        start_matrix: NDArray[np.float64],
+        target: CartesianTarget,
+    ) -> NDArray[np.float64]:
+        if isinstance(target, PoseStamped):
+            return np.asarray(pose_to_matrix(target), dtype=np.float64)
+        target_matrix = start_matrix.copy()
+        target_matrix[:3, 3] += np.asarray(target.translation, dtype=np.float64)
+        delta_rotation = Rotation.from_euler("xyz", target.rotation_rpy).as_matrix()
+        target_matrix[:3, :3] = delta_rotation @ start_matrix[:3, :3]
+        return target_matrix
+
+    def _run_cartesian_planner(
+        self,
+        ctx: RoboPlanContext,
+        group: RoboPlanGroup,
+        path: Any,
+    ) -> Any:
+        options = self._cartesian_planner_options(
+            group.name,
+            self._planner_config.linear_cartesian,
+        )
+        with self._lock:
+            scene = self._require_scene()
+            scene_q = self._full_scene_q(ctx)
+            scene.setJointPositions(scene_q)
+            q_start = roboplan_core.JointConfiguration(
+                list(scene.getJointNames()),
+                scene_q,
+            )
+            planner = roboplan_cartesian.CartesianPathPlanner(scene, options)
+            trajectory = planner.plan(path, q_start)
+        if trajectory is None:
+            raise ValueError("official planner returned no trajectory")
+        return trajectory
+
+    @staticmethod
+    def _cartesian_planner_options(
+        group_name: str,
+        config: RoboPlanLinearCartesianConfig,
+    ) -> Any:
+        options = roboplan_cartesian.CartesianPlannerOptions()
+        options.group_name = group_name
+        options.speed_mode = roboplan_cartesian.CartesianSpeedMode.Bounded
+        for field_name in (
+            "dt",
+            "max_linear_speed",
+            "max_angular_speed",
+            "max_linear_acceleration",
+            "max_angular_acceleration",
+            "max_position_error",
+            "max_orientation_error",
+            "velocity_scale",
+            "acceleration_scale",
+            "limit_ratio_tolerance",
+            "position_limit_gain",
+            "max_attempts_per_step",
+        ):
+            setattr(options, field_name, getattr(config, field_name))
+        return options
+
+    def _path_from_cartesian_trajectory(
+        self,
+        selection: PlanningGroupSelection,
+        group: RoboPlanGroup,
+        trajectory: Any,
+    ) -> tuple[list[JointState], list[float]]:
+        result_names = tuple(getattr(trajectory, "joint_names", ()))
+        if not result_names:
+            raise ValueError("RoboPlan trajectory does not identify its joints")
+        if not set(group.native_names).issubset(result_names):
+            raise ValueError("RoboPlan trajectory omits joints from the selected group")
+        positions = list(trajectory.positions)
+        velocities = list(trajectory.velocities)
+        timestamps = [float(value) for value in trajectory.times]
+        if not positions:
+            return [], []
+        if len(velocities) != len(positions) or len(timestamps) != len(positions):
+            raise ValueError("RoboPlan trajectory fields have inconsistent waypoint counts")
+
+        native_by_public = dict(zip(group.public_names, group.native_names, strict=True))
+        expected_names = list(selection.joint_names)
+        path: list[JointState] = []
+        for position_row, velocity_row in zip(positions, velocities, strict=True):
+            position_values = np.asarray(position_row, dtype=np.float64)
+            velocity_values = np.asarray(velocity_row, dtype=np.float64)
+            if len(position_values) != len(result_names) or len(velocity_values) != len(
+                result_names
+            ):
+                raise ValueError(
+                    "RoboPlan trajectory waypoint length does not match its joint names"
+                )
+            position_by_native = dict(zip(result_names, position_values, strict=True))
+            velocity_by_native = dict(zip(result_names, velocity_values, strict=True))
+            path.append(
+                JointState(
+                    name=expected_names,
+                    position=[
+                        float(position_by_native[native_by_public[name]]) for name in expected_names
+                    ],
+                    velocity=[
+                        float(velocity_by_native[native_by_public[name]]) for name in expected_names
+                    ],
+                )
+            )
+        return path, timestamps
+
+    def _combined_path_collision_free(self, path: Sequence[JointState]) -> bool:
+        with self.scratch_context() as ctx:
+            for start, end in pairwise(path):
+                q_start = np.asarray(start.position, dtype=np.float64)
+                q_end = np.asarray(end.position, dtype=np.float64)
+                max_change = float(np.max(np.abs(q_end - q_start), initial=0.0))
+                steps = max(1, int(np.ceil(max_change / _CARTESIAN_COLLISION_STEP_SIZE)))
+                for fraction in np.linspace(0.0, 1.0, steps + 1):
+                    sample = JointState(
+                        name=start.name,
+                        position=(q_start + fraction * (q_end - q_start)).tolist(),
+                    )
+                    self._apply_selected_state(ctx, sample)
+                    first_robot_id = next(iter(self._robots))
+                    if not self.is_collision_free(ctx, first_robot_id):
+                        return False
+            if len(path) == 1:
+                self._apply_selected_state(ctx, path[0])
+                first_robot_id = next(iter(self._robots))
+                return self.is_collision_free(ctx, first_robot_id)
+        return True
 
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:

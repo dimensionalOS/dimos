@@ -57,6 +57,24 @@ JointPath: TypeAlias = "list[JointState]"
 
 
 @dataclass(frozen=True)
+class CartesianDelta:
+    """World-frame TCP displacement for linear Cartesian planning.
+
+    Translation is expressed in meters along world axes. Rotation is an XYZ
+    roll-pitch-yaw delta in radians and is pre-multiplied onto the TCP rotation at
+    the explicit planning start state.
+    """
+
+    translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    frame_id: str = "world"
+
+
+CartesianTarget: TypeAlias = "PoseStamped | CartesianDelta"
+"""Absolute world-frame TCP pose or world-frame displacement from the planning start."""
+
+
+@dataclass(frozen=True)
 class PlanningSceneInfo:
     """Stable planning-scene metadata for external collaborators.
 
