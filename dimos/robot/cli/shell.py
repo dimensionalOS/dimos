@@ -28,6 +28,16 @@ from dimos.core.run_registry import get_most_recent
 from dimos.porcelain.dimos import Dimos
 from dimos.utils.cli import theme
 
+QUICK_START = """\
+[bold]Quick start[/bold]
+  help()                            Show this guide again
+  modules()                         List deployed module instances
+  rpcs()                            List every RPC
+  rpcs("ModuleName")                Filter RPCs by module
+  describe("ModuleName.method")     Show a signature and documentation
+  app.ModuleName.method(...)        Invoke an RPC
+  app.ModuleName.method?            Inspect an RPC with IPython"""
+
 
 def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
@@ -72,6 +82,10 @@ def _format_description(info: ModuleInfo | RpcInfo) -> str:
 
 
 def _shell_namespace(app: Dimos) -> dict[str, Any]:
+    def help() -> None:
+        """Print the DimOS RPC shell quick-start guide."""
+        Console(highlight=False).print(QUICK_START)
+
     def modules() -> None:
         """Print deployed module instances."""
         table = Table("Instance", "Class", "RPCs", header_style=theme.ACCENT)
@@ -100,6 +114,7 @@ def _shell_namespace(app: Dimos) -> dict[str, Any]:
 
     return {
         "app": app,
+        "help": help,
         "modules": modules,
         "rpcs": rpcs,
         "describe": describe,
@@ -117,16 +132,8 @@ def _print_shell_banner() -> None:
     console.print(Text(theme.ascii_logo.rstrip(), style=theme.ACCENT), soft_wrap=True)
     console.print(Text("RPC shell", style=f"bold {theme.ACCENT}"))
     console.print(f"Attached to {run}.")
-    console.print(
-        """
-[bold]Quick start[/bold]
-  modules()                         List deployed module instances
-  rpcs()                            List every RPC
-  rpcs("ModuleName")                Filter RPCs by module
-  describe("ModuleName.method")     Show a signature and documentation
-  app.ModuleName.method(...)        Invoke an RPC
-  app.ModuleName.method?            Inspect an RPC with IPython"""
-    )
+    console.print()
+    console.print(QUICK_START)
     console.print(
         Text(
             "WARNING: RPC calls execute immediately against the running system.",

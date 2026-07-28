@@ -146,11 +146,12 @@ dimos shell
 The command requires an interactive terminal. For scripts and automation, use
 `Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
 
-The shell starts with four names:
+The shell starts with five names:
 
 | Name | Purpose |
 |------|---------|
 | `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
+| `help()` | Reprint the shell's quick-start guide |
 | `modules()` | Print module instances, classes, and RPC counts |
 | `rpcs()` | Print every RPC's signature and docstring summary |
 | `describe(value)` | Pretty-print a module or RPC's signature and documentation |
@@ -159,6 +160,7 @@ For example:
 
 ```python skip
 modules()
+help()
 rpcs("StressTestModule")
 describe("StressTestModule.ping")
 app.StressTestModule.ping()
