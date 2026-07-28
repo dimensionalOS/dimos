@@ -500,6 +500,7 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         *,
         token: str | None,
         public_read: bool = False,
+        public_write: bool = False,
         node_name: str = "local",
         region: str = "other",
         max_object_bytes: int | None = None,
@@ -541,6 +542,7 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
         self.repository = repository
         self.token = token
         self.public_read = public_read
+        self.public_write = public_write
         self.node_name = node_name
         self.region = region
         self.max_object_bytes = max_object_bytes
@@ -652,9 +654,11 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         owner: str | None = None,
         repository: str | None = None,
     ) -> bool:
-        if not write and self._repository_server().public_read:
-            return True
         server = self._repository_server()
+        if write and server.public_write:
+            return True
+        if not write and server.public_read:
+            return True
         if not write and server.signing_secret is not None:
             parsed = urlsplit(self.path)
             query = parse_qs(parsed.query)
@@ -840,7 +844,12 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             if server.signing_secret is not None
             else "SHA-256 verified downloads",
         )
-        access_mode = "Public read" if server.public_read else "Authenticated read"
+        if server.public_write:
+            access_mode = "Public demo read/write"
+        elif server.public_read:
+            access_mode = "Public read"
+        else:
+            access_mode = "Authenticated read"
         query = parse_qs(urlsplit(self.path).query)
         owner = query.get("owner", [""])[0]
         repository_name = query.get("repository", [""])[0]
@@ -863,6 +872,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             owner=owner,
             repository=repository_name,
             objects=object_views,
+            public_write=server.public_write,
         )
         self._send_html(HTTPStatus.OK, page)
 
@@ -1307,6 +1317,7 @@ def serve_repository(
     port: int,
     token: str | None,
     public_read: bool = False,
+    public_write: bool = False,
     repository: ReplayRepositoryBackend | None = None,
     node_name: str = "local",
     region: str = "other",
@@ -1327,6 +1338,7 @@ def serve_repository(
         repository or ReplayRepository(root),
         token=token,
         public_read=public_read,
+        public_write=public_write,
         node_name=node_name,
         region=region,
         max_object_bytes=max_object_bytes,
