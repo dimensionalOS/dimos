@@ -513,8 +513,86 @@ def test_public_write_allows_anonymous_resumable_upload(tmp_path: Path) -> None:
     assert "without a token" in page.text
 
 
-def test_repository_rejects_upload_checksum_mismatch(tmp_path: Path) -> None:
-    payload = b"not-the-claimed-object"
+def test_anonymous_uploader_can_delete_only_with_its_capability(tmp_path: Path) -> None:
+    payload = b"deletable demo video"
+    with _running_server(
+        tmp_path / "objects",
+        public_read=True,
+        public_write=True,
+    ) as server_url:
+        collection = f"{server_url}/api/v1/repositories/demo/videos/uploads"
+        created = requests.post(
+            collection,
+            headers={
+                "X-Dimos-Filename": "delete-me.mp4",
+                "X-Dimos-Size": str(len(payload)),
+                "X-Dimos-Content-Type": "video/mp4",
+            },
+            timeout=5.0,
+        ).json()
+        session_url = f"{collection}/{created['upload_id']}"
+        requests.put(
+            session_url,
+            data=payload,
+            headers={"X-Dimos-Offset": "0"},
+            timeout=5.0,
+        ).raise_for_status()
+        completed = requests.post(f"{session_url}/complete", timeout=5.0)
+        completed.raise_for_status()
+        result = completed.json()
+        object_url = (
+            f"{server_url}/api/v1/repositories/demo/videos/objects/"
+            f"{result['object_id']}"
+        )
+        anonymous = requests.delete(object_url, timeout=5.0)
+        wrong = requests.delete(
+            object_url,
+            headers={"X-Dimos-Delete-Token": "wrong"},
+            timeout=5.0,
+        )
+        deleted = requests.delete(
+            object_url,
+            headers={"X-Dimos-Delete-Token": result["delete_token"]},
+            timeout=5.0,
+        )
+        listing = requests.get(
+            f"{server_url}/api/v1/repositories/demo/videos/objects",
+            timeout=5.0,
+        )
+
+    assert anonymous.status_code == HTTPStatus.UNAUTHORIZED
+    assert wrong.status_code == HTTPStatus.UNAUTHORIZED
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert listing.json()["objects"] == []
+    assert len(result["delete_token"]) >= 32
+
+
+def test_admin_can_delete_legacy_object_without_a_capability(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.mp4"
+    source.write_bytes(b"legacy")
+    with _running_server(
+        tmp_path / "objects",
+        public_read=True,
+        public_write=True,
+    ) as server_url:
+        uploaded = upload_file(
+            server_url=server_url,
+            owner="admin",
+            repository="legacy",
+            path=source,
+            token="test-token",
+        )
+        response = requests.delete(
+            f"{server_url}/api/v1/repositories/admin/legacy/objects/"
+            f"{uploaded.object_id}",
+            headers={"Authorization": "Bearer test-token"},
+            timeout=5.0,
+        )
+
+    assert response.status_code == HTTPStatus.NO_CONTENT
+
+
+def test_repository_rejects_upload_checksum_mismatch(tmp_path: Path) -> None:    payload = b"not-the-claimed-object"
     headers = {
         "Authorization": "Bearer test-token",
         "Content-Length": str(len(payload)),
