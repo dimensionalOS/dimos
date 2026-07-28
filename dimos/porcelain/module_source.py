@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
+
+from dimos.porcelain.module_handle import ModuleHandle
 
 if TYPE_CHECKING:
     from dimos.core.coordination.module_coordinator import ModuleDescriptor
@@ -34,6 +36,6 @@ class ModuleSource(Protocol):
 
     def list_module_descriptors(self) -> list[ModuleDescriptor]: ...
 
-    def get_module(self, name: str) -> Any: ...
+    def get_module(self, name: str) -> ModuleHandle: ...
 
     def close(self) -> None: ...

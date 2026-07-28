@@ -18,20 +18,23 @@ import atexit
 import importlib
 import inspect
 import threading
-from typing import Any
+from typing import Any, TypeAlias
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.global_config import global_config
 from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, extract_rpc_info
 from dimos.core.module import ModuleBase, PeekNotFound
 from dimos.core.rpc_client import RpcCall
 from dimos.porcelain.local_module_source import LocalModuleSource
+from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
 from dimos.porcelain.skills_proxy import SkillsProxy
 from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
+
+DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
 
 
 class Dimos:
@@ -129,12 +132,12 @@ class Dimos:
 
         return [_describe_module(descriptor) for descriptor in descriptors]
 
-    def get_module(self, name: str) -> Any:
+    def get_module(self, name: str) -> ModuleHandle:
         """Return a module proxy by exact instance name or unique class name."""
         with self._lock:
             return self._require_source().get_module(name)
 
-    def list_rpcs(self, module: str | Any | None = None) -> list[RpcInfo]:
+    def list_rpcs(self, module: str | ModuleHandle | None = None) -> list[RpcInfo]:
         """Return structured metadata for all advertised RPCs.
 
         Args:
@@ -150,7 +153,7 @@ class Dimos:
                 return module_info.rpcs
         raise KeyError(instance_name)
 
-    def describe(self, target: str | Any) -> ModuleInfo | RpcInfo:
+    def describe(self, target: DescribeTarget) -> ModuleInfo | RpcInfo:
         """Describe a module or RPC proxy, or a qualified ``module.rpc`` string."""
         if isinstance(target, (ModuleInfo, RpcInfo)):
             return target
@@ -194,12 +197,9 @@ class Dimos:
                 return rpc_info
         raise KeyError(f"{instance_name}.{rpc_name}")
 
-    def _module_instance_name(self, module: str | Any) -> str:
+    def _module_instance_name(self, module: str | ModuleHandle) -> str:
         proxy = self.get_module(module) if isinstance(module, str) else module
-        instance_name = getattr(proxy, "remote_name", None)
-        if not isinstance(instance_name, str):
-            raise TypeError("Expected a module name or module proxy")
-        return instance_name
+        return proxy.remote_name
 
     def _require_source(self) -> ModuleSource:
         if self._source is None:
@@ -282,7 +282,7 @@ class Dimos:
         with self._lock:
             return self._source is not None and not self._stopped
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> ModuleHandle:
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -339,13 +339,13 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
     )
 
 
-def _describe_module(descriptor: Any) -> ModuleInfo:
+def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
     instance_name = descriptor.rpc_name or descriptor.class_name
-    module_class: type[Any] | None = None
+    module_class: type[ModuleBase] | None = None
     try:
         module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
         candidate = getattr(importlib.import_module(module_path), class_name)
-        if inspect.isclass(candidate):
+        if inspect.isclass(candidate) and issubclass(candidate, ModuleBase):
             module_class = candidate
     except (ImportError, AttributeError, ValueError):
         pass

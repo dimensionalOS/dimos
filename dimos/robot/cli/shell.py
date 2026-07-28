@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import sys
-from typing import Any
+from typing import TypedDict
 
 from IPython import start_ipython
 from rich.console import Console
@@ -25,7 +26,8 @@ import typer
 
 from dimos.core.introspection.module.info import ModuleInfo, RpcInfo
 from dimos.core.run_registry import get_most_recent
-from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.dimos import DescribeTarget, Dimos
+from dimos.porcelain.module_handle import ModuleHandle
 from dimos.utils.cli import theme
 
 QUICK_START = """\
@@ -37,6 +39,14 @@ QUICK_START = """\
   describe("ModuleName.method")     Show a signature and documentation
   app.ModuleName.method(...)        Invoke an RPC
   app.ModuleName.method?            Inspect an RPC with IPython"""
+
+
+class ShellNamespace(TypedDict):
+    app: Dimos
+    guide: Callable[[], None]
+    modules: Callable[[], None]
+    rpcs: Callable[[str | ModuleHandle | None], None]
+    describe: Callable[[DescribeTarget], None]
 
 
 def _is_interactive_terminal() -> bool:
@@ -81,7 +91,7 @@ def _format_description(info: ModuleInfo | RpcInfo) -> str:
     return "\n".join(lines)
 
 
-def _shell_namespace(app: Dimos) -> dict[str, Any]:
+def _shell_namespace(app: Dimos) -> ShellNamespace:
     def guide() -> None:
         """Print the DimOS RPC shell quick-start guide."""
         Console(highlight=False).print(QUICK_START)
@@ -97,7 +107,7 @@ def _shell_namespace(app: Dimos) -> dict[str, Any]:
             )
         Console().print(table)
 
-    def rpcs(module: str | Any | None = None) -> None:
+    def rpcs(module: str | ModuleHandle | None = None) -> None:
         """Print advertised RPC signatures and summaries."""
         table = Table("RPC", "Signature", "Description", header_style=theme.ACCENT)
         for info in app.list_rpcs(module):
@@ -108,7 +118,7 @@ def _shell_namespace(app: Dimos) -> dict[str, Any]:
             table.add_row(qualified_name, _rpc_signature(info), summary)
         Console().print(table)
 
-    def describe(target: str | Any) -> None:
+    def describe(target: DescribeTarget) -> None:
         """Print a module or RPC's signature and documentation."""
         Console().print(Text(_format_description(app.describe(target))))
 

@@ -26,7 +26,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
-from dimos.porcelain.remote_module_source import RemoteModuleSource, _RemoteProxy
+from dimos.porcelain.module_handle import RemoteModuleProxy
+from dimos.porcelain.remote_module_source import RemoteModuleSource
 
 
 class NamedRemoteModule(Module):
@@ -191,7 +192,7 @@ def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
     monkeypatch.setattr("dimos.porcelain.remote_module_source.importlib.import_module", fake_import)
     client._source.invalidate("StressTestModule")
     proxy = client._source.get_module("StressTestModule")
-    assert isinstance(proxy, _RemoteProxy)
+    assert isinstance(proxy, RemoteModuleProxy)
     assert proxy.ping() == "pong"
     assert str(inspect.signature(proxy.ping)) == "(*args, **kwargs)"
 
