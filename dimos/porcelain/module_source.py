@@ -21,7 +21,12 @@ if TYPE_CHECKING:
 
 
 class ModuleSource(Protocol):
-    """Common interface for local and remote module sources."""
+    """Common interface for owned and coordinator-connected module sources.
+
+    "Local" is backed by the coordinator owned by ``Dimos.run()``. "Remote" is
+    relative to the client: it connects to a separately running coordinator,
+    which may still be on the same host.
+    """
 
     is_remote: bool
 

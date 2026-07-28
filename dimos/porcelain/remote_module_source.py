@@ -61,7 +61,11 @@ class _RemoteProxy:
 
 
 class RemoteModuleSource(ModuleSource):
-    """Module source that drives a remote daemon over the Coordinator @rpc service."""
+    """Module source connected to a separately running coordinator over RPC.
+
+    The coordinator may be on the same host; "remote" distinguishes this from
+    the in-process coordinator owned by ``Dimos.run()``.
+    """
 
     is_remote = True
 

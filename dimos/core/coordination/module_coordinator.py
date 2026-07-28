@@ -635,16 +635,18 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
+        """Serve coordinator RPC and block until the process is interrupted.
+
+        Owning service startup here gives CLI and direct Python ``build().loop()``
+        launches the same attachment behavior.
+        """
         self.start_rpc_service()
         try:
-            self._wait_until_stopped()
+            threading.Event().wait()
         except KeyboardInterrupt:
             return
         finally:
             self.stop()
-
-    def _wait_until_stopped(self) -> None:
-        threading.Event().wait()
 
 
 def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:

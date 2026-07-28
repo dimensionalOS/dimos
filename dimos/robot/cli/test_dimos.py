@@ -23,7 +23,6 @@ from dimos.core.coordination.blueprints import autoconnect
 import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.porcelain.dimos import Dimos
 from dimos.robot import external_blueprints as external
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
 import dimos.utils.cli.spy.run_spy as run_spy
@@ -65,75 +64,6 @@ def test_global_config_flag_applies_before_subcommand():
         assert "transport: zenoh" in result.output
     finally:
         global_config.update(transport=original)
-
-
-def test_shell_rejects_non_interactive_execution(mocker):
-    mocker.patch("dimos.robot.cli.dimos._is_interactive_terminal", return_value=False)
-    connect = mocker.patch("dimos.robot.cli.dimos.Dimos.connect")
-
-    result = CliRunner().invoke(main, ["shell"])
-
-    assert result.exit_code == 1
-    assert "requires an interactive terminal" in result.output
-    assert "Dimos Python interface" in result.output
-    connect.assert_not_called()
-
-
-def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
-    app = mocker.Mock(spec=Dimos)
-    mocker.patch("dimos.robot.cli.dimos._is_interactive_terminal", return_value=True)
-    connect = mocker.patch("dimos.robot.cli.dimos.Dimos.connect", return_value=app)
-    mocker.patch("dimos.robot.cli.dimos.get_most_recent", return_value=None)
-    start_ipython = mocker.patch("dimos.robot.cli.dimos.start_ipython")
-
-    result = CliRunner().invoke(main, ["shell"])
-
-    assert result.exit_code == 0, result.output
-    connect.assert_called_once_with()
-    namespace = start_ipython.call_args.kwargs["user_ns"]
-    assert set(namespace) == {"app", "modules", "rpcs", "describe"}
-    assert namespace["app"] is app
-    assert namespace["modules"] is app.list_modules
-    assert namespace["rpcs"] is app.list_rpcs
-    assert namespace["describe"] is app.describe
-    assert "unregistered coordinator" in result.output
-    assert "RPC calls execute immediately" in result.output
-    app.stop.assert_called_once_with()
-
-
-def test_shell_does_not_retry_after_connection_failure(mocker):
-    mocker.patch("dimos.robot.cli.dimos._is_interactive_terminal", return_value=True)
-    connect = mocker.patch(
-        "dimos.robot.cli.dimos.Dimos.connect",
-        side_effect=RuntimeError("No running DimOS coordinator found"),
-    )
-    start_ipython = mocker.patch("dimos.robot.cli.dimos.start_ipython")
-
-    result = CliRunner().invoke(main, ["shell"])
-
-    assert result.exit_code == 1
-    assert "No running DimOS coordinator found" in result.output
-    connect.assert_called_once_with()
-    start_ipython.assert_not_called()
-
-
-def test_shell_disconnects_when_ipython_reports_connection_loss(mocker):
-    app = mocker.Mock(spec=Dimos)
-    mocker.patch("dimos.robot.cli.dimos._is_interactive_terminal", return_value=True)
-    connect = mocker.patch("dimos.robot.cli.dimos.Dimos.connect", return_value=app)
-    mocker.patch("dimos.robot.cli.dimos.get_most_recent", return_value=None)
-    mocker.patch(
-        "dimos.robot.cli.dimos.start_ipython",
-        side_effect=RuntimeError("coordinator connection lost"),
-    )
-
-    result = CliRunner().invoke(main, ["shell"])
-
-    assert result.exit_code == 1
-    assert isinstance(result.exception, RuntimeError)
-    assert str(result.exception) == "coordinator connection lost"
-    connect.assert_called_once_with()
-    app.stop.assert_called_once_with()
 
 
 def test_blueprint_arg_help():

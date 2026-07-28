@@ -151,9 +151,9 @@ The shell starts with four names:
 | Name | Purpose |
 |------|---------|
 | `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
-| `modules()` | List structured information for current module instances |
-| `rpcs()` | List every advertised RPC, including skills and lifecycle RPCs |
-| `describe(value)` | Describe a module proxy, RPC proxy, or qualified `module.rpc` name |
+| `modules()` | Print module instances, classes, and RPC counts |
+| `rpcs()` | Print every RPC's signature and docstring summary |
+| `describe(value)` | Pretty-print a module or RPC's signature and documentation |
 
 For example:
 
@@ -164,8 +164,22 @@ describe("StressTestModule.ping")
 app.StressTestModule.ping()
 ```
 
+For example, `describe("StressTestModule.echo")` prints:
+
+```text
+RPC: StressTestModule.echo
+Signature: echo(message: str) -> str
+
+Documentation:
+Echo a message back to the caller.
+```
+
+Use `app.describe(...)` when you want the structured `ModuleInfo` or `RpcInfo`
+record instead of formatted output.
+
 Discovery is live, so modules loaded after attachment appear on the next
-`modules()` or `rpcs()` call. Exact instance names select one deployment when
+`modules()` or `rpcs()` call. Use `app.list_modules()` and `app.list_rpcs()` when
+you want structured records. Exact instance names select one deployment when
 multiple instances share a class.
 
 RPC calls execute immediately against the running system. The shell does not filter
