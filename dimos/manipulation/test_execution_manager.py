@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.coordinator_client import ControlCoordinatorClient
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -84,21 +84,23 @@ def _plan(
     )
 
 
-def _client() -> MagicMock:
-    client = MagicMock(spec=ControlCoordinatorClient)
-    client.execute_trajectory.return_value = TrajectoryExecutionResult(
+def _coordinator() -> MagicMock:
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
-    client.cancel_trajectory.return_value = TrajectoryCancellationResult(
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
-    return client
+    return coordinator
 
 
-def _manager(*targets: ExecutionTarget, client: MagicMock | None = None) -> PlanExecutionManager:
+def _manager(
+    *targets: ExecutionTarget, coordinator: MagicMock | None = None
+) -> PlanExecutionManager:
     return PlanExecutionManager(
         targets=targets or (_target(),),
-        coordinator_client=client or _client(),
+        coordinator=coordinator if coordinator is not None else _coordinator(),
     )
 
 
@@ -140,7 +142,7 @@ def test_manager_requires_unique_robot_targets() -> None:
 
 
 def test_execute_maps_all_robots_into_one_trajectory() -> None:
-    client = _client()
+    coordinator = _coordinator()
     manager = _manager(
         _target(
             "left",
@@ -152,32 +154,32 @@ def test_execute_maps_all_robots_into_one_trajectory() -> None:
             model_joint_names=("j1",),
             coordinator_to_model={"right_hw/j1": "j1"},
         ),
-        client=client,
+        coordinator=coordinator,
     )
     plan = _plan(("left/j1", "right/j1"))
 
     result = manager.execute(plan)
 
     assert result.outcome is ExecutionOutcome.ACCEPTED
-    client.execute_trajectory.assert_called_once()
-    trajectory = client.execute_trajectory.call_args.args[0]
+    coordinator.execute_trajectory.assert_called_once()
+    trajectory = coordinator.execute_trajectory.call_args.args[0]
     assert trajectory.joint_names == ["left_hw/j1", "right_hw/j1"]
     assert trajectory.points == plan.trajectory.points
     assert trajectory.timestamp == plan.trajectory.timestamp
 
 
 def test_execute_preserves_single_robot_subset() -> None:
-    client = _client()
+    coordinator = _coordinator()
     manager = _manager(
         _target("left", model_joint_names=("j1", "j2")),
         _target("right", model_joint_names=("j1",)),
-        client=client,
+        coordinator=coordinator,
     )
 
     result = manager.execute(_plan(("left/j2",)))
 
     assert result.accepted
-    trajectory = client.execute_trajectory.call_args.args[0]
+    trajectory = coordinator.execute_trajectory.call_args.args[0]
     assert trajectory.joint_names == ["j2"]
     assert trajectory.points[0].positions == [0.0]
 
@@ -195,18 +197,18 @@ def test_execute_rejects_unmappable_plan_before_rpc(
     plan: GeneratedPlan,
     message: str,
 ) -> None:
-    client = _client()
-    manager = _manager(client=client)
+    coordinator = _coordinator()
+    manager = _manager(coordinator=coordinator)
 
     result = manager.execute(plan)
 
     assert result.outcome is ExecutionOutcome.REJECTED
     assert message in result.message
-    client.execute_trajectory.assert_not_called()
+    coordinator.execute_trajectory.assert_not_called()
 
 
 def test_execute_rejects_cross_robot_mapping_collision() -> None:
-    client = _client()
+    coordinator = _coordinator()
     manager = _manager(
         _target(
             "left",
@@ -218,14 +220,14 @@ def test_execute_rejects_cross_robot_mapping_collision() -> None:
             model_joint_names=("j1",),
             coordinator_to_model={"shared/j1": "j1"},
         ),
-        client=client,
+        coordinator=coordinator,
     )
 
     result = manager.execute(_plan(("left/j1", "right/j1")))
 
     assert result.outcome is ExecutionOutcome.REJECTED
     assert "duplicate coordinator joints" in result.message
-    client.execute_trajectory.assert_not_called()
+    coordinator.execute_trajectory.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -238,10 +240,10 @@ def test_execute_rejects_cross_robot_mapping_collision() -> None:
     ],
 )
 def test_execute_preserves_coordinator_rejection(status: TrajectoryExecutionStatus) -> None:
-    client = _client()
+    coordinator = _coordinator()
     coordinator_result = TrajectoryExecutionResult(status, "specific rejection")
-    client.execute_trajectory.return_value = coordinator_result
-    manager = _manager(client=client)
+    coordinator.execute_trajectory.return_value = coordinator_result
+    manager = _manager(coordinator=coordinator)
 
     result = manager.execute(_plan())
 
@@ -251,10 +253,10 @@ def test_execute_preserves_coordinator_rejection(status: TrajectoryExecutionStat
 
 
 def test_execute_rpc_failure_is_uncertain() -> None:
-    client = _client()
-    client.execute_trajectory.side_effect = TimeoutError("timed out")
+    coordinator = _coordinator()
+    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
 
-    result = _manager(client=client).execute(_plan())
+    result = _manager(coordinator=coordinator).execute(_plan())
 
     assert result.outcome is ExecutionOutcome.UNCERTAIN
     assert "timed out" in result.message
@@ -285,11 +287,11 @@ def test_cancel_preserves_coordinator_semantics(
     safe: bool,
     cancelled: bool,
 ) -> None:
-    client = _client()
+    coordinator = _coordinator()
     coordinator_result = TrajectoryCancellationResult(status, "cancel result")
-    client.cancel_trajectory.return_value = coordinator_result
+    coordinator.cancel_trajectory.return_value = coordinator_result
 
-    result = _manager(client=client).cancel()
+    result = _manager(coordinator=coordinator).cancel()
 
     assert result is coordinator_result
     assert result.safe is safe
@@ -297,10 +299,10 @@ def test_cancel_preserves_coordinator_semantics(
 
 
 def test_cancel_rpc_failure_is_uncertain() -> None:
-    client = _client()
-    client.cancel_trajectory.side_effect = TimeoutError("timed out")
+    coordinator = _coordinator()
+    coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
 
-    result = _manager(client=client).cancel()
+    result = _manager(coordinator=coordinator).cancel()
 
     assert result.status is TrajectoryCancellationStatus.UNCERTAIN
     assert not result.safe
@@ -309,7 +311,7 @@ def test_cancel_rpc_failure_is_uncertain() -> None:
 
 
 def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
-    client = _client()
+    coordinator = _coordinator()
     execute_started = Event()
     release_execute = Event()
 
@@ -319,8 +321,8 @@ def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
             raise TimeoutError("test did not release execute RPC")
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
-    client.execute_trajectory.side_effect = execute_trajectory
-    manager = _manager(client=client)
+    coordinator.execute_trajectory.side_effect = execute_trajectory
+    manager = _manager(coordinator=coordinator)
     execute_results: list[ExecutionDispatchResult] = []
     cancel_results: list[TrajectoryCancellationResult] = []
 
@@ -334,7 +336,7 @@ def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
         if execute_was_started:
             cancel_thread.start()
             cancel_was_started = True
-            cancel_called_before_release = client.cancel_trajectory.called
+            cancel_called_before_release = coordinator.cancel_trajectory.called
     finally:
         release_execute.set()
         execute_thread.join(timeout=1.0)
@@ -350,4 +352,4 @@ def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
     assert execute_results[0].outcome is ExecutionOutcome.ACCEPTED
     assert len(cancel_results) == 1
     assert cancel_results[0].status is TrajectoryCancellationStatus.ALREADY_STOPPED
-    client.cancel_trajectory.assert_called_once_with()
+    coordinator.cancel_trajectory.assert_called_once_with()

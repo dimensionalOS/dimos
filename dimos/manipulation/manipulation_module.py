@@ -36,7 +36,7 @@ from pydantic import Field
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.coordinator_client import ControlCoordinatorClient
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -147,6 +147,7 @@ class ManipulationModule(Module):
     """
 
     config: ManipulationModuleConfig
+    _control_coordinator: ControlCoordinator
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
@@ -173,7 +174,6 @@ class ManipulationModule(Module):
         self._last_plan: GeneratedPlan | None = None
 
         # Coordinator integration (initialized in start())
-        self._coordinator_client: ControlCoordinatorClient
         self._execution_manager: PlanExecutionManager
 
         # Init joints: captured from first joint state per robot, used by go_init
@@ -1352,10 +1352,7 @@ class ManipulationModule(Module):
         )
         return True
 
-    def _initialize_execution(
-        self,
-        coordinator_client: ControlCoordinatorClient | None = None,
-    ) -> None:
+    def _initialize_execution(self) -> None:
         """Initialize coordinator access and planned execution policy."""
         targets = [
             ExecutionTarget.from_coordinator_mapping(
@@ -1365,12 +1362,9 @@ class ManipulationModule(Module):
             )
             for _, config, _ in self._robots.values()
         ]
-        self._coordinator_client = (
-            coordinator_client if coordinator_client is not None else ControlCoordinatorClient()
-        )
         self._execution_manager = PlanExecutionManager(
             targets=targets,
-            coordinator_client=self._coordinator_client,
+            coordinator=self._control_coordinator,
         )
 
     @rpc
@@ -1487,7 +1481,7 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return False
-        return self._coordinator_client.set_gripper_position(hw_id, position)
+        return self._control_coordinator.set_gripper_position(hw_id, position)
 
     @rpc
     def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
@@ -1499,7 +1493,7 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return None
-        result = self._coordinator_client.get_gripper_position(hw_id)
+        result = self._control_coordinator.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
     @skill
@@ -1847,9 +1841,5 @@ class ManipulationModule(Module):
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
             self._world_monitor.stop_all_monitors()
-
-        coordinator_client = getattr(self, "_coordinator_client", None)
-        if coordinator_client is not None:
-            coordinator_client.close()
 
         super().stop()

@@ -44,8 +44,7 @@ from __future__ import annotations
 
 import math
 import sys
-import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
@@ -127,11 +126,17 @@ class CoordinatorClient:
 
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
         """Execute through the coordinator's sole trajectory task."""
-        return self._rpc.execute_trajectory(trajectory)  # type: ignore[no-any-return]
+        return cast(
+            "TrajectoryExecutionResult",
+            self._rpc.execute_trajectory(trajectory),
+        )
 
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
         """Cancel the coordinator's sole trajectory task."""
-        return self._rpc.cancel_trajectory()  # type: ignore[no-any-return]
+        return cast(
+            "TrajectoryCancellationResult",
+            self._rpc.cancel_trajectory(),
+        )
 
     def select_task(self, task_name: str) -> bool:
         """
@@ -305,16 +310,6 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
     print("=" * 70)
 
 
-def wait_for_completion(trajectory: JointTrajectory, timeout: float = 60.0) -> bool:
-    """Wait for the expected trajectory duration."""
-    wait_time = trajectory.duration + 0.5
-    if wait_time > timeout:
-        return False
-    time.sleep(wait_time)
-    print("\nTrajectory duration elapsed")
-    return True
-
-
 class CoordinatorShell:
     """IPython shell interface for coordinator control."""
 
@@ -435,8 +430,10 @@ class CoordinatorShell:
         if confirm == "y":
             result = self._client.execute_trajectory(self._generated_trajectory)
             if result.status is TrajectoryExecutionStatus.ACCEPTED:
-                print("Trajectory started...")
-                wait_for_completion(self._generated_trajectory)
+                print(
+                    "Trajectory accepted "
+                    f"(expected duration: {self._generated_trajectory.duration:.2f}s)"
+                )
             else:
                 print(f"Failed to start trajectory: {result.message or result.status.name}")
 

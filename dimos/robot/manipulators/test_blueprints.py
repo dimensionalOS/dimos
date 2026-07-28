@@ -41,9 +41,7 @@ from dimos.robot.manipulators.piper.blueprints.teleop import (
     keyboard_teleop_piper,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import (
-    dual_xarm6_planner,
     dual_xarm6_planner_coordinator,
-    xarm6_planner_only,
     xarm7_planner_coordinator,
 )
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -140,10 +138,9 @@ def test_planner_helper_preserves_explicit_visualization() -> None:
 
 
 def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
-    for blueprint in (xarm6_planner_only, dual_xarm6_planner, xarm7_planner_coordinator):
-        config = _manipulation_config(blueprint)
+    config = _manipulation_config(xarm7_planner_coordinator)
 
-        assert isinstance(config.visualization, NoManipulationVisualizationConfig)
+    assert isinstance(config.visualization, NoManipulationVisualizationConfig)
 
 
 def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backends() -> None:

@@ -17,13 +17,14 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation._test_manipulation_helpers import make_module
+from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -62,8 +63,11 @@ def _plan(final_position: float = 1.0) -> GeneratedPlan:
     )
 
 
-def _module_with_client(client: MagicMock) -> ManipulationModule:
-    module = make_module()
+def _module_with_coordinator(
+    coordinator: MagicMock,
+    module_factory: ModuleFactory,
+) -> ManipulationModule:
+    module = module_factory(coordinator)
     config = RobotModelConfig(
         name="arm",
         model_path=Path("/path/to/robot.urdf"),
@@ -79,34 +83,36 @@ def _module_with_client(client: MagicMock) -> ManipulationModule:
         ],
     )
     module._robots = {"arm": ("arm_id", config, MagicMock())}
-    module._initialize_execution(client)
+    module._initialize_execution()
     return module
 
 
-def _client(
+def _coordinator(
     *,
     execute_status: TrajectoryExecutionStatus = TrajectoryExecutionStatus.ACCEPTED,
     cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
 ) -> MagicMock:
-    client = MagicMock()
-    client.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
-    client.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
-    return client
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    return coordinator
 
 
-def test_execute_plan_can_dispatch_cached_plan_repeatedly() -> None:
-    client = _client()
-    module = _module_with_client(client)
+def test_execute_plan_can_dispatch_cached_plan_repeatedly(
+    module_factory: ModuleFactory,
+) -> None:
+    coordinator = _coordinator()
+    module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
     assert module.execute_plan()
     assert module.execute_plan()
-    assert client.execute_trajectory.call_count == 2
+    assert coordinator.execute_trajectory.call_count == 2
 
 
-def test_direct_plan_does_not_replace_cached_plan() -> None:
-    client = _client()
-    module = _module_with_client(client)
+def test_direct_plan_does_not_replace_cached_plan(module_factory: ModuleFactory) -> None:
+    coordinator = _coordinator()
+    module = _module_with_coordinator(coordinator, module_factory)
     cached = _plan(1.0)
     direct = _plan(2.0)
     module._last_plan = cached
@@ -114,13 +120,15 @@ def test_direct_plan_does_not_replace_cached_plan() -> None:
     assert module.execute_plan(plan=direct)
 
     assert module._last_plan is cached
-    dispatched = client.execute_trajectory.call_args.args[0]
+    dispatched = coordinator.execute_trajectory.call_args.args[0]
     assert dispatched.points[-1].positions == [2.0]
 
 
-def test_known_coordinator_rejection_restores_previous_state() -> None:
-    client = _client(execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH)
-    module = _module_with_client(client)
+def test_known_coordinator_rejection_restores_previous_state(
+    module_factory: ModuleFactory,
+) -> None:
+    coordinator = _coordinator(execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH)
+    module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
     module._state = ManipulationState.COMPLETED
 
@@ -130,10 +138,10 @@ def test_known_coordinator_rejection_restores_previous_state() -> None:
     assert module._last_plan is not None
 
 
-def test_uncertain_execute_projects_to_fault() -> None:
-    client = _client()
-    client.execute_trajectory.side_effect = TimeoutError("timed out")
-    module = _module_with_client(client)
+def test_uncertain_execute_projects_to_fault(module_factory: ModuleFactory) -> None:
+    coordinator = _coordinator()
+    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
     assert not module.execute_plan()
@@ -142,10 +150,10 @@ def test_uncertain_execute_projects_to_fault() -> None:
     assert "timed out" in module.get_error()
 
 
-def test_uncertain_cancel_projects_to_fault() -> None:
-    client = _client()
-    client.cancel_trajectory.side_effect = TimeoutError("timed out")
-    module = _module_with_client(client)
+def test_uncertain_cancel_projects_to_fault(module_factory: ModuleFactory) -> None:
+    coordinator = _coordinator()
+    coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
+    module = _module_with_coordinator(coordinator, module_factory)
     module._state = ManipulationState.EXECUTING
 
     assert not module.cancel()

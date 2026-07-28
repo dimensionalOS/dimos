@@ -23,7 +23,7 @@ from types import MappingProxyType
 
 import attrs
 
-from dimos.control.coordinator_client import ControlCoordinatorClient
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -167,7 +167,7 @@ class PlanExecutionManager:
         self,
         *,
         targets: Iterable[ExecutionTarget],
-        coordinator_client: ControlCoordinatorClient,
+        coordinator: ControlCoordinator,
     ) -> None:
         target_items = tuple(targets)
         target_names = [target.robot_name for target in target_items]
@@ -175,7 +175,7 @@ class PlanExecutionManager:
             raise ValueError("Execution targets must have unique robot names")
 
         self._targets = {target.robot_name: target for target in target_items}
-        self._coordinator_client = coordinator_client
+        self._coordinator = coordinator
         self._operation_lock = threading.Lock()
 
     def execute(self, plan: GeneratedPlan) -> ExecutionDispatchResult:
@@ -190,7 +190,7 @@ class PlanExecutionManager:
                 )
 
             try:
-                result = self._coordinator_client.execute_trajectory(trajectory)
+                result = self._coordinator.execute_trajectory(trajectory)
             except Exception as exc:
                 logger.exception("Coordinator execute RPC failed")
                 return ExecutionDispatchResult(
@@ -214,7 +214,7 @@ class PlanExecutionManager:
         """Cancel coordinator trajectory execution."""
         with self._operation_lock:
             try:
-                return self._coordinator_client.cancel_trajectory()
+                return self._coordinator.cancel_trajectory()
             except Exception as exc:
                 logger.exception("Coordinator cancel RPC failed")
                 return TrajectoryCancellationResult(

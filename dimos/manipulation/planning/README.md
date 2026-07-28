@@ -5,8 +5,8 @@ Motion planning for robotic manipulators. Backend-agnostic design with Drake imp
 ## Quick Start
 
 ```bash
-# 1. Verify manipulation dependencies load correctly (standalone, no hardware):
-dimos run xarm6-planner-only
+# 1. Verify manipulation dependencies with mock hardware:
+dimos run xarm7-planner-coordinator
 
 # 2. Keyboard teleop with mock arm (single command):
 dimos run keyboard-teleop-xarm7
@@ -138,9 +138,8 @@ accepted.
 
 | Blueprint | Description |
 |-----------|-------------|
-| `xarm6_planner_only` | XArm 6-DOF standalone (no coordinator) |
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
-| `dual-xarm6-planner` | Dual XArm 6-DOF |
+| `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with mock coordinator hardware |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
 
 ## Directory Structure

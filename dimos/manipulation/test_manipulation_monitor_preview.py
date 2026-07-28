@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation._test_manipulation_helpers import make_module as _make_module
+from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -117,9 +117,12 @@ def _install_generated_plan(
     )
 
 
-def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
+def _make_module_with_monitor(
+    module_factory: ModuleFactory,
+    *configs: RobotModelConfig,
+) -> ManipulationModule:
     """Create a ManipulationModule with a mocked world monitor and robots configured."""
-    module = _make_module()
+    module = module_factory()
     module._world_monitor = MagicMock()
     module._init_joints = {}
     for config in configs:
@@ -194,9 +197,9 @@ class FakeVisualization:
 class TestOnJointState:
     """Test _on_joint_state routing, splitting, and init capture."""
 
-    def test_routes_positions_to_monitor(self, robot_config_with_mapping):
+    def test_routes_positions_to_monitor(self, robot_config_with_mapping, module_factory):
         """Joint positions from aggregated message are routed to the correct monitor."""
-        module = _make_module_with_monitor(robot_config_with_mapping)
+        module = _make_module_with_monitor(module_factory, robot_config_with_mapping)
 
         msg = JointState(
             name=["left/joint1", "left/joint2", "left/joint3"],
@@ -213,9 +216,9 @@ class TestOnJointState:
         assert sub_msg.velocity == [1.0, 2.0, 3.0]
         assert call_args[1]["robot_id"] == "robot_left_arm"
 
-    def test_skips_robot_with_missing_joints(self, robot_config_with_mapping):
+    def test_skips_robot_with_missing_joints(self, robot_config_with_mapping, module_factory):
         """Robots whose joints are absent from the message are skipped."""
-        module = _make_module_with_monitor(robot_config_with_mapping)
+        module = _make_module_with_monitor(module_factory, robot_config_with_mapping)
 
         # Message has none of left_arm's joints
         msg = JointState(
@@ -226,9 +229,9 @@ class TestOnJointState:
 
         module._world_monitor.on_joint_state.assert_not_called()
 
-    def test_captures_init_joints_on_first_call(self, robot_config_with_mapping):
+    def test_captures_init_joints_on_first_call(self, robot_config_with_mapping, module_factory):
         """First joint state is stored as init joints; subsequent calls don't overwrite."""
-        module = _make_module_with_monitor(robot_config_with_mapping)
+        module = _make_module_with_monitor(module_factory, robot_config_with_mapping)
 
         first_msg = JointState(
             name=["left/joint1", "left/joint2", "left/joint3"],
@@ -246,7 +249,7 @@ class TestOnJointState:
         module._on_joint_state(second_msg)
         assert module._init_joints["left_arm"].position == [0.1, 0.2, 0.3]
 
-    def test_multi_robot_splits_correctly(self):
+    def test_multi_robot_splits_correctly(self, module_factory):
         """With two robots, each gets only its own joints from the aggregated message."""
         left_config = RobotModelConfig(
             name="left",
@@ -274,7 +277,7 @@ class TestOnJointState:
             ],
             joint_name_mapping={"right/j1": "j1", "right/j2": "j2"},
         )
-        module = _make_module_with_monitor(left_config, right_config)
+        module = _make_module_with_monitor(module_factory, left_config, right_config)
 
         msg = JointState(
             name=["left/j1", "left/j2", "right/j1", "right/j2"],
@@ -295,9 +298,9 @@ class TestOnJointState:
         assert calls["robot_left"].velocity == [0.1, 0.2]
         assert calls["robot_right"].velocity == [0.3, 0.4]
 
-    def test_no_monitor_returns_early(self, robot_config_with_mapping):
+    def test_no_monitor_returns_early(self, robot_config_with_mapping, module_factory):
         """When world_monitor is None, _on_joint_state returns without error."""
-        module = _make_module()
+        module = module_factory()
         module._robots = {"left_arm": ("id", robot_config_with_mapping, MagicMock())}
         module._world_monitor = None
 
@@ -354,8 +357,8 @@ class TestWorldMonitorVisualization:
 
 
 class TestManipulationPreview:
-    def test_clear_planned_path_invalidates_before_dismissing_preview(self):
-        module = _make_module()
+    def test_clear_planned_path_invalidates_before_dismissing_preview(self, module_factory):
+        module = module_factory()
         plan = GeneratedPlan(trajectory=JointTrajectory(), group_ids=("arm/manipulator",), path=[])
         module._last_plan = plan
         module._world_monitor = MagicMock()
@@ -370,8 +373,8 @@ class TestManipulationPreview:
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
         assert module._last_plan is None
 
-    def test_clear_planned_path_clears_without_a_world_monitor(self):
-        module = _make_module()
+    def test_clear_planned_path_clears_without_a_world_monitor(self, module_factory):
+        module = module_factory()
         module._last_plan = GeneratedPlan(
             trajectory=JointTrajectory(), group_ids=("arm/manipulator",), path=[]
         )
@@ -379,21 +382,21 @@ class TestManipulationPreview:
         assert module.clear_planned_path() is True
         assert module._last_plan is None
 
-    def test_dismiss_preview_noop_without_monitor(self):
-        module = _make_module()
+    def test_dismiss_preview_noop_without_monitor(self, module_factory):
+        module = module_factory()
 
         module._dismiss_preview(["arm/manipulator"])
 
-    def test_dismiss_preview_routes_to_monitor(self):
-        module = _make_module()
+    def test_dismiss_preview_routes_to_monitor(self, module_factory):
+        module = module_factory()
         module._world_monitor = MagicMock()
 
         module._dismiss_preview(["arm/manipulator"])
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
-    def test_preview_routes_one_complete_plan_with_default_duration(self):
-        module = _make_module()
+    def test_preview_routes_one_complete_plan_with_default_duration(self, module_factory):
+        module = module_factory()
         config = _one_joint_config()
         traj_gen = MagicMock()
         _install_generated_plan(module, config, traj_gen, [0.0], [2.0])
@@ -404,8 +407,8 @@ class TestManipulationPreview:
             module._last_plan.trajectory, None
         )
 
-    def test_preview_robot_name_validates_affectedness_without_trimming(self):
-        module = _make_module()
+    def test_preview_robot_name_validates_affectedness_without_trimming(self, module_factory):
+        module = module_factory()
         left = _one_joint_config("left")
         right = _one_joint_config("right")
         traj_gen = MagicMock()
@@ -431,8 +434,8 @@ class TestManipulationPreview:
             module._last_plan.trajectory, 2.5
         )
 
-    def test_preview_rejects_unaffected_compatibility_robot(self):
-        module = _make_module()
+    def test_preview_rejects_unaffected_compatibility_robot(self, module_factory):
+        module = module_factory()
         config = _one_joint_config()
         traj_gen = MagicMock()
         _install_generated_plan(module, config, traj_gen, [0.0], [1.0])

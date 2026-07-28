@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.coordinator_client import ControlCoordinatorClient
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -121,18 +121,14 @@ def joint_state_zeros():
 
 
 @pytest.fixture
-def module(xarm7_config, mocker):
+def module(xarm7_config):
     """Create a started ManipulationModule with ports disabled."""
-    coordinator_client = MagicMock(spec=ControlCoordinatorClient)
-    coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
-    coordinator_client.cancel_trajectory.return_value = TrajectoryCancellationResult(
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
-    )
-    mocker.patch(
-        "dimos.manipulation.manipulation_module.ControlCoordinatorClient",
-        return_value=coordinator_client,
     )
     mod = ManipulationModule(
         robots=[xarm7_config],
@@ -141,6 +137,7 @@ def module(xarm7_config, mocker):
         planner_name="rrt_connect",
         visualization={"backend": "none"},
     )
+    mod._control_coordinator = coordinator
     mod.coordinator_joint_state = None
     mod.objects = None
     mod.start()
@@ -261,7 +258,7 @@ class TestManipulationModuleIntegration:
         assert module._last_plan is not None
         robot_config = module._robots["test_arm"][1]
         assert module.execute() is True
-        trajectory = module._coordinator_client.execute_trajectory.call_args.args[0]
+        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
         assert trajectory.joint_names == list(robot_config.joint_name_mapping.keys())
 
@@ -284,8 +281,8 @@ class TestCoordinatorIntegration:
         assert module._state == ManipulationState.COMPLETED
 
         # Verify coordinator was called
-        module._coordinator_client.execute_trajectory.assert_called_once()
-        trajectory = module._coordinator_client.execute_trajectory.call_args.args[0]
+        module._control_coordinator.execute_trajectory.assert_called_once()
+        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
         assert len(trajectory.points) > 1
         # Joint names should be translated
@@ -298,7 +295,7 @@ class TestCoordinatorIntegration:
 
         module.plan_to_joints(JointState(position=[0.05] * 7))
 
-        module._coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
+        module._control_coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
             TrajectoryExecutionStatus.INVALID_TRAJECTORY
         )
 

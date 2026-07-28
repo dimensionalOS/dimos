@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared lightweight test harnesses for manipulation module tests."""
+"""Shared lifecycle-managed fixtures for manipulation module tests."""
 
+from typing import Protocol
 from unittest.mock import MagicMock
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -25,16 +27,20 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.manipulation.manipulation_module import ManipulationModule
 
 
-def make_module() -> ManipulationModule:
-    """Create a lightweight ManipulationModule harness for behavior tests."""
-    module = ManipulationModule()
-    module.stop()
-    coordinator_client = MagicMock()
-    coordinator_client.execute_trajectory.return_value = TrajectoryExecutionResult(
+class ModuleFactory(Protocol):
+    def __call__(
+        self,
+        coordinator: ControlCoordinator | None = None,
+    ) -> ManipulationModule: ...
+
+
+def mock_control_coordinator() -> MagicMock:
+    """Create a coordinator reference with safe default execution results."""
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
-    coordinator_client.cancel_trajectory.return_value = TrajectoryCancellationResult(
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
-    module._initialize_execution(coordinator_client)
-    return module
+    return coordinator
