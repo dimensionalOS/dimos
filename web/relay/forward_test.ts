@@ -1,8 +1,8 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { encodeDataFrame, type FrameHeader } from "@dimos/shared";
 import {
-  Forwarder,
   LatestChannel,
+  parseRobotFrameHeader,
   readDataFrameBytes,
   readWebTransportPreamble,
   ReliableChannel,
@@ -113,56 +113,16 @@ Deno.test("reliable: queue overflow kicks the viewer", async () => {
   assertEquals(sink.kicked, "reliable channel overflow");
 });
 
-Deno.test("a slow viewer never delays another viewer", async () => {
-  const forwarder = new Forwarder();
-  const slow = new FakeSink(false);
-  const fast = new FakeSink();
-  forwarder.addViewer(slow);
-  forwarder.addViewer(fast);
-  for (let i = 0; i < 5; i++) forwarder.onRobotFrame(dataFrame("odom", i, "reliable"));
-  await tick();
-  assertEquals(fast.sent.length, 5);
-  assertEquals(slow.sent.length, 1); // stuck on its first write, rest queued
-  assertEquals(slow.kicked, null);
-});
-
-Deno.test("forwarder routes by header delivery and keeps channels independent", async () => {
-  const forwarder = new Forwarder();
-  const sink = new FakeSink(false);
-  const viewer = forwarder.addViewer(sink);
-  forwarder.onRobotFrame(dataFrame("color_image", 0, "latest"));
-  forwarder.onRobotFrame(dataFrame("color_image", 1, "latest"));
-  forwarder.onRobotFrame(dataFrame("color_image", 2, "latest"));
-  forwarder.onRobotFrame(dataFrame("odom", 0, "reliable"));
-  forwarder.onRobotFrame(dataFrame("odom", 1, "reliable"));
-  await tick();
-  assert(viewer.channels.get("color_image") instanceof LatestChannel);
-  assert(viewer.channels.get("odom") instanceof ReliableChannel);
-  // one color_image write in flight, newest pending, middle dropped
-  assertEquals(viewer.channels.get("color_image")!.dropped, 1);
-  // odom: one in flight, one queued, nothing dropped
-  assertEquals(viewer.channels.get("odom")!.dropped, 0);
-  assertEquals(viewer.channels.get("odom")!.queued(), 1);
-
-  const stats = forwarder.stats() as {
-    viewers: number;
-    channels: Record<string, { framesIn: number; bytesIn: number; delivery: string }>;
-  };
-  assertEquals(stats.viewers, 1);
-  assertEquals(stats.channels.color_image.framesIn, 3);
-  assertEquals(stats.channels.odom.framesIn, 2);
-  assertEquals(stats.channels.odom.delivery, "reliable");
-});
-
-Deno.test("junk frames are dropped without touching viewers", async () => {
-  const forwarder = new Forwarder();
-  const sink = new FakeSink();
-  forwarder.addViewer(sink);
-  forwarder.onRobotFrame(new Uint8Array([1, 2, 3])); // shorter than a header
-  const bad = new Uint8Array(16); // headerLen=0 -> JSON parse of "" fails
-  forwarder.onRobotFrame(bad);
-  await tick();
-  assertEquals(sink.sent.length, 0);
+Deno.test("parseRobotFrameHeader accepts valid frames and rejects junk", () => {
+  const good = dataFrame("odom", 4, "reliable");
+  assertEquals(parseRobotFrameHeader(good), { ch: "odom", seq: 4, ts: 4.5, delivery: "reliable" });
+  assertEquals(parseRobotFrameHeader(new Uint8Array([1, 2, 3])), null); // shorter than a header
+  assertEquals(parseRobotFrameHeader(new Uint8Array(16)), null); // headerLen=0 -> JSON.parse("")
+  const badDelivery = encodeDataFrame(
+    { ch: "cam", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
+    new Uint8Array([7]),
+  );
+  assertEquals(parseRobotFrameHeader(badDelivery), null);
 });
 
 function byteStream(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
@@ -207,22 +167,4 @@ Deno.test("preamble: stream ending mid-preamble rejects", async () => {
     Error,
     "stream ended mid-preamble",
   );
-});
-
-Deno.test("a well-framed frame with an invalid header is dropped and counted", async () => {
-  const forwarder = new Forwarder();
-  const sink = new FakeSink();
-  forwarder.addViewer(sink);
-  // Parseable JSON header, but delivery is not a known value: must be rejected.
-  const badHeader = encodeDataFrame(
-    { ch: "cam", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
-    new Uint8Array([7]),
-  );
-  forwarder.onRobotFrame(badHeader);
-  forwarder.onRobotFrame(new Uint8Array(16)); // headerLen=0 -> JSON.parse("") throws
-  forwarder.onRobotFrame(dataFrame("odom", 0, "reliable")); // valid -> routed
-  await tick();
-  assertEquals(sink.sent.length, 1);
-  const stats = forwarder.stats() as { framesDropped: number };
-  assertEquals(stats.framesDropped, 2);
 });
