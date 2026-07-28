@@ -22,7 +22,6 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import hmac
-from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -43,6 +42,12 @@ import requests
 from dimos.hosted_data.auth import (
     RepositoryAccessPolicy,
     verify_download_signature,
+)
+from dimos.hosted_data.web_ui import (
+    UPLOAD_SCRIPT,
+    RepositoryObjectView,
+    render_repository_page,
+    render_status_page,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -632,26 +637,6 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
                 self._pending_bytes.pop(key, None)
 
 
-_BROWSER_UPLOAD_PANEL = """
-<section class="browser-upload"><h2>Upload robot data</h2><form id="browser-upload-form">
-<label>Owner<input id="browser-owner" required maxlength="64" value="__OWNER__"></label>
-<label>Repository<input id="browser-repository" required maxlength="64" value="__REPOSITORY__"></label>
-<label>Upload token<input id="browser-token" type="password" required autocomplete="off"></label>
-<label>Files<input id="browser-files" type="file" multiple required accept="video/*,.db,.mcap,.json,.bin"></label>
-<button id="browser-upload-button" type="submit">Upload</button><progress id="browser-upload-progress" max="100" value="0"></progress>
-<p id="browser-upload-status">Choose files to begin. The token is never stored.</p></form></section>
-<style>.browser-upload{padding:1rem;margin:1rem 0;border:1px solid #33445c;border-radius:12px;background:#111824}.browser-upload form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.browser-upload label{display:grid;gap:.3rem;color:#cbd5e3}.browser-upload input{padding:.65rem;border:1px solid #41516a;border-radius:8px;background:#090e16;color:#fff}.browser-upload button{padding:.65rem 1rem;border:0;border-radius:8px;background:#27855f;color:#fff;font-weight:700;cursor:pointer}.browser-upload progress{width:100%;align-self:center}.browser-upload .error{color:#ff9999}@media(max-width:650px){.browser-upload form{grid-template-columns:1fr}}</style>
-<script>(()=>{"use strict";const g=id=>document.getElementById(id),form=g("browser-upload-form"),owner=g("browser-owner"),repo=g("browser-repository"),token=g("browser-token"),files=g("browser-files"),button=g("browser-upload-button"),progress=g("browser-upload-progress"),status=g("browser-upload-status");const one=(file,index,total)=>new Promise((ok,fail)=>{const x=new XMLHttpRequest(),target="/api/v1/repositories/"+encodeURIComponent(owner.value.trim())+"/"+encodeURIComponent(repo.value.trim())+"/objects";x.open("POST",target);x.setRequestHeader("Authorization","Bearer "+token.value);x.setRequestHeader("Content-Type",file.type||"application/octet-stream");x.setRequestHeader("X-Dimos-Filename",encodeURIComponent(file.name));x.upload.onprogress=e=>{if(e.lengthComputable){progress.value=((index+e.loaded/e.total)/total)*100;status.textContent="Uploading "+file.name+" - "+Math.round(e.loaded/e.total*100)+"%"}};x.onerror=()=>fail(new Error("Network error"));x.onload=()=>{let p={};try{p=JSON.parse(x.responseText||"{}")}catch(_){}if(x.status>=200&&x.status<300)ok(p);else fail(new Error(p.error||"Upload failed: HTTP "+x.status))};x.send(file)});form.addEventListener("submit",async e=>{e.preventDefault();status.classList.remove("error");const selected=Array.from(files.files||[]);if(!form.reportValidity()||!selected.length)return;button.disabled=true;try{for(let i=0;i<selected.length;i+=1)await one(selected[i],i,selected.length);progress.value=100;status.textContent=selected.length+" file(s) uploaded. Opening repository...";const destination="/r/"+encodeURIComponent(owner.value.trim())+"/"+encodeURIComponent(repo.value.trim());window.setTimeout(()=>window.location.assign(destination),500)}catch(error){status.classList.add("error");status.textContent=error instanceof Error?error.message:String(error)}finally{button.disabled=false}})})();</script>
-"""
-
-
-def _browser_upload_panel(owner: str = "", repository: str = "") -> str:
-    """Return the same-origin upload form without storing its bearer token."""
-    return _BROWSER_UPLOAD_PANEL.replace("__OWNER__", escape(owner, quote=True)).replace(
-        "__REPOSITORY__", escape(repository, quote=True)
-    )
-
-
 class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     """Raw streaming REST API for replay objects."""
 
@@ -751,6 +736,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         encoded = payload.encode()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Connection", "close")
         self.end_headers()
@@ -768,9 +755,12 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; "
             "connect-src 'self'; media-src " + " ".join(media_sources),
         )
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Connection", "close")
         self.end_headers()
@@ -801,53 +791,32 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             repository=repository_name,
         ):
             return
-        objects = self._repository_server().repository.list(owner, repository_name)
-        upload_panel = _browser_upload_panel(owner, repository_name)
-        cards: list[str] = []
+        server = self._repository_server()
+        objects = server.repository.list(owner, repository_name)
+        object_views: list[RepositoryObjectView] = []
         for item in objects:
             object_url = (
                 f"/api/v1/repositories/{quote(owner, safe='')}/"
                 f"{quote(repository_name, safe='')}/objects/{item.object_id}"
             )
             public_object_url = (
-                f"{self._repository_server().cdn_base_url}{object_url}"
-                if self._repository_server().cdn_base_url
-                else object_url
+                f"{server.cdn_base_url}{object_url}" if server.cdn_base_url else object_url
             )
-            escaped_object_url = escape(public_object_url, quote=True)
-            preview = ""
-            if item.content_type.startswith("video/"):
-                preview = f'<video controls preload="metadata" src="{escaped_object_url}"></video>'
-            cards.append(
-                "<article>"
-                f"<h2>{escape(item.filename)}</h2>"
-                f"{preview}"
-                f"<p>{item.size_bytes:,} bytes · SHA-256 {escape(item.sha256)}</p>"
-                f'<a href="{escaped_object_url}?download=1">Download</a>'
-                "</article>"
+            object_views.append(
+                RepositoryObjectView(
+                    filename=item.filename,
+                    size_bytes=item.size_bytes,
+                    sha256=item.sha256,
+                    content_type=item.content_type,
+                    object_url=public_object_url,
+                )
             )
-        body = "".join(cards) or "<p>No objects have been uploaded yet.</p>"
-        page = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{escape(owner)}/{escape(repository_name)} replay repository</title>
-  <style>
-    body {{ max-width: 900px; margin: 2rem auto; padding: 0 1rem;
-            font: 16px system-ui, sans-serif; background: #101114; color: #f5f5f5; }}
-    article {{ padding: 1rem; margin: 1rem 0; border: 1px solid #333; border-radius: 12px; }}
-    video {{ display: block; width: 100%; max-height: 520px; background: #000; }}
-    a {{ color: #70b7ff; }}
-    p {{ color: #bbb; overflow-wrap: anywhere; }}
-  </style>
-</head>
-<body>
-  <h1>{escape(owner)}/{escape(repository_name)}</h1>
-  {upload_panel}
-  {body}
-</body>
-</html>"""
+        page = render_repository_page(
+            node_name=server.node_name,
+            owner=owner,
+            repository=repository_name,
+            objects=object_views,
+        )
         self._send_html(HTTPStatus.OK, page)
 
     def _serve_status_page(self) -> None:
@@ -864,65 +833,13 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             if server.signing_secret is not None
             else "SHA-256 verified downloads",
         )
-        capability_cards = "".join(f"<li>{escape(capability)}</li>" for capability in capabilities)
         access_mode = "Public read" if server.public_read else "Authenticated read"
-        upload_panel = _browser_upload_panel()
-        page = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>DimOS hosted replay &middot; {escape(server.node_name)}</title>
-  <style>
-    :root {{ color-scheme: dark; }}
-    body {{ max-width: 960px; margin: 0 auto; padding: 3rem 1.25rem;
-            font: 16px/1.55 system-ui, sans-serif; background: #090b10; color: #f6f7fb; }}
-    header {{ padding: 2rem; border: 1px solid #253044; border-radius: 20px;
-              background: linear-gradient(135deg, #121b2b, #11131a); }}
-    .eyebrow {{ color: #71d7a3; font-weight: 700; letter-spacing: .08em;
-                text-transform: uppercase; }}
-    h1 {{ margin: .4rem 0; font-size: clamp(2rem, 6vw, 4rem); line-height: 1; }}
-    .status {{ display: inline-flex; gap: .5rem; align-items: center; margin-top: 1rem;
-               padding: .4rem .8rem; border-radius: 999px; color: #8af0ba;
-               background: #123323; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-             gap: 1rem; margin: 1rem 0; }}
-    .card {{ padding: 1.1rem; border: 1px solid #242b39; border-radius: 14px;
-             background: #11141b; }}
-    .label {{ color: #929db0; font-size: .82rem; text-transform: uppercase; }}
-    .value {{ margin-top: .25rem; font-size: 1.25rem; font-weight: 700; }}
-    ul {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-          gap: .7rem; padding: 0; list-style: none; }}
-    li {{ padding: .8rem 1rem; border-radius: 10px; background: #121b26; color: #cfe7ff; }}
-    a {{ color: #83c7ff; }}
-    footer {{ margin-top: 2rem; color: #8490a3; }}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="eyebrow">DimOS hosted replay</div>
-    <h1>{escape(server.node_name)}</h1>
-    <p>Remote robotics data upload, verified download, and memory2 replay infrastructure.</p>
-    <div class="status">&#9679; Service online</div>
-  </header>
-  {upload_panel}
-  <section class="grid" aria-label="Node details">
-    <div class="card"><div class="label">Region</div>
-      <div class="value">{escape(server.region)}</div></div>
-    <div class="card"><div class="label">Access</div>
-      <div class="value">{escape(access_mode)}</div></div>
-    <div class="card"><div class="label">Protocol</div>
-      <div class="value">Hosted data API v1</div></div>
-  </section>
-  <h2>Available capabilities</h2>
-  <ul>{capability_cards}</ul>
-  <footer>
-    Machine-readable checks:
-    <a href="/healthz">health</a> &middot;
-    <a href="/api/v1/nodes">node discovery</a>
-  </footer>
-</body>
-</html>"""
+        page = render_status_page(
+            node_name=server.node_name,
+            region=server.region,
+            access_mode=access_mode,
+            capabilities=capabilities,
+        )
         self._send_html(HTTPStatus.OK, page)
 
     def do_POST(self) -> None:
@@ -1187,6 +1104,13 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         request_path = urlsplit(self.path).path
         if request_path == "/":
             self._serve_status_page()
+            return
+        if request_path == "/assets/hosted-data.js":
+            self._send_text(
+                HTTPStatus.OK,
+                UPLOAD_SCRIPT,
+                "text/javascript; charset=utf-8",
+            )
             return
         if request_path == "/healthz":
             self._send_json(

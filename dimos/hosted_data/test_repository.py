@@ -140,7 +140,11 @@ def test_public_status_page_and_health_capabilities(tmp_path: Path) -> None:
     assert "Service online" in page.text
     assert "HTTP HEAD and byte ranges" in page.text
     assert "Expiring signed downloads" in page.text
+    assert 'src="/assets/hosted-data.js"' in page.text
     assert page.headers["Content-Security-Policy"].startswith("default-src 'none'")
+    assert "script-src 'self'" in page.headers["Content-Security-Policy"]
+    assert page.headers["X-Frame-Options"] == "DENY"
+    assert page.headers["Referrer-Policy"] == "no-referrer"
     assert health.json() == {
         "api_version": 1,
         "capabilities": {
@@ -471,11 +475,17 @@ def test_public_repository_page_plays_and_downloads_video(tmp_path: Path) -> Non
             token="test-token",
         )
         page = requests.get(f"{server_url}/r/alice/go2", timeout=5.0)
+        script = requests.get(f"{server_url}/assets/hosted-data.js", timeout=5.0)
         object_url = f"{server_url}/api/v1/repositories/alice/go2/objects/{uploaded.object_id}"
         video = requests.get(object_url, timeout=5.0)
         download = requests.get(f"{object_url}?download=1", timeout=5.0)
 
     assert page.status_code == 200
+    assert script.status_code == 200
+    assert script.headers["Content-Type"] == "text/javascript; charset=utf-8"
+    assert script.headers["X-Content-Type-Options"] == "nosniff"
+    assert script.headers["Cache-Control"] == "no-store"
+    assert "browser-upload-form" in script.text
     assert "<video controls" in page.text
     assert "share.mp4" in page.text
     assert page.headers["X-Content-Type-Options"] == "nosniff"
@@ -589,7 +599,7 @@ def test_cdn_base_url_is_used_by_repository_page(tmp_path: Path) -> None:
     )
     assert (
         page.headers["Content-Security-Policy"] == "default-src 'none'; style-src 'unsafe-inline'; "
-        "media-src 'self' https://cdn.example"
+        "script-src 'self'; connect-src 'self'; media-src 'self' https://cdn.example"
     )
 
 
