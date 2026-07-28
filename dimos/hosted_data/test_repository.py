@@ -540,10 +540,7 @@ def test_anonymous_uploader_can_delete_only_with_its_capability(tmp_path: Path) 
         completed = requests.post(f"{session_url}/complete", timeout=5.0)
         completed.raise_for_status()
         result = completed.json()
-        object_url = (
-            f"{server_url}/api/v1/repositories/demo/videos/objects/"
-            f"{result['object_id']}"
-        )
+        object_url = f"{server_url}/api/v1/repositories/demo/videos/objects/{result['object_id']}"
         anonymous = requests.delete(object_url, timeout=5.0)
         wrong = requests.delete(
             object_url,
@@ -583,8 +580,7 @@ def test_admin_can_delete_legacy_object_without_a_capability(tmp_path: Path) -> 
             token="test-token",
         )
         response = requests.delete(
-            f"{server_url}/api/v1/repositories/admin/legacy/objects/"
-            f"{uploaded.object_id}",
+            f"{server_url}/api/v1/repositories/admin/legacy/objects/{uploaded.object_id}",
             headers={"Authorization": "Bearer test-token"},
             timeout=5.0,
         )

@@ -60,6 +60,7 @@ class _FakeS3Client:
         assert isinstance(body, bytes)
         self.objects[(str(kwargs["Bucket"]), str(kwargs["Key"]))] = body
         return {}
+
     def delete_object(self, **kwargs: Any) -> dict[str, Any]:
         self.objects.pop((str(kwargs["Bucket"]), str(kwargs["Key"])), None)
         return {}
