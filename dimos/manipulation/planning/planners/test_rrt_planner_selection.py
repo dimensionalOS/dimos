@@ -30,9 +30,9 @@ from dimos.manipulation.planning.groups.models import (
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import CartesianDelta
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -208,7 +208,7 @@ def test_plan_linear_cartesian_path_is_explicitly_unsupported() -> None:
         _World(),
         selection,
         JointState({"position": [0.0, 0.0]}),
-        {group.id: CartesianDelta(translation=(0.1, 0.0, 0.0))},
+        {group.id: Transform(translation=Vector3(0.1, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.UNSUPPORTED

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -56,22 +57,8 @@ JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
 
-@dataclass(frozen=True)
-class CartesianDelta:
-    """World-frame TCP displacement for linear Cartesian planning.
-
-    Translation is expressed in meters along world axes. Rotation is an XYZ
-    roll-pitch-yaw delta in radians and is pre-multiplied onto the TCP rotation at
-    the explicit planning start state.
-    """
-
-    translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    rotation_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    frame_id: str = "world"
-
-
-CartesianTarget: TypeAlias = "PoseStamped | CartesianDelta"
-"""Absolute world-frame TCP pose or world-frame displacement from the planning start."""
+CartesianTarget: TypeAlias = "PoseStamped | Transform"
+"""Absolute TCP pose or relative rigid displacement from the planning start."""
 
 
 @dataclass(frozen=True)

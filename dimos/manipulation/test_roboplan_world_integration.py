@@ -21,9 +21,10 @@ from typing import Any
 import pytest
 
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import CartesianDelta
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 import dimos.manipulation.planning.world.roboplan_world as roboplan_world_module
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config
 from dimos.utils.transform_utils import pose_to_matrix
@@ -75,7 +76,7 @@ def test_real_roboplan_plans_fixed_orientation_linear_path(
         world,
         selection,
         start,
-        {group_id: CartesianDelta(translation=(0.005, 0.0, 0.0))},
+        {group_id: Transform(translation=Vector3(0.005, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.SUCCESS, result.message
@@ -120,8 +121,8 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_tracks(
         selection,
         start,
         {
-            left_group_id: CartesianDelta(translation=(0.003, 0.0, 0.0)),
-            right_group_id: CartesianDelta(translation=(0.005, 0.0, 0.0)),
+            left_group_id: Transform(translation=Vector3(0.003, 0.0, 0.0)),
+            right_group_id: Transform(translation=Vector3(0.005, 0.0, 0.0)),
         },
     )
 

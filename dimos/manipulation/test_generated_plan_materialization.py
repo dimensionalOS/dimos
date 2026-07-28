@@ -25,9 +25,10 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import CartesianDelta, PlanningResult
+from dimos.manipulation.planning.spec.models import PlanningResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -140,10 +141,12 @@ def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monke
         timestamps=[0.0, 0.25],
     )
 
-    plan = module.generate_linear_cartesian_plan(
-        {"left/group": CartesianDelta(translation=(0.01, 0.0, 0.0))}
+    success = module.plan_linear_cartesian_targets(
+        {"left/group": Transform(translation=Vector3(0.01, 0.0, 0.0))}
     )
+    plan = module._last_plan
 
+    assert success
     assert plan is module._last_plan
     assert plan is not None
     assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
@@ -184,7 +187,7 @@ def test_linear_cartesian_plan_rejects_malformed_timed_results(
     )
 
     result = module.generate_linear_cartesian_plan(
-        {"left/group": CartesianDelta(translation=(0.01, 0.0, 0.0))}
+        {"left/group": Transform(translation=Vector3(0.01, 0.0, 0.0))}
     )
 
     assert result is None

@@ -42,9 +42,10 @@ from dimos.manipulation.planning.planners.config import (
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import CartesianDelta, Obstacle
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.transform_utils import pose_to_matrix
@@ -1111,9 +1112,9 @@ def test_linear_cartesian_planner_returns_timed_global_joint_states(
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         {
-            "arm/manipulator": CartesianDelta(
-                translation=(0.1, 0.0, 0.0),
-                rotation_rpy=(0.0, 0.0, np.pi / 2.0),
+            "arm/manipulator": Transform(
+                translation=Vector3(0.1, 0.0, 0.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2.0)),
             )
         },
     )
@@ -1153,7 +1154,7 @@ def test_linear_cartesian_zero_rotation_preserves_start_orientation(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": CartesianDelta(translation=(0.1, 0.0, 0.0))},
+        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1181,7 +1182,7 @@ def test_linear_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
                 position=Vector3(0.2, 0.0, 0.0),
                 orientation=Quaternion(),
             ),
-            "arm/manipulator": CartesianDelta(translation=(0.05, 0.0, 0.0)),
+            "arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
         },
     )
 
@@ -1208,7 +1209,7 @@ def test_linear_cartesian_allows_auxiliary_groups(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
-        {"arm/manipulator": CartesianDelta(translation=(0.05, 0.0, 0.0))},
+        {"arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0))},
         auxiliary_groups=("right/manipulator",),
     )
 
@@ -1222,13 +1223,13 @@ def test_linear_cartesian_allows_auxiliary_groups(
     [
         ({}, ("arm/manipulator",), PlanningStatus.INVALID_GOAL, "at least one target"),
         (
-            {"arm/manipulator": CartesianDelta()},
+            {"arm/manipulator": Transform()},
             ("arm/manipulator",),
             PlanningStatus.INVALID_GOAL,
             "disjoint",
         ),
         (
-            {"arm/manipulator": CartesianDelta(frame_id="tool")},
+            {"arm/manipulator": Transform(frame_id="tool")},
             (),
             PlanningStatus.UNSUPPORTED,
             "world-frame",
@@ -1269,7 +1270,7 @@ def test_linear_cartesian_rejects_start_that_differs_from_scene(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.1, 0.0]),
-        {"arm/manipulator": CartesianDelta(translation=(0.1, 0.0, 0.0))},
+        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.INVALID_START
@@ -1294,7 +1295,7 @@ def test_linear_cartesian_rejects_official_planner_failure(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": CartesianDelta(translation=(0.1, 0.0, 0.0))},
+        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.NO_SOLUTION
@@ -1329,8 +1330,8 @@ def test_linear_cartesian_postvalidation_checks_combined_multi_robot_state(
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
         {
-            "arm/manipulator": CartesianDelta(translation=(0.05, 0.0, 0.0)),
-            "right/manipulator": CartesianDelta(translation=(0.05, 0.0, 0.0)),
+            "arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
+            "right/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
         },
     )
 
@@ -1383,7 +1384,7 @@ def test_linear_cartesian_postvalidation_checks_between_waypoints(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": CartesianDelta(translation=(0.05, 0.0, 0.0))},
+        {"arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0))},
     )
 
     assert result.status == PlanningStatus.NO_SOLUTION

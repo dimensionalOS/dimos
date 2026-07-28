@@ -31,7 +31,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 try:
     import roboplan.cartesian_planning as roboplan_cartesian
@@ -54,7 +53,6 @@ from dimos.manipulation.planning.planners.selected_joint_space import normalize_
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
-    CartesianDelta,
     CartesianTarget,
     Obstacle,
     PlanningGroupID,
@@ -69,6 +67,7 @@ from dimos.manipulation.planning.world.roboplan_model import (
     build_roboplan_model,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
@@ -484,28 +483,14 @@ class RoboPlanWorld:
                 message="RoboPlan has no generated group for this selection",
             )
         try:
-            normalized_start = normalize_selection_target(selection, start, "start")
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        try:
             normalized_goal = normalize_selection_target(selection, goal, "goal")
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._is_ready():
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
-            )
+        try:
+            normalized_start = self._validated_selection_start(selection, start)
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
         start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
-        current_by_name = self._current_global_positions()
-        if any(
-            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
-            for name in selection.joint_names
-        ):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
         return self._plan_group(
             group,
             start_by_name,
@@ -535,26 +520,10 @@ class RoboPlanWorld:
         )
         if validation_error is not None:
             return validation_error
-        if not self._is_ready():
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
-            )
         try:
-            normalized_start = normalize_selection_target(selection, start, "start")
+            normalized_start = self._validated_selection_start(selection, start)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-
-        start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
-        current_by_name = self._current_global_positions()
-        if any(
-            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
-            for name in selection.joint_names
-        ):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
 
         group = self._require_model().groups.get(frozenset(selection.group_ids))
         if group is None:
@@ -611,6 +580,26 @@ class RoboPlanWorld:
 
     # Internals
 
+    def _validated_selection_start(
+        self,
+        selection: PlanningGroupSelection,
+        start: JointState,
+    ) -> JointState:
+        """Return a normalized start matching the authoritative scene state."""
+        if not self._is_ready():
+            raise ValueError(
+                "RoboPlan planning scene is not ready: authoritative state is incomplete"
+            )
+        normalized = normalize_selection_target(selection, start, "start")
+        start_by_name = dict(zip(normalized.name, normalized.position, strict=True))
+        current_by_name = self._current_global_positions()
+        if any(
+            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
+            for name in selection.joint_names
+        ):
+            raise ValueError("Requested start state does not match current scene state")
+        return normalized
+
     def _validate_linear_cartesian_request(
         self,
         selection: PlanningGroupSelection,
@@ -658,12 +647,10 @@ class RoboPlanWorld:
                     status=PlanningStatus.INVALID_GOAL,
                     message=f"Planning group '{group_id}' has no TCP tip link",
                 )
-            if not isinstance(target, (PoseStamped, CartesianDelta)):
+            if not isinstance(target, (PoseStamped, Transform)):
                 return PlanningResult(
                     status=PlanningStatus.INVALID_GOAL,
-                    message=(
-                        f"Cartesian target for '{group_id}' must be a PoseStamped or CartesianDelta"
-                    ),
+                    message=f"Cartesian target for '{group_id}' must be a PoseStamped or Transform",
                 )
             if target.frame_id != "world":
                 return PlanningResult(
@@ -714,9 +701,9 @@ class RoboPlanWorld:
         if isinstance(target, PoseStamped):
             return np.asarray(pose_to_matrix(target), dtype=np.float64)
         target_matrix = start_matrix.copy()
-        target_matrix[:3, 3] += np.asarray(target.translation, dtype=np.float64)
-        delta_rotation = Rotation.from_euler("xyz", target.rotation_rpy).as_matrix()
-        target_matrix[:3, :3] = delta_rotation @ start_matrix[:3, :3]
+        delta_matrix = np.asarray(target.to_matrix(), dtype=np.float64)
+        target_matrix[:3, 3] += delta_matrix[:3, 3]
+        target_matrix[:3, :3] = delta_matrix[:3, :3] @ start_matrix[:3, :3]
         return target_matrix
 
     def _run_cartesian_planner(

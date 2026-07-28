@@ -59,12 +59,3 @@ ManipulationPlannerConfig = Annotated[
     RRTConnectPlannerConfig | RoboPlanPlannerConfig,
     Field(discriminator="backend"),
 ]
-
-
-def planner_config_from_name(name: str) -> ManipulationPlannerConfig:
-    """Create a default typed planner config from a legacy planner name."""
-    if name == "rrt_connect":
-        return RRTConnectPlannerConfig()
-    if name == "roboplan":
-        return RoboPlanPlannerConfig()
-    raise ValueError(f"Unknown planner: {name}. Available: ['rrt_connect', 'roboplan']")

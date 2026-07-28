@@ -83,8 +83,7 @@ execute()               # Execute via coordinator
 Manipulation planning separates the world backend from the planner algorithm:
 
 - `world_backend` selects the robot/world/collision representation.
-- `planner.backend` selects the path-planning algorithm. The legacy
-  `planner_name` field remains available as a compatibility shim.
+- `planner.backend` selects the path-planning algorithm.
 - `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
   field remains available as a compatibility shim.
 
@@ -142,10 +141,12 @@ joint velocity/acceleration scaling, joint-limit tolerance and gain, and
 per-step attempts. DimOS always selects RoboPlan's bounded-speed mode so the
 official planner checks Cartesian tracking throughout generation.
 
-Linear Cartesian planning remains an internal capability in this release. The
-Viser manipulation panel can consume it for interactive planning, but there is
-no caller-facing `ManipulationModule` RPC, skill, MCP tool, or CLI motion
-command.
+Linear Cartesian planning remains a low-level internal capability in this
+release. `ManipulationModule.plan_linear_cartesian_targets()` accepts targets
+keyed by planning group: `PoseStamped` represents an absolute target and
+`Transform` represents a relative rigid displacement. The Viser panel uses
+absolute targets for interactive planning. There is no skill, MCP tool, or CLI
+motion command yet.
 
 Install the manipulation dependencies:
 

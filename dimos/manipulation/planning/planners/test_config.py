@@ -21,7 +21,6 @@ from dimos.manipulation.planning.planners.config import (
     ManipulationPlannerConfig,
     RoboPlanPlannerConfig,
     RRTConnectPlannerConfig,
-    planner_config_from_name,
 )
 
 
@@ -54,8 +53,3 @@ def test_roboplan_linear_cartesian_config_rejects_invalid_limits(
 ) -> None:
     with pytest.raises(ValidationError):
         RoboPlanPlannerConfig(linear_cartesian=linear_config)  # type: ignore[arg-type]
-
-
-def test_planner_config_from_legacy_name() -> None:
-    assert planner_config_from_name("rrt_connect") == RRTConnectPlannerConfig()
-    assert planner_config_from_name("roboplan") == RoboPlanPlannerConfig()
