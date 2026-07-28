@@ -193,17 +193,37 @@ class LCMSpySource:
         # Inline import: an unavailable LCM backend must not break the other
         # spy sources (see default_sources).
         from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
+        from dimos.protocol.service.lcmservice import lcm_bus_urls
 
-        self._bus = LCMPubSubBase(**lcm_kwargs)
+        urls = (lcm_kwargs["url"],) if "url" in lcm_kwargs else lcm_bus_urls()
+        self._buses = [LCMPubSubBase(**{**lcm_kwargs, "url": url}) for url in urls]
 
     def start(self) -> None:
-        self._bus.start()
+        started: list[Any] = []
+        try:
+            for bus in self._buses:
+                bus.start()
+                started.append(bus)
+        except BaseException:
+            for bus in reversed(started):
+                bus.stop()
+            raise
 
     def stop(self) -> None:
-        self._bus.stop()
+        for bus in self._buses:
+            bus.stop()
 
     def tap(self, callback: Callable[[str, int], None]) -> Callable[[], None]:
-        return self._bus.subscribe_all(lambda msg, topic: callback(str(topic), len(msg)))
+        unsubs = [
+            bus.subscribe_all(lambda msg, topic: callback(str(topic), len(msg)))
+            for bus in self._buses
+        ]
+
+        def unsubscribe() -> None:
+            for unsub in unsubs:
+                unsub()
+
+        return unsubscribe
 
     def subscribe_decoded(self, topic: str, callback: Callable[[Any], None]) -> Callable[[], None]:
         """Opt-in per-topic decoded tap — OFF the spy hot path. Not implemented in v1."""

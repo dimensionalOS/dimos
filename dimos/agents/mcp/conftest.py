@@ -34,7 +34,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def agent_setup(request, mcp_url: str, lcm_url: str):
+def agent_setup(request, mcp_url: str):
     coordinator = None
     transports: list[pLCMTransport] = []
     unsubs: list = []
@@ -50,8 +50,10 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
         history: list[BaseMessage] = []
         finished_event = Event()
 
-        agent_transport: pLCMTransport = pLCMTransport("/agent", url=lcm_url)
-        finished_transport: pLCMTransport = pLCMTransport("/finished", url=lcm_url)
+        # No explicit url: each channel shards onto its own bus and the module
+        # side does the same, so publisher and subscriber meet.
+        agent_transport: pLCMTransport = pLCMTransport("/agent")
+        finished_transport: pLCMTransport = pLCMTransport("/finished")
         transports.extend([agent_transport, finished_transport])
 
         def on_message(msg: BaseMessage) -> None:

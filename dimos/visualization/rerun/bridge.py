@@ -48,7 +48,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
-from dimos.protocol.service.lcmservice import autoconf
+from dimos.protocol.service.lcmservice import autoconf, lcm_bus_urls
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
@@ -175,7 +175,7 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
     transport = getattr(config, "transport", None) or global_config.transport
     if transport == "zenoh":
         return [Zenoh()]
-    return [LCM()]
+    return [LCM(url=url) for url in lcm_bus_urls()]
 
 
 def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:

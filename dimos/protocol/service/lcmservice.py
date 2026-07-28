@@ -15,11 +15,14 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from ipaddress import IPv4Address
 import os
 import platform
 import threading
 import traceback
 from typing import Any
+from urllib.parse import urlsplit
+import zlib
 
 import lcm as lcm_mod
 
@@ -37,6 +40,67 @@ _DEFAULT_LCM_PORT = "7667"
 _DEFAULT_LCM_URL = os.getenv(
     "LCM_DEFAULT_URL", f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
 )
+
+
+def _multicast_bus_url(base_url: str, offset: int) -> str:
+    """Derive an adjacent multicast group with its own port.
+
+    The dedicated port is what guarantees socket-level separation: BSD/macOS
+    demultiplexes multicast by bound port, so two buses sharing a port would
+    leak traffic into each other's sockets. Non-udpm and non-multicast URLs
+    (memq, unicast) are returned unchanged, collapsing the pool to one bus.
+    """
+    parsed = urlsplit(base_url)
+    if parsed.scheme != "udpm" or parsed.hostname is None or parsed.port is None:
+        return base_url
+    try:
+        address = IPv4Address(parsed.hostname)
+    except ValueError:
+        return base_url
+    if not address.is_multicast:
+        return base_url
+
+    octets = list(address.packed)
+    octets[-1] = ((octets[-1] - 1 + offset) % 254) + 1
+    host = str(IPv4Address(bytes(octets)))
+    port_span = 65535 - 1024 + 1
+    port = ((parsed.port - 1024 + offset) % port_span) + 1024
+    return parsed._replace(netloc=f"{host}:{port}").geturl()
+
+
+_STREAM_BUS_COUNT = max(0, int(os.getenv("LCM_STREAM_BUSES", "16")))
+
+_STREAM_BUS_URLS = tuple(
+    dict.fromkeys(_multicast_bus_url(_DEFAULT_LCM_URL, i + 1) for i in range(_STREAM_BUS_COUNT))
+)
+
+
+def lcm_url_for_channel(channel: str) -> str:
+    """Map a stream channel onto one bus of the stream pool.
+
+    LCM filters channels in userspace, after the kernel has already copied
+    every datagram on a bus into every socket joined to it. Hashing each
+    channel onto its own (group, port) bus moves that filtering into the
+    kernel: a socket only receives the channels that share its bus, so
+    high-volume streams no longer fan out into every LCM handle in every
+    process. The hash must be identical across processes for publishers and
+    subscribers to meet, hence crc32 rather than the seeded builtin hash().
+
+    Set LCM_STREAM_BUSES=0 to disable sharding (single shared bus), or to a
+    different count to trade fewer sockets against more channel collisions.
+    """
+    if not _STREAM_BUS_URLS:
+        return _DEFAULT_LCM_URL
+    # Typed LCM channels are "/path#pkg.Msg"; shard on the path so transports
+    # that hash the topic string and spies that see the wire name meet.
+    path = channel.split("#", 1)[0]
+    index = zlib.crc32(path.encode()) % len(_STREAM_BUS_URLS)
+    return _STREAM_BUS_URLS[index]
+
+
+def lcm_bus_urls() -> tuple[str, ...]:
+    """Return each distinct DimOS LCM bus URL: the default bus plus the stream pool."""
+    return tuple(dict.fromkeys((_DEFAULT_LCM_URL, *_STREAM_BUS_URLS)))
 
 
 def autoconf(check_only: bool = False) -> None:

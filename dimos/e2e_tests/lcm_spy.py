@@ -23,7 +23,11 @@ import lcm
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.service.lcmservice import LCMService
+from dimos.protocol.service.lcmservice import (
+    LCMService,
+    lcm_bus_urls,
+    lcm_url_for_channel,
+)
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -39,6 +43,11 @@ class LcmSpy(LCMService):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.l = lcm.LCM()
+        # Stream channels are sharded across dedicated buses; tap those too so
+        # the spy sees the whole system, not just the default control bus.
+        self._stream_services = [
+            LCMService(url=url) for url in lcm_bus_urls() if url != self.config.url
+        ]
         self.messages = {}
         self._messages_lock = threading.Lock()
         self._saved_topics = set()
@@ -50,9 +59,15 @@ class LcmSpy(LCMService):
         super().start()
         if self.l:
             self.l.subscribe(".*", self.msg)
+        for service in self._stream_services:
+            service.start()
+            if service.l:
+                service.l.subscribe(".*", self.msg)
 
     def stop(self) -> None:
         super().stop()
+        for service in self._stream_services:
+            service.stop()
 
     def msg(self, topic: str, data: bytes) -> None:
         with self._saved_topics_lock:
@@ -67,6 +82,12 @@ class LcmSpy(LCMService):
                     listener(data)
 
     def publish(self, topic: str, msg: Any) -> None:
+        # Publish on the bus the channel's exact subscribers joined.
+        url = lcm_url_for_channel(topic)
+        for service in self._stream_services:
+            if service.config.url == url and service.l is not None:
+                service.l.publish(topic, msg.lcm_encode())
+                return
         self.l.publish(topic, msg.lcm_encode())
 
     def save_topic(self, topic: str) -> None:

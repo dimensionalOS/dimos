@@ -26,14 +26,15 @@ from langchain_core.messages import (
 
 import dimos.protocol.pubsub.impl.lcmpubsub as lcm
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
+from dimos.protocol.service.lcmservice import lcm_url_for_channel
 
 
 def test_publish_messages() -> None:
     """Publish test messages to verify agentspy is working."""
     print("Starting agent message publisher demo...")
 
-    # Create transport
-    transport = PickleLCM()
+    # Create transport on the same sharded bus agentspy subscribes to
+    transport = PickleLCM(url=lcm_url_for_channel("/agent"))
     topic = lcm.Topic("/agent")
 
     print(f"Publishing to topic: {topic}")

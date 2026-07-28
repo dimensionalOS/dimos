@@ -29,6 +29,7 @@ import shutil
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.lcmservice import lcm_bus_urls
 from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs
 
 
@@ -132,8 +133,10 @@ class TestBridgePubsubResolution:
         config = Config(pubsubs=[LCM()], g=GlobalConfig(transport="lcm"))
         pubsubs = _resolve_pubsubs(config)
 
-        assert len(pubsubs) == 1
-        assert isinstance(pubsubs[0], LCM)
+        # The transport default taps every bus: the control bus plus the
+        # sharded stream pool.
+        assert all(isinstance(p, LCM) for p in pubsubs)
+        assert {p.config.url for p in pubsubs} == set(lcm_bus_urls())
 
     def test_explicit_custom_pubsubs_override_is_honored(self):
         custom = ExplicitPubSubOverride()

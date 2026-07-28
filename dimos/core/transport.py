@@ -45,6 +45,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic as ZenohTopic,
     Zenoh,
 )
+from dimos.protocol.service.lcmservice import lcm_url_for_channel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -108,15 +109,13 @@ class pLCMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
+        kwargs.setdefault("url", lcm_url_for_channel(topic))
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (pLCMTransport, (self.topic,))
 
     def broadcast(self, _: Out[T] | None, msg: T) -> None:
-        if not self._started:
-            self.start()
-
         self.lcm.publish(self.topic, msg)
 
     def subscribe(
@@ -141,6 +140,7 @@ class LCMTransport(PubSubTransport[T]):
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(LCMTopic(topic, type))
         if not hasattr(self, "lcm"):
+            kwargs.setdefault("url", lcm_url_for_channel(topic))
             self.lcm = LCM(**kwargs)
 
     def start(self) -> None:
@@ -155,9 +155,6 @@ class LCMTransport(PubSubTransport[T]):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
         self.lcm.publish(self.topic, msg)
 
     def subscribe(
@@ -174,6 +171,7 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
             JpegLCM,
         )  # ~330ms: deferred to avoid pulling in Image/cv2/rerun
 
+        kwargs.setdefault("url", lcm_url_for_channel(topic))
         self.lcm = JpegLCM(**kwargs)  # type: ignore[assignment]
         super().__init__(topic, type)
 

@@ -21,6 +21,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.service.lcmservice import lcm_url_for_channel
 from dimos.robot.cli.topic import _build_eval_context, _decode_typed_lcm_message, topic_send
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -54,7 +55,7 @@ def test_build_eval_context_maps_message_names_to_classes() -> None:
         assert cls.__name__ == name
 
 
-def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: str) -> None:
+def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "transport", "lcm")
 
     # topic_send never stops the transport it creates; capture it so its LCM
@@ -68,7 +69,8 @@ def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: 
 
     monkeypatch.setattr("dimos.robot.cli.topic.make_transport", capturing_make_transport)
 
-    bus = LCM(url=lcm_url)
+    # Subscribe on the bus this channel shards onto, where topic_send publishes.
+    bus = LCM(url=lcm_url_for_channel("/test_topic_send"))
     bus.start()
     collector = CallbackCollector(1)
     bus.subscribe(Topic(topic="/test_topic_send", lcm_type=Twist), collector)
