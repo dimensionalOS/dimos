@@ -632,6 +632,23 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
                 self._pending_bytes.pop(key, None)
 
 
+_BROWSER_UPLOAD_PANEL = """
+<section class="browser-upload"><h2>Upload robot data</h2><form id="browser-upload-form">
+<label>Owner<input id="browser-owner" required maxlength="64" value="__OWNER__"></label>
+<label>Repository<input id="browser-repository" required maxlength="64" value="__REPOSITORY__"></label>
+<label>Upload token<input id="browser-token" type="password" required autocomplete="off"></label>
+<label>Files<input id="browser-files" type="file" multiple required accept="video/*,.db,.mcap,.json,.bin"></label>
+<button id="browser-upload-button" type="submit">Upload</button><progress id="browser-upload-progress" max="100" value="0"></progress>
+<p id="browser-upload-status">Choose files to begin. The token is never stored.</p></form></section>
+<style>.browser-upload{padding:1rem;margin:1rem 0;border:1px solid #33445c;border-radius:12px;background:#111824}.browser-upload form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.browser-upload label{display:grid;gap:.3rem;color:#cbd5e3}.browser-upload input{padding:.65rem;border:1px solid #41516a;border-radius:8px;background:#090e16;color:#fff}.browser-upload button{padding:.65rem 1rem;border:0;border-radius:8px;background:#27855f;color:#fff;font-weight:700;cursor:pointer}.browser-upload progress{width:100%;align-self:center}.browser-upload .error{color:#ff9999}@media(max-width:650px){.browser-upload form{grid-template-columns:1fr}}</style>
+<script>(()=>{"use strict";const g=id=>document.getElementById(id),form=g("browser-upload-form"),owner=g("browser-owner"),repo=g("browser-repository"),token=g("browser-token"),files=g("browser-files"),button=g("browser-upload-button"),progress=g("browser-upload-progress"),status=g("browser-upload-status");const one=(file,index,total)=>new Promise((ok,fail)=>{const x=new XMLHttpRequest(),target="/api/v1/repositories/"+encodeURIComponent(owner.value.trim())+"/"+encodeURIComponent(repo.value.trim())+"/objects";x.open("POST",target);x.setRequestHeader("Authorization","Bearer "+token.value);x.setRequestHeader("Content-Type",file.type||"application/octet-stream");x.setRequestHeader("X-Dimos-Filename",encodeURIComponent(file.name));x.upload.onprogress=e=>{if(e.lengthComputable){progress.value=((index+e.loaded/e.total)/total)*100;status.textContent="Uploading "+file.name+" - "+Math.round(e.loaded/e.total*100)+"%"}};x.onerror=()=>fail(new Error("Network error"));x.onload=()=>{let p={};try{p=JSON.parse(x.responseText||"{}")}catch(_){}if(x.status>=200&&x.status<300)ok(p);else fail(new Error(p.error||"Upload failed: HTTP "+x.status))};x.send(file)});form.addEventListener("submit",async e=>{e.preventDefault();status.classList.remove("error");const selected=Array.from(files.files||[]);if(!form.reportValidity()||!selected.length)return;button.disabled=true;try{for(let i=0;i<selected.length;i+=1)await one(selected[i],i,selected.length);progress.value=100;status.textContent=selected.length+" file(s) uploaded. Opening repository...";const destination="/r/"+encodeURIComponent(owner.value.trim())+"/"+encodeURIComponent(repo.value.trim());window.setTimeout(()=>window.location.assign(destination),500)}catch(error){status.classList.add("error");status.textContent=error instanceof Error?error.message:String(error)}finally{button.disabled=false}})})();</script>
+"""
+
+
+def _browser_upload_panel(owner: str = "", repository: str = "") -> str:
+    """Return the same-origin upload form without storing its bearer token."""
+    return (_BROWSER_UPLOAD_PANEL.replace("__OWNER__", escape(owner, quote=True)).replace("__REPOSITORY__", escape(repository, quote=True)))
+
 class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     """Raw streaming REST API for replay objects."""
 
@@ -748,7 +765,8 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; media-src " + " ".join(media_sources),
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "connect-src 'self'; media-src " + " ".join(media_sources),
         )
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Connection", "close")
@@ -781,6 +799,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         ):
             return
         objects = self._repository_server().repository.list(owner, repository_name)
+        upload_panel = _browser_upload_panel(owner, repository_name)
         cards: list[str] = []
         for item in objects:
             object_url = (
@@ -822,6 +841,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
 </head>
 <body>
   <h1>{escape(owner)}/{escape(repository_name)}</h1>
+  {upload_panel}
   {body}
 </body>
 </html>"""
@@ -843,6 +863,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         )
         capability_cards = "".join(f"<li>{escape(capability)}</li>" for capability in capabilities)
         access_mode = "Public read" if server.public_read else "Authenticated read"
+        upload_panel = _browser_upload_panel()
         page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -881,6 +902,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     <p>Remote robotics data upload, verified download, and memory2 replay infrastructure.</p>
     <div class="status">&#9679; Service online</div>
   </header>
+  {upload_panel}
   <section class="grid" aria-label="Node details">
     <div class="card"><div class="label">Region</div>
       <div class="value">{escape(server.region)}</div></div>
