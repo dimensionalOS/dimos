@@ -132,6 +132,11 @@ button {
   cursor: pointer;
 }
 button:disabled { cursor: wait; opacity: .6; }
+.secondary {
+  border-color: #c8ced8;
+  background: #fff;
+  color: #344054;
+}
 progress { width: min(320px, 100%); accent-color: var(--accent); }
 .upload-status { min-height: 21px; margin-top: 10px; }
 .upload-status.error { color: var(--error); }
@@ -192,9 +197,33 @@ UPLOAD_SCRIPT = r"""
   const token = byId("browser-token");
   const files = byId("browser-files");
   const button = byId("browser-upload-button");
+  const browse = byId("browser-browse-button");
   const progress = byId("browser-upload-progress");
   const status = byId("browser-upload-status");
   const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+  const repositoryUrl = () => {
+    const query = new URLSearchParams({
+      owner: owner.value.trim(),
+      repository: repository.value.trim(),
+    });
+    return `/?${query.toString()}`;
+  };
+
+  const namesAreValid = () => {
+    const valid = validName.test(owner.value.trim()) &&
+      validName.test(repository.value.trim());
+    if (!valid) {
+      status.classList.add("error");
+      status.textContent = "Owner and repository names may use letters, numbers, dots, underscores, and hyphens.";
+    }
+    return valid;
+  };
+
+  browse.addEventListener("click", () => {
+    status.classList.remove("error");
+    if (namesAreValid()) window.location.assign(repositoryUrl());
+  });
 
   const uploadOne = (file, index, total) => new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -230,11 +259,7 @@ UPLOAD_SCRIPT = r"""
     const ownerName = owner.value.trim();
     const repositoryName = repository.value.trim();
     if (!form.reportValidity() || !selected.length) return;
-    if (!validName.test(ownerName) || !validName.test(repositoryName)) {
-      status.classList.add("error");
-      status.textContent = "Owner and repository names may use letters, numbers, dots, underscores, and hyphens.";
-      return;
-    }
+    if (!namesAreValid()) return;
 
     button.disabled = true;
     try {
@@ -242,9 +267,8 @@ UPLOAD_SCRIPT = r"""
         await uploadOne(selected[index], index, selected.length);
       }
       progress.value = 100;
-      status.textContent = `${selected.length} file(s) uploaded. Opening repository...`;
-      const destination = `/r/${encodeURIComponent(ownerName)}/${encodeURIComponent(repositoryName)}`;
-      window.setTimeout(() => window.location.assign(destination), 400);
+      status.textContent = `${selected.length} file(s) uploaded. Refreshing objects...`;
+      window.setTimeout(() => window.location.assign(repositoryUrl()), 400);
     } catch (error) {
       status.classList.add("error");
       status.textContent = error instanceof Error ? error.message : String(error);
@@ -300,6 +324,7 @@ def render_upload_panel(owner: str = "", repository: str = "") -> str:
     </label>
     <div class="actions">
       <button id="browser-upload-button" type="submit">Upload</button>
+      <button id="browser-browse-button" class="secondary" type="button">Open repository</button>
       <progress id="browser-upload-progress" max="100" value="0"></progress>
     </div>
   </form>
@@ -314,9 +339,19 @@ def render_status_page(
     region: str,
     access_mode: str,
     capabilities: Iterable[str],
+    owner: str = "",
+    repository: str = "",
+    objects: Iterable[RepositoryObjectView] = (),
 ) -> str:
     """Render the public service status and upload page."""
     capability_items = "".join(f"<li>{escape(capability)}</li>" for capability in capabilities)
+    repository_panel = ""
+    if owner and repository:
+        repository_panel = _render_objects_panel(
+            owner=owner,
+            repository=repository,
+            objects=objects,
+        )
     content = f"""
 <section class="summary">
   <div>
@@ -332,7 +367,8 @@ def render_status_page(
     <li><span class="label">API</span><span class="value">Hosted data v1</span></li>
   </ul>
 </section>
-{render_upload_panel()}
+{render_upload_panel(owner, repository)}
+{repository_panel}
 <section class="panel">
   <h2>Capabilities</h2>
   <ul class="capabilities">{capability_items}</ul>
@@ -356,6 +392,28 @@ def render_repository_page(
     objects: Iterable[RepositoryObjectView],
 ) -> str:
     """Render one repository with browser previews and explicit downloads."""
+    content = f"""
+<section class="summary">
+  <div>
+    <h1>{escape(owner)} / {escape(repository)}</h1>
+    <p>Repository objects are content-addressed and SHA-256 verified.</p>
+  </div>
+</section>
+{render_upload_panel(owner, repository)}
+{_render_objects_panel(owner=owner, repository=repository, objects=objects)}"""
+    return _document(
+        title=f"{owner}/{repository} - DimOS replay",
+        node_name=node_name,
+        content=content,
+    )
+
+
+def _render_objects_panel(
+    *,
+    owner: str,
+    repository: str,
+    objects: Iterable[RepositoryObjectView],
+) -> str:
     rows: list[str] = []
     for item in objects:
         object_url = escape(item.object_url, quote=True)
@@ -376,20 +434,8 @@ def render_repository_page(
             "</article>"
         )
     object_list = "".join(rows) or '<p class="empty">No objects uploaded.</p>'
-    content = f"""
-<section class="summary">
-  <div>
-    <h1>{escape(owner)} / {escape(repository)}</h1>
-    <p>Repository objects are content-addressed and SHA-256 verified.</p>
-  </div>
-</section>
-{render_upload_panel(owner, repository)}
+    return f"""
 <section class="panel">
-  <h2>Objects</h2>
+  <h2>Objects &middot; {escape(owner)} / {escape(repository)}</h2>
   <div class="object-list">{object_list}</div>
 </section>"""
-    return _document(
-        title=f"{owner}/{repository} - DimOS replay",
-        node_name=node_name,
-        content=content,
-    )

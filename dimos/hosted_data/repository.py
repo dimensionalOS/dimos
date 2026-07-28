@@ -46,7 +46,6 @@ from dimos.hosted_data.auth import (
 from dimos.hosted_data.web_ui import (
     UPLOAD_SCRIPT,
     RepositoryObjectView,
-    render_repository_page,
     render_status_page,
 )
 from dimos.utils.logging_config import setup_logger
@@ -791,6 +790,20 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             repository=repository_name,
         ):
             return
+        location = f"/?owner={quote(owner, safe='')}&repository={quote(repository_name, safe='')}"
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+    def _repository_object_views(
+        self,
+        owner: str,
+        repository_name: str,
+    ) -> list[RepositoryObjectView]:
         server = self._repository_server()
         objects = server.repository.list(owner, repository_name)
         object_views: list[RepositoryObjectView] = []
@@ -811,13 +824,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                     object_url=public_object_url,
                 )
             )
-        page = render_repository_page(
-            node_name=server.node_name,
-            owner=owner,
-            repository=repository_name,
-            objects=object_views,
-        )
-        self._send_html(HTTPStatus.OK, page)
+        return object_views
 
     def _serve_status_page(self) -> None:
         """Render a public, data-free service summary for operators."""
@@ -834,11 +841,28 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             else "SHA-256 verified downloads",
         )
         access_mode = "Public read" if server.public_read else "Authenticated read"
+        query = parse_qs(urlsplit(self.path).query)
+        owner = query.get("owner", [""])[0]
+        repository_name = query.get("repository", [""])[0]
+        object_views: list[RepositoryObjectView] = []
+        if owner or repository_name:
+            owner = _validate_name(owner, "owner")
+            repository_name = _validate_name(repository_name, "repository")
+            if not self._check_authorized(
+                write=False,
+                owner=owner,
+                repository=repository_name,
+            ):
+                return
+            object_views = self._repository_object_views(owner, repository_name)
         page = render_status_page(
             node_name=server.node_name,
             region=server.region,
             access_mode=access_mode,
             capabilities=capabilities,
+            owner=owner,
+            repository=repository_name,
+            objects=object_views,
         )
         self._send_html(HTTPStatus.OK, page)
 
@@ -1103,7 +1127,10 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
         server.metrics.increment("requests_total")
         request_path = urlsplit(self.path).path
         if request_path == "/":
-            self._serve_status_page()
+            try:
+                self._serve_status_page()
+            except RepositoryError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if request_path == "/assets/hosted-data.js":
             self._send_text(
