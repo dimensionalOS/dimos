@@ -86,7 +86,11 @@ class CompressedImage(Timestamped):
             import imagecodecs
             import numpy as np
 
-            arr = image.data if image.channels == 1 else image.to_rgb().data
+            # zero-copy passthrough unless channel order actually needs fixing
+            if image.channels == 1 or image.format is ImageFormat.RGB:
+                arr = image.data
+            else:
+                arr = image.to_rgb().data
             if arr.dtype not in (np.uint8, np.uint16, np.float32):
                 raise ValueError(f"JXL cannot encode dtype {arr.dtype}")
             arr = np.ascontiguousarray(arr)
@@ -128,12 +132,9 @@ class CompressedImage(Timestamped):
 
             arr = imagecodecs.jpegxl_decode(self.data)
             if arr.ndim == 2:
-                if arr.dtype == np.float32:
-                    fmt = ImageFormat.DEPTH
-                elif arr.dtype == np.uint16:
-                    fmt = ImageFormat.GRAY16
-                else:
-                    fmt = ImageFormat.GRAY
+                fmt = {np.float32: ImageFormat.DEPTH, np.uint16: ImageFormat.GRAY16}.get(
+                    arr.dtype.type, ImageFormat.GRAY
+                )
             else:
                 fmt = ImageFormat.RGBA if arr.shape[2] == 4 else ImageFormat.RGB
         else:
