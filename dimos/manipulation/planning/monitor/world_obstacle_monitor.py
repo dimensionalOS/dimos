@@ -31,7 +31,11 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import CollisionObjectMessage, Obstacle
+from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
+    CollisionObjectMessage,
+    Obstacle,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
@@ -249,7 +253,7 @@ class WorldObstacleMonitor:
             obstacle_type=obstacle_type,
             pose=msg.pose,
             dimensions=msg.dimensions,
-            color=msg.color or (0.8, 0.2, 0.2, 0.8),
+            color=msg.color or DEFAULT_OBSTACLE_RGBA,
         )
 
     def on_detections(self, detections: list[Detection3D]) -> None:

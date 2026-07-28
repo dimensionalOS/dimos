@@ -60,6 +60,7 @@ from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
     GeneratedPlan,
     IKResult,
     Obstacle,
@@ -1821,7 +1822,7 @@ class ManipulationModule(Module):
         if obstacle_type == ObstacleType.MESH and not mesh_path:
             raise ValueError("mesh_path required for mesh obstacles")
         if color is None:
-            rgba = (0.8, 0.2, 0.2, 0.8)
+            rgba = DEFAULT_OBSTACLE_RGBA
         elif len(color) == 4:
             rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
         else:
