@@ -142,8 +142,12 @@ jobs:
               'FIRST_TIME_CONTRIBUTOR',
             ]);
             const { owner, repo } = context.repo;
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
+            const prNumber = context.payload.pull_request.number;
+            // The opened event's author_association can be stale. Refetch the PR
+            // instead of trusting that snapshot.
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: prNumber,
+            });
             core.info(`pr=#${prNumber} authorAssociation=${pr.author_association}`);
 
             if (!firstTimeAssociations.has(pr.author_association)) {
