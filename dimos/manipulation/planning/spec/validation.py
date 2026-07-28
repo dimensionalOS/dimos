@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Backend-agnostic obstacle validation shared by planning world implementations."""
+"""Validation for shared manipulation planning specifications."""
 
 from __future__ import annotations
 

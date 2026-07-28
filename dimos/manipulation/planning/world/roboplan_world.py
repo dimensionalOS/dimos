@@ -54,8 +54,8 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
+from dimos.manipulation.planning.spec.validation import validate_obstacle
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
-from dimos.manipulation.planning.world.obstacle_validation import validate_obstacle
 from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanGroup,
     RoboPlanModel,

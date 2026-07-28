@@ -38,8 +38,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
+from dimos.manipulation.planning.spec.validation import validate_obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-from dimos.manipulation.planning.world.obstacle_validation import validate_obstacle
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
