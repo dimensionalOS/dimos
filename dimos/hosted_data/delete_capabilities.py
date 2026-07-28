@@ -47,11 +47,9 @@ class DeleteCapabilityStore:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     digests = [
-                        str(item)
-                        for item in raw
-                        if isinstance(item, str) and len(item) == 64
+                        str(item) for item in raw if isinstance(item, str) and len(item) == 64
                     ]
-            digests = (digests + [digest])[-8:]
+            digests = ([*digests, digest])[-8:]
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary: Path | None = None
             try:
@@ -84,9 +82,7 @@ class DeleteCapabilityStore:
         if not isinstance(raw, list):
             return False
         supplied = hashlib.sha256(token.encode()).hexdigest()
-        return any(
-            isinstance(item, str) and hmac.compare_digest(supplied, item) for item in raw
-        )
+        return any(isinstance(item, str) and hmac.compare_digest(supplied, item) for item in raw)
 
     def revoke(self, owner: str, repository: str, object_id: str) -> None:
         """Remove all capabilities after an object is deleted."""
