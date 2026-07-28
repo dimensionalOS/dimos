@@ -25,6 +25,18 @@ import time
 import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
+# macOS Open3D uses LLVM libomp, which (when OMP_WAIT_POLICY is unset) still
+# actively spins for KMP_BLOCKTIME (default 200ms) after each parallel region.
+# Several point-cloud workers each owning a core-sized pool then yield-spin
+# between frames and burn whole cores in kernel time (measured: replay dropped
+# from ~1120% to ~70% CPU on a 12-core Mac with these set). Linux Open3D links
+# libgomp, whose unset default is only a short spin then sleep, so leave it
+# alone. Set before any library loads libomp; workers inherit via the
+# forkserver. User environment overrides win.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_BLOCKTIME", "0")
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -42,8 +54,10 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.robot.cli.cache import app as cache_app
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -155,6 +169,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
+main.add_typer(cache_app, name="cache")
 
 
 def arg_help(
@@ -270,7 +285,12 @@ def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
     return fallback
 
 
-def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
+def load_config_args(
+    config: type[BaseModel],
+    args: Iterable[str],
+    path: Path,
+    cli_g_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         kwargs = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -295,6 +315,11 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
             d = d.setdefault(p, {})
         d[parts[-1]] = v
 
+    if cli_g_overrides:
+        # Explicit CLI flags (--transport, --local-relay, ...) win for their
+        # own keys but must not wipe the rest of the g subtree built above.
+        kwargs.setdefault("g", {}).update(cli_g_overrides)
+
     # We don't need this config, but this atleast validates the user input first.
     # This will help catch misspellings and similar mistakes.
     config(**kwargs)
@@ -302,7 +327,23 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
     return kwargs  # type: ignore[no-any-return]
 
 
+def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
+    """Append one relay bridge to an enabled CLI run after blueprint resolution."""
+    if not (global_config.local_relay or global_config.relay_url):
+        return blueprint
+
+    try:
+        from dimos.web.relay_bridge.relay_bridge_module import with_relay_bridge
+    except ImportError as e:
+        raise RuntimeError(
+            "--local-relay/--relay-url need the web extra: `uv sync --extra web --inexact`"
+        ) from e
+
+    return with_relay_bridge(blueprint)
+
+
 @main.command()
+@cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
@@ -311,6 +352,14 @@ def run(
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    local_relay: bool | None = typer.Option(
+        None,
+        "--local-relay/--no-local-relay",
+        help="Spawn a local cockpit relay and bridge this robot to it",
+    ),
+    relay_url: str | None = typer.Option(
+        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -334,6 +383,16 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
+
+    # These flags are accepted on `run` itself, not just as global options.
+    run_overrides = {
+        name: value
+        for name, value in (("local_relay", local_relay), ("relay_url", relay_url))
+        if value is not None
+    }
+    if run_overrides:
+        cli_config_overrides.update(run_overrides)
+        global_config.update(**run_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -360,6 +419,8 @@ def run(
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
+    blueprint = _with_relay_bridge(blueprint)
+
     if show_help:
         print("Blueprint arguments:")
         print("  Override with --option/-o module.field=value.")
@@ -368,9 +429,7 @@ def run(
         return
 
     blueprint_config = blueprint.config()
-    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
-    if cli_config_overrides:
-        kwargs["g"] = cli_config_overrides
+    kwargs = load_config_args(blueprint_config, blueprint_args, config_path, cli_config_overrides)
 
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
@@ -819,7 +878,7 @@ def dataprep_build(
     ),
 ) -> None:
     """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
-    from dimos.learning.dataprep.cli import build
+    from dimos.imitation.dataprep.cli import build
 
     build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
 
@@ -834,7 +893,7 @@ def dataprep_inspect(
     ),
 ) -> None:
     """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
-    from dimos.learning.dataprep.cli import inspect
+    from dimos.imitation.dataprep.cli import inspect
 
     inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
 
@@ -948,15 +1007,84 @@ def apriltag(
             "ArUco (aruco_original, aruco_mip_36h12, aruco_{4x4,5x5,6x6,7x7}_{50,100,250,1000})"
         ),
     ),
+    three_d: bool = typer.Option(
+        False,
+        "--3d/--no-3d",
+        help="Also emit 3D-printable STL pairs + colored 3MF per tag (into a directory)",
+    ),
+    thickness_mm: float = typer.Option(3.0, "--thickness-mm", help="[3d] Plate thickness in mm"),
+    marker_mm: float = typer.Option(
+        0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
+    ),
+    margin_cells: float = typer.Option(
+        1.0,
+        "--margin-cells",
+        help="[3d] Light quiet-zone border around the tag, in tag cells",
+    ),
+    holes: bool = typer.Option(
+        True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"
+    ),
+    hole_dia_mm: float = typer.Option(
+        3.4, "--hole-dia-mm", help="[3d] Mounting hole diameter in mm (3.4 = M3 clearance)"
+    ),
+    back_text: bool = typer.Option(
+        True, "--back-text/--no-back-text", help="[3d] Engrave family + ID on the back"
+    ),
+    text_inlay: bool = typer.Option(
+        True,
+        "--text-inlay/--no-text-inlay",
+        help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
+    ),
+    legs: float = typer.Option(
+        0.0,
+        "--legs",
+        metavar="HEIGHT_MM",
+        help=(
+            "[3d] Also generate a flat-printable T-footed leg. HEIGHT_MM is floor to TAG CENTER "
+            "(the tag's pose origin). Implies --holes"
+        ),
+    ),
+    leg_thickness_mm: float = typer.Option(
+        6.0, "--leg-thickness-mm", help="[3d] Leg column thickness in mm"
+    ),
+    leg_brace: bool = typer.Option(
+        True, "--leg-brace/--no-leg-brace", help="[3d] Gusset up the back of the leg column"
+    ),
 ) -> None:
-    """Generate a printable AprilTag/ArUco PDF with calibration ruler."""
-    from dimos.utils.cli.apriltag import generate_pdf, parse_id_spec
+    """Generate a printable AprilTag/ArUco PDF, optionally with 3D-printable STLs."""
+    from dimos.utils.cli.apriltag import TagRequest, parse_id_spec
 
-    id_list = parse_id_spec(ids)
-    path = generate_pdf(
-        id_list, out, family=family, size_mm=size_mm, page_size=page_size, pack=pack
-    )
-    typer.echo(f"Wrote {len(id_list)} tag(s) to {path}")
+    try:
+        request = TagRequest(
+            ids=parse_id_spec(ids),
+            out=out,
+            id_spec=ids,
+            family=family,
+            size_mm=size_mm,
+            page_size=page_size,
+            pack=pack,
+            three_d=three_d,
+            thickness_mm=thickness_mm,
+            marker_mm=marker_mm,
+            margin_cells=margin_cells,
+            holes=holes,
+            hole_dia_mm=hole_dia_mm,
+            back_text=back_text,
+            text_inlay=text_inlay,
+            legs_mm=legs,
+            leg_thickness_mm=leg_thickness_mm,
+            leg_brace=leg_brace,
+        )
+        typer.echo("apriltag")
+        for key, value in request.describe():
+            typer.echo(f"  {key:<10} {value}")
+        typer.echo("")
+        written = request.render()
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    for line in request.summary(written):
+        typer.echo(line)
 
 
 @main.command(name="rerun-bridge")

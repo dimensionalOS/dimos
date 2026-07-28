@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,8 @@ import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -47,7 +50,11 @@ def _write_urdf(path: Path) -> None:
     path.write_text(
         """
 <robot name="chain">
-  <link name="base_link"/>
+  <link name="base_link">
+    <collision>
+      <geometry><box size="0.4 0.4 0.4"/></geometry>
+    </collision>
+  </link>
   <link name="link1"/>
   <link name="tool0"/>
   <joint name="joint1" type="revolute">
@@ -147,6 +154,92 @@ def test_drake_config_group_helpers_validate_duplicate_and_ambiguous_groups(
         DrakeWorld._primary_pose_group_id_for_config(ambiguous)
     with pytest.raises(KeyError, match="Unknown planning group ID"):
         DrakeWorld._planning_group_from_config(ambiguous, "arm/missing")
+
+
+@requires_drake
+def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    world = DrakeWorld()
+    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=[2, 0, 0], orientation=[0, 0, 0, 1]),
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    unnamed = replace(obstacle, name="")
+
+    operations = [
+        lambda: world.add_obstacle(obstacle),
+        lambda: world.remove_obstacle("box"),
+        lambda: world.update_obstacle(obstacle),
+        lambda: world.update_obstacle_pose("box", obstacle.pose),
+        world.clear_obstacles,
+        world.get_obstacles,
+    ]
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="finalized"):
+            operation()
+    world.finalize()
+    assert world.add_obstacle(unnamed) is None
+    assert world.add_obstacle(obstacle) == "box"
+    joint_state = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    assert world.check_config_collision_free(robot_id, joint_state)
+    original_geometry_id = world._obstacles["box"].geometry_id
+    assert world.add_obstacle(obstacle) is None
+    assert world.remove_obstacle("missing") is False
+    assert world.update_obstacle(replace(obstacle, name="missing")) is False
+    assert world.update_obstacle_pose("missing", obstacle.pose) is False
+    moved_pose = PoseStamped(position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    assert world.update_obstacle_pose("box", moved_pose)
+    assert world._obstacles["box"].geometry_id != original_geometry_id
+    assert world.get_obstacles()[0].pose.position.x == pytest.approx(0.0)
+    assert not world.check_config_collision_free(robot_id, joint_state)
+
+    replacement = replace(
+        obstacle,
+        obstacle_type=ObstacleType.SPHERE,
+        dimensions=(0.5,),
+        color=(0.0, 1.0, 0.0, 1.0),
+    )
+    assert world.update_obstacle(replacement)
+    assert world.check_config_collision_free(robot_id, joint_state)
+    replacement.dimensions = (9.0,)
+    retrieved = world.get_obstacles()[0]
+    retrieved.dimensions = (8.0,)
+    assert world.get_obstacles()[0].dimensions == (0.5,)
+
+
+@requires_drake
+def test_drake_obstacle_replacement_failure_invalidates_world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    world = DrakeWorld()
+    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.finalize()
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        dimensions=(0.1, 0.1, 0.1),
+    )
+    world.add_obstacle(obstacle)
+    monkeypatch.setattr(
+        world,
+        "_add_obstacle_to_scene_graph",
+        lambda *_args: (_ for _ in ()).throw(ValueError("native replacement failed")),
+    )
+
+    with pytest.raises(ValueError, match="native replacement failed"):
+        world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0)))
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.get_obstacles()
 
 
 @requires_drake

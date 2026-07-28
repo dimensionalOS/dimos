@@ -10,6 +10,10 @@ name: pr-labels
 # flight), every PR to main must declare backport intent via that label or
 # `backport:skip`.
 #
+# `first-time-contributor`: labels PRs whose author had not previously
+# committed to this repository when the PR was opened. The label is retained
+# as a snapshot even if the author's association changes later.
+#
 # Runs on the default branch via these events, so the GITHUB_TOKEN is
 # write-scoped even for PRs from forks — and the workflow file itself can't
 # be tampered with by a fork PR.
@@ -120,6 +124,39 @@ jobs:
               }
               await setLabel(prNumber, ciOk && !pr.draft);
             }
+
+  first-time-contributor:
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write  # To add the label
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const label = 'first-time-contributor';
+            const firstTimeAssociations = new Set([
+              'FIRST_TIMER',
+              'FIRST_TIME_CONTRIBUTOR',
+            ]);
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            // The opened event's author_association can be stale. Refetch the PR
+            // instead of trusting that snapshot.
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: prNumber,
+            });
+            core.info(`pr=#${prNumber} authorAssociation=${pr.author_association}`);
+
+            if (!firstTimeAssociations.has(pr.author_association)) {
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: prNumber, labels: [label],
+            });
 
   backport-check:
     name: "Admins: Backport label added"

@@ -33,7 +33,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
@@ -195,6 +195,82 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
             for time_from_start, positions in points
         ],
     )
+
+
+class TestObstacleUpdates:
+    def test_complete_update_forwards_new_obstacle_value(self) -> None:
+        module = _make_module()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+        pose = Pose(
+            position=Vector3(1.0, 2.0, 3.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+
+        result = module.update_obstacle(
+            "moving-shape",
+            pose,
+            "sphere",
+            [0.4],
+            color=[0.1, 0.2, 0.3, 0.9],
+        )
+
+        assert result is True
+        obstacle = module._world_monitor.update_obstacle.call_args.args[0]
+        assert obstacle.name == "moving-shape"
+        assert obstacle.obstacle_type == ObstacleType.SPHERE
+        assert obstacle.dimensions == (0.4,)
+        assert obstacle.color == (0.1, 0.2, 0.3, 0.9)
+        assert obstacle.pose.position.x == pytest.approx(1.0)
+
+        assert module.update_obstacle("default-color", pose, "box", [1.0, 1.0, 1.0])
+        default_obstacle = module._world_monitor.update_obstacle.call_args.args[0]
+        assert default_obstacle.color == (0.8, 0.2, 0.2, 0.8)
+
+    def test_pose_update_forwards_only_name_and_pose(self) -> None:
+        module = _make_module()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle_pose.return_value = True
+        pose = Pose(
+            position=Vector3(4.0, 5.0, 6.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+
+        result = module.update_obstacle_pose("moving-shape", pose)
+
+        assert result is True
+        name, stamped = module._world_monitor.update_obstacle_pose.call_args.args
+        assert name == "moving-shape"
+        assert stamped.position.x == pytest.approx(4.0)
+        assert stamped.position.y == pytest.approx(5.0)
+        assert stamped.position.z == pytest.approx(6.0)
+
+    def test_complete_update_rejects_unknown_shape_before_world_mutation(self) -> None:
+        module = _make_module()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        with pytest.raises(ValueError, match="Unknown obstacle shape"):
+            module.update_obstacle("shape", Pose(), "capsule", [1.0])
+
+        module._world_monitor.update_obstacle.assert_not_called()
+
+    def test_complete_update_rejects_incomplete_mesh_and_invalid_color(self) -> None:
+        module = _make_module()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        with pytest.raises(ValueError, match="mesh_path required"):
+            module.update_obstacle("mesh", Pose(), "mesh")
+        with pytest.raises(ValueError, match="four values"):
+            module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0], color=[1.0])
+
+        module._world_monitor.update_obstacle.assert_not_called()
+
+    def test_updates_fail_when_world_monitor_is_unavailable(self) -> None:
+        module = _make_module()
+        module._world_monitor = None
+
+        assert module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0]) is False
+        assert module.update_obstacle_pose("box", Pose()) is False
 
 
 class TestStateMachine:
@@ -368,8 +444,8 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
-            world_backend="drake",
-            planner_name="rrt_connect",
+            world_backend="roboplan",
+            planner_name="roboplan",
             kinematics_name=None,
             kinematics=kinematics,
         )
@@ -388,8 +464,8 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
-            world_backend="drake",
-            planner_name="rrt_connect",
+            world_backend="roboplan",
+            planner_name="roboplan",
             kinematics_name="pink",
             kinematics=module.config.kinematics,
         )
