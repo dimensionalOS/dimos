@@ -476,7 +476,8 @@ class RepositoryMetrics:
             "requests_total": 0,
             "errors_total": 0,
             "uploads_total": 0,
-            "downloads_total": 0,`n            "deletions_total": 0,
+            "downloads_total": 0,
+            "deletions_total": 0,
             "uploaded_bytes_total": 0,
             "downloaded_bytes_total": 0,
             "recovered_parts_total": 0,
@@ -979,7 +980,11 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
                 metadata.object_id,
                 metadata.size_bytes,
             )
-            response = metadata.to_dict()`n            response["delete_token"] = server.delete_capabilities.issue(`n                owner, repository, metadata.object_id`n            )`n            self._send_json(HTTPStatus.CREATED, response)
+            response = metadata.to_dict()
+            response["delete_token"] = server.delete_capabilities.issue(
+                owner, repository, metadata.object_id
+            )
+            self._send_json(HTTPStatus.CREATED, response)
         except ObjectTooLargeError as exc:
             self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
         except RepositoryQuotaError as exc:
@@ -1047,7 +1052,11 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             )
             server.metrics.increment("uploads_total")
             server.metrics.increment("uploaded_bytes_total", metadata.size_bytes)
-            response = metadata.to_dict()`n            response["delete_token"] = server.delete_capabilities.issue(`n                owner, repository, metadata.object_id`n            )`n            self._send_json(HTTPStatus.CREATED, response)
+            response = metadata.to_dict()
+            response["delete_token"] = server.delete_capabilities.issue(
+                owner, repository, metadata.object_id
+            )
+            self._send_json(HTTPStatus.CREATED, response)
         except ObjectTooLargeError as exc:
             self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
         except RepositoryQuotaError as exc:
