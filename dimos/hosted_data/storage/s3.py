@@ -273,6 +273,13 @@ class S3ReplayRepository:
             raise RuntimeError("S3 object response did not contain a closable Body")
         return metadata, cast("ClosableBinaryReader", body)
 
+    def delete(self, owner: str, repository: str, object_id: str) -> ReplayObject:
+        """Delete metadata first so partially deleted blobs stay invisible."""
+        metadata = self._read_metadata(owner, repository, object_id)
+        object_key, metadata_key = self._keys(owner, repository, object_id)
+        self.client.delete_object(Bucket=self.bucket, Key=metadata_key)
+        self.client.delete_object(Bucket=self.bucket, Key=object_key)
+        return metadata
     def list(self, owner: str, repository: str) -> list[ReplayObject]:
         """List completed objects; orphan blobs are intentionally invisible."""
         base = self._base_key(owner, repository)
