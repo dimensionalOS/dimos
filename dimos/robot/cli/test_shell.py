@@ -45,9 +45,9 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     connect.assert_called_once_with()
     assert start_ipython.call_args.kwargs["argv"] == ["--no-banner", "--no-tip"]
     namespace = start_ipython.call_args.kwargs["user_ns"]
-    assert set(namespace) == {"app", "help", "modules", "rpcs", "describe"}
+    assert set(namespace) == {"app", "guide", "modules", "rpcs", "describe"}
     assert namespace["app"] is app
-    assert callable(namespace["help"])
+    assert callable(namespace["guide"])
     assert callable(namespace["modules"])
     assert callable(namespace["rpcs"])
     assert callable(namespace["describe"])
@@ -61,15 +61,15 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     app.stop.assert_called_once_with()
 
 
-def test_shell_help_reprints_quick_start_guide(mocker, capsys):
+def test_shell_guide_reprints_quick_start_guide(mocker, capsys):
     app = mocker.Mock(spec=Dimos)
 
-    result = _shell_namespace(app)["help"]()
+    result = _shell_namespace(app)["guide"]()
 
     assert result is None
     output = capsys.readouterr().out
     assert "Quick start" in output
-    assert "help()" in output
+    assert "guide()" in output
     assert "modules()" in output
     assert 'rpcs("ModuleName")' in output
     assert 'describe("ModuleName.method")' in output

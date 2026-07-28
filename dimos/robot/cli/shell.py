@@ -30,7 +30,7 @@ from dimos.utils.cli import theme
 
 QUICK_START = """\
 [bold]Quick start[/bold]
-  help()                            Show this guide again
+  guide()                           Show this guide again
   modules()                         List deployed module instances
   rpcs()                            List every RPC
   rpcs("ModuleName")                Filter RPCs by module
@@ -82,7 +82,7 @@ def _format_description(info: ModuleInfo | RpcInfo) -> str:
 
 
 def _shell_namespace(app: Dimos) -> dict[str, Any]:
-    def help() -> None:
+    def guide() -> None:
         """Print the DimOS RPC shell quick-start guide."""
         Console(highlight=False).print(QUICK_START)
 
@@ -114,7 +114,7 @@ def _shell_namespace(app: Dimos) -> dict[str, Any]:
 
     return {
         "app": app,
-        "help": help,
+        "guide": guide,
         "modules": modules,
         "rpcs": rpcs,
         "describe": describe,

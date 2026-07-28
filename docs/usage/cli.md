@@ -151,7 +151,7 @@ The shell starts with five names:
 | Name | Purpose |
 |------|---------|
 | `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
-| `help()` | Reprint the shell's quick-start guide |
+| `guide()` | Reprint the shell's quick-start guide |
 | `modules()` | Print module instances, classes, and RPC counts |
 | `rpcs()` | Print every RPC's signature and docstring summary |
 | `describe(value)` | Pretty-print a module or RPC's signature and documentation |
@@ -160,7 +160,7 @@ For example:
 
 ```python skip
 modules()
-help()
+guide()
 rpcs("StressTestModule")
 describe("StressTestModule.ping")
 app.StressTestModule.ping()
