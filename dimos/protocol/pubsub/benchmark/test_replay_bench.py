@@ -113,8 +113,9 @@ def _bench(transport, frame: Image, n: int, wire_bytes: int) -> dict | None:
     drops = 0
     transport.subscribe(callback)
     try:
-        # warmup (first delivery also proves subscription is live)
-        deadline = time.monotonic() + 10
+        # warmup (first delivery also proves subscription is live); real
+        # deliveries arrive in ms — 3s only gets burned by undeliverable paths
+        deadline = time.monotonic() + 3
         while not event.is_set() and time.monotonic() < deadline:
             transport.broadcast(None, frame)
             event.wait(0.2)

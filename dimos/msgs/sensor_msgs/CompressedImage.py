@@ -26,16 +26,14 @@ from dimos.types.timestamped import Timestamped, to_human_readable
 # cv2/turbojpeg/Image are imported lazily so this module stays cheap for
 # byte-level consumers that never encode or decode pixels.
 if TYPE_CHECKING:
-    import rerun as rr
-
     from dimos.msgs.sensor_msgs.Image import Image
 
-CompressionFormat = Literal["jpeg", "png"]
+CompressionFormat = Literal["jpeg", "png", "jxl"]
 
 
 @dataclass
 class CompressedImage(Timestamped):
-    """Compressed image bytes (JPEG/PNG) — ROS sensor_msgs/CompressedImage."""
+    """Compressed image bytes (JPEG/PNG/JPEG-XL) — ROS sensor_msgs/CompressedImage."""
 
     msg_name = "sensor_msgs.CompressedImage"
 
@@ -57,8 +55,15 @@ class CompressedImage(Timestamped):
         format: CompressionFormat = "jpeg",
         quality: int = 75,
         max_width: int | None = None,
+        effort: int | None = None,
     ) -> CompressedImage:
-        """Encode a raw Image. JPEG rejects 16-bit/depth formats; PNG rejects float depth."""
+        """Encode a raw Image.
+
+        JPEG rejects 16-bit/depth formats; PNG rejects float depth. JXL takes
+        everything: lossless for 16-bit/float data (depth must survive the wire
+        exactly), `quality` for uint8. `effort` (jxl only, 1-9) trades encode
+        cpu for size; defaults are pinned for camera-rate streaming.
+        """
         from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
         if not isinstance(image, Image):
@@ -79,6 +84,24 @@ class CompressedImage(Timestamped):
             if not ok:
                 raise ValueError("PNG encoding failed")
             data = buf.tobytes()
+        elif format == "jxl":
+            import imagecodecs
+            import numpy as np
+
+            # zero-copy passthrough unless channel order actually needs fixing
+            if image.channels == 1 or image.format is ImageFormat.RGB:
+                arr = image.data
+            else:
+                arr = image.to_rgb().data
+            if arr.dtype not in (np.uint8, np.uint16, np.float32):
+                raise ValueError(f"JXL cannot encode dtype {arr.dtype}")
+            arr = np.ascontiguousarray(arr)
+            # libjxl's default effort=7 costs 83-300ms per 720p frame; these
+            # pins keep camera-rate (13ms lossy / 3ms lossless) for ~5% size
+            if arr.dtype == np.uint8:
+                data = bytes(imagecodecs.jpegxl_encode(arr, level=quality, effort=effort or 3))
+            else:
+                data = bytes(imagecodecs.jpegxl_encode(arr, lossless=True, effort=effort or 1))
         else:
             raise ValueError(f"unsupported format {format!r}")
         return cls(data=data, format=format, frame_id=image.frame_id, ts=image.ts)
@@ -101,8 +124,21 @@ class CompressedImage(Timestamped):
                 raise ValueError("PNG decoding failed")
             if arr.ndim == 2:
                 fmt = ImageFormat.GRAY16 if arr.dtype == np.uint16 else ImageFormat.GRAY
+            elif arr.shape[2] == 4:
+                fmt = ImageFormat.BGRA
             else:
                 fmt = ImageFormat.BGR
+        elif self.format.startswith("jxl"):
+            import imagecodecs
+            import numpy as np
+
+            arr = imagecodecs.jpegxl_decode(self.data)
+            if arr.ndim == 2:
+                fmt = {np.float32: ImageFormat.DEPTH, np.uint16: ImageFormat.GRAY16}.get(
+                    arr.dtype.type, ImageFormat.GRAY
+                )
+            else:
+                fmt = ImageFormat.RGBA if arr.shape[2] == 4 else ImageFormat.RGB
         else:
             raise ValueError(f"unsupported format {self.format!r}")
         return Image(data=arr, format=fmt, frame_id=self.frame_id, ts=self.ts)
@@ -129,8 +165,11 @@ class CompressedImage(Timestamped):
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9,
         )
 
-    def to_rerun(self) -> rr.EncodedImage:
+    def to_rerun(self) -> Any:
         import rerun as rr
 
-        media_type = "image/jpeg" if self.format.startswith("jpeg") else "image/png"
-        return rr.EncodedImage(contents=self.data, media_type=media_type)
+        if self.format.startswith(("jpeg", "png")):
+            media_type = "image/jpeg" if self.format.startswith("jpeg") else "image/png"
+            return rr.EncodedImage(contents=self.data, media_type=media_type)
+        # formats rerun's EncodedImage can't decode: send pixels instead
+        return self.decode().to_rerun()
