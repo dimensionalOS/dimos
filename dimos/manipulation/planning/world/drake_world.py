@@ -39,6 +39,7 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.planning.world.obstacle_validation import validate_obstacle
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -622,37 +623,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
-        if not obstacle.name and not allow_empty_name:
-            raise ValueError("Obstacle name must be non-empty")
-        expected_dimensions = {
-            ObstacleType.BOX: 3,
-            ObstacleType.SPHERE: 1,
-            ObstacleType.CYLINDER: 2,
-        }
-        if obstacle.obstacle_type in expected_dimensions:
-            expected = expected_dimensions[obstacle.obstacle_type]
-            if len(obstacle.dimensions) != expected:
-                raise ValueError(
-                    f"{obstacle.obstacle_type.name} obstacle requires {expected} dimensions, "
-                    f"got {len(obstacle.dimensions)}"
-                )
-            dimensions = np.asarray(obstacle.dimensions, dtype=np.float64)
-            if not np.isfinite(dimensions).all() or np.any(dimensions <= 0.0):
-                raise ValueError("Obstacle dimensions must be finite and positive")
-        elif obstacle.obstacle_type == ObstacleType.MESH:
-            if not obstacle.mesh_path:
-                raise ValueError("MESH obstacle requires mesh_path")
-        else:
-            raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
-        color = np.asarray(obstacle.color, dtype=np.float64)
-        if color.shape != (4,) or not np.isfinite(color).all():
-            raise ValueError("Obstacle color must contain four finite values")
-        transform = Transform(
+        pose_matrix = Transform(
             translation=obstacle.pose.position,
             rotation=obstacle.pose.orientation,
         ).to_matrix()
-        if not np.isfinite(transform).all():
-            raise ValueError("Obstacle pose must contain only finite values")
+        validate_obstacle(obstacle, pose_matrix, allow_empty_name=allow_empty_name)
 
     def _remove_obstacle_geometry(self, obstacle_data: _ObstacleData) -> None:
         self._scene_graph.RemoveGeometry(

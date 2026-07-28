@@ -35,7 +35,7 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.constants import CACHE_DIR
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
@@ -98,7 +98,7 @@ REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
 OBSTACLE_NAMESPACE = "/manipulation/obstacles"
-OBSTACLE_DEFAULT_RGBA = (0.8, 0.2, 0.2, 0.8)
+OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)

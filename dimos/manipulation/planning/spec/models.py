@@ -91,6 +91,10 @@ Jacobian: TypeAlias = "NDArray[np.float64]"
 """6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
 
 
+DEFAULT_OBSTACLE_RGBA: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+"""Default RGBA (0-1 range) applied to obstacles that carry no explicit color."""
+
+
 @dataclass
 class Obstacle:
     """Obstacle specification for collision avoidance.
@@ -112,7 +116,7 @@ class Obstacle:
     obstacle_type: ObstacleType
     pose: PoseStamped
     dimensions: tuple[float, ...] = ()
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
 
 

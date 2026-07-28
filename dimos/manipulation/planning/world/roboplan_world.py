@@ -55,6 +55,7 @@ from dimos.manipulation.planning.spec.models import (
     WorldRobotID,
 )
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
+from dimos.manipulation.planning.world.obstacle_validation import validate_obstacle
 from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanGroup,
     RoboPlanModel,
@@ -738,29 +739,9 @@ class RoboPlanWorld:
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
-        if not obstacle.name and not allow_empty_name:
-            raise ValueError("Obstacle name must be non-empty")
-        expected_dimensions = {
-            ObstacleType.BOX: 3,
-            ObstacleType.SPHERE: 1,
-            ObstacleType.CYLINDER: 2,
-        }
-        if obstacle.obstacle_type in expected_dimensions:
-            self._require_dimensions(obstacle, expected_dimensions[obstacle.obstacle_type])
-            dimensions = np.asarray(obstacle.dimensions, dtype=np.float64)
-            if not np.isfinite(dimensions).all() or np.any(dimensions <= 0.0):
-                raise ValueError("Obstacle dimensions must be finite and positive")
-        elif obstacle.obstacle_type == ObstacleType.MESH:
-            if not obstacle.mesh_path:
-                raise ValueError("MESH obstacle requires mesh_path")
-        else:
-            raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
-        color = np.asarray(obstacle.color, dtype=np.float64)
-        if color.shape != (4,) or not np.isfinite(color).all():
-            raise ValueError("Obstacle color must contain four finite values")
-        matrix = pose_to_matrix(obstacle.pose)
-        if not np.isfinite(matrix).all():
-            raise ValueError("Obstacle pose must contain only finite values")
+        validate_obstacle(
+            obstacle, pose_to_matrix(obstacle.pose), allow_empty_name=allow_empty_name
+        )
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:
