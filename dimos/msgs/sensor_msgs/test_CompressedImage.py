@@ -147,6 +147,13 @@ def test_jxl_lossy_rgb_honors_quality(rgb_image) -> None:
     assert diff < 5, f"JXL q90 mean pixel error too high: {diff}"
 
 
+def test_jxl_effort_trades_cpu_for_size(rgb_image) -> None:
+    pytest.importorskip("imagecodecs")
+    fast = CompressedImage.from_image(rgb_image, format="jxl", effort=1)
+    thorough = CompressedImage.from_image(rgb_image, format="jxl", effort=7)
+    assert len(thorough.data) <= len(fast.data)
+
+
 def test_jxl_rejects_float64() -> None:
     pytest.importorskip("imagecodecs")
     depth = Image(data=np.zeros((10, 10), dtype=np.float64), format=ImageFormat.DEPTH)

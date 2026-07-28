@@ -55,12 +55,14 @@ class CompressedImage(Timestamped):
         format: CompressionFormat = "jpeg",
         quality: int = 75,
         max_width: int | None = None,
+        effort: int | None = None,
     ) -> CompressedImage:
         """Encode a raw Image.
 
         JPEG rejects 16-bit/depth formats; PNG rejects float depth. JXL takes
         everything: lossless for 16-bit/float data (depth must survive the wire
-        exactly), `quality` for uint8.
+        exactly), `quality` for uint8. `effort` (jxl only, 1-9) trades encode
+        cpu for size; defaults are pinned for camera-rate streaming.
         """
         from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
@@ -97,9 +99,9 @@ class CompressedImage(Timestamped):
             # libjxl's default effort=7 costs 83-300ms per 720p frame; these
             # pins keep camera-rate (13ms lossy / 3ms lossless) for ~5% size
             if arr.dtype == np.uint8:
-                data = bytes(imagecodecs.jpegxl_encode(arr, level=quality, effort=3))
+                data = bytes(imagecodecs.jpegxl_encode(arr, level=quality, effort=effort or 3))
             else:
-                data = bytes(imagecodecs.jpegxl_encode(arr, lossless=True, effort=1))
+                data = bytes(imagecodecs.jpegxl_encode(arr, lossless=True, effort=effort or 1))
         else:
             raise ValueError(f"unsupported format {format!r}")
         return cls(data=data, format=format, frame_id=image.frame_id, ts=image.ts)
