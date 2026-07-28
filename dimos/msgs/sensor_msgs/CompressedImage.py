@@ -90,10 +90,12 @@ class CompressedImage(Timestamped):
             if arr.dtype not in (np.uint8, np.uint16, np.float32):
                 raise ValueError(f"JXL cannot encode dtype {arr.dtype}")
             arr = np.ascontiguousarray(arr)
+            # libjxl's default effort=7 costs 83-300ms per 720p frame; these
+            # pins keep camera-rate (13ms lossy / 3ms lossless) for ~5% size
             if arr.dtype == np.uint8:
-                data = bytes(imagecodecs.jpegxl_encode(arr, level=quality))
+                data = bytes(imagecodecs.jpegxl_encode(arr, level=quality, effort=3))
             else:
-                data = bytes(imagecodecs.jpegxl_encode(arr, lossless=True))
+                data = bytes(imagecodecs.jpegxl_encode(arr, lossless=True, effort=1))
         else:
             raise ValueError(f"unsupported format {format!r}")
         return cls(data=data, format=format, frame_id=image.frame_id, ts=image.ts)
