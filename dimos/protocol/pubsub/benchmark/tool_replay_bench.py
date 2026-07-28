@@ -109,7 +109,8 @@ class BenchSink(Module):
 
     @rpc
     def stop(self) -> None:
-        self._flush()
+        with self._lock:
+            self._flush()
         super().stop()
 
     def _on_image(self, msg: Image) -> None:
