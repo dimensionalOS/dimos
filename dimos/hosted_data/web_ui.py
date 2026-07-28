@@ -417,11 +417,8 @@ def render_upload_panel(
 ) -> str:
     """Render a same-origin upload form without embedding or storing its token."""
     if auth_required:
-        token_control = """
-    {token_control}"""
         initial_status = "Ready. The token is used only for this upload."
     else:
-        token_control = '<input id="browser-token" type="hidden" value="">'
         initial_status = "Ready. This demo node accepts uploads without a token."
     return f"""
 <section class="panel" aria-labelledby="upload-title">
