@@ -417,8 +417,14 @@ def render_upload_panel(
 ) -> str:
     """Render a same-origin upload form without embedding or storing its token."""
     if auth_required:
+        token_control = (
+            '<label>Upload token'
+            '<input id="browser-token" type="password" required autocomplete="off">'
+            '</label>'
+        )
         initial_status = "Ready. The token is used only for this upload."
     else:
+        token_control = '<input id="browser-token" type="hidden" value="">'
         initial_status = "Ready. This demo node accepts uploads without a token."
     return f"""
 <section class="panel" aria-labelledby="upload-title">
@@ -431,9 +437,7 @@ def render_upload_panel(
       <input id="browser-repository" required maxlength="64"
              value="{escape(repository, quote=True)}">
     </label>
-    <label>Upload token
-      <input id="browser-token" type="password" required autocomplete="off">
-    </label>
+    {token_control}
     <label class="file-row">Files
       <input id="browser-files" type="file" multiple required
              accept="video/*,.db,.mcap,.json,.bin">
