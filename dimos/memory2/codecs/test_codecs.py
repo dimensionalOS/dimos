@@ -137,17 +137,16 @@ def _jpeg_case() -> Case | None:
     if not _turbojpeg_available():
         return None
 
-    from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import get_data
+    import numpy as np
 
-    db_path = get_data("go2_short.db")
-
-    with SqliteStore(path=str(db_path)) as store:
-        video = store.stream("color_image", Image)
-        frames = [obs.data for obs in video.limit(3).to_list()]
-
-    if not frames:
-        return None
+    # smooth gradients survive lossy jpeg within the eq tolerance
+    frames = []
+    for shift in (0, 90, 180):
+        arr = np.zeros((48, 64, 3), np.uint8)
+        arr[..., 0] = np.linspace(0, 255, 64, dtype=np.uint8)
+        arr[..., 1] = np.linspace(0, 255, 48, dtype=np.uint8)[:, None]
+        arr[..., 2] = shift
+        frames.append(Image(data=arr, format=ImageFormat.RGB, frame_id="cam", ts=1.0))
 
     return Case(
         name="jpeg",
@@ -165,14 +164,9 @@ _case_factories = {
     "jpeg": _jpeg_case,
 }
 
-# The jpeg case reads frames from an 84 MB LFS database. Regular CI runners cap
-# LFS pulls at 1 MiB, and deselected tests still get collected (imported), so
-# the pull has to happen at test time (in the `case` fixture below) and the
-# case is marked self_hosted so only self-hosted runners and local machines
-# run it.
 case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm"]
 if _turbojpeg_available():
-    case_params.append(pytest.param("jpeg", marks=pytest.mark.self_hosted))
+    case_params.append("jpeg")
 
 
 @pytest.fixture
