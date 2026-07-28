@@ -20,9 +20,13 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip("roboplan.cartesian_planning")
+roboplan_world_module = importlib.import_module(
+    "dimos.manipulation.planning.world.roboplan_world"
+)
+
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-import dimos.manipulation.planning.world.roboplan_world as roboplan_world_module
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -30,8 +34,6 @@ from dimos.robot.manipulators.xarm.config import make_xarm6_model_config
 from dimos.utils.transform_utils import pose_to_matrix
 
 pytestmark = pytest.mark.self_hosted
-
-pytest.importorskip("roboplan.cartesian_planning")
 
 
 @pytest.fixture
