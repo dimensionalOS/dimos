@@ -209,7 +209,19 @@ UPLOAD_SCRIPT = r"""
     window.setTimeout(resolve, milliseconds));
   const authorizationHeaders = () => token.value
     ? {"Authorization": `Bearer ${token.value}`}
-    : {};
+    : {};  const capabilityKey = (ownerName, repositoryName, objectId) =>
+    `dimos-delete:${ownerName}/${repositoryName}/${objectId}`;
+  const rememberDeleteCapability = (ownerName, repositoryName, result) => {
+    if (!result.delete_token || !result.object_id) return;
+    try {
+      window.localStorage.setItem(
+        capabilityKey(ownerName, repositoryName, result.object_id),
+        result.delete_token,
+      );
+    } catch (_) {
+      // Upload still succeeds when browser storage is unavailable.
+    }
+  };
 
   const repositoryUrl = () => {
     const query = new URLSearchParams({
@@ -354,11 +366,51 @@ UPLOAD_SCRIPT = r"""
       }
     }
 
-    return withRetries(() => requestJson("POST", `${sessionUrl}/complete`, {
+    const completed = await withRetries(() => requestJson("POST", `${sessionUrl}/complete`, {
       headers: authorizationHeaders(),
     }));
+    rememberDeleteCapability(
+      owner.value.trim(),
+      repository.value.trim(),
+      completed,
+    );
+    return completed;
   };
 
+  for (const deleteButton of document.querySelectorAll(".delete-object")) {
+    const objectId = deleteButton.dataset.objectId;
+    const ownerName = owner.value.trim();
+    const repositoryName = repository.value.trim();
+    const key = capabilityKey(ownerName, repositoryName, objectId);
+    let deleteToken = "";
+    try {
+      deleteToken = window.localStorage.getItem(key) || "";
+    } catch (_) {
+      // Only the uploader's browser is offered deletion.
+    }
+    if (!deleteToken) continue;
+    deleteButton.hidden = false;
+    deleteButton.addEventListener("click", async () => {
+      if (!window.confirm(`Delete ${deleteButton.dataset.filename}? This cannot be undone.`)) {
+        return;
+      }
+      deleteButton.disabled = true;
+      try {
+        const target = `/api/v1/repositories/${encodeURIComponent(ownerName)}/` +
+          `${encodeURIComponent(repositoryName)}/objects/${encodeURIComponent(objectId)}`;
+        await requestJson("DELETE", target, {
+          headers: {"X-Dimos-Delete-Token": deleteToken},
+        });
+        window.localStorage.removeItem(key);
+        deleteButton.closest(".object").remove();
+        status.textContent = "Object deleted.";
+      } catch (error) {
+        status.classList.add("error");
+        status.textContent = error instanceof Error ? error.message : String(error);
+        deleteButton.disabled = false;
+      }
+    });
+  }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.classList.remove("error");
@@ -404,7 +456,7 @@ def _document(*, title: str, node_name: str, content: str) -> str:
     </div>
   </nav>
   <main class="shell">{content}</main>
-  <script src="/assets/hosted-data.js?v=6" defer></script>
+  <script src="/assets/hosted-data.js?v=8" defer></script>
 </body>
 </html>"""
 
@@ -544,13 +596,16 @@ def _render_objects_panel(
             else ""
         )
         rows.append(
-            '<article class="object">'
+            f'<article class="object" data-object-id="{escape(item.object_id, quote=True)}">'
             "<div>"
             f"<h2>{escape(item.filename)}</h2>"
             f'<p class="object-meta mono">{item.size_bytes:,} bytes &middot; '
             f"SHA-256 {escape(item.sha256)}</p>"
             "</div>"
             f'<a class="download" href="{object_url}?download=1">Download</a>'
+            f'<button class="delete-object secondary" type="button" hidden '
+            f'data-object-id="{escape(item.object_id, quote=True)}" '
+            f'data-filename="{escape(item.filename, quote=True)}">Delete</button>'
             f"{preview}"
             "</article>"
         )
