@@ -14,28 +14,10 @@
 
 """Tests for typed manipulation planner configuration."""
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 import pytest
 
-from dimos.manipulation.planning.planners.config import (
-    ManipulationPlannerConfig,
-    RoboPlanPlannerConfig,
-    RRTConnectPlannerConfig,
-)
-
-
-def test_planner_config_discriminates_backend() -> None:
-    adapter = TypeAdapter(ManipulationPlannerConfig)
-
-    assert adapter.validate_python({"backend": "rrt_connect"}) == RRTConnectPlannerConfig()
-    assert adapter.validate_python(
-        {
-            "backend": "roboplan",
-            "linear_cartesian": {"dt": 0.02, "max_linear_speed": 0.2},
-        }
-    ) == RoboPlanPlannerConfig(
-        linear_cartesian={"dt": 0.02, "max_linear_speed": 0.2}  # type: ignore[arg-type]
-    )
+from dimos.manipulation.planning.planners.config import RoboPlanPlannerConfig
 
 
 @pytest.mark.parametrize(

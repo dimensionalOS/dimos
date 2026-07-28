@@ -147,7 +147,6 @@ def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monke
     plan = module._last_plan
 
     assert success
-    assert plan is module._last_plan
     assert plan is not None
     assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
     assert [point.velocities for point in plan.trajectory.points] == [

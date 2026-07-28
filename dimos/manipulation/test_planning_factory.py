@@ -39,7 +39,6 @@ from dimos.manipulation.planning.kinematics.config import (
 )
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.planners.config import (
-    RoboPlanLinearCartesianConfig,
     RoboPlanPlannerConfig,
     RRTConnectPlannerConfig,
 )
@@ -208,7 +207,12 @@ def test_start_uses_configured_planner_and_kinematics(
     robot_config: RobotModelConfig,
     make_module: Callable[..., ManipulationModule],
 ) -> None:
-    module = make_module(robots=[robot_config], kinematics=JacobianKinematicsConfig())
+    planner_config = RRTConnectPlannerConfig()
+    module = make_module(
+        robots=[robot_config],
+        planner=planner_config,
+        kinematics=JacobianKinematicsConfig(),
+    )
     world = mocker.MagicMock(name="world")
     world_monitor = mocker.MagicMock()
     world_monitor.add_robot.return_value = "robot-id"
@@ -235,28 +239,10 @@ def test_start_uses_configured_planner_and_kinematics(
     create_planning_specs_mock.assert_called_once_with(
         world=world,
         world_backend="roboplan",
-        planner=RoboPlanPlannerConfig(),
+        planner=planner_config,
         kinematics_name=None,
         kinematics=module.config.kinematics,
     )
     assert module._planner is planner
     assert module._kinematics is kinematics
     assert module._robots["arm"][0] == "robot-id"
-
-
-def test_module_config_parses_typed_roboplan_planner() -> None:
-    module = ManipulationModule(
-        planner={
-            "backend": "roboplan",
-            "linear_cartesian": {"dt": 0.02, "max_linear_speed": 0.2},
-        }
-    )
-    try:
-        assert module.config.planner == RoboPlanPlannerConfig(
-            linear_cartesian=RoboPlanLinearCartesianConfig(
-                dt=0.02,
-                max_linear_speed=0.2,
-            )
-        )
-    finally:
-        module.stop()

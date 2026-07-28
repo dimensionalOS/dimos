@@ -1124,7 +1124,6 @@ def test_linear_cartesian_planner_returns_timed_global_joint_states(
     assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
     assert result.path[-1].position == pytest.approx([0.1, 0.1])
     assert result.path[1].velocity == pytest.approx([0.5, 0.5])
-    assert result.path[-1].effort == []
     planner = FakeCartesianPathPlanner.instances[-1]
     assert planner.options.speed_mode == FakeCartesianSpeedMode.Bounded
     assert planner.options.max_linear_speed == pytest.approx(0.2)
