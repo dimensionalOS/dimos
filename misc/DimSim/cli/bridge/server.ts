@@ -733,6 +733,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
               (
                 relayType === "runEval" ||
                 relayType === "evalStart" ||
+                relayType === "evalAgentOutput" ||
                 relayType === "evalAbort"
               );
             const evalCommandTarget = relayType === "runEval"
@@ -758,6 +759,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
             if (
               relayType === "runEval" ||
               relayType === "evalStart" ||
+              relayType === "evalAgentOutput" ||
               relayType === "evalAbort"
             ) {
               console.log(

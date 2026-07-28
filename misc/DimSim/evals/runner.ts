@@ -15,6 +15,7 @@ import {
   runAgentEvalOnSocket,
 } from "./agent-driver.ts";
 import type {
+  EvalEvidence,
   EvalFailureStage,
   EvalResultMessage,
   EvalStatus,
@@ -33,6 +34,7 @@ export interface EvalResult {
   reason: string;
   score: number | null;
   durationMs: number;
+  evidence?: EvalEvidence;
 }
 
 export interface WorkflowEntry {
@@ -422,6 +424,7 @@ export function runScorerEvalOnSocket(
         durationMs: typeof message.durationMs === "number"
           ? message.durationMs
           : 0,
+        evidence: message.evidence,
       });
     };
     const onFailure = (event: Event) => {

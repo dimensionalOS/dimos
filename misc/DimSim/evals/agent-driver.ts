@@ -1,6 +1,8 @@
 import type {
   EvalAbortMessage,
+  EvalAgentOutputMessage,
   EvalCleanupMessage,
+  EvalEvidence,
   EvalFailureStage,
   EvalProtocolMessage,
   EvalReadyMessage,
@@ -11,6 +13,11 @@ import type {
   RunEvalMessage,
 } from "./protocol.ts";
 import { isFiniteStartPose } from "./protocol.ts";
+import {
+  type AgentOutputEvent,
+  type AgentOutputObserver,
+  createAgentOutputObserver,
+} from "./agent-output.ts";
 
 export interface EvalSocket extends EventTarget {
   readonly readyState: number;
@@ -42,6 +49,7 @@ export interface AgentEvalTimeouts {
   browserReadyMs: number;
   resetMs: number;
   sensorSettleMs: number;
+  agentOutputMs: number;
   mcpMs: number;
   resultGraceMs: number;
 }
@@ -50,6 +58,7 @@ export const DEFAULT_AGENT_TIMEOUTS: AgentEvalTimeouts = {
   browserReadyMs: 30_000,
   resetMs: 5_000,
   sensorSettleMs: 10_000,
+  agentOutputMs: 5_000,
   mcpMs: 10_000,
   resultGraceMs: 5_000,
 };
@@ -69,6 +78,7 @@ export interface AgentEvalResult {
   reason: string;
   score: number | null;
   durationMs: number;
+  evidence?: EvalEvidence;
 }
 
 interface WaitOptions {
@@ -76,6 +86,7 @@ interface WaitOptions {
   timeoutMs: number;
   stage: EvalFailureStage;
   types: Set<EvalProtocolMessage["type"]>;
+  signal?: AbortSignal;
 }
 
 class AgentEvalError extends Error {
@@ -227,6 +238,7 @@ function waitForMessage(
       socket.removeEventListener("message", onMessage);
       socket.removeEventListener("error", onSocketFailure);
       socket.removeEventListener("close", onSocketFailure);
+      options.signal?.removeEventListener("abort", onAbort);
     };
     const settle = (fn: () => void) => {
       if (settled) return;
@@ -263,6 +275,16 @@ function waitForMessage(
         )
       );
     };
+    const onAbort = () => {
+      settle(() =>
+        reject(
+          new AgentEvalError(
+            `${options.stage} wait cancelled`,
+            options.stage,
+          ),
+        )
+      );
+    };
     const timer = setTimeout(() => {
       settle(() =>
         reject(
@@ -276,6 +298,7 @@ function waitForMessage(
     socket.addEventListener("message", onMessage);
     socket.addEventListener("error", onSocketFailure);
     socket.addEventListener("close", onSocketFailure);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -298,6 +321,7 @@ function normalizeResult(
     reason: message.reason ?? (message.passed ? "ok" : "fail"),
     score: typeof message.score === "number" ? message.score : null,
     durationMs: typeof message.durationMs === "number" ? message.durationMs : 0,
+    evidence: message.evidence,
   };
 }
 
@@ -332,6 +356,7 @@ export async function runAgentEvalOnSocket(options: {
   workflow: AgentWorkflow;
   mcpUrl: string;
   mcp?: McpTransport;
+  agentOutputObserverFactory?: () => AgentOutputObserver;
   runId?: string;
   timeouts?: Partial<AgentEvalTimeouts>;
 }): Promise<AgentEvalResult> {
@@ -345,6 +370,49 @@ export async function runAgentEvalOnSocket(options: {
   const timeouts = { ...DEFAULT_AGENT_TIMEOUTS, ...options.timeouts };
   let tools: McpTool[] = [];
   let terminalError: AgentEvalError | null = null;
+  let outputObserver: AgentOutputObserver | null = null;
+  let requiredAgentOutput: string | undefined;
+  let captureAgentOutput = false;
+  let scoringStarted = false;
+  let outputForwarded = false;
+  let pendingAgentOutput: AgentOutputEvent | null = null;
+  let resultWaitAbort: AbortController | null = null;
+
+  const forwardAgentOutput = (event: AgentOutputEvent) => {
+    if (outputForwarded) return;
+    const message: EvalAgentOutputMessage = {
+      type: "evalAgentOutput",
+      runId,
+      text: event.text.trim(),
+      timestampMs: event.timestampMs,
+    };
+    send(socket, message);
+    outputForwarded = true;
+  };
+
+  const onAgentOutput = (event: AgentOutputEvent) => {
+    if (
+      !captureAgentOutput ||
+      !requiredAgentOutput ||
+      event.hasToolCalls ||
+      event.text.trim() !== requiredAgentOutput ||
+      pendingAgentOutput
+    ) {
+      return;
+    }
+    pendingAgentOutput = event;
+    if (scoringStarted) forwardAgentOutput(event);
+  };
+
+  const raceObserverFailure = async <T>(operation: Promise<T>): Promise<T> => {
+    if (!outputObserver) return await operation;
+    return await Promise.race([
+      operation,
+      outputObserver.failure.then((error) => {
+        throw new AgentEvalError(error.message, "agentOutput");
+      }),
+    ]);
+  };
 
   try {
     const runMessage: RunEvalMessage = {
@@ -371,13 +439,17 @@ export async function runAgentEvalOnSocket(options: {
       ready.task.length === 0 ||
       !Number.isFinite(ready.timeoutMs) ||
       ready.timeoutMs <= 0 ||
-      !isFiniteStartPose(ready.startPose)
+      !isFiniteStartPose(ready.startPose) ||
+      (ready.requiredAgentOutput !== undefined &&
+        (typeof ready.requiredAgentOutput !== "string" ||
+          ready.requiredAgentOutput.trim().length === 0))
     ) {
       throw new AgentEvalError(
         "browser returned invalid evalReady data",
         "browserReady",
       );
     }
+    requiredAgentOutput = ready.requiredAgentOutput?.trim();
 
     const reset: EvalResetMessage = {
       type: "evalReset",
@@ -439,10 +511,27 @@ export async function runAgentEvalOnSocket(options: {
       }
     }
 
+    if (requiredAgentOutput) {
+      outputObserver = options.agentOutputObserverFactory?.() ??
+        createAgentOutputObserver();
+      try {
+        await withTimeout(
+          outputObserver.start(onAgentOutput),
+          timeouts.agentOutputMs,
+          "agent output sidecar",
+        );
+      } catch (error) {
+        throw new AgentEvalError(
+          error instanceof Error ? error.message : String(error),
+          "agentOutput",
+        );
+      }
+    }
+
     try {
       const mcpDeadline = Date.now() + timeouts.mcpMs;
       tools = await withTimeout(
-        mcp.listTools(mcpUrl, timeouts.mcpMs),
+        raceObserverFailure(mcp.listTools(mcpUrl, timeouts.mcpMs)),
         timeouts.mcpMs,
         "MCP tools/list",
       );
@@ -455,17 +544,22 @@ export async function runAgentEvalOnSocket(options: {
       if (remainingMs <= 0) {
         throw new Error(`MCP stage timed out after ${timeouts.mcpMs}ms`);
       }
+      captureAgentOutput = true;
       await withTimeout(
-        mcp.callTool(
-          mcpUrl,
-          "agent_send",
-          { message: ready.task },
-          remainingMs,
+        raceObserverFailure(
+          mcp.callTool(
+            mcpUrl,
+            "agent_send",
+            { message: ready.task },
+            remainingMs,
+          ),
         ),
         remainingMs,
         "MCP agent_send",
       );
     } catch (error) {
+      captureAgentOutput = false;
+      if (error instanceof AgentEvalError) throw error;
       throw new AgentEvalError(
         error instanceof Error ? error.message : String(error),
         "mcp",
@@ -473,14 +567,21 @@ export async function runAgentEvalOnSocket(options: {
     }
 
     const start: EvalStartMessage = { type: "evalStart", runId };
+    resultWaitAbort = new AbortController();
     const resultPromise = waitForMessage(socket, {
       runId,
       timeoutMs: ready.timeoutMs + timeouts.resultGraceMs,
       stage: "result",
       types: new Set(["evalResult"]),
+      signal: resultWaitAbort.signal,
     });
     send(socket, start);
-    const result = await resultPromise as EvalResultMessage;
+    scoringStarted = true;
+    if (pendingAgentOutput) forwardAgentOutput(pendingAgentOutput);
+    const result = await raceObserverFailure(
+      resultPromise as Promise<EvalResultMessage>,
+    );
+    captureAgentOutput = false;
     return normalizeResult(workflow, runId, result);
   } catch (error) {
     terminalError = error instanceof AgentEvalError
@@ -491,6 +592,8 @@ export async function runAgentEvalOnSocket(options: {
       );
     return errorResult(workflow, runId, terminalError);
   } finally {
+    captureAgentOutput = false;
+    resultWaitAbort?.abort();
     if (terminalError) {
       try {
         const abort: EvalAbortMessage = {
@@ -504,24 +607,28 @@ export async function runAgentEvalOnSocket(options: {
         // Socket failures are already represented by the terminal result.
       }
     }
-    // Keep cleanup compatible with the upstream MCP surface. The bridge
-    // cleanup below clears velocity; stop_navigation additionally cancels
-    // any navigation goal when that upstream tool is present.
-    if (tools.some((tool) => tool.name === "stop_navigation")) {
+    for (
+      const cleanupTool of [
+        "end_exploration",
+        "stop_looking_out",
+        "stop_navigation",
+      ]
+    ) {
+      if (!tools.some((tool) => tool.name === cleanupTool)) continue;
       try {
         await withTimeout(
           mcp.callTool(
             mcpUrl,
-            "stop_navigation",
+            cleanupTool,
             {},
             timeouts.mcpMs,
           ),
           timeouts.mcpMs,
-          "MCP stop_navigation",
+          `MCP ${cleanupTool}`,
         );
       } catch (error) {
         console.error(
-          `[runner] cleanup stop_navigation failed: ${
+          `[runner] cleanup ${cleanupTool} failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -532,6 +639,17 @@ export async function runAgentEvalOnSocket(options: {
       send(socket, cleanup);
     } catch {
       // Best effort: the bridge also clears motion when the eval socket closes.
+    }
+    if (outputObserver) {
+      try {
+        await outputObserver.stop();
+      } catch (error) {
+        console.error(
+          `[runner] cleanup agent output sidecar failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
   }
 }

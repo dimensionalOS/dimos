@@ -40,6 +40,8 @@ import {
 import type { DimosBridge } from "../src/bridge.ts";
 import type {
   EvalAbortMessage,
+  EvalAgentOutputEvidence,
+  EvalAgentOutputMessage,
   EvalFailureStage,
   EvalReadyMessage,
   EvalResultMessage,
@@ -65,6 +67,8 @@ export interface EvalContext {
   sceneState: SceneState;
   /** Pose-history evidence collected only after authoritative eval start. */
   metrics: EvalMetrics;
+  /** Exact agent output accepted for this run, if the workflow requires one. */
+  agentOutput: EvalAgentOutputEvidence | null;
   setAgentPose: (p: StartPose) => void;
   findAsset: (q: string) => AssetEntry | null;
   dist: (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => number;
@@ -86,6 +90,8 @@ export interface EvalWorkflow {
   setup?: (ctx: EvalContext) => void | Promise<void>;
   /** Static goal check used to reject an agent eval already solved at reset. */
   initialSuccess?: (ctx: EvalContext) => EvalSuccess;
+  /** Exact, standalone assistant output required during an agent eval. */
+  requiredAgentOutput?: string;
   success: (ctx: EvalContext) => EvalSuccess;
 }
 
@@ -192,6 +198,7 @@ export class EvalHarness {
     lastPose: null,
     viewpoints: [],
   };
+  _agentOutput: EvalAgentOutputEvidence | null = null;
   _earlyAborts = new Map<string, EvalAbortMessage>();
   _patchedSockets = new WeakSet<WebSocket>();
 
@@ -221,7 +228,12 @@ export class EvalHarness {
   _patchWsOnMessage(ws: WebSocket): void {
     if (this._patchedSockets.has(ws)) return;
     this._patchedSockets.add(ws);
-    const evalTypes = new Set(["runEval", "evalStart", "evalAbort"]);
+    const evalTypes = new Set([
+      "runEval",
+      "evalStart",
+      "evalAgentOutput",
+      "evalAbort",
+    ]);
     // Listen alongside DimosBridge's transport handler. Replacing
     // `ws.onmessage` here can orphan heartbeat and pose processing after a
     // reconnect, leaving the scorer at the browser's stale spawn pose.
@@ -249,6 +261,9 @@ export class EvalHarness {
         break;
       case "evalStart":
         this._startAgentEval(cmd as EvalStartMessage);
+        break;
+      case "evalAgentOutput":
+        this._recordAgentOutput(cmd as EvalAgentOutputMessage);
         break;
       case "evalAbort":
         this._abortAgentEval(cmd as EvalAbortMessage);
@@ -361,6 +376,7 @@ export class EvalHarness {
       return await this._prepareAgentEval(command, workflow);
     }
 
+    this._agentOutput = null;
     console.log("[eval] running: %s", tag);
     this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
 
@@ -434,6 +450,7 @@ export class EvalHarness {
     command: ActiveCommand,
     workflow: EvalWorkflow,
   ): Promise<EvalResultMsg> {
+    this._agentOutput = null;
     const alreadyAborted = this._takeEarlyAbort(command, workflow);
     if (alreadyAborted) return alreadyAborted;
 
@@ -537,6 +554,7 @@ export class EvalHarness {
         task: workflow.task,
         timeoutMs: timeoutSec * 1000,
         startPose,
+        requiredAgentOutput: workflow.requiredAgentOutput,
       };
       console.log(
         "[eval] ready and waiting for authoritative reset: %s",
@@ -554,6 +572,7 @@ export class EvalHarness {
     const workflow = pending.workflow;
     const timeoutMs = (workflow.timeoutSec ?? 120) * 1000;
     const start = Date.now();
+    this._agentOutput = null;
     this._resetTrajectory(this.getAgentPose());
     console.log("[eval] agent scoring started: %s", this._activeUrl);
     this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
@@ -611,6 +630,33 @@ export class EvalHarness {
     tick();
   }
 
+  _recordAgentOutput(message: EvalAgentOutputMessage): void {
+    const pending = this._pendingAgentEval;
+    if (
+      !pending ||
+      !pending.started ||
+      pending.runId !== message.runId ||
+      this._agentOutput ||
+      pending.workflow.requiredAgentOutput !== message.text ||
+      !Number.isFinite(message.timestampMs)
+    ) {
+      return;
+    }
+    const pose = this.getAgentPose();
+    this._agentOutput = {
+      text: message.text,
+      timestampMs: message.timestampMs,
+      pose: pose
+        ? { x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw }
+        : undefined,
+    };
+    console.log(
+      "[eval] accepted required agent output for %s: %s",
+      message.runId,
+      message.text,
+    );
+  }
+
   _abortAgentEval(message: EvalAbortMessage): void {
     const pending = this._pendingAgentEval;
     if (!pending || pending.runId !== message.runId) {
@@ -622,6 +668,7 @@ export class EvalHarness {
     if (pending.timer) clearTimeout(pending.timer);
     this._pendingAgentEval = null;
     this._activeUrl = null;
+    this._agentOutput = null;
     if (this._overlay) {
       this._overlay.remove();
       this._overlay = null;
@@ -648,6 +695,7 @@ export class EvalHarness {
     if (!abort) return null;
     this._earlyAborts.delete(command.runId);
     this._activeUrl = null;
+    this._agentOutput = null;
     return {
       type: "evalResult",
       runId: command.runId,
@@ -685,6 +733,14 @@ export class EvalHarness {
       agentPos,
       sceneState,
       metrics,
+      agentOutput: this._agentOutput
+        ? {
+          ...this._agentOutput,
+          pose: this._agentOutput.pose
+            ? { ...this._agentOutput.pose }
+            : undefined,
+        }
+        : null,
       setAgentPose: (p) => {
         const a = window.__dimosAgent;
         if (!a) return;
@@ -777,6 +833,16 @@ export class EvalHarness {
       reason: result.reason,
       score: result.score,
       durationMs,
+      evidence: this._agentOutput
+        ? {
+          agentOutput: {
+            ...this._agentOutput,
+            pose: this._agentOutput.pose
+              ? { ...this._agentOutput.pose }
+              : undefined,
+          },
+        }
+        : undefined,
     };
     console.log("[eval] %s (%dms): %s", passed ? "PASS" : "FAIL", durationMs, result.reason ?? "");
     this._showResult(passed, result.reason ?? (passed ? "ok" : "fail"));

@@ -52,6 +52,7 @@ The correlated lifecycle is:
 
 ```text
 runEval → evalReady → evalReset → resetAck → agent_send → evalStart → evalResult
+                                                     ↳ evalAgentOutput
 ```
 
 The browser imports and validates the workflow and runs `setup`, but scoring
@@ -61,6 +62,22 @@ pose/odometry, and acknowledges the actual pose before `agent_send` is called.
 Agent workflows therefore require finite `x`, `y`, `z`, and `yaw` fields.
 An initially satisfied rubric is rejected because it cannot measure agent
 behavior.
+
+A workflow may set `requiredAgentOutput` to require an exact, standalone
+assistant response. For those workflows only, the runner starts a read-only
+Python sidecar that subscribes to the existing `/agent` stream. Human messages,
+tool output, AI messages with tool calls, and non-exact text do not count.
+The sidecar does not add an agent tool or modify DimOS.
+
+The outside bathtub workflow uses this contract:
+
+```bash
+dimsim eval apartment/find-and-go-to-bathtub --agent
+```
+
+It passes only after the agent emits exactly `FOUND_BATHTUB` during the active
+run and the robot is within 1 metre of the bathtub. JSON output includes the
+accepted message timestamp and the robot pose at which it was received.
 
 Results retain `passed` and add `runId`, `status`, and (for infrastructure
 errors) `failureStage`. Exit codes are `0` for pass, `1` for task failure, and
@@ -87,6 +104,7 @@ With the model credentials configured in DimOS:
 | `timeoutSec` | – | Default 120. Wall-clock cap. |
 | `startPose` | – | `{x, y, z, yaw?}`, applied before `setup`. Yaw in degrees. |
 | `setup(ctx)` | – | Async fn run once at start. Spawn obstacles, set props, anything. |
+| `requiredAgentOutput` | – | Exact standalone AI response required in connected `--agent` mode. |
 
 ## The `ctx` object
 
@@ -97,6 +115,7 @@ Both `setup(ctx)` and `success(ctx)` receive:
 | `ctx.agent` | The live agent: `setPosition`, `getPosition`, `group`, etc. |
 | `ctx.agentPos` | `{x, y, z}`, current translation, convenience copy. |
 | `ctx.sceneState` | `{assets, agentPos}`, used by rubric helpers. |
+| `ctx.agentOutput` | Accepted exact agent output evidence, or `null`. |
 | `ctx.setAgentPose({x, y, z, yaw?})` | Teleport the agent. |
 | `ctx.findAsset(query)` | Case-insensitive search by title or id. |
 | `ctx.dist(a, b)` | Euclidean distance. |

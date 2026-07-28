@@ -5,6 +5,7 @@ import {
   type McpTransport,
   runAgentEvalOnSocket,
 } from "./agent-driver.ts";
+import type { AgentOutputEvent, AgentOutputObserver } from "./agent-output.ts";
 
 function assert(
   condition: unknown,
@@ -65,6 +66,53 @@ class FakeMcp implements McpTransport {
       return Promise.reject(new Error(`${name} failed`));
     }
     return Promise.resolve({ ok: true });
+  }
+}
+
+class FakeAgentOutputObserver implements AgentOutputObserver {
+  started = false;
+  stopped = false;
+  private handler?: (event: AgentOutputEvent) => void;
+  private failObserver!: (error: Error) => void;
+  readonly failure: Promise<Error>;
+
+  constructor(
+    readonly startError?: Error,
+    readonly onStart?: (observer: FakeAgentOutputObserver) => void,
+  ) {
+    this.failure = new Promise((resolve) => {
+      this.failObserver = resolve;
+    });
+  }
+
+  start(handler: (event: AgentOutputEvent) => void): Promise<void> {
+    this.started = true;
+    this.handler = handler;
+    if (this.startError) return Promise.reject(this.startError);
+    this.onStart?.(this);
+    return Promise.resolve();
+  }
+
+  emit(
+    text: string,
+    hasToolCalls = false,
+    timestampMs = 1234,
+  ): void {
+    this.handler?.({
+      type: "agent_output",
+      text,
+      hasToolCalls,
+      timestampMs,
+    });
+  }
+
+  fail(message: string): void {
+    this.failObserver(new Error(message));
+  }
+
+  stop(): Promise<void> {
+    this.stopped = true;
+    return Promise.resolve();
   }
 }
 
@@ -155,6 +203,212 @@ Deno.test("agent eval orders reset, one dispatch, start, result, and cleanup", a
     ],
   );
   assertEquals(result.runId, runId);
+});
+
+Deno.test("agent eval forwards only exact tool-free required output and owns sidecar", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver(
+    undefined,
+    (started) => started.emit("FOUND_BATHTUB"),
+  );
+  const mcp = new FakeMcp([
+    { name: "agent_send" },
+    { name: "end_exploration" },
+    { name: "stop_looking_out" },
+    { name: "stop_navigation" },
+  ]);
+  const runId = "required-output-run";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Find the bathtub",
+        timeoutMs: 100,
+        startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+        requiredAgentOutput: "FOUND_BATHTUB",
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+      });
+    } else if (message.type === "evalStart") {
+      observer.emit("FOUND_BATHTUB", true);
+      observer.emit("I found it: FOUND_BATHTUB");
+      observer.emit("  FOUND_BATHTUB  ", false, 5678);
+    } else if (message.type === "evalAgentOutput") {
+      socket.emit({
+        type: "evalResult",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Find the bathtub",
+        passed: true,
+        status: "passed",
+        reason: "declared and nearby",
+        durationMs: 12,
+        evidence: {
+          agentOutput: {
+            text: "FOUND_BATHTUB",
+            timestampMs: 5678,
+            pose: { x: 1, y: 0.5, z: 2, yaw: 0 },
+          },
+        },
+      });
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp,
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+      mcpMs: 50,
+      resultGraceMs: 50,
+    },
+  });
+
+  assert(result.passed, JSON.stringify(result));
+  assert(observer.started);
+  assert(observer.stopped);
+  assertEquals(
+    socket.sent.map((message) => message.type),
+    [
+      "runEval",
+      "evalReset",
+      "evalStart",
+      "evalAgentOutput",
+      "evalCleanup",
+    ],
+  );
+  assertEquals(
+    mcp.calls.map((call) => call.name),
+    [
+      "tools/list",
+      "agent_send",
+      "end_exploration",
+      "stop_looking_out",
+      "stop_navigation",
+    ],
+  );
+  assertEquals(result.evidence?.agentOutput?.timestampMs, 5678);
+});
+
+Deno.test("agent eval classifies sidecar startup failure before dispatch", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver(
+    new Error("observer unavailable"),
+  );
+  const mcp = new FakeMcp([{ name: "agent_send" }]);
+  const runId = "sidecar-start-failure";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Find the bathtub",
+        timeoutMs: 100,
+        startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+        requiredAgentOutput: "FOUND_BATHTUB",
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+      });
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp,
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+    },
+  });
+
+  assertEquals(result.failureStage, "agentOutput");
+  assertEquals(mcp.calls, []);
+  assert(observer.stopped);
+  assert(!socket.sent.some((message) => message.type === "evalStart"));
+});
+
+Deno.test("agent eval aborts if required-output sidecar exits during scoring", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver();
+  const runId = "sidecar-runtime-failure";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Find the bathtub",
+        timeoutMs: 100,
+        startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+        requiredAgentOutput: "FOUND_BATHTUB",
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 0, y: 0.5, z: 3, yaw: 0 },
+      });
+    } else if (message.type === "evalStart") {
+      observer.fail("observer exited");
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp: new FakeMcp([{ name: "agent_send" }]),
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+      mcpMs: 50,
+      resultGraceMs: 50,
+    },
+  });
+
+  assertEquals(result.failureStage, "agentOutput");
+  assert(observer.stopped);
+  assert(
+    socket.sent.some((message) =>
+      message.type === "evalAbort" &&
+      message.failureStage === "agentOutput"
+    ),
+  );
 });
 
 Deno.test("agent eval browser-ready watchdog aborts and cleans up", async () => {

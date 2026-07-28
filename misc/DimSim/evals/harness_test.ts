@@ -42,6 +42,62 @@ function setAgentCommand(harness: EvalHarness, runId: string): void {
   };
 }
 
+function makeBathtubHarness(): {
+  harness: EvalHarness;
+  bridge: FakeBridge;
+  setPose: (x: number, z: number) => void;
+} {
+  const bridge = new FakeBridge();
+  let pose = { x: 5, y: 0.5, z: 5, yaw: 0, pitch: 0 };
+  const harness = new EvalHarness({
+    bridge: bridge as any,
+    getSceneState: () => ({
+      assets: [{
+        title: "bathtub",
+        transform: { x: 0, y: 0.5, z: 0 },
+        _bbox: { w: 1, h: 1, d: 1 },
+      }],
+    }),
+    getAgentPose: () => ({ ...pose }),
+  });
+  (harness as any)._showOverlay = () => {};
+  (harness as any)._showResult = () => {};
+  return {
+    harness,
+    bridge,
+    setPose: (x, z) => {
+      pose = { ...pose, x, z };
+    },
+  };
+}
+
+function bathtubWorkflow(): EvalWorkflow {
+  return {
+    scene: "apartment",
+    task: "Find the bathtub and respond exactly FOUND_BATHTUB.",
+    timeoutSec: 2,
+    startPose: { x: 5, y: 0.5, z: 5, yaw: 0 },
+    requiredAgentOutput: "FOUND_BATHTUB",
+    initialSuccess: (ctx) =>
+      ctx.rubrics.objectDistance({
+        target: "bathtub",
+        thresholdM: 1,
+      }),
+    success: (ctx) => {
+      const goal = ctx.rubrics.objectDistance({
+        target: "bathtub",
+        thresholdM: 1,
+      });
+      const declared = ctx.agentOutput?.text === "FOUND_BATHTUB";
+      return {
+        passed: declared && goal.passed,
+        reason: `${declared ? "declared" : "waiting"}; ${goal.reason}`,
+        score: goal.score,
+      };
+    },
+  };
+}
+
 const originalWindow = (globalThis as any).window;
 
 Deno.test({
@@ -354,4 +410,116 @@ Deno.test("a new agent run clears a stale pending browser run", async () => {
   );
   assert((harness as any)._pendingAgentEval === null);
   assertEquals(bridge.sent[0].failureStage, "import");
+});
+
+Deno.test("agent output before evalStart or for another run is ignored", async () => {
+  (globalThis as any).window = { __dimosAgent: null };
+  try {
+    const { harness } = makeBathtubHarness();
+    setAgentCommand(harness, "output-window-run");
+    const resultPromise = harness.runEval(bathtubWorkflow());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await harness._handleCommand({
+      type: "evalAgentOutput",
+      runId: "output-window-run",
+      text: "FOUND_BATHTUB",
+      timestampMs: 100,
+    });
+    await harness._handleCommand({
+      type: "evalStart",
+      runId: "output-window-run",
+    });
+    await harness._handleCommand({
+      type: "evalAgentOutput",
+      runId: "another-run",
+      text: "FOUND_BATHTUB",
+      timestampMs: 200,
+    });
+
+    assertEquals((harness as any)._agentOutput, null);
+    await harness._handleCommand({
+      type: "evalAbort",
+      runId: "output-window-run",
+      reason: "test complete",
+      failureStage: "result",
+    });
+    const result = await resultPromise;
+    assertEquals(result.status, "error");
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+});
+
+Deno.test("agent output followed by proximity passes with pose evidence", async () => {
+  (globalThis as any).window = { __dimosAgent: null };
+  try {
+    const { harness, setPose } = makeBathtubHarness();
+    setAgentCommand(harness, "output-first-run");
+    const resultPromise = harness.runEval(bathtubWorkflow());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await harness._handleCommand({
+      type: "evalStart",
+      runId: "output-first-run",
+    });
+    await harness._handleCommand({
+      type: "evalAgentOutput",
+      runId: "output-first-run",
+      text: "FOUND_BATHTUB",
+      timestampMs: 1234,
+    });
+
+    assertEquals((harness as any)._agentOutput, {
+      text: "FOUND_BATHTUB",
+      timestampMs: 1234,
+      pose: { x: 5, y: 0.5, z: 5, yaw: 0 },
+    });
+    assertEquals(
+      bathtubWorkflow().success((harness as any)._makeContext()).passed,
+      false,
+    );
+    setPose(0.75, 0);
+    const result = await resultPromise;
+
+    assert(result.passed);
+    assertEquals(result.evidence?.agentOutput, {
+      text: "FOUND_BATHTUB",
+      timestampMs: 1234,
+      pose: { x: 5, y: 0.5, z: 5, yaw: 0 },
+    });
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+});
+
+Deno.test("proximity followed by agent output also passes", async () => {
+  (globalThis as any).window = { __dimosAgent: null };
+  try {
+    const { harness, setPose } = makeBathtubHarness();
+    setAgentCommand(harness, "proximity-first-run");
+    const resultPromise = harness.runEval(bathtubWorkflow());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await harness._handleCommand({
+      type: "evalStart",
+      runId: "proximity-first-run",
+    });
+    setPose(0.75, 0);
+
+    assertEquals(
+      bathtubWorkflow().success((harness as any)._makeContext()).passed,
+      false,
+    );
+    await harness._handleCommand({
+      type: "evalAgentOutput",
+      runId: "proximity-first-run",
+      text: "FOUND_BATHTUB",
+      timestampMs: 5678,
+    });
+    const result = await resultPromise;
+
+    assert(result.passed);
+    assertEquals(result.evidence?.agentOutput?.timestampMs, 5678);
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
 });

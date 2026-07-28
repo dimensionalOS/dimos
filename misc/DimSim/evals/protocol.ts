@@ -11,6 +11,7 @@ export type EvalFailureStage =
   | "connection"
   | "browserReady"
   | "reset"
+  | "agentOutput"
   | "mcp"
   | "result"
   | "socket"
@@ -25,6 +26,16 @@ export interface EvalStartPose {
   y: number;
   z: number;
   yaw: number;
+}
+
+export interface EvalAgentOutputEvidence {
+  text: string;
+  timestampMs: number;
+  pose?: EvalStartPose;
+}
+
+export interface EvalEvidence {
+  agentOutput?: EvalAgentOutputEvidence;
 }
 
 export interface RunEvalMessage {
@@ -43,6 +54,7 @@ export interface EvalReadyMessage {
   task: string;
   timeoutMs: number;
   startPose: EvalStartPose;
+  requiredAgentOutput?: string;
   channel?: string;
 }
 
@@ -65,6 +77,14 @@ export interface ResetAckMessage {
 export interface EvalStartMessage {
   type: "evalStart";
   runId: string;
+  channel?: string;
+}
+
+export interface EvalAgentOutputMessage {
+  type: "evalAgentOutput";
+  runId: string;
+  text: string;
+  timestampMs: number;
   channel?: string;
 }
 
@@ -94,6 +114,7 @@ export interface EvalResultMessage {
   reason?: string;
   score?: number;
   durationMs: number;
+  evidence?: EvalEvidence;
   channel?: string;
 }
 
@@ -103,6 +124,7 @@ export type EvalProtocolMessage =
   | EvalResetMessage
   | ResetAckMessage
   | EvalStartMessage
+  | EvalAgentOutputMessage
   | EvalAbortMessage
   | EvalCleanupMessage
   | EvalResultMessage;

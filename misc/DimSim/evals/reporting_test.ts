@@ -33,11 +33,20 @@ function result(
 }
 
 Deno.test("JSON reporting contains only the result document", () => {
-  const output = formatResults([result("passed", "ok")], "json");
+  const passed = result("passed", "ok");
+  passed.evidence = {
+    agentOutput: {
+      text: "FOUND_BATHTUB",
+      timestampMs: 1234,
+      pose: { x: 1, y: 0.5, z: 2, yaw: 90 },
+    },
+  };
+  const output = formatResults([passed], "json");
   const parsed = JSON.parse(output);
   assert(Array.isArray(parsed));
   assert(parsed[0].status === "passed");
   assert(parsed[0].runId === "run-passed");
+  assert(parsed[0].evidence.agentOutput.text === "FOUND_BATHTUB");
 });
 
 Deno.test("JUnit distinguishes task failures from infrastructure errors", () => {
