@@ -20,7 +20,7 @@ from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 
 logger = setup_logger()
 
@@ -40,6 +40,9 @@ class LocalModuleSource(ModuleSource):
 
     def list_module_names(self) -> list[str]:
         return self._coordinator.list_module_names()
+
+    def list_module_descriptors(self) -> list[ModuleDescriptor]:
+        return self._coordinator.list_modules()
 
     def get_module(self, name: str) -> Any:
         if name in self._coordinator._deployed_modules:

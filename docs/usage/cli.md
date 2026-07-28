@@ -135,6 +135,51 @@ packages do not edit that file; they expose blueprints through Python package en
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
 
+### `dimos shell`
+
+Open an IPython session attached to the coordinator on the configured transport bus:
+
+```bash skip
+dimos shell
+```
+
+The command requires an interactive terminal. For scripts and automation, use
+`Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
+
+The shell starts with four names:
+
+| Name | Purpose |
+|------|---------|
+| `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
+| `modules()` | List structured information for current module instances |
+| `rpcs()` | List every advertised RPC, including skills and lifecycle RPCs |
+| `describe(value)` | Describe a module proxy, RPC proxy, or qualified `module.rpc` name |
+
+For example:
+
+```python skip
+modules()
+rpcs("StressTestModule")
+describe("StressTestModule.ping")
+app.StressTestModule.ping()
+```
+
+Discovery is live, so modules loaded after attachment appear on the next
+`modules()` or `rpcs()` call. Exact instance names select one deployment when
+multiple instances share a class.
+
+RPC calls execute immediately against the running system. The shell does not filter
+methods or ask for confirmation, so an RPC may move hardware or change lifecycle
+state. Start with a non-hardware, simulation, or replay stack.
+
+Exiting IPython closes only the shell's client connection. The coordinator and its
+modules keep running. If the coordinator stops or restarts, calls fail visibly; start
+a new `dimos shell` session to reconnect.
+
+The shell normally displays the CLI run ID and blueprint. Coordinators launched
+directly from Python have no run-registry metadata and are shown as
+`unregistered coordinator`.
+
 ### `dimos status`
 
 Show the running DimOS instance.

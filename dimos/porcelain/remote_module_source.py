@@ -54,6 +54,11 @@ class _RemoteProxy:
     def __dir__(self) -> list[str]:
         return sorted(self._rpc_names)
 
+    @property
+    def remote_name(self) -> str:
+        """The exact deployed module-instance name."""
+        return self._remote_name
+
 
 class RemoteModuleSource(ModuleSource):
     """Module source that drives a remote daemon over the Coordinator @rpc service."""
@@ -70,7 +75,9 @@ class RemoteModuleSource(ModuleSource):
             self._coord = CoordinatorRPC.connect(timeout=timeout)
         except TimeoutError:
             raise RuntimeError(
-                "No running DimOS instance. Start one with `dimos run <blueprint>`."
+                "No running DimOS coordinator found on the configured transport bus. "
+                "Start one with `dimos run <blueprint>` or enter a coordinator loop "
+                "from Python."
             ) from None
 
     def _refresh_descriptors(self) -> dict[str, ModuleDescriptor]:
@@ -103,22 +110,26 @@ class RemoteModuleSource(ModuleSource):
             descriptors = self._refresh_descriptors()
             return list(descriptors.keys())
 
+    def list_module_descriptors(self) -> list[ModuleDescriptor]:
+        with self._lock:
+            return list(self._refresh_descriptors().values())
+
     def get_module(self, name: str) -> Any:
         with self._lock:
-            cached = self._cache.get(name)
+            descriptor = self._get_descriptor(name)
+            remote_name = descriptor.rpc_name or descriptor.class_name
+            cached = self._cache.get(remote_name)
             if cached is not None:
                 return cached
 
-            descriptor = self._get_descriptor(name)
             proxy: RPCClient | _RemoteProxy
             try:
                 module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
                 cls = getattr(importlib.import_module(module_path), class_name)
-                proxy = RPCClient(None, cls, descriptor.rpc_name or None, rpc=self._coord.rpc)
+                proxy = RPCClient(None, cls, remote_name, rpc=self._coord.rpc)
             except (ImportError, AttributeError):
-                remote_name = descriptor.rpc_name or name
                 proxy = _RemoteProxy(self._coord.rpc, remote_name, set(descriptor.rpc_names))
-            self._cache[name] = proxy
+            self._cache[remote_name] = proxy
             return proxy
 
     def invalidate(self, name: str) -> None:

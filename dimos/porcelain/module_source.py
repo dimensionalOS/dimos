@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleDescriptor
 
 
 class ModuleSource(Protocol):
@@ -23,6 +26,8 @@ class ModuleSource(Protocol):
     is_remote: bool
 
     def list_module_names(self) -> list[str]: ...
+
+    def list_module_descriptors(self) -> list[ModuleDescriptor]: ...
 
     def get_module(self, name: str) -> Any: ...
 

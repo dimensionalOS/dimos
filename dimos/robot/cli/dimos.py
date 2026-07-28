@@ -38,6 +38,7 @@ if sys.platform == "darwin":
     os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
 from dotenv import load_dotenv
+from IPython import start_ipython
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
@@ -54,6 +55,7 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.porcelain.dimos import Dimos
 from dimos.robot.cli.piper import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
@@ -467,6 +469,57 @@ def status() -> None:
     typer.echo(f"  Blueprint: {entry.blueprint}")
     typer.echo(f"  Uptime:    {uptime}")
     typer.echo(f"  Log:       {entry.log_dir}")
+
+
+def _is_interactive_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _shell_namespace(app: Dimos) -> dict[str, Any]:
+    return {
+        "app": app,
+        "modules": app.list_modules,
+        "rpcs": app.list_rpcs,
+        "describe": app.describe,
+    }
+
+
+def _shell_banner() -> str:
+    entry = get_most_recent(alive_only=True)
+    run = (
+        f"run {entry.run_id} ({entry.blueprint})"
+        if entry is not None
+        else "unregistered coordinator"
+    )
+    return (
+        f"Attached to {run}.\n"
+        "Available: app, modules(), rpcs(), describe(...)\n"
+        "WARNING: RPC calls execute immediately against the running system."
+    )
+
+
+@main.command()
+def shell() -> None:
+    """Open an IPython shell attached to the running DimOS coordinator."""
+    if not _is_interactive_terminal():
+        typer.echo(
+            "Error: `dimos shell` requires an interactive terminal. "
+            "Use the Dimos Python interface for automation.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        app = Dimos.connect()
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    try:
+        typer.echo(_shell_banner())
+        start_ipython(argv=[], user_ns=_shell_namespace(app))  # type: ignore[no-untyped-call]
+    finally:
+        app.stop()
 
 
 @main.command()

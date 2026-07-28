@@ -811,6 +811,44 @@ def test_start_rpc_service_responds_to_ping(dynamic_coordinator) -> None:
         client.stop()
 
 
+def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
+    dynamic_coordinator.start_rpc_service()
+    first_service = dynamic_coordinator._coordinator_rpc
+
+    dynamic_coordinator.start_rpc_service()
+
+    assert dynamic_coordinator._coordinator_rpc is first_service
+
+
+def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, mocker) -> None:
+    start_rpc = mocker.spy(dynamic_coordinator, "start_rpc_service")
+    stop = mocker.spy(dynamic_coordinator, "stop")
+    mocker.patch.object(
+        dynamic_coordinator,
+        "_wait_until_stopped",
+        side_effect=KeyboardInterrupt,
+    )
+
+    dynamic_coordinator.loop()
+
+    start_rpc.assert_called_once_with()
+    stop.assert_called_once_with()
+
+
+def test_loop_reuses_explicitly_started_rpc_service(dynamic_coordinator, mocker) -> None:
+    dynamic_coordinator.start_rpc_service()
+    mocker.patch.object(
+        dynamic_coordinator,
+        "_wait_until_stopped",
+        side_effect=KeyboardInterrupt,
+    )
+    serve = mocker.patch.object(CoordinatorRPC, "serve")
+
+    dynamic_coordinator.loop()
+
+    serve.assert_not_called()
+
+
 def test_list_module_names(dynamic_coordinator) -> None:
     assert dynamic_coordinator.list_module_names() == []
     dynamic_coordinator.load_module(ModuleA)
