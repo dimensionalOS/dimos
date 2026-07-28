@@ -280,6 +280,7 @@ class S3ReplayRepository:
         self.client.delete_object(Bucket=self.bucket, Key=metadata_key)
         self.client.delete_object(Bucket=self.bucket, Key=object_key)
         return metadata
+
     def list(self, owner: str, repository: str) -> list[ReplayObject]:
         """List completed objects; orphan blobs are intentionally invisible."""
         base = self._base_key(owner, repository)

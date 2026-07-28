@@ -455,6 +455,7 @@ class ReplayRepository:
         metadata_path.unlink()
         object_path.unlink(missing_ok=True)
         return metadata
+
     def recover_incomplete_uploads(self) -> int:
         """Remove temporary files left by an interrupted server process."""
         if not self.root.exists():
@@ -574,9 +575,7 @@ class ReplayRepositoryServer(ThreadingHTTPServer):
             else Path(tempfile.gettempdir()) / "dimos-resumable-uploads"
         )
         self.uploads = ResumableUploadManager(session_root / ".resumable-uploads")
-        self.delete_capabilities = DeleteCapabilityStore(
-            session_root / ".delete-capabilities"
-        )
+        self.delete_capabilities = DeleteCapabilityStore(session_root / ".delete-capabilities")
         self.metrics = RepositoryMetrics()
         self._quota_lock = Lock()
         self._pending_bytes: dict[tuple[str, str], int] = {}
@@ -748,6 +747,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             return True
         self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid delete capability")
         return False
+
     def _route(self) -> tuple[str, str, str | None]:
         parts = [unquote(part) for part in urlsplit(self.path).path.split("/") if part]
         if len(parts) not in {6, 7} or parts[:3] != ["api", "v1", "repositories"]:
@@ -1141,6 +1141,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except OSError as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
     def do_HEAD(self) -> None:
         """Return object metadata or preflight a collection upload."""
         server = self._repository_server()
