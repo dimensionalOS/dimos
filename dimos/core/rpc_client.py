@@ -27,7 +27,7 @@ from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import ModuleBase
+    from dimos.core.module import ModuleBase, SkillInfo
 
 logger = setup_logger()
 
@@ -115,6 +115,7 @@ class ModuleProxyProtocol(Protocol):
     def build(self) -> None: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...
+    def get_skills(self) -> list[SkillInfo]: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
 
 
