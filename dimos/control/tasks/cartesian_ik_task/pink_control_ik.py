@@ -28,8 +28,8 @@ _PINK_INSTALL_ERROR = "Pink control tasks require the 'pink' dependency. Install
 
 try:
     from pink import Configuration, solve_ik
-    from pink.limits import ConfigurationLimit, VelocityLimit
-    from pink.tasks import FrameTask, PostureTask
+    from pink.limits import ConfigurationLimit
+    from pink.tasks import DampingTask, FrameTask, PostureTask
 except ModuleNotFoundError as exc:
     raise ModuleNotFoundError(
         f"{_PINK_INSTALL_ERROR} Missing module: {exc.name}",
@@ -55,6 +55,7 @@ class PinkControlIKConfig(BaseConfig):
     position_cost: FiniteFloat = Field(1.0, ge=0.0)
     orientation_cost: FiniteFloat = Field(1.0, ge=0.0)
     posture_cost: FiniteFloat = Field(1e-3, ge=0.0)
+    damping_cost: FiniteFloat = Field(0.0, ge=0.0)
     reference_q: list[float] | None = None
     qpsolver_options: dict[str, FiniteFloat] = Field(default_factory=dict)
 
@@ -89,8 +90,10 @@ class _PinkRuntime:
     configuration: Configuration
     frame_task: FrameTask
     posture_task: PostureTask | None
+    damping_task: DampingTask | None
     tasks: list[object]
     limits: list[object]
+    velocity_limits: NDArray[np.float64]
 
 
 class _PinkControlIKBuilder:
@@ -150,9 +153,20 @@ class _PinkControlIKBuilder:
             gain=config.task_gain,
         )
         posture_task = PostureTask(cost=config.posture_cost) if config.posture_cost > 0.0 else None
+        damping_task = DampingTask(cost=config.damping_cost) if config.damping_cost > 0.0 else None
         tasks: list[object] = [frame_task]
         if posture_task is not None:
             tasks.append(posture_task)
+        if damping_task is not None:
+            tasks.append(damping_task)
+
+        velocity_limits = np.asarray(model.velocityLimit, dtype=np.float64).copy()
+        if (
+            velocity_limits.size != model.nv
+            or not np.all(np.isfinite(velocity_limits))
+            or np.any(velocity_limits <= 0.0)
+        ):
+            raise ValueError("effective Pink velocity limits are invalid")
 
         return _PinkRuntime(
             config=config,
@@ -164,8 +178,10 @@ class _PinkControlIKBuilder:
             configuration=configuration,
             frame_task=frame_task,
             posture_task=posture_task,
+            damping_task=damping_task,
             tasks=tasks,
             limits=limits,
+            velocity_limits=velocity_limits,
         )
 
     @staticmethod
@@ -302,7 +318,10 @@ class _PinkControlIKBuilder:
                 model.velocityLimit[index] = limit
         for index in mapping.v_indices:
             model.velocityLimit[index] = min(model.velocityLimit[index], self._config.max_velocity)
-        return [ConfigurationLimit(model), VelocityLimit(model)]
+        # Keep position bounds in the QP, but apply velocity limits by uniformly
+        # scaling the solution. Tiny per-tick velocity boxes can make ProxQP
+        # misclassify feasible differential IK problems as primal-infeasible.
+        return [ConfigurationLimit(model)]
 
 
 class PinkControlIK:
@@ -355,6 +374,7 @@ class PinkControlIK:
             velocity = np.asarray(velocity, dtype=np.float64).reshape(-1)
             if velocity.size != runtime.model.nv or not np.all(np.isfinite(velocity)):
                 raise IKControlRuntimeError("Pink produced an invalid velocity")
+            velocity = self._scale_velocity(velocity)
             configuration.integrate_inplace(velocity, dt)
             candidate = self._project_controlled_positions(configuration.q, measured)
             if candidate.size != measured.size or not np.all(np.isfinite(candidate)):
@@ -404,6 +424,13 @@ class PinkControlIK:
         return np.array(
             [velocity[index] for index in self._runtime.mapping.v_indices], dtype=np.float64
         )
+
+    def _scale_velocity(self, velocity: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Uniformly scale a Pink solution to preserve its joint-space direction."""
+        max_ratio = float(np.max(np.abs(velocity) / self._runtime.velocity_limits))
+        if max_ratio <= 1.0:
+            return velocity
+        return velocity / max_ratio
 
     def _clamp_position_limits(self, candidate: NDArray[np.float64]) -> NDArray[np.float64]:
         runtime = self._runtime

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pinocchio
-from pydantic import FiniteFloat
+from pydantic import Field, FiniteFloat
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
@@ -41,6 +41,16 @@ if TYPE_CHECKING:
     from dimos.teleop.quest.quest_types import Buttons
 
 logger = setup_logger()
+
+
+class TeleopControlIKConfig(PinkControlIKConfig):
+    """Pink control policy for engagement-relative arm teleoperation."""
+
+    max_velocity: FiniteFloat = Field(1.0, gt=0.0)
+    position_cost: FiniteFloat = Field(1.0, ge=0.0)
+    orientation_cost: FiniteFloat = Field(1.0, ge=0.0)
+    posture_cost: FiniteFloat = Field(0.0, ge=0.0)
+    damping_cost: FiniteFloat = Field(1e-3, ge=0.0)
 
 
 @dataclass
@@ -225,7 +235,7 @@ class TeleopIKTask(CartesianIKTask):
 
 
 class TeleopIKTaskParams(BaseConfig):
-    control_ik: PinkControlIKConfig
+    control_ik: TeleopControlIKConfig
     hand: Literal["left", "right"] | None = None
     timeout: float = 0.5
     max_joint_delta_deg: float = 5.0

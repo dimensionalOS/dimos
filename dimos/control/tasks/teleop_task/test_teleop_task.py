@@ -296,3 +296,47 @@ def test_factory_requires_pink_configuration_and_matching_model(tmp_path: Path) 
     )
     with pytest.raises(ValueError, match="task joints must match"):
         create_task(mismatched, {})
+
+
+def test_factory_applies_balanced_teleop_control_policy(
+    tmp_path: Path, fake_ik: _FakePinkIK
+) -> None:
+    configured = TaskConfig(
+        name="teleop",
+        type="teleop_ik",
+        joint_names=["arm/joint1", "arm/joint2"],
+        params={
+            "control_ik": {"robot_model": _robot(tmp_path / "unused.urdf")},
+            "hand": "right",
+        },
+    )
+
+    task = create_task(configured, {})
+
+    assert task._config.control_ik.max_velocity == 1.0
+    assert task._config.control_ik.position_cost == 1.0
+    assert task._config.control_ik.orientation_cost == 1.0
+    assert task._config.control_ik.posture_cost == 0.0
+    assert task._config.control_ik.damping_cost == 1e-3
+    assert task._config.max_joint_delta_deg == 5.0
+
+
+def test_factory_preserves_explicit_teleop_orientation_cost_override(
+    tmp_path: Path, fake_ik: _FakePinkIK
+) -> None:
+    configured = TaskConfig(
+        name="teleop",
+        type="teleop_ik",
+        joint_names=["arm/joint1", "arm/joint2"],
+        params={
+            "control_ik": {
+                "robot_model": _robot(tmp_path / "unused.urdf"),
+                "orientation_cost": 0.2,
+            },
+            "hand": "right",
+        },
+    )
+
+    task = create_task(configured, {})
+
+    assert task._config.control_ik.orientation_cost == 0.2
