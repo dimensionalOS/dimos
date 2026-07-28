@@ -99,6 +99,7 @@ def test_serve_uses_environment_token(
         "port": 9876,
         "token": "secret",
         "public_read": True,
+        "public_write": False,
         "repository": None,
         "node_name": "local",
         "region": "other",
@@ -111,6 +112,37 @@ def test_serve_uses_environment_token(
         "tls_certfile": None,
         "tls_keyfile": None,
     }
+
+
+def test_serve_allows_explicit_public_demo_writes_without_a_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, Any] = {}
+    monkeypatch.setattr(
+        hosted_data_cli,
+        "serve_repository",
+        lambda **kwargs: received.update(kwargs),
+    )
+
+    result = runner.invoke(
+        hosted_data_cli.hosted_data_app,
+        [
+            "serve",
+            "--root",
+            str(tmp_path),
+            "--host",
+            "0.0.0.0",
+            "--public-read",
+            "--public-write",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["public_write"] is True
+    assert received["token"] is None
+    assert received["public_read"] is True
+    assert received["public_write"] is True
 
 
 def test_serve_builds_an_s3_compatible_backend(
