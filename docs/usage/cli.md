@@ -145,6 +145,8 @@ dimos shell
 
 The command requires an interactive terminal. For scripts and automation, use
 `Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
+While attaching, the shell displays a waiting indicator and retries coordinator
+discovery within the default five-second connection budget.
 
 The shell starts with five names:
 

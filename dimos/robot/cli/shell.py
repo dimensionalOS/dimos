@@ -153,7 +153,8 @@ def shell() -> None:
         raise typer.Exit(1)
 
     try:
-        app = Dimos.connect()
+        with Console().status("Waiting for the DimOS coordinator...", spinner="dots"):
+            app = Dimos.connect()
     except RuntimeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

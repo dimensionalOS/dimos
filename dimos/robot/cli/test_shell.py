@@ -163,7 +163,7 @@ def test_format_module_description_includes_class_docs_and_rpcs():
     assert "ping() -> str" in description
 
 
-def test_shell_does_not_retry_after_connection_failure(mocker):
+def test_shell_reports_connection_failure(mocker):
     mocker.patch("dimos.robot.cli.shell._is_interactive_terminal", return_value=True)
     connect = mocker.patch(
         "dimos.robot.cli.shell.Dimos.connect",
