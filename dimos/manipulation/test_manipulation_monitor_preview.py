@@ -21,7 +21,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -118,7 +117,7 @@ def _install_generated_plan(
 
 
 def _make_module_with_monitor(
-    module_factory: ModuleFactory,
+    module_factory,
     *configs: RobotModelConfig,
 ) -> ManipulationModule:
     """Create a ManipulationModule with a mocked world monitor and robots configured."""

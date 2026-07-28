@@ -24,7 +24,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -65,7 +64,7 @@ def _plan(final_position: float = 1.0) -> GeneratedPlan:
 
 def _module_with_coordinator(
     coordinator: MagicMock,
-    module_factory: ModuleFactory,
+    module_factory,
 ) -> ManipulationModule:
     module = module_factory(coordinator)
     config = RobotModelConfig(
@@ -99,7 +98,7 @@ def _coordinator(
 
 
 def test_execute_plan_can_dispatch_cached_plan_repeatedly(
-    module_factory: ModuleFactory,
+    module_factory,
 ) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
@@ -110,7 +109,7 @@ def test_execute_plan_can_dispatch_cached_plan_repeatedly(
     assert coordinator.execute_trajectory.call_count == 2
 
 
-def test_direct_plan_does_not_replace_cached_plan(module_factory: ModuleFactory) -> None:
+def test_direct_plan_does_not_replace_cached_plan(module_factory) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
     cached = _plan(1.0)
@@ -125,7 +124,7 @@ def test_direct_plan_does_not_replace_cached_plan(module_factory: ModuleFactory)
 
 
 def test_known_coordinator_rejection_restores_previous_state(
-    module_factory: ModuleFactory,
+    module_factory,
 ) -> None:
     coordinator = _coordinator(execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH)
     module = _module_with_coordinator(coordinator, module_factory)
@@ -138,7 +137,7 @@ def test_known_coordinator_rejection_restores_previous_state(
     assert module._last_plan is not None
 
 
-def test_uncertain_execute_projects_to_fault(module_factory: ModuleFactory) -> None:
+def test_uncertain_execute_projects_to_fault(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)
@@ -150,7 +149,7 @@ def test_uncertain_execute_projects_to_fault(module_factory: ModuleFactory) -> N
     assert "timed out" in module.get_error()
 
 
-def test_uncertain_cancel_projects_to_fault(module_factory: ModuleFactory) -> None:
+def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)

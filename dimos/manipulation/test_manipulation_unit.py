@@ -29,7 +29,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
@@ -200,7 +199,7 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
 class TestStateMachine:
     """Test state transitions."""
 
-    def test_cancel_interrupts_active_work(self, module_factory: ModuleFactory):
+    def test_cancel_interrupts_active_work(self, module_factory):
         """Cancel works for executing motion and in-progress planning."""
         module = module_factory()
 
@@ -216,7 +215,7 @@ class TestStateMachine:
         assert module.cancel() is True
         assert module._state == ManipulationState.IDLE
 
-    def test_cancel_hides_active_plan_preview(self, module_factory: ModuleFactory):
+    def test_cancel_hides_active_plan_preview(self, module_factory):
         module = module_factory()
         module._state = ManipulationState.EXECUTING
         module._last_plan = GeneratedPlan(
@@ -228,9 +227,7 @@ class TestStateMachine:
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
-    def test_cancel_completed_execution_cancels_coordinator_task(
-        self, module_factory: ModuleFactory
-    ):
+    def test_cancel_completed_execution_cancels_coordinator_task(self, module_factory):
         module = module_factory()
         config = _one_joint_config()
         _install_generated_plan(module, config, MagicMock(), [0.0], [0.1])
@@ -245,7 +242,7 @@ class TestStateMachine:
         module._control_coordinator.cancel_trajectory.assert_called_once_with()
         assert module._state == ManipulationState.IDLE
 
-    def test_reset_not_during_execution(self, module_factory: ModuleFactory):
+    def test_reset_not_during_execution(self, module_factory):
         """Reset works in any state except EXECUTING."""
         module = module_factory()
 
@@ -261,7 +258,7 @@ class TestStateMachine:
         assert not result.is_success()
         assert result.error_code == "INVALID_STATE"
 
-    def test_fail_sets_fault_state(self, module_factory: ModuleFactory):
+    def test_fail_sets_fault_state(self, module_factory):
         """_fail helper sets FAULT state and message."""
         module = module_factory()
         module._state = ManipulationState.PLANNING
@@ -271,7 +268,7 @@ class TestStateMachine:
         assert module._state == ManipulationState.FAULT
         assert module._error_message == "Test error"
 
-    def test_begin_planning_state_checks(self, robot_config, module_factory: ModuleFactory):
+    def test_begin_planning_state_checks(self, robot_config, module_factory):
         """_begin_planning only allowed from IDLE or COMPLETED."""
         module = module_factory()
         module._world_monitor = MagicMock()
@@ -294,7 +291,7 @@ class TestStateMachine:
 class TestRobotSelection:
     """Test robot selection logic."""
 
-    def test_single_robot_default(self, robot_config, module_factory: ModuleFactory):
+    def test_single_robot_default(self, robot_config, module_factory):
         """Single robot is used by default."""
         module = module_factory()
         module._robots = {"arm": ("id", robot_config, MagicMock())}
@@ -303,7 +300,7 @@ class TestRobotSelection:
         assert result is not None
         assert result[0] == "arm"
 
-    def test_multiple_robots_require_name(self, robot_config, module_factory: ModuleFactory):
+    def test_multiple_robots_require_name(self, robot_config, module_factory):
         """Multiple robots require explicit name."""
         module = module_factory()
         module._robots = {
@@ -373,7 +370,7 @@ class TestPlanningInitialization:
         self,
         robot_config,
         planning_initialization: PlanningInitializationHarness,
-        module_factory: ModuleFactory,
+        module_factory,
     ):
         """ManipulationModule config selects the requested IK backend."""
         module = module_factory()
@@ -397,7 +394,7 @@ class TestPlanningInitialization:
         self,
         robot_config,
         planning_initialization: PlanningInitializationHarness,
-        module_factory: ModuleFactory,
+        module_factory,
     ):
         """The old kinematics_name field remains a compatibility shim."""
         module = module_factory()
@@ -432,9 +429,7 @@ class TestPlanningInitialization:
         assert config.kinematics.dt == 0.02
         assert config.kinematics.posture_cost == 0.0
 
-    def test_solve_ik_rpc_calls_configured_backend(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_solve_ik_rpc_calls_configured_backend(self, robot_config, module_factory):
         """solve_ik returns the backend IKResult without path planning."""
         module = module_factory()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -475,9 +470,7 @@ class TestPlanningInitialization:
         assert target_pose.frame_id == "world"
         assert target_pose.position.x == 0.45
 
-    def test_solve_ik_rpc_returns_failure_without_joint_state(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_solve_ik_rpc_returns_failure_without_joint_state(self, robot_config, module_factory):
         """solve_ik reports a failed IKResult when no seed state is available."""
         module = module_factory()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -497,7 +490,7 @@ class TestPlanningInitialization:
         module._kinematics.solve_pose_targets.assert_not_called()
 
     def test_solve_ik_rpc_accepts_explicit_seed_without_current_state(
-        self, robot_config, module_factory: ModuleFactory
+        self, robot_config, module_factory
     ):
         """solve_ik succeeds with an explicit seed when no current state is available."""
         module = module_factory()
@@ -523,9 +516,7 @@ class TestPlanningInitialization:
 class TestPlanningGroupApis:
     """Test explicit planning-group API behavior."""
 
-    def test_list_planning_groups_and_robot_info_include_groups(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_list_planning_groups_and_robot_info_include_groups(self, robot_config, module_factory):
         module = module_factory()
         registry = PlanningGroupRegistry([robot_config])
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -543,7 +534,7 @@ class TestPlanningGroupApis:
         assert info["has_joint_name_mapping"] is False
 
     def test_plan_to_joint_targets_stores_generated_plan_and_legacy_caches(
-        self, robot_config, module_factory: ModuleFactory
+        self, robot_config, module_factory
     ):
         module = module_factory()
         registry = PlanningGroupRegistry([robot_config])
@@ -627,7 +618,7 @@ class TestPlanningGroupApis:
         assert module._planner.plan_selected_joint_path.call_count == 2
 
     def test_plan_to_pose_targets_uses_group_ik_and_selected_path(
-        self, robot_config, module_factory: ModuleFactory
+        self, robot_config, module_factory
     ):
         module = module_factory()
         registry = PlanningGroupRegistry([robot_config])
@@ -690,9 +681,7 @@ class TestPlanningGroupApis:
         _, planner_kwargs = module._planner.plan_selected_joint_path.call_args
         assert planner_kwargs["goal"] is ik_goal
 
-    def test_failed_plan_materialization_clears_generated_plan(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_failed_plan_materialization_clears_generated_plan(self, robot_config, module_factory):
         module = module_factory()
         registry = PlanningGroupRegistry([robot_config])
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -744,7 +733,7 @@ class TestPlanningGroupApis:
         assert module.has_planned_path() is False
 
     def test_execute_plan_dispatches_selected_subsets_once_with_shared_clock_and_mapping(
-        self, module_factory: ModuleFactory
+        self, module_factory
     ):
         left = RobotModelConfig(
             name="left",
@@ -820,7 +809,7 @@ class TestPlanningGroupApis:
         assert [point.velocities for point in payload.points] == [[0.0, 0.0], [0.2, 0.4]]
 
     def test_pose_wrappers_fail_safely_without_unique_pose_group(
-        self, robot_config, module_factory: ModuleFactory
+        self, robot_config, module_factory
     ):
         no_pose_config = RobotModelConfig(
             name="test_arm",
@@ -852,7 +841,7 @@ class TestPlanningGroupApis:
         assert "no pose-targetable planning group" in result.message
 
     def test_pose_wrappers_fail_safely_with_multiple_pose_groups(
-        self, robot_config, module_factory: ModuleFactory
+        self, robot_config, module_factory
     ):
         multi_pose_config = RobotModelConfig(
             name="test_arm",
@@ -890,9 +879,7 @@ class TestPlanningGroupApis:
         assert result.status == IKStatus.NO_SOLUTION
         assert "2 pose-targetable planning groups" in result.message
 
-    def test_solve_ik_preserves_backend_failure_detail(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_solve_ik_preserves_backend_failure_detail(self, robot_config, module_factory):
         """IK diagnostics include the backend's human-readable failure message."""
         module = module_factory()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
@@ -916,9 +903,7 @@ class TestPlanningGroupApis:
 
 
 class TestPlanningDiagnostics:
-    def test_planner_failure_preserves_backend_detail(
-        self, robot_config, module_factory: ModuleFactory
-    ):
+    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
         """Planning diagnostics include the backend message."""
         module = module_factory()
         module._world_monitor = MagicMock()
@@ -944,7 +929,7 @@ class TestPlanningDiagnostics:
 class TestExecute:
     """Test coordinator execution."""
 
-    def test_execute_requires_trajectory(self, robot_config, module_factory: ModuleFactory):
+    def test_execute_requires_trajectory(self, robot_config, module_factory):
         """Execute fails without planned trajectory."""
         module = module_factory()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}

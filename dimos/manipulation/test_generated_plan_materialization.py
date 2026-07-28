@@ -19,7 +19,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation._test_manipulation_helpers import ModuleFactory
 from dimos.manipulation.manipulation_module import ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -78,7 +77,7 @@ def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -
     )
 
 
-def _module(monkeypatch: pytest.MonkeyPatch, module_factory: ModuleFactory):
+def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     RecordingGenerator.calls = []
     RecordingGenerator.limits = None
     RecordingGenerator.fail = False

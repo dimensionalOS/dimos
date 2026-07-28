@@ -15,16 +15,37 @@
 """Shared manipulation test fixtures."""
 
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any, Protocol, cast
+from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.manipulation._test_manipulation_helpers import (
-    ModuleFactory,
-    mock_control_coordinator,
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
+
+
+class ModuleFactory(Protocol):
+    """Callable type returned by the module factory fixture."""
+
+    def __call__(self, coordinator: ControlCoordinator | None = None) -> ManipulationModule: ...
+
+
+def _mock_control_coordinator() -> MagicMock:
+    """Create a coordinator reference with safe default execution results."""
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.ACCEPTED
+    )
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.ALREADY_STOPPED
+    )
+    return coordinator
 
 
 @pytest.fixture
@@ -36,7 +57,7 @@ def module_factory() -> Iterator[ModuleFactory]:
         module = ManipulationModule()
         modules.append(module)
         module._control_coordinator = (
-            coordinator if coordinator is not None else mock_control_coordinator()
+            coordinator if coordinator is not None else _mock_control_coordinator()
         )
         cast("Any", module).coordinator_joint_state = None
         module.start()
