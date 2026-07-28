@@ -125,15 +125,27 @@ progressive HTTP playback at:
 http://SERVER:8765/r/alice/go2-debug
 ```
 
+Operators can share the server root as a data-free status dashboard:
+
+```text
+http://SERVER:8765/
+```
+
+It shows the node name, region, access mode, and enabled transfer capabilities
+without listing repository contents. `/healthz` exposes the same operational
+state as JSON, including an API version and capability flags, so a deployment
+check can distinguish a healthy current server from an older process that is
+still listening on the port.
+
 Set `--server-url` on all three client commands when the repository server is
 remote. The client streams the raw object to disk and verifies its SHA-256
 before making the destination visible. A non-loopback server refuses to start
 without `DIMOS_REPLAY_REPOSITORY_TOKEN`. Public read is an explicit MVP option;
 do not enable it for private recordings.
 
-The MVP does not yet implement HTTP `HEAD` or byte-range requests. Seeking and
-first-frame performance therefore depend on the video's container layout;
-robust browser streaming remains follow-up work.
+Object endpoints implement HTTP `HEAD` and single byte-range requests. This
+supports resumable downloads and browser seeking; first-frame performance still
+depends on the video's codec and container layout.
 
 ## Batch transfer
 

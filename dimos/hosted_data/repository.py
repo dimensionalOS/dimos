@@ -636,7 +636,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     """Raw streaming REST API for replay objects."""
 
     protocol_version = "HTTP/1.1"
-    server_version = "DimOSReplayRepository/0.1"
+    server_version = "DimOSReplayRepository/0.2"
 
     def _repository_server(self) -> ReplayRepositoryServer:
         return cast("ReplayRepositoryServer", self.server)
@@ -823,6 +823,79 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
 <body>
   <h1>{escape(owner)}/{escape(repository_name)}</h1>
   {body}
+</body>
+</html>"""
+        self._send_html(HTTPStatus.OK, page)
+
+    def _serve_status_page(self) -> None:
+        """Render a public, data-free service summary for operators."""
+        server = self._repository_server()
+        capabilities = (
+            "Content-addressed objects",
+            "Resumable uploads",
+            "HTTP HEAD and byte ranges",
+            "China/US node discovery",
+            "Prometheus metrics",
+            "Repository ACLs" if server.access_policy is not None else "Bearer-token access",
+            "Expiring signed downloads"
+            if server.signing_secret is not None
+            else "SHA-256 verified downloads",
+        )
+        capability_cards = "".join(f"<li>{escape(capability)}</li>" for capability in capabilities)
+        access_mode = "Public read" if server.public_read else "Authenticated read"
+        page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DimOS hosted replay &middot; {escape(server.node_name)}</title>
+  <style>
+    :root {{ color-scheme: dark; }}
+    body {{ max-width: 960px; margin: 0 auto; padding: 3rem 1.25rem;
+            font: 16px/1.55 system-ui, sans-serif; background: #090b10; color: #f6f7fb; }}
+    header {{ padding: 2rem; border: 1px solid #253044; border-radius: 20px;
+              background: linear-gradient(135deg, #121b2b, #11131a); }}
+    .eyebrow {{ color: #71d7a3; font-weight: 700; letter-spacing: .08em;
+                text-transform: uppercase; }}
+    h1 {{ margin: .4rem 0; font-size: clamp(2rem, 6vw, 4rem); line-height: 1; }}
+    .status {{ display: inline-flex; gap: .5rem; align-items: center; margin-top: 1rem;
+               padding: .4rem .8rem; border-radius: 999px; color: #8af0ba;
+               background: #123323; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+             gap: 1rem; margin: 1rem 0; }}
+    .card {{ padding: 1.1rem; border: 1px solid #242b39; border-radius: 14px;
+             background: #11141b; }}
+    .label {{ color: #929db0; font-size: .82rem; text-transform: uppercase; }}
+    .value {{ margin-top: .25rem; font-size: 1.25rem; font-weight: 700; }}
+    ul {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: .7rem; padding: 0; list-style: none; }}
+    li {{ padding: .8rem 1rem; border-radius: 10px; background: #121b26; color: #cfe7ff; }}
+    a {{ color: #83c7ff; }}
+    footer {{ margin-top: 2rem; color: #8490a3; }}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">DimOS hosted replay</div>
+    <h1>{escape(server.node_name)}</h1>
+    <p>Remote robotics data upload, verified download, and memory2 replay infrastructure.</p>
+    <div class="status">&#9679; Service online</div>
+  </header>
+  <section class="grid" aria-label="Node details">
+    <div class="card"><div class="label">Region</div>
+      <div class="value">{escape(server.region)}</div></div>
+    <div class="card"><div class="label">Access</div>
+      <div class="value">{escape(access_mode)}</div></div>
+    <div class="card"><div class="label">Protocol</div>
+      <div class="value">Hosted data API v1</div></div>
+  </section>
+  <h2>Available capabilities</h2>
+  <ul>{capability_cards}</ul>
+  <footer>
+    Machine-readable checks:
+    <a href="/healthz">health</a> &middot;
+    <a href="/api/v1/nodes">node discovery</a>
+  </footer>
 </body>
 </html>"""
         self._send_html(HTTPStatus.OK, page)
@@ -1086,23 +1159,35 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         server = self._repository_server()
         server.metrics.increment("requests_total")
-        if urlsplit(self.path).path == "/healthz":
+        request_path = urlsplit(self.path).path
+        if request_path == "/":
+            self._serve_status_page()
+            return
+        if request_path == "/healthz":
             self._send_json(
                 HTTPStatus.OK,
                 {
                     "status": "ok",
                     "node": self._repository_server().node_name,
                     "region": self._repository_server().region,
+                    "api_version": 1,
+                    "capabilities": {
+                        "byte_ranges": True,
+                        "node_discovery": True,
+                        "repository_acl": server.access_policy is not None,
+                        "resumable_uploads": True,
+                        "signed_downloads": server.signing_secret is not None,
+                    },
                 },
             )
             return
-        if urlsplit(self.path).path == "/api/v1/nodes":
+        if request_path == "/api/v1/nodes":
             self._send_json(
                 HTTPStatus.OK,
                 {"nodes": list(server.discovery_nodes)},
             )
             return
-        if urlsplit(self.path).path == "/probe":
+        if request_path == "/probe":
             query = parse_qs(urlsplit(self.path).query)
             try:
                 size = int(query.get("bytes", ["65536"])[0])
@@ -1120,7 +1205,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"\0" * size)
             self.close_connection = True
             return
-        if urlsplit(self.path).path == "/metrics":
+        if request_path == "/metrics":
             if not self._check_authorized(write=False):
                 return
             self._send_text(

@@ -125,6 +125,37 @@ def test_raw_video_upload_list_download_round_trip(tmp_path: Path) -> None:
     assert sha256_file(download) == uploaded.sha256
 
 
+def test_public_status_page_and_health_capabilities(tmp_path: Path) -> None:
+    with _running_server(
+        tmp_path / "objects",
+        node_name="cn-beijing",
+        region="china",
+        signing_secret="download-secret",
+    ) as server_url:
+        page = requests.get(f"{server_url}/")
+        health = requests.get(f"{server_url}/healthz")
+
+    assert page.status_code == HTTPStatus.OK
+    assert "cn-beijing" in page.text
+    assert "Service online" in page.text
+    assert "HTTP HEAD and byte ranges" in page.text
+    assert "Expiring signed downloads" in page.text
+    assert page.headers["Content-Security-Policy"].startswith("default-src 'none'")
+    assert health.json() == {
+        "api_version": 1,
+        "capabilities": {
+            "byte_ranges": True,
+            "node_discovery": True,
+            "repository_acl": False,
+            "resumable_uploads": True,
+            "signed_downloads": True,
+        },
+        "node": "cn-beijing",
+        "region": "china",
+        "status": "ok",
+    }
+
+
 def test_object_head_and_video_byte_ranges(tmp_path: Path) -> None:
     source = tmp_path / "video.mp4"
     source.write_bytes(bytes(range(100)))
