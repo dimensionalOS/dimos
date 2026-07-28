@@ -60,15 +60,10 @@ class PerceiveLoopSkill(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._vl_model.start()
-        self._model_started = True
 
     @rpc
     def stop(self) -> None:
         self._stop_lookout()
-        if self._model_started:
-            self._vl_model.stop()
-            self._model_started = False
         super().stop()
 
     @skill
@@ -118,9 +113,8 @@ class PerceiveLoopSkill(Module):
             sharpest = backpressure(
                 sharpness_window(1.0 / self._period, self.color_image.pure_observable())
             )
-            if not self._model_started:
-                self._vl_model.start()
-                self._model_started = True
+            self._vl_model.start()
+            self._model_started = True
             self._active_lookout = tuple(description_of_things)
             self._then = then
             self._lookout_subscription = sharpest.subscribe(
@@ -167,6 +161,8 @@ class PerceiveLoopSkill(Module):
             self._active_lookout = ()
             then = self._then
             self._then = None
+            self._vl_model.stop()
+            self._model_started = False
 
         if then is None:
             self.tool_update(
@@ -199,6 +195,9 @@ class PerceiveLoopSkill(Module):
                 self._lookout_subscription = None
             self._active_lookout = ()
             self._then = None
+            if self._model_started:
+                self._vl_model.stop()
+                self._model_started = False
         self.stop_tool("look_out_for")
 
 

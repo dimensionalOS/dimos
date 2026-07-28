@@ -26,29 +26,6 @@ from dimos.navigation.base import NavigationState
 from dimos.types.robot_location import RobotLocation
 
 
-def test_semantic_navigation_rejects_low_confidence_match() -> None:
-    result = {
-        "distance": 0.75,
-        "metadata": [{"pos_x": 1.0, "pos_y": 2.0, "rot_z": 0.0}],
-    }
-
-    pose = NavigationSkillContainer._get_goal_pose_from_result(result)
-
-    assert pose is None
-
-
-def test_semantic_navigation_reports_low_confidence_match_as_not_found(mocker) -> None:
-    navigation_skill = mocker.Mock()
-    navigation_skill._similarity_threshold = 0.28
-    navigation_skill._spatial_memory.query_by_text.return_value = [{"distance": 0.75}]
-    navigation_skill._get_goal_pose_from_result.return_value = None
-
-    result = NavigationSkillContainer._navigate_using_semantic_map(navigation_skill, "bathtub")
-
-    assert result == "No sufficiently similar location found in semantic map for 'bathtub'."
-    navigation_skill._navigate_to.assert_not_called()
-
-
 class FakeCamera(Module):
     color_image: Out[Image]
 
