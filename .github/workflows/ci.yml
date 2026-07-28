@@ -311,6 +311,7 @@ jobs:
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
+      # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
