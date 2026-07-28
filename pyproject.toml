@@ -156,13 +156,13 @@ dependencies = [
 
 
 [project.scripts]
-lcmspy = "dimos.utils.cli.spy.run_spy:lcm_main"
-agentspy = "dimos.utils.cli.agentspy.agentspy:main"
-humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos = "dimos.robot.cli.dimos:cli_main"
+lcmspy = "dimos.cli.spy.run_spy:lcm_main"
+agentspy = "dimos.cli.agentspy.agentspy:main"
+humancli = "dimos.cli.human.humanclianim:main"
+dimos = "dimos.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
-doclinks = "dimos.utils.docs.doclinks:main"
-dtop = "dimos.utils.cli.dtop:main"
+doclinks = "dimos.cli.doclinks:main"
+dtop = "dimos.cli.dtop:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
