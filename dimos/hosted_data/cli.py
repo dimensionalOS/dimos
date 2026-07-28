@@ -206,11 +206,7 @@ def serve(
         raise typer.BadParameter("--region must be china, us, or other")
     if (tls_certfile is None) != (tls_keyfile is None):
         raise typer.BadParameter("--tls-certfile and --tls-keyfile must be provided together")
-    if (
-        host not in {"127.0.0.1", "::1", "localhost"}
-        and not token
-        and not public_write
-    ):
+    if host not in {"127.0.0.1", "::1", "localhost"} and not token and not public_write:
         raise typer.BadParameter(
             "DIMOS_REPLAY_REPOSITORY_TOKEN or --token is required for a non-loopback server"
         )
