@@ -21,9 +21,7 @@ from typing import Any
 import pytest
 
 pytest.importorskip("roboplan.cartesian_planning")
-roboplan_world_module = importlib.import_module(
-    "dimos.manipulation.planning.world.roboplan_world"
-)
+roboplan_world_module = importlib.import_module("dimos.manipulation.planning.world.roboplan_world")
 
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
