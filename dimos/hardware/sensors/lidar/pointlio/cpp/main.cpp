@@ -55,10 +55,8 @@ struct PointLioConfig {
     bool cut_frame;
     double cut_frame_time_interval;
     double time_lag_imu_to_lidar;
-    std::string lidar_type;
     int scan_line;
     int scan_rate;
-    std::string timestamp_unit;
     double blind;
     int point_filter_num;
     bool use_imu_as_input;
@@ -126,6 +124,17 @@ using dimos::make_header;
 using dimos::make_xyzi_cloud;
 using dimos::xyzi_point;
 
+// iVox neighbour stencil codes, from Point-LIO's parameters.cpp.
+int ivox_nearby_code(const std::string& name) {
+    if (name == "center") return 0;
+    if (name == "nearby6") return 6;
+    if (name == "nearby18") return 18;
+    if (name == "nearby26") return 26;
+    throw std::runtime_error(
+        "ivox_nearby_type must be one of: center nearby6 nearby18 nearby26, got '" +
+        name + "'");
+}
+
 uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
     std::memcpy(&ns, pkt->timestamp, sizeof(uint64_t));
@@ -165,12 +174,6 @@ public:
         params.scan_rate = cfg_.scan_rate;
         params.blind = cfg_.blind;
         params.point_filter_num = cfg_.point_filter_num;
-        params.lidar_type = dimos::native::enum_from_name(
-            cfg_.lidar_type, "lidar_type",
-            {{"avia", 1}, {"velodyne", 2}, {"ouster", 3}, {"hesai", 4}, {"unilidar", 5}});
-        params.timestamp_unit = dimos::native::enum_from_name(
-            cfg_.timestamp_unit, "timestamp_unit",
-            {{"second", 0}, {"millisecond", 1}, {"microsecond", 2}, {"nanosecond", 3}});
         params.use_imu_as_input = cfg_.use_imu_as_input;
         params.prop_at_freq_of_imu = cfg_.prop_at_freq_of_imu;
         params.check_satu = cfg_.check_satu;
@@ -183,9 +186,7 @@ public:
         params.filter_size_surf = cfg_.filter_size_surf;
         params.filter_size_map = cfg_.filter_size_map;
         params.ivox_grid_resolution = cfg_.ivox_grid_resolution;
-        params.ivox_nearby_type = dimos::native::enum_from_name(
-            cfg_.ivox_nearby_type, "ivox_nearby_type",
-            {{"center", 0}, {"nearby6", 6}, {"nearby18", 18}, {"nearby26", 26}});
+        params.ivox_nearby_type = ivox_nearby_code(cfg_.ivox_nearby_type);
         params.cube_side_length = cfg_.cube_side_length;
         params.det_range = cfg_.det_range;
         params.fov_degree = cfg_.fov_degree;

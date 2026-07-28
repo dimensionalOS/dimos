@@ -63,10 +63,6 @@ from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
 # Point-LIO's int codes.
-# LID_TYPE enum (Point-LIO src/preprocess.h). avia = 1 selects the Livox branch
-# the Mid-360 emits.
-LidarType = Literal["avia", "velodyne", "ouster", "hesai", "unilidar"]
-TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
 # iVox local-map neighbour stencil.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
@@ -105,10 +101,8 @@ class PointLioConfig(NativeModuleConfig):
     cut_frame_time_interval: float = 0.1
     time_lag_imu_to_lidar: float = 0.0
     # preprocess
-    lidar_type: LidarType = "avia"  # 1 = AVIA (Livox) branch the Mid-360 emits
     scan_line: int = 4
     scan_rate: int = 10
-    timestamp_unit: TimestampUnit = "nanosecond"
     blind: float = 0.5  # spherical min range (m)
     point_filter_num: int = 3  # pre-KF decimation: keep every Nth raw point (1 = all)
     # mapping

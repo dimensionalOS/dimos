@@ -53,10 +53,8 @@ struct FastLio2Config {
     bool debug;
     bool time_sync_en;
     double time_offset_lidar_to_imu;
-    std::string lidar_type;
     int scan_line;
     int scan_rate;
-    std::string timestamp_unit;
     double blind;
     double acc_cov;
     double gyr_cov;
@@ -142,12 +140,6 @@ public:
         params.scan_rate = cfg_.scan_rate;
         params.time_sync_en = cfg_.time_sync_en;
         params.extrinsic_est_en = cfg_.extrinsic_est_en;
-        params.lidar_type = dimos::native::enum_from_name(
-            cfg_.lidar_type, "lidar_type",
-            {{"livox", 1}, {"velodyne", 2}, {"ouster", 3}});
-        params.timestamp_unit = dimos::native::enum_from_name(
-            cfg_.timestamp_unit, "timestamp_unit",
-            {{"second", 0}, {"millisecond", 1}, {"microsecond", 2}, {"nanosecond", 3}});
         params.extrinsic_T = cfg_.extrinsic_t;
         params.extrinsic_R = cfg_.extrinsic_r;
 

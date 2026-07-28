@@ -11,12 +11,10 @@
 #include <pfr.hpp>
 
 #include <cstddef>
-#include <initializer_list>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 namespace dimos::native {
@@ -68,23 +66,6 @@ inline void require_positive(double value, const char* name) {
     if (!(value > 0.0)) {
         throw std::runtime_error(std::string(name) + " must be greater than 0");
     }
-}
-
-/// Map a config string onto the integer a native library expects, naming the
-/// legal values when it does not match. For a field Python constrains to a
-/// fixed set, where falling through to a default would hide a typo.
-inline int enum_from_name(const std::string& value, const char* field,
-                          std::initializer_list<std::pair<const char*, int>> table) {
-    for (const auto& entry : table) {
-        if (value == entry.first) {
-            return entry.second;
-        }
-    }
-    std::string msg = std::string(field) + " must be one of:";
-    for (const auto& entry : table) {
-        msg += std::string(" ") + entry.first;
-    }
-    throw std::runtime_error(msg + ", got '" + value + "'");
 }
 
 class Config {

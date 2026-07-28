@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -54,10 +54,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
-
-# Human-readable enums; the C++ binary maps these strings to FAST-LIO's int codes.
-LidarType = Literal["livox", "velodyne", "ouster"]
-TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
 
 
 class FastLio2Config(NativeModuleConfig):
@@ -93,10 +89,8 @@ class FastLio2Config(NativeModuleConfig):
     time_sync_en: bool = False
     time_offset_lidar_to_imu: float = 0.0
     # preprocess
-    lidar_type: LidarType = "livox"
     scan_line: int = 4
-    scan_rate: int = 10  # velodyne only
-    timestamp_unit: TimestampUnit = "microsecond"  # velodyne/ouster time field unit
+    scan_rate: int = 10
     blind: float = 0.5  # spherical min range (m)
     # mapping
     # acc_cov down-weights the IMU accel prediction. 0.01 is high trust (fine for
