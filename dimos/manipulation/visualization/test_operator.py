@@ -29,6 +29,7 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.visualization.operator import (
     JointTargetRequest,
+    LinearCartesianTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
 )
@@ -92,6 +93,9 @@ class FakeModule:
         self.robot_ids: dict[RobotName, str] = {"arm": "arm_id"}
         self.plan_joint_targets: list[dict[PlanningGroupID, JointState]] = []
         self.plan_pose_targets: list[
+            tuple[dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...]]
+        ] = []
+        self.linear_cartesian_targets: list[
             tuple[dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...]]
         ] = []
         self.ik_calls: list[
@@ -167,6 +171,14 @@ class FakeModule:
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
     ) -> GeneratedPlan | None:
         self.plan_pose_targets.append((targets, auxiliary_groups))
+        return self.plan if self.plan_success else None
+
+    def generate_linear_cartesian_plan(
+        self,
+        targets: dict[PlanningGroupID, PoseStamped],
+        auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+    ) -> GeneratedPlan | None:
+        self.linear_cartesian_targets.append((targets, auxiliary_groups))
         return self.plan if self.plan_success else None
 
     def preview_plan(
@@ -366,6 +378,41 @@ def test_planning_methods_return_exact_generated_plan() -> None:
     assert list(module.plan_joint_targets[0]["arm/manipulator"].name) == ["arm/j0", "arm/j1"]
     assert module.plan_pose_targets == [({"arm/manipulator": pose}, ())]
     assert pose_result is module.plan
+
+
+def test_linear_cartesian_planning_routes_absolute_targets_and_auxiliary_groups() -> None:
+    groups = (
+        PlanningGroup(
+            "arm/manipulator",
+            "arm",
+            "manipulator",
+            ("arm/j0",),
+            ("j0",),
+            "base",
+            "tool",
+        ),
+        PlanningGroup(
+            "arm/gripper",
+            "arm",
+            "gripper",
+            ("arm/j1",),
+            ("j1",),
+            "tool",
+            None,
+        ),
+    )
+    operator, module, _ = _operator(_robot_config(groups=groups))
+    pose = _pose()
+
+    result = operator.plan_linear_cartesian(
+        LinearCartesianTargetRequest(
+            {"arm/manipulator": pose},
+            ("arm/gripper",),
+        )
+    )
+
+    assert result is module.plan
+    assert module.linear_cartesian_targets == [({"arm/manipulator": pose}, ("arm/gripper",))]
 
 
 def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:

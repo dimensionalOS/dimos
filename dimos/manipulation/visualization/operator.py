@@ -58,6 +58,14 @@ class PoseTargetRequest:
 
 
 @dataclass(frozen=True)
+class LinearCartesianTargetRequest:
+    """Absolute world-frame targets for linear Cartesian planning."""
+
+    pose_targets: Mapping[PlanningGroupID, PoseStamped]
+    auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
+
+
+@dataclass(frozen=True)
 class TargetEvaluationResult:
     """Advisory selected-domain target evaluation."""
 
@@ -153,6 +161,23 @@ class ManipulationOperator:
         poses = {group_id: stamped for group_id, stamped in request.pose_targets.items()}
         return self._module.generate_plan_to_pose_targets(
             cast("Mapping[PlanningGroupID | PlanningGroup, PoseStamped]", poses),
+            request.auxiliary_group_ids,
+        )
+
+    def plan_linear_cartesian(self, request: LinearCartesianTargetRequest) -> GeneratedPlan | None:
+        """Plan synchronized linear TCP motion to absolute world-frame poses."""
+        pose_request = PoseTargetRequest(
+            request.pose_targets,
+            request.auxiliary_group_ids,
+        )
+        _group_ids, validation = self._validate_pose_request(pose_request)
+        if validation is not None:
+            return None
+        return self._module.generate_linear_cartesian_plan(
+            cast(
+                "Mapping[PlanningGroupID | PlanningGroup, PoseStamped]",
+                dict(request.pose_targets),
+            ),
             request.auxiliary_group_ids,
         )
 

@@ -142,9 +142,10 @@ joint velocity/acceleration scaling, joint-limit tolerance and gain, and
 per-step attempts. DimOS always selects RoboPlan's bounded-speed mode so the
 official planner checks Cartesian tracking throughout generation.
 
-Linear Cartesian planning is an internal planner capability in this release. It
-does not yet add a caller-facing `ManipulationModule` RPC, skill, MCP tool, or
-CLI motion command.
+Linear Cartesian planning remains an internal capability in this release. The
+Viser manipulation panel can consume it for interactive planning, but there is
+no caller-facing `ManipulationModule` RPC, skill, MCP tool, or CLI motion
+command.
 
 Install the manipulation dependencies:
 
@@ -220,6 +221,20 @@ for target evaluation, planning, preview, execution, cancellation, reset, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
+
+The panel's **Planning mode** selector chooses how the current target is
+reached:
+
+- **Free-space** is the default. It resolves the target to joints and invokes
+  the configured collision-free joint-path planner.
+- **Linear Cartesian** sends the existing transform-control poses as absolute
+  world-frame TCP targets to RoboPlan's linear Cartesian planner. Selected
+  groups without a TCP participate as auxiliary groups.
+
+Linear Cartesian failure never falls back to free-space planning. A backend
+without linear support reports `UNSUPPORTED`; collision or Cartesian tracking
+failure leaves the plan unavailable. Preview and execution use RoboPlan's
+original synchronized timestamps and velocities.
 
 External manipulation visualizers are initialized from a backend-neutral
 `VisualizationSession` after the planning world has added its robots. The

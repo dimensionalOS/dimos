@@ -22,6 +22,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
 from dimos.manipulation.visualization.operator import (
     JointTargetRequest,
+    LinearCartesianTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
     TargetEvaluationResult,
@@ -40,6 +41,7 @@ from dimos.manipulation.visualization.viser.state import (
     PanelPlanState,
     PanelRuntime,
     PanelState,
+    PlanningMode,
     PlanStatus,
     TargetEvaluationRequest,
     TargetEvaluationWorker,
@@ -102,6 +104,11 @@ ROBOT_DISPLAY_MODES: dict[str, RobotDisplayMode] = {mode.value: mode for mode in
 ROBOT_DISPLAY_COLLISION_WARNING = (
     "**Collision meshes unavailable.** Showing visual geometry with collision styling."
 )
+PLANNING_MODE_LABELS = {
+    PlanningMode.FREE_SPACE: "Free-space",
+    PlanningMode.LINEAR_CARTESIAN: "Linear Cartesian",
+}
+PLANNING_MODES_BY_LABEL = {label: mode for mode, label in PLANNING_MODE_LABELS.items()}
 
 
 class ViserPanelGui:
@@ -303,6 +310,25 @@ class ViserPanelGui:
         self.state.plan_state.plan = plan
         return plan is not None
 
+    def plan_linear_cartesian(
+        self,
+        pose_targets: Mapping[PlanningGroupID, Pose],
+        auxiliary_group_ids: Sequence[PlanningGroupID],
+    ) -> bool:
+        stamped = {
+            group_id: PoseStamped(
+                frame_id="world",
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            for group_id, pose in pose_targets.items()
+        }
+        plan = self.operator.plan_linear_cartesian(
+            LinearCartesianTargetRequest(stamped, tuple(auxiliary_group_ids))
+        )
+        self.state.plan_state.plan = plan
+        return plan is not None
+
     def preview_path(self) -> bool:
         plan = self.state.plan_state.plan
         return plan is not None and self.operator.preview(plan)
@@ -363,6 +389,13 @@ class ViserPanelGui:
         self._handles["preset"] = preset_dropdown
         self._handles["target_summary"] = gui.add_markdown("Feasibility: `unknown`")
         self._handles["actions_heading"] = gui.add_markdown("### Actions")
+        planning_mode = gui.add_dropdown(
+            "Planning mode",
+            options=list(PLANNING_MODES_BY_LABEL),
+            initial_value=PLANNING_MODE_LABELS[self.state.planning_mode],
+        )
+        planning_mode.on_update(lambda event: self._set_planning_mode(event.target.value))
+        self._handles["planning_mode"] = planning_mode
         plan_button = gui.add_button("Plan", disabled=True, color=PRIMARY_ACTION_COLOR)
         plan_button.on_click(lambda _: self._submit_plan())
         self._handles["plan"] = plan_button
@@ -1127,11 +1160,32 @@ class ViserPanelGui:
             )
             return
         group_ids = self.state.selected_group_ids
+        planning_mode = self.state.planning_mode
         selection_epoch = self.state.selection_epoch
         target_sequence_id = self.state.latest_sequence_id
-        targets = self._target_set_from_sliders()
-        if targets is None:
-            return
+        joint_targets: dict[PlanningGroupID, JointState] | None = None
+        pose_targets: dict[PlanningGroupID, Pose] = {}
+        auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
+        if planning_mode == PlanningMode.LINEAR_CARTESIAN:
+            pose_targets = self._active_pose_targets()
+            pose_capable_ids = {
+                group_id
+                for group_id in group_ids
+                if (group := self._groups_by_id().get(group_id)) is not None
+                and group.has_pose_target
+            }
+            if set(pose_targets) != pose_capable_ids:
+                self._set_recoverable_error(
+                    "Linear Cartesian planning requires a target for every selected TCP group"
+                )
+                return
+            auxiliary_group_ids = tuple(
+                group_id for group_id in group_ids if group_id not in pose_targets
+            )
+        else:
+            joint_targets = self._target_set_from_sliders()
+            if joint_targets is None:
+                return
         operation_id = self._next_operation_id()
 
         def operation() -> None:
@@ -1164,7 +1218,19 @@ class ViserPanelGui:
                     "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
                 )
                 return
-            ok = self.plan_to_selected_joints(group_ids, targets)
+            if planning_mode != self.state.planning_mode:
+                self.state.plan_state.status = PlanStatus.STALE
+                self._finish_operation(
+                    "plan=False",
+                    operation_id=operation_id,
+                    selection_epoch=selection_epoch,
+                )
+                return
+            if planning_mode == PlanningMode.LINEAR_CARTESIAN:
+                ok = self.plan_linear_cartesian(pose_targets, auxiliary_group_ids)
+            else:
+                assert joint_targets is not None
+                ok = self.plan_to_selected_joints(group_ids, joint_targets)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
@@ -1177,8 +1243,14 @@ class ViserPanelGui:
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
                 self.state.plan_state.plan = None
+                self.state.error = self.get_error() or (
+                    "Linear Cartesian planning failed"
+                    if planning_mode == PlanningMode.LINEAR_CARTESIAN
+                    else "Free-space planning failed"
+                )
             self._finish_operation(
-                f"plan_to_joints={ok}",
+                f"plan_{planning_mode.value}={ok}",
+                clear_error=ok,
                 operation_id=operation_id,
                 selection_epoch=selection_epoch,
             )
@@ -1186,6 +1258,14 @@ class ViserPanelGui:
         self._operation_worker.submit(
             operation, on_error=lambda message: self._set_operation_error(message, operation_id)
         )
+
+    def _set_planning_mode(self, label: str) -> None:
+        mode = PLANNING_MODES_BY_LABEL.get(label)
+        if self._closed or mode is None or mode == self.state.planning_mode:
+            return
+        self.state.planning_mode = mode
+        self.state.mark_plan_stale()
+        self.refresh()
 
     def _submit_preview(self) -> None:
         if self._closed:

@@ -25,7 +25,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.spec.models import CartesianDelta, PlanningResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -122,6 +122,74 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._last_plan.path is not module._last_plan.trajectory.points
     assert module._last_plan.trajectory.joint_names == names
     assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
+
+
+def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch):
+    module = _module(monkeypatch)
+    module._state = ManipulationState.IDLE
+    names = ["left/b", "left/a"]
+    start = JointState(name=names, position=[0.0, 0.0])
+    path = [
+        JointState(name=names, position=[0.0, 0.0], velocity=[0.0, 0.0]),
+        JointState(name=names, position=[0.2, 0.1], velocity=[0.4, 0.2]),
+    ]
+    module._world_monitor.current_global_joint_state.return_value = start
+    module._planner.plan_linear_cartesian_path.return_value = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=path,
+        timestamps=[0.0, 0.25],
+    )
+
+    plan = module.generate_linear_cartesian_plan(
+        {"left/group": CartesianDelta(translation=(0.01, 0.0, 0.0))}
+    )
+
+    assert plan is module._last_plan
+    assert plan is not None
+    assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
+    assert [point.velocities for point in plan.trajectory.points] == [
+        [0.0, 0.0],
+        [0.4, 0.2],
+    ]
+    assert RecordingGenerator.calls == []
+    request = module._planner.plan_linear_cartesian_path.call_args.kwargs
+    assert request["start"].name == names
+    assert request["auxiliary_groups"] == ()
+
+
+@pytest.mark.parametrize(
+    ("timestamps", "velocities", "message"),
+    [
+        (None, [[0.0, 0.0], [0.1, 0.1]], "one timestamp"),
+        ([0.0, 0.0], [[0.0, 0.0], [0.1, 0.1]], "strictly increasing"),
+        ([0.0, 0.1], [[], [0.1, 0.1]], "velocity dimension"),
+    ],
+)
+def test_linear_cartesian_plan_rejects_malformed_timed_results(
+    monkeypatch, timestamps, velocities, message
+):
+    module = _module(monkeypatch)
+    module._state = ManipulationState.IDLE
+    names = ["left/b", "left/a"]
+    start = JointState(name=names, position=[0.0, 0.0])
+    path = [
+        JointState(name=names, position=[0.0, 0.0], velocity=velocities[0]),
+        JointState(name=names, position=[0.2, 0.1], velocity=velocities[1]),
+    ]
+    module._world_monitor.current_global_joint_state.return_value = start
+    module._planner.plan_linear_cartesian_path.return_value = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=path,
+        timestamps=timestamps,
+    )
+
+    result = module.generate_linear_cartesian_plan(
+        {"left/group": CartesianDelta(translation=(0.01, 0.0, 0.0))}
+    )
+
+    assert result is None
+    assert module._last_plan is None
+    assert message in module._error_message
 
 
 @pytest.mark.parametrize(
