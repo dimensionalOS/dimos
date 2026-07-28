@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -43,10 +45,13 @@ class OdomBodyFrame(Module):
     odometry: In[Odometry]
     body_odometry: Out[Odometry]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._mount_inv = Quaternion(*self.config.mount_rotation).inverse()
+
     @rpc
     def start(self) -> None:
         super().start()
-        self._mount_inv = Quaternion(*self.config.mount_rotation).inverse()
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
 
     def _on_odometry(self, msg: Odometry) -> None:

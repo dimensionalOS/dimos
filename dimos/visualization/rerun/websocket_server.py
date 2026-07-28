@@ -151,13 +151,19 @@ class RerunWebSocketServer(Module):
 
         msg_type = msg.get("type")
 
+        # dict.get's default is only used when the key is missing — if Rerun
+        # sends a 2D-panel click the "z" key is present with value None, and
+        # `float(None)` raises.  Coerce explicitly.
+        def _num(v: Any) -> float:
+            return float(v) if v is not None else 0.0
+
         if msg_type == "click":
             self.clicked_point.publish(
                 PointStamped(
-                    x=float(msg.get("x", 0)),
-                    y=float(msg.get("y", 0)),
-                    z=float(msg.get("z", 0)),
-                    ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
+                    x=_num(msg.get("x")),
+                    y=_num(msg.get("y")),
+                    z=_num(msg.get("z")),
+                    ts=_num(msg.get("timestamp_ms")) / 1000.0,
                     frame_id=str(msg.get("entity_path", "")),
                 )
             )
@@ -166,14 +172,14 @@ class RerunWebSocketServer(Module):
             self.tele_cmd_vel.publish(
                 Twist(
                     linear=Vector3(
-                        float(msg.get("linear_x", 0)),
-                        float(msg.get("linear_y", 0)),
-                        float(msg.get("linear_z", 0)),
+                        _num(msg.get("linear_x")),
+                        _num(msg.get("linear_y")),
+                        _num(msg.get("linear_z")),
                     ),
                     angular=Vector3(
-                        float(msg.get("angular_x", 0)),
-                        float(msg.get("angular_y", 0)),
-                        float(msg.get("angular_z", 0)),
+                        _num(msg.get("angular_x")),
+                        _num(msg.get("angular_y")),
+                        _num(msg.get("angular_z")),
                     ),
                 )
             )

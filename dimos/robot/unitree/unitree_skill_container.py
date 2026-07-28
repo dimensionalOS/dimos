@@ -201,7 +201,7 @@ class UnitreeSkillContainer(Module):
     def start(self) -> None:
         super().start()
         # Initialize TF early so it can start receiving transforms.
-        _ = self.tf
+        self.tf  # noqa: B018 -- touch the property to trigger lazy init
 
     @rpc
     def stop(self) -> None:

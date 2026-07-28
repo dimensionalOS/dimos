@@ -42,9 +42,23 @@ class LocalModuleSource(ModuleSource):
         return self._coordinator.list_module_names()
 
     def get_module(self, name: str) -> Any:
-        for cls, proxy in self._coordinator._deployed_modules.items():
+        if name in self._coordinator._deployed_modules:
+            return self._coordinator._deployed_modules[name]
+
+        matches: list[tuple[str, Any]] = []
+        for instance_key, proxy in self._coordinator._deployed_modules.items():
+            cls = self._coordinator._instance_classes[instance_key]
             if cls.__name__ == name:
-                return proxy
+                matches.append((instance_key, proxy))
+
+        if len(matches) == 1:
+            return matches[0][1]
+        if len(matches) > 1:
+            instance_names = ", ".join(sorted(instance_key for instance_key, _ in matches))
+            raise ValueError(
+                f"Multiple instances of {name!r} are deployed "
+                f"({instance_names}); use the instance name."
+            )
         raise KeyError(name)
 
     def invalidate(self, name: str) -> None:

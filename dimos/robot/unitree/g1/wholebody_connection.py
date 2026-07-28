@@ -273,11 +273,11 @@ class G1WholeBodyConnection(Module):
         self._verify_mode_machine_once(fresh)
 
     def _verify_mode_machine_once(self, sample: LowState_) -> None:
-        """Warn if configured mode_machine differs from the firmware report.
+        """Adopt the firmware-reported mode_machine if it differs from config.
 
-        Commands with a wrong mode_machine are silently rejected, so this
-        prevents a confusing "everything looks fine but the robot doesn't
-        move" failure mode on G1 variants we haven't tested.
+        Commands with a wrong mode_machine are silently rejected, and the
+        reported value varies per boot on some G1 units, so the configured
+        value is only a default until the first LowState tells us the truth.
         """
         if self._mode_machine_verified:
             return
@@ -285,12 +285,15 @@ class G1WholeBodyConnection(Module):
         actual = int(sample.mode_machine)
         if actual != self._mode_machine:
             logger.warning(
-                "mode_machine mismatch; commands may be silently rejected by firmware. "
-                "Set G1WholeBodyConnectionConfig.mode_machine to the reported value "
-                "for this variant.",
+                "mode_machine mismatch; adopting the firmware-reported value "
+                "(commands with the configured one would be silently rejected).",
                 configured=self._mode_machine,
                 reported=actual,
             )
+            with self._lock:
+                self._mode_machine = actual
+                if self._low_cmd is not None:
+                    self._low_cmd.mode_machine = actual
 
     def _snapshot_motor_imu(self) -> G1LowStateSnapshot | None:
         """Return the latest real motor/IMU sample, or None before first LowState."""

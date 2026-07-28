@@ -57,7 +57,7 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         # Convert to PIL images
-        pil_images = [PILImage.fromarray(img.to_opencv()) for img in images]
+        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
 
         # Process images
         with torch.inference_mode():

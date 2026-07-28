@@ -116,7 +116,7 @@ def test_weaklist_indexing() -> None:
 
     # Test index out of range
     with pytest.raises(IndexError):
-        _ = wl[3]
+        wl[3]
 
 
 def test_weaklist_clear() -> None:

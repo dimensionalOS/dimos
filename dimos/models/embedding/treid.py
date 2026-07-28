@@ -107,7 +107,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
 
         dummy_image = np.random.randint(0, 256, (256, 128, 3), dtype=np.uint8)
         with torch.inference_mode():
-            _ = self._model([dummy_image])
+            self._model([dummy_image])
 
     def stop(self) -> None:
         """Release model and free GPU memory."""

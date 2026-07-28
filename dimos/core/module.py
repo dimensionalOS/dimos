@@ -110,6 +110,10 @@ class ModuleConfig(BaseConfig):
     tf_transport: type[TFSpec] = Field(default_factory=tf_backend)  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
+    # Set by the coordinator when the same module class is deployed more than
+    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
+    # from the class name to this name.
+    instance_name: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -158,7 +162,7 @@ class ModuleBase(Configurable, CompositeResource):
             # start() before serve_module_rpc(): Zenoh's subscribe needs an open
             # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
-            self.rpc.serve_module_rpc(self)
+            self.rpc.serve_module_rpc(self, name=self.config.instance_name)
         except ValueError:
             ...
 

@@ -35,6 +35,7 @@ class IKStatus(Enum):
     JOINT_LIMITS = auto()
     COLLISION = auto()
     TIMEOUT = auto()
+    UNSUPPORTED = auto()
 
 
 class PlanningStatus(Enum):
@@ -47,3 +48,4 @@ class PlanningStatus(Enum):
     INVALID_GOAL = auto()
     COLLISION_AT_START = auto()
     COLLISION_AT_GOAL = auto()
+    UNSUPPORTED = auto()

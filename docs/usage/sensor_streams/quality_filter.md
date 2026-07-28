@@ -166,7 +166,7 @@ Visualizing which frames were selected (green border = selected as sharpest in w
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-![output](assets/frame_mosaic.jpg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/sensor_streams/assets/frame_mosaic.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
@@ -200,7 +200,7 @@ Output: 6 frame(s) (selected sharpest per window)
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-![output](assets/frame_mosaic2.jpg)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/sensor_streams/assets/frame_mosaic2.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph2.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')

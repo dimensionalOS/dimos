@@ -15,21 +15,17 @@
 
 """Transport-stats report from a recorded teleop ``.db``.
 
-Reads the streams a ``TeleopRecorder`` writes (twist, poses, buttons, video
-stats) and emits ``report.md`` next to it.
-The math (percentiles, rate, jitter, stalls) is the same one the live HUD
-uses — both go through ``stream_stats``.
-
-Importable from ``TeleopRecorder.stop()`` (post-hoc on the run's own .db) or
-runnable standalone over an old recording::
-
-    python -m dimos.teleop.utils.report <path/to/recording.db>
+Reads the streams a ``TeleopRecorder`` writes and emits ``report_<ts>.json``
+next to it (JSON so runs are diffable / CI-gateable). Same percentile math as
+the live HUD (``stream_stats``). Called from ``TeleopRecorder.stop()`` or
+standalone: ``python -m dimos.teleop.utils.report <recording.db>``.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+import json
 from pathlib import Path
 import sys
 from typing import Any
@@ -46,8 +42,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Streams the recorder declares + the dimos msg type to decode each as. Order
-# here drives the order in the report.
+# Streams the recorder declares + the dimos msg type to decode each as.
+# (Report order is alphabetical — the writer uses sort_keys.)
 _STREAM_TYPES = {
     "cmd_vel_stamped": TwistStamped,
     "left_controller_output": PoseStamped,
@@ -58,10 +54,11 @@ _STREAM_TYPES = {
 
 
 def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
-    """Write ``report.md`` for the recording at *db_path*.
+    """Write ``report_<ts>.json`` for the recording at *db_path*.
 
-    Output lands in *out_dir* if given, else next to the .db. Returns the
-    written report.md path. Raises if the .db is missing or unreadable.
+    Named after the .db stem so runs don't clobber. Output lands in *out_dir*
+    if given, else next to the .db. Returns the written path. Raises if the .db
+    is missing or unreadable.
     """
     if not db_path.exists():
         raise FileNotFoundError(f"Recording not found: {db_path}")
@@ -74,33 +71,41 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
     store.start()
     try:
         records = _read_all(store)
+        telemetry = _read_telemetry(store)
     finally:
         store.stop()
 
     # Per-message-stream → summary stats. video_stats is a separate shape.
     twist_streams = {n: r for n, r in records.items() if n != "video_stats" and r}
     summaries = {name: _summary(rs, stall_factor=3.0) for name, rs in twist_streams.items()}
-    active = {n: s for n, s in summaries.items() if s.get("rate_hz")}
+    # Filter on count, not rate_hz — Buttons has no ts (rate_hz None) and would vanish.
+    active = {n: s for n, s in summaries.items() if s.get("count")}
     video_summary = _summarize_video(records.get("video_stats", []))
+    telemetry_summary = _summarize_telemetry(telemetry)
 
     duration_s = _run_duration(records)
     timestamp = datetime.fromtimestamp(db_path.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
 
-    md = _format_report(timestamp, duration_s, active, video_summary)
+    report = {
+        "timestamp": timestamp,
+        "duration_s": round(duration_s, 3),
+        "streams": active,
+        "video": video_summary,
+        "telemetry": telemetry_summary,
+    }
 
-    report_path = out_dir / "report.md"
-    report_path.write_text(md)
+    # Name the report after the .db stem so runs don't clobber and the pair
+    # stays together: recording_teleop_<ts>.db → report_<ts>.json.
+    suffix = db_path.stem.replace("recording_teleop", "").replace("recording", "").lstrip("_")
+    report_name = f"report_{suffix}.json" if suffix else "report.json"
+    report_path = out_dir / report_name
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
     logger.info("Report written to %s", report_path)
     return report_path
 
 
 def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
-    """Pull every known teleop stream out of *store*, decoded to typed msgs.
-
-    Streams not in this recording yield empty lists. Each list is ordered by
-    insertion (which equals arrival order, the recorder writes synchronously
-    in the message-arrival thread).
-    """
+    """Every known teleop stream, decoded; absent streams yield empty lists."""
     available = set(store.list_streams())
     out: dict[str, list[Any]] = {}
     for name, msg_type in _STREAM_TYPES.items():
@@ -108,11 +113,24 @@ def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
             out[name] = []
             continue
         stream: Any = store.stream(name, msg_type)
-        # Stream.__iter__ yields Observation[T]; we want (ts, payload) so the
-        # stats math (which reads .ts on the payload) matches what the
-        # benchmark module did with in-memory msgs.
         out[name] = [obs.data for obs in stream]
     return out
+
+
+def _read_telemetry(store: SqliteStore) -> list[dict[str, Any]]:
+    """Recorded ``robot_telemetry`` JSON frames — the robot's own live cmd-link
+    stats plus soc/state, read as-is instead of recomputed."""
+    if "robot_telemetry" not in set(store.list_streams()):
+        return []
+    frames: list[dict[str, Any]] = []
+    for obs in store.stream("robot_telemetry", bytes):
+        try:
+            frame = json.loads(obs.data)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(frame, dict):
+            frames.append(frame)
+    return frames
 
 
 def _run_duration(records: dict[str, list[Any]]) -> float:
@@ -126,16 +144,8 @@ def _run_duration(records: dict[str, list[Any]]) -> float:
 
 
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
-    """Stats for one twist/pose/buttons stream.
-
-    Computed from each message's ``.ts`` (sender stamp, clock-sync calibrated).
-    We treat .ts as the arrival time too because the recorder doesn't persist a
-    separate wall-arrival stamp — for these streams in practice the recorder
-    writes within microseconds of arrival, so inter-stamp deltas track
-    inter-arrival deltas closely.
-
-    Buttons lacks ``.ts``, so rate/jitter are ``None``.
-    """
+    """Stats for one twist/pose/buttons stream, from each message's ``.ts``
+    (sender stamp). Buttons lacks ``.ts``, so its rate/jitter are ``None``."""
     count = len(records)
     tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
 
@@ -156,12 +166,35 @@ def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
     }
 
 
-def _summarize_video(samples: list[VideoStats]) -> dict[str, Any] | None:
-    """Aggregate per-sample VideoStats into report figures, or None.
+def _summarize_telemetry(frames: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Aggregate recorded ``robot_telemetry`` frames, or None if none recorded.
 
-    fps/kbps/loss/jbuf/decode → p50+p95 percentiles. Resolution → modal WxH.
-    dropped/freezes → run totals (the operator's monotonic counters).
+    Latency/jitter/rate come straight off the robot's recorded ``cmd`` stats;
+    soc is summarized as the run's min/last.
     """
+    if not frames:
+        return None
+
+    def cmd_col(key: str) -> list[float]:
+        return [
+            float(f["cmd"][key])
+            for f in frames
+            if isinstance(f.get("cmd"), dict) and f["cmd"].get(key) is not None
+        ]
+
+    socs = [int(f["soc"]) for f in frames if f.get("soc") is not None]
+    return {
+        "count": len(frames),
+        "latency_ms": pcts(cmd_col("latency_ms")),
+        "jitter_ms": pcts(cmd_col("jitter_ms")),
+        "rate_hz": pcts(cmd_col("rate_hz")),
+        "soc_min": min(socs) if socs else None,
+        "soc_last": socs[-1] if socs else None,
+    }
+
+
+def _summarize_video(samples: list[VideoStats]) -> dict[str, Any] | None:
+    """Percentiles per metric, modal resolution, run-total dropped/freezes."""
     if not samples:
         return None
 
@@ -179,91 +212,11 @@ def _summarize_video(samples: list[VideoStats]) -> dict[str, Any] | None:
         "loss_pct": pcts(col("loss_pct")),
         "jitter_buffer_ms": pcts(col("jitter_buffer_ms")),
         "decode_ms": pcts(col("decode_ms")),
+        # 0 when the robot isn't stamping — summarize only real readings.
+        "e2e_latency_ms": pcts([v for v in col("e2e_latency_ms") if v > 0]),
         "frames_dropped": max((s.frames_dropped for s in samples), default=0),
         "freezes": max((s.freezes for s in samples), default=0),
     }
-
-
-def _format_report(
-    timestamp: str,
-    duration_s: float,
-    active: dict[str, dict[str, Any]],
-    video: dict[str, Any] | None,
-) -> str:
-    lines = [
-        "# Hosted Teleop Recording Report",
-        "",
-        f"- **Timestamp:** {timestamp}",
-        f"- **Duration:** {duration_s:.1f} s",
-        f"- **Active streams:** {len(active)}",
-        "",
-        "> Generated from the recording's `.db` at session stop. Stream stats "
-        "are computed from each message's sender timestamp (clock-sync "
-        "calibrated). Rate and jitter are clock-independent; video stats come "
-        "from the operator's `getStats()`.",
-        "",
-    ]
-    if not active:
-        lines.append("_No messages received on any stream._")
-        lines += _video_lines(video)
-        return "\n".join(lines) + "\n"
-
-    for name, s in active.items():
-        jitter = s["jitter_ms"]
-        jitter_line = (
-            f"- Jitter (ms): p50 {jitter['p50']:.1f} / p95 {jitter['p95']:.1f} "
-            f"/ p99 {jitter['p99']:.1f} / max {jitter['max']:.1f}"
-            if jitter
-            else "- Jitter: n/a (need ≥2 messages)"
-        )
-
-        lines += [
-            f"## {name}",
-            "",
-            f"- Messages: {s['count']}",
-            f"- Rate: {s['rate_hz']:.2f} Hz" if s["rate_hz"] else "- Rate: n/a",
-            jitter_line,
-            f"- Stalls: {s['stall_count']} ({s['stall_total_s']:.2f} s total)",
-            "",
-        ]
-    lines += _video_lines(video)
-    return "\n".join(lines) + "\n"
-
-
-def _video_lines(video: dict[str, Any] | None) -> list[str]:
-    """Render the operator-side video health section, or a hint if absent.
-
-    These come from the operator's ``pc.getStats()`` (receive side) relayed
-    over ``state_reliable`` — the robot's send side can't see what actually
-    arrived. Empty when no operator was streaming video during the run.
-    """
-    if not video:
-        return [
-            "## Video (operator receive-side)",
-            "",
-            "_No video_stats received — connect an operator with video to capture them._",
-            "",
-        ]
-
-    def pp(stats: dict[str, float] | None, unit: str = "") -> str:
-        if not stats:
-            return "n/a"
-        return f"p50 {stats['p50']:.1f}{unit} / p95 {stats['p95']:.1f}{unit}"
-
-    return [
-        "## Video (operator receive-side)",
-        "",
-        f"- Samples: {video['count']}",
-        f"- Resolution (modal): {video['resolution']}",
-        f"- FPS: {pp(video['fps'])}",
-        f"- Bitrate: {pp(video['kbps'], ' kbps')}",
-        f"- Packet loss: {pp(video['loss_pct'], '%')}",
-        f"- Jitter buffer: {pp(video['jitter_buffer_ms'], ' ms')}",
-        f"- Decode time: {pp(video['decode_ms'], ' ms')}",
-        f"- Frames dropped (total): {video['frames_dropped']}",
-        f"- Freezes (total): {video['freezes']}",
-        "",
-    ]
 
 
 def main() -> None:

@@ -16,53 +16,28 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
-    make_xarm7_model_config,
-    make_xarm_hardware,
+    make_xarm7_sim_hardware,
+    make_xarm7_sim_module_kwargs,
+    make_xarm7_sim_robot_config,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-XARM7_SIM_HOME = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
-
-_xarm7_sim_hw = make_xarm_hardware(
-    "arm",
-    7,
-    adapter_type="sim_mujoco",
-    address=str(XARM7_SIM_PATH),
-    gripper=True,
-    home_joints=XARM7_SIM_HOME,
-)
+_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[
-            make_xarm7_model_config(
-                name="arm",
-                add_gripper=True,
-                pitch=math.radians(45),
-                tf_extra_links=["link7"],
-                home_joints=XARM7_SIM_HOME,
-                pre_grasp_offset=0.05,
-            )
-        ],
+        robots=[make_xarm7_sim_robot_config()],
         planning_timeout=10.0,
         visualization={"backend": "meshcat"},
     ),
-    MujocoSimModule.blueprint(
-        address=str(XARM7_SIM_PATH),
-        headless=False,
-        dof=7,
-        camera_name="wrist_camera",
-        base_frame_id="link7",
-    ),
+    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],

@@ -29,8 +29,8 @@ connection = ConnectionModule.blueprint
 
 Now you can create the blueprint with:
 
-```python skip session=blueprint-ex1
-blueprint = connection('arg1', 'arg2', kwarg='value')
+```python session=blueprint-ex1
+blueprint = connection(arg1=5, arg2="foo")
 ```
 
 ## Linking blueprints
@@ -253,6 +253,85 @@ blueprint.remappings([
 })
 ```
 
+## Multi-robot blueprints (namespaces)
+
+You can use namespaces to control several robot instances.
+
+Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
+under a name prefix so several copies can coexist. Because blueprints are plain
+Python values, a variable-size (and mixed-type) fleet is just a loop:
+
+```python session=blueprint-ns
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+
+class SensorConfig(ModuleConfig):
+    ip: str = ""
+
+class Sensor(Module):
+    config: SensorConfig
+    pointcloud: Out[str]
+
+class AggregateMapper(Module):
+    pointcloud: In[str]
+
+robot_ips = ["10.0.0.1", "10.0.0.2"]
+
+fleet = autoconnect(
+    AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
+    *[
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+        for i, ip in enumerate(robot_ips)
+    ],
+)
+```
+
+Inside a namespace everything is prefixed:
+
+* instance names (`robot0/go2connection`),
+* stream names and topics (`/robot0/lidar`),
+* TF frames (`frame_id_prefix`, unless you set one yourself),
+* and RPC topics (`robot0/go2connection/move`).
+
+Prefixed streams only connect within their namespace.
+
+Stream names listed in `expose` are left unprefixed, so they connect globally.
+That is how data crosses the boundary.
+
+In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
+
+If you want to manually redirect to a namespaced name, you can use the namespaced prefix:  `.remappings([(FleetPlanner, "cmd_r0", "robot0/cmd_vel")])`
+
+Module references (Specs or direct classes) resolve within the consumer's
+namespace first, then enclosing namespaces, then globally, so per-robot
+consumers bind to their own robot's providers.
+
+Configuration addresses instances with `/` escaped to `_`:
+`-o robot0/go2connection.ip=10.0.0.5` (or `-o robot0_go2connection.ip=...`),
+env `ROBOT0_GO2CONNECTION__IP=...`. `.remappings` accepts an instance name
+string wherever it accepts a module class.
+
+The downside of this is that the number of modules is fixed at blueprint creation. But it can be easily overcome by using a global variable. For example you can invoke with this:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos run blueprint-name
+```
+
+and construct `robot_ips` from the environment variable:
+
+```python skip
+robot_ips = (global_config.robot_ips or "").split(",")
+```
+
+For convenience `global_config.processed_robot_ips` is available which automatically splits the string and errors if no IPs are present.
+
+This works in simulation too: adding `--simulation` starts one MuJoCo instance per robot and the IPs are ignored. For example, to run two simulated Go2 robots:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
+```
+
 ## Overriding global configuration.
 
 Each module includes the global config available as `self.config.g`. E.g.:
@@ -345,19 +424,18 @@ class HelperModule(Module):
         ...
 ```
 
-And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
+And you want to call `Drone.get_time` in `HelperModule.set_alarm_clock`.
 
-To do this, you can request a module reference.
+To do this, you can request a module reference. Annotate an attribute with the module class and DimOS will inject a proxy for the running module at build time. Calling `get_time()` on it performs the RPC call.
 
 ```python session=blueprint-ex3
-from dimos.core.core import rpc
 from dimos.core.module import Module
 
 class HelperModule(Module):
     drone_module: Drone
 
     def set_alarm_clock(self) -> None:
-        print(self.drone_module.get_time_rpc())
+        print(self.drone_module.get_time())
 ```
 
 But what if we want `HelperModule` to work for more than just `Drone`? For that we can use a spec.
@@ -367,10 +445,12 @@ from dimos.spec.utils import Spec
 from typing import Protocol
 
 class Drone(Module):
+    @rpc
     def get_time(self) -> str:
         return "1:00 PM"
 
 class Car(Module):
+    @rpc
     def get_time(self) -> str:
         return "2:00 PM"
 
@@ -378,10 +458,10 @@ class Car(Module):
 class AnyModuleWithGetTime(Spec, Protocol):
     def get_time(self) -> str: ...
 
-class ModuleB(Module):
+class HelperModule(Module):
     device: AnyModuleWithGetTime
 
-    def request_the_time(self) -> None:
+    def set_alarm_clock(self) -> None:
         # autoconnect() will automatically find whatever module has a get_time() method
         print(self.device.get_time())
 ```
