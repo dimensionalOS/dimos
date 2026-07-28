@@ -647,7 +647,10 @@ _BROWSER_UPLOAD_PANEL = """
 
 def _browser_upload_panel(owner: str = "", repository: str = "") -> str:
     """Return the same-origin upload form without storing its bearer token."""
-    return (_BROWSER_UPLOAD_PANEL.replace("__OWNER__", escape(owner, quote=True)).replace("__REPOSITORY__", escape(repository, quote=True)))
+    return _BROWSER_UPLOAD_PANEL.replace("__OWNER__", escape(owner, quote=True)).replace(
+        "__REPOSITORY__", escape(repository, quote=True)
+    )
+
 
 class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
     """Raw streaming REST API for replay objects."""
