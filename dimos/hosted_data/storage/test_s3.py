@@ -60,6 +60,9 @@ class _FakeS3Client:
         assert isinstance(body, bytes)
         self.objects[(str(kwargs["Bucket"]), str(kwargs["Key"]))] = body
         return {}
+    def delete_object(self, **kwargs: Any) -> dict[str, Any]:
+        self.objects.pop((str(kwargs["Bucket"]), str(kwargs["Key"])), None)
+        return {}
 
     def upload_fileobj(
         self,
@@ -124,8 +127,28 @@ def test_s3_repository_upload_list_and_stream_download() -> None:
     assert downloaded == payload
 
 
-def test_s3_repository_deduplicates_by_digest() -> None:
+def test_s3_repository_deletes_metadata_and_blob() -> None:
     client = _FakeS3Client()
+    repository = S3ReplayRepository(bucket="replays", client=client)
+    payload = b"delete-from-s3"
+    uploaded = repository.put_stream(
+        owner="alice",
+        repository="go2",
+        filename="capture.mp4",
+        source=BytesIO(payload),
+        size_bytes=len(payload),
+        content_type="video/mp4",
+    )
+
+    deleted = repository.delete("alice", "go2", uploaded.object_id)
+
+    assert deleted == uploaded
+    assert repository.list("alice", "go2") == []
+    with pytest.raises(FileNotFoundError):
+        repository.open("alice", "go2", uploaded.object_id)
+
+
+def test_s3_repository_deduplicates_by_digest() -> None:    client = _FakeS3Client()
     repository = S3ReplayRepository(bucket="replays", client=client)
     payload = b"same-content"
 
