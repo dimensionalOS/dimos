@@ -34,6 +34,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 )
 from dimos.control.tasks.eef_twist_task.eef_twist_task import create_task as _eef_create_task
 from dimos.control.tasks.registry import control_task_registry
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -44,7 +45,14 @@ def _robot(path: Path) -> RobotModelConfig:
         model_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1"],
-        end_effector_link="tool",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1",),
+                base_link="base",
+                tip_link="tool",
+            )
+        ],
         home_joints=[0.0],
     )
 
