@@ -26,6 +26,7 @@ import tempfile
 from threading import Lock
 from typing import Protocol
 
+
 class DeleteAccessPolicy(Protocol):
     """Small policy surface required for administrator deletion."""
 
@@ -37,6 +38,7 @@ class DeleteAccessPolicy(Protocol):
         owner: str,
         repository: str,
     ) -> bool: ...
+
 
 class DeleteCapabilityStore:
     """Persist hashed delete capabilities without storing bearer secrets."""
@@ -109,23 +111,26 @@ class DeleteCapabilityStore:
     ) -> bool:
         """Authorize an administrator or the anonymous uploader capability."""
         bearer = (
-            authorization.removeprefix("Bearer ")
-            if authorization.startswith("Bearer ")
-            else ""
+            authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
         )
         if admin_token is not None and hmac.compare_digest(
             authorization,
             f"Bearer {admin_token}",
         ):
             return True
-        if bearer and access_policy is not None and access_policy.authorize(
-            bearer,
-            mode="write",
-            owner=owner,
-            repository=repository,
+        if (
+            bearer
+            and access_policy is not None
+            and access_policy.authorize(
+                bearer,
+                mode="write",
+                owner=owner,
+                repository=repository,
+            )
         ):
             return True
         return self.verify(owner, repository, object_id, capability)
+
     def revoke(self, owner: str, repository: str, object_id: str) -> None:
         """Remove all capabilities after an object is deleted."""
         with self._lock:

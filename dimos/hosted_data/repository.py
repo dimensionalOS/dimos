@@ -720,6 +720,7 @@ class ReplayRepositoryRequestHandler(BaseHTTPRequestHandler):
             admin_token=server.token,
             access_policy=server.access_policy,
         )
+
     def _check_delete_authorized(
         self,
         owner: str,
