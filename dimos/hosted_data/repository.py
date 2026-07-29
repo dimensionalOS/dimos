@@ -176,9 +176,7 @@ class ReplayRepository:
         self.root = Path(root)
 
     def _repository_dir(self, owner: str, repository: str) -> Path:
-        return self.root / _validate_name(owner, "owner") / _validate_name(
-            repository, "repository"
-        )
+        return self.root / _validate_name(owner, "owner") / _validate_name(repository, "repository")
 
     def _paths(self, owner: str, repository: str, object_id: str) -> tuple[Path, Path]:
         directory = self._repository_dir(owner, repository)
@@ -230,9 +228,7 @@ class ReplayRepository:
                 while remaining:
                     chunk = source.read(min(_CHUNK_SIZE, remaining))
                     if not chunk:
-                        raise RepositoryError(
-                            f"stream ended with {remaining} bytes still expected"
-                        )
+                        raise RepositoryError(f"stream ended with {remaining} bytes still expected")
                     if len(chunk) > remaining:
                         raise RepositoryError("stream returned more bytes than requested")
                     temporary.write(chunk)
@@ -260,9 +256,7 @@ class ReplayRepository:
             )
             os.replace(temporary_path, object_path)
             temporary_path = None
-            metadata_part = metadata_path.with_name(
-                f".{metadata_path.name}.{os.getpid()}.part"
-            )
+            metadata_part = metadata_path.with_name(f".{metadata_path.name}.{os.getpid()}.part")
             try:
                 metadata_part.write_text(
                     json.dumps(metadata.to_dict(), sort_keys=True),
@@ -307,10 +301,7 @@ class ReplayRepository:
         directory = self._repository_dir(owner, repository)
         if not directory.is_dir():
             return []
-        objects = [
-            self.get(owner, repository, path.stem)[0]
-            for path in directory.glob("*.json")
-        ]
+        objects = [self.get(owner, repository, path.stem)[0] for path in directory.glob("*.json")]
         return sorted(objects, key=lambda item: item.created_at, reverse=True)
 
     def recover_incomplete_uploads(self) -> int:
