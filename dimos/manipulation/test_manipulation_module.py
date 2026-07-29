@@ -31,6 +31,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationState,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -121,7 +122,7 @@ def module(xarm7_config):
         robots=[xarm7_config],
         planning_timeout=10.0,
         world_backend="drake",
-        planner_name="rrt_connect",
+        planner=RRTConnectPlannerConfig(),
         visualization={"backend": "none"},
     )
     mod.coordinator_joint_state = None
