@@ -19,14 +19,16 @@ import stat
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 import dimos.manipulation.demo_graspgenx.demo as demo
-from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
+from . import __main__
 from .demo import DemoResult, deployment_config, run_contributor_demo, run_demo
 from .fixture import load_demo_clouds, load_scene_record
 
@@ -35,10 +37,9 @@ class FakeGraspProposer:
     def __init__(self) -> None:
         self.calls = 0
 
-    def propose_grasps(self, object_pointcloud: object) -> GraspCandidateArray:
+    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         self.calls += 1
-        cloud = object_pointcloud  # type: ignore[union-attr]
-        center = cloud.pointcloud.get_center()  # type: ignore[union-attr]
+        center = object_pointcloud.pointcloud.get_center()
         candidates = [
             GraspCandidate(
                 Pose(
@@ -51,17 +52,10 @@ class FakeGraspProposer:
             )
             for dz, score in ((0.16, 0.91), (0.15, 0.73), (0.14, 0.52))
         ]
-        return GraspCandidateArray(Header(float(cloud.ts), "world"), candidates)  # type: ignore[union-attr]
-
-
-def fake_factory(_config: object) -> object:
-    return object()
-
-
-def fake_inference(_sampler: object, _points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    poses = np.repeat(np.eye(4, dtype=np.float32)[None, ...], 3, axis=0)
-    poses[:, :3, 3] = np.asarray([0.25, 0.18, 0.16])
-    return poses, np.asarray([0.91, 0.73, 0.52], dtype=np.float32)
+        return GraspCandidateArray(
+            Header(float(object_pointcloud.ts), "world"),
+            candidates,
+        )
 
 
 def test_standard_data_fixture_is_deterministic() -> None:
@@ -97,101 +91,59 @@ def test_demo_runs_inference_once_and_writes_png(tmp_path: Path) -> None:
     assert stat.S_IMODE(output.stat().st_mode) == 0o644
 
 
-def test_direct_adapter_config_and_cleanup() -> None:
-    config = deployment_config()
-    assert config.checkpoint_path is None
-    module = GraspGenXModule(config, factory=fake_factory, inference=fake_inference)
-    _, object_cloud = load_demo_clouds()
-    try:
-        module.start()
-        result = module.propose_grasps(object_cloud)
-        assert len(result) == 3
-    finally:
-        module.stop()
-
-
 def test_contributor_stops_adapter_after_render_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    mocker: MockerFixture, tmp_path: Path
 ) -> None:
-    class Adapter:
-        def __init__(self) -> None:
-            self.stop_count = 0
+    adapter = mocker.patch.object(demo, "GraspGenXModule").return_value
+    mocker.patch.object(demo, "run_demo", side_effect=RuntimeError("render"))
 
-        def start(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            self.stop_count += 1
-
-        def propose_grasps(self, cloud: object) -> GraspCandidateArray:
-            raise AssertionError("inference should not be reached")
-
-    adapter = Adapter()
-    monkeypatch.setattr(
-        demo,
-        "run_demo",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("render")),
-    )
     with pytest.raises(RuntimeError, match="render"):
-        run_contributor_demo(
-            output_path=tmp_path / "failure.png",
-            module_factory=lambda _config: adapter,  # type: ignore[arg-type]
-        )
-    assert adapter.stop_count == 1
+        run_contributor_demo(output_path=tmp_path / "failure.png")
+
+    adapter.start.assert_called_once_with()
+    adapter.stop.assert_called_once_with()
 
 
-def test_one_config_drives_checkpoint_and_wireframe(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_one_config_drives_adapter_and_wireframe(mocker: MockerFixture, tmp_path: Path) -> None:
     base = deployment_config()
     config = base.model_copy(
         update={
-            "checkpoint_path": "/custom/checkpoint",
             "gripper": base.gripper.model_copy(update={"offset_open": (0.0, 0.0, 0.2)}),
         }
     )
-    captured: dict[str, object] = {}
+    adapter_class = mocker.patch.object(demo, "GraspGenXModule")
+    run = mocker.patch.object(
+        demo,
+        "run_demo",
+        return_value=DemoResult(tmp_path / "config.png", 1, 1, 1, 1.0, "world"),
+    )
 
-    class Adapter:
-        def start(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-        def propose_grasps(self, cloud: object) -> GraspCandidateArray:
-            raise AssertionError("replaced run_demo should handle this")
-
-    def fake_run(proposer: object, output: Path, **kwargs: object) -> DemoResult:
-        captured.update(kwargs)
-        return DemoResult(output, 1, 1, 1, 1.0, "world")
-
-    monkeypatch.setattr(demo, "run_demo", fake_run)
     run_contributor_demo(
         output_path=tmp_path / "config.png",
         config=config,
-        module_factory=lambda supplied: captured.update(config=supplied) or Adapter(),
     )
-    assert captured["config"] is config
-    assert captured["gripper"] is config.gripper
+
+    assert adapter_class.call_args.kwargs["gripper"] == config.gripper.model_dump()
+    run.assert_called_once_with(
+        adapter_class.return_value,
+        tmp_path / "config.png",
+        gripper=config.gripper,
+    )
 
 
-def test_python_module_entrypoint_is_direct_and_user_visible(tmp_path: Path) -> None:
-    from . import __main__
-
+def test_python_module_entrypoint_is_direct_and_user_visible(
+    mocker: MockerFixture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     output = tmp_path / "entrypoint.png"
-    assert (
-        __main__.main(
-            ["--output", str(output)],
-            module_factory=lambda config: GraspGenXModule(
-                config,
-                factory=fake_factory,
-                inference=fake_inference,
-            ),
-        )
-        == 0
+    run = mocker.patch.object(
+        __main__,
+        "run_contributor_demo",
+        return_value=DemoResult(output, 1, 1, 3, 0.9, "world"),
     )
-    assert output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+    assert __main__.main(["--output", str(output)]) == 0
+    run.assert_called_once_with(output_path=output)
+    assert f"candidates=3 image={output}" in capsys.readouterr().out
 
 
 def test_empty_result_fails_explicitly(tmp_path: Path) -> None:

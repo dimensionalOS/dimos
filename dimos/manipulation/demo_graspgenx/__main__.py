@@ -15,13 +15,11 @@
 """Run GraspGenX once and save an annotated point-cloud PNG."""
 
 import argparse
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import os
 from pathlib import Path
 
-from dimos.manipulation.grasping.grasp_gen_x import GraspGenXConfig
-
-from .demo import GraspGenAdapter, run_contributor_demo
+from .demo import run_contributor_demo
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,17 +33,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    module_factory: Callable[[GraspGenXConfig], GraspGenAdapter] | None = None,
-) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    result = (
-        run_contributor_demo(output_path=args.output)
-        if module_factory is None
-        else run_contributor_demo(output_path=args.output, module_factory=module_factory)
-    )
+    result = run_contributor_demo(output_path=args.output)
     print(
         f"graspgenx-ycb-demo complete candidates={result.candidate_count} "
         f"image={result.image_path}",

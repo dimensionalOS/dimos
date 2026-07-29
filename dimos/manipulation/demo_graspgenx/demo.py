@@ -18,12 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import import_module
-import os
 from pathlib import Path
-from typing import Protocol
 
 import numpy as np
+import torch
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x import (
@@ -40,14 +38,6 @@ from .fixture import load_demo_clouds
 from .render import SweepVolumeLike, render_grasp_image
 
 
-class GraspGenAdapter(Protocol):
-    def start(self) -> None: ...
-
-    def stop(self) -> None: ...
-
-    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
-
-
 @dataclass(frozen=True)
 class DemoResult:
     image_path: Path
@@ -61,7 +51,6 @@ class DemoResult:
 def deployment_config() -> GraspGenXConfig:
     """Build the fixed sweep-volume deployment without downloading the checkpoint."""
     return GraspGenXConfig(
-        checkpoint_path=os.environ.get("DIMOS_GRASPGENX_CHECKPOINT"),
         gripper=SweepVolumeGripperConfig(
             extents_open=(0.08, 0.045, 0.04),
             offset_open=(0.0, 0.0, 0.135),
@@ -75,10 +64,6 @@ def deployment_config() -> GraspGenXConfig:
 
 
 def _cuda_context() -> dict[str, object]:
-    try:
-        torch = import_module("torch")
-    except ImportError:
-        return {"available": False, "device": "unavailable (torch not installed)"}
     available = bool(torch.cuda.is_available())
     return {"available": available, "device": torch.cuda.get_device_name(0) if available else "cpu"}
 
@@ -143,24 +128,21 @@ def run_contributor_demo(
     *,
     output_path: Path,
     config: GraspGenXConfig | None = None,
-    module_factory: Callable[[GraspGenXConfig], GraspGenAdapter] = GraspGenXModule,
 ) -> DemoResult:
     """Run the real adapter once and save its annotated point-cloud image."""
-    if not callable(module_factory):
-        raise TypeError("module_factory must be callable")
     active_config = config if config is not None else deployment_config()
-    runtime = _cuda_context()
-    checkpoint_source = active_config.checkpoint_path or (
-        f"hf://{GRASPGENX_MODEL_REPO}@{GRASPGENX_MODEL_REVISION}"
-    )
+    cuda = _cuda_context()
     print(
         "graspgenx-ycb-demo "
-        f"checkpoint={checkpoint_source} "
-        f"cuda={runtime['available']} device={runtime['device']}",
+        f"checkpoint=hf://{GRASPGENX_MODEL_REPO}@{GRASPGENX_MODEL_REVISION} "
+        f"cuda={cuda['available']} device={cuda['device']}",
         flush=True,
     )
 
-    adapter = module_factory(active_config)
+    module_args = active_config.model_dump(
+        exclude={"rpc_transport", "tf_transport", "g"},
+    )
+    adapter = GraspGenXModule(**module_args)
     try:
         adapter.start()
         return run_demo(adapter, output_path, gripper=active_config.gripper)

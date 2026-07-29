@@ -49,7 +49,6 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
-    "**/*.npz",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -506,6 +505,8 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
+    # GraspGenX compatibility overrides. Keep this block together and validate
+    # it against the source/model revisions pinned by the graspgenx extra.
     # GraspGenX pins stale yourdfpy==0.0.56; DimOS requires the compatible
     # maintained release line.
     "yourdfpy>=0.0.60",

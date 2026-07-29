@@ -11,8 +11,6 @@ on:
       - pyproject.toml
       - setup.py
       - MANIFEST.in
-      - .gitattributes
-      - dimos/manipulation/demo_graspgenx/**
 
 permissions: {}
 
