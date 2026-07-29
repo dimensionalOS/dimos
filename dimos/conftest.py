@@ -110,6 +110,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
+    config.addinivalue_line(
+        "markers",
+        "web_browser: cockpit browser e2e (playwright chromium); runs in the CI web job",
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
