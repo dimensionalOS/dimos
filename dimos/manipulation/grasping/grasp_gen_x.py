@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """In-process, deployment-fixed GraspGenX proposal adapter."""
 
@@ -18,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -31,6 +37,10 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.protocol.service.spec import BaseConfig
+
+GRASPGENX_MODEL_REPO = "adithyamurali/GraspGenXModel"
+GRASPGENX_MODEL_REVISION = "7c834043c11a11417e31d6d5ea9355801e40a2c1"
+GRASPGENX_MODEL_VERSION = "release"
 
 
 class SweepVolumeGripperConfig(BaseConfig):
@@ -100,7 +110,7 @@ class SweepVolumeGripperConfig(BaseConfig):
 class GraspGenXConfig(ModuleConfig):
     """GraspGenX deployment settings, serializable by DimOS blueprints."""
 
-    checkpoint_path: str
+    checkpoint_path: str | None = None
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: tuple[tuple[float, float, float, float], ...] = Field(
         default=(
@@ -136,11 +146,12 @@ class GraspGenXConfig(ModuleConfig):
             raise ValueError("max_candidates must be a positive integer")
         return value
 
-    @model_validator(mode="after")
-    def checkpoint_root(self) -> GraspGenXConfig:
-        if not self.checkpoint_path:
-            raise ValueError("checkpoint_path must not be empty")
-        return self
+    @field_validator("checkpoint_path")
+    @classmethod
+    def nonempty_checkpoint_override(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("checkpoint_path must be nonempty when provided")
+        return value
 
 
 class GraspGenXError(RuntimeError):
@@ -151,42 +162,62 @@ BackendFactory = Callable[[GraspGenXConfig], Any]
 Inference = Callable[[Any, np.ndarray], tuple[Any, Any]]
 
 
-def _prepare_offline_environment(config: GraspGenXConfig) -> Path:
-    """Point GraspGenX's import-time setup hook at already-local assets.
+def _resolve_checkpoint_root(
+    config: GraspGenXConfig,
+    *,
+    downloader: Callable[..., str] | None = None,
+) -> Path:
+    """Resolve a local override or cache the pinned release through Hugging Face Hub."""
+    if config.checkpoint_path is not None:
+        root = Path(config.checkpoint_path).expanduser().resolve()
+        upstream_root = root
+    else:
+        if downloader is None:
+            try:
+                huggingface_hub = importlib.import_module("huggingface_hub")
+                downloader = huggingface_hub.snapshot_download
+            except (AttributeError, ImportError) as exc:
+                raise GraspGenXError(
+                    "huggingface-hub is required to download the GraspGenX checkpoint"
+                ) from exc
+        try:
+            snapshot = downloader(
+                repo_id=GRASPGENX_MODEL_REPO,
+                revision=GRASPGENX_MODEL_REVISION,
+                allow_patterns=[
+                    f"{GRASPGENX_MODEL_VERSION}/gen/*",
+                    f"{GRASPGENX_MODEL_VERSION}/dis/*",
+                ],
+            )
+        except Exception as exc:
+            raise GraspGenXError(
+                f"failed to download {GRASPGENX_MODEL_REPO}@{GRASPGENX_MODEL_REVISION} "
+                "from Hugging Face Hub"
+            ) from exc
+        upstream_root = Path(snapshot).expanduser().resolve()
+        root = upstream_root / GRASPGENX_MODEL_VERSION
 
-    Upstream uses ``GRASPGENX_CHECKPOINT_DIR`` and
-    ``GRASPGENX_GRIPPER_CFG_DIR`` (not DimOS's convenience variable).  The
-    sweep-volume path does not read gripper description files, but upstream
-    still requires the directory to exist, so the checkpoint root is used as
-    that deployment directory.  This is an intentional invariant: only
-    sweep-volume backbones are accepted below and no named gripper asset is
-    consumed.
-    """
-    root = Path(config.checkpoint_path).expanduser().resolve()
     missing = [name for name in ("gen", "dis") if not (root / name).is_dir()]
     if missing:
         raise FileNotFoundError(
-            "GraspGenX offline deployment requires an existing checkpoint root "
-            f"with {', '.join(missing)}/: {root}. Populate it before starting DimOS; "
-            "runtime download/clone is disabled."
+            f"GraspGenX checkpoint root must contain {', '.join(missing)}/: {root}"
         )
-    gripper_root = os.environ.get("GRASPGENX_GRIPPER_CFG_DIR", str(root))
+    gripper_root = os.environ.get("GRASPGENX_GRIPPER_CFG_DIR", str(upstream_root))
     gripper_path = Path(gripper_root).expanduser().resolve()
     if not gripper_path.is_dir():
         raise FileNotFoundError(
-            "GraspGenX offline deployment requires an existing directory for "
+            "GraspGenX requires an existing directory for "
             f"GRASPGENX_GRIPPER_CFG_DIR: {gripper_path}. The sweep-volume adapter "
-            "does not consume named gripper assets, but upstream requires this "
-            "directory to exist; create/populate it before starting DimOS."
+            "does not consume named gripper assets."
         )
-    os.environ["GRASPGENX_CHECKPOINT_DIR"] = str(root)
+    os.environ["GRASPGENX_CHECKPOINT_DIR"] = str(upstream_root)
     os.environ["GRASPGENX_GRIPPER_CFG_DIR"] = str(gripper_path)
     return root
 
 
 def _default_factory(config: GraspGenXConfig) -> Any:
     """Load the released checkpoint layout (root/{gen,dis})."""
-    root = _prepare_offline_environment(config)
+    root = _resolve_checkpoint_root(config)
     gen_dir, dis_dir = root / "gen", root / "dis"
     if not root.is_dir() or not gen_dir.is_dir() or not dis_dir.is_dir():
         raise FileNotFoundError(f"GraspGenX checkpoint root must contain gen/ and dis/: {root}")

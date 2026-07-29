@@ -27,6 +27,8 @@ import numpy as np
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x import (
+    GRASPGENX_MODEL_REPO,
+    GRASPGENX_MODEL_REVISION,
     GraspGenXConfig,
     GraspGenXModule,
     SweepVolumeGripperConfig,
@@ -57,11 +59,9 @@ class DemoResult:
 
 
 def deployment_config() -> GraspGenXConfig:
-    """Build the fixed sweep-volume deployment without loading the checkpoint."""
+    """Build the fixed sweep-volume deployment without downloading the checkpoint."""
     return GraspGenXConfig(
-        checkpoint_path=os.environ.get(
-            "DIMOS_GRASPGENX_CHECKPOINT", "/__missing_graspgenx_checkpoint__"
-        ),
+        checkpoint_path=os.environ.get("DIMOS_GRASPGENX_CHECKPOINT"),
         gripper=SweepVolumeGripperConfig(
             extents_open=(0.08, 0.045, 0.04),
             offset_open=(0.0, 0.0, 0.135),
@@ -150,9 +150,12 @@ def run_contributor_demo(
         raise TypeError("module_factory must be callable")
     active_config = config if config is not None else deployment_config()
     runtime = _cuda_context()
+    checkpoint_source = active_config.checkpoint_path or (
+        f"hf://{GRASPGENX_MODEL_REPO}@{GRASPGENX_MODEL_REVISION}"
+    )
     print(
         "graspgenx-ycb-demo "
-        f"checkpoint={active_config.checkpoint_path} "
+        f"checkpoint={checkpoint_source} "
         f"cuda={runtime['available']} device={runtime['device']}",
         flush=True,
     )

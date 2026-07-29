@@ -99,6 +99,7 @@ def test_demo_runs_inference_once_and_writes_png(tmp_path: Path) -> None:
 
 def test_direct_adapter_config_and_cleanup() -> None:
     config = deployment_config()
+    assert config.checkpoint_path is None
     module = GraspGenXModule(config, factory=fake_factory, inference=fake_inference)
     _, object_cloud = load_demo_clouds()
     try:

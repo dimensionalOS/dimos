@@ -26,10 +26,13 @@ import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x import (
+    GRASPGENX_MODEL_REPO,
+    GRASPGENX_MODEL_REVISION,
     GraspGenXConfig,
     GraspGenXError,
     GraspGenXModule,
     _default_factory,
+    _resolve_checkpoint_root,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
@@ -39,7 +42,7 @@ from dimos.msgs.std_msgs.Header import Header
 
 def config(**overrides: object) -> GraspGenXConfig:
     values: dict[str, object] = {
-        "checkpoint_path": "/checkpoints",
+        "checkpoint_path": None,
         "gripper": {
             "extents_open": (0.1, 0.1, 0.1),
             "offset_open": (0, 0, 0),
@@ -50,6 +53,33 @@ def config(**overrides: object) -> GraspGenXConfig:
     }
     values.update(overrides)
     return GraspGenXConfig(**values)  # type: ignore[arg-type]
+
+
+def test_hugging_face_checkpoint_is_cached_when_no_local_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "models--graspgenx" / "snapshots" / GRASPGENX_MODEL_REVISION
+    (snapshot / "release" / "gen").mkdir(parents=True)
+    (snapshot / "release" / "dis").mkdir()
+    calls: list[dict[str, object]] = []
+
+    def snapshot_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.delenv("GRASPGENX_CHECKPOINT_DIR", raising=False)
+    monkeypatch.delenv("GRASPGENX_GRIPPER_CFG_DIR", raising=False)
+
+    assert _resolve_checkpoint_root(config(), downloader=snapshot_download) == snapshot / "release"
+    assert calls == [
+        {
+            "repo_id": GRASPGENX_MODEL_REPO,
+            "revision": GRASPGENX_MODEL_REVISION,
+            "allow_patterns": ["release/gen/*", "release/dis/*"],
+        }
+    ]
+    assert os.environ["GRASPGENX_CHECKPOINT_DIR"] == str(snapshot)
+    assert os.environ["GRASPGENX_GRIPPER_CFG_DIR"] == str(snapshot)
 
 
 class _Tensor:

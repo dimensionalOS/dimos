@@ -29,20 +29,17 @@ The validated uv overrides are `yourdfpy>=0.0.60`, `trimesh>=4.12`, `numpy>=2`,
 When changing constraints, re-resolve the universal lock and run focused GraspGenX
 tests plus relevant DimOS regression tests.
 
-### Checkpoint and assets
+### Checkpoint
 
-Set `DIMOS_GRASPGENX_CHECKPOINT` to a hydrated checkpoint root containing:
+The first run downloads the official `adithyamurali/GraspGenXModel` release through
+`huggingface_hub.snapshot_download()`. DimOS pins the model repository revision
+alongside the pinned GraspGenX source revision and downloads only `release/{gen,dis}`.
+Hugging Face stores the approximately 1.69 GB snapshot in its normal local cache, so
+later runs reuse it.
 
-```text
-/path/to/checkpoint/
-├── gen/
-└── dis/
-```
-
-The checkpoint must use a sweep-volume-compatible backbone. The adapter never
-downloads checkpoints, gripper assets, or repository data. A Git-LFS pointer is not a
-checkpoint: if a file begins with `version https://git-lfs.github.com/spec`, hydrate
-it with `git lfs install` and `git lfs pull`, then verify the files are populated.
+For an offline deployment, `DIMOS_GRASPGENX_CHECKPOINT` can override the Hub download
+with an existing local root containing `gen/` and `dis/`. The checkpoint must use a
+sweep-volume-compatible backbone.
 
 ## Run the YCB demo
 
@@ -50,7 +47,6 @@ This direct-process contributor command loads one recorded scene, selects its la
 banana point cloud, runs the real adapter once, saves an annotated PNG, and exits:
 
 ```bash
-export DIMOS_GRASPGENX_CHECKPOINT=/path/to/checkpoint
 export DIMOS_GRASPGENX_OUTPUT=./graspgenx-ycb-demo.png  # optional
 uv run --extra graspgenx python -m dimos.manipulation.demo_graspgenx
 ```
@@ -133,8 +129,9 @@ extractor.
 
 | Symptom | Action |
 |---|---|
-| Missing `gen/` or `dis/` | Point `DIMOS_GRASPGENX_CHECKPOINT` at the hydrated root. |
-| Git-LFS pointer files | Install Git LFS, run `git lfs pull`, and verify content/size. |
+| Hugging Face download failure | Check network access and available disk space in the Hugging Face cache. |
+| Offline or air-gapped runtime | Pre-populate a root with `gen/` and `dis/`, then set `DIMOS_GRASPGENX_CHECKPOINT`. |
+| Missing `gen/` or `dis/` in an override | Point `DIMOS_GRASPGENX_CHECKPOINT` at the release directory, not its parent. |
 | Sweep-incompatible backbone | Use sweep-volume-compatible diffusion and discriminator backbones. |
 | CUDA/model initialization failure | Check driver/CUDA, `torch.cuda.is_available()`, resolved torch versions, and checkpoint contents. |
 | No candidates | Empty is valid API no-result, but the image demo requires at least one proposal. |
@@ -150,7 +147,7 @@ uv run ruff check dimos/manipulation/grasping dimos/manipulation/demo_graspgenx
 uv run ruff format --check dimos/manipulation/grasping dimos/manipulation/demo_graspgenx
 ```
 
-An optional real-GPU acceptance run uses the direct contributor command with a real checkpoint.
-Record CUDA initialization, inference diagnostics, and the output image separately;
-these focused checks are not evidence for the broad full suite. No runtime clone or
-checkpoint download is permitted.
+An optional real-GPU acceptance run uses the direct contributor command with the pinned
+Hub checkpoint. Record download/cache resolution, CUDA initialization, inference
+diagnostics, and the output image separately; these focused checks are not evidence for
+the broad full suite.
