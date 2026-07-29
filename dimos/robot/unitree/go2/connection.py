@@ -501,4 +501,3 @@ class GO2Connection(Module, Camera, Pointcloud):
         Returns None if no frame has been captured yet.
         """
         return self._latest_video_frame
-        return self._latest_video_frame
