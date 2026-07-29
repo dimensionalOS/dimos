@@ -311,6 +311,14 @@ jobs:
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
       # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
