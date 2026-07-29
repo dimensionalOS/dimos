@@ -26,7 +26,7 @@ from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.units import mm
 import yaml
 
-from dimos.utils.cli.apriltag import _grid_layout
+from dimos.cli.apriltag import _grid_layout
 
 PAGE_SIZES_PT = {
     "a4": A4,

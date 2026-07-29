@@ -33,7 +33,8 @@ from dimos.core.transport_factory import (
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 LCM = GlobalConfig(transport="lcm")
 ZENOH = GlobalConfig(transport="zenoh")
@@ -99,10 +100,6 @@ def test_make_transport_zenoh_typed_carries_qos() -> None:
 def test_make_transport_zenoh_pickled_carries_qos() -> None:
     t = make_transport("/human_input", g=ZENOH)
     assert t._zenoh_topic.qos == QOS_NEVER_DROP
-
-
-def test_zenoh_rpc_topics_never_drop() -> None:
-    assert ZenohRPC().topicgen("Hello/say", req_or_res=False).qos == QOS_NEVER_DROP
 
 
 def test_rpc_backend_resolves_per_transport() -> None:

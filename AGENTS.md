@@ -107,8 +107,8 @@ dimos/
 │   │   └── worker_manager_*.py     # Python / docker worker pools
 │   ├── global_config.py     # GlobalConfig (env vars, CLI flags, .env)
 │   └── run_registry.py      # Per-run tracking + log paths
+├── cli/                     # `dimos` CLI entry point (typer) + TUI tools (spy, dtop, apriltag)
 ├── robot/
-│   ├── cli/dimos.py         # CLI entry point (typer)
 │   ├── all_blueprints.py    # Auto-generated blueprint registry (DO NOT EDIT MANUALLY)
 │   ├── unitree/             # Unitree robot implementations (Go2, G1, B1)
 │   │   ├── unitree_skill_container.py  # Go2 @skill methods
@@ -129,7 +129,7 @@ dimos/
 ├── perception/              # Object detection, tracking, memory
 ├── visualization/rerun/     # Rerun bridge
 ├── msgs/                    # Message types (geometry_msgs, sensor_msgs, nav_msgs)
-└── utils/                   # Logging, data loading, CLI tools
+└── utils/                   # Logging, data loading
 docs/
 ├── usage/modules.md         # ← Module system deep dive
 ├── usage/blueprints.md      # Blueprint composition guide

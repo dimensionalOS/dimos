@@ -33,7 +33,8 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic as ZenohTopic,
     ZenohQoS,
 )
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
