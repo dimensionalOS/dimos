@@ -19,6 +19,7 @@ from pathlib import Path
 from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -28,8 +29,8 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
 )
 from dimos.manipulation.visualization.operator import (
+    CartesianTargetRequest,
     JointTargetRequest,
-    LinearCartesianTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
 )
@@ -95,8 +96,12 @@ class FakeModule:
         self.plan_pose_targets: list[
             tuple[dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...]]
         ] = []
-        self.linear_cartesian_targets: list[
-            tuple[dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...]]
+        self.cartesian_targets: list[
+            tuple[
+                dict[PlanningGroupID, tuple[PoseStamped, ...]],
+                RoboPlanCartesianPathConfig,
+                tuple[PlanningGroupID, ...],
+            ]
         ] = []
         self.ik_calls: list[
             tuple[
@@ -173,12 +178,13 @@ class FakeModule:
         self.plan_pose_targets.append((targets, auxiliary_groups))
         return self.plan if self.plan_success else None
 
-    def generate_linear_cartesian_plan(
+    def generate_cartesian_plan(
         self,
-        targets: dict[PlanningGroupID, PoseStamped],
+        targets: dict[PlanningGroupID, tuple[PoseStamped, ...]],
+        config: RoboPlanCartesianPathConfig,
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
     ) -> GeneratedPlan | None:
-        self.linear_cartesian_targets.append((targets, auxiliary_groups))
+        self.cartesian_targets.append((targets, config, auxiliary_groups))
         return self.plan if self.plan_success else None
 
     def preview_plan(
@@ -380,7 +386,7 @@ def test_planning_methods_return_exact_generated_plan() -> None:
     assert pose_result is module.plan
 
 
-def test_linear_cartesian_planning_routes_absolute_targets_and_auxiliary_groups() -> None:
+def test_cartesian_planning_prepends_current_pose_and_routes_auxiliary_groups() -> None:
     groups = (
         PlanningGroup(
             "arm/manipulator",
@@ -403,16 +409,23 @@ def test_linear_cartesian_planning_routes_absolute_targets_and_auxiliary_groups(
     )
     operator, module, _ = _operator(_robot_config(groups=groups))
     pose = _pose()
+    config = RoboPlanCartesianPathConfig(speed_mode="time_optimal")
 
-    result = operator.plan_linear_cartesian(
-        LinearCartesianTargetRequest(
+    result = operator.plan_cartesian(
+        CartesianTargetRequest(
             {"arm/manipulator": pose},
+            config,
             ("arm/gripper",),
         )
     )
 
     assert result is module.plan
-    assert module.linear_cartesian_targets == [({"arm/manipulator": pose}, ("arm/gripper",))]
+    assert len(module.cartesian_targets) == 1
+    targets, recorded_config, auxiliary_groups = module.cartesian_targets[0]
+    assert targets["arm/manipulator"][0].position == Vector3(1.0, 2.0, 3.0)
+    assert targets["arm/manipulator"][1] is pose
+    assert recorded_config is config
+    assert auxiliary_groups == ("arm/gripper",)
 
 
 def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:

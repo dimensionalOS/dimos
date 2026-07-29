@@ -23,6 +23,7 @@ import pytest
 pytest.importorskip("roboplan.cartesian_planning")
 roboplan_world_module = importlib.import_module("dimos.manipulation.planning.world.roboplan_world")
 
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -51,7 +52,7 @@ def _sync_zero_state(
     )
 
 
-def test_real_roboplan_plans_fixed_orientation_linear_path(
+def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     roboplan_world_type: type[Any],
 ) -> None:
     config = make_xarm6_model_config(name="arm")
@@ -72,11 +73,20 @@ def test_real_roboplan_plans_fixed_orientation_linear_path(
         world._apply_selected_state(ctx, start)
         start_pose = world.get_group_ee_pose(ctx, group_id)
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         start,
-        {group_id: Transform(translation=Vector3(0.005, 0.0, 0.0))},
+        {
+            group_id: (
+                Transform.identity(),
+                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+            )
+        },
+        RoboPlanCartesianPathConfig(
+            speed_mode="time_optimal",
+            toppra_blend_deviation=0.0,
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS, result.message
@@ -93,7 +103,7 @@ def test_real_roboplan_plans_fixed_orientation_linear_path(
     assert orientation_error <= 0.01
 
 
-def test_real_roboplan_synchronizes_different_length_dual_arm_tracks(
+def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
     roboplan_world_type: type[Any],
 ) -> None:
     left_config = make_xarm6_model_config(name="left_arm", y_offset=0.3)
@@ -116,14 +126,22 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_tracks(
         name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         start,
         {
-            left_group_id: Transform(translation=Vector3(0.003, 0.0, 0.0)),
-            right_group_id: Transform(translation=Vector3(0.005, 0.0, 0.0)),
+            left_group_id: (
+                Transform.identity(),
+                Transform(translation=Vector3(0.0015, 0.001, 0.0)),
+                Transform(translation=Vector3(0.003, 0.0, 0.0)),
+            ),
+            right_group_id: (
+                Transform.identity(),
+                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+            ),
         },
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.SUCCESS, result.message

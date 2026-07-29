@@ -22,6 +22,7 @@ import math
 from typing import TYPE_CHECKING, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -58,10 +59,11 @@ class PoseTargetRequest:
 
 
 @dataclass(frozen=True)
-class LinearCartesianTargetRequest:
-    """Absolute world-frame targets for linear Cartesian planning."""
+class CartesianTargetRequest:
+    """Absolute world-frame goals for Cartesian path planning."""
 
     pose_targets: Mapping[PlanningGroupID, PoseStamped]
+    config: CartesianPathConfig
     auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
 
 
@@ -164,8 +166,8 @@ class ManipulationOperator:
             request.auxiliary_group_ids,
         )
 
-    def plan_linear_cartesian(self, request: LinearCartesianTargetRequest) -> GeneratedPlan | None:
-        """Plan synchronized linear TCP motion to absolute world-frame poses."""
+    def plan_cartesian(self, request: CartesianTargetRequest) -> GeneratedPlan | None:
+        """Plan synchronized TCP motion to absolute world-frame goals."""
         pose_request = PoseTargetRequest(
             request.pose_targets,
             request.auxiliary_group_ids,
@@ -173,11 +175,19 @@ class ManipulationOperator:
         _group_ids, validation = self._validate_pose_request(pose_request)
         if validation is not None:
             return None
-        return self._module.generate_linear_cartesian_plan(
+        targets = {
+            group_id: (
+                self._world_monitor.get_group_ee_pose(group_id),
+                target,
+            )
+            for group_id, target in request.pose_targets.items()
+        }
+        return self._module.generate_cartesian_plan(
             cast(
-                "Mapping[PlanningGroupID | PlanningGroup, PoseStamped]",
-                dict(request.pose_targets),
+                "Mapping[PlanningGroupID | PlanningGroup, Sequence[PoseStamped]]",
+                targets,
             ),
+            request.config,
             request.auxiliary_group_ids,
         )
 

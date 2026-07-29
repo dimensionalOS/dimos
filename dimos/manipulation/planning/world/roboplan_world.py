@@ -46,10 +46,7 @@ except ImportError as exc:
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
-from dimos.manipulation.planning.planners.config import (
-    RoboPlanLinearCartesianConfig,
-    RoboPlanPlannerConfig,
-)
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -121,11 +118,6 @@ class RoboPlanWorld:
         self._usable = True
         self._live_context = RoboPlanContext()
         self._lock = RLock()
-        self._planner_config = RoboPlanPlannerConfig()
-
-    def set_planner_config(self, config: RoboPlanPlannerConfig) -> None:
-        """Configure scene-backed planning before requests are evaluated."""
-        self._planner_config = config
 
     # Robot Management
 
@@ -536,25 +528,24 @@ class RoboPlanWorld:
             max_iterations,
         )
 
-    def plan_linear_cartesian_path(
+    def plan_cartesian_path(
         self,
         world: WorldSpec,
         selection: PlanningGroupSelection,
         start: JointState,
         targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: RoboPlanCartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanningResult:
-        """Plan synchronized linear TCP tracks with official RoboPlan Cartesian planning."""
+        """Plan synchronized TCP waypoint paths with official RoboPlan planning."""
         started = time.time()
         if world is not self:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
-        validation_error = self._validate_linear_cartesian_request(
-            selection, targets, auxiliary_groups
-        )
+        validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
             return validation_error
         try:
@@ -577,6 +568,7 @@ class RoboPlanWorld:
                     ctx,
                     group,
                     cartesian_path,
+                    config,
                 )
             path, timestamps = self._path_from_cartesian_trajectory(
                 selection,
@@ -607,7 +599,7 @@ class RoboPlanWorld:
             path=path,
             planning_time=time.time() - started,
             path_length=compute_path_length(path),
-            message="RoboPlan linear Cartesian path found",
+            message="RoboPlan Cartesian path found",
             timestamps=timestamps,
         )
 
@@ -637,7 +629,7 @@ class RoboPlanWorld:
             raise ValueError("Requested start state does not match current scene state")
         return normalized
 
-    def _validate_linear_cartesian_request(
+    def _validate_cartesian_request(
         self,
         selection: PlanningGroupSelection,
         targets: Mapping[PlanningGroupID, CartesianTarget],
@@ -651,7 +643,7 @@ class RoboPlanWorld:
         if not targets:
             return PlanningResult(
                 status=PlanningStatus.INVALID_GOAL,
-                message="Linear Cartesian planning requires at least one target group",
+                message="Cartesian planning requires at least one target group",
             )
         auxiliary_ids = tuple(auxiliary_groups)
         if len(set(auxiliary_ids)) != len(auxiliary_ids):
@@ -684,15 +676,37 @@ class RoboPlanWorld:
                     status=PlanningStatus.INVALID_GOAL,
                     message=f"Planning group '{group_id}' has no TCP tip link",
                 )
-            if not isinstance(target, (PoseStamped, Transform)):
+            if not isinstance(target, Sequence) or isinstance(target, (str, bytes)):
                 return PlanningResult(
                     status=PlanningStatus.INVALID_GOAL,
-                    message=f"Cartesian target for '{group_id}' must be a PoseStamped or Transform",
+                    message=f"Cartesian target for '{group_id}' must be a waypoint sequence",
                 )
-            if target.frame_id != "world":
+            if len(target) < 2:
+                return PlanningResult(
+                    status=PlanningStatus.INVALID_GOAL,
+                    message=f"Cartesian target for '{group_id}' requires at least two waypoints",
+                )
+            waypoint_type = (
+                PoseStamped
+                if isinstance(target[0], PoseStamped)
+                else Transform
+                if isinstance(target[0], Transform)
+                else None
+            )
+            if waypoint_type is None or any(
+                not isinstance(waypoint, waypoint_type) for waypoint in target
+            ):
+                return PlanningResult(
+                    status=PlanningStatus.INVALID_GOAL,
+                    message=(
+                        f"Cartesian target for '{group_id}' must contain only PoseStamped "
+                        "waypoints or only Transform waypoints"
+                    ),
+                )
+            if any(waypoint.frame_id != "world" for waypoint in target):
                 return PlanningResult(
                     status=PlanningStatus.UNSUPPORTED,
-                    message="Linear Cartesian planning supports only world-frame targets",
+                    message="Cartesian planning supports only world-frame waypoints",
                 )
         return None
 
@@ -715,7 +729,7 @@ class RoboPlanWorld:
         model = self._require_model()
         base_frames: list[str] = []
         tip_frames: list[str] = []
-        tracks: list[list[NDArray[np.float64]]] = []
+        waypoint_paths: list[list[NDArray[np.float64]]] = []
         for group in selection.groups:
             target = targets.get(group.id)
             if target is None:
@@ -724,21 +738,27 @@ class RoboPlanWorld:
                 raise ValueError(f"Planning group '{group.id}' has no TCP tip link")
             start_pose = self.get_group_ee_pose(ctx, group.id)
             start_matrix = np.asarray(pose_to_matrix(start_pose), dtype=np.float64)
-            target_matrix = self._resolve_cartesian_target(start_matrix, target)
+            target_matrices = [
+                self._resolve_cartesian_waypoint(start_matrix, waypoint) for waypoint in target
+            ]
+            if not np.allclose(target_matrices[0], start_matrix, atol=1e-6, rtol=0.0):
+                raise ValueError(
+                    f"Cartesian target for '{group.id}' must begin at its current TCP pose"
+                )
             base_frames.append(_WORLD_FRAME)
             tip_frames.append(model.native_link(group.robot_name, group.tip_link))
-            tracks.append([start_matrix, target_matrix])
-        return roboplan_core.CartesianPath(base_frames, tip_frames, tracks)
+            waypoint_paths.append(target_matrices)
+        return roboplan_core.CartesianPath(base_frames, tip_frames, waypoint_paths)
 
-    def _resolve_cartesian_target(
+    def _resolve_cartesian_waypoint(
         self,
         start_matrix: NDArray[np.float64],
-        target: CartesianTarget,
+        waypoint: PoseStamped | Transform,
     ) -> NDArray[np.float64]:
-        if isinstance(target, PoseStamped):
-            return np.asarray(pose_to_matrix(target), dtype=np.float64)
+        if isinstance(waypoint, PoseStamped):
+            return np.asarray(pose_to_matrix(waypoint), dtype=np.float64)
         target_matrix = start_matrix.copy()
-        delta_matrix = np.asarray(target.to_matrix(), dtype=np.float64)
+        delta_matrix = np.asarray(waypoint.to_matrix(), dtype=np.float64)
         target_matrix[:3, 3] += delta_matrix[:3, 3]
         target_matrix[:3, :3] = delta_matrix[:3, :3] @ start_matrix[:3, :3]
         return target_matrix
@@ -748,11 +768,9 @@ class RoboPlanWorld:
         ctx: RoboPlanContext,
         group: RoboPlanGroup,
         path: Any,
+        config: RoboPlanCartesianPathConfig,
     ) -> Any:
-        options = self._cartesian_planner_options(
-            group.name,
-            self._planner_config.linear_cartesian,
-        )
+        options = self._cartesian_planner_options(group.name, config)
         with self._lock:
             scene = self._require_scene()
             scene_q = self._full_scene_q(ctx)
@@ -770,11 +788,14 @@ class RoboPlanWorld:
     @staticmethod
     def _cartesian_planner_options(
         group_name: str,
-        config: RoboPlanLinearCartesianConfig,
+        config: RoboPlanCartesianPathConfig,
     ) -> Any:
         options = roboplan_cartesian.CartesianPlannerOptions()
         options.group_name = group_name
-        options.speed_mode = roboplan_cartesian.CartesianSpeedMode.Bounded
+        options.speed_mode = {
+            "bounded": roboplan_cartesian.CartesianSpeedMode.Bounded,
+            "time_optimal": roboplan_cartesian.CartesianSpeedMode.TimeOptimal,
+        }[config.speed_mode]
         for field_name in (
             "dt",
             "max_linear_speed",
@@ -783,9 +804,16 @@ class RoboPlanWorld:
             "max_angular_acceleration",
             "max_position_error",
             "max_orientation_error",
+            "position_cost",
+            "orientation_cost",
+            "task_gain",
+            "lm_damping",
+            "regularization",
+            "config_task_weight",
             "velocity_scale",
             "acceleration_scale",
             "limit_ratio_tolerance",
+            "toppra_blend_deviation",
             "position_limit_gain",
             "max_attempts_per_step",
         ):

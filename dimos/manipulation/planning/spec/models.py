@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -57,8 +57,11 @@ JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
 
-CartesianTarget: TypeAlias = "PoseStamped | Transform"
-"""Absolute TCP pose or relative rigid displacement from the planning start."""
+CartesianWaypoint: TypeAlias = "PoseStamped | Transform"
+"""One absolute TCP pose or relative rigid displacement from the planning start."""
+
+CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[Transform]"
+"""Ordered homogeneous Cartesian waypoints for one planning group."""
 
 
 @dataclass(frozen=True)

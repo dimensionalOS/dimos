@@ -162,10 +162,6 @@ def create_planner(
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
         if not isinstance(world, PlannerSpec):
             raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
-        from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-
-        if isinstance(world, RoboPlanWorld):
-            world.set_planner_config(config)
         return world
 
     raise TypeError(f"Unsupported planner config: {type(config).__name__}")

@@ -18,11 +18,12 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TypeAlias, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
 from dimos.manipulation.visualization.operator import (
+    CartesianTargetRequest,
     JointTargetRequest,
-    LinearCartesianTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
     TargetEvaluationResult,
@@ -105,8 +106,8 @@ ROBOT_DISPLAY_COLLISION_WARNING = (
     "**Collision meshes unavailable.** Showing visual geometry with collision styling."
 )
 PLANNING_MODE_LABELS = {
-    PlanningMode.FREE_SPACE: "Free-space",
-    PlanningMode.LINEAR_CARTESIAN: "Linear Cartesian",
+    PlanningMode.JOINT_SPACE: "Joint space",
+    PlanningMode.CARTESIAN_SPACE: "Cartesian space",
 }
 PLANNING_MODES_BY_LABEL = {label: mode for mode, label in PLANNING_MODE_LABELS.items()}
 
@@ -310,7 +311,7 @@ class ViserPanelGui:
         self.state.plan_state.plan = plan
         return plan is not None
 
-    def plan_linear_cartesian(
+    def plan_cartesian(
         self,
         pose_targets: Mapping[PlanningGroupID, Pose],
         auxiliary_group_ids: Sequence[PlanningGroupID],
@@ -323,8 +324,12 @@ class ViserPanelGui:
             )
             for group_id, pose in pose_targets.items()
         }
-        plan = self.operator.plan_linear_cartesian(
-            LinearCartesianTargetRequest(stamped, tuple(auxiliary_group_ids))
+        plan = self.operator.plan_cartesian(
+            CartesianTargetRequest(
+                stamped,
+                RoboPlanCartesianPathConfig(),
+                tuple(auxiliary_group_ids),
+            )
         )
         self.state.plan_state.plan = plan
         return plan is not None
@@ -1166,7 +1171,7 @@ class ViserPanelGui:
         joint_targets: dict[PlanningGroupID, JointState] | None = None
         pose_targets: dict[PlanningGroupID, Pose] = {}
         auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
-        if planning_mode == PlanningMode.LINEAR_CARTESIAN:
+        if planning_mode == PlanningMode.CARTESIAN_SPACE:
             pose_targets = self._active_pose_targets()
             pose_capable_ids = {
                 group_id
@@ -1176,7 +1181,7 @@ class ViserPanelGui:
             }
             if set(pose_targets) != pose_capable_ids:
                 self._set_recoverable_error(
-                    "Linear Cartesian planning requires a target for every selected TCP group"
+                    "Cartesian planning requires a target for every selected TCP group"
                 )
                 return
             auxiliary_group_ids = tuple(
@@ -1226,8 +1231,8 @@ class ViserPanelGui:
                     selection_epoch=selection_epoch,
                 )
                 return
-            if planning_mode == PlanningMode.LINEAR_CARTESIAN:
-                ok = self.plan_linear_cartesian(pose_targets, auxiliary_group_ids)
+            if planning_mode == PlanningMode.CARTESIAN_SPACE:
+                ok = self.plan_cartesian(pose_targets, auxiliary_group_ids)
             else:
                 assert joint_targets is not None
                 ok = self.plan_to_selected_joints(group_ids, joint_targets)
@@ -1244,9 +1249,9 @@ class ViserPanelGui:
                 self.state.plan_state.status = PlanStatus.FAILED
                 self.state.plan_state.plan = None
                 self.state.error = self.get_error() or (
-                    "Linear Cartesian planning failed"
-                    if planning_mode == PlanningMode.LINEAR_CARTESIAN
-                    else "Free-space planning failed"
+                    "Cartesian planning failed"
+                    if planning_mode == PlanningMode.CARTESIAN_SPACE
+                    else "Joint-space planning failed"
                 )
             self._finish_operation(
                 f"plan_{planning_mode.value}={ok}",

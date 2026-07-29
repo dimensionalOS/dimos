@@ -57,6 +57,7 @@ from dimos.manipulation.planning.kinematics.config import (
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
+    CartesianPathConfig,
     ManipulationPlannerConfig,
     RoboPlanPlannerConfig,
 )
@@ -1192,20 +1193,22 @@ class ManipulationModule(Module):
         return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
 
     @rpc
-    def plan_linear_cartesian_targets(
+    def plan_cartesian_targets(
         self,
         targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
         auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
     ) -> bool:
-        """Plan linear TCP motion to absolute poses or relative transforms."""
-        return self.generate_linear_cartesian_plan(targets, auxiliary_groups) is not None
+        """Plan TCP motion through absolute or relative Cartesian waypoints."""
+        return self.generate_cartesian_plan(targets, config, auxiliary_groups) is not None
 
-    def generate_linear_cartesian_plan(
+    def generate_cartesian_plan(
         self,
         targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
         auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
     ) -> GeneratedPlan | None:
-        """Generate and store a timed linear Cartesian plan through PlannerSpec."""
+        """Generate and store a timed Cartesian plan through PlannerSpec."""
         if self._world_monitor is None or self._planner is None:
             return None
         if not targets:
@@ -1226,17 +1229,18 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         selection, start = resolved
-        result = self._planner.plan_linear_cartesian_path(
+        result = self._planner.plan_cartesian_path(
             world=self._world_monitor.world,
             selection=selection,
             start=start,
             targets=normalized_targets,
+            config=config,
             auxiliary_groups=auxiliary_ids,
         )
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._fail_planning_epoch(
-                planning_epoch, f"Linear Cartesian planning failed: {result.status.name}{detail}"
+                planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
             )
             return None
         return self._store_generated_plan(

@@ -17,11 +17,11 @@
 from pydantic import ValidationError
 import pytest
 
-from dimos.manipulation.planning.planners.config import RoboPlanPlannerConfig
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 
 
 @pytest.mark.parametrize(
-    "linear_config",
+    "path_config",
     [
         {"dt": 0.0},
         {"velocity_scale": 1.1},
@@ -30,8 +30,8 @@ from dimos.manipulation.planning.planners.config import RoboPlanPlannerConfig
         {"max_attempts_per_step": 0},
     ],
 )
-def test_roboplan_linear_cartesian_config_rejects_invalid_limits(
-    linear_config: dict[str, float],
+def test_roboplan_cartesian_path_config_rejects_invalid_limits(
+    path_config: dict[str, float],
 ) -> None:
     with pytest.raises(ValidationError):
-        RoboPlanPlannerConfig(linear_cartesian=linear_config)  # type: ignore[arg-type]
+        RoboPlanCartesianPathConfig(**path_config)  # type: ignore[arg-type]

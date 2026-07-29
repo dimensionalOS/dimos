@@ -23,6 +23,7 @@ from dimos.manipulation._test_manipulation_helpers import make_module
 from dimos.manipulation.manipulation_module import ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
@@ -125,7 +126,7 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
 
 
-def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch):
+def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch):
     module = _module(monkeypatch)
     module._state = ManipulationState.IDLE
     names = ["left/b", "left/a"]
@@ -135,14 +136,20 @@ def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monke
         JointState(name=names, position=[0.2, 0.1], velocity=[0.4, 0.2]),
     ]
     module._world_monitor.current_global_joint_state.return_value = start
-    module._planner.plan_linear_cartesian_path.return_value = PlanningResult(
+    module._planner.plan_cartesian_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=path,
         timestamps=[0.0, 0.25],
     )
 
-    success = module.plan_linear_cartesian_targets(
-        {"left/group": Transform(translation=Vector3(0.01, 0.0, 0.0))}
+    success = module.plan_cartesian_targets(
+        {
+            "left/group": (
+                Transform.identity(),
+                Transform(translation=Vector3(0.01, 0.0, 0.0)),
+            )
+        },
+        RoboPlanCartesianPathConfig(),
     )
     plan = module._last_plan
 
@@ -154,7 +161,7 @@ def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monke
         [0.4, 0.2],
     ]
     assert RecordingGenerator.calls == []
-    request = module._planner.plan_linear_cartesian_path.call_args.kwargs
+    request = module._planner.plan_cartesian_path.call_args.kwargs
     assert request["start"].name == names
     assert request["auxiliary_groups"] == ()
 
@@ -167,7 +174,7 @@ def test_linear_cartesian_plan_preserves_planner_timestamps_and_velocities(monke
         ([0.0, 0.1], [[], [0.1, 0.1]], "velocity dimension"),
     ],
 )
-def test_linear_cartesian_plan_rejects_malformed_timed_results(
+def test_cartesian_plan_rejects_malformed_timed_results(
     monkeypatch, timestamps, velocities, message
 ):
     module = _module(monkeypatch)
@@ -179,14 +186,20 @@ def test_linear_cartesian_plan_rejects_malformed_timed_results(
         JointState(name=names, position=[0.2, 0.1], velocity=velocities[1]),
     ]
     module._world_monitor.current_global_joint_state.return_value = start
-    module._planner.plan_linear_cartesian_path.return_value = PlanningResult(
+    module._planner.plan_cartesian_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=path,
         timestamps=timestamps,
     )
 
-    result = module.generate_linear_cartesian_plan(
-        {"left/group": Transform(translation=Vector3(0.01, 0.0, 0.0))}
+    result = module.generate_cartesian_plan(
+        {
+            "left/group": (
+                Transform.identity(),
+                Transform(translation=Vector3(0.01, 0.0, 0.0)),
+            )
+        },
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result is None

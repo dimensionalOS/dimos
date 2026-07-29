@@ -35,10 +35,7 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import (
-    RoboPlanLinearCartesianConfig,
-    RoboPlanPlannerConfig,
-)
+from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -108,9 +105,16 @@ class FakeCartesianPlannerOptions:
         self.max_angular_acceleration = 2.5
         self.max_position_error = 0.005
         self.max_orientation_error = 0.01
+        self.position_cost = 1.0
+        self.orientation_cost = 1.0
+        self.task_gain = 1.0
+        self.lm_damping = 0.01
+        self.regularization = 1e-6
+        self.config_task_weight = 0.05
         self.velocity_scale = 1.0
         self.acceleration_scale = 1.0
         self.limit_ratio_tolerance = 1.05
+        self.toppra_blend_deviation = 0.05
         self.position_limit_gain = 1.0
         self.max_attempts_per_step = 16
 
@@ -500,6 +504,21 @@ def _selection(
     registry = PlanningGroupRegistry(configs)
     return PlanningGroupSelection.from_groups(
         tuple(registry.get(group_id) for group_id in group_ids)
+    )
+
+
+def _relative_target(*waypoints: Transform) -> tuple[Transform, ...]:
+    return (Transform.identity(), *waypoints)
+
+
+def _absolute_target(*waypoints: PoseStamped) -> tuple[PoseStamped, ...]:
+    return (
+        PoseStamped(
+            frame_id="world",
+            position=Vector3(),
+            orientation=Quaternion(),
+        ),
+        *waypoints,
     )
 
 
@@ -1427,30 +1446,49 @@ def test_native_planner_coordinates_groups_across_two_robots(
     assert result.path[-1].position == [0.1, 0.3, 0.4, 0.2]
 
 
-def test_linear_cartesian_planner_returns_timed_global_joint_states(
+def test_cartesian_planner_returns_timed_global_joint_states_and_options(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
-    world.set_planner_config(
-        RoboPlanPlannerConfig(
-            linear_cartesian=RoboPlanLinearCartesianConfig(
-                dt=0.02,
-                max_linear_speed=0.2,
-            )
-        )
-    )
     selection = _selection((robot_config,), "arm/manipulator")
+    option_overrides = {
+        "dt": 0.02,
+        "max_linear_speed": 0.2,
+        "max_angular_speed": 0.6,
+        "max_linear_acceleration": 0.7,
+        "max_angular_acceleration": 2.0,
+        "max_position_error": 0.006,
+        "max_orientation_error": 0.02,
+        "position_cost": 2.0,
+        "orientation_cost": 3.0,
+        "task_gain": 0.8,
+        "lm_damping": 0.02,
+        "regularization": 2e-6,
+        "config_task_weight": 0.1,
+        "velocity_scale": 0.9,
+        "acceleration_scale": 0.8,
+        "limit_ratio_tolerance": 1.02,
+        "toppra_blend_deviation": 0.0,
+        "position_limit_gain": 0.7,
+        "max_attempts_per_step": 8,
+    }
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         {
-            "arm/manipulator": Transform(
-                translation=Vector3(0.1, 0.0, 0.0),
-                rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2.0)),
+            "arm/manipulator": _relative_target(
+                Transform(
+                    translation=Vector3(0.1, 0.0, 0.0),
+                    rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2.0)),
+                )
             )
         },
+        RoboPlanCartesianPathConfig(
+            speed_mode="time_optimal",
+            **option_overrides,
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1459,8 +1497,9 @@ def test_linear_cartesian_planner_returns_timed_global_joint_states(
     assert result.path[-1].position == pytest.approx([0.1, 0.1])
     assert result.path[1].velocity == pytest.approx([0.5, 0.5])
     planner = FakeCartesianPathPlanner.instances[-1]
-    assert planner.options.speed_mode == FakeCartesianSpeedMode.Bounded
-    assert planner.options.max_linear_speed == pytest.approx(0.2)
+    assert planner.options.speed_mode == FakeCartesianSpeedMode.TimeOptimal
+    for field_name, expected in option_overrides.items():
+        assert getattr(planner.options, field_name) == pytest.approx(expected)
     assert planner.paths[0].base_frames == ["dimos_world"]
     np.testing.assert_allclose(planner.paths[0].tforms[0][0], np.eye(4), atol=1e-12)
     expected_rotation = np.array(
@@ -1477,25 +1516,33 @@ def test_linear_cartesian_planner_returns_timed_global_joint_states(
     )
 
 
-def test_linear_cartesian_zero_rotation_preserves_start_orientation(
+def test_cartesian_zero_rotation_preserves_start_orientation(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
+        {
+            "arm/manipulator": _relative_target(
+                Transform(translation=Vector3(0.05, 0.02, 0.0)),
+                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+            )
+        },
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.SUCCESS
     track = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0]
-    np.testing.assert_allclose(track[1][:3, :3], track[0][:3, :3], atol=1e-12)
+    assert len(track) == 3
+    for waypoint in track[1:]:
+        np.testing.assert_allclose(waypoint[:3, :3], track[0][:3, :3], atol=1e-12)
 
 
-def test_linear_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
+def test_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _, _, second_config = _make_two_robot_world(fake_roboplan, robot_config)
@@ -1505,18 +1552,21 @@ def test_linear_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
         "arm/manipulator",
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
         {
-            "right/manipulator": PoseStamped(
-                frame_id="world",
-                position=Vector3(0.2, 0.0, 0.0),
-                orientation=Quaternion(),
+            "right/manipulator": _absolute_target(
+                PoseStamped(
+                    frame_id="world",
+                    position=Vector3(0.2, 0.0, 0.0),
+                    orientation=Quaternion(),
+                )
             ),
-            "arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
+            "arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0))),
         },
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1528,7 +1578,7 @@ def test_linear_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
     assert planner.paths[0].tip_frames == ["right__tcp", "arm__tcp"]
 
 
-def test_linear_cartesian_allows_auxiliary_groups(
+def test_cartesian_allows_auxiliary_groups(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _, _, second_config = _make_two_robot_world(fake_roboplan, robot_config)
@@ -1538,11 +1588,12 @@ def test_linear_cartesian_allows_auxiliary_groups(
         "right/manipulator",
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
-        {"arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0))},
+        {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
         auxiliary_groups=("right/manipulator",),
     )
 
@@ -1556,20 +1607,37 @@ def test_linear_cartesian_allows_auxiliary_groups(
     [
         ({}, ("arm/manipulator",), PlanningStatus.INVALID_GOAL, "at least one target"),
         (
-            {"arm/manipulator": Transform()},
+            {"arm/manipulator": _relative_target(Transform())},
             ("arm/manipulator",),
             PlanningStatus.INVALID_GOAL,
             "disjoint",
         ),
         (
-            {"arm/manipulator": Transform(frame_id="tool")},
+            {"arm/manipulator": _relative_target(Transform(frame_id="tool"))},
             (),
             PlanningStatus.UNSUPPORTED,
             "world-frame",
         ),
+        (
+            {"arm/manipulator": (Transform.identity(),)},
+            (),
+            PlanningStatus.INVALID_GOAL,
+            "at least two waypoints",
+        ),
+        (
+            {
+                "arm/manipulator": (
+                    Transform.identity(),
+                    PoseStamped(frame_id="world"),
+                )
+            },
+            (),
+            PlanningStatus.INVALID_GOAL,
+            "only PoseStamped waypoints or only Transform waypoints",
+        ),
     ],
 )
-def test_linear_cartesian_rejects_invalid_requests(
+def test_cartesian_rejects_invalid_requests(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     targets: dict[str, Any],
@@ -1580,11 +1648,12 @@ def test_linear_cartesian_rejects_invalid_requests(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         targets,
+        RoboPlanCartesianPathConfig(),
         auxiliary_groups=auxiliary_groups,
     )
 
@@ -1593,24 +1662,25 @@ def test_linear_cartesian_rejects_invalid_requests(
     assert result.path == []
 
 
-def test_linear_cartesian_rejects_start_that_differs_from_scene(
+def test_cartesian_rejects_start_that_differs_from_scene(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.1, 0.0]),
-        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
+        {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.INVALID_START
     assert "does not match current scene state" in result.message
 
 
-def test_linear_cartesian_rejects_official_planner_failure(
+def test_cartesian_rejects_official_planner_failure(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     mocker: MockerFixture,
@@ -1624,18 +1694,19 @@ def test_linear_cartesian_rejects_official_planner_failure(
         side_effect=ValueError("tracking failed"),
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": Transform(translation=Vector3(0.1, 0.0, 0.0))},
+        {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.NO_SOLUTION
     assert "tracking failed" in result.message
 
 
-def test_linear_cartesian_postvalidation_checks_combined_multi_robot_state(
+def test_cartesian_postvalidation_checks_combined_multi_robot_state(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     mocker: MockerFixture,
@@ -1658,14 +1729,15 @@ def test_linear_cartesian_postvalidation_checks_combined_multi_robot_state(
         side_effect=collides_only_when_both_arms_advance,
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
         {
-            "arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
-            "right/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0)),
+            "arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0))),
+            "right/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0))),
         },
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.NO_SOLUTION
@@ -1673,7 +1745,7 @@ def test_linear_cartesian_postvalidation_checks_combined_multi_robot_state(
     assert "collision post-validation" in result.message
 
 
-def test_linear_cartesian_postvalidation_checks_between_waypoints(
+def test_cartesian_postvalidation_checks_between_waypoints(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     mocker: MockerFixture,
@@ -1713,11 +1785,12 @@ def test_linear_cartesian_postvalidation_checks_between_waypoints(
         side_effect=collides_only_mid_edge,
     )
 
-    result = world.plan_linear_cartesian_path(
+    result = world.plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"arm/manipulator": Transform(translation=Vector3(0.05, 0.0, 0.0))},
+        {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.NO_SOLUTION

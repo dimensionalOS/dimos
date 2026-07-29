@@ -115,38 +115,40 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
-RoboPlan's typed planner config contains its linear Cartesian planner options:
+RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
-from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.planners.config import (
-    RoboPlanLinearCartesianConfig,
-    RoboPlanPlannerConfig,
+    RoboPlanCartesianPathConfig,
 )
 
-config = ManipulationModuleConfig(
-    planner=RoboPlanPlannerConfig(
-        linear_cartesian=RoboPlanLinearCartesianConfig(
-            max_linear_speed=0.1,
-            max_angular_speed=0.5,
-            max_position_error=0.005,
-            max_orientation_error=0.01,
-        )
-    )
+path_config = RoboPlanCartesianPathConfig(
+    speed_mode="bounded",
+    max_linear_speed=0.1,
+    max_angular_speed=0.5,
+    max_position_error=0.005,
+    max_orientation_error=0.01,
+)
+
+module.plan_cartesian_targets(
+    {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
+    path_config,
 )
 ```
 
-The remaining settings cover sample time, linear/angular acceleration limits,
-joint velocity/acceleration scaling, joint-limit tolerance and gain, and
-per-step attempts. DimOS always selects RoboPlan's bounded-speed mode so the
-official planner checks Cartesian tracking throughout generation.
+The remaining settings mirror RoboPlan's standard Cartesian planner options,
+including bounded and time-optimal speed modes, sample time, solver weights,
+linear/angular acceleration limits, joint velocity/acceleration scaling,
+TOPP-RA corner blending, joint-limit handling, and per-step attempts.
 
-Linear Cartesian planning remains a low-level internal capability in this
-release. `ManipulationModule.plan_linear_cartesian_targets()` accepts targets
-keyed by planning group: `PoseStamped` represents an absolute target and
-`Transform` represents a relative rigid displacement. The Viser panel uses
-absolute targets for interactive planning. There is no skill, MCP tool, or CLI
-motion command yet.
+Cartesian path planning remains a low-level internal capability in this
+release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
+waypoint sequence for each target planning group. A sequence contains only
+`PoseStamped` absolute waypoints or only `Transform` displacements relative to
+the planning start, and begins at the current TCP pose or identity transform.
+RoboPlan plans all target groups simultaneously. The Viser panel constructs a
+two-waypoint absolute path for interactive planning. There is no skill, MCP
+tool, or CLI motion command yet.
 
 Install the manipulation dependencies:
 
@@ -226,14 +228,14 @@ callback generations; it does not touch `WorldSpec`, IK, planner objects,
 The panel's **Planning mode** selector chooses how the current target is
 reached:
 
-- **Free-space** is the default. It resolves the target to joints and invokes
+- **Joint space** is the default. It resolves the target to joints and invokes
   the configured collision-free joint-path planner.
-- **Linear Cartesian** sends the existing transform-control poses as absolute
-  world-frame TCP targets to RoboPlan's linear Cartesian planner. Selected
-  groups without a TCP participate as auxiliary groups.
+- **Cartesian space** sends the existing transform-control poses as absolute
+  world-frame TCP goals to RoboPlan's Cartesian path planner. Selected groups
+  without a TCP participate as auxiliary groups.
 
-Linear Cartesian failure never falls back to free-space planning. A backend
-without linear support reports `UNSUPPORTED`; collision or Cartesian tracking
+Cartesian planning failure never falls back to joint-space planning. A backend
+without Cartesian path support reports `UNSUPPORTED`; collision or tracking
 failure leaves the plan unavailable. Preview and execution use RoboPlan's
 original synchronized timestamps and velocities.
 

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.planners.selected_joint_space import (
     SelectedJointSpace,
     normalize_selection_target,
@@ -288,19 +289,20 @@ class RRTConnectPlanner:
             max_iterations,
         )
 
-    def plan_linear_cartesian_path(
+    def plan_cartesian_path(
         self,
         world: WorldSpec,
         selection: PlanningGroupSelection,
         start: JointState,
         targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanningResult:
-        """Report that RRT-Connect cannot guarantee linear TCP motion."""
+        """Report that RRT-Connect does not support Cartesian path planning."""
         return PlanningResult(
             status=PlanningStatus.UNSUPPORTED,
-            message="RRT-Connect does not support linear Cartesian path planning",
+            message="RRT-Connect does not support Cartesian path planning",
         )
 
     def _extend_selected_tree(
