@@ -33,8 +33,8 @@ def clean_config(monkeypatch):
 
 
 def test_robot_ip_becomes_connect_endpoint(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "robot_ip", "10.55.1.102")
-    assert ZenohConfig().connect == ["tcp/10.55.1.102:7447"]
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    assert ZenohConfig().connect == ["tcp/192.0.2.10:7447"]
 
 
 def test_no_robot_ip_keeps_scouting_only(clean_config):
@@ -43,24 +43,24 @@ def test_no_robot_ip_keeps_scouting_only(clean_config):
 
 def test_lcm_transport_derives_nothing(clean_config, monkeypatch):
     monkeypatch.setattr(global_config, "transport", "lcm")
-    monkeypatch.setattr(global_config, "robot_ip", "10.55.1.102")
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
     assert ZenohConfig().connect == []
 
 
 def test_explicit_port_is_kept(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "robot_ip", "10.55.1.102:9000")
-    assert ZenohConfig().connect == ["tcp/10.55.1.102:9000"]
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10:9000")
+    assert ZenohConfig().connect == ["tcp/192.0.2.10:9000"]
 
 
 def test_robot_ips_list_dedupes_against_robot_ip(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "robot_ip", "10.55.1.102")
-    monkeypatch.setattr(global_config, "robot_ips", "10.55.1.102, 10.55.1.103")
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10, 192.0.2.11")
     assert ZenohConfig().connect == [
-        "tcp/10.55.1.102:7447",
-        "tcp/10.55.1.103:7447",
+        "tcp/192.0.2.10:7447",
+        "tcp/192.0.2.11:7447",
     ]
 
 
 def test_caller_override_wins(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "robot_ip", "10.55.1.102")
-    assert ZenohConfig(connect=["tcp/1.2.3.4:7447"]).connect == ["tcp/1.2.3.4:7447"]
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    assert ZenohConfig(connect=["tcp/198.51.100.7:7447"]).connect == ["tcp/198.51.100.7:7447"]
