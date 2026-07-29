@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock
@@ -53,6 +54,7 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
+from dimos.manipulation.planning.spec.validation import validate_obstacle
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanGroup,
@@ -107,6 +109,7 @@ class RoboPlanWorld:
         self._authoritative_robot_ids: set[WorldRobotID] = set()
         self._robot_counter = 0
         self._finalized = False
+        self._usable = True
         self._live_context = RoboPlanContext()
         self._lock = RLock()
 
@@ -156,54 +159,88 @@ class RoboPlanWorld:
     def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add a supported obstacle to the RoboPlan scene."""
         with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle, allow_empty_name=True)
             obstacle_id = obstacle.name
             if not obstacle_id:
                 return None
             if obstacle_id in self._obstacles:
                 return None
-            if self._finalized:
-                self._add_obstacle_to_scene(obstacle, obstacle_id)
-            self._obstacles[obstacle_id] = obstacle
+            snapshot = deepcopy(obstacle)
+            self._add_obstacle_to_scene(snapshot, obstacle_id)
+            self._obstacles[obstacle_id] = snapshot
             return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
         with self._lock:
+            self._require_finalized()
             if obstacle_id not in self._obstacles:
                 return False
-            if self._finalized:
-                self._require_scene().removeGeometry(obstacle_id)
+            self._require_scene().removeGeometry(obstacle_id)
             del self._obstacles[obstacle_id]
             return True
 
-    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update an obstacle pose and invalidate collision scratch."""
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Atomically replace a complete obstacle."""
         with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle)
+            snapshot = deepcopy(obstacle)
+            obstacle_id = snapshot.name
             if obstacle_id not in self._obstacles:
                 return False
-            if self._finalized:
-                self._require_scene().updateGeometryPlacement(
-                    obstacle_id, _WORLD_FRAME, pose_to_matrix(pose)
-                )
-            self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
+            scene = self._require_scene()
+            try:
+                scene.removeGeometry(obstacle_id)
+                self._add_obstacle_to_scene(snapshot, obstacle_id)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = snapshot
+            return True
+
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Atomically update only an obstacle pose."""
+        with self._lock:
+            self._require_finalized()
+            replacement_pose = deepcopy(pose)
+            matrix = pose_to_matrix(replacement_pose)
+            if not np.isfinite(matrix).all():
+                raise ValueError("Obstacle pose must contain only finite values")
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            try:
+                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, matrix)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = replace(
+                self._obstacles[obstacle_id],
+                pose=replacement_pose,
+            )
             return True
 
     def clear_obstacles(self) -> None:
         """Remove all tracked obstacles."""
         with self._lock:
+            self._require_finalized()
             for obstacle_id in list(self._obstacles.keys()):
                 self.remove_obstacle(obstacle_id)
 
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently tracked by DimOS."""
         with self._lock:
-            return list(self._obstacles.values())
+            self._require_finalized()
+            return deepcopy(list(self._obstacles.values()))
 
     # Lifecycle
 
     def finalize(self) -> None:
         """Build one immutable robot model and materialize pending obstacles."""
         with self._lock:
+            self._require_usable()
             if self._finalized:
                 return
             model = build_roboplan_model(
@@ -565,15 +602,22 @@ class RoboPlanWorld:
         )
 
     def _require_finalized(self) -> None:
+        self._require_usable()
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
+    def _require_usable(self) -> None:
+        if not self._usable:
+            raise RuntimeError("Planning world is invalid and must be reconstructed")
+
     def _require_scene(self) -> Any:
+        self._require_usable()
         if self._scene is None:
             raise RuntimeError("RoboPlan scene is not initialized; finalize the world first")
         return self._scene
 
     def _require_model(self) -> RoboPlanModel:
+        self._require_usable()
         if self._model is None:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
@@ -693,6 +737,11 @@ class RoboPlanWorld:
             )
             return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+
+    def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
+        validate_obstacle(
+            obstacle, pose_to_matrix(obstacle.pose), allow_empty_name=allow_empty_name
+        )
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:

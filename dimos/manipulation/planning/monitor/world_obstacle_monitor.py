@@ -26,11 +26,16 @@ Example:
 
 from __future__ import annotations
 
+from dataclasses import replace
 import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import CollisionObjectMessage, Obstacle
+from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
+    CollisionObjectMessage,
+    Obstacle,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
@@ -184,19 +189,43 @@ class WorldObstacleMonitor:
                 logger.error(f"Obstacle callback error: {e}")
 
     def _update_collision_object(self, msg: CollisionObjectMessage) -> None:
-        """Update a collision object pose."""
+        """Route a pose-only update or a complete obstacle replacement."""
+        has_replacement_fields = (
+            msg.primitive_type is not None or msg.dimensions is not None or msg.color is not None
+        )
+
         if msg.id not in self._collision_objects:
-            # Treat as add if doesn't exist
-            self._add_collision_object(msg)
+            if has_replacement_fields and self._msg_to_obstacle(msg) is not None:
+                self._add_collision_object(msg)
+            else:
+                logger.warning(
+                    "Cannot update unknown collision object '%s' without a complete "
+                    "obstacle description",
+                    msg.id,
+                )
             return
 
         obstacle_id = self._collision_objects[msg.id]
+        if has_replacement_fields:
+            replacement = self._msg_to_obstacle(msg)
+            if replacement is None:
+                logger.warning("Rejected incomplete collision object replacement for '%s'", msg.id)
+                return
+            replacement = replace(replacement, name=obstacle_id)
+            if not self._parent.update_obstacle(replacement):
+                return
+            logger.debug("Replaced collision object '%s'", msg.id)
+        elif msg.pose is not None:
+            if not self._parent.update_obstacle_pose(obstacle_id, msg.pose):
+                return
+            logger.debug("Updated collision object '%s' pose", msg.id)
+        else:
+            logger.warning("Collision object update for '%s' contains no changes", msg.id)
+            return
 
-        if msg.pose is not None:
-            self._parent.update_obstacle_pose(obstacle_id, msg.pose)
-            logger.debug(f"Updated collision object '{msg.id}' pose")
-
-        # Notify callbacks
+        # Keep the legacy callback payload unchanged: updates report None.
+        # Before adding consumers, define separate full-replacement and pose-only
+        # callback semantics instead of inferring them from this payload.
         for callback in self._obstacle_callbacks:
             try:
                 callback("update", obstacle_id, None)
@@ -224,7 +253,7 @@ class WorldObstacleMonitor:
             obstacle_type=obstacle_type,
             pose=msg.pose,
             dimensions=msg.dimensions,
-            color=msg.color,
+            color=msg.color or DEFAULT_OBSTACLE_RGBA,
         )
 
     def on_detections(self, detections: list[Detection3D]) -> None:
@@ -254,6 +283,9 @@ class WorldObstacleMonitor:
                 if det_id in self._perception_objects:
                     # Update existing obstacle
                     obstacle_id = self._perception_objects[det_id]
+                    # TODO: Cache the last accepted obstacle and use complete
+                    # replacement when detection dimensions change. Advance
+                    # tracking state only after the world accepts the update.
                     self._parent.update_obstacle_pose(obstacle_id, pose)
                     self._perception_timestamps[det_id] = current_time
                 else:
@@ -399,8 +431,8 @@ class WorldObstacleMonitor:
         """Add callback for obstacle changes.
 
         Args:
-            callback: Function called with (operation, obstacle_id, obstacle)
-                     where operation is "add", "update", or "remove"
+            callback: Function called with (operation, obstacle_id, obstacle).
+                Add passes the obstacle; update and remove currently pass None.
         """
         self._obstacle_callbacks.append(callback)
 
@@ -477,6 +509,8 @@ class WorldObstacleMonitor:
 
         # Step 3: apply to Drake world under lock (fast)
         with self._lock:
+            # TODO: Diff stable ObjectDB IDs and update existing obstacles
+            # instead of removing and re-adding the complete set.
             for obs_id in self._object_obstacles.values():
                 self._parent.remove_obstacle(obs_id)
             self._object_obstacles.clear()
