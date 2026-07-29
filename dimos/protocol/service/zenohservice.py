@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 import json
+import platform
+import socket
 import threading
+import time
 from typing import Any
 
 from pydantic import Field
@@ -31,6 +34,13 @@ logger = setup_logger()
 # Robot-side bridges (e.g. go2web) listen here so a remote dimos can dial in
 # when multicast discovery fails. Zenoh's own default port.
 ROBOT_ZENOH_PORT = 7447
+
+# Poll interval while waiting for connect endpoints to link.
+_CONNECT_POLL_INTERVAL = 0.05
+
+# Interface scouting falls back to when network discovery is off. Zenoh takes an
+# interface name, and Darwin spells loopback differently.
+LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 
 
 def _default_connect_endpoints() -> list[str]:
@@ -57,14 +67,52 @@ def _default_connect_endpoints() -> list[str]:
     return out
 
 
+def _default_scouting() -> bool:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_scouting
+
+
+def _default_connect_timeout() -> float:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_connect_timeout
+
+
+def endpoint_addresses(endpoint: str) -> set[str]:
+    """Resolve a locator to the ``host:port`` forms a live link may report.
+
+    ``tcp/go2:7447`` is dialled by name but the established link reports the
+    resolved address, so the name alone never matches.
+    """
+    _, _, address = endpoint.rpartition("/")
+    host, _, port = address.rpartition(":")
+    if not host:
+        return {address}
+    out = {f"{host}:{port}"}
+    try:
+        for info in socket.getaddrinfo(host, None):
+            out.add(f"{info[4][0]}:{port}")
+    except OSError:
+        pass
+    return out
+
+
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
+    # Discover peers across the network. Off keeps discovery on loopback.
+    scouting: bool = Field(default_factory=_default_scouting)
+    # Seconds to block in start() waiting for `connect` endpoints to link.
+    connect_timeout: float = Field(default_factory=_default_connect_timeout)
 
     @property
     def session_key(self) -> str:
-        return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
+        return (
+            f"{self.mode}|{json.dumps(sorted(self.connect))}"
+            f"|{json.dumps(sorted(self.listen))}|{self.scouting}"
+        )
 
 
 class ZenohSessionPool:
@@ -83,6 +131,15 @@ class ZenohSessionPool:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
                     zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
+                if not config.scouting:
+                    # Loopback multicast stays on so sibling worker processes on
+                    # this host still discover each other -- cutting scouting
+                    # outright leaves them unable to reach one another at all,
+                    # since peers don't route each other's traffic.
+                    zconfig.insert_json5(
+                        "scouting/multicast/interface", json.dumps(LOOPBACK_INTERFACE)
+                    )
+                    zconfig.insert_json5("scouting/gossip/enabled", "false")
                 self._sessions[key] = zenoh.open(zconfig)
                 logger.debug(f"Zenoh session opened in {config.mode} mode")
             return self._sessions[key]
@@ -111,7 +168,38 @@ class ZenohService(Service):
 
     def start(self) -> None:
         self._session = self._session_pool.acquire(self.config)
+        self._await_connect(self._session)
         super().start()
+
+    def _await_connect(self, session: zenoh.Session) -> None:
+        """Block until every configured connect endpoint has an established link.
+
+        Opening a zenoh session returns before its endpoints are dialled, so
+        without this a blueprint starts publishing into a session that has
+        nowhere to send yet and the first messages are simply lost. LCM blocks
+        in start() for the same reason.
+
+        Unreachable endpoints are a warning, not an error: one robot being down
+        should not stop the rest of the graph from coming up.
+        """
+        pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
+        if not pending or self.config.connect_timeout <= 0:
+            return
+        deadline = time.monotonic() + self.config.connect_timeout
+        while pending:
+            linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
+            for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
+                logger.debug(f"Zenoh linked {endpoint}")
+                del pending[endpoint]
+            if not pending:
+                return
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"Zenoh endpoints not linked after {self.config.connect_timeout}s: "
+                    f"{sorted(pending)} - continuing, published messages may be dropped"
+                )
+                return
+            time.sleep(_CONNECT_POLL_INTERVAL)
 
     @property
     def session(self) -> zenoh.Session:
