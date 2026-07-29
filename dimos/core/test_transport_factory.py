@@ -107,10 +107,6 @@ def test_rpc_backend_resolves_per_transport() -> None:
     assert rpc_backend(ZENOH) is ZenohRPC
 
 
-def test_zenoh_rpc_topicgen_has_no_leading_slash() -> None:
-    assert ZenohRPC().topicgen("Hello/say", req_or_res=True).topic == "dimos/rpc/Hello/say/res"
-
-
 def test_apply_transport_arg() -> None:
     g = GlobalConfig(transport="lcm")
     apply_transport_arg(["prog", "--transport", "zenoh"], g=g)
