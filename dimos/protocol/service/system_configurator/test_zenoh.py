@@ -18,18 +18,39 @@
 import platform
 import resource
 
+from dimos.protocol.service.system_configurator import zenoh as zenoh_mod
 from dimos.protocol.service.system_configurator.zenoh import MemlockConfiguratorLinux
 from dimos.protocol.service.system_configurator.zenoh_config import zenoh_configurators
 
 REQUIRED = 64 * 1024 * 1024
+USER = "testuser"
 
 
-def _configurator(monkeypatch, soft: int, hard: int | None = None) -> MemlockConfiguratorLinux:
-    """A configurator over a fake rlimit pair."""
+def _configurator(
+    monkeypatch, soft: int, hard: int | None = None, persisted: str | None = None
+) -> MemlockConfiguratorLinux:
+    """A configurator over a fake rlimit pair and an optional pam_limits file."""
     state = {"limit": (soft, soft if hard is None else hard)}
     monkeypatch.setattr(resource, "getrlimit", lambda _: state["limit"])
     monkeypatch.setattr(resource, "setrlimit", lambda _, value: state.__setitem__("limit", value))
+    monkeypatch.setattr(zenoh_mod, "LIMITS_FILE", _StubPath(persisted))
+    monkeypatch.setattr(MemlockConfiguratorLinux, "_user", property(lambda self: USER))
     return MemlockConfiguratorLinux(required_bytes=REQUIRED)
+
+
+class _StubPath:
+    """Stands in for LIMITS_FILE without touching /etc."""
+
+    def __init__(self, text: str | None) -> None:
+        self._text = text
+
+    def read_text(self) -> str:
+        if self._text is None:
+            raise OSError("no such file")
+        return self._text
+
+    def __str__(self) -> str:
+        return "/etc/security/limits.d/99-dimos-memlock.conf"
 
 
 def test_check_passes_when_limit_is_sufficient(monkeypatch):
@@ -71,3 +92,48 @@ def test_soft_limit_is_raised_when_hard_limit_allows(monkeypatch):
     configurator = _configurator(monkeypatch, soft=8 * 1024 * 1024, hard=REQUIRED)
     assert configurator.check() is True
     assert resource.getrlimit(resource.RLIMIT_MEMLOCK)[0] >= REQUIRED
+
+
+def test_user_scoped_drop_in_stops_the_prompt(monkeypatch):
+    """pam_limits only applies at login; re-asking every run would never help."""
+    configurator = _configurator(
+        monkeypatch,
+        soft=8 * 1024 * 1024,
+        persisted=f"{USER}\t-\tmemlock\t65536\n",
+    )
+    assert configurator.check() is True
+    assert configurator.explanation() is None
+
+
+def test_wildcard_drop_in_still_counts(monkeypatch):
+    """A legacy '*' line applies to this user too, so it must not re-prompt."""
+    configurator = _configurator(
+        monkeypatch,
+        soft=8 * 1024 * 1024,
+        persisted="*\t-\tmemlock\t65536\n",
+    )
+    assert configurator.check() is True
+
+
+def test_drop_in_for_another_user_is_ignored(monkeypatch):
+    """Someone else's line grants us nothing, so the prompt must still fire."""
+    configurator = _configurator(
+        monkeypatch,
+        soft=8 * 1024 * 1024,
+        persisted="somebodyelse\t-\tmemlock\t65536\n",
+    )
+    assert configurator.check() is False
+
+
+def test_drop_in_below_requirement_still_prompts(monkeypatch):
+    configurator = _configurator(
+        monkeypatch,
+        soft=8 * 1024 * 1024,
+        persisted=f"{USER}\t-\tmemlock\t16384\n",
+    )
+    assert configurator.check() is False
+
+
+def test_unparseable_drop_in_still_prompts(monkeypatch):
+    configurator = _configurator(monkeypatch, soft=8 * 1024 * 1024, persisted="garbage\n")
+    assert configurator.check() is False
