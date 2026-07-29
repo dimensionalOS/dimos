@@ -42,7 +42,9 @@ class BinaryReader(Protocol):
 
 
 class ClosableBinaryReader(BinaryReader, Protocol):
-    """Object body that releases its underlying resource."""
+    """Seekable object body that releases its underlying resource."""
+
+    def seek(self, offset: int, whence: int = 0) -> int: ...
 
     def close(self) -> None: ...
 
