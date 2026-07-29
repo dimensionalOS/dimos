@@ -56,8 +56,6 @@ class RobotModelConfig(ModuleConfig):
         joint_name_mapping: Maps coordinator joint names to local model joint names.
             This is retained for current coordinator/monitor integrations while planning
             APIs move toward globally scoped joint names.
-        coordinator_task_name: Task name for executing trajectories via coordinator RPC.
-            If set, trajectories can be executed via execute_trajectory() RPC.
     """
 
     name: str
@@ -79,7 +77,6 @@ class RobotModelConfig(ModuleConfig):
     max_acceleration: float = 2.0
     # Coordinator integration
     joint_name_mapping: dict[str, str] = Field(default_factory=dict)
-    coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)

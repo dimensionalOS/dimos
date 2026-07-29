@@ -27,6 +27,7 @@ dimos run unitree-g1-agentic --robot-ip 192.168.123.161   # real G1 hardware
 
 # --- Inspect & control ---
 dimos status
+dimos shell            # IPython attached to all module RPCs (no MCP required)
 dimos log              # last 50 lines, human-readable
 dimos log -f           # follow/tail in real time
 dimos agent-send "say hello"
@@ -44,7 +45,7 @@ dimos restart          # stop + re-run with same original args
 | `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
-| `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
+| `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
 
@@ -217,6 +218,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | Command | Description |
 |---------|-------------|
 | `dimos run <blueprint> [--daemon]` | Start a blueprint |
+| `dimos shell` | Open an attached IPython session for live module/RPC discovery and calls |
 | `dimos status` | Show running instance (run ID, PID, blueprint, uptime, log path) |
 | `dimos stop [--force]` | SIGTERM → SIGKILL after 5s; `--force` = immediate SIGKILL |
 | `dimos restart [--force]` | Stop + re-exec with original args |

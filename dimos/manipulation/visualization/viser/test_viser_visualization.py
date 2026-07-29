@@ -180,7 +180,6 @@ class Config:
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
-    coordinator_task_name: str | None = None
     pre_grasp_offset: float = 0.0
 
     def __post_init__(self) -> None:

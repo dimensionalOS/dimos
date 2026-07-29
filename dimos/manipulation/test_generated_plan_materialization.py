@@ -19,7 +19,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation._test_manipulation_helpers import make_module
 from dimos.manipulation.manipulation_module import ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -78,7 +77,7 @@ def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -
     )
 
 
-def _module(monkeypatch: pytest.MonkeyPatch):
+def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     RecordingGenerator.calls = []
     RecordingGenerator.limits = None
     RecordingGenerator.fail = False
@@ -87,7 +86,7 @@ def _module(monkeypatch: pytest.MonkeyPatch):
     )
     left = _robot("left", ["a", "b"], 1.0, 2.0)
     right = _robot("right", ["c"], 3.0, 4.0)
-    module = make_module()
+    module = module_factory()
     module._robots = {
         "left": ("left_id", left, MagicMock()),
         "right": ("right_id", right, MagicMock()),
@@ -107,8 +106,9 @@ def _path(names: list[str], first: list[float], second: list[float]) -> list[Joi
 
 def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distinct_path(
     monkeypatch,
+    module_factory,
 ):
-    module = _module(monkeypatch)
+    module = _module(monkeypatch, module_factory)
     names = ["left/b", "left/a", "right/c"]
     path = _path(names, [0.0, 0.0, 0.0], [0.2, 0.1, 0.3])
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
@@ -132,8 +132,8 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
         (_path(["left/b", "left/a"], [0.0, float("nan")], [1.0, 1.0]), "non-finite"),
     ],
 )
-def test_rejects_malformed_or_nonfinite_waypoints(monkeypatch, path, message):
-    module = _module(monkeypatch)
+def test_rejects_malformed_or_nonfinite_waypoints(monkeypatch, module_factory, path, message):
+    module = _module(monkeypatch, module_factory)
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
@@ -143,8 +143,8 @@ def test_rejects_malformed_or_nonfinite_waypoints(monkeypatch, path, message):
     assert message in module._error_message
 
 
-def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatch):
-    module = _module(monkeypatch)
+def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatch, module_factory):
+    module = _module(monkeypatch, module_factory)
     module._robots["left"][1].max_velocity = 0.0
     names = ["left/b", "left/a"]
     path = _path(names, [0.0, 0.0], [1.0, 1.0])
@@ -156,7 +156,7 @@ def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatc
     assert module._last_plan is None
     assert RecordingGenerator.calls == []
 
-    module = _module(monkeypatch)
+    module = _module(monkeypatch, module_factory)
     RecordingGenerator.fail = True
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
@@ -166,8 +166,8 @@ def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatc
     assert len(RecordingGenerator.calls) == 1
 
 
-def test_zero_generation_after_caching_for_status_and_completion(monkeypatch):
-    module = _module(monkeypatch)
+def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, module_factory):
+    module = _module(monkeypatch, module_factory)
     names = ["left/b", "left/a"]
     path = _path(names, [0.0, 0.0], [1.0, 1.0])
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
@@ -176,6 +176,5 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch):
     assert module._plan_selected_path(("left/group",), path[0], path[-1], 1)
     RecordingGenerator.calls = []
 
-    module._get_coordinator_client = MagicMock(return_value=None)
-    module._wait_for_trajectory_completion("left", timeout=0.0)
+    module._wait_for_trajectory_completion(timeout=0.0)
     assert RecordingGenerator.calls == []

@@ -253,9 +253,8 @@ planner is locked for its whole native call.
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
-| `xarm6-planner-only` | XArm6 standalone planner (no coordinator) |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
-| `dual-xarm6-planner` | Dual XArm6 planning |
+| `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
