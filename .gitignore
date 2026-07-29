@@ -23,6 +23,8 @@ target/
 dist/
 build/
 *.so
+/web/cockpit/.build.lock
+/web/cockpit/.dist-*
 
 # Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)
 .direnv/

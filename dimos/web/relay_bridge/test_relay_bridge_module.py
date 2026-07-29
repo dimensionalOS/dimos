@@ -25,6 +25,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 import json
+from pathlib import Path
 import socket
 import threading
 import time
@@ -631,6 +632,65 @@ def test_supervisor_survives_reconcile_error(bridge, monkeypatch) -> None:
     assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
 
 
+def test_port_conflict_fails_before_build(monkeypatch) -> None:
+    # The port probe precedes the build: a start that cannot get the port
+    # must not touch the dist another running relay is serving.
+    builds: list[int] = []
+    monkeypatch.setattr(
+        relay_bridge_module, "ensure_cockpit_dist", lambda *args, **kwargs: builds.append(1)
+    )
+    spawns: list[int] = []
+    monkeypatch.setattr(
+        RelayBridgeModule, "_spawn_relay", lambda self, open_browser: spawns.append(1)
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        port = blocker.getsockname()[1]
+        module = RelayBridgeModule(local_port=port, open_browser=False, robot_id="unit-bot")
+        module.odom.transport = FakeTransport()
+        with pytest.raises(RuntimeError, match="unavailable"):
+            module.start()
+        stop_module(module)
+    assert builds == [] and spawns == []
+
+
+def test_build_cancellation_is_bounded(monkeypatch) -> None:
+    # Cancelling a start mid-build must reach the build (which kills its
+    # child) promptly instead of waiting out the 600 s build timeout.
+    started = threading.Event()
+    finished = threading.Event()
+
+    def fake_ensure(web_dir: Path, cancel: threading.Event | None = None) -> None:
+        assert cancel is not None
+        started.set()
+        cancel.wait(timeout=30.0)
+        finished.set()
+
+    monkeypatch.setattr(relay_bridge_module, "ensure_cockpit_dist", fake_ensure)
+    monkeypatch.setattr(relay_bridge_module, "find_web_dir", lambda: Path("/nonexistent"))
+    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    try:
+        assert module._loop is not None
+        future = asyncio.run_coroutine_threadsafe(module._build_cockpit(), module._loop)
+        assert started.wait(timeout=5.0)
+        future.cancel()
+        assert finished.wait(timeout=5.0)  # the cancel event reached the build
+        assert wait_until(lambda: module._build_cancel is None)
+    finally:
+        stop_module(module)
+
+
+def test_close_cancels_in_flight_build() -> None:
+    # stop() racing a still-starting main() (start blocked in the build) must
+    # cancel the build via _close_module rather than wait for its timeout.
+    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    cancel = threading.Event()
+    module._build_cancel = cancel
+    stop_module(module)
+    assert cancel.is_set()
+
+
 def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
     # First-connect failure after a successful spawn happens before main yields;
     # its unified finally must still reap the fresh child.
@@ -638,7 +698,11 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
         raise OSError("connect refused")
 
     monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fail_connect)
-    module = RelayBridgeModule(local_port=0, open_browser=False, robot_id="unit-bot")
+    # cockpit_build=False: the build now runs in main() before _spawn_relay,
+    # so the fake spawn below no longer shields this test from it.
+    module = RelayBridgeModule(
+        local_port=0, open_browser=False, cockpit_build=False, robot_id="unit-bot"
+    )
     relay = FakeRelay(running=True)
 
     def fake_spawn(open_browser: bool) -> str:

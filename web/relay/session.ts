@@ -19,13 +19,24 @@ import {
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
+import { parseManifest } from "@dimos/shared/manifest";
 import {
   type ChannelPolicy,
+  type FrameWriter,
   readDataFrameBytes,
   readWebTransportPreamble,
   type ViewerSink,
 } from "./forward.ts";
 import type { Registry, RobotPeer, ViewerPeer } from "./registry.ts";
+
+// Relay->viewer send priorities, all in one place. WebTransport sendOrder
+// (backed by quinn stream priority here): queued bytes of a higher-order
+// stream are sent before those of a lower-order one, so control must outrank
+// reliable telemetry and reliable must outrank latest video, whose per-frame
+// streams count down from -1 to complete oldest-first (README bug 7).
+// Datagrams (the Python viewer's control leg) have no sendOrder API.
+export const CONTROL_SEND_ORDER = 2;
+export const RELIABLE_SEND_ORDER = 1;
 
 function closeAfterFlush(wt: WebTransport, reason: string): void {
   // Session close discards queued stream/datagram data, so give a just-sent
@@ -111,6 +122,16 @@ export class RobotSession implements RobotPeer {
           "missing robot id",
         );
       }
+      // Manifest-less hellos are legal (transport tests); a declared manifest
+      // must pass the domain rules or duplicate/bogus channels would be
+      // interpreted inconsistently downstream.
+      if (msg.manifest !== undefined) {
+        try {
+          parseManifest(msg.manifest);
+        } catch (e) {
+          return this.#reject("invalid_manifest", (e as Error).message, "invalid manifest");
+        }
+      }
       // First hello wins; resends (the bridge repeats hello until welcome)
       // must not mutate identity mid-session.
       if (this.info === null) {
@@ -164,16 +185,24 @@ export class ViewerSession implements ViewerPeer {
     this.#wt = wt;
     this.id = id;
     this.#registry = registry;
-    let sendOrder = 1;
+    let latestOrder = 1;
     this.sink = {
       async sendFrame(bytes: Uint8Array): Promise<void> {
         const stream = await wt.createUnidirectionalStream({
           waitUntilAvailable: true,
-          sendOrder: -(sendOrder++),
+          sendOrder: -(latestOrder++),
         });
         const writer = stream.getWriter();
         await writer.write(bytes);
         await writer.close();
+      },
+      async openStream(): Promise<FrameWriter> {
+        // Persistent stream for a reliable channel.
+        const stream = await wt.createUnidirectionalStream({
+          waitUntilAvailable: true,
+          sendOrder: RELIABLE_SEND_ORDER,
+        });
+        return stream.getWriter();
       },
       kick(reason: string): void {
         console.log(`[relay] kicking viewer: ${reason}`);
@@ -216,6 +245,9 @@ export class ViewerSession implements ViewerPeer {
     (async () => {
       for await (const bidi of this.#wt.incomingBidirectionalStreams) {
         (async () => {
+          // Viewer-opened, so its send half starts at the default order 0,
+          // which a saturated reliable stream would starve.
+          bidi.writable.sendOrder = CONTROL_SEND_ORDER;
           const writer = bidi.writable.getWriter();
           const reply = (m: Msg) => {
             writer.write(encodeControlFrame(m)).catch(() => {});
