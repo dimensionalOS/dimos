@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm6 WorldBelief perception stack."""
+"""xArm6 WorldBelief perception and recording-replay stacks."""
 
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import Any, cast
 
 import rerun.blueprint as rrb
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -31,6 +32,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.worldbelief_module import WorldBeliefModule
 from dimos.perception.worldbelief_recorder import WorldBeliefRecorder
+from dimos.perception.worldbelief_replay import _WorldBeliefReplaySource
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -69,8 +71,45 @@ def _rerun_blueprint() -> rrb.Blueprint:
     )
 
 
+def _rerun_bridge() -> Blueprint:
+    return RerunBridgeModule.blueprint(
+        blueprint=_rerun_blueprint,
+        topic_to_entity=_topic_to_entity,
+        visual_override={
+            "world/color_camera": partial(
+                _camera_info_to_rerun, image_topic="world/color_camera/color_image"
+            ),
+            "world/depth_camera": partial(
+                _camera_info_to_rerun, image_topic="world/depth_camera/depth_image"
+            ),
+        },
+        max_hz={
+            "world/color_camera/color_image": 10.0,
+            "world/depth_camera/depth_image": 5.0,
+            "world/detections_3d": 10.0,
+            "world/pointcloud": 5.0,
+        },
+    )
+
+
+def _worldbelief_module(db_path: Path, history_path: Path) -> Blueprint:
+    return WorldBeliefModule.blueprint(
+        db_path=db_path,
+        history_path=history_path,
+        scan_prompts=[],
+        depth_tolerance_s=0.1,
+        stationary_hz=4.0,
+        yoloe_model_name="yoloe-11l-seg.pt",
+        dino_model_name="facebook/dinov2-base",
+        clip_model_name="openai/clip-vit-base-patch32",
+    )
+
+
 _hw = xarm6_hardware("arm")
 _hw.auto_enable = True
+
+_xarm6_state = STATE_DIR / "worldbelief" / "xarm6"
+_xarm6_recording_base = _xarm6_state / "recordings" / "xarm6_worldbelief.db"
 
 xarm6_worldbelief = autoconnect(
     # Provides wrist-camera FK/TF.
@@ -91,40 +130,48 @@ xarm6_worldbelief = autoconnect(
         base_frame_id="link6",
         base_transform=XARM6_WORLDBELIEF_CAMERA_TRANSFORM,
     ),
-    RerunBridgeModule.blueprint(
-        blueprint=_rerun_blueprint,
-        topic_to_entity=_topic_to_entity,
-        visual_override={
-            "world/color_camera": partial(
-                _camera_info_to_rerun, image_topic="world/color_camera/color_image"
-            ),
-            "world/depth_camera": partial(
-                _camera_info_to_rerun, image_topic="world/depth_camera/depth_image"
-            ),
-        },
-        max_hz={
-            "world/color_camera/color_image": 10.0,
-            "world/depth_camera/depth_image": 5.0,
-            "world/detections_3d": 10.0,
-            "world/pointcloud": 5.0,
-        },
-    ),
-    WorldBeliefRecorder.blueprint(
-        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
-    ),
-    WorldBeliefModule.blueprint(
-        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
-        history_path=STATE_DIR / "worldbelief" / "xarm6" / "worldbelief_history.db",
-        scan_prompts=[],
-        depth_tolerance_s=0.1,
-        stationary_hz=4.0,
-        yoloe_model_name="yoloe-11l-seg.pt",
-        dino_model_name="facebook/dinov2-base",
-        clip_model_name="openai/clip-vit-base-patch32",
+    _rerun_bridge(),
+    WorldBeliefRecorder.blueprint(db_path=_xarm6_recording_base),
+    _worldbelief_module(
+        _xarm6_recording_base,
+        _xarm6_state / "worldbelief_history.db",
     ),
     McpServer.blueprint(),
     coordinator(
         hardware=[_hw],
         tasks=[trajectory_task(_hw)],
     ),
+).global_config(n_workers=8)
+
+
+def _xarm6_worldbelief_replay(dataset: str | Path | None, state_name: str) -> Blueprint:
+    """Replace only the physical sensor/TF source; keep the live belief stack."""
+    state = _xarm6_state / "replay" / state_name
+    recording_base = state / "recordings" / "xarm6_worldbelief.db"
+    source_kwargs: dict[str, Any] = {"instance_name": "worldbelief_replay_source"}
+    if dataset is not None:
+        source_kwargs["dataset"] = dataset
+
+    return autoconnect(
+        _rerun_bridge(),
+        WorldBeliefRecorder.blueprint(db_path=recording_base),
+        _worldbelief_module(recording_base, state / "worldbelief_history.db"),
+        McpServer.blueprint(),
+        _WorldBeliefReplaySource.blueprint(**source_kwargs),
+    )
+
+
+xarm6_worldbelief_replay = _xarm6_worldbelief_replay(
+    None,
+    "custom",
+).global_config(n_workers=8)
+
+xarm6_worldbelief_replay_kitchen = _xarm6_worldbelief_replay(
+    "xarm6_worldbelief_realsense_d435i_kitchen",
+    "kitchen",
+).global_config(n_workers=8)
+
+xarm6_worldbelief_replay_stationery = _xarm6_worldbelief_replay(
+    "xarm6_worldbelief_realsense_d435i_stationery",
+    "stationery",
 ).global_config(n_workers=8)
