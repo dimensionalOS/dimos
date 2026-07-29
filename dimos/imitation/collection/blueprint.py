@@ -49,15 +49,19 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-# buttons / color_image / joint_state / status are left to autoconnect — each
-# name is unique across the composed blueprint, so it resolves to a stable
-# /<name> topic shared by producer and recorder.
+# buttons / color_image / status are left to autoconnect — each name is unique
+# across the composed blueprint, so it resolves to a stable /<name> topic shared
+# by producer and recorder. The joint stream is remapped onto the coordinator's
+# per-robot `arm_joints` output; the recorder still writes it to the db under its
+# port name (`coordinator_joint_state`), which is what DataPrep reads.
+_JOINTS_FROM_ARM = [(CollectionRecorder, "coordinator_joint_state", "arm_joints")]
+
 learning_collect_quest_xarm7 = autoconnect(
     teleop_quest_xarm7,
     *_camera_if_real(),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("xarm7")),
-)
+).remappings(_JOINTS_FROM_ARM)
 
 
 learning_collect_quest_piper = autoconnect(
@@ -65,4 +69,4 @@ learning_collect_quest_piper = autoconnect(
     *_camera_if_real(),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("piper")),
-)
+).remappings(_JOINTS_FROM_ARM)
