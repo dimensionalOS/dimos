@@ -27,7 +27,6 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-import rerun as rr
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
@@ -308,6 +307,8 @@ class Image(Timestamped):
         raise ValueError(f"Unsupported format: {self.format}")
 
     def to_rerun(self) -> Any:
+        import rerun as rr
+
         """Convert to a Rerun archetype: JPEG-encoded for color images, raw for depth."""
         match self.format:
             case ImageFormat.DEPTH | ImageFormat.DEPTH16:
@@ -678,4 +679,5 @@ def _parse_lcm_encoding(enc: str) -> tuple[ImageFormat, type, int]:
     }
     if enc not in m:
         raise ValueError(f"Unsupported encoding: {enc}")
+    return m[enc]
     return m[enc]

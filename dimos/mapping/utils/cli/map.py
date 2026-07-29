@@ -20,13 +20,12 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-import rerun as rr
-import rerun.blueprint as rrb
 import typer
 
-# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d) are
-# deferred into the function bodies below so that `dimos --help` — which imports this
-# module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
+# Heavy imports (rerun → tokio runtime; mapping/memory2 → torch, transformers,
+# open3d) are deferred into the function bodies below so that `dimos --help` — which
+# imports this module just to register the `map` subcommand — stays fast. See
+# test_cli_startup.py.
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory2.stream import Stream
@@ -67,6 +66,8 @@ def _log_markers(
     labels: list[str],
 ) -> None:
     """Render per-marker fill + outline + pin-stem + label as four static entities."""
+    import rerun as rr
+
     n = len(centers)
     pin_strips = [[(cx, cy, cz), (cx, cy, cz + MARKER_STEM)] for (cx, cy, cz) in centers]
     label_positions = [(cx, cy, cz + MARKER_STEM + 0.01) for (cx, cy, cz) in centers]
@@ -183,6 +184,9 @@ def _log_reconstruction(
     bottom_cutoff: float | None = None,
 ) -> None:
     """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
     from dimos.memory2.vis.color import Color
     from dimos.msgs.geometry_msgs.Transform import Transform
 
@@ -418,6 +422,8 @@ def main(
     ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
+    import rerun as rr
+
     from dimos.mapping.loop_closure.pgo import PGO
     from dimos.memory2.cli.dataset import open_store, resolve_dataset
     from dimos.memory2.transform import QualityWindow, SpeedLimit
