@@ -434,16 +434,16 @@ def run(
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
-        # Health check before daemonizing — catch early crashes
+        # Health check before daemonizing ??catch early crashes
         if not coordinator.health_check():
-            typer.echo("Error: health check failed — a worker process died.", err=True)
+            typer.echo("Error: health check failed ??a worker process died.", err=True)
             coordinator.stop()
             raise typer.Exit(1)
 
         n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules)")
-        typer.echo("✓ Health check passed")
-        typer.echo("✓ DimOS running in background\n")
+        typer.echo(f"??All modules started ({n_modules} modules)")
+        typer.echo("??Health check passed")
+        typer.echo("??DimOS running in background\n")
         typer.echo(f"  Run ID:    {run_id}")
         typer.echo(f"  Log:       {log_dir}")
         typer.echo("  Stop:      dimos stop")
@@ -737,7 +737,7 @@ def restart(
     try:
         os.execvp(argv[0], argv)
     except OSError as exc:
-        typer.echo(f"Error: failed to restart — {exc}", err=True)
+        typer.echo(f"Error: failed to restart ??{exc}", err=True)
         raise typer.Exit(1)
 
 
@@ -779,7 +779,7 @@ def list_blueprints() -> None:
 def spy(ctx: typer.Context) -> None:
     """Universal transport spy: topics, rates, sizes across all pubsub transports."""
     # A root-level `--transport` (before the subcommand) sets the stack's pubsub
-    # backend — which single transport dimos processes participate on. The spy is an
+    # backend ??which single transport dimos processes participate on. The spy is an
     # observer: it watches every transport and takes its own repeatable `--transport`
     # filter *after* the subcommand. The two look alike but mean different things, so
     # reject the root placement rather than silently ignoring the requested filter.
@@ -903,8 +903,10 @@ map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
 map_app.command("replay-marker")(_map_replay_marker_main)
 
+from dimos.hosted_data.cli import data_app
 from dimos.memory2.cli.app import mem_app
 
+main.add_typer(data_app, name="data")
 main.add_typer(mem_app, name="mem")
 
 

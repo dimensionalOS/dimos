@@ -23,7 +23,7 @@ import re
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 import uvicorn
@@ -97,29 +97,45 @@ def create_app(repository: ReplayRepositoryBackend) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post(
+    @app.put(
         "/v1/repositories/{owner}/{repository_name}/objects",
         status_code=201,
     )
-    def upload_object(
+    async def upload_object(
         owner: str,
         repository_name: str,
-        file: Annotated[UploadFile, File()],
+        request: Request,
+        filename: str,
+        content_length: Annotated[int | None, Header(alias="Content-Length")] = None,
         expected_sha256: Annotated[str | None, Header(alias="X-Content-SHA256")] = None,
     ) -> dict[str, Any]:
-        if file.filename is None:
-            raise HTTPException(status_code=400, detail="uploaded file needs a filename")
-        if file.size is None:
-            raise HTTPException(status_code=411, detail="uploaded file size is required")
-        item = repository.put_stream(
-            owner=owner,
-            repository=repository_name,
-            filename=file.filename,
-            source=file.file,
-            size_bytes=file.size,
-            content_type=file.content_type or "application/octet-stream",
-            expected_sha256=expected_sha256,
-        )
+        if content_length is None:
+            raise HTTPException(status_code=411, detail="Content-Length is required")
+        if content_length < 0:
+            raise HTTPException(status_code=400, detail="Content-Length cannot be negative")
+
+        received = 0
+        with tempfile.SpooledTemporaryFile(max_size=8 * _STREAM_CHUNK_SIZE, mode="w+b") as source:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > content_length:
+                    raise HTTPException(status_code=400, detail="request body exceeds Content-Length")
+                source.write(chunk)
+            if received != content_length:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"received {received} bytes, expected {content_length}",
+                )
+            source.seek(0)
+            item = repository.put_stream(
+                owner=owner,
+                repository=repository_name,
+                filename=filename,
+                source=source,
+                size_bytes=content_length,
+                content_type=request.headers.get("content-type", "application/octet-stream"),
+                expected_sha256=expected_sha256,
+            )
         return item.to_dict()
 
     @app.get("/v1/repositories/{owner}/{repository_name}/objects")

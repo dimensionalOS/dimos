@@ -29,15 +29,29 @@ def _client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(ReplayRepository(tmp_path / "objects")))
 
 
+def _upload(client: TestClient, payload: bytes, *, owner: str = "alice"):
+    return client.put(
+        f"/v1/repositories/{owner}/go2/objects",
+        params={"filename": "capture.mp4"},
+        content=payload,
+        headers={"Content-Type": "video/mp4", "Content-Length": str(len(payload))},
+    )
+
+
 def test_upload_list_head_and_download(tmp_path: Path) -> None:
     payload = b"\x00\x00\x00\x18ftypmp42" + b"video-frame" * 100_000
     digest = hashlib.sha256(payload).hexdigest()
 
     with _client(tmp_path) as client:
-        upload = client.post(
+        upload = client.put(
             "/v1/repositories/alice/go2/objects",
-            files={"file": ("capture.mp4", payload, "video/mp4")},
-            headers={"X-Content-SHA256": digest},
+            params={"filename": "capture.mp4"},
+            content=payload,
+            headers={
+                "Content-Type": "video/mp4",
+                "Content-Length": str(len(payload)),
+                "X-Content-SHA256": digest,
+            },
         )
         assert upload.status_code == 201
         assert upload.json()["object_id"] == digest
@@ -62,11 +76,8 @@ def test_download_supports_browser_byte_ranges(tmp_path: Path) -> None:
     payload = bytes(range(100))
 
     with _client(tmp_path) as client:
-        uploaded = client.post(
-            "/v1/repositories/alice/video/objects",
-            files={"file": ("clip.mp4", payload, "video/mp4")},
-        ).json()
-        url = f"/v1/repositories/alice/video/objects/{uploaded['object_id']}"
+        uploaded = _upload(client, payload).json()
+        url = f"/v1/repositories/alice/go2/objects/{uploaded['object_id']}"
 
         middle = client.get(url, headers={"Range": "bytes=10-19"})
         assert middle.status_code == 206
@@ -87,10 +98,7 @@ def test_invalid_range_and_missing_object_return_http_errors(tmp_path: Path) -> 
         missing = client.get(f"/v1/repositories/alice/go2/objects/{digest}")
         assert missing.status_code == 404
 
-        uploaded = client.post(
-            "/v1/repositories/alice/go2/objects",
-            files={"file": ("clip.mp4", b"small-video", "video/mp4")},
-        ).json()
+        uploaded = _upload(client, b"small-video").json()
         invalid = client.get(
             f"/v1/repositories/alice/go2/objects/{uploaded['object_id']}",
             headers={"Range": "bytes=999-1000"},
@@ -101,18 +109,27 @@ def test_invalid_range_and_missing_object_return_http_errors(tmp_path: Path) -> 
 
 def test_upload_rejects_digest_mismatch_and_unsafe_names(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        mismatch = client.post(
+        mismatch = client.put(
             "/v1/repositories/alice/go2/objects",
-            files={"file": ("clip.mp4", b"video", "video/mp4")},
-            headers={"X-Content-SHA256": "0" * 64},
+            params={"filename": "clip.mp4"},
+            content=b"video",
+            headers={"Content-Length": "5", "X-Content-SHA256": "0" * 64},
         )
         assert mismatch.status_code == 400
 
-        unsafe = client.post(
-            "/v1/repositories/bad!owner/go2/objects",
-            files={"file": ("clip.mp4", b"video", "video/mp4")},
-        )
+        unsafe = _upload(client, b"video", owner="bad!owner")
         assert unsafe.status_code == 400
+
+
+def test_upload_requires_content_length(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.put(
+            "/v1/repositories/alice/go2/objects",
+            params={"filename": "clip.mp4"},
+            content=b"",
+            headers={"Content-Length": ""},
+        )
+        assert response.status_code in {411, 422}
 
 
 def test_health(tmp_path: Path) -> None:
