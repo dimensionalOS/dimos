@@ -1,0 +1,109 @@
+{
+  "arcade machine": {
+    "status": "dropped",
+    "note": "white service robot; it moves between sightings (~0.9 m drift across the location group), so it has no fixed reference position"
+  },
+  "beam": {
+    "status": "dropped",
+    "note": "structural pillar, and the scene has several similar ones"
+  },
+  "bookstore": {
+    "status": "renamed",
+    "display_name": "liquor shelf",
+    "note": "backlit bottle display shelf; the label is wrong but the contents are unambiguous"
+  },
+  "computer tower": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "dance floor": {
+    "status": "dropped",
+    "note": "floor region with light streaks, not an object"
+  },
+  "dollhouse": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "dressing room": {
+    "status": "dropped",
+    "note": "generic goods shelf bay; class-ambiguous in a retail scene"
+  },
+  "elevator door": {
+    "status": "verified"
+  },
+  "glass wall": {
+    "status": "dropped",
+    "note": "wall surface, not an askable object"
+  },
+  "harpsichord": {
+    "status": "dropped",
+    "note": "unidentifiable stacked objects"
+  },
+  "houseplant": {
+    "status": "verified",
+    "note": "potted plant, unique in the scene"
+  },
+  "ice sculpture": {
+    "status": "dropped",
+    "note": "a distinct white conical object, but not identifiable in the dim frames"
+  },
+  "obelisk": {
+    "status": "dropped",
+    "note": "ambiguous white pole, too dim to identify"
+  },
+  "organization": {
+    "status": "renamed",
+    "display_name": "stack of storage boxes",
+    "note": "brown storage boxes on an LED-lit shelf bay"
+  },
+  "parking meter": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  },
+  "podium": {
+    "status": "dropped",
+    "note": "same location as 'speaker'; both crops unverifiable"
+  },
+  "profile": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "room divider": {
+    "status": "dropped",
+    "note": "corrugated shutter surface, not an askable object"
+  },
+  "server room": {
+    "status": "renamed",
+    "display_name": "snack rack",
+    "note": "shelf bay with hanging snack packets"
+  },
+  "shaver": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  },
+  "shelf": {
+    "status": "dropped",
+    "note": "class-ambiguous: the scene is full of shelves"
+  },
+  "speaker": {
+    "status": "dropped",
+    "note": "same location as 'podium'; both crops unverifiable"
+  },
+  "water cooler": {
+    "status": "dropped",
+    "note": "generic goods shelf bay; class-ambiguous in a retail scene"
+  },
+  "window": {
+    "status": "dropped",
+    "note": "misread shelf display; there is no window here"
+  },
+  "window sill": {
+    "status": "renamed",
+    "display_name": "row of white bottles",
+    "note": "row of white bottles on a low ledge"
+  },
+  "wine cooler": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  }
+}
