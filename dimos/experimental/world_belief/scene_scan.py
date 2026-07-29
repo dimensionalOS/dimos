@@ -26,7 +26,7 @@ from dimos.experimental.world_belief.world_belief import WorldBelief
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.perception.detection.type.detection3d.object import Object
+from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

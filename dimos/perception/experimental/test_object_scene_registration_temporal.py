@@ -23,7 +23,7 @@ import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.protocol.tf.tf import TFSpec
 
 
@@ -64,7 +64,7 @@ def test_temporal_tf_lookup_uses_bounded_image_timestamp(
     tf = _FakeTF(MagicMock())
     module._tf = cast("TFSpec", tf)
     monkeypatch.setattr(
-        "dimos.perception.object_scene_registration.Object.from_2d_to_list",
+        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
     )
 
@@ -85,7 +85,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
     tf = _FakeTF(old_transform)
     module._tf = cast("TFSpec", tf)
     monkeypatch.setattr(
-        "dimos.perception.object_scene_registration.Object.from_2d_to_list",
+        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
     )
 
@@ -129,14 +129,14 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
     fake_o3d.camera.PinholeCameraIntrinsic.return_value = MagicMock()
     fake_o3d.geometry.Image.return_value = MagicMock()
     fake_o3d.geometry.PointCloud.create_from_depth_image.return_value = pointcloud
-    monkeypatch.setattr("dimos.perception.object_scene_registration.o3d", fake_o3d)
+    monkeypatch.setattr("dimos.perception.experimental.object_scene_registration.o3d", fake_o3d)
 
     result = MagicMock()
     result.transform.side_effect = lambda used_transform: (
         result if used_transform is transform else pytest.fail("mixed scene snapshot")
     )
     monkeypatch.setattr(
-        "dimos.perception.object_scene_registration.PointCloud2",
+        "dimos.perception.experimental.object_scene_registration.PointCloud2",
         lambda *_args, **_kwargs: result,
     )
 

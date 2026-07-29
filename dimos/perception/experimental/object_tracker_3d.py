@@ -32,7 +32,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.perception.experimental.object_tracker_2d import ObjectTracker2D
 from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger

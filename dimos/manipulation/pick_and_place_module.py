@@ -38,7 +38,7 @@ from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.detection.type.detection3d.object import (
+from dimos.perception.experimental.object import (
     Object as DetObject,
 )
 from dimos.utils.logging_config import setup_logger

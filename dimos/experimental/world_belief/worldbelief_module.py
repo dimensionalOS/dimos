@@ -44,7 +44,7 @@ from dimos.memory2.module import MemoryModuleConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.type.detection3d.object import Object
+from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -240,7 +240,7 @@ class WorldBeliefModule(Module):
             ScanIncompleteError,
         )
         from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.perception.detection.type.detection3d.object import (
+        from dimos.perception.experimental.object import (
             aggregate_pointclouds,
             to_detection3d_array,
         )

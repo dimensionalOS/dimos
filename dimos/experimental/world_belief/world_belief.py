@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.perception.detection.type.detection3d.object import Object
+    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
