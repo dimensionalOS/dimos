@@ -1,32 +1,32 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Shown to AI when creating artifacts. Keep this high-level; details belong
+# in per-change specs (openspec/changes/<name>/) created in feature worktrees.
+context: |
+  dimos: DimensionalOS robot operating system (Python monorepo).
+  Domains: hosted teleop (WebRTC/cloudflare; Go2 quadruped, xArm), manipulation
+  (GraspGenX), perception, navigation, control, memory, simulation.
+
+  Conventions:
+  - Always GIT_LFS_SKIP_SMUDGE=1 on git operations (full LFS smudge fills the disk).
+  - This branch (ruthwik/main) is a personal baseline: origin/main + "spec:" commits
+    carrying openspec/. Spec content must never reach origin/main — before a PR,
+    strip with: git rebase --onto origin/main ruthwik/main <feature-branch>.
+  - Any commit touching openspec/ is prefixed "spec:" so it is easy to drop.
+  - One feature = one worktree under ~/Documents/worktrees, branched off ruthwik/main.
+  - Task status lives on Agent Board (`board` CLI): move to in_progress when starting,
+    in_review when implemented; only the human moves cards to done.
+
+  High-level direction: openspec/ROADMAP.md.
 
 # Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+# rules:
+#   proposal:
+#     - Keep proposals under 500 words
+#     - Always include a "Non-goals" section
 
 # Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+# operations:
+#   apply:
+#     guidance:
+#       - Keep test summaries concise
