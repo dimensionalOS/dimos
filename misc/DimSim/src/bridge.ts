@@ -154,6 +154,7 @@ export class DimosBridge {
               this._handleServerPose(msg.x, msg.y, msg.z, msg.yaw);
             } else if (msg.type === "physicsReady") {
               this._serverPhysicsReady = true;
+              this.resumePublishing();
             } else if (msg.type === "embodimentConfig") {
               this._handleEmbodimentConfig(msg);
             }

@@ -23,6 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from dimos.simulation.dimsim.agent_output_sidecar import (
     run_sidecar,
+    serialize_agent_idle,
     serialize_agent_message,
 )
 
@@ -83,6 +84,15 @@ def test_serialize_agent_message_extracts_responses_text_and_tool_metadata() -> 
     }
 
 
+def test_serialize_agent_idle_accepts_only_boolean_state() -> None:
+    assert serialize_agent_idle(True, timestamp=12.345) == {
+        "type": "agent_idle",
+        "idle": True,
+        "timestampMs": 12345,
+    }
+    assert serialize_agent_idle("true", timestamp=12.345) is None
+
+
 def test_run_sidecar_signals_ready_before_buffered_output_and_cleans_up() -> None:
     transport = FakeTransport(
         [
@@ -109,3 +119,37 @@ def test_run_sidecar_signals_ready_before_buffered_output_and_cleans_up() -> Non
     assert transport.started
     assert transport.unsubscribed
     assert transport.stopped
+
+
+def test_run_sidecar_streams_idle_state_and_cleans_up_both_transports() -> None:
+    agent_transport = FakeTransport([])
+    idle_transport = FakeTransport([False, True])
+    output = StringIO()
+    stop_event = Event()
+    stop_event.set()
+
+    run_sidecar(
+        agent_transport,
+        output,
+        stop_event,
+        idle_transport=idle_transport,
+    )
+
+    lines = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert lines == [
+        {"type": "ready"},
+        {
+            "type": "agent_idle",
+            "idle": False,
+            "timestampMs": lines[1]["timestampMs"],
+        },
+        {
+            "type": "agent_idle",
+            "idle": True,
+            "timestampMs": lines[2]["timestampMs"],
+        },
+    ]
+    assert agent_transport.unsubscribed
+    assert agent_transport.stopped
+    assert idle_transport.unsubscribed
+    assert idle_transport.stopped

@@ -5818,13 +5818,24 @@ if (dimosMode) {
       // Chunked snapshot protocol (DSC1) — single-frame send stalls when the
       // browser main thread is CPU-saturated (e.g. headless SwiftShader on a
       // weak runner): WebSocket.bufferedAmount climbs and never drains.
-      // Splitting into ~256KB chunks with a setTimeout(0) yield between each
-      // lets the WS pump run, and bridge reassembles in receive order.
+      // Splitting into bounded 2MB chunks with an event-loop yield between
+      // small batches lets the WS pump run, and bridge reassembles in receive
+      // order.
       // Wire format:
       //   prelude:  [DSC1 4B BE][total u32 LE][sx f32 LE][sy f32 LE][sz f32 LE]   (20B)
       //   chunks:   raw bytes, in order, until `total` accumulated bridge-side.
-      const SNAPSHOT_CHUNK_SIZE = 256 * 1024;
-      const SNAPSHOT_MAX_BUFFERED = 4 * 1024 * 1024;
+      const SNAPSHOT_CHUNK_SIZE = 512 * 1024;
+      const SNAPSHOT_CHUNKS_PER_TURN = 2;
+      const SNAPSHOT_BUFFER_HIGH_WATER = 2 * 1024 * 1024;
+      const snapshotTaskQueue = [];
+      const snapshotTaskChannel = new MessageChannel();
+      snapshotTaskChannel.port1.onmessage = () => {
+        snapshotTaskQueue.shift()?.();
+      };
+      const scheduleSnapshotTask = (task) => {
+        snapshotTaskQueue.push(task);
+        snapshotTaskChannel.port2.postMessage(0);
+      };
       const _waitSensorWs = async () => {
         if (
           bridge.wsSensors && bridge.wsSensors.readyState === WebSocket.OPEN
@@ -5868,34 +5879,40 @@ if (dimosMode) {
                 bridge.resumePublishing();
                 return;
               }
-              // Queue a bounded batch per callback. Background Chrome tabs
-              // throttle setTimeout heavily; sending one chunk per callback
-              // turns a ~27MB apartment snapshot into a multi-minute upload.
-              // The 4MiB cap still gives the WebSocket pump explicit
-              // backpressure and avoids the old unbounded single-frame stall.
+              // Let Chrome's network service drain before adding more data.
+              // Re-posting MessageChannel tasks while bufferedAmount is high
+              // can monopolize the renderer task queue and prevent the socket
+              // pump from making progress at all.
+              if (
+                bridge.wsSensors.bufferedAmount >
+                  SNAPSHOT_BUFFER_HIGH_WATER
+              ) {
+                setTimeout(sendNextChunk, 25);
+                return;
+              }
+              // Queue a finite batch, then yield through MessageChannel.
+              // Polling bufferedAmount from a continuously re-queued task can
+              // starve Chrome's WebSocket pump precisely when backpressure is
+              // present. A finite number of turns guarantees that JavaScript
+              // stops producing tasks and lets the network service drain.
+              let chunksThisTurn = 0;
               while (
                 sent < total &&
-                bridge.wsSensors.bufferedAmount <= SNAPSHOT_MAX_BUFFERED
+                chunksThisTurn < SNAPSHOT_CHUNKS_PER_TURN
               ) {
                 const end = Math.min(sent + SNAPSHOT_CHUNK_SIZE, total);
                 bridge.wsSensors.send(snapshot.subarray(sent, end));
                 sent = end;
+                chunksThisTurn++;
               }
               if (sent >= total) {
-                const resumeWhenDrained = () => {
-                  if (
-                    bridge.wsSensors?.readyState !== WebSocket.OPEN ||
-                    bridge.wsSensors.bufferedAmount === 0
-                  ) {
-                    bridge.resumePublishing();
-                    return;
-                  }
-                  setTimeout(resumeWhenDrained, 50);
-                };
-                resumeWhenDrained();
+                // Publishing resumes only when the bridge acknowledges
+                // restored server physics. Resuming on a timer can restart
+                // expensive software-rendered camera capture while the
+                // snapshot is still buffered, starving the transfer itself.
                 return;
               }
-              setTimeout(sendNextChunk, 50); // yield to the WebSocket pump
+              scheduleSnapshotTask(sendNextChunk);
             };
             sendNextChunk();
           } catch (e) {

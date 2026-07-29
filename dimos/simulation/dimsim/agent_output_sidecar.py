@@ -76,12 +76,28 @@ def serialize_agent_message(
     }
 
 
+def serialize_agent_idle(
+    idle: Any,
+    *,
+    timestamp: float | None = None,
+) -> dict[str, Any] | None:
+    """Return a typed idle-state event for the eval lifecycle."""
+    if not isinstance(idle, bool):
+        return None
+    return {
+        "type": "agent_idle",
+        "idle": idle,
+        "timestampMs": round((time.time() if timestamp is None else timestamp) * 1000),
+    }
+
+
 def run_sidecar(
     transport: AgentTransport,
     output: TextIO,
     stop_event: Event,
+    idle_transport: AgentTransport | None = None,
 ) -> None:
-    """Stream AI messages until ``stop_event`` is set, owning all cleanup."""
+    """Stream AI messages and optional idle state, owning all cleanup."""
     lock = RLock()
     ready = False
     pending: list[dict[str, Any]] = []
@@ -103,10 +119,26 @@ def run_sidecar(
             else:
                 pending.append(event)
 
+    def on_idle(idle: Any) -> None:
+        event = serialize_agent_idle(idle)
+        if event is None:
+            return
+        with lock:
+            if ready:
+                emit(event)
+            else:
+                pending.append(event)
+
     transport.start()
     unsubscribe: Callable[[], None] | None = None
+    unsubscribe_idle: Callable[[], None] | None = None
+    idle_started = False
     try:
         unsubscribe = transport.subscribe(on_message)
+        if idle_transport is not None:
+            idle_transport.start()
+            idle_started = True
+            unsubscribe_idle = idle_transport.subscribe(on_idle)
         with lock:
             emit({"type": "ready"})
             ready = True
@@ -115,8 +147,12 @@ def run_sidecar(
             pending.clear()
         stop_event.wait()
     finally:
+        if unsubscribe_idle is not None:
+            unsubscribe_idle()
         if unsubscribe is not None:
             unsubscribe()
+        if idle_started and idle_transport is not None:
+            idle_transport.stop()
         transport.stop()
 
 
@@ -129,7 +165,12 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
-    run_sidecar(make_transport("/agent"), sys.stdout, stop_event)
+    run_sidecar(
+        make_transport("/agent"),
+        sys.stdout,
+        stop_event,
+        make_transport("/agent_idle"),
+    )
 
 
 if __name__ == "__main__":

@@ -47,6 +47,11 @@ export interface WorkflowEntry {
 
 export type EvalSocketFactory = (url: string) => EvalSocket;
 
+// The browser owns each workflow's declared timeout and always emits a result
+// when that timeout expires. This outer watchdog only catches a wedged browser,
+// so it must remain longer than the longest shipped workflow (15 minutes).
+export const SCORER_RESULT_WATCHDOG_MS = 3_600_000;
+
 export interface RunEvalOptions {
   /** Control WebSocket URL (no `?ch=...`). */
   wsUrl: string;
@@ -379,7 +384,7 @@ export function connectEvalSocket(
 export function runScorerEvalOnSocket(
   socket: EvalSocket,
   workflow: WorkflowEntry,
-  timeoutMs = 125_000,
+  timeoutMs = SCORER_RESULT_WATCHDOG_MS,
   runId = crypto.randomUUID(),
 ): Promise<EvalResult> {
   return new Promise((resolve) => {

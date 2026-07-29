@@ -9,11 +9,14 @@ import type {
   EvalResetMessage,
   EvalResultMessage,
   EvalStartMessage,
+  PhysicsReadyMessage,
+  PhysicsReadyRequestMessage,
   ResetAckMessage,
   RunEvalMessage,
 } from "./protocol.ts";
 import { isFiniteStartPose } from "./protocol.ts";
 import {
+  type AgentIdleEvent,
   type AgentOutputEvent,
   type AgentOutputObserver,
   createAgentOutputObserver,
@@ -46,21 +49,35 @@ export interface AgentWorkflow {
 }
 
 export interface AgentEvalTimeouts {
+  physicsReadyMs: number;
   browserReadyMs: number;
   resetMs: number;
   sensorSettleMs: number;
   agentOutputMs: number;
+  agentIdleProbeMs: number;
+  agentDispatchMs: number;
+  agentIdleMs: number;
   mcpMs: number;
   resultGraceMs: number;
 }
 
 export const DEFAULT_AGENT_TIMEOUTS: AgentEvalTimeouts = {
+  // Restoring the apartment's ~27 MB Rapier snapshot can take around a minute
+  // in a CPU-rendered background browser.
+  physicsReadyMs: 120_000,
   browserReadyMs: 30_000,
   resetMs: 5_000,
   sensorSettleMs: 10_000,
   agentOutputMs: 5_000,
+  agentIdleProbeMs: 1_000,
+  agentDispatchMs: 5_000,
+  agentIdleMs: 60_000,
   mcpMs: 10_000,
-  resultGraceMs: 5_000,
+  // A CPU-rendered background tab can deliver a workflow's final timer tick
+  // several seconds late even though its control heartbeat remains healthy.
+  // Keep the result watchdog bounded while leaving enough time for the
+  // browser's already-computed result to cross the WebSocket.
+  resultGraceMs: 15_000,
 };
 
 const RESET_POSITION_TOLERANCE_M = 0.25;
@@ -227,6 +244,23 @@ async function withTimeout<T>(
   }
 }
 
+async function probeWithTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function waitForMessage(
   socket: EvalSocket,
   options: WaitOptions,
@@ -302,6 +336,84 @@ function waitForMessage(
   });
 }
 
+/**
+ * Establish that the bridge has restored browser physics before asking the
+ * browser to import a workflow. The explicit request closes the race where a
+ * one-shot `physicsReady` broadcast happened before this socket subscribed.
+ */
+function waitForPhysicsReady(
+  socket: EvalSocket,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("error", onSocketFailure);
+      socket.removeEventListener("close", onSocketFailure);
+    };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+    const onMessage = (event: Event) => {
+      const data = (event as MessageEvent).data;
+      if (typeof data !== "string") return;
+      try {
+        const message = JSON.parse(data) as Partial<PhysicsReadyMessage>;
+        if (message.type !== "physicsReady") return;
+      } catch {
+        return;
+      }
+      settle(resolve);
+    };
+    const onSocketFailure = (event: Event) => {
+      settle(() =>
+        reject(
+          new AgentEvalError(
+            event.type === "close"
+              ? "websocket closed while waiting for bridge physics"
+              : "websocket error while waiting for bridge physics",
+            "socket",
+          ),
+        )
+      );
+    };
+    const timer = setTimeout(() => {
+      settle(() =>
+        reject(
+          new AgentEvalError(
+            `physicsReady timed out after ${timeoutMs}ms`,
+            "physicsReady",
+          ),
+        )
+      );
+    }, timeoutMs);
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("error", onSocketFailure);
+    socket.addEventListener("close", onSocketFailure);
+
+    try {
+      const request: PhysicsReadyRequestMessage = {
+        type: "physicsReadyRequest",
+      };
+      socket.send(JSON.stringify(request));
+    } catch (error) {
+      settle(() =>
+        reject(
+          new AgentEvalError(
+            error instanceof Error ? error.message : String(error),
+            "socket",
+          ),
+        )
+      );
+    }
+  });
+}
+
 function normalizeResult(
   workflow: AgentWorkflow,
   runId: string,
@@ -370,6 +482,7 @@ export async function runAgentEvalOnSocket(options: {
   const timeouts = { ...DEFAULT_AGENT_TIMEOUTS, ...options.timeouts };
   let tools: McpTool[] = [];
   let terminalError: AgentEvalError | null = null;
+  let finalResult: AgentEvalResult | null = null;
   let outputObserver: AgentOutputObserver | null = null;
   let requiredAgentOutput: string | undefined;
   let captureAgentOutput = false;
@@ -377,6 +490,27 @@ export async function runAgentEvalOnSocket(options: {
   let outputForwarded = false;
   let pendingAgentOutput: AgentOutputEvent | null = null;
   let resultWaitAbort: AbortController | null = null;
+  let latestAgentIdle: boolean | null = null;
+  let idleSupported = false;
+  let dispatchWindowOpen = false;
+  let sawDispatchedTurnBusy = false;
+  let resolveFirstIdle!: (event: AgentIdleEvent) => void;
+  let firstIdleResolved = false;
+  const firstIdle = new Promise<AgentIdleEvent>((resolve) => {
+    resolveFirstIdle = resolve;
+  });
+  let resolveIdle!: () => void;
+  let idlePromise = new Promise<void>((resolve) => {
+    resolveIdle = resolve;
+  });
+  let resolveDispatchedTurnIdle!: () => void;
+  const dispatchedTurnIdle = new Promise<void>((resolve) => {
+    resolveDispatchedTurnIdle = resolve;
+  });
+  let resolveDispatchedTurnBusy!: () => void;
+  const dispatchedTurnBusy = new Promise<void>((resolve) => {
+    resolveDispatchedTurnBusy = resolve;
+  });
 
   const forwardAgentOutput = (event: AgentOutputEvent) => {
     if (outputForwarded) return;
@@ -388,6 +522,19 @@ export async function runAgentEvalOnSocket(options: {
     };
     send(socket, message);
     outputForwarded = true;
+  };
+
+  const recordResult = (result: AgentEvalResult): AgentEvalResult => {
+    finalResult = result;
+    return result;
+  };
+
+  const recordIsolationFailure = (error: unknown) => {
+    if (!finalResult || finalResult.status === "error") return;
+    finalResult.passed = false;
+    finalResult.status = "error";
+    finalResult.failureStage = "agentIdle";
+    finalResult.reason = error instanceof Error ? error.message : String(error);
   };
 
   const onAgentOutput = (event: AgentOutputEvent) => {
@@ -404,6 +551,28 @@ export async function runAgentEvalOnSocket(options: {
     if (scoringStarted) forwardAgentOutput(event);
   };
 
+  const onAgentIdle = (event: AgentIdleEvent) => {
+    latestAgentIdle = event.idle;
+    if (!firstIdleResolved) {
+      firstIdleResolved = true;
+      resolveFirstIdle(event);
+    }
+    if (event.idle) {
+      resolveIdle();
+      if (dispatchWindowOpen && sawDispatchedTurnBusy) {
+        resolveDispatchedTurnIdle();
+      }
+      return;
+    }
+    idlePromise = new Promise<void>((resolve) => {
+      resolveIdle = resolve;
+    });
+    if (dispatchWindowOpen) {
+      sawDispatchedTurnBusy = true;
+      resolveDispatchedTurnBusy();
+    }
+  };
+
   const raceObserverFailure = async <T>(operation: Promise<T>): Promise<T> => {
     if (!outputObserver) return await operation;
     return await Promise.race([
@@ -415,6 +584,8 @@ export async function runAgentEvalOnSocket(options: {
   };
 
   try {
+    await waitForPhysicsReady(socket, timeouts.physicsReadyMs);
+
     const runMessage: RunEvalMessage = {
       type: "runEval",
       runId,
@@ -430,7 +601,7 @@ export async function runAgentEvalOnSocket(options: {
     send(socket, runMessage);
     const readyOrResult = await readyPromise;
     if (readyOrResult.type === "evalResult") {
-      return normalizeResult(workflow, runId, readyOrResult);
+      return recordResult(normalizeResult(workflow, runId, readyOrResult));
     }
     const ready = readyOrResult as EvalReadyMessage;
     if (
@@ -451,6 +622,51 @@ export async function runAgentEvalOnSocket(options: {
     }
     requiredAgentOutput = ready.requiredAgentOutput?.trim();
 
+    if (requiredAgentOutput || timeouts.agentIdleProbeMs > 0) {
+      outputObserver = options.agentOutputObserverFactory?.() ??
+        createAgentOutputObserver();
+      try {
+        await withTimeout(
+          outputObserver.start(onAgentOutput, onAgentIdle),
+          timeouts.agentOutputMs,
+          "agent output sidecar",
+        );
+      } catch (error) {
+        throw new AgentEvalError(
+          error instanceof Error ? error.message : String(error),
+          "agentOutput",
+        );
+      }
+    }
+
+    if (outputObserver && timeouts.agentIdleProbeMs > 0) {
+      const firstState = await probeWithTimeout(
+        raceObserverFailure(firstIdle),
+        timeouts.agentIdleProbeMs,
+      );
+      if (firstState) {
+        idleSupported = true;
+        if (!firstState.idle) {
+          try {
+            await withTimeout(
+              raceObserverFailure(idlePromise),
+              timeouts.agentIdleMs,
+              "prior DimSim agent turn",
+            );
+          } catch (error) {
+            throw new AgentEvalError(
+              error instanceof Error ? error.message : String(error),
+              "agentIdle",
+            );
+          }
+        }
+      } else {
+        console.error(
+          "[agent-eval] agent idle stream unavailable; continuing without the optional isolation barrier",
+        );
+      }
+    }
+
     const reset: EvalResetMessage = {
       type: "evalReset",
       runId,
@@ -465,7 +681,7 @@ export async function runAgentEvalOnSocket(options: {
     send(socket, reset);
     const resetOrResult = await resetPromise;
     if (resetOrResult.type === "evalResult") {
-      return normalizeResult(workflow, runId, resetOrResult);
+      return recordResult(normalizeResult(workflow, runId, resetOrResult));
     }
     const ack = resetOrResult as ResetAckMessage;
     if (!ack.ok || !isFiniteStartPose(ack.pose)) {
@@ -511,23 +727,6 @@ export async function runAgentEvalOnSocket(options: {
       }
     }
 
-    if (requiredAgentOutput) {
-      outputObserver = options.agentOutputObserverFactory?.() ??
-        createAgentOutputObserver();
-      try {
-        await withTimeout(
-          outputObserver.start(onAgentOutput),
-          timeouts.agentOutputMs,
-          "agent output sidecar",
-        );
-      } catch (error) {
-        throw new AgentEvalError(
-          error instanceof Error ? error.message : String(error),
-          "agentOutput",
-        );
-      }
-    }
-
     try {
       const mcpDeadline = Date.now() + timeouts.mcpMs;
       tools = await withTimeout(
@@ -545,6 +744,7 @@ export async function runAgentEvalOnSocket(options: {
         throw new Error(`MCP stage timed out after ${timeouts.mcpMs}ms`);
       }
       captureAgentOutput = true;
+      dispatchWindowOpen = true;
       await withTimeout(
         raceObserverFailure(
           mcp.callTool(
@@ -557,6 +757,20 @@ export async function runAgentEvalOnSocket(options: {
         remainingMs,
         "MCP agent_send",
       );
+      if (idleSupported) {
+        try {
+          await withTimeout(
+            raceObserverFailure(dispatchedTurnBusy),
+            timeouts.agentDispatchMs,
+            "DimSim agent dispatch",
+          );
+        } catch (error) {
+          throw new AgentEvalError(
+            error instanceof Error ? error.message : String(error),
+            "agentIdle",
+          );
+        }
+      }
     } catch (error) {
       captureAgentOutput = false;
       if (error instanceof AgentEvalError) throw error;
@@ -582,7 +796,7 @@ export async function runAgentEvalOnSocket(options: {
       resultPromise as Promise<EvalResultMessage>,
     );
     captureAgentOutput = false;
-    return normalizeResult(workflow, runId, result);
+    return recordResult(normalizeResult(workflow, runId, result));
   } catch (error) {
     terminalError = error instanceof AgentEvalError
       ? error
@@ -590,7 +804,7 @@ export async function runAgentEvalOnSocket(options: {
         error instanceof Error ? error.message : String(error),
         "mcp",
       );
-    return errorResult(workflow, runId, terminalError);
+    return recordResult(errorResult(workflow, runId, terminalError));
   } finally {
     captureAgentOutput = false;
     resultWaitAbort?.abort();
@@ -605,6 +819,23 @@ export async function runAgentEvalOnSocket(options: {
         send(socket, abort);
       } catch {
         // Socket failures are already represented by the terminal result.
+      }
+    }
+    let cancellationFailure: unknown;
+    if (outputObserver && dispatchWindowOpen) {
+      try {
+        await withTimeout(
+          outputObserver.cancelActiveTurn(runId),
+          timeouts.agentDispatchMs,
+          "DimSim agent turn cancellation",
+        );
+      } catch (error) {
+        cancellationFailure = error;
+        console.error(
+          `[runner] agent turn cancellation failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
     for (
@@ -633,6 +864,26 @@ export async function runAgentEvalOnSocket(options: {
           }`,
         );
       }
+    }
+    if (idleSupported && dispatchWindowOpen) {
+      try {
+        await withTimeout(
+          raceObserverFailure(dispatchedTurnIdle),
+          timeouts.agentIdleMs,
+          "DimSim agent turn completion",
+        );
+        cancellationFailure = undefined;
+      } catch (error) {
+        cancellationFailure = error;
+        console.error(
+          `[runner] agent isolation barrier failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    if (cancellationFailure) {
+      recordIsolationFailure(cancellationFailure);
     }
     try {
       const cleanup: EvalCleanupMessage = { type: "evalCleanup", runId };

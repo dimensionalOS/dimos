@@ -121,7 +121,11 @@ function resolveMotionModel(embodiment?: EmbodimentConfig): string {
 
 const CH_ODOM = "/odom#geometry_msgs.PoseStamped";
 const CH_CMD_VEL = "/cmd_vel#geometry_msgs.Twist";
-const CMD_VEL_TIMEOUT_MS = 500;
+// DimOS motion skills refresh cmd_vel at 10 Hz. Keep one additional half
+// period of jitter tolerance, but stop promptly when their explicit zero is
+// delayed behind other LCM work. A 500 ms hold let each bounded relative move
+// coast roughly 0.3–0.4 m after the skill had already reported completion.
+const CMD_VEL_TIMEOUT_MS = 150;
 
 // -- ServerPhysics ------------------------------------------------------------
 

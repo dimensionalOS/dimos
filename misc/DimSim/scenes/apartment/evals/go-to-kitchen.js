@@ -1,9 +1,11 @@
-import { runEval } from '@dimsim/eval';
+import { runEval } from "@dimsim/eval";
 
 await runEval({
-  scene: 'apartment',
-  task: 'Go to the kitchen',
-  timeoutSec: 30,
-  startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },
-  success: (ctx) => ctx.rubrics.objectDistance({ target: 'refrigerator', thresholdM: 3.0 }),
+  scene: "apartment",
+  task: "Go into the kitchen directly ahead through the open doorway. " +
+    "Stop near the refrigerator.",
+  timeoutSec: 60,
+  startPose: { x: 0.8, y: 0.5, z: 2.5, yaw: -120 },
+  success: (ctx) =>
+    ctx.rubrics.objectDistance({ target: "refrigerator", thresholdM: 3.0 }),
 });

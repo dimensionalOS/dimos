@@ -7,9 +7,19 @@ export interface AgentOutputEvent {
   timestampMs: number;
 }
 
+export interface AgentIdleEvent {
+  type: "agent_idle";
+  idle: boolean;
+  timestampMs: number;
+}
+
 export interface AgentOutputObserver {
   readonly failure: Promise<Error>;
-  start(onOutput: (event: AgentOutputEvent) => void): Promise<void>;
+  start(
+    onOutput: (event: AgentOutputEvent) => void,
+    onIdle?: (event: AgentIdleEvent) => void,
+  ): Promise<void>;
+  cancelActiveTurn(runId: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -31,7 +41,7 @@ function deferred<T>(): Deferred<T> {
 
 export function parseAgentOutputLine(
   line: string,
-): AgentOutputEvent | "ready" | null {
+): AgentOutputEvent | AgentIdleEvent | "ready" | null {
   let value: unknown;
   try {
     value = JSON.parse(line);
@@ -41,6 +51,14 @@ export function parseAgentOutputLine(
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
   if (event.type === "ready") return "ready";
+  if (
+    event.type === "agent_idle" &&
+    typeof event.idle === "boolean" &&
+    typeof event.timestampMs === "number" &&
+    Number.isFinite(event.timestampMs)
+  ) {
+    return event as unknown as AgentIdleEvent;
+  }
   if (
     event.type !== "agent_output" ||
     typeof event.text !== "string" ||
@@ -65,7 +83,10 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
 
   readonly failure = this.failureState.promise;
 
-  async start(onOutput: (event: AgentOutputEvent) => void): Promise<void> {
+  async start(
+    onOutput: (event: AgentOutputEvent) => void,
+    onIdle?: (event: AgentIdleEvent) => void,
+  ): Promise<void> {
     if (this.child) throw new Error("agent output observer already started");
     try {
       this.child = new Deno.Command("uv", {
@@ -93,13 +114,14 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
       throw wrapped;
     }
 
-    void this.readOutput(onOutput);
+    void this.readOutput(onOutput, onIdle);
     void this.watchStatus();
     await this.readyState.promise;
   }
 
   private async readOutput(
     onOutput: (event: AgentOutputEvent) => void,
+    onIdle?: (event: AgentIdleEvent) => void,
   ): Promise<void> {
     const child = this.child;
     if (!child) return;
@@ -115,12 +137,12 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
         while (newline >= 0) {
           const line = buffered.slice(0, newline);
           buffered = buffered.slice(newline + 1);
-          this.handleLine(line, onOutput);
+          this.handleLine(line, onOutput, onIdle);
           newline = buffered.indexOf("\n");
         }
       }
       if (buffered) {
-        this.handleLine(buffered, onOutput);
+        this.handleLine(buffered, onOutput, onIdle);
       }
     } catch (error) {
       if (!this.stopping) {
@@ -138,6 +160,7 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
   private handleLine(
     line: string,
     onOutput: (event: AgentOutputEvent) => void,
+    onIdle?: (event: AgentIdleEvent) => void,
   ): void {
     const event = parseAgentOutputLine(line);
     if (event === "ready") {
@@ -145,6 +168,8 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
         this.ready = true;
         this.readyState.resolve();
       }
+    } else if (event?.type === "agent_idle") {
+      onIdle?.(event);
     } else if (event) {
       onOutput(event);
     }
@@ -166,6 +191,33 @@ export class ProcessAgentOutputObserver implements AgentOutputObserver {
   private fail(error: Error): void {
     if (!this.ready) this.readyState.reject(error);
     this.failureState.resolve(error);
+  }
+
+  async cancelActiveTurn(runId: string): Promise<void> {
+    if (!runId) throw new Error("runId must not be empty");
+    const output = await new Deno.Command("uv", {
+      args: [
+        "run",
+        "--project",
+        REPO_ROOT,
+        "python",
+        "-m",
+        "dimos.simulation.dimsim.agent_turn_control",
+        runId,
+      ],
+      cwd: REPO_ROOT,
+      stdin: "null",
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    if (!output.success) {
+      const detail = new TextDecoder().decode(output.stderr).trim();
+      throw new Error(
+        `failed to cancel active DimSim agent turn${
+          detail ? `: ${detail}` : ` (exit ${output.code})`
+        }`,
+      );
+    }
   }
 
   async stop(): Promise<void> {

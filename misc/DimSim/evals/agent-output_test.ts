@@ -1,4 +1,8 @@
-import { type AgentOutputEvent, parseAgentOutputLine } from "./agent-output.ts";
+import {
+  type AgentIdleEvent,
+  type AgentOutputEvent,
+  parseAgentOutputLine,
+} from "./agent-output.ts";
 
 function assertEquals(actual: unknown, expected: unknown): void {
   const a = JSON.stringify(actual);
@@ -20,6 +24,16 @@ Deno.test("agent output parser accepts ready and typed output events", () => {
       timestampMs: 1234,
     } satisfies AgentOutputEvent,
   );
+  assertEquals(
+    parseAgentOutputLine(
+      '{"type":"agent_idle","idle":false,"timestampMs":5678}',
+    ),
+    {
+      type: "agent_idle",
+      idle: false,
+      timestampMs: 5678,
+    } satisfies AgentIdleEvent,
+  );
 });
 
 Deno.test("agent output parser rejects malformed and incomplete lines", () => {
@@ -35,6 +49,12 @@ Deno.test("agent output parser rejects malformed and incomplete lines", () => {
     parseAgentOutputLine(
       '{"type":"agent_output","text":"FOUND_BATHTUB",' +
         '"hasToolCalls":false,"timestampMs":null}',
+    ),
+    null,
+  );
+  assertEquals(
+    parseAgentOutputLine(
+      '{"type":"agent_idle","idle":"false","timestampMs":1234}',
     ),
     null,
   );

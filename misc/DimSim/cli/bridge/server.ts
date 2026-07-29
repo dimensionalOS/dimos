@@ -578,6 +578,18 @@ export async function startBridgeServer(options: BridgeServerOptions) {
               relayType = typeof msg.type === "string" ? msg.type : "";
               relayRunId = typeof msg.runId === "string" ? msg.runId : "";
 
+              if (msg.type === "physicsReadyRequest") {
+                if (
+                  chState.serverPhysics &&
+                  socket.readyState === WebSocket.OPEN
+                ) {
+                  try {
+                    socket.send(JSON.stringify({ type: "physicsReady" }));
+                  } catch { /* the socket lifecycle reports the failure */ }
+                }
+                return;
+              }
+
               if (msg.type === "heartbeat") {
                 registerControlSocket();
                 try {

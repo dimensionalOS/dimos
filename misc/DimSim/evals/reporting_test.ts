@@ -3,6 +3,7 @@ import {
   type EvalResult,
   exitCodeForResults,
   formatResults,
+  SCORER_RESULT_WATCHDOG_MS,
   toJunitXml,
 } from "./runner.ts";
 
@@ -69,6 +70,10 @@ Deno.test("exit codes classify pass, failure, and infrastructure error", () => {
       result("error", "infra"),
     ]) === 2,
   );
+});
+
+Deno.test("scorer watchdog does not preempt 15-minute workflows", () => {
+  assert(SCORER_RESULT_WATCHDOG_MS > 900_000 + 5_000);
 });
 
 Deno.test("bridge connection watchdog closes an unresponsive socket", async () => {

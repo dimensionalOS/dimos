@@ -9,9 +9,11 @@ export type EvalStatus = "passed" | "failed" | "error";
 export type EvalFailureStage =
   | "configuration"
   | "connection"
+  | "physicsReady"
   | "browserReady"
   | "reset"
   | "agentOutput"
+  | "agentIdle"
   | "mcp"
   | "result"
   | "socket"
@@ -36,6 +38,15 @@ export interface EvalAgentOutputEvidence {
 
 export interface EvalEvidence {
   agentOutput?: EvalAgentOutputEvidence;
+}
+
+/** Bridge lifecycle handshake used before a correlated eval run begins. */
+export interface PhysicsReadyRequestMessage {
+  type: "physicsReadyRequest";
+}
+
+export interface PhysicsReadyMessage {
+  type: "physicsReady";
 }
 
 export interface RunEvalMessage {

@@ -5,7 +5,11 @@ import {
   type McpTransport,
   runAgentEvalOnSocket,
 } from "./agent-driver.ts";
-import type { AgentOutputEvent, AgentOutputObserver } from "./agent-output.ts";
+import type {
+  AgentIdleEvent,
+  AgentOutputEvent,
+  AgentOutputObserver,
+} from "./agent-output.ts";
 
 function assert(
   condition: unknown,
@@ -24,11 +28,15 @@ class FakeSocket extends EventTarget implements EvalSocket {
   readyState: number = WebSocket.OPEN;
   sent: Array<Record<string, unknown>> = [];
   onSend?: (message: Record<string, unknown>) => void;
+  autoPhysicsReady = true;
 
   send(data: string): void {
     const message = JSON.parse(data) as Record<string, unknown>;
     this.sent.push(message);
     this.onSend?.(message);
+    if (message.type === "physicsReadyRequest" && this.autoPhysicsReady) {
+      queueMicrotask(() => this.emit({ type: "physicsReady" }));
+    }
   }
 
   emit(message: Record<string, unknown>): void {
@@ -48,6 +56,10 @@ class FakeMcp implements McpTransport {
   constructor(
     readonly tools: McpTool[],
     readonly failTool?: string,
+    readonly onCall?: (
+      name: string,
+      args: Record<string, unknown>,
+    ) => void,
   ) {}
 
   listTools(_url: string, _timeoutMs: number): Promise<McpTool[]> {
@@ -62,6 +74,7 @@ class FakeMcp implements McpTransport {
     _timeoutMs: number,
   ): Promise<unknown> {
     this.calls.push({ name, args });
+    this.onCall?.(name, args);
     if (name === this.failTool) {
       return Promise.reject(new Error(`${name} failed`));
     }
@@ -72,25 +85,44 @@ class FakeMcp implements McpTransport {
 class FakeAgentOutputObserver implements AgentOutputObserver {
   started = false;
   stopped = false;
+  cancelledRunIds: string[] = [];
   private handler?: (event: AgentOutputEvent) => void;
+  private idleHandler?: (event: AgentIdleEvent) => void;
   private failObserver!: (error: Error) => void;
   readonly failure: Promise<Error>;
 
   constructor(
     readonly startError?: Error,
     readonly onStart?: (observer: FakeAgentOutputObserver) => void,
+    readonly cancelError?: Error,
+    readonly onCancel?: (
+      runId: string,
+      observer: FakeAgentOutputObserver,
+    ) => void,
   ) {
     this.failure = new Promise((resolve) => {
       this.failObserver = resolve;
     });
   }
 
-  start(handler: (event: AgentOutputEvent) => void): Promise<void> {
+  start(
+    handler: (event: AgentOutputEvent) => void,
+    idleHandler?: (event: AgentIdleEvent) => void,
+  ): Promise<void> {
     this.started = true;
     this.handler = handler;
+    this.idleHandler = idleHandler;
     if (this.startError) return Promise.reject(this.startError);
     this.onStart?.(this);
     return Promise.resolve();
+  }
+
+  emitIdle(idle: boolean, timestampMs = 1234): void {
+    this.idleHandler?.({
+      type: "agent_idle",
+      idle,
+      timestampMs,
+    });
   }
 
   emit(
@@ -108,6 +140,13 @@ class FakeAgentOutputObserver implements AgentOutputObserver {
 
   fail(message: string): void {
     this.failObserver(new Error(message));
+  }
+
+  cancelActiveTurn(runId: string): Promise<void> {
+    this.cancelledRunIds.push(runId);
+    this.onCancel?.(runId, this);
+    if (this.cancelError) return Promise.reject(this.cancelError);
+    return Promise.resolve();
   }
 
   stop(): Promise<void> {
@@ -181,6 +220,7 @@ Deno.test("agent eval orders reset, one dispatch, start, result, and cleanup", a
       browserReadyMs: 50,
       resetMs: 50,
       sensorSettleMs: 0,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
       resultGraceMs: 50,
     },
@@ -189,7 +229,13 @@ Deno.test("agent eval orders reset, one dispatch, start, result, and cleanup", a
   assert(result.passed, JSON.stringify(result));
   assertEquals(
     socket.sent.map((message) => message.type),
-    ["runEval", "evalReset", "evalStart", "evalCleanup"],
+    [
+      "physicsReadyRequest",
+      "runEval",
+      "evalReset",
+      "evalStart",
+      "evalCleanup",
+    ],
   );
   assertEquals(
     mcp.calls,
@@ -203,6 +249,224 @@ Deno.test("agent eval orders reset, one dispatch, start, result, and cleanup", a
     ],
   );
   assertEquals(result.runId, runId);
+});
+
+Deno.test("agent eval fences dispatch and terminal cleanup with DimSim idle state", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver(
+    undefined,
+    (started) => started.emitIdle(true),
+    undefined,
+    (_runId, cancelling) => cancelling.emitIdle(true),
+  );
+  const mcp = new FakeMcp(
+    [
+      { name: "agent_send" },
+      { name: "stop_navigation" },
+    ],
+    undefined,
+    (name) => {
+      if (name === "agent_send") observer.emitIdle(false);
+    },
+  );
+  const runId = "idle-fenced-run";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Go to the couch",
+        timeoutMs: 100,
+        startPose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    } else if (message.type === "evalStart") {
+      socket.emit({
+        type: "evalResult",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Go to the couch",
+        passed: true,
+        status: "passed",
+        reason: "at couch",
+        durationMs: 12,
+      });
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp,
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+      agentIdleProbeMs: 50,
+      agentDispatchMs: 50,
+      agentIdleMs: 50,
+      mcpMs: 50,
+      resultGraceMs: 50,
+    },
+  });
+
+  assert(result.passed, JSON.stringify(result));
+  assert(observer.started);
+  assert(observer.stopped);
+  assertEquals(observer.cancelledRunIds, [runId]);
+  assertEquals(
+    socket.sent.map((message) => message.type),
+    [
+      "physicsReadyRequest",
+      "runEval",
+      "evalReset",
+      "evalStart",
+      "evalCleanup",
+    ],
+  );
+  assertEquals(
+    mcp.calls.map((call) => call.name),
+    ["tools/list", "agent_send", "stop_navigation"],
+  );
+});
+
+Deno.test("agent eval reports an isolation error when turn cancellation cannot stop the active turn", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver(
+    undefined,
+    (started) => started.emitIdle(true),
+    new Error("control channel unavailable"),
+  );
+  const mcp = new FakeMcp(
+    [{ name: "agent_send" }, { name: "stop_navigation" }],
+    undefined,
+    (name) => {
+      if (name === "agent_send") observer.emitIdle(false);
+    },
+  );
+  const runId = "turn-cancel-failure";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Go to the couch",
+        timeoutMs: 100,
+        startPose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    } else if (message.type === "evalStart") {
+      socket.emit({
+        type: "evalResult",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Go to the couch",
+        passed: true,
+        status: "passed",
+        reason: "at couch",
+        durationMs: 12,
+      });
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp,
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+      agentIdleProbeMs: 50,
+      agentDispatchMs: 20,
+      agentIdleMs: 20,
+      mcpMs: 50,
+      resultGraceMs: 50,
+    },
+  });
+
+  assertEquals(result.status, "error");
+  assertEquals(result.failureStage, "agentIdle");
+  assert(result.reason.includes("timed out"), result.reason);
+  assertEquals(observer.cancelledRunIds, [runId]);
+});
+
+Deno.test("agent eval refuses to start scoring without a correlated busy edge", async () => {
+  const socket = new FakeSocket();
+  const observer = new FakeAgentOutputObserver(
+    undefined,
+    (started) => started.emitIdle(true),
+  );
+  const runId = "missing-busy-edge";
+  socket.onSend = (message) => {
+    if (message.type === "runEval") {
+      socket.emit({
+        type: "evalReady",
+        runId,
+        workflowUrl: workflow.url,
+        scene: workflow.scene,
+        task: "Go to the couch",
+        timeoutMs: 100,
+        startPose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    } else if (message.type === "evalReset") {
+      socket.emit({
+        type: "resetAck",
+        runId,
+        ok: true,
+        pose: { x: 1, y: 0.5, z: 3, yaw: 117 },
+      });
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp: new FakeMcp([{ name: "agent_send" }]),
+    runId,
+    agentOutputObserverFactory: () => observer,
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 50,
+      sensorSettleMs: 0,
+      agentOutputMs: 50,
+      agentIdleProbeMs: 50,
+      agentDispatchMs: 5,
+      agentIdleMs: 5,
+      mcpMs: 50,
+    },
+  });
+
+  assertEquals(result.failureStage, "agentIdle");
+  assert(!socket.sent.some((message) => message.type === "evalStart"));
+  assert(observer.stopped);
 });
 
 Deno.test("agent eval forwards only exact tool-free required output and owns sidecar", async () => {
@@ -275,6 +539,7 @@ Deno.test("agent eval forwards only exact tool-free required output and owns sid
       resetMs: 50,
       sensorSettleMs: 0,
       agentOutputMs: 50,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
       resultGraceMs: 50,
     },
@@ -286,6 +551,7 @@ Deno.test("agent eval forwards only exact tool-free required output and owns sid
   assertEquals(
     socket.sent.map((message) => message.type),
     [
+      "physicsReadyRequest",
       "runEval",
       "evalReset",
       "evalStart",
@@ -347,6 +613,7 @@ Deno.test("agent eval classifies sidecar startup failure before dispatch", async
       resetMs: 50,
       sensorSettleMs: 0,
       agentOutputMs: 50,
+      agentIdleProbeMs: 0,
     },
   });
 
@@ -396,6 +663,7 @@ Deno.test("agent eval aborts if required-output sidecar exits during scoring", a
       resetMs: 50,
       sensorSettleMs: 0,
       agentOutputMs: 50,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
       resultGraceMs: 50,
     },
@@ -426,7 +694,82 @@ Deno.test("agent eval browser-ready watchdog aborts and cleans up", async () => 
   assertEquals(result.failureStage, "browserReady");
   assertEquals(
     socket.sent.map((message) => message.type),
-    ["runEval", "evalAbort", "evalCleanup"],
+    ["physicsReadyRequest", "runEval", "evalAbort", "evalCleanup"],
+  );
+});
+
+Deno.test("agent eval waits for delayed bridge physics before runEval", async () => {
+  const socket = new FakeSocket();
+  socket.autoPhysicsReady = false;
+  socket.onSend = (message) => {
+    if (message.type === "physicsReadyRequest") {
+      setTimeout(() => socket.emit({ type: "physicsReady" }), 5);
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp: new FakeMcp([{ name: "agent_send" }]),
+    runId: "delayed-physics",
+    timeouts: {
+      physicsReadyMs: 50,
+      browserReadyMs: 5,
+    },
+  });
+
+  assertEquals(result.failureStage, "browserReady");
+  assertEquals(
+    socket.sent.map((message) => message.type),
+    ["physicsReadyRequest", "runEval", "evalAbort", "evalCleanup"],
+  );
+});
+
+Deno.test("agent eval physics-ready watchdog aborts before runEval", async () => {
+  const socket = new FakeSocket();
+  socket.autoPhysicsReady = false;
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp: new FakeMcp([{ name: "agent_send" }]),
+    runId: "physics-watchdog",
+    timeouts: { physicsReadyMs: 5 },
+  });
+
+  assertEquals(result.status, "error");
+  assertEquals(result.failureStage, "physicsReady");
+  assertEquals(
+    socket.sent.map((message) => message.type),
+    ["physicsReadyRequest", "evalAbort", "evalCleanup"],
+  );
+});
+
+Deno.test("agent eval reports socket failure while waiting for physics", async () => {
+  const socket = new FakeSocket();
+  socket.autoPhysicsReady = false;
+  socket.onSend = (message) => {
+    if (message.type === "physicsReadyRequest") {
+      queueMicrotask(() => socket.dispatchEvent(new Event("error")));
+    }
+  };
+
+  const result = await runAgentEvalOnSocket({
+    socket,
+    workflow,
+    mcpUrl: "http://127.0.0.1:9990/mcp",
+    mcp: new FakeMcp([{ name: "agent_send" }]),
+    runId: "physics-socket-failure",
+    timeouts: { physicsReadyMs: 50 },
+  });
+
+  assertEquals(result.status, "error");
+  assertEquals(result.failureStage, "socket");
+  assertEquals(
+    socket.sent.map((message) => message.type),
+    ["physicsReadyRequest", "evalAbort", "evalCleanup"],
   );
 });
 
@@ -454,14 +797,24 @@ Deno.test("agent eval reset watchdog aborts before MCP dispatch", async () => {
     mcpUrl: "http://127.0.0.1:9990/mcp",
     mcp,
     runId,
-    timeouts: { browserReadyMs: 50, resetMs: 5 },
+    timeouts: {
+      browserReadyMs: 50,
+      resetMs: 5,
+      agentIdleProbeMs: 0,
+    },
   });
 
   assertEquals(result.failureStage, "reset");
   assertEquals(mcp.calls, []);
   assertEquals(
     socket.sent.map((message) => message.type),
-    ["runEval", "evalReset", "evalAbort", "evalCleanup"],
+    [
+      "physicsReadyRequest",
+      "runEval",
+      "evalReset",
+      "evalAbort",
+      "evalCleanup",
+    ],
   );
 });
 
@@ -500,6 +853,7 @@ Deno.test("agent eval rejects a finite reset acknowledgement at the wrong pose",
       browserReadyMs: 50,
       resetMs: 50,
       sensorSettleMs: 0,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
     },
   });
@@ -547,6 +901,7 @@ Deno.test("agent eval MCP watchdog prevents evalStart", async () => {
       browserReadyMs: 50,
       resetMs: 50,
       sensorSettleMs: 0,
+      agentIdleProbeMs: 0,
       mcpMs: 5,
     },
   });
@@ -589,6 +944,7 @@ Deno.test("agent eval result watchdog uses workflow timeout plus grace", async (
       browserReadyMs: 50,
       resetMs: 50,
       sensorSettleMs: 0,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
       resultGraceMs: 5,
     },
@@ -633,6 +989,7 @@ Deno.test("agent eval MCP failure never starts scoring and dispatches once", asy
       browserReadyMs: 50,
       resetMs: 50,
       sensorSettleMs: 0,
+      agentIdleProbeMs: 0,
       mcpMs: 50,
     },
   });
@@ -640,7 +997,13 @@ Deno.test("agent eval MCP failure never starts scoring and dispatches once", asy
   assertEquals(result.failureStage, "mcp");
   assertEquals(
     socket.sent.map((message) => message.type),
-    ["runEval", "evalReset", "evalAbort", "evalCleanup"],
+    [
+      "physicsReadyRequest",
+      "runEval",
+      "evalReset",
+      "evalAbort",
+      "evalCleanup",
+    ],
   );
   assertEquals(
     mcp.calls.filter((call) => call.name === "agent_send").length,
