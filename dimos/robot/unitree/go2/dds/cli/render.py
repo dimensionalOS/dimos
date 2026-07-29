@@ -229,7 +229,7 @@ def _interp_pose(
 
 
 def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
-    from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.mapping.voxels.module import VoxelMapTransformer
 
     ext = LIDAR_TO_BASE  # lidar -> base (standard Transform from extrinsics)
 

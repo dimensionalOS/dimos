@@ -23,7 +23,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
-from dimos.mapping.voxels import VoxelGrid
+from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

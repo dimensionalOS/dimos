@@ -126,7 +126,7 @@ def _accumulate(
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
-    from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.mapping.voxels.module import VoxelMapTransformer
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:

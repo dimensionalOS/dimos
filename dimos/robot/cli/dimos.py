@@ -41,6 +41,9 @@ os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+# cv2 reads this at import for its parallel_for pool; replaces the eager
+# `import cv2; cv2.setNumThreads(2)` the worker entrypoint used to do.
+os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 
 from dotenv import load_dotenv
 from pydantic import BaseModel

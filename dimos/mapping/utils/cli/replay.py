@@ -179,7 +179,7 @@ def main(
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     import rerun as rr
 
-    from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory2.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
