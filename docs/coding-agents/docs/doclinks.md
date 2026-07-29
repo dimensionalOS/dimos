@@ -1,6 +1,6 @@
 When writing or editing markdown documentation, use `doclinks` tool to resolve file references.
 
-Full documentation if needed: [`utils/docs/doclinks.md`](/dimos/utils/docs/doclinks.md)
+Full documentation if needed: [`cli/doclinks.md`](/dimos/cli/doclinks.md)
 
 ## Syntax
 
