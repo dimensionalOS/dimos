@@ -18,4 +18,3 @@ worktree with `/opsx-propose` and live under `openspec/changes/<name>/`.
 ## Merged
 
 - Hosted teleop 3 — xArm cloudflare blueprints on the split module pattern.
-  Spec preserved at `openspec/changes/hosted-teleop-setup/`.
