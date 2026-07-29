@@ -141,7 +141,7 @@ def make_connection(
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
         dataset = cfg.replay_db
-        return ReplayConnection(dataset=dataset)
+        return ReplayConnection(dataset=dataset, data_server_url=cfg.data_server_url)
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -165,9 +165,11 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
+        data_server_url: str = "http://127.0.0.1:8765",
         **kwargs,
     ) -> None:
         self.dataset = dataset
+        self.data_server_url = data_server_url
         self._loop = kwargs.get("loop", False)
         self._seek = kwargs.get("seek")
         self._duration = kwargs.get("duration")
@@ -177,7 +179,12 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
         store = self.register_disposable(
-            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
+            SqliteStore(
+                path=str(
+                    resolve_db_path(self.dataset, hosted_server_url=self.data_server_url)
+                ),
+                must_exist=True,
+            )
         )
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)

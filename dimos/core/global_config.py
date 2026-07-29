@@ -55,6 +55,10 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    data_server_url: str = Field(
+        default="http://127.0.0.1:8765",
+        validation_alias=AliasChoices("DIMOS_DATA_SERVER_URL", "data_server_url"),
+    )
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT

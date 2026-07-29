@@ -34,6 +34,7 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
+from dimos.hosted_data.reference import resolve_hosted_replay
 from dimos.memory2.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import resolve_named_path
@@ -49,8 +50,15 @@ _LOOP_GAP = 0.05  # min wall-time gap inserted between loop wraps (seconds)
 _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
-def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss)."""
+def resolve_db_path(
+    dataset: str | Path,
+    *,
+    hosted_server_url: str | None = None,
+) -> Path:
+    """Resolve a local, LFS, or hosted memory2 replay database."""
+    hosted = resolve_hosted_replay(dataset, server_url=hosted_server_url)
+    if hosted is not None:
+        return hosted
     return resolve_named_path(dataset, ".db")
 
 
