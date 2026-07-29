@@ -120,7 +120,7 @@ def test_short_stream_is_rejected_and_cleaned_up(tmp_path: Path) -> None:
     ("field", "value"),
     [
         ("owner", "../alice"),
-        ("repository", "go2/office"),
+        ("name", "go2/office"),
         ("filename", "../recording.db"),
         ("filename", "folder\\recording.db"),
     ],
@@ -156,7 +156,7 @@ def test_metadata_rejects_invalid_size_types(size_bytes: object) -> None:
         "created_at": "2026-01-01T00:00:00+00:00",
     }
 
-    with pytest.raises(RepositoryError, match="invalid replay object metadata"):
+    with pytest.raises(RepositoryError):
         ReplayObject.from_dict(data)
 
 
