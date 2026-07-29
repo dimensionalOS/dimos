@@ -25,7 +25,7 @@ Channels (topic == DataChannel name):
     map_unreliable      robot → operator   map (unordered, lossy) — publishable
 
 Media rides the same session: a sendonly camera track (``set_video_frame``)
-and, opt-in (``audio_in``), the operator's mic (``set_audio_frame_callback``).
+and the operator's mic (``set_audio_frame_callback``).
 The aiortc/CF quirks (MAX_BUNDLE, the id=0 throwaway channel) are documented
 in ``dimos/teleop/quest_hosted/README.md``. Config via ``transports.broker.*``.
 """
@@ -74,7 +74,6 @@ class BrokerConfig(ProviderConfig):
     ordered: bool = False
     max_retransmits: int | None = 0
     video_codec: str = "h264"
-    audio_in: bool = False
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
@@ -106,8 +105,8 @@ class BrokerProvider(AsyncProviderBase):
     (robot → operator): ``publish()`` on ``state_reliable_back`` /
     ``map_unreliable``; while no operator is connected the channel doesn't
     exist and messages drop, which is normal pubsub behaviour. Media rides the
-    same session: a sendonly camera track (``set_video_frame``) and, opt-in,
-    the operator's mic track (``audio_in`` → ``set_audio_frame_callback``).
+    same session: a sendonly camera track (``set_video_frame``) and the
+    operator's mic track (``set_audio_frame_callback``).
     """
 
     INBOUND_CHANNELS = ("cmd_unreliable", "state_reliable")
@@ -215,11 +214,10 @@ class BrokerProvider(AsyncProviderBase):
             if self._config.video_codec:
                 self._prefer_video_codec(self._config.video_codec)
             # Operator → robot audio: recvonly m=audio in the offer so CF can
-            # bridge the operator's mic track into this session. The frames are
-            # read off the track in the on("track") handler below. Opt-in.
-            if self._config.audio_in:
-                self._pc.addTransceiver("audio", direction="recvonly")
-                self._attach_audio_receiver()
+            # bridge the operator's mic track into this session. Frames are
+            # dropped unless a module registers an audio callback.
+            self._pc.addTransceiver("audio", direction="recvonly")
+            self._attach_audio_receiver()
             self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
             offer = await self._pc.createOffer()

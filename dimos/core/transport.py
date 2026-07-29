@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import functools
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
     TypeVar,
     cast,
 )
+
+import numpy as np
 
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
@@ -45,6 +48,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic as ZenohTopic,
     Zenoh,
 )
+from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -527,6 +531,68 @@ class WebRTCVideoTransport(Transport[Any]):
 
 class CloudflareVideoTransport(WebRTCVideoTransport):
     """Camera → teleop web client via the hosted broker (see WebRTCVideoTransport)."""
+
+    _config_cls = BrokerConfig
+
+
+class WebRTCAudioTransport(Transport[AudioEvent]):
+    """Remote operator audio received as decoded PCM audio events."""
+
+    _config_cls: type[ProviderConfig]
+
+    def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
+        self._config = config or self._config_cls(**config_kwargs)
+
+    @classmethod
+    def spec(cls, **kwargs: Any) -> TransportSpec:
+        """Defer construction until provider configuration is resolved."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, (), kwargs)
+
+    def start(self) -> None:
+        provider = self._config.provider()
+        if not provider.is_connected:
+            provider.start()
+
+    def stop(self) -> None:
+        pass  # provider lifecycle is process-scoped
+
+    def broadcast(self, _: Out[AudioEvent] | None, msg: AudioEvent) -> None:
+        logger.warning("%s is subscribe-only; dropping local audio", type(self).__name__)
+
+    def subscribe(
+        self,
+        callback: Callable[[AudioEvent], None],
+        selfstream: Stream[AudioEvent] | None = None,
+    ) -> Callable[[], None]:
+        provider = self._config.provider()
+        set_callback = getattr(provider, "set_audio_frame_callback", None)
+        if set_callback is None:
+            raise NotImplementedError(f"{type(provider).__name__} does not support audio tracks")
+
+        def _on_frame(pcm: bytes, sample_rate: int, channels: int) -> None:
+            callback(
+                AudioEvent(
+                    data=np.frombuffer(pcm, dtype=np.int16).copy(),
+                    sample_rate=sample_rate,
+                    timestamp=time.time(),
+                    channels=channels,
+                )
+            )
+
+        set_callback(_on_frame)
+        if not provider.is_connected:
+            provider.start()
+
+        def _unsubscribe() -> None:
+            set_callback(None)
+
+        return _unsubscribe
+
+
+class CloudflareAudioTransport(WebRTCAudioTransport):
+    """Operator microphone audio received through the hosted broker."""
 
     _config_cls = BrokerConfig
 
