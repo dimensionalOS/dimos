@@ -29,8 +29,9 @@ from collections.abc import Iterator
 import contextlib
 import os
 from pathlib import Path
-import tempfile
 import threading
+
+from dimos.constants import CACHE_DIR
 
 _lock = threading.Lock()
 
@@ -54,7 +55,7 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
     global _prefix_dir
 
     if _prefix_dir is None:
-        _prefix_dir = Path(tempfile.gettempdir()) / "dimos_ament_prefix"
+        _prefix_dir = CACHE_DIR / "ament_prefix"
 
     prefix = _prefix_dir
     resource_dir = prefix / "share" / "ament_index" / "resource_index" / "packages"

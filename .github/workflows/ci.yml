@@ -331,7 +331,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
