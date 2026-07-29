@@ -48,7 +48,9 @@ dimos run coordinator-mock
 dimos run xarm7-planner-coordinator
 ```
 
-Pink IK is the default solver. Tune it with nested module config overrides:
+The IK default follows the planning world: RoboPlan worlds use bundled OInK,
+while other worlds use Pink. Select Pink explicitly to tune it with nested
+module config overrides:
 
 ```bash
 dimos run xarm7-planner-coordinator \
@@ -84,8 +86,10 @@ Manipulation planning separates the world backend from the planner algorithm:
 
 - `world_backend` selects the robot/world/collision representation.
 - `planner_name` selects the path-planning algorithm.
-- `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
-  field remains available as a compatibility shim.
+- Omitted `kinematics` selects the world-native IK backend when available and
+  otherwise selects Pink.
+- Explicit `kinematics.backend` overrides the automatic selection. The legacy
+  `kinematics_name` field remains an explicit compatibility shim.
 
 
 ```bash
@@ -104,16 +108,18 @@ Valid combinations:
 
 | `world_backend` | `planner_name` | `kinematics.backend` | Status |
 |-----------------|----------------|-------------------|--------|
-| `roboplan` | `roboplan` | `pink` or `jacobian` | Default path; RoboPlan-native planner |
-| `drake` | `rrt_connect` | `pink` | Legacy Drake world |
+| `roboplan` | `roboplan` | omitted or `roboplan` | Default native RoboPlan world, planner, and OInK |
+| `roboplan` | `roboplan` | `pink` or `jacobian` | Explicit generic IK override |
+| `drake` | `rrt_connect` | omitted or `pink` | Legacy Drake world with Pink |
 | `drake` | `rrt_connect` | `jacobian` | Legacy Jacobian IK |
 | `drake` | `rrt_connect` | `drake_optimization` | Drake-only IK |
-| `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
+| `roboplan` | `rrt_connect` | omitted, `roboplan`, `pink`, or `jacobian` | Native or generic IK with generic RRT |
 
 Invalid combinations fail during startup instead of waiting for the first plan
 request. For example, `planner_name=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
-`world_backend=drake`.
+`world_backend=drake`. Likewise, `kinematics.backend=roboplan` requires a
+RoboPlan world.
 
 Install the manipulation dependencies:
 
@@ -121,12 +127,23 @@ Install the manipulation dependencies:
 uv sync --extra manipulation --inexact
 ```
 
-The `manipulation` extra includes RoboPlan via `roboplan` from PyPI.
+The `manipulation` extra includes RoboPlan via `roboplan` from PyPI. OInK is
+bundled as `roboplan.optimal_ik`; it has no separate install or capability
+probe.
 The `--inexact` flag preserves other extras already installed in your current
 environment.
 
 Safety behavior for unsupported RoboPlan features:
 
+- RoboPlan OInK accepts pose targets expressed in the `world` frame. Other
+  target frames return an unsupported IK result.
+- OInK checks convergence against the requested position and orientation
+  tolerances. When collision checking is enabled, the converged composite
+  endpoint is checked in the RoboPlan world.
+- The initial OInK integration does not add a self-collision barrier.
+  Intermediate numerical iterations are search states, not a safe executable
+  path; the motion planner remains responsible for generating a collision-free
+  trajectory.
 - Planning-critical unsupported inputs fail loudly before planning. Examples
   include unsupported obstacle geometry, unavailable robot loading APIs, or
   unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from

@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 import importlib
 from pathlib import Path
+import subprocess
 import sys
 import threading
 from types import ModuleType
@@ -36,13 +38,15 @@ from dimos.manipulation.planning.groups.models import (
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.transform_utils import pose_to_matrix
+
+_ARGUMENT_OMITTED = object()
 
 
 class FakeJointConfiguration:
@@ -57,6 +61,13 @@ class FakeJointPath:
     def __init__(self, joint_names: list[str], positions: list[np.ndarray]) -> None:
         self.joint_names = joint_names
         self.positions = positions
+
+
+class FakeCartesianConfiguration:
+    def __init__(self) -> None:
+        self.base_frame = ""
+        self.tip_frame = ""
+        self.tform = np.eye(4)
 
 
 class FakeBox:
@@ -166,6 +177,9 @@ class FakeScene:
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)
 
+    def integrate(self, q: np.ndarray, delta_q: np.ndarray) -> np.ndarray:
+        return np.asarray(q) + np.asarray(delta_q)
+
     def addBoxGeometry(
         self,
         obstacle_id: str,
@@ -263,6 +277,65 @@ class FakeRRT:
         )
 
 
+class FakeFrameTaskOptions:
+    pass
+
+
+class FakeFrameTask:
+    instances: ClassVar[list[FakeFrameTask]] = []
+
+    def __init__(
+        self,
+        oink: FakeOink,
+        scene: FakeScene,
+        target: FakeCartesianConfiguration,
+        options: FakeFrameTaskOptions | None = None,
+    ) -> None:
+        self.oink = oink
+        self.scene = scene
+        self.target = target
+        self.options = options or FakeFrameTaskOptions()
+        self.instances.append(self)
+
+
+class FakePositionLimit:
+    def __init__(self, oink: FakeOink, gain: float = 1.0) -> None:
+        self.oink = oink
+        self.gain = gain
+
+
+class FakeOink:
+    instances: ClassVar[list[FakeOink]] = []
+    step: ClassVar[float] = 0.25
+    solve_error: ClassVar[Exception | None] = None
+
+    def __init__(self, scene: FakeScene, group_name: str) -> None:
+        self.scene = scene
+        self.group_name = group_name
+        self.q_indices = tuple(
+            scene.native_joint_names.index(name) for name in scene.groups[group_name]
+        )
+        self.v_indices = self.q_indices
+        self.num_variables = len(self.v_indices)
+        self.solve_calls: list[tuple[list[FakeFrameTask], list[Any], object]] = []
+        self.scene_positions: list[np.ndarray] = []
+        self.instances.append(self)
+
+    def solveIk(
+        self,
+        scene: FakeScene,
+        tasks: list[FakeFrameTask],
+        constraints: list[Any],
+        delta_q: np.ndarray,
+        regularization: float | object = _ARGUMENT_OMITTED,
+    ) -> None:
+        self.solve_calls.append((tasks, constraints, regularization))
+        self.scene_positions.append(scene.current_positions.copy())
+        if self.solve_error is not None:
+            raise self.solve_error
+        delta_q[:] = self.step
+
+
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     roboplan_pkg = ModuleType("roboplan")
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
@@ -270,6 +343,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
     core.JointPath = FakeJointPath  # type: ignore[attr-defined]
+    core.CartesianConfiguration = FakeCartesianConfiguration  # type: ignore[attr-defined]
     core.Box = FakeBox  # type: ignore[attr-defined]
     core.Sphere = FakeSphere  # type: ignore[attr-defined]
     core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
@@ -294,14 +368,39 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     rrt.RRTOptions = FakeRRTOptions  # type: ignore[attr-defined]
     rrt.RRT = FakeRRT  # type: ignore[attr-defined]
 
+    optimal_ik = ModuleType("roboplan.optimal_ik")
+    optimal_ik.Oink = FakeOink  # type: ignore[attr-defined]
+    optimal_ik.FrameTaskOptions = FakeFrameTaskOptions  # type: ignore[attr-defined]
+    optimal_ik.FrameTask = FakeFrameTask  # type: ignore[attr-defined]
+    optimal_ik.PositionLimit = FakePositionLimit  # type: ignore[attr-defined]
+
+    FakeFrameTask.instances = []
+    FakeOink.instances = []
+    FakeOink.step = 0.25
+    FakeOink.solve_error = None
+
     monkeypatch.setitem(sys.modules, "roboplan", roboplan_pkg)
     monkeypatch.setitem(sys.modules, "roboplan.core", core)
     monkeypatch.setitem(sys.modules, "roboplan.rrt", rrt)
+    monkeypatch.setitem(sys.modules, "roboplan.optimal_ik", optimal_ik)
 
 
 @pytest.fixture
-def fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_fake_roboplan(monkeypatch)
+def fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    with monkeypatch.context() as fake_modules:
+        _install_fake_roboplan(fake_modules)
+        yield
+
+    package = sys.modules.get("dimos.manipulation.planning.world")
+    for module_name in (
+        "dimos.manipulation.planning.world.roboplan_oink",
+        "dimos.manipulation.planning.world.roboplan_world",
+    ):
+        sys.modules.pop(module_name, None)
+        if package is not None:
+            module_attribute = module_name.rsplit(".", maxsplit=1)[-1]
+            if hasattr(package, module_attribute):
+                delattr(package, module_attribute)
 
 
 @pytest.fixture
@@ -410,7 +509,20 @@ def _selection(
     )
 
 
+def _target(x: float, frame_id: str = "world") -> PoseStamped:
+    return PoseStamped(
+        frame_id=frame_id,
+        position=Vector3(x=x),
+        orientation=Quaternion(),
+    )
+
+
 def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
+    oink_module_name = "dimos.manipulation.planning.world.roboplan_oink"
+    if oink_module_name in sys.modules:
+        importlib.reload(sys.modules[oink_module_name])
+    else:
+        importlib.import_module(oink_module_name)
     module_name = "dimos.manipulation.planning.world.roboplan_world"
     if module_name in sys.modules:
         return importlib.reload(sys.modules[module_name])
@@ -419,9 +531,50 @@ def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
 
 def test_roboplan_bindings_are_imported_at_module_load(fake_roboplan: None) -> None:
     module = _import_roboplan_world(fake_roboplan)
+    oink_module = sys.modules["dimos.manipulation.planning.world.roboplan_oink"]
 
     assert module.roboplan_core.Scene is FakeScene
+    assert oink_module.roboplan_optimal_ik.Oink is FakeOink
     assert module.roboplan_rrt.RRT is FakeRRT
+
+
+def test_missing_bundled_oink_fails_fast_without_pink_fallback() -> None:
+    script = """
+import builtins
+import sys
+from types import ModuleType
+
+roboplan = ModuleType("roboplan")
+roboplan.__path__ = []
+sys.modules["roboplan"] = roboplan
+sys.modules["roboplan.core"] = ModuleType("roboplan.core")
+sys.modules["roboplan.rrt"] = ModuleType("roboplan.rrt")
+
+real_import = builtins.__import__
+
+def blocked_import(name, *args, **kwargs):
+    if name == "roboplan.optimal_ik":
+        raise ImportError("simulated missing bundled OInK")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = blocked_import
+try:
+    import dimos.manipulation.planning.world.roboplan_world
+except ImportError as exc:
+    assert "Install the manipulation extra" in str(exc)
+else:
+    raise AssertionError("Missing roboplan.optimal_ik did not fail fast")
+
+assert "dimos.manipulation.planning.kinematics.pink_ik" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_robot_registration_finalization_and_joint_limits(
@@ -1161,6 +1314,381 @@ def test_legacy_kinematics_wrappers_require_unique_pose_group(
         ambiguous_world.get_jacobian(ambiguous_world.get_live_context(), ambiguous_id)
 
 
+def test_oink_single_target_uses_defaults_and_restores_scene(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+    )
+    expected_scene_q = world._full_scene_q(world.get_live_context())
+
+    result = world.solve(
+        world,
+        robot_id,
+        _target(0.8),
+        seed=JointState(
+            name=["arm/joint2", "arm/joint1"],
+            position=[0.2, 0.1],
+        ),
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == ["arm/joint1", "arm/joint2"]
+    assert result.joint_state.position == pytest.approx([0.35, 0.45])
+    assert result.iterations == 1
+    assert len(FakeOink.instances) == 1
+    oink = FakeOink.instances[0]
+    assert oink.group_name == "manipulator"
+    assert len(oink.solve_calls) == 1
+    tasks, constraints, regularization = oink.solve_calls[0]
+    assert tasks == FakeFrameTask.instances
+    assert len(constraints) == 1
+    assert isinstance(constraints[0], FakePositionLimit)
+    assert regularization is _ARGUMENT_OMITTED
+    assert FakeFrameTask.instances[0].target.base_frame == ""
+    assert FakeFrameTask.instances[0].target.tip_frame == "tcp"
+    np.testing.assert_allclose(world._scene.current_positions, expected_scene_q)
+
+
+def test_oink_reports_worst_multi_target_error_and_caps_each_attempt(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("shoulder", ("joint1",), "base", "tcp"),
+                PlanningGroupDefinition("wrist", ("joint2",), "link1", "tcp"),
+            ]
+        }
+    )
+    world, _ = _make_world(fake_roboplan, config)
+    FakeOink.step = 0.0
+    _import_roboplan_world(fake_roboplan)
+    oink_module = sys.modules["dimos.manipulation.planning.world.roboplan_oink"]
+    monkeypatch.setattr(oink_module, "_MAX_ITERATIONS_PER_ATTEMPT", 3)
+    shoulder = world._planning_groups.get("arm/shoulder")
+    wrist = world._planning_groups.get("arm/wrist")
+
+    result = world.solve_pose_targets(
+        world,
+        {shoulder: _target(0.2), wrist: _target(0.8)},
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.position_error == pytest.approx(0.8)
+    assert result.orientation_error == pytest.approx(0.0)
+    assert result.iterations == 3
+    assert len(FakeOink.instances[0].solve_calls) == 3
+
+
+def test_oink_partial_seed_auxiliary_only_preserves_selection_order(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+    )
+    group = world._planning_groups.get("arm/manipulator")
+
+    result = world.solve_pose_targets(
+        world,
+        {},
+        auxiliary_groups=(group,),
+        seed=JointState(name=["arm/joint2"], position=[0.6]),
+        check_collision=False,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == ["arm/joint1", "arm/joint2"]
+    assert result.joint_state.position == pytest.approx([0.1, 0.6])
+    assert result.iterations == 0
+    assert FakeOink.instances == []
+
+
+def test_oink_restarts_only_pose_joints_and_reuses_one_instance(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("pose", ("joint1",), "base", "tcp"),
+                PlanningGroupDefinition("aux", ("joint2",), "link1"),
+            ]
+        }
+    )
+    world, robot_id = _make_world(fake_roboplan, config)
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.1, 0.4]),
+    )
+    _import_roboplan_world(fake_roboplan)
+    oink_module = sys.modules["dimos.manipulation.planning.world.roboplan_oink"]
+    monkeypatch.setattr(oink_module, "_MAX_ITERATIONS_PER_ATTEMPT", 1)
+    FakeOink.step = 0.0
+    random_uniform = mocker.patch(
+        "dimos.manipulation.planning.world.roboplan_oink.np.random.uniform",
+        return_value=np.asarray([0.7]),
+    )
+
+    result = world.solve_pose_targets(
+        world,
+        {world._planning_groups.get("arm/pose"): _target(10.0)},
+        auxiliary_groups=(world._planning_groups.get("arm/aux"),),
+        check_collision=False,
+        max_attempts=2,
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert len(FakeOink.instances) == 1
+    oink = FakeOink.instances[0]
+    assert len(oink.solve_calls) == 2
+    np.testing.assert_allclose(oink.scene_positions[0][:2], [0.1, 0.4])
+    np.testing.assert_allclose(oink.scene_positions[1][:2], [0.7, 0.4])
+    random_uniform.assert_called_once()
+
+
+def test_oink_collision_precedence_and_collision_override(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    seed = JointState(name=["joint1", "joint2"], position=[0.85, 0.0])
+
+    collision = world.solve(
+        world,
+        robot_id,
+        _target(1.25),
+        seed=seed,
+        check_collision=True,
+        max_attempts=1,
+    )
+    accepted = world.solve(
+        world,
+        robot_id,
+        _target(1.25),
+        seed=seed,
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert collision.status == IKStatus.COLLISION
+    assert collision.joint_state is None
+    assert accepted.status == IKStatus.SUCCESS
+    assert accepted.joint_state is not None
+    assert max(accepted.joint_state.position) > 0.9
+
+
+def test_oink_collision_free_endpoint_is_checked_and_accepted(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    has_collisions = mocker.spy(FakeScene, "hasCollisions")
+
+    result = world.solve(
+        world,
+        robot_id,
+        _target(0.5),
+        check_collision=True,
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    has_collisions.assert_called_once()
+
+
+def test_oink_no_solution_reports_closest_attempt(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    expected_scene_q = world._full_scene_q(world.get_live_context())
+    _import_roboplan_world(fake_roboplan)
+    oink_module = sys.modules["dimos.manipulation.planning.world.roboplan_oink"]
+    monkeypatch.setattr(oink_module, "_MAX_ITERATIONS_PER_ATTEMPT", 1)
+    FakeOink.step = 0.0
+    mocker.patch(
+        "dimos.manipulation.planning.world.roboplan_oink.np.random.uniform",
+        return_value=np.asarray([0.4, 0.4]),
+    )
+    group = world._planning_groups.get("arm/manipulator")
+
+    result = world.solve_pose_targets(
+        world,
+        {group: _target(0.9)},
+        position_tolerance=0.01,
+        orientation_tolerance=0.01,
+        check_collision=False,
+        max_attempts=2,
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.joint_state is None
+    assert result.position_error == pytest.approx(0.1)
+    assert result.orientation_error == pytest.approx(0.0)
+    np.testing.assert_allclose(world._scene.current_positions, expected_scene_q)
+
+
+def test_oink_supports_multi_robot_composite_selection(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, _, _, second_config = _make_two_robot_world(fake_roboplan, robot_config)
+    right = world._planning_groups.get("right/manipulator")
+    left = world._planning_groups.get("arm/manipulator")
+
+    result = world.solve_pose_targets(
+        world,
+        {right: _target(1.0), left: _target(1.0)},
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert second_config.name == "right"
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == [
+        "right/joint1",
+        "right/joint2",
+        "arm/joint1",
+        "arm/joint2",
+    ]
+    assert result.joint_state.position == pytest.approx([0.25] * 4)
+    assert len(FakeFrameTask.instances) == 2
+    assert {task.target.tip_frame for task in FakeFrameTask.instances} == {
+        "arm__tcp",
+        "right__tcp",
+    }
+
+
+def test_oink_multi_robot_collision_applies_composite_endpoint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, _, _, _ = _make_two_robot_world(fake_roboplan, robot_config)
+    left = world._planning_groups.get("arm/manipulator")
+    right = world._planning_groups.get("right/manipulator")
+    has_collisions = mocker.patch.object(
+        FakeScene,
+        "hasCollisions",
+        autospec=True,
+        side_effect=FakeScene.hasCollisions,
+    )
+
+    result = world.solve_pose_targets(
+        world,
+        {},
+        auxiliary_groups=(right, left),
+        seed=JointState(
+            name=[
+                "right/joint1",
+                "right/joint2",
+                "arm/joint1",
+                "arm/joint2",
+            ],
+            position=[0.95, 0.2, 0.1, 0.3],
+        ),
+        check_collision=True,
+    )
+
+    assert result.status == IKStatus.COLLISION
+    checked_q = has_collisions.call_args.args[1]
+    checked = dict(zip(world._scene.native_joint_names, checked_q, strict=True))
+    assert checked["arm__joint1"] == pytest.approx(0.1)
+    assert checked["arm__joint2"] == pytest.approx(0.3)
+    assert checked["right__joint1"] == pytest.approx(0.95)
+    assert checked["right__joint2"] == pytest.approx(0.2)
+
+
+def test_oink_rejects_unsupported_frame_and_overlapping_groups(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    group = world._planning_groups.get("arm/manipulator")
+
+    frame_result = world.solve_pose_targets(
+        world,
+        {group: _target(0.0, frame_id="base")},
+    )
+    overlap_result = world.solve_pose_targets(
+        world,
+        {group: _target(0.0)},
+        auxiliary_groups=(group,),
+    )
+
+    assert frame_result.status == IKStatus.UNSUPPORTED
+    assert frame_result.joint_state is None
+    assert overlap_result.status == IKStatus.UNSUPPORTED
+    assert overlap_result.joint_state is None
+
+
+def test_oink_restores_scene_after_solver_exception(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+    )
+    expected_scene_q = world._full_scene_q(world.get_live_context())
+    FakeOink.solve_error = RuntimeError("qp failed")
+
+    result = world.solve(
+        world,
+        robot_id,
+        _target(10.0),
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "qp failed" in result.message
+    np.testing.assert_allclose(world._scene.current_positions, expected_scene_q)
+
+
+def test_oink_single_target_wrapper_requires_unique_pose_group(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("first", ("joint1",), "base", "tcp"),
+                PlanningGroupDefinition("second", ("joint2",), "link1", "tcp"),
+            ]
+        }
+    )
+    world, robot_id = _make_world(fake_roboplan, config)
+
+    result = world.solve(world, robot_id, _target(0.0))
+
+    assert result.status == IKStatus.UNSUPPORTED
+    assert "pose-targetable planning groups" in result.message
+
+
 def test_group_lookup_rejects_unknown_group_id(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -1281,7 +1809,7 @@ def test_native_selected_planner_accepts_local_joint_names(
     assert result.path[-1].position == [0.2, 0.4]
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_supports_disjoint_same_robot_groups(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1302,8 +1830,9 @@ def test_native_selected_planner_rejects_multi_group_selection(
         JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[-1].name == ["arm/joint1", "arm/joint2"]
+    assert result.path[-1].position == [0.1, 0.1]
 
 
 def test_native_planner_coordinates_groups_across_two_robots(

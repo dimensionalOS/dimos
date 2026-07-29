@@ -54,7 +54,6 @@ from dimos.manipulation.planning.groups.utils import (
 )
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
-    PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -136,7 +135,7 @@ class ManipulationModuleConfig(ModuleConfig):
         default_factory=NoManipulationVisualizationConfig
     )
     planner_name: PlannerName = "roboplan"
-    kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
+    kinematics: ManipulationKinematicsConfig | None = None
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup

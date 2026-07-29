@@ -21,7 +21,7 @@ the optional dependency installed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -46,8 +46,9 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
+    IKResult,
     Obstacle,
     PlanningGroupID,
     PlanningResult,
@@ -60,6 +61,11 @@ from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanGroup,
     RoboPlanModel,
     build_roboplan_model,
+)
+from dimos.manipulation.planning.world.roboplan_oink import (
+    RoboPlanIKContext,
+    RoboPlanIKRobotState,
+    solve_roboplan_ik,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -434,6 +440,109 @@ class RoboPlanWorld:
             f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
         )
 
+    # KinematicsSpec for native RoboPlan OInK
+
+    def solve(
+        self,
+        world: WorldSpec,
+        robot_id: WorldRobotID,
+        target_pose: PoseStamped,
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve the unique pose-targetable group for one robot."""
+        if world is not self:
+            return self._ik_failure(
+                IKStatus.UNSUPPORTED,
+                "RoboPlan-native IK requires its RoboPlanWorld instance",
+            )
+        try:
+            robot = self._get_robot(robot_id)
+            group_id = self._planning_groups.primary_pose_group_id_for_robot(robot.config.name)
+            if group_id is None:
+                return self._ik_failure(
+                    IKStatus.UNSUPPORTED,
+                    f"Robot '{robot.config.name}' has no pose-targetable planning group",
+                )
+            group = self._planning_groups.get(group_id)
+        except (KeyError, ValueError) as exc:
+            return self._ik_failure(IKStatus.UNSUPPORTED, str(exc))
+        return self.solve_pose_targets(
+            world,
+            {group: target_pose},
+            seed=seed,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+            check_collision=check_collision,
+            max_attempts=max_attempts,
+        )
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve planning-group-scoped targets with one request-local OInK."""
+        if world is not self:
+            return self._ik_failure(
+                IKStatus.UNSUPPORTED,
+                "RoboPlan-native IK requires its RoboPlanWorld instance",
+            )
+        try:
+            self._require_finalized()
+        except RuntimeError as exc:
+            return self._ik_failure(IKStatus.NO_SOLUTION, str(exc))
+
+        with self._lock:
+            scene = self._require_scene()
+            scene_snapshot = self._full_scene_q(self._live_context)
+            try:
+                robot_states: dict[RobotName, RoboPlanIKRobotState] = {}
+                for robot_id, robot in self._robots.items():
+                    if robot.lower_limits is None or robot.upper_limits is None:
+                        raise ValueError(
+                            f"RoboPlan joint limits are unavailable for '{robot.config.name}'"
+                        )
+                    robot_states[robot.config.name] = RoboPlanIKRobotState(
+                        joint_names=tuple(robot.config.joint_names),
+                        positions=self._live_context.q_by_robot[robot_id].copy(),
+                        lower_limits=robot.lower_limits.copy(),
+                        upper_limits=robot.upper_limits.copy(),
+                    )
+                context = RoboPlanIKContext(
+                    scene=scene,
+                    model=self._require_model(),
+                    planning_groups=self._planning_groups,
+                    robots=robot_states,
+                    scene_q=scene_snapshot,
+                )
+                return solve_roboplan_ik(
+                    context,
+                    pose_targets,
+                    auxiliary_groups=auxiliary_groups,
+                    seed=seed,
+                    position_tolerance=position_tolerance,
+                    orientation_tolerance=orientation_tolerance,
+                    check_collision=check_collision,
+                    max_attempts=max_attempts,
+                )
+            except (KeyError, ValueError) as exc:
+                return self._ik_failure(
+                    IKStatus.NO_SOLUTION,
+                    f"RoboPlan OInK context setup failed: {exc}",
+                )
+            finally:
+                scene.setJointPositions(scene_snapshot)
+
     # PlannerSpec for native RoboPlan planning
 
     def plan_joint_path(
@@ -541,6 +650,24 @@ class RoboPlanWorld:
         return "RoboPlan"
 
     # Internals
+
+    def _ik_failure(
+        self,
+        status: IKStatus,
+        message: str,
+        *,
+        position_error: float = 0.0,
+        orientation_error: float = 0.0,
+        iterations: int = 0,
+    ) -> IKResult:
+        return IKResult(
+            status=status,
+            joint_state=None,
+            position_error=position_error,
+            orientation_error=orientation_error,
+            iterations=iterations,
+            message=message,
+        )
 
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:

@@ -28,6 +28,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
+    create_planning_specs,
     create_planning_stack,
     create_world,
     validate_backend_combination,
@@ -36,11 +37,12 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.kinematics.config import (
     JacobianKinematicsConfig,
     PinkKinematicsConfig,
+    RoboPlanKinematicsConfig,
 )
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.protocols import PlannerSpec
+from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -121,6 +123,54 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
     ):
         validate_backend_combination(world_backend="roboplan", kinematics_name="drake_optimization")
 
+    with pytest.raises(
+        ValueError, match='kinematics_name="roboplan" requires world_backend="roboplan"'
+    ):
+        validate_backend_combination(
+            world_backend="drake",
+            planner_name="rrt_connect",
+            kinematics_name="roboplan",
+        )
+
+
+def test_create_kinematics_uses_roboplan_world_as_native_backend(
+    mocker: MockerFixture,
+) -> None:
+    world = mocker.MagicMock(spec=KinematicsSpec)
+
+    assert (
+        create_kinematics(
+            config=RoboPlanKinematicsConfig(),
+            world=world,
+            world_backend="roboplan",
+        )
+        is world
+    )
+
+
+def test_create_kinematics_rejects_native_backend_with_wrong_world_backend(
+    mocker: MockerFixture,
+) -> None:
+    with pytest.raises(
+        ValueError, match='kinematics_name="roboplan" requires world_backend="roboplan"'
+    ):
+        create_kinematics(
+            config=RoboPlanKinematicsConfig(),
+            world=mocker.MagicMock(),
+            world_backend="drake",
+        )
+
+
+def test_create_kinematics_rejects_native_backend_without_kinematics_world(
+    mocker: MockerFixture,
+) -> None:
+    with pytest.raises(ValueError, match="RoboPlan world implementing KinematicsSpec"):
+        create_kinematics(
+            config=RoboPlanKinematicsConfig(),
+            world=mocker.MagicMock(),
+            world_backend="roboplan",
+        )
+
 
 def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture) -> None:
     world = mocker.MagicMock(spec=PlannerSpec)
@@ -160,10 +210,95 @@ def test_create_planning_stack_defaults_to_roboplan(
 
     assert result == (world, kinematics, planner, "robot-id")
     mock_world.assert_called_once_with(backend="roboplan", visualization=None)
-    mock_kinematics.assert_called_once_with(config=PinkKinematicsConfig())
+    mock_kinematics.assert_called_once_with(
+        config=RoboPlanKinematicsConfig(),
+        world=world,
+        world_backend="roboplan",
+    )
     mock_planner.assert_called_once_with(name="roboplan", world=world, world_backend="roboplan")
     world.add_robot.assert_called_once_with(robot_config)
     world.finalize.assert_called_once()
+
+
+def test_create_planning_specs_defaults_drake_world_to_pink(
+    mocker: MockerFixture,
+) -> None:
+    world = mocker.MagicMock()
+    create_ik = mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=mocker.MagicMock(),
+    )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=mocker.MagicMock(),
+    )
+
+    create_planning_specs(
+        world=world,
+        world_backend="drake",
+        planner_name="rrt_connect",
+    )
+
+    create_ik.assert_called_once_with(
+        config=PinkKinematicsConfig(),
+        world=world,
+        world_backend="drake",
+    )
+
+
+def test_explicit_legacy_pink_overrides_roboplan_default(
+    mocker: MockerFixture,
+) -> None:
+    world = mocker.MagicMock()
+    create_ik = mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=mocker.MagicMock(),
+    )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=mocker.MagicMock(),
+    )
+
+    create_planning_specs(
+        world=world,
+        world_backend="roboplan",
+        planner_name="roboplan",
+        kinematics_name="pink",
+    )
+
+    create_ik.assert_called_once_with(
+        config=PinkKinematicsConfig(),
+        world=world,
+        world_backend="roboplan",
+    )
+
+
+def test_explicit_typed_pink_overrides_roboplan_default(
+    mocker: MockerFixture,
+) -> None:
+    world = mocker.MagicMock()
+    create_ik = mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=mocker.MagicMock(),
+    )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=mocker.MagicMock(),
+    )
+    config = PinkKinematicsConfig(max_iterations=17)
+
+    create_planning_specs(
+        world=world,
+        world_backend="roboplan",
+        planner_name="roboplan",
+        kinematics=config,
+    )
+
+    create_ik.assert_called_once_with(
+        config=config,
+        world=world,
+        world_backend="roboplan",
+    )
 
 
 def test_start_with_no_robots_skips_planning(

@@ -1,6 +1,7 @@
 # Manipulation Planning Stack
 
-Motion planning for robotic manipulators. Backend-agnostic design with Drake implementation.
+Motion planning and inverse kinematics for robotic manipulators, with generic
+and world-native backends for RoboPlan and Drake.
 
 ## Quick Start
 
@@ -80,7 +81,8 @@ module = ManipulationModule(
     enable_viz=True,
     world_backend="drake",                # RoboPlan is the default
     planner_name="rrt_connect",           # RoboPlan is the default
-    kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
+    # Omit kinematics for the world default, or select an explicit override:
+    kinematics={"backend": "drake_optimization"}, # "roboplan" / "jacobian" / "pink"
 )
 module.start()
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
@@ -119,8 +121,11 @@ module.execute()  # Sends to coordinator
 | `JacobianIK` | Backend-agnostic | Iterative damped least-squares |
 | `DrakeOptimizationIK` | Drake-specific | Full nonlinear optimization |
 | `PinkIK` | Pinocchio/Pink | Local differential IK with task QP composition |
+| RoboPlan OInK | RoboPlan-specific | Native task/QP IK using the RoboPlan scene |
 
-`PinkIK` is selectable with `kinematics={"backend": "pink"}` or the CLI override
+When kinematics configuration is omitted, a RoboPlan world uses native OInK and
+other worlds use Pink. Explicit configuration always overrides that policy, so
+Pink remains selectable with `kinematics={"backend": "pink"}` or the CLI override
 `-o manipulationmodule.kinematics.backend=pink`. Pink tuning fields are nested
 under the same config, for example
 `-o manipulationmodule.kinematics.max_iterations=100`. It is installed with the
@@ -130,11 +135,19 @@ local/differential rather than global IK, so it can converge to local minima;
 collision checks remain enforced by the planning world before a candidate is
 accepted.
 
+RoboPlan OInK is selected explicitly with
+`kinematics={"backend": "roboplan"}` and requires a RoboPlan world. It is part
+of the normal `roboplan` package in the manipulation extra. The initial backend
+supports `world`-frame targets and optional converged-endpoint collision
+validation. It does not use a self-collision barrier, and its numerical search
+iterations are not an executable path.
+
 ### World Backends
 
 | Backend | Description |
 |---------|-------------|
 | `DrakeWorld` | Drake physics with Meshcat visualization |
+| `RoboPlanWorld` | RoboPlan scene, collision queries, native RRT, and native OInK |
 
 ## Blueprints
 
@@ -149,10 +162,13 @@ accepted.
 
 ```
 planning/
-├── spec.py                  # Protocols (WorldSpec, KinematicsSpec, PlannerSpec)
+├── spec/protocols.py        # Protocols (WorldSpec, KinematicsSpec, PlannerSpec)
 ├── factory.py               # create_world, create_kinematics, create_planner
 ├── world/
-│   └── drake_world.py       # DrakeWorld implementation
+│   ├── drake_world.py       # DrakeWorld implementation
+│   ├── roboplan_model.py    # RoboPlan model and planning-group mappings
+│   ├── roboplan_world.py    # RoboPlan world, planner, and locked IK delegation
+│   └── roboplan_oink.py     # Private request-local OInK solver
 ├── kinematics/
 │   ├── jacobian_ik.py       # Backend-agnostic Jacobian IK
 │   ├── drake_optimization_ik.py  # Drake nonlinear IK

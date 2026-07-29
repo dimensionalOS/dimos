@@ -51,8 +51,17 @@ class PinkKinematicsConfig(BaseConfig):
     safety_break: bool = True
 
 
+class RoboPlanKinematicsConfig(BaseConfig):
+    """Configuration discriminator for RoboPlan-native OInK."""
+
+    backend: Literal["roboplan"] = "roboplan"
+
+
 ManipulationKinematicsConfig = Annotated[
-    JacobianKinematicsConfig | DrakeOptimizationKinematicsConfig | PinkKinematicsConfig,
+    JacobianKinematicsConfig
+    | DrakeOptimizationKinematicsConfig
+    | PinkKinematicsConfig
+    | RoboPlanKinematicsConfig,
     Field(discriminator="backend"),
 ]
 
@@ -65,6 +74,9 @@ def kinematics_config_from_name(name: str) -> ManipulationKinematicsConfig:
         return DrakeOptimizationKinematicsConfig()
     if name == "pink":
         return PinkKinematicsConfig()
+    if name == "roboplan":
+        return RoboPlanKinematicsConfig()
     raise ValueError(
-        f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization', 'pink']"
+        "Unknown kinematics solver: "
+        f"{name}. Available: ['jacobian', 'drake_optimization', 'pink', 'roboplan']"
     )
