@@ -1,20 +1,24 @@
 schema: spec-driven
 
-# Shown to AI when creating artifacts. Keep this high-level; details belong
-# in per-change specs (openspec/changes/<name>/) created in feature worktrees.
+# Shown to AI when creating artifacts. Kept terse — the full rule sheet is
+# openspec/CONVENTIONS.md; per-feature context lives in openspec/changes/<slug>/.
 context: |
-  dimos: DimensionalOS robot operating system (Python monorepo).
-  Domains: hosted teleop (WebRTC/cloudflare; Go2 quadruped, xArm), manipulation
-  (GraspGenX), perception, navigation, control, memory, simulation.
+  dimos: DimensionalOS robot operating system (Python monorepo). Modules
+  communicate via typed streams; blueprints compose them into robot stacks.
+  Domains: hosted teleop (Go2 quadruped, xArm), manipulation (GraspGenX),
+  perception, navigation, control, memory, simulation.
 
-  Conventions:
-  - Always GIT_LFS_SKIP_SMUDGE=1 on git operations (full LFS smudge fills the disk).
-  - This branch (ruthwik/main) is a personal baseline: origin/main + "spec:" commits
-    carrying openspec/. Spec content must never reach origin/main — before a PR,
-    strip with: git rebase --onto origin/main ruthwik/main <feature-branch>.
-  - Any commit touching openspec/ is prefixed "spec:" so it is easy to drop.
-  - One feature = one worktree under ~/Documents/worktrees, branched off ruthwik/main.
-  - Task status lives on Agent Board (`board` CLI): move to in_progress when starting,
+  MUST READ before implementing: openspec/CONVENTIONS.md (distilled dos/don'ts,
+  commands, CI gates). Canonical long-form: AGENTS.md, docs/coding-agents/.
+
+  Workflow essentials:
+  - Always GIT_LFS_SKIP_SMUDGE=1 on git operations.
+  - This branch (ruthwik/main) is a personal baseline; commits touching openspec/
+    are prefixed "spec:" and must never reach origin/main
+    (strip before PR: git rebase --onto origin/main ruthwik/main <feature-branch>).
+  - One feature = one worktree; feature context goes in
+    openspec/changes/<slug>/context.md (template: openspec/templates/feature-context.md).
+  - Task status on Agent Board (`board` CLI): in_progress when starting,
     in_review when implemented; only the human moves cards to done.
 
   High-level direction: openspec/ROADMAP.md.
