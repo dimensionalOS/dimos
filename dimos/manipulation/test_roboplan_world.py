@@ -89,6 +89,7 @@ class FakeScene:
     joint_group_joint_names: ClassVar[list[str] | None] = None
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
+    valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
     def __init__(
         self,
@@ -106,10 +107,15 @@ class FakeScene:
         }
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
+        self.geometry_shapes: dict[str, object] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
         self.groups = self._read_groups(srdf)
         self.native_joint_names = self._read_joint_names(urdf)
         self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
+
+    def _require_frame(self, parent_frame: str) -> None:
+        if parent_frame not in self.valid_frames:
+            raise RuntimeError(f"Frame name '{parent_frame}' not found in frame_map_.")
 
     @staticmethod
     def _read_groups(srdf: str) -> dict[str, list[str]]:
@@ -168,7 +174,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
+        self.geometry_shapes[obstacle_id] = box
 
     def addSphereGeometry(
         self,
@@ -178,7 +186,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
+        self.geometry_shapes[obstacle_id] = sphere
 
     def addCylinderGeometry(
         self,
@@ -188,7 +198,9 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
+        self.geometry_shapes[obstacle_id] = cylinder
 
     def addMeshGeometry(
         self,
@@ -198,15 +210,19 @@ class FakeScene:
         matrix: np.ndarray,
         color: np.ndarray,
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
+        self.geometry_shapes[obstacle_id] = mesh
 
     def updateGeometryPlacement(
         self, obstacle_id: str, parent_frame: str, matrix: np.ndarray
     ) -> None:
+        self._require_frame(parent_frame)
         self.geometry[obstacle_id] = matrix
 
     def removeGeometry(self, obstacle_id: str) -> None:
         del self.geometry[obstacle_id]
+        self.geometry_shapes.pop(obstacle_id, None)
 
     def setCollisions(self, body1: str, body2: str, enable: bool) -> None:
         self.collision_settings[(body1, body2)] = enable
@@ -547,35 +563,41 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
         "box",
         updated_pose,
     )
-    assert world.get_obstacles()[0].pose is updated_pose
+    np.testing.assert_allclose(
+        pose_to_matrix(world.get_obstacles()[0].pose),
+        pose_to_matrix(updated_pose),
+    )
     np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
     assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("box")
     assert world.get_obstacles() == []
 
 
-def test_obstacle_added_before_finalize_is_materialized(
+def test_obstacle_operations_require_finalization(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
-    mocker: MockerFixture,
 ) -> None:
     module = _import_roboplan_world(fake_roboplan)
     world = module.RoboPlanWorld()
     world.add_robot(robot_config)
-    add_box = mocker.patch.object(FakeScene, "addBoxGeometry", autospec=True)
-    world.add_obstacle(
-        Obstacle(
-            name="pending",
-            obstacle_type=ObstacleType.BOX,
-            pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-            dimensions=(0.1, 0.2, 0.3),
-        )
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        dimensions=(0.1, 0.2, 0.3),
     )
 
-    world.finalize()
-
-    assert add_box.call_count == 1
-    assert add_box.call_args.args[1] == "pending"
+    operations = [
+        lambda: world.add_obstacle(obstacle),
+        lambda: world.remove_obstacle("box"),
+        lambda: world.update_obstacle(obstacle),
+        lambda: world.update_obstacle_pose("box", obstacle.pose),
+        world.clear_obstacles,
+        world.get_obstacles,
+    ]
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="finalized"):
+            operation()
 
 
 def test_failed_obstacle_add_rolls_back_and_can_be_retried(
@@ -672,7 +694,229 @@ def test_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     assert world.add_obstacle(named) == "world-owned"
     assert world.add_obstacle(named) is None
     assert world.remove_obstacle("missing") is False
+    assert world.update_obstacle(replace(named, name="missing")) is False
     assert world.update_obstacle_pose("missing", named.pose) is False
+
+
+def test_complete_update_rejects_invalid_obstacle_values(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    valid = Obstacle(
+        name="shape",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    invalid_obstacles = [
+        (replace(valid, name=""), "name must be non-empty"),
+        (replace(valid, dimensions=(0.1, -0.2, 0.3)), "finite and positive"),
+        (
+            replace(valid, obstacle_type=ObstacleType.MESH, dimensions=(), mesh_path=None),
+            "requires mesh_path",
+        ),
+        (replace(valid, color=(1.0, 0.0, 0.0)), "four finite values"),
+        (
+            replace(
+                valid,
+                pose=PoseStamped(
+                    position=[np.nan, 0.0, 0.0],
+                    orientation=[0.0, 0.0, 0.0, 1.0],
+                ),
+            ),
+            "finite values",
+        ),
+    ]
+
+    for invalid, message in invalid_obstacles:
+        with pytest.raises(ValueError, match=message):
+            world.update_obstacle(invalid)
+
+    assert world.get_obstacles() == []
+
+
+def test_complete_replacement_and_defensive_obstacle_snapshots(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    original = Obstacle(
+        name="shape",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+        color=(1.0, 0.0, 0.0, 1.0),
+    )
+    assert world.add_obstacle(original) == "shape"
+    original.dimensions = (9.0, 9.0, 9.0)
+    assert world.get_obstacles()[0].dimensions == (0.1, 0.2, 0.3)
+
+    replacement = Obstacle(
+        name="shape",
+        obstacle_type=ObstacleType.SPHERE,
+        pose=PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.4,),
+        color=(0.0, 1.0, 0.0, 0.5),
+    )
+    assert world.update_obstacle(replacement)
+    assert isinstance(world._scene.geometry_shapes["shape"], FakeSphere)
+    stored = world.get_obstacles()[0]
+    assert stored.obstacle_type == ObstacleType.SPHERE
+    assert stored.dimensions == (0.4,)
+    assert stored.color == (0.0, 1.0, 0.0, 0.5)
+
+    replacement.dimensions = (2.0,)
+    stored.dimensions = (3.0,)
+    stored.pose.position.x = 99.0
+    assert world.get_obstacles()[0].dimensions == (0.4,)
+    assert world.get_obstacles()[0].pose.position.x == pytest.approx(1.0)
+    assert world.update_obstacle(replace(replacement, name="missing")) is False
+
+
+def test_collision_query_blocks_during_obstacle_replacement(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    replacement_started = threading.Event()
+    allow_replacement = threading.Event()
+    query_finished = threading.Event()
+    original_remove = world._scene.removeGeometry
+
+    def blocking_remove(obstacle_id: str) -> None:
+        original_remove(obstacle_id)
+        replacement_started.set()
+        assert allow_replacement.wait(1.0)
+
+    monkeypatch.setattr(world._scene, "removeGeometry", blocking_remove)
+    update_thread = threading.Thread(
+        target=lambda: world.update_obstacle(replace(obstacle, dimensions=(1, 1, 1)))
+    )
+    update_thread.start()
+    assert replacement_started.wait(1.0)
+    query_thread = threading.Thread(
+        target=lambda: (
+            world.check_config_collision_free(
+                robot_id,
+                JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+            ),
+            query_finished.set(),
+        )
+    )
+    query_thread.start()
+    assert not query_finished.wait(0.05)
+    allow_replacement.set()
+    update_thread.join(1.0)
+    query_thread.join(1.0)
+    assert query_finished.is_set()
+
+
+def test_obstacle_replacement_blocks_during_collision_query(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    query_started = threading.Event()
+    allow_query = threading.Event()
+    update_finished = threading.Event()
+    original_query = world._scene.hasCollisions
+
+    def blocking_query(q: np.ndarray) -> bool:
+        query_started.set()
+        assert allow_query.wait(1.0)
+        return original_query(q)
+
+    monkeypatch.setattr(world._scene, "hasCollisions", blocking_query)
+    query_thread = threading.Thread(
+        target=lambda: world.check_config_collision_free(
+            robot_id,
+            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        )
+    )
+    query_thread.start()
+    assert query_started.wait(1.0)
+    update_thread = threading.Thread(
+        target=lambda: (
+            world.update_obstacle(replace(obstacle, dimensions=(1, 1, 1))),
+            update_finished.set(),
+        )
+    )
+    update_thread.start()
+    assert not update_finished.wait(0.05)
+    allow_query.set()
+    query_thread.join(1.0)
+    update_thread.join(1.0)
+    assert update_finished.is_set()
+
+
+def test_native_update_failure_invalidates_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    monkeypatch.setattr(
+        world._scene,
+        "addBoxGeometry",
+        lambda *_args: (_ for _ in ()).throw(ValueError("native replacement failed")),
+    )
+
+    with pytest.raises(ValueError, match="native replacement failed"):
+        world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0)))
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.get_obstacles()
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.check_config_collision_free(
+            robot_id,
+            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        )
+
+
+def test_native_pose_update_failure_invalidates_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    monkeypatch.setattr(
+        world._scene,
+        "updateGeometryPlacement",
+        lambda *_args: (_ for _ in ()).throw(ValueError("native pose update failed")),
+    )
+
+    with pytest.raises(ValueError, match="native pose update failed"):
+        world.update_obstacle_pose("box", obstacle.pose)
+    with pytest.raises(RuntimeError, match="invalid"):
+        world.get_obstacles()
 
 
 def test_collision_config_and_edge_checks(
@@ -712,6 +956,47 @@ def test_generic_rrt_planner_uses_roboplan_world_collision_checks(
 
     assert result.status == PlanningStatus.SUCCESS
     assert len(result.path) >= 2
+
+
+def test_generic_planner_allows_update_between_collision_checks(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    original_check = world.check_config_collision_free
+    checks = 0
+    updated = False
+
+    def checking_with_interleaved_update(robot: str, state: JointState) -> bool:
+        nonlocal checks, updated
+        result = original_check(robot, state)
+        checks += 1
+        if checks == 1:
+            updated = world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0)))
+        return result
+
+    monkeypatch.setattr(world, "check_config_collision_free", checking_with_interleaved_update)
+    planner = RRTConnectPlanner(step_size=0.5, connect_step_size=0.5, goal_tolerance=10.0)
+    result = planner.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.2, 0.1]),
+        timeout=1.0,
+        max_iterations=3,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert updated
+    assert checks >= 2
 
 
 def test_fk_jacobian_and_explicit_min_distance_unsupported(
@@ -895,6 +1180,55 @@ def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotMo
     assert result.status == PlanningStatus.SUCCESS
     assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
+
+
+def test_native_planning_blocks_obstacle_replacement(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    planning_started = threading.Event()
+    allow_planning = threading.Event()
+    update_finished = threading.Event()
+    original_plan = FakeRRT.plan
+
+    def blocking_plan(
+        self: FakeRRT,
+        q_start: FakeJointConfiguration,
+        q_goal: FakeJointConfiguration,
+    ) -> FakeJointPath:
+        planning_started.set()
+        assert allow_planning.wait(1.0)
+        return original_plan(self, q_start, q_goal)
+
+    monkeypatch.setattr(FakeRRT, "plan", blocking_plan)
+    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    goal = JointState(name=["joint1", "joint2"], position=[0.2, 0.1])
+    planning_thread = threading.Thread(
+        target=lambda: world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+    )
+    planning_thread.start()
+    assert planning_started.wait(1.0)
+    update_thread = threading.Thread(
+        target=lambda: (
+            world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0))),
+            update_finished.set(),
+        )
+    )
+    update_thread.start()
+    assert not update_finished.wait(0.05)
+    allow_planning.set()
+    planning_thread.join(1.0)
+    update_thread.join(1.0)
+    assert update_finished.is_set()
 
 
 def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(

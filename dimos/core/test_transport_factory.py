@@ -34,7 +34,8 @@ from dimos.core.transport_factory import (
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.tf.tf import LCMTF, ZenohTF
 
 LCM = GlobalConfig(transport="lcm")
@@ -103,10 +104,6 @@ def test_make_transport_zenoh_pickled_carries_qos() -> None:
     assert t._zenoh_topic.qos == QOS_NEVER_DROP
 
 
-def test_zenoh_rpc_topics_never_drop() -> None:
-    assert ZenohRPC().topicgen("Hello/say", req_or_res=False).qos == QOS_NEVER_DROP
-
-
 def test_rpc_backend_resolves_per_transport() -> None:
     assert rpc_backend(LCM) is LCMRPC
     assert rpc_backend(ZENOH) is ZenohRPC
@@ -124,10 +121,6 @@ def test_zenoh_tf_config_topic_and_pubsub() -> None:
     cfg = ZenohPubsubConfig()
     assert cfg.topic.topic == "dimos/tf"
     assert cfg.pubsub is Zenoh
-
-
-def test_zenoh_rpc_topicgen_has_no_leading_slash() -> None:
-    assert ZenohRPC().topicgen("Hello/say", req_or_res=True).topic == "dimos/rpc/Hello/say/res"
 
 
 def test_apply_transport_arg() -> None:

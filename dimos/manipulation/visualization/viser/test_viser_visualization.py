@@ -1508,6 +1508,64 @@ def test_scene_obstacle_visibility_replacement_cleanup_and_closed_state() -> Non
     assert len(handles) == count
 
 
+def test_scene_complete_and_pose_updates_preserve_atomic_obstacle_state() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, dict[str, object], Handle]] = []
+
+    def add_box(path: str, **kwargs: object) -> Handle:
+        handle = Handle(visible=bool(kwargs["visible"]))
+        calls.append((path, kwargs, handle))
+        return handle
+
+    server.scene.add_box = add_box
+    scene = ViserManipulationScene(server, Urdf)
+    item = obstacle(ObstacleType.BOX, (1.0, 2.0, 3.0))
+    scene.add_vis_obstacle("shape", item)
+    moved_pose = PoseStamped(position=[7.0, 8.0, 9.0], orientation=[0.0, 0.0, 0.0, 1.0])
+
+    scene.update_vis_obstacle_pose("shape", moved_pose)
+
+    assert len(calls) == 2
+    assert calls[0][2].removed is True
+    assert calls[1][1]["dimensions"] == (1.0, 2.0, 3.0)
+    assert calls[1][1]["position"] == (7.0, 8.0, 9.0)
+    assert scene._obstacles["shape"].dimensions == (1.0, 2.0, 3.0)
+
+
+def test_scene_updates_handle_unknown_ids_proxy_failures_and_warning_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_box = lambda *_args, **_kwargs: Handle()
+    server.scene.add_icosphere = lambda *_args, **_kwargs: Handle()
+    server.scene.add_label = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf)
+
+    scene.update_vis_obstacle_pose("missing", PoseStamped())
+    monkeypatch.setattr(
+        scene_module.trimesh,
+        "load_mesh",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("missing")),
+    )
+    with pytest.raises(RuntimeError, match="renderer used a proxy"):
+        scene.update_vis_obstacle(obstacle(ObstacleType.MESH, mesh_path="missing.obj"))
+
+    scene.show_obstacle_warning("first warning")
+    warning = scene._obstacle_warning_handle
+    assert warning is not None
+    scene.show_obstacle_warning("updated warning")
+    assert warning.content == "updated warning"
+    monkeypatch.setattr(
+        server.gui,
+        "add_markdown",
+        lambda _message: (_ for _ in ()).throw(RuntimeError("GUI unavailable")),
+    )
+    scene._obstacle_warning_handle = None
+    scene.show_obstacle_warning("ignored warning")
+
+
 def test_visualizer_forwards_obstacle_operations_and_ignores_them_after_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1533,6 +1591,15 @@ def test_visualizer_forwards_obstacle_operations_and_ignores_them_after_close(
         def add_vis_obstacle(self, obstacle_id: str, value: Obstacle) -> None:
             calls.append(("add", obstacle_id, value))
 
+        def update_vis_obstacle(self, value: Obstacle) -> None:
+            calls.append(("update", value))
+
+        def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+            calls.append(("update-pose", obstacle_id, pose))
+
+        def show_obstacle_warning(self, message: str) -> None:
+            calls.append(("warning", message))
+
         def remove_vis_obstacle(self, obstacle_id: str) -> None:
             calls.append(("remove", obstacle_id))
 
@@ -1549,26 +1616,98 @@ def test_visualizer_forwards_obstacle_operations_and_ignores_them_after_close(
 
     visualizer.initialize(VisualizationSession(PlanningSceneInfo(robots={})))
     visualizer.add_vis_obstacle("sphere", item)
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose("sphere", item.pose)
     visualizer.remove_vis_obstacle("sphere")
     visualizer.clear_vis_obstacles()
     assert calls == [
         ("start",),
         ("scene-create",),
         ("add", "sphere", item),
+        ("update", item),
+        ("update-pose", "sphere", item.pose),
         ("remove", "sphere"),
         ("clear",),
     ]
 
     visualizer.close()
     visualizer.add_vis_obstacle("ignored", item)
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose("ignored", item.pose)
     visualizer.remove_vis_obstacle("ignored")
     visualizer.clear_vis_obstacles()
     assert calls == [
         ("start",),
         ("scene-create",),
         ("add", "sphere", item),
+        ("update", item),
+        ("update-pose", "sphere", item.pose),
         ("remove", "sphere"),
         ("clear",),
         ("scene-close",),
         ("runtime-close",),
     ]
+
+
+def test_visualizer_handles_update_failure_once_and_exposes_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, _config: ViserVisualizationConfig) -> None:
+            pass
+
+        def start(self) -> Server:
+            return Server()
+
+        def close(self) -> None:
+            return None
+
+    class FakeScene:
+        def __init__(self, _server: Server, _viser_urdf: object) -> None:
+            pass
+
+        def update_vis_obstacle(self, value: Obstacle) -> None:
+            calls.append(("update", value.name))
+            raise RuntimeError("renderer failed")
+
+        def update_vis_obstacle_pose(self, obstacle_id: str, _pose: PoseStamped) -> None:
+            calls.append(("update-pose", obstacle_id))
+            raise RuntimeError("pose renderer failed")
+
+        def show_obstacle_warning(self, message: str) -> None:
+            calls.append(("warning", message))
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    item = obstacle(ObstacleType.SPHERE, (0.5,))
+    visualizer.initialize(VisualizationSession(PlanningSceneInfo(robots={})))
+
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose(item.name, item.pose)
+
+    assert calls[0] == ("update", item.name)
+    assert calls[1][0] == "warning"
+    assert item.name in str(calls[1][1])
+    assert calls[2] == ("update-pose", item.name)
+    assert calls[3][0] == "warning"
+    assert item.name in str(calls[3][1])
+    assert len(calls) == 4
+
+
+def test_visualizer_update_is_a_noop_when_start_produces_no_scene(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    monkeypatch.setattr(visualizer, "_ensure_started", lambda: None)
+    item = obstacle(ObstacleType.SPHERE, (0.5,))
+
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose(item.name, item.pose)
