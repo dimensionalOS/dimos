@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "navigate_with_text",
+          "args": {
+            "query": "elevator door"
+          },
+          "id": "call_gate0_1",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I am heading to the elevator door.",
+      "tool_calls": []
+    }
+  ]
+}

@@ -334,11 +334,23 @@ def read_shard(path: str | Path) -> list[ScoredCase]:
         kind, data = envelope.get("kind"), envelope.get("data")
         if kind == _KIND_ANSWER:
             answer = AnswerRecord(**data)
+            if answer.question_id in answers:
+                raise ValueError(
+                    f"{path}:{lineno}: duplicate answer for question "
+                    f"{answer.question_id!r} — a shard holds one run of one "
+                    "configuration, so a repeat means two runs were mixed into one file"
+                )
             answers[answer.question_id] = answer
             if answer.question_id not in order:
                 order.append(answer.question_id)
         elif kind == _KIND_SCORE:
             result = ScoreResult(**data)
+            if result.question_id in results:
+                raise ValueError(
+                    f"{path}:{lineno}: duplicate score for question "
+                    f"{result.question_id!r} — a shard holds one run of one "
+                    "configuration, so a repeat means two runs were mixed into one file"
+                )
             results[result.question_id] = result
             if result.question_id not in order:
                 order.append(result.question_id)
