@@ -367,12 +367,12 @@ config = base_blueprint.config()
 config(**blueprint_args)  # raises pydantic.ValidationError if args are incorrect
 ```
 
-`dimos.robot.cli.dimos.arg_help()` is a helper function that will return a string
+`dimos.cli.dimos.arg_help()` is a helper function that will return a string
 containing all details of these arguments (this is how the output is produced when
 running `dimos run unitree-go2 --help`, for example):
 
 ```python session=blueprint-ex1
-from dimos.robot.cli.dimos import arg_help
+from dimos.cli.dimos import arg_help
 
 print(arg_help(base_blueprint.config(), base_blueprint))
 ```
@@ -389,13 +389,13 @@ print(arg_help(base_blueprint.config(), base_blueprint))
       * module2.frame_id: str | None (default: None)
 ```
 
-Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
+Another function is `dimos.cli.dimos.load_config_args()` which can create the
 argument dict for users from a config file, environment variables and CLI arguments:
 
 ```python session=blueprint-ex1
 from pathlib import Path
 
-from dimos.robot.cli.dimos import load_config_args
+from dimos.cli.dimos import load_config_args
 
 config_path = Path.home() / "base-blueprint-config.json"
 cli_args = ["module1.arg1=5"]

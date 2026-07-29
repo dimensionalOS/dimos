@@ -25,9 +25,10 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC, ZenohRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
