@@ -699,4 +699,3 @@ def _parse_lcm_encoding(enc: str) -> tuple[ImageFormat, type, int]:
     if enc not in m:
         raise ValueError(f"Unsupported encoding: {enc}")
     return m[enc]
-    return m[enc]
