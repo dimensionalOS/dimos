@@ -180,9 +180,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         # same wall-clock anchor on subscribe.
         store = self.register_disposable(
             SqliteStore(
-                path=str(
-                    resolve_db_path(self.dataset, hosted_server_url=self.data_server_url)
-                ),
+                path=str(resolve_db_path(self.dataset, hosted_server_url=self.data_server_url)),
                 must_exist=True,
             )
         )

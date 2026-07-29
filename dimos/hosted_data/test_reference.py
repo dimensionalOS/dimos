@@ -62,9 +62,7 @@ def _metadata(payload: bytes, filename: str = "go2.db") -> dict[str, Any]:
 
 def test_parse_hosted_reference() -> None:
     object_id = "a" * 64
-    parsed = reference.HostedReplayReference.parse(
-        f"dimos-replay://alice/go2/{object_id}"
-    )
+    parsed = reference.HostedReplayReference.parse(f"dimos-replay://alice/go2/{object_id}")
     assert parsed == reference.HostedReplayReference("alice", "go2", object_id)
     assert reference.HostedReplayReference.parse("go2_short") is None
 

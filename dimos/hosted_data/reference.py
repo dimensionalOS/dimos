@@ -68,8 +68,7 @@ def _cache_root() -> Path:
 
 def _objects_url(server_url: str, reference: HostedReplayReference) -> str:
     return (
-        f"{server_url.rstrip('/')}/v1/repositories/"
-        f"{reference.owner}/{reference.repository}/objects"
+        f"{server_url.rstrip('/')}/v1/repositories/{reference.owner}/{reference.repository}/objects"
     )
 
 
@@ -108,9 +107,7 @@ def resolve_hosted_replay(
     if target.is_file() and sha256_file(target) == reference.object_id:
         return target
 
-    resolved_server_url = server_url or os.environ.get(
-        "DIMOS_DATA_SERVER_URL", _DEFAULT_SERVER_URL
-    )
+    resolved_server_url = server_url or os.environ.get("DIMOS_DATA_SERVER_URL", _DEFAULT_SERVER_URL)
     item = _metadata(resolved_server_url, reference)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.part")
