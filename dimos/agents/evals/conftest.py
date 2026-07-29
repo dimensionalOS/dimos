@@ -30,10 +30,13 @@ real ``McpServer``/``McpClient`` -- with observation-only modules at the edges
   and ``output_dir``. ``SpatialMemory.stop()`` saves-then-clears and runs twice
   per teardown, so a pinned visual-memory file gets overwritten with an empty
   one on the second pass. The ChromaDB store the eval queries is unaffected.
-* No ``ObjectTrackingSpec`` provider is deployed. With one,
-  ``navigate_with_text`` would route through the vision-language object path
-  (an external API key and a 30 s tracking loop) instead of the semantic-map
-  path this eval scores.
+* No ``ObjectTrackingSpec`` provider is deployed. That keeps the blueprint
+  minimal, and belt-and-braces closes the vision-language object path (an
+  external API key and a 30 s tracking loop) that ``navigate_with_text`` tries
+  before the semantic map -- but it is not what closes that path.
+  ``FakeCamera`` publishes nothing, so ``_latest_image`` stays ``None`` and
+  ``_get_bbox_for_current_frame`` returns before any external call, tracker or
+  no tracker. The eval reaches the semantic-map path it scores either way.
 """
 
 from __future__ import annotations

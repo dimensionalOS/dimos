@@ -33,11 +33,17 @@ Scoring rules (frozen, see ``contracts.py``):
 * Error is **map-frame XY distance** only -- ``navigate_with_text`` emits goals
   with ``z == 0``, so a 3-D distance would penalize elevated reference points.
 * ``passed`` requires a single prediction within ``question.threshold_m``.
-* Everything that is not a clean single prediction scores ``error_m=None`` and
-  stays in the pass-rate denominator; only the error plot drops it.
-* Outcomes separate agent behavior (``no_prediction``, ``multiple_predictions``)
-  from broken measurements (``tool_error``, ``harness_error``) so a broken run
-  cannot masquerade as a bad model.
+* Everything that is not a clean single prediction scores ``error_m=None``;
+  only the error plot drops it silently.
+* Outcomes separate agent behavior (``predicted``, ``no_prediction``,
+  ``multiple_predictions``) from broken measurements (``tool_error``,
+  ``answer_timeout``, ``harness_error``), and :func:`pass_rate` /
+  :func:`no_prediction_rate` divide by the agent-attributable side alone. That
+  is what makes "a broken measurement cannot masquerade as an agent failure" a
+  property of the printed numbers rather than a promise in a docstring: a
+  configuration whose harness died is not thereby worse at spatial reasoning.
+  :func:`broken_count` reports how many were excluded, and the renderer prints
+  it next to the rates so the shrunken denominator is never invisible.
 """
 
 from __future__ import annotations
@@ -51,6 +57,18 @@ from pathlib import Path
 from typing import Any
 
 from dimos.agents.evals.contracts import AnswerRecord, Outcome, QuestionSpec, ScoreResult
+
+#: Outcomes that report what the agent did. These are the results the rates
+#: below are computed over: each one is a choice the agent made (or declined to
+#: make) on a measurement that worked.
+AGENT_ATTRIBUTABLE_OUTCOMES: frozenset[Outcome] = frozenset(
+    {"predicted", "no_prediction", "multiple_predictions"}
+)
+
+#: Outcomes that report what the *harness* did. Nothing about the agent's
+#: spatial ability can be read off them, so they are excluded from the rates
+#: and counted separately instead.
+BROKEN_OUTCOMES: frozenset[Outcome] = frozenset({"harness_error", "answer_timeout", "tool_error"})
 
 
 @dataclass(frozen=True)
@@ -134,6 +152,15 @@ def classify_outcome(observation: RunObservation) -> Outcome:
     5. ``predicted``     -- exactly one goal.
     6. ``no_prediction`` -- no goal at all (e.g. the memory's similarity gate
        rejected the query). A legitimate, expected agent outcome.
+
+    The first three are :data:`BROKEN_OUTCOMES` and are excluded from the rates
+    below. ``tool_error`` belongs on that side even though the agent triggered
+    the call: realistically the navigation skill raises from RPC plumbing (a
+    worker that went away, a serialization failure), not from anything the
+    model chose -- the query is a plain string the skill is content to simply
+    not match, which is ``no_prediction``, not an exception. Counting raises
+    against a configuration would price infrastructure flakiness as spatial
+    ability.
 
     >>> classify_outcome(RunObservation("q", "m", "p", "s", True, 1.0, 2.0))
     'no_prediction'
@@ -244,28 +271,53 @@ def score(question: QuestionSpec, answer: AnswerRecord) -> ScoreResult:
     )
 
 
-def pass_rate(results: Sequence[ScoreResult]) -> float:
-    """Fraction of questions passed, over **all** questions.
+def _agent_attributable(results: Iterable[ScoreResult]) -> list[ScoreResult]:
+    """The results that say something about the agent -- the rates' denominator."""
+    return [r for r in results if r.outcome in AGENT_ATTRIBUTABLE_OUTCOMES]
 
-    Every outcome stays in the denominator: an agent that answers nothing is
-    not thereby perfect. Returns 0.0 for an empty sequence.
+
+def broken_count(results: Iterable[ScoreResult]) -> int:
+    """How many results measure the harness instead of the agent.
+
+    This is exactly what :func:`pass_rate` and :func:`no_prediction_rate` drop,
+    so reporting it alongside them keeps the smaller denominator visible: a
+    configuration with a high pass rate over two surviving questions is not the
+    same claim as one over six.
+
+    >>> broken_count([])
+    0
+    """
+    return sum(1 for r in results if r.outcome in BROKEN_OUTCOMES)
+
+
+def pass_rate(results: Sequence[ScoreResult]) -> float:
+    """Fraction of passes over the **agent-attributable** results.
+
+    ``no_prediction`` and ``multiple_predictions`` stay in the denominator: an
+    agent that answers nothing is not thereby perfect. Broken measurements
+    (:data:`BROKEN_OUTCOMES`) are excluded, because a harness that crashed says
+    nothing about the model and would otherwise be charged to it. Returns 0.0
+    when nothing is attributable.
 
     >>> pass_rate([])
     0.0
     """
-    if not results:
+    attributable = _agent_attributable(results)
+    if not attributable:
         return 0.0
-    return sum(1 for r in results if r.passed) / len(results)
+    return sum(1 for r in attributable if r.passed) / len(attributable)
 
 
 def no_prediction_rate(results: Sequence[ScoreResult]) -> float:
-    """Fraction of questions where the agent set no goal at all.
+    """Fraction of agent-attributable results where no goal was set at all.
 
-    Returns 0.0 for an empty sequence.
+    Shares :func:`pass_rate`'s denominator, so the two rates describe the same
+    sample. Returns 0.0 when nothing is attributable.
     """
-    if not results:
+    attributable = _agent_attributable(results)
+    if not attributable:
         return 0.0
-    return sum(1 for r in results if r.outcome == "no_prediction") / len(results)
+    return sum(1 for r in attributable if r.outcome == "no_prediction") / len(attributable)
 
 
 def errors_m(results: Iterable[ScoreResult]) -> list[float]:
@@ -365,8 +417,29 @@ def read_shard(path: str | Path) -> list[ScoredCase]:
 
 
 def read_shards(paths: Iterable[str | Path]) -> list[ScoredCase]:
-    """Read several shard files into one flat list, in the order given."""
+    """Read several shard files into one flat list, in the order given.
+
+    Raises ``ValueError`` when two files carry the same
+    ``(model_id, prompt_id, question_id)``. ``read_shard`` already refuses a
+    repeat *within* one file, but the documented workflow renders a whole shard
+    directory, and a re-run appends new timestamped files next to the old ones
+    rather than replacing them. Silently concatenating both would double that
+    configuration's denominator and average two different runs into one row of
+    the figure -- a figure that is wrong in a way nobody can see.
+    """
     cases: list[ScoredCase] = []
-    for path in paths:
-        cases.extend(read_shard(path))
+    seen: dict[tuple[str, str, str], Path] = {}
+    for raw_path in paths:
+        path = Path(raw_path)
+        for case in read_shard(path):
+            key = (case.answer.model_id, case.answer.prompt_id, case.answer.question_id)
+            first = seen.get(key)
+            if first is not None:
+                raise ValueError(
+                    f"{first} and {path} both hold question {key[2]!r} for "
+                    f"configuration ({key[0]!r}, {key[1]!r}); rendering both would "
+                    "count it twice -- render one run's shards at a time"
+                )
+            seen[key] = path
+            cases.append(case)
     return cases

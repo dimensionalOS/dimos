@@ -12,26 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qualification rules of the reference generator, on hand-built measurements.
+"""Rules and geometry of the reference generator, without the replay.
 
 The sweep that produces ``Measurement`` objects needs a replay, a detector and
-a GPU-shaped afternoon; the rules that decide which of them become reference
-rows need neither, and they are where the table's credibility comes from. So
-these build measurements directly and check the decisions: which views count
-as independent, how candidates cluster, which gate claims a drop, when a label
-is too ambiguous to ask about, and how one object collecting several names is
-caught.
+a GPU-shaped afternoon; everything that decides what those measurements *mean*
+needs neither, and that is where the table's credibility comes from. Three
+things are checked here, all on hand-built inputs:
+
+* the **qualification rules** -- which views count as independent, how
+  candidates cluster, which gate claims a drop, when a label is too ambiguous
+  to ask about, and how one object collecting several names is caught;
+* the **projection and bbox measurement**, on synthetic points whose pixels and
+  world median are computed by hand, so a frame, sign or axis-order mistake in
+  the step that turns LiDAR into a position fails here rather than silently
+  moving every reference;
+* the **committed table itself**, against invariants a future pipeline change
+  must not break -- each reference sits about one measured depth from the
+  nearest pose it was seen from, and every committed question is passable on
+  that same evidence.
 """
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
 import pytest
 
+from dimos.agents.evals.contracts import QuestionSpec
+from dimos.agents.evals.questions import load_refs
 from dimos.agents.evals.teacher import (
+    _FALLBACK_D,
+    _FALLBACK_K,
+    _FALLBACK_SIZE,
+    Camera,
     GateParams,
     Measurement,
+    Projector,
     Reference,
     _cluster_by_position,
     _one_view_per_frame,
@@ -39,11 +59,17 @@ from dimos.agents.evals.teacher import (
     apply_gates,
     assign_location_groups,
     independent_views,
+    measure_bbox,
     qualify,
     shrink_bbox,
 )
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 GATES = GateParams()
+
+REFERENCE_DIR = Path(__file__).parent / "reference"
 
 
 def make_measurement(
@@ -361,3 +387,349 @@ def test_references_further_apart_than_the_radius_stay_separate() -> None:
     )
     assert [reference.location_group for reference in tagged] == ["loc-01", "loc-02"]
     assert len(table) == 2
+
+
+def test_labels_stacked_on_top_of_each_other_are_one_location() -> None:
+    """Linking is planar: a shelf and the boxes on it are one "go to X" answer.
+
+    The two references are 1.4 m apart in 3-D -- outside the radius -- and
+    0.1 m apart on the floor. A 3-D link would let height split them, both
+    names would become questions, and an agent that drove to the shelf would be
+    marked wrong for whichever name it did not happen to match.
+    """
+    tagged, table = assign_location_groups(
+        [make_reference("shelf", 0.0, z=0.2), make_reference("storage boxes", 0.1, z=1.6)], 0.75
+    )
+    assert [reference.location_group for reference in tagged] == ["loc-01", "loc-01"]
+    assert table[0]["raw_labels"] == ["shelf", "storage boxes"]
+    # The reported spread is XY too, i.e. the distance the decision was made on.
+    assert table[0]["max_pairwise_m"] == pytest.approx(0.1)
+
+
+# --- projection -------------------------------------------------------------
+#
+# The step that turns a LiDAR sweep into a pixel is where a frame, sign or
+# axis-order mistake hides best: it moves every reference by a plausible-looking
+# amount and nothing else complains. These place synthetic points at known
+# offsets from a known pose and check the pixels against the geometry by hand.
+
+#: ``dimos.robot.unitree.go2.connection.BASE_TO_OPTICAL``, rebuilt here rather
+#: than imported: that module pulls in the whole robot stack (rerun, reactivex,
+#: the WebRTC connection) for two quaternions, and this lane has to stay fast.
+#: What is under test is the projection math, so pinning the mount it was
+#: computed against is also what the tests want.
+BASE_TO_OPTICAL = Transform(
+    translation=Vector3(0.3, 0.0, 0.0),
+    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+    frame_id="base_link",
+    child_frame_id="camera_optical",
+)
+
+CAMERA = Camera(
+    matrix=np.array(_FALLBACK_K, dtype=np.float64).reshape(3, 3),
+    distortion=np.array(_FALLBACK_D, dtype=np.float64).reshape(-1, 1),
+    width=_FALLBACK_SIZE[0],
+    height=_FALLBACK_SIZE[1],
+    source="front_camera_720.yaml (inlined fallback constants)",
+)
+PROJECTOR = Projector(CAMERA, BASE_TO_OPTICAL, GATES.front_z_m)
+
+#: Principal point and focal lengths of :data:`CAMERA`, spelled out.
+CX, CY = float(CAMERA.matrix[0, 2]), float(CAMERA.matrix[1, 2])
+FX, FY = float(CAMERA.matrix[0, 0]), float(CAMERA.matrix[1, 1])
+
+#: The camera sits this far ahead of ``base_link`` along the robot's heading.
+CAMERA_FORWARD_M = 0.3
+
+
+def pose_at(x: float, y: float, z: float = 0.3, yaw: float = 0.0) -> tuple[float, ...]:
+    """A recorded pose ``(x, y, z, qx, qy, qz, qw)`` with only yaw applied."""
+    return (x, y, z, 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+
+
+def expected_pixel(point_optical: tuple[float, float, float]) -> tuple[float, float]:
+    """Project one optical-frame point with the equidistant model, by hand.
+
+    Written out from the model's definition rather than delegating to
+    ``cv2.fisheye`` -- the point is to have a second opinion about what the
+    pixel should be, not to restate the call under test.
+    """
+    x, y, z = point_optical
+    a, b = x / z, y / z
+    r = math.hypot(a, b)
+    theta = math.atan(r)
+    k1, k2, k3, k4 = (float(k) for k in CAMERA.distortion.reshape(-1))
+    theta_d = theta * (1.0 + k1 * theta**2 + k2 * theta**4 + k3 * theta**6 + k4 * theta**8)
+    scale = theta_d / r if r > 0.0 else 1.0
+    return FX * scale * a + CX, FY * scale * b + CY
+
+
+def test_a_point_on_the_optical_axis_lands_on_the_principal_point() -> None:
+    """The zero case: dead ahead, at the camera's height, is (cx, cy) exactly."""
+    points = np.array([[2.3, 0.0, 0.3]])
+    uv, depth, world, robot_xyz = PROJECTOR.project(points, pose_at(0.0, 0.0))
+
+    assert robot_xyz == (0.0, 0.0, 0.3)
+    assert uv[0] == pytest.approx((CX, CY))
+    # Depth is measured from the camera, which is 0.3 m ahead of base_link.
+    assert depth[0] == pytest.approx(2.3 - CAMERA_FORWARD_M)
+    assert world[0] == pytest.approx([2.3, 0.0, 0.3])
+
+
+def test_the_optical_axis_follows_the_robots_yaw() -> None:
+    """The pose's rotation is applied, not just its translation.
+
+    Turned 90 degrees left, "2 m ahead" is +y in the map frame, and the camera
+    offset moves with it.
+    """
+    points = np.array([[1.0, 4.3, 0.3]])
+    uv, depth, _, _ = PROJECTOR.project(points, pose_at(1.0, 2.0, yaw=math.pi / 2.0))
+
+    assert uv[0] == pytest.approx((CX, CY))
+    assert depth[0] == pytest.approx(2.0)
+
+
+def test_offsets_move_the_pixel_the_way_the_world_does() -> None:
+    """Left in the map frame is left in the image; up is up.
+
+    A sign flip in the base->optical rotation would keep the magnitudes and
+    mirror the picture, which no downstream gate could notice.
+    """
+    ahead = np.array([[2.3, 0.0, 0.3]])
+    left = np.array([[2.3, 0.5, 0.3]])  # +y is to the robot's left
+    up = np.array([[2.3, 0.0, 0.8]])  # +z is up
+
+    (u_ahead, v_ahead) = PROJECTOR.project(ahead, pose_at(0.0, 0.0))[0][0]
+    (u_left, v_left) = PROJECTOR.project(left, pose_at(0.0, 0.0))[0][0]
+    (u_up, v_up) = PROJECTOR.project(up, pose_at(0.0, 0.0))[0][0]
+
+    assert u_left < u_ahead and v_left == pytest.approx(v_ahead)
+    assert v_up < v_ahead and u_up == pytest.approx(u_ahead)
+
+
+@pytest.mark.parametrize(
+    ("world_point", "optical_point"),
+    [
+        ((2.3, 0.5, 0.3), (-0.5, 0.0, 2.0)),
+        ((2.3, -0.4, 0.9), (0.4, -0.6, 2.0)),
+        ((1.3, 0.25, 0.0), (-0.25, 0.3, 1.0)),
+    ],
+    ids=["left", "right_and_up", "close_and_low"],
+)
+def test_projected_pixels_match_the_equidistant_model(
+    world_point: tuple[float, float, float], optical_point: tuple[float, float, float]
+) -> None:
+    """map -> optical is ``(-dy, -dz, dx)``, and the pixel is the fisheye model.
+
+    The optical points are spelled out in the parameters, so the test also pins
+    the axis convention (x right, y down, z forward) rather than only the
+    arithmetic.
+    """
+    uv, depth, _, _ = PROJECTOR.project(np.array([world_point]), pose_at(0.0, 0.0))
+
+    assert depth[0] == pytest.approx(optical_point[2])
+    assert uv[0] == pytest.approx(expected_pixel(optical_point))
+
+
+def test_points_behind_the_camera_and_off_the_sensor_are_dropped() -> None:
+    """Only points the camera could actually have seen survive projection.
+
+    Without the ``front_z`` test a point behind the robot re-emerges mirrored
+    in front of it; without the image bounds a point beside the robot lands on
+    a pixel that no bbox can legitimately claim.
+    """
+    behind = np.array([[-1.0, 0.0, 0.3]])
+    grazing = np.array([[0.30, 0.0, 0.3]])  # exactly at the camera: depth 0
+    beside = np.array([[0.36, 5.0, 0.3]])  # in front, but ~89 degrees off-axis
+
+    assert len(PROJECTOR.project(behind, pose_at(0.0, 0.0))[0]) == 0
+    assert len(PROJECTOR.project(grazing, pose_at(0.0, 0.0))[0]) == 0
+    assert len(PROJECTOR.project(beside, pose_at(0.0, 0.0))[0]) == 0
+
+
+def test_projection_keeps_pixels_depths_and_world_points_index_aligned() -> None:
+    """A pixel test also has to select the right map-frame point.
+
+    The dropped point sits between the two survivors, so an off-by-one in the
+    masking would leave the arrays plausibly shaped and wrongly paired.
+    """
+    points = np.array([[2.3, 0.5, 0.3], [-1.0, 0.0, 0.3], [3.3, 0.0, 0.3]])
+    uv, depth, world, _ = PROJECTOR.project(points, pose_at(0.0, 0.0))
+
+    assert len(uv) == len(depth) == len(world) == 2
+    assert world[0] == pytest.approx([2.3, 0.5, 0.3])
+    assert world[1] == pytest.approx([3.3, 0.0, 0.3])
+    assert depth == pytest.approx([2.0, 3.0])
+    assert uv[1] == pytest.approx((CX, CY))  # the second survivor is dead ahead
+
+
+# --- measuring a bbox -------------------------------------------------------
+
+BBOX = (100.0, 100.0, 300.0, 300.0)
+#: The centre of ``BBOX``, i.e. inside it however hard it is shrunk.
+INSIDE_UV = (200.0, 200.0)
+#: Inside the raw ``BBOX``, outside the frozen 0.15 shrink of it -- (115, 115)
+#: to (285, 285) -- because bbox corners are mostly background.
+OUTSIDE_SHRUNK_UV = (110.0, 110.0)
+
+
+def projection(
+    rows: list[tuple[tuple[float, float], float, tuple[float, float, float]]],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Build the ``(uv, depth, world)`` triple ``measure_bbox`` consumes."""
+    uv = np.array([row[0] for row in rows], dtype=np.float64)
+    depth = np.array([row[1] for row in rows], dtype=np.float64)
+    world = np.array([row[2] for row in rows], dtype=np.float64)
+    return uv, depth, world
+
+
+def test_measure_bbox_reports_the_depth_cluster_and_ignores_its_tails() -> None:
+    """The position is the map-frame median of the [p25, p75] depth inliers.
+
+    The box holds a railing in front of the object and a wall behind it, both
+    of which are legitimate in-box points -- they count toward ``n_points`` --
+    but neither may move the position.
+    """
+    rows = (
+        [(INSIDE_UV, 0.8, (0.8, 0.0, 0.5))] * 2  # foreground railing
+        + [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 10  # the object itself
+        + [(INSIDE_UV, 6.0, (6.0, 0.0, 0.5))] * 2  # wall behind it
+    )
+    measured = measure_bbox(*projection(rows), BBOX, GATES)
+
+    assert measured is not None
+    n_points, depth_median, depth_iqr, world_xyz = measured
+    assert n_points == 14  # every non-ground in-box point, not just the inliers
+    assert depth_median == pytest.approx(2.0)
+    assert depth_iqr == pytest.approx(0.0)
+    assert world_xyz == pytest.approx((2.0, 0.0, 0.5))
+
+
+def test_measure_bbox_rejects_the_floor_before_it_can_vote() -> None:
+    """The floor is the largest single source of in-bbox points.
+
+    Here it is also the *majority* of them, so a median that included it would
+    put the reference on the ground several metres short of the object -- which
+    is what the ground gate exists to prevent.
+    """
+    rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 3 + [(INSIDE_UV, 1.0, (1.0, 0.0, 0.02))] * 5
+    measured = measure_bbox(*projection(rows), BBOX, GATES)
+
+    assert measured is not None
+    n_points, _, _, world_xyz = measured
+    assert n_points == 3
+    assert world_xyz == pytest.approx((2.0, 0.0, 0.5))
+
+
+def test_measure_bbox_only_looks_inside_the_shrunk_box() -> None:
+    rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 3 + [
+        (OUTSIDE_SHRUNK_UV, 9.0, (9.0, 0.0, 0.5)),
+        ((400.0, 400.0), 9.0, (9.0, 9.0, 0.5)),  # outside the raw box entirely
+    ]
+    measured = measure_bbox(*projection(rows), BBOX, GATES)
+
+    assert measured is not None
+    assert measured[0] == 3
+    assert measured[3] == pytest.approx((2.0, 0.0, 0.5))
+
+
+@pytest.mark.parametrize(
+    ("rows", "reason"),
+    [
+        ([(INSIDE_UV, 1.0, (1.0, 0.0, 0.02))] * 5, "only the floor is in the box"),
+        ([(OUTSIDE_SHRUNK_UV, 2.0, (2.0, 0.0, 0.5))] * 5, "nothing is in the shrunk box"),
+        ([], "the sweep put no point on the image at all"),
+    ],
+    ids=["all_ground", "all_outside", "empty"],
+)
+def test_measure_bbox_reports_nothing_rather_than_guessing(
+    rows: list[tuple[tuple[float, float], float, tuple[float, float, float]]], reason: str
+) -> None:
+    uv, depth, world = (
+        projection(rows) if rows else (np.zeros((0, 2)), np.zeros(0), np.zeros((0, 3)))
+    )
+    assert measure_bbox(uv, depth, world, BBOX, GATES) is None, reason
+
+
+def test_a_bbox_straddling_two_depths_reports_an_iqr_the_gate_drops() -> None:
+    """The IQR is the "is this one object?" signal, and it has to reach the gate.
+
+    A box spanning a near shelf and a far wall has no honest single position;
+    ``measure_bbox`` still returns one, and ``apply_gates`` is what throws it
+    away -- so the number it hands over must actually be wide.
+    """
+    # Enough points on each side that the earlier `min_points` gate has no
+    # claim on the drop: the one under test is the depth spread.
+    rows = [(INSIDE_UV, 1.0, (1.0, 0.0, 0.5))] * 12 + [(INSIDE_UV, 5.0, (5.0, 0.0, 0.5))] * 12
+    measured = measure_bbox(*projection(rows), BBOX, GATES)
+
+    assert measured is not None
+    n_points, depth_median, depth_iqr, world_xyz = measured
+    assert n_points >= GATES.min_points
+    assert depth_iqr > GATES.max_depth_iqr_m
+
+    straddling = make_measurement(
+        0.0, world_xyz, n_points=n_points, depth_m=depth_median, depth_iqr_m=depth_iqr
+    )
+    kept, drops = apply_gates([straddling], GATES)
+    assert kept == []
+    assert dict(drops) == {"depth_iqr": 1}
+
+
+# --- the committed table ----------------------------------------------------
+
+
+def nearest_viewpoint_m(ref: dict[str, Any]) -> float:
+    """XY distance from a reference to the closest pose it was observed from."""
+    return min(math.hypot(pose[0] - ref["x"], pose[1] - ref["y"]) for pose in ref["robot_poses"])
+
+
+#: How far ``nearest_viewpoint_m`` may sit from the depth the same row reports.
+#: The two are measured differently -- one is the closest of several poses, the
+#: other the median optical depth over the cluster, from a camera 0.3 m ahead of
+#: base_link -- so they are only ever approximately equal. The widest gap in the
+#: committed table is 0.79 m, on ``dollhouse``: the white service robot that
+#: moves between sightings, which is exactly why review dropped it. The check is
+#: not calibration; it is a tripwire for a frame, sign or unit mistake, and any
+#: of those moves this by metres.
+MAX_VIEWPOINT_DEPTH_MISMATCH_M = 0.9
+
+
+def test_every_reference_sits_about_one_measured_depth_from_its_nearest_viewpoint() -> None:
+    """``x``/``y``, ``robot_poses`` and ``depth_median_m`` have to agree.
+
+    They come from three different places -- the LiDAR sweep, the recorded pose
+    and the optical-frame depths -- so a future change that projects into the
+    wrong frame, drops a sign, or forgets the camera offset breaks their
+    agreement long before it produces a table anyone would question by eye.
+    """
+    for ref in load_refs(REFERENCE_DIR / "refs.jsonl"):
+        mismatch = nearest_viewpoint_m(ref) - ref["depth_median_m"]
+        assert abs(mismatch) <= MAX_VIEWPOINT_DEPTH_MISMATCH_M, (
+            f"{ref['raw_label']!r}: nearest viewpoint {nearest_viewpoint_m(ref):.2f} m vs "
+            f"depth median {ref['depth_median_m']:.2f} m ({mismatch:+.2f} m apart)"
+        )
+
+
+def test_every_committed_question_is_passable_on_the_teachers_own_evidence() -> None:
+    """The invariant ``questions.build_questions`` enforces, asserted on the artifact.
+
+    The scored goal is a viewpoint, so a question whose object was never seen
+    from closer than its own threshold could not be passed however well the
+    agent behaved. This is the same check as the generator's, run against the
+    committed files rather than against whatever the generator was last fed.
+    """
+    refs = {ref["raw_label"]: ref for ref in load_refs(REFERENCE_DIR / "refs.jsonl")}
+    questions = [
+        QuestionSpec.from_json(line)
+        for line in (REFERENCE_DIR / "questions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    assert questions
+    for question in questions:
+        nearest = nearest_viewpoint_m(refs[question.raw_label])
+        assert nearest < question.threshold_m, (
+            f"{question.question_id!r} is unpassable by construction: nearest teacher "
+            f"viewpoint {nearest:.2f} m >= threshold {question.threshold_m} m"
+        )

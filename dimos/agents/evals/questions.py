@@ -28,7 +28,7 @@ about it under ``display_name``) or ``dropped`` (never ask). A label the overlay
 does not mention is **dropped**: silence is not approval, and an unreviewed
 label is exactly the kind that turns out to be a wall or a light streak.
 
-Two conditions abort the run rather than emit a subtly broken question set:
+Three conditions abort the run rather than emit a subtly broken question set:
 
 * **Duplicate display names.** Two questions with the same wording have no
   single right answer, and renaming is how duplicates get introduced.
@@ -36,6 +36,13 @@ Two conditions abort the run rather than emit a subtly broken question set:
   sit on the same physical spot under different labels; asking about both would
   score the same place twice and mark an agent wrong for the name it did not
   guess. Review has to keep one and drop the rest.
+* **A question no agent could pass.** The threshold is an observation
+  envelope, not a point-accuracy tolerance (see :data:`DEFAULT_THRESHOLD_M`),
+  so a reference the teacher only ever saw from further away than the
+  threshold is unpassable however well the agent behaves. Each kept question
+  is checked against the nearest viewpoint in its own reference row's
+  ``robot_poses``, which makes "every committed question is passable on the
+  teacher's own evidence" an enforced invariant rather than a hope.
 
 The question wording comes from one fixed template. The instruction about *how*
 to answer belongs to the system prompt under test and is deliberately not part
@@ -47,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -57,7 +65,17 @@ from dimos.agents.evals.contracts import QuestionSpec
 QUESTION_TEMPLATE = "Where is the {display_name}? Use your navigation tools to go to it."
 
 VALID_STATUSES = ("verified", "renamed", "dropped")
-DEFAULT_THRESHOLD_M = 1.5
+
+#: Pass threshold in metres: the teacher's observation envelope
+#: (``teacher.GateParams.max_range_m``, 3.2 m) plus margin. "Passed" therefore
+#: means the selected goal lies within the range the object was actually
+#: observed from -- the task-level claim "the robot ends up at the object" --
+#: and deliberately not point accuracy. It cannot mean point accuracy: the
+#: shipping ``navigate_with_text`` builds its goal from the *robot pose* of the
+#: retrieved frame, so even a perfect retrieval lands roughly one viewing
+#: distance away from the LiDAR-derived object centroid the reference holds.
+#: The fine-grained signal is ``error_m``, which the figure plots in full.
+DEFAULT_THRESHOLD_M = 3.5
 
 
 def load_refs(path: Path) -> list[dict[str, Any]]:
@@ -87,6 +105,13 @@ def build_questions(
     Returns the questions sorted by id, the list of problems that must abort the
     run, and the per-status counts. Problems are collected rather than raised at
     the first one, so a reviewer sees every offending label in one pass.
+
+    The last check each surviving question faces is passability: the reference
+    row records the poses the teacher observed the object from, so the nearest
+    of them is the closest a viewpoint-shaped goal can legitimately land. A
+    question whose nearest viewpoint is already at or beyond *threshold_m* is
+    reported as a problem instead of being emitted -- scoring it would measure
+    the recording's geometry rather than the agent.
     """
     problems: list[str] = []
     counts = dict.fromkeys(VALID_STATUSES, 0)
@@ -136,18 +161,39 @@ def build_questions(
                 "review must keep at most one of them"
             )
             continue
-        # The id is the key every later artifact joins on, so two names that
-        # differ only in punctuation are as bad as two identical names.
-        question_id = f"{slugify(ref['dataset'])}-{slugify(display_name)}"
+        # The id is the key every later artifact joins on -- shards, the
+        # figure, longitudinal comparisons between runs -- so it is built from
+        # the *detector* label, which no reviewer can change: renaming a
+        # question in review.json changes its wording, not its identity. Two
+        # labels that differ only in punctuation are still as bad as two
+        # identical ones.
+        question_id = f"{slugify(ref['dataset'])}-{slugify(raw_label)}"
         if question_id in kept_ids:
             problems.append(
-                f"{display_name!r} and {kept_ids[question_id]!r} both slugify to "
+                f"{raw_label!r} and {kept_ids[question_id]!r} both slugify to "
                 f"question id {question_id!r}"
             )
             continue
+
+        # The shipping goal is a viewpoint: `navigate_with_text` answers from
+        # the robot pose of the retrieved frame, while the reference is a
+        # LiDAR-derived object centroid. An object the teacher never got closer
+        # to than the threshold therefore cannot be reached by any agent, and a
+        # question set holding one reports a failure that is not the agent's.
+        nearest_viewpoint_m = min(
+            (math.hypot(pose[0] - ref["x"], pose[1] - ref["y"]) for pose in ref["robot_poses"]),
+            default=float("inf"),
+        )
+        if nearest_viewpoint_m >= threshold_m:
+            problems.append(
+                f"{raw_label!r}: unpassable by construction: nearest teacher viewpoint "
+                f"{nearest_viewpoint_m:.2f} m >= threshold {threshold_m} m"
+            )
+            continue
+
         kept_names[display_name] = raw_label
         kept_groups[group] = raw_label
-        kept_ids[question_id] = display_name
+        kept_ids[question_id] = raw_label
 
         questions.append(
             QuestionSpec(
@@ -184,7 +230,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--threshold-m",
         type=float,
         default=DEFAULT_THRESHOLD_M,
-        help="map-frame XY distance within which a goal counts as correct",
+        help=(
+            "map-frame XY distance within which a goal counts as correct; the "
+            "default is the teacher's observation envelope plus margin, so "
+            "'passed' means the robot ends up at the object rather than on it "
+            "(the continuous signal is error_m)"
+        ),
     )
     return parser
 

@@ -35,6 +35,7 @@ from dimos.agents.evals.scorer import (
     GoalRecord,
     RunObservation,
     append_shard,
+    broken_count,
     build_answer_record,
     classify_outcome,
     errors_m,
@@ -327,11 +328,51 @@ def test_pass_rate_keeps_unanswered_questions_in_the_denominator() -> None:
     ]
     assert pass_rate(results) == pytest.approx(0.25)
     assert no_prediction_rate(results) == pytest.approx(0.5)
+    assert broken_count(results) == 0
+
+
+def test_broken_measurements_leave_the_denominator_entirely() -> None:
+    """A harness that died is not a model that failed.
+
+    The same two agent-attributable results are scored twice: once alone, once
+    with three broken measurements appended. If the broken ones stayed in the
+    denominator, a run whose worker crashed would report half the pass rate of
+    an identical run that happened not to crash -- and the shard would look
+    like evidence about the model.
+    """
+    agent = [scored("predicted", passed=True, error_m=0.4), scored("no_prediction")]
+    with_broken = [
+        *agent,
+        scored("harness_error"),
+        scored("answer_timeout"),
+        scored("tool_error"),
+    ]
+
+    assert pass_rate(agent) == pytest.approx(0.5)
+    assert pass_rate(with_broken) == pytest.approx(0.5)
+    assert no_prediction_rate(with_broken) == pytest.approx(0.5)
+    assert broken_count(with_broken) == 3
+
+
+def test_multiple_predictions_stays_on_the_agents_side_of_the_split() -> None:
+    """Setting two goals is a choice the agent made, not a broken measurement."""
+    results = [scored("predicted", passed=True, error_m=0.4), scored("multiple_predictions")]
+    assert pass_rate(results) == pytest.approx(0.5)
+    assert broken_count(results) == 0
 
 
 def test_rates_of_nothing_are_zero() -> None:
     assert pass_rate([]) == 0.0
     assert no_prediction_rate([]) == 0.0
+    assert broken_count([]) == 0
+
+
+def test_rates_of_nothing_but_broken_measurements_are_zero() -> None:
+    """An empty denominator is 0.0, not a crash and not an invented number."""
+    results = [scored("harness_error"), scored("tool_error")]
+    assert pass_rate(results) == 0.0
+    assert no_prediction_rate(results) == 0.0
+    assert broken_count(results) == 2
 
 
 def test_errors_m_is_the_plotted_sample_in_input_order() -> None:
@@ -412,3 +453,33 @@ def test_read_shards_concatenates_in_the_order_given(tmp_path: Path) -> None:
         paths.append(path)
 
     assert [case.answer.question_id for case in read_shards(reversed(paths))] == ["q2", "q1"]
+
+
+def test_read_shards_rejects_the_same_question_twice_across_files(tmp_path: Path) -> None:
+    """A re-run leaves its old shards behind, and the renderer reads the directory.
+
+    Shard filenames carry a timestamp, so a second run of one configuration
+    adds files rather than replacing them. Concatenating both would double that
+    configuration's denominator and average two runs into one row -- a figure
+    that is wrong in the one way nobody can see by looking at it.
+    """
+    first = tmp_path / "gpt-5-6-luna__spatial__20260729T090000-1.jsonl"
+    second = tmp_path / "gpt-5-6-luna__spatial__20260729T101500-2.jsonl"
+    for path in (first, second):
+        answer = make_answer("q1")
+        append_shard(path, answer, score(make_question("q1"), answer))
+
+    with pytest.raises(ValueError, match="both hold question 'q1'"):
+        read_shards([first, second])
+
+
+def test_read_shards_keeps_configurations_apart(tmp_path: Path) -> None:
+    """The same question under two configurations is two measurements, not a clash."""
+    paths = []
+    for name, prompt_id in (("a.jsonl", "shipping"), ("b.jsonl", "spatial")):
+        path = tmp_path / name
+        answer = make_answer("q1", prompt_id=prompt_id)
+        append_shard(path, answer, score(make_question("q1"), answer))
+        paths.append(path)
+
+    assert [case.answer.prompt_id for case in read_shards(paths)] == ["shipping", "spatial"]

@@ -86,7 +86,7 @@
     "min_view_dt_s": 1.0,
     "sample_hz": 4.0
   },
-  "generated_utc": "2026-07-29T06:28:46+00:00",
+  "generated_utc": "2026-07-29T08:04:38+00:00",
   "generator": "dimos/agents/evals/teacher.py",
   "location_groups": [
     {
@@ -96,7 +96,7 @@
         0.5062
       ],
       "location_group": "loc-01",
-      "max_pairwise_m": 0.9314,
+      "max_pairwise_m": 0.9192,
       "raw_labels": [
         "arcade machine",
         "computer tower",
@@ -147,7 +147,7 @@
         0.3438
       ],
       "location_group": "loc-05",
-      "max_pairwise_m": 0.2417,
+      "max_pairwise_m": 0.2253,
       "raw_labels": [
         "dressing room",
         "water cooler"
@@ -184,7 +184,7 @@
         0.5
       ],
       "location_group": "loc-08",
-      "max_pairwise_m": 0.0866,
+      "max_pairwise_m": 0.0707,
       "raw_labels": [
         "harpsichord",
         "window"
@@ -245,7 +245,7 @@
         0.4625
       ],
       "location_group": "loc-13",
-      "max_pairwise_m": 0.076,
+      "max_pairwise_m": 0.0125,
       "raw_labels": [
         "parking meter",
         "shaver"
@@ -357,9 +357,9 @@
     "wine cooler"
   ],
   "timing": {
-    "detection_sweep_s": 62.73,
+    "detection_sweep_s": 75.22,
     "lidar_dt_ms_max_abs": 84.0,
-    "wallclock_s": 74.9,
-    "yoloe_inference_ms_median": 122.0
+    "wallclock_s": 88.35,
+    "yoloe_inference_ms_median": 141.0
   }
 }

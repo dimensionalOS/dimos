@@ -56,10 +56,10 @@ every value actually used is echoed into ``manifest.json``:
     clusters mean the scene holds two instances a question could not
     distinguish, so the label is dropped rather than guessed at
 12. finally, link surviving labels that sit within ``--link-radius`` of each
-    other into a shared ``location_group``. Steps 1-11 all run per label, so
-    nothing before this can notice that one physical object collected several
-    names — which would otherwise ask about the same place several times and
-    mark an agent wrong for the names it did not happen to match
+    other **in XY** into a shared ``location_group``. Steps 1-11 all run per
+    label, so nothing before this can notice that one physical object collected
+    several names — which would otherwise ask about the same place several
+    times and mark an agent wrong for the names it did not happen to match
 
 The output is a *replay-derived reference*, not ground truth — geometric
 concentration is not semantic correctness. Labels therefore pass through a
@@ -719,6 +719,12 @@ def assign_location_groups(
     which single name survives — ``questions.py`` refuses to emit two questions
     from one group.
 
+    Distance here is **map-frame XY**, matching how the group is used: the
+    question is "go to X", the robot drives on a plane, and two labels stacked
+    vertically — a shelf and the boxes on it — are one destination however far
+    apart they are in height. Linking in 3-D would let the shelf's height split
+    a group and let both names become questions with the same right answer.
+
     Returns the references with the field filled in, plus the group table for
     the manifest.
     """
@@ -734,7 +740,7 @@ def assign_location_groups(
     for i, a in enumerate(ordered):
         for j in range(i + 1, len(ordered)):
             b = ordered[j]
-            if math.dist((a.x, a.y, a.z), (b.x, b.y, b.z)) <= radius_m:
+            if math.dist((a.x, a.y), (b.x, b.y)) <= radius_m:
                 parent[find(i)] = find(j)
 
     members: dict[int, list[int]] = defaultdict(list)
@@ -760,9 +766,11 @@ def assign_location_groups(
                     round(float(np.mean([row.y for row in rows])), 4),
                     round(float(np.mean([row.z for row in rows])), 4),
                 ],
+                # XY, i.e. the distance the linking decision was actually made
+                # on; a 3-D number here would not explain the grouping.
                 "max_pairwise_m": round(
                     max(
-                        (math.dist((a.x, a.y, a.z), (b.x, b.y, b.z)) for a in rows for b in rows),
+                        (math.dist((a.x, a.y), (b.x, b.y)) for a in rows for b in rows),
                         default=0.0,
                     ),
                     4,
@@ -1027,7 +1035,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--link-radius",
         type=float,
         default=defaults.link_radius_m,
-        help="distance (m) within which two labels are treated as one location",
+        help="map-frame XY distance (m) within which two labels are one location",
     )
     parser.add_argument(
         "--crops",

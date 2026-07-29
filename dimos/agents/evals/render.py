@@ -17,7 +17,7 @@
 Usage::
 
     uv run python -m dimos.agents.evals.render \\
-        --shards path/to/shards/ --out error_distribution.png --threshold-m 1.5
+        --shards path/to/shards/ --out error_distribution.png --threshold-m 3.5
 
 ``--shards`` takes any mix of files, directories (every ``*.jsonl`` inside) and
 globs. Shards are the per-case JSONL files written by
@@ -30,7 +30,9 @@ The figure is a per-configuration strip of measured errors (one dot per
 question that produced a goal, a marker at the median) annotated with
 ``n_pred / n_total``, the no-prediction rate and the pass rate -- the counts
 matter as much as the dots, because a configuration that rarely answers can
-otherwise look accurate.
+otherwise look accurate. The rates divide by the agent-attributable results
+only, so a row that lost questions to the harness also prints ``broken n``:
+the denominator the percentages are over is never left to be guessed at.
 
 Output is checked against the repository's 75 KB large-file limit and the run
 fails if the PNG exceeds it, so a sample figure can be committed alongside the
@@ -44,10 +46,12 @@ from collections import OrderedDict
 from collections.abc import Sequence
 import glob as globlib
 from pathlib import Path
+import statistics
 import sys
 
 from dimos.agents.evals.scorer import (
     ScoredCase,
+    broken_count,
     errors_m,
     no_prediction_rate,
     pass_rate,
@@ -93,13 +97,21 @@ def group_by_configuration(
 
 
 def _summary(cases: Sequence[ScoredCase]) -> str:
-    """One-line stats annotation for a configuration row."""
+    """One-line stats annotation for a configuration row.
+
+    ``n_pred``/``n_total`` counts every case in the row, while the two rates
+    divide by the agent-attributable ones only. ``broken n`` names the
+    difference, so a row whose percentages are computed over a shrunken sample
+    says so; it is omitted when nothing broke, which is the normal case.
+    """
     results = [case.result for case in cases]
     n_pred = len(errors_m(results))
+    n_broken = broken_count(results)
+    broken = f"  broken {n_broken}" if n_broken else ""
     return (
         f"n_pred {n_pred}/{len(results)}  "
         f"no-prediction {no_prediction_rate(results):.0%}  "
-        f"pass {pass_rate(results):.0%}"
+        f"pass {pass_rate(results):.0%}{broken}"
     )
 
 
@@ -139,7 +151,7 @@ def render_figure(
         color = f"C{row % 10}"
         ax.plot(values, ys, "o", color=color, alpha=0.75, markersize=6, zorder=3)
         if values:
-            median = sorted(values)[len(values) // 2]
+            median = statistics.median(values)
             ax.plot(
                 [median],
                 [row],

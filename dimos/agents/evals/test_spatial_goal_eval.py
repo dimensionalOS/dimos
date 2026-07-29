@@ -21,13 +21,14 @@ actually driving the shipping agent, and it needs an ingested spatial memory
 (and, for the sweep, an API key).
 
 **The sweep** (``test_goal_selection_sweep``) is the measurement: two system
-prompts x two models over the whole committed question set, one JSONL shard
-per case. It is a *tool-routing and query-formulation comparison*, not a
-ranking of spatial ability -- the coordinates come from ``SpatialMemory``'s
-deterministic CLIP top-1, and the model only decides whether to call the tool,
-what query to send, and how many times. What it asserts is correspondingly
-narrow: every question produced a paired, attributable record, and none of
-them failed inside the harness. The numbers live in the shards.
+prompts (the shipping default, and one that names the spatial memory) x two
+models over the whole committed question set, one JSONL shard per case. It is
+a *tool-routing and query-formulation comparison*, not a ranking of spatial
+ability -- the coordinates come from ``SpatialMemory``'s deterministic CLIP
+top-1, and the model only decides whether to call the tool, what query to
+send, and how many times. What it asserts is correspondingly narrow: every
+question produced a paired, attributable record, and none of them failed
+inside the harness. The numbers live in the shards.
 
 **The smoke** (``test_full_chain_pipeline``) needs no key. It ingests a thin
 slice of the replay, asks one question with a recorded model transcript, and
@@ -48,7 +49,7 @@ Running the sweep locally::
 
     # then turn the four shards into the one figure
     uv run python -m dimos.agents.evals.render \\
-        --shards .ignore.eval-shards --out error_distribution.png --threshold-m 1.5
+        --shards .ignore.eval-shards --out error_distribution.png --threshold-m 3.5
 
 Note for a first run on a fresh machine: ``navigate_with_text`` tries tagged
 locations before the semantic map, and that path makes ChromaDB instantiate
@@ -75,6 +76,7 @@ from dimos.agents.evals.render import MAX_PNG_BYTES, render_figure
 from dimos.agents.evals.scorer import (
     RunObservation,
     append_shard,
+    broken_count,
     build_answer_record,
     errors_m,
     no_prediction_rate,
@@ -83,6 +85,7 @@ from dimos.agents.evals.scorer import (
     read_shard,
     score,
 )
+from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.utils.data import get_data_dir
 from dimos.utils.logging_config import setup_logger
 
@@ -114,17 +117,22 @@ MODEL_IDS = ("gpt-5.6-luna", "openai:gpt-5.6-sol")
 #: Frozen prompt arms. Neither says anything about the shape of an answer: the
 #: constant task instruction is part of the question template
 #: (``questions.QUESTION_TEMPLATE``), because a swept format instruction would
-#: measure format compliance instead of spatial behavior. The difference
-#: between the two arms is only whether the agent is told it *has* a spatial
-#: memory -- i.e. whether it routes to the tool or answers from world
-#: knowledge, which is exactly what the sweep compares.
-PROMPT_PLAIN = "You are a robot assistant."
+#: measure format compliance instead of spatial behavior. What differs between
+#: the arms is how strongly the agent is told it *has* a spatial memory -- i.e.
+#: whether it routes to the tool or answers from world knowledge, which is
+#: exactly what the sweep compares.
 PROMPT_SPATIAL = (
     "You are a mobile robot assistant with a semantic spatial memory of the space you "
     "have explored. When asked where something is, or to go to something, use your "
     "navigation tools rather than answering from general knowledge."
 )
-PROMPTS = (("plain", PROMPT_PLAIN), ("spatial", PROMPT_SPATIAL))
+
+#: The two arms. The baseline is the **shipping** prompt -- ``McpClientConfig``'s
+#: default, what a deployed robot actually runs with -- rather than a synthetic
+#: minimal one, because a baseline nobody ships measures a configuration nobody
+#: has. The coupling is the point: a change to ``dimos/agents/system_prompt.py``
+#: moves this eval, which is the signal it exists to give.
+PROMPTS = (("shipping", SYSTEM_PROMPT), ("spatial", PROMPT_SPATIAL))
 
 #: The smoke test's question, and the query in its recorded transcript.
 SMOKE_QUESTION_ID = "go2-bigoffice-elevator-door"
@@ -238,7 +246,8 @@ def test_goal_selection_sweep(
     results = [case.result for case in cases]
     logger.info(
         f"[{model_id} / {prompt_id}] {out}: n_pred {len(errors_m(results))}/{len(results)}, "
-        f"no-prediction {no_prediction_rate(results):.0%}, pass {pass_rate(results):.0%}"
+        f"no-prediction {no_prediction_rate(results):.0%}, pass {pass_rate(results):.0%}, "
+        f"broken {broken_count(results)}"
     )
 
     assert [case.answer.question_id for case in cases] == [q.question_id for q in question_set]

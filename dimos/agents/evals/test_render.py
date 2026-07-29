@@ -23,6 +23,7 @@ that mixes two configurations into one row is worse than no figure) and the
 from __future__ import annotations
 
 from pathlib import Path
+import statistics
 
 import pytest
 
@@ -36,7 +37,7 @@ from dimos.agents.evals.render import (
 from dimos.agents.evals.scorer import ScoredCase, append_shard
 
 MODELS = ("gpt-5.6-luna", "openai:gpt-4o")
-PROMPTS = ("plain", "spatial")
+PROMPTS = ("shipping", "spatial")
 
 
 def make_case(
@@ -132,19 +133,19 @@ def test_collect_shard_paths_refuses_to_render_nothing(tmp_path: Path) -> None:
 def test_cases_group_by_model_and_prompt_together() -> None:
     """A configuration is the pair: the same model under two prompts is two rows."""
     cases = [
-        make_case("q1", model_id="gpt-5.6-luna", prompt_id="plain"),
+        make_case("q1", model_id="gpt-5.6-luna", prompt_id="shipping"),
         make_case("q2", model_id="gpt-5.6-luna", prompt_id="spatial"),
-        make_case("q3", model_id="openai:gpt-4o", prompt_id="plain"),
-        make_case("q4", model_id="gpt-5.6-luna", prompt_id="plain"),
+        make_case("q3", model_id="openai:gpt-4o", prompt_id="shipping"),
+        make_case("q4", model_id="gpt-5.6-luna", prompt_id="shipping"),
     ]
     grouped = group_by_configuration(cases)
 
     assert list(grouped) == [
-        ("gpt-5.6-luna", "plain"),
+        ("gpt-5.6-luna", "shipping"),
         ("gpt-5.6-luna", "spatial"),
-        ("openai:gpt-4o", "plain"),
+        ("openai:gpt-4o", "shipping"),
     ]
-    assert [case.answer.question_id for case in grouped["gpt-5.6-luna", "plain"]] == ["q1", "q4"]
+    assert [case.answer.question_id for case in grouped["gpt-5.6-luna", "shipping"]] == ["q1", "q4"]
 
 
 def test_grouping_follows_the_order_the_shards_were_given() -> None:
@@ -208,4 +209,52 @@ def test_main_renders_a_directory_of_shards_and_reports_the_counts(
     assert "24 cases from 4 shard(s)" in printed
     # 5 of the 6 questions produced a goal, and 3 of those are within 1.5 m.
     assert printed.count("n_pred 5/6  no-prediction 17%  pass 50%") == 4
+    # Nothing broke, so the annotation does not carry a broken count at all.
+    assert "broken" not in printed
     assert out.stat().st_size <= render.MAX_PNG_BYTES
+
+
+def test_the_annotation_names_the_measurements_the_rates_dropped() -> None:
+    """A row whose percentages are over a smaller sample has to say so.
+
+    Two questions here died in the harness. The rates are computed over the
+    four that did not -- charging a crashed worker to the model would be the
+    bug -- so ``n_pred 3/6`` next to ``pass 75%`` would look like arithmetic
+    nobody can reproduce until ``broken 2`` explains it.
+    """
+    cases = [
+        make_case("q1", error_m=0.4),
+        make_case("q2", error_m=0.9),
+        make_case("q3", error_m=1.4),
+        make_case("q4", error_m=None, outcome="no_prediction"),
+        make_case("q5", error_m=None, outcome="harness_error"),
+        make_case("q6", error_m=None, outcome="tool_error"),
+    ]
+    assert render._summary(cases) == "n_pred 3/6  no-prediction 25%  pass 75%  broken 2"
+
+
+def test_the_row_marker_is_the_median_of_that_rows_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The marker is the row's only summary statistic, so it has to be the median.
+
+    ``sorted(values)[len // 2]`` is the *upper middle* value: on the four
+    errors below it reports 1.4 m where the median is 1.15 m. Six questions
+    minus the ones that produced no goal is an even count often enough for the
+    difference to be the number a reader takes away.
+    """
+    real_median = statistics.median
+    medianed: list[list[float]] = []
+
+    def spy(values: list[float]) -> float:
+        medianed.append(list(values))
+        return real_median(values)
+
+    monkeypatch.setattr(render.statistics, "median", spy)
+    errors = (0.35, 0.9, 1.4, 2.05)
+    cases = [make_case(f"q{index}", error_m=error) for index, error in enumerate(errors)]
+    render_figure(cases, tmp_path / "median.png")
+
+    assert medianed == [list(errors)]
+    assert real_median(errors) == pytest.approx(1.15)
+    assert sorted(errors)[len(errors) // 2] == 1.4  # what the old formula returned

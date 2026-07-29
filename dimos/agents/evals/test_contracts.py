@@ -28,8 +28,10 @@ from typing import get_args
 
 from dimos.agents.evals.contracts import OUTCOMES, AnswerRecord, Outcome, QuestionSpec, ScoreResult
 
+#: The committed "liquor shelf" question: asked under its reviewed name, but
+#: identified by the detector label the reviewer cannot move.
 QUESTION = QuestionSpec(
-    question_id="go2-bigoffice-liquor-shelf",
+    question_id="go2-bigoffice-bookstore",
     display_name="liquor shelf",
     raw_label="bookstore",
     question_text="Where is the liquor shelf? Use your navigation tools to go to it.",
@@ -39,11 +41,11 @@ QUESTION = QuestionSpec(
     n_views=2,
     spread_m=0.0707,
     human_review="renamed",
-    threshold_m=1.5,
+    threshold_m=3.5,
 )
 
 ANSWER = AnswerRecord(
-    question_id="go2-bigoffice-liquor-shelf",
+    question_id="go2-bigoffice-bookstore",
     outcome="predicted",
     goal_x=-1.4,
     goal_y=-1.2,
@@ -59,9 +61,9 @@ ANSWER = AnswerRecord(
 )
 
 RESULT = ScoreResult(
-    question_id="go2-bigoffice-liquor-shelf",
+    question_id="go2-bigoffice-bookstore",
     passed=True,
-    reason="map-frame XY error 0.879 m vs threshold 1.500 m",
+    reason="map-frame XY error 0.879 m vs threshold 3.500 m",
     score=1.0,
     error_m=0.8791,
     outcome="predicted",
@@ -98,7 +100,7 @@ def test_answer_record_round_trip_without_a_goal() -> None:
         tool_invoked=True,
         tool_queries=["houseplant"],
         model_id="openai:gpt-4o",
-        prompt_id="plain",
+        prompt_id="shipping",
         prompt_sha256="b" * 64,
         wall_time_s=2.5,
     )

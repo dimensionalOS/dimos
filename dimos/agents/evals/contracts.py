@@ -40,7 +40,9 @@ Scoring semantics (fixed):
   ``passed=False`` with ``error_m=None``, stays in the denominator of pass
   rate, and is excluded only from the error-distribution plot.
 * Outcomes distinguish agent failures from harness failures so a broken run
-  cannot masquerade as a bad model.
+  cannot masquerade as a bad model: the rates in ``scorer.py`` divide by the
+  three agent-attributable outcomes only, and the renderer prints how many
+  results were excluded as broken.
 """
 
 from __future__ import annotations
@@ -76,8 +78,13 @@ class QuestionSpec:
 
     ``display_name`` is the reviewed name used in ``question_text``;
     ``raw_label`` preserves the original detector label so renames stay
-    auditable. Questions whose labels were rejected in review are dropped
-    upstream and never become specs.
+    auditable, and is also what ``question_id`` is built from, so a rename in
+    review cannot break a longitudinal join. Questions whose labels were
+    rejected in review are dropped upstream and never become specs.
+
+    ``threshold_m`` is an *observation envelope*, not a point-accuracy
+    tolerance: see ``questions.DEFAULT_THRESHOLD_M`` for why a viewpoint-shaped
+    goal cannot be scored against a tighter one.
     """
 
     question_id: str
@@ -90,7 +97,7 @@ class QuestionSpec:
     n_views: int
     spread_m: float
     human_review: HumanReview
-    threshold_m: float = 1.5
+    threshold_m: float = 3.5
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)

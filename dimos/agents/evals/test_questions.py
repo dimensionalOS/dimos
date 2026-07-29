@@ -36,6 +36,7 @@ from dimos.agents.evals.questions import (
     load_review,
     slugify,
 )
+from dimos.agents.evals.teacher import GateParams
 
 REFERENCE_DIR = Path(__file__).parent / "reference"
 
@@ -45,7 +46,12 @@ EXPECTED_QUESTION_COUNT = 6
 
 
 def make_ref(raw_label: str, location_group: str, **overrides: Any) -> dict[str, Any]:
-    """One ``refs.jsonl`` row, with only the fields ``build_questions`` reads."""
+    """One ``refs.jsonl`` row, with only the fields ``build_questions`` reads.
+
+    ``robot_poses`` defaults to two viewpoints 0.6 m and 0.9 m from wherever
+    the reference is, so a row is passable at any threshold worth testing;
+    tests about the passability gate itself pass their own.
+    """
     ref: dict[str, Any] = {
         "dataset": "go2_bigoffice",
         "raw_label": raw_label,
@@ -57,6 +63,10 @@ def make_ref(raw_label: str, location_group: str, **overrides: Any) -> dict[str,
         "spread_m": 0.25,
     }
     ref.update(overrides)
+    ref.setdefault(
+        "robot_poses",
+        [[ref["x"] + 0.6, ref["y"], 0.31], [ref["x"], ref["y"] + 0.9, 0.31]],
+    )
     return ref
 
 
@@ -118,9 +128,30 @@ def test_renamed_label_is_asked_under_the_new_name_and_keeps_the_old_one() -> No
     question = questions[0]
     assert question.display_name == "liquor shelf"
     assert question.raw_label == "bookstore"
-    assert question.question_id == "go2-bigoffice-liquor-shelf"
+    assert question.question_id == "go2-bigoffice-bookstore"
     assert question.human_review == "renamed"
     assert "liquor shelf" in question.question_text
+
+
+def test_a_rename_changes_the_wording_but_never_the_id() -> None:
+    """The id is what a later run joins on, so review may not be able to move it.
+
+    Renaming a question in ``review.json`` is a routine, low-ceremony edit --
+    somebody sharpens "liquor shelf" to "backlit bottle shelf" months later. If
+    that rewrote the id, every shard, figure and comparison recorded under the
+    old one would quietly stop lining up, and nothing would report it.
+    """
+    ref = [make_ref("bookstore", "loc-03")]
+    first, _, _ = build_questions(
+        ref, {"bookstore": {"status": "renamed", "display_name": "liquor shelf"}}, 1.5
+    )
+    renamed, problems, _ = build_questions(
+        ref, {"bookstore": {"status": "renamed", "display_name": "backlit bottle shelf"}}, 1.5
+    )
+
+    assert not problems
+    assert first[0].question_id == renamed[0].question_id == "go2-bigoffice-bookstore"
+    assert first[0].question_text != renamed[0].question_text
 
 
 def test_a_label_the_overlay_never_mentions_is_dropped() -> None:
@@ -206,19 +237,23 @@ def test_two_labels_on_one_location_group_abort_the_run() -> None:
     ]
 
 
-def test_names_that_differ_only_in_punctuation_abort_the_run() -> None:
-    """The id is what every later artifact joins on, so a slug clash is fatal."""
+def test_labels_that_differ_only_in_punctuation_abort_the_run() -> None:
+    """The id is what every later artifact joins on, so a slug clash is fatal.
+
+    Two questions cannot share one id even when the detector's own vocabulary
+    is what collided; the reviewer has to drop one.
+    """
     questions, problems, _ = build_questions(
-        [make_ref("bookstore", "loc-03"), make_ref("organization", "loc-12")],
+        [make_ref("window sill", "loc-18"), make_ref("window-sill", "loc-12")],
         {
-            "bookstore": {"status": "renamed", "display_name": "liquor shelf"},
-            "organization": {"status": "renamed", "display_name": "liquor-shelf"},
+            "window sill": {"status": "verified"},
+            "window-sill": {"status": "verified"},
         },
         1.5,
     )
-    assert [q.display_name for q in questions] == ["liquor shelf"]
+    assert [q.raw_label for q in questions] == ["window sill"]
     assert problems == [
-        "'liquor-shelf' and 'liquor shelf' both slugify to question id 'go2-bigoffice-liquor-shelf'"
+        "'window-sill' and 'window sill' both slugify to question id 'go2-bigoffice-window-sill'"
     ]
 
 
@@ -253,6 +288,64 @@ def test_questions_are_sorted_by_id_and_carry_the_threshold() -> None:
         "go2-bigoffice-window-sill",
     ]
     assert {q.threshold_m for q in questions} == {2.0}
+
+
+def test_default_threshold_covers_the_teachers_observation_envelope() -> None:
+    """The threshold is an envelope, and the envelope is the teacher's own.
+
+    ``max_range_m`` is the furthest the teacher accepted a measurement from, so
+    it is also the furthest a correct viewpoint-shaped goal can legitimately
+    land from a reference. A default below it would fail questions on the
+    geometry of the recording rather than on anything the agent did.
+    """
+    assert DEFAULT_THRESHOLD_M > GateParams().max_range_m
+
+
+def test_a_question_no_agent_could_reach_aborts_the_run() -> None:
+    """The scored goal is a viewpoint, so an object only seen from far away is unpassable.
+
+    ``navigate_with_text`` answers with the robot pose of the retrieved frame,
+    and the reference is the object's own centroid. If the teacher never got
+    within the threshold of the object, a perfect retrieval still scores as a
+    failure -- and the run would report the recording's geometry as the model's
+    fault. The generator refuses to emit such a question at all.
+    """
+    questions, problems, _ = build_questions(
+        [make_ref("elevator door", "loc-06", robot_poses=[[3.4, 2.0, 0.31], [1.0, 5.2, 0.31]])],
+        {"elevator door": {"status": "verified"}},
+        1.5,
+    )
+    assert questions == []
+    assert problems == [
+        "'elevator door': unpassable by construction: nearest teacher viewpoint "
+        "2.40 m >= threshold 1.5 m"
+    ]
+
+
+def test_the_same_question_is_passable_once_the_threshold_is_the_envelope() -> None:
+    """Same reference, same viewpoints: it is the threshold that decides.
+
+    This is the shape of the bug the gate exists to catch -- three of the six
+    committed questions were unpassable under the old 1.5 m default -- so the
+    two halves are asserted together rather than one in isolation.
+    """
+    refs = [make_ref("elevator door", "loc-06", robot_poses=[[3.4, 2.0, 0.31], [1.0, 5.2, 0.31]])]
+    review = {"elevator door": {"status": "verified"}}
+
+    questions, problems, _ = build_questions(refs, review, DEFAULT_THRESHOLD_M)
+    assert problems == []
+    assert [q.question_id for q in questions] == ["go2-bigoffice-elevator-door"]
+
+
+def test_a_reference_with_no_viewpoints_at_all_is_unpassable() -> None:
+    """A row with no ``robot_poses`` carries no evidence that it was ever reached."""
+    _, problems, _ = build_questions(
+        [make_ref("houseplant", "loc-09", robot_poses=[])],
+        {"houseplant": {"status": "verified"}},
+        DEFAULT_THRESHOLD_M,
+    )
+    assert len(problems) == 1
+    assert "unpassable by construction" in problems[0]
 
 
 def test_slugify_collapses_runs_of_punctuation() -> None:
