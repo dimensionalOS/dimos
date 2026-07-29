@@ -1,16 +1,21 @@
 {
   "nodes": {
-    "dimos-rust": {
+    "dimos-repo": {
       "flake": false,
       "locked": {
-        "path": "../../../../../native/rust",
-        "type": "path"
+        "lastModified": 1784784963,
+        "narHash": "sha256-eBLNDnxhdAgmd3x4mwQIKWxWsayG84DeOo7u/cMiGYA=",
+        "ref": "main",
+        "rev": "10793320a6693b00f82d6f26c7ce77043fa7c6a8",
+        "revCount": 971,
+        "type": "git",
+        "url": "file:../../../../.."
       },
       "original": {
-        "path": "../../../../../native/rust",
-        "type": "path"
-      },
-      "parent": []
+        "ref": "main",
+        "type": "git",
+        "url": "file:../../../../.."
+      }
     },
     "flake-utils": {
       "inputs": {
@@ -48,7 +53,7 @@
     },
     "root": {
       "inputs": {
-        "dimos-rust": "dimos-rust",
+        "dimos-repo": "dimos-repo",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

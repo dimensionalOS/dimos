@@ -26,6 +26,12 @@
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
       in {
+        # Toolchain-only shell for CI fmt/clippy/test, kept independent of the
+        # `src` runCommand so `nix develop` stays cheap.
+        devShells.default = pkgs.mkShell {
+          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
+        };
+
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "voxel-ray-tracing";
           version = "0.1.0";
@@ -35,6 +41,11 @@
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
           cargoHash = "sha256-6a8GHRSKI6mjg9HNbrestCud8xZtF8HaD0bWVMbl7N8=";
+
+          # macOS: pyo3's extension-module leaves CPython symbols undefined in the
+          # cdylib; let the loader resolve them at import time.
+          env.RUSTFLAGS = nixpkgs.lib.optionalString pkgs.stdenv.isDarwin
+            "-C link-args=-Wl,-undefined,dynamic_lookup";
 
           meta.mainProgram = "voxel_ray_tracing";
         };

@@ -14,8 +14,7 @@
     };
     fast-lio = {
       # Point-LIO fork (split out of dimos-module-fastlio2's pointlio branch).
-      # Repo is org-internal for now, hence git+ssh instead of github:.
-      url = "git+ssh://git@github.com/dimensionalOS/dimos-module-pointlio?ref=main";
+      url = "github:dimensionalOS/dimos-module-pointlio/main";
       flake = false;
     };
     lcm-extended = {

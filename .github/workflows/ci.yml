@@ -71,7 +71,7 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
   rust:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -79,6 +79,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # ray_tracing's flake input dimos-repo (git+file:../../../..?ref=main)
+          # pins a historical rev; a shallow checkout omits that object.
+          fetch-depth: 0
       - name: Find Cargo workspace roots
         id: find-crates
         run: |
@@ -105,26 +109,50 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ steps.find-crates.outputs.crates }}
-      - name: cargo fmt
+      - name: Install Nix (with Cachix substituter)
+        # Read-only substituter: pulls the flake dev shells from the cache. No
+        # auth token, so this job stays unprivileged (unlike cachix-build).
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-rust-${{ runner.os }}-${{ hashFiles('**/flake.lock') }}
+          restore-keys: nix-rust-${{ runner.os }}-
+      - name: Format, lint, and test each crate
+        # Crates with a flake run through its dev shell (so tests get any
+        # flake-provided deps); flakeless crates use the plain toolchain.
         env:
           CRATES: ${{ steps.find-crates.outputs.crates }}
         run: |
           for crate in $CRATES; do
-            (cd "$crate" && cargo fmt --all -- --check)
-          done
-      - name: cargo clippy
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
-          done
-      - name: cargo test
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo test --workspace --all-features --locked)
+            # if nix, run the rust tests in nix (not plain rust)
+            if [ -f "$crate/flake.nix" ]; then
+              echo "::group::$crate (flake dev shell)"
+              (cd "$crate" && nix develop path:. --command bash -c '
+                set -euxo pipefail
+                cargo fmt --all -- --check
+                cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+                cargo test --workspace --all-features --locked
+              ')
+              echo "::endgroup::"
+            else
+              echo "::group::$crate (plain toolchain)"
+              (
+                cd "$crate"
+                cargo fmt --all -- --check
+                cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+                cargo test --workspace --all-features --locked
+              )
+              echo "::endgroup::"
+            fi
           done
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
@@ -135,11 +163,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
+        # PyO3 extension modules (cdylib + `extension-module`) are the one case
+        # that still needs a plain build: pytest imports the compiled .so.
         run: |
           uv sync --group tests --frozen
           source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
+          pyo3_crates=$(grep -rl --include=Cargo.toml 'extension-module' . \
+            --exclude-dir=.venv --exclude-dir=target \
+            --exclude-dir=node_modules --exclude-dir=.git \
+            | sed 's|/Cargo.toml$||; s|^\./||' | sort)
+          echo "PyO3 extension crates:"
+          echo "$pyo3_crates"
+          for crate in $pyo3_crates; do
+            maturin develop -m "$crate/Cargo.toml"
+          done
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
@@ -365,39 +402,7 @@ jobs:
           use_pypi: true
           version: "11.2.8"
 
-  cmu-nav-natives-marker:
-    # Check whether the modules-for-this-config marker cache
-    # already exists. Used to skip cmu-nav-natives without using the cachix environment.
-    if: |
-      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # For checkout
-    outputs:
-      cache-hit: ${{ steps.marker.outputs.cache-hit }}
-      key: ${{ steps.cache-key.outputs.key }}
-    steps:
-      - name: Checkout files used for cache key
-        uses: actions/checkout@v7
-        with:
-          sparse-checkout: |
-            bin/build-cmu-nav-natives
-            dimos/navigation/cmu_nav/modules
-          sparse-checkout-cone-mode: false
-      - name: Compute cache key
-        # Recomputing the key in cmu-nav-natives after build breaks the key.
-        # Save here so it can be reused verbatim.
-        id: cache-key
-        run: echo "key=cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}" >> "$GITHUB_OUTPUT"
-      - name: Look up marker cache
-        id: marker
-        uses: actions/cache/restore@v6
-        with:
-          path: /tmp/cmu-nav-natives-marker
-          key: ${{ steps.cache-key.outputs.key }}
-          lookup-only: true
-
-  cmu-nav-natives:
+  cachix-build:
     # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
     # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
     # reaches a `run:` step here could exfiltrate the token, letting an attacker
@@ -408,11 +413,12 @@ jobs:
     # The `if:` guard below is the only thing keeping forks out — DO NOT REMOVE.
     # merge_group runs the PR's *merged* workflow with secrets, so .github/
     # changes must be reviewed before a fork PR is queued.
+    #
+    # No skip gate needed: unchanged modules substitute from Cachix (no compile)
+    # and push nothing new, so running every time is idempotent and cheap.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
-    needs: cmu-nav-natives-marker
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 300
     environment: cachix
     runs-on: ubuntu-latest
@@ -422,6 +428,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # ray_tracing's flake input dimos-repo (git+file:../../../..?ref=main)
+          # pins a historical rev; a shallow checkout omits that object.
+          fetch-depth: 0
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install uv
@@ -449,27 +459,17 @@ jobs:
           path: |
             ~/.cache/nix
             ~/.local/state/nix
-          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**/*.py') }}
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-native-modules', '**/flake.lock', '**/flake.nix') }}
           restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
         uses: cachix/cachix-action@v17
         with:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - name: Build cmu_nav native modules
+      - name: Build native modules
         env:
           BUILD_WORKERS: "1"
-        run: uv run bin/build-cmu-nav-natives
-      - name: Write marker file
-        run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
-      - name: Save marker cache
-        # Done as a final step (rather than via actions/cache's post-step) so
-        # a build failure doesn't poison the cache with a marker for a config
-        # we never actually pushed.
-        uses: actions/cache/save@v6
-        with:
-          path: /tmp/cmu-nav-natives-marker
-          key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
+        run: uv run bin/build-native-modules
 
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
@@ -478,8 +478,8 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
-    needs: [compute-ros-pin, cmu-nav-natives]
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [compute-ros-pin, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -523,6 +523,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           clean: false
+          # Native-module flakes pin a historical rev via a git+file self-reference;
+          # a shallow checkout omits that object and nix eval fails to fetch it.
+          fetch-depth: 0
           # If we ever allow external PRs on custom runner, persisting credentials
           # could be abused by attackers.
           persist-credentials: false
@@ -601,9 +604,9 @@ jobs:
           max-jobs = 0
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - name: Fetch cmu_nav native modules from Cachix
+      - name: Fetch native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
-        run: uv run bin/build-cmu-nav-natives
+        run: uv run bin/build-native-modules
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -690,6 +693,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           clean: false
+          # Native-module flakes pin a historical rev via a git+file self-reference;
+          # a shallow checkout omits that object and nix eval fails to fetch it.
+          fetch-depth: 0
           # If we ever allow external PRs on custom runner, persisting credentials
           # could be abused by attackers.
           persist-credentials: false
@@ -818,7 +824,7 @@ jobs:
     - docs-validate
     - web
     - tests
-    - cmu-nav-natives
+    - cachix-build
     - self-hosted-tests
     #- self-hosted-large-tests
 
@@ -830,7 +836,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
+        allowed-skips: cachix-build, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7
