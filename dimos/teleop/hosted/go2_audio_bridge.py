@@ -167,7 +167,7 @@ class Go2AudioBridgeModule(Module):
             self._upload_wav(wav_data)
         except Exception:
             logger.warning("Go2 megaphone upload failed", exc_info=True)
-            self._megaphone_active = False
+            self._exit_megaphone()
             if self.config.speaker == "auto":
                 self._speaker_available = False
 

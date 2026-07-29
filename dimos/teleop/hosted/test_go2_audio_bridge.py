@@ -30,6 +30,7 @@ from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.blueprints.cloudflare import teleop_hosted_go2_transport
 from dimos.teleop.hosted.go2_audio_bridge import (
     ENTER_MEGAPHONE,
+    EXIT_MEGAPHONE,
     GET_AUDIO_LIST,
     TARGET_SAMPLE_RATE,
     UPLOAD_MEGAPHONE,
@@ -236,10 +237,18 @@ def test_worker_exits_megaphone_after_idle_timeout(bridge: Go2AudioBridgeModule,
 
 def test_failed_upload_disables_auto_speaker(bridge: Go2AudioBridgeModule) -> None:
     bridge._speaker_available = True
-    bridge.go2.publish_request.side_effect = RuntimeError("upload failed")  # type: ignore[attr-defined]
+
+    def respond(_topic: str, request: dict[str, Any]) -> dict[str, Any]:
+        if request["api_id"] == UPLOAD_MEGAPHONE:
+            raise RuntimeError("upload failed")
+        return {"code": 0}
+
+    bridge.go2.publish_request.side_effect = respond  # type: ignore[attr-defined]
 
     bridge._flush([np.array([100], dtype=np.int16)])
 
+    requests = [call.args[1]["api_id"] for call in bridge.go2.publish_request.call_args_list]  # type: ignore[attr-defined]
+    assert requests == [ENTER_MEGAPHONE, UPLOAD_MEGAPHONE, EXIT_MEGAPHONE]
     assert bridge._speaker_available is False
     assert bridge._megaphone_active is False
 
