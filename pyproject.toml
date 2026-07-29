@@ -364,6 +364,7 @@ scene = [
 
 graspgenx = [
     "graspgenx",
+    "matplotlib>=3.7.1",
     "torch>=2.1,<2.7",
     "torchvision>=0.16,<0.22",
 ]

@@ -1776,6 +1776,7 @@ drone = [
 ]
 graspgenx = [
     { name = "graspgenx" },
+    { name = "matplotlib" },
     { name = "torch" },
     { name = "torchvision" },
 ]
@@ -2137,6 +2138,7 @@ requires-dist = [
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
+    { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },

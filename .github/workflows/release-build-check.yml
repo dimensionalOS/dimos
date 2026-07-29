@@ -28,8 +28,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Hydrate GraspGenX fixture
-        run: git lfs pull --include="dimos/manipulation/demo_graspgenx/fixtures/ycb_banana_scene.npz"
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.1.0
         with:

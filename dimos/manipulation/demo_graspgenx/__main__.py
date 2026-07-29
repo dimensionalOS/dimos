@@ -1,15 +1,27 @@
 # Copyright 2026 Dimensional Inc.
-"""Contributor entry point for the direct-process GraspGenX YCB demo."""
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Run GraspGenX once and save an annotated point-cloud PNG."""
 
 import argparse
 from collections.abc import Callable, Sequence
 import os
 from pathlib import Path
-from typing import Any
 
-from dimos.manipulation.grasping.grasp_gen_x import GraspGenXConfig, GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXConfig
 
-from .demo import run_contributor_demo
+from .demo import GraspGenAdapter, run_contributor_demo
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -17,45 +29,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(os.environ.get("DIMOS_GRASPGENX_OUTPUT", "graspgenx-ycb-demo.yaml")),
+        default=Path(os.environ.get("DIMOS_GRASPGENX_OUTPUT", "graspgenx-ycb-demo.png")),
+        help="Destination PNG path.",
     )
-    parser.add_argument("--recording-path", type=Path, default=None)
-    parser.add_argument(
-        "--viewer", choices=("rerun", "none"), default=os.environ.get("DIMOS_VIEWER", "rerun")
-    )
-    parser.add_argument(
-        "--rerun-open",
-        choices=("native", "web", "both", "none"),
-        default=os.environ.get("DIMOS_RERUN_OPEN", "native"),
-    )
-    parser.add_argument(
-        "--native-window-backend",
-        choices=("x11", "wayland", "auto"),
-        default=os.environ.get("DIMOS_GRASPGENX_NATIVE_WINDOW_BACKEND", "x11"),
-    )
-    parser.add_argument("--flush-timeout", type=float, default=10.0)
     return parser
 
 
 def main(
     argv: Sequence[str] | None = None,
     *,
-    module_factory: Callable[[GraspGenXConfig], GraspGenXModule] = GraspGenXModule,
-    runner: Callable[..., Any] = run_contributor_demo,
+    module_factory: Callable[[GraspGenXConfig], GraspGenAdapter] | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
-    result = runner(
-        output_path=args.output,
-        recording_path=args.recording_path,
-        viewer=args.viewer,
-        rerun_open=args.rerun_open,
-        native_window_backend=args.native_window_backend,
-        flush_timeout=args.flush_timeout,
-        module_factory=module_factory,
+    result = (
+        run_contributor_demo(output_path=args.output)
+        if module_factory is None
+        else run_contributor_demo(output_path=args.output, module_factory=module_factory)
     )
     print(
         f"graspgenx-ycb-demo complete candidates={result.candidate_count} "
-        f"yaml={result.output_path} recording={result.recording_path}",
+        f"image={result.image_path}",
         flush=True,
     )
     return 0
