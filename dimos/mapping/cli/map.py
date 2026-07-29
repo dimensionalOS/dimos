@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-# Heavy imports (rerun → tokio runtime; mapping/memory2 → torch, transformers,
-# open3d) are deferred into the function bodies below so that `dimos --help` — which
-# imports this module just to register the `map` subcommand — stays fast. See
-# test_cli_startup.py.
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory2.stream import Stream

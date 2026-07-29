@@ -31,9 +31,6 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-# Heavy imports (rerun → tokio runtime; memory2/perception → torch, scipy, cv2)
-# are deferred into main() so that `dimos map --help` stays fast. See
-# test_cli_startup.py and the same pattern in dimos/mapping/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
 

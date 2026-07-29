@@ -39,9 +39,6 @@ import typer
 
 from dimos.memory2.utils.progress import progress
 
-# Heavy imports (rerun → tokio runtime; mapping/memory2 → torch, scipy, open3d)
-# are deferred into the function bodies so that `dimos map --help` stays fast. See
-# test_cli_startup.py and the same pattern in dimos/mapping/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
