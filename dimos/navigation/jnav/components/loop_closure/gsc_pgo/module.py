@@ -125,6 +125,18 @@ class PGOConfig(NativeModuleConfig):
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
     loop_robust_kernel: bool = True
     loop_robust_huber_k: float = 1.345
+    # Loop-verification ICP: iteration cap, correspondence gate (m), inlier-only fitness, minimum
+    # submap points (0 = off), and seeding at the current pose instead of the matched keyframe.
+    loop_icp_max_iterations: int = 50
+    loop_icp_max_correspondence_m: float = 10.0
+    loop_icp_inlier_fitness: bool = False
+    loop_icp_min_points: int = 0
+    loop_icp_seed_at_current_pose: bool = False
+    # Loop factor noise: rotation variance (0 = the ICP fitness) and a translation-variance floor.
+    loop_rotation_variance: float = 0.0
+    loop_translation_variance_floor: float = 0.0
+    # iSAM2 update passes after an update that adds a closure.
+    loop_refinement_passes: int = 5
 
     # After each loop closure, re-solve the whole graph once with a batch GNC (graduated
     # non-convexity, TLS loss) optimizer, pinning the odometry backbone as known inliers. GNC
