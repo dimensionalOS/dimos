@@ -29,8 +29,8 @@ connection = ConnectionModule.blueprint
 
 Now you can create the blueprint with:
 
-```python skip session=blueprint-ex1
-blueprint = connection('arg1', 'arg2', kwarg='value')
+```python session=blueprint-ex1
+blueprint = connection(arg1=5, arg2="foo")
 ```
 
 ## Linking blueprints
@@ -424,19 +424,18 @@ class HelperModule(Module):
         ...
 ```
 
-And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
+And you want to call `Drone.get_time` in `HelperModule.set_alarm_clock`.
 
-To do this, you can request a module reference.
+To do this, you can request a module reference. Annotate an attribute with the module class and DimOS will inject a proxy for the running module at build time. Calling `get_time()` on it performs the RPC call.
 
 ```python session=blueprint-ex3
-from dimos.core.core import rpc
 from dimos.core.module import Module
 
 class HelperModule(Module):
     drone_module: Drone
 
     def set_alarm_clock(self) -> None:
-        print(self.drone_module.get_time_rpc())
+        print(self.drone_module.get_time())
 ```
 
 But what if we want `HelperModule` to work for more than just `Drone`? For that we can use a spec.
@@ -446,10 +445,12 @@ from dimos.spec.utils import Spec
 from typing import Protocol
 
 class Drone(Module):
+    @rpc
     def get_time(self) -> str:
         return "1:00 PM"
 
 class Car(Module):
+    @rpc
     def get_time(self) -> str:
         return "2:00 PM"
 
@@ -457,10 +458,10 @@ class Car(Module):
 class AnyModuleWithGetTime(Spec, Protocol):
     def get_time(self) -> str: ...
 
-class ModuleB(Module):
+class HelperModule(Module):
     device: AnyModuleWithGetTime
 
-    def request_the_time(self) -> None:
+    def set_alarm_clock(self) -> None:
         # autoconnect() will automatically find whatever module has a get_time() method
         print(self.device.get_time())
 ```

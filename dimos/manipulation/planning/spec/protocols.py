@@ -83,16 +83,20 @@ class WorldSpec(Protocol):
         ...
 
     # Obstacle Management
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle to the world. Returns unique obstacle ID."""
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        """Add an obstacle, returning a non-empty native ID if inserted."""
         ...
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle. Returns True if removed."""
         ...
 
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Replace the complete obstacle identified by obstacle.name."""
+        ...
+
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update obstacle pose. Returns True if updated."""
+        """Update only an obstacle pose. Returns True if updated."""
         ...
 
     def clear_obstacles(self) -> None:
@@ -196,6 +200,26 @@ class VisualizationSpec(Protocol):
 
     def initialize(self, session: VisualizationSession) -> None:
         """Receive one-shot visualization session metadata after world startup."""
+        ...
+
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render or otherwise accept an obstacle added to the planning world."""
+        ...
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Replace a complete obstacle representation."""
+        ...
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Update only an obstacle representation's pose."""
+        ...
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove an obstacle representation from the visualization."""
+        ...
+
+    def clear_vis_obstacles(self) -> None:
+        """Clear obstacle representations from the visualization."""
         ...
 
     def get_visualization_url(self) -> str | None:

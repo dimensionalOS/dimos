@@ -83,6 +83,22 @@ def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
     assert detections == []
 
 
+def test_detect_markers_in_image_needs_detect_inverted_for_negative_tags() -> None:
+    image = synthetic_marker_image(7, inverted=True)
+    kwargs = {
+        "camera_info": camera_info(image.ts),
+        "world_T_optical": world_T_optical(image.ts),
+        "marker_length_m": 0.18,
+        "aruco_dictionary": "DICT_APRILTAG_36h11",
+    }
+
+    assert detect_markers_in_image(image, **kwargs) == []
+
+    detections = detect_markers_in_image(image, detect_inverted=True, **kwargs)
+    assert len(detections) == 1
+    assert detections[0].marker_id == 7
+
+
 def test_detect_markers_transformer_preserves_observation_context_and_tags() -> None:
     marker_id = 7
     image = synthetic_marker_image(marker_id, ts=12.0)
