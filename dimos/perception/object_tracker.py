@@ -90,8 +90,9 @@ class ObjectTracking(Module):
 
         self.camera_intrinsics = None
 
-        self.tracker = None
-        self.tracking_bbox = None  # Stores (x, y, w, h) for tracker initialization
+        self.tracker: cv2.Tracker | None = None
+        # Stores (x, y, w, h) for tracker initialization
+        self.tracking_bbox: tuple[int, int, int, int] | None = None
         self.tracking_initialized = False
         self.orb = cv2.ORB_create()  # type: ignore[attr-defined]
         self.bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -192,23 +193,27 @@ class ObjectTracking(Module):
         """
         if self._latest_rgb_frame is None:
             logger.warning("No RGB frame available for tracking")
+            self.stop_track()
+            return {"status": "no_frame"}
 
         # Initialize tracking
         x1, y1, x2, y2 = map(int, bbox)
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0:
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
+            self.stop_track()
+            return {"status": "invalid_bbox"}
 
         # Set tracking parameters
-        self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]  # Store in (x, y, w, h) format
-        self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
+        self.tracking_bbox = (x1, y1, w, h)  # Store in (x, y, w, h) format
+        self.tracker = cv2.TrackerCSRT.create()  # type: ignore[attr-defined]
         self.tracking_initialized = False
         self.original_des = None
         self.reid_fail_count = 0
         logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
         # Extract initial features
-        roi = self._latest_rgb_frame[y1:y2, x1:x2]  # type: ignore[index]
+        roi = self._latest_rgb_frame[y1:y2, x1:x2]
         if roi.size > 0:
             self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
             if self.original_des is None:
@@ -217,17 +222,20 @@ class ObjectTracking(Module):
                 logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
 
             # Initialize the tracker
-            init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)  # type: ignore[attr-defined]
-            if init_success:
+            try:
+                self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)
+            except cv2.error:
+                logger.error("Tracker initialization failed.")
+                self.stop_track()
+                return {"status": "init_failed"}
+            else:
                 self.tracking_initialized = True
                 self.tracking_frame_count = 0  # Reset frame counter
                 logger.info("Tracker initialized successfully.")
-            else:
-                logger.error("Tracker initialization failed.")
-                self.stop_track()
         else:
             logger.error("Empty ROI during tracker initialization.")
             self.stop_track()
+            return {"status": "init_failed"}
 
         # Start tracking thread
         self._start_tracking_thread()

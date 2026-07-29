@@ -192,7 +192,10 @@ class NavigationSkillContainer(Module):
         logger.info(f"Found {query} at {bbox}")
 
         # Start tracking - BBoxNavigationModule automatically generates goals
-        self._object_tracking.track(bbox)  # type: ignore[arg-type]
+        result = self._object_tracking.track(bbox)  # type: ignore[arg-type]
+        if result.get("status") != "tracking_started":
+            logger.warning(f"Failed to start tracking '{query}': {result.get('status')}")
+            return None
 
         start_time = time.time()
         timeout = 30.0
