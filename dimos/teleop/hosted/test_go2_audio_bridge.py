@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import queue
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 import wave
 
@@ -56,6 +58,15 @@ def bridge(monkeypatch: pytest.MonkeyPatch) -> Go2AudioBridgeModule:
     result = Go2AudioBridgeModule()
     result.go2 = MagicMock()
     return result
+
+
+def audio_frame(samples: int = 4410, value: int = 100) -> AudioEvent:
+    return AudioEvent(
+        np.full(samples, value, dtype=np.int16),
+        sample_rate=TARGET_SAMPLE_RATE,
+        timestamp=1.0,
+        channels=1,
+    )
 
 
 def test_stereo_audio_is_mixed_and_resampled_for_go2() -> None:
@@ -139,3 +150,135 @@ def test_supported_speaker_uploads_wav_through_megaphone(
             TARGET_SAMPLE_RATE,
             2,
         )
+
+
+def test_start_and_stop_manage_audio_subscription_and_worker(
+    bridge: Go2AudioBridgeModule, mocker
+) -> None:
+    bridge.config.speaker = "enabled"
+    bridge.operator_audio = MagicMock()  # type: ignore[assignment]
+    subscription = MagicMock()
+    bridge.operator_audio.subscribe.return_value = subscription  # type: ignore[attr-defined]
+    worker = mocker.patch("dimos.teleop.hosted.go2_audio_bridge.threading.Thread")
+    mocker.patch.object(Module, "start")
+    stop = mocker.patch.object(Module, "stop")
+    register = mocker.patch.object(bridge, "register_disposable")
+    exit_megaphone = mocker.patch.object(bridge, "_exit_megaphone")
+
+    bridge.start()
+    bridge.stop()
+
+    bridge.operator_audio.subscribe.assert_called_once_with(bridge._on_audio)  # type: ignore[attr-defined]
+    register.assert_called_once()
+    worker.return_value.start.assert_called_once_with()
+    worker.return_value.join.assert_called_once_with(timeout=2.0)
+    exit_megaphone.assert_called_once_with()
+    stop.assert_called_once_with()
+
+
+def test_disabled_speaker_does_not_subscribe_to_operator_audio(
+    bridge: Go2AudioBridgeModule, mocker
+) -> None:
+    bridge.config.speaker = "disabled"
+    bridge.operator_audio = MagicMock()  # type: ignore[assignment]
+    worker = mocker.patch("dimos.teleop.hosted.go2_audio_bridge.threading.Thread")
+    mocker.patch.object(Module, "start")
+
+    bridge.start()
+
+    assert bridge._speaker_available is False
+    bridge.operator_audio.subscribe.assert_not_called()  # type: ignore[attr-defined]
+    worker.return_value.start.assert_called_once_with()
+
+
+def test_full_audio_queue_drops_oldest_frame(bridge: Go2AudioBridgeModule) -> None:
+    frames = [audio_frame(value=value) for value in range(11)]
+    for frame in frames[:10]:
+        bridge._frames.put_nowait(frame)
+
+    bridge._on_audio(frames[10])
+
+    queued = [bridge._frames.get_nowait() for _ in range(10)]
+    assert queued == frames[1:]
+
+
+def test_worker_batches_audio_and_flushes_remaining_frames(
+    bridge: Go2AudioBridgeModule, mocker
+) -> None:
+    bridge.config.batch_ms = 100
+    frame = audio_frame(samples=2205)
+    bridge._frames.put_nowait(frame)
+    bridge._frames.put_nowait(frame)
+    bridge._frames.put_nowait(frame)
+    bridge._frames.put_nowait(None)
+    batches: list[list[np.ndarray[Any, np.dtype[np.int16]]]] = []
+    flush = mocker.patch.object(
+        bridge, "_flush", side_effect=lambda frames: batches.append(list(frames))
+    )
+
+    bridge._run()
+
+    assert flush.call_count == 2
+    assert [len(batch) for batch in batches] == [2, 1]
+
+
+def test_worker_exits_megaphone_after_idle_timeout(bridge: Go2AudioBridgeModule, mocker) -> None:
+    get = mocker.patch.object(bridge._frames, "get", side_effect=[queue.Empty, None])
+    flush = mocker.patch.object(bridge, "_flush")
+    exit_megaphone = mocker.patch.object(bridge, "_exit_megaphone")
+
+    bridge._run()
+
+    assert get.call_count == 2
+    assert flush.call_count == 2
+    exit_megaphone.assert_called_once_with()
+
+
+def test_failed_upload_disables_auto_speaker(bridge: Go2AudioBridgeModule) -> None:
+    bridge._speaker_available = True
+    bridge.go2.publish_request.side_effect = RuntimeError("upload failed")  # type: ignore[attr-defined]
+
+    bridge._flush([np.array([100], dtype=np.int16)])
+
+    assert bridge._speaker_available is False
+    assert bridge._megaphone_active is False
+
+
+def test_exit_megaphone_clears_state_even_when_request_fails(
+    bridge: Go2AudioBridgeModule,
+) -> None:
+    bridge._megaphone_active = True
+    bridge.go2.publish_request.side_effect = RuntimeError("request failed")  # type: ignore[attr-defined]
+
+    bridge._exit_megaphone()
+
+    assert bridge._megaphone_active is False
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"code": 1}, 1),
+        ({"data": {"code": 2}}, 2),
+        ({"data": {"header": {"status": {"code": 3}}}}, 3),
+        ("unexpected", None),
+        ({}, None),
+    ],
+)
+def test_response_code_extracts_supported_firmware_shapes(
+    response: Any, expected: int | None
+) -> None:
+    assert Go2AudioBridgeModule._response_code(response) == expected
+
+
+def test_request_rejects_empty_response(bridge: Go2AudioBridgeModule) -> None:
+    bridge.go2.publish_request.return_value = None  # type: ignore[attr-defined]
+
+    with pytest.raises(RuntimeError, match="returned no response"):
+        bridge._request(GET_AUDIO_LIST)
+
+
+def test_audio_conversion_rejects_invalid_metadata() -> None:
+    frame = AudioEvent(np.array([1], dtype=np.int16), sample_rate=0, timestamp=1.0, channels=1)
+
+    assert Go2AudioBridgeModule._to_mono_target_rate(frame).size == 0
