@@ -15,15 +15,16 @@
 from __future__ import annotations
 
 import time
-
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
+from typing import TYPE_CHECKING
 
 from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
 
 logger = setup_logger()
 
@@ -49,6 +50,8 @@ class VoxelGrid:
         frame_id: str = "world",
         show_startup_log: bool = True,
     ) -> None:
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         self._voxel_size = voxel_size
         self._frame_id = frame_id
 
@@ -89,6 +92,9 @@ class VoxelGrid:
 
     @simple_mcache
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         self._check_disposed()
         cpu = o3c.Device("CPU:0")
         out = o3d.t.geometry.PointCloud(device=cpu)
@@ -115,6 +121,8 @@ class VoxelGrid:
 def ensure_legacy_pcd(
     pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
 ) -> o3d.geometry.PointCloud:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     if isinstance(pcd_any, o3d.geometry.PointCloud):
         return pcd_any
 

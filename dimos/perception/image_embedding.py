@@ -24,7 +24,6 @@ import io
 import os
 import sys
 
-import cv2
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
@@ -261,6 +260,8 @@ class ImageEmbeddingProvider:
         Returns:
             PIL Image object
         """
+        import cv2
+
         if isinstance(image, np.ndarray):
             if len(image.shape) == 3 and image.shape[2] == 3:
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)

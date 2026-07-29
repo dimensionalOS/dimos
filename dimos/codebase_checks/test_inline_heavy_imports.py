@@ -14,7 +14,6 @@
 
 import ast
 from collections.abc import Iterable, Iterator
-from pathlib import Path
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
@@ -25,77 +24,6 @@ DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
 # processes that never touch it. Import them inside the function/method that
 # uses them (or under `if TYPE_CHECKING:` for annotations only).
 HEAVY_MODULES = ("cv2", "open3d", "rerun")
-
-# Files that predate this rule and still import heavy modules eagerly.
-# Do NOT add to this list -- new code must import HEAVY_MODULES inline.
-# When you fix a file, remove it here
-GRANDFATHERED = {
-    "core/o3dpickle.py",
-    "experimental/scene_cooking/browser/collision.py",
-    "experimental/scene_cooking/mujoco/collision_export.py",
-    "experimental/scene_cooking/source_assets/inspect.py",
-    "experimental/scene_cooking/source_assets/mesh.py",
-    "experimental/security_demo/security_module.py",
-    "hardware/sensors/camera/realsense/camera.py",
-    "hardware/sensors/camera/webcam.py",
-    "hardware/sensors/camera/zed/camera.py",
-    "manipulation/grasping/visualize_grasps.py",
-    "mapping/loop_closure/pgo.py",
-    "mapping/loop_closure/pgo_auto.py",
-    "mapping/loop_closure/utils/markers_rrd.py",
-    "mapping/occupancy/visualizations.py",
-    "mapping/occupancy/visualize_path.py",
-    "mapping/pointclouds/accumulators/general.py",
-    "mapping/pointclouds/accumulators/protocol.py",
-    "mapping/pointclouds/demo.py",
-    "mapping/pointclouds/util.py",
-    "mapping/ray_tracing/transformer.py",
-    "mapping/ray_tracing/utils/raytrace_rrd.py",
-    "mapping/relocalization/relocalize.py",
-    "mapping/voxels/grid.py",
-    "mapping/voxels/impl/o3d.py",
-    "memory2/vis/utils.py",
-    "models/segmentation/edge_tam.py",
-    "msgs/sensor_msgs/PointCloud2.py",
-    "navigation/cmu_nav/modules/simple_planner/simple_planner.py",
-    "navigation/nav_3d/evaluator/blueprints.py",
-    "navigation/nav_3d/evaluator/mesh_loader.py",
-    "navigation/nav_3d/mls_planner/utils/plan_rrd.py",
-    "perception/common/utils.py",
-    "perception/detection/objectDB.py",
-    "perception/detection/type/detection2d/seg.py",
-    "perception/detection/type/detection3d/object.py",
-    "perception/fiducial/fixture_verification.py",
-    "perception/image_embedding.py",
-    "perception/object_scene_registration.py",
-    "perception/object_tracker.py",
-    "perception/object_tracker_2d.py",
-    "perception/object_tracker_3d.py",
-    "perception/perceive_loop_skill.py",
-    "perception/spatial_perception.py",
-    "perception/visual_memory.py",
-    "robot/drone/drone_tracking_module.py",
-    "robot/manipulators/xarm/blueprints/worldbelief.py",
-    "robot/unitree/g1/blueprints/primitive/unitree_g1_vis.py",
-    "robot/unitree/go2/dds/cli/render.py",
-    "robot/unitree/type/lidar.py",
-    "robot/unitree/type/map.py",
-    "simulation/genesis/stream.py",
-    "simulation/isaac/stream.py",
-    "simulation/mujoco/depth_camera.py",
-    "simulation/mujoco/mujoco_process.py",
-    "simulation/unity/module.py",
-    "skills/manipulation/pick_and_place.py",
-    "stream/video_provider.py",
-    "utils/cli/apriltag.py",
-    "utils/cli/cameracalibrate/cameracalibrate.py",
-    "utils/extract_frames.py",
-    "visualization/rerun/bridge.py",
-    "visualization/rerun/init.py",
-    "visualization/rerun/resource_stats.py",
-    "web/dimos_interface/api/server.py",
-    "web/relay_bridge/demo_smoke.py",
-}
 
 
 def _is_type_checking(test: ast.expr) -> bool:
@@ -153,13 +81,12 @@ def find_eager_heavy_imports() -> dict[str, list[tuple[int, str]]]:
 
 
 def test_heavy_imports_are_inline() -> None:
-    """Fail if a non-grandfathered file imports cv2/open3d at module level."""
+    """Fail if any file imports cv2/open3d/rerun at module level."""
     hits = find_eager_heavy_imports()
-    new = {f: lines for f, lines in hits.items() if f not in GRANDFATHERED}
-    if new:
+    if hits:
         listing = "\n".join(
             f"  - dimos/{f}:{line}: `{module}`"
-            for f, lines in sorted(new.items())
+            for f, lines in sorted(hits.items())
             for line, module in lines
         )
         raise AssertionError(
@@ -168,15 +95,4 @@ def test_heavy_imports_are_inline() -> None:
             "transitively imports the module. Import them inside the function or "
             "method that uses them; imports needed only for type annotations go "
             "under `if TYPE_CHECKING:`."
-        )
-
-
-def test_grandfathered_list_is_current() -> None:
-    """Fail if a grandfathered file no longer has eager heavy imports (ratchet)."""
-    stale = GRANDFATHERED - set(find_eager_heavy_imports())
-    if stale:
-        listing = "\n".join(f"  - dimos/{f}" for f in sorted(stale))
-        raise AssertionError(
-            f"These files no longer import {'/'.join(HEAVY_MODULES)} eagerly -- remove "
-            f"them from GRANDFATHERED in {Path(__file__).name} so they stay clean:\n{listing}"
         )

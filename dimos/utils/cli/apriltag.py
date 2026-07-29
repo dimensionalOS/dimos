@@ -22,41 +22,49 @@ as `tag_size` to pose-estimation routines (pupil-apriltags, solvePnP, etc.).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import functools
 from pathlib import Path
 import re
 
-import cv2
 from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, A5, A6, A7, A8, LETTER
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
-# (DICT_ID, max_id, sidePixels) — sidePixels = markerSize + 2*borderBits.
-# AprilTag dicts use a 2-cell border; ArUco dicts use a 1-cell border.
-_FAMILIES = {
-    # AprilTag (2-cell black border)
-    "tag36h11": (cv2.aruco.DICT_APRILTAG_36h11, 586, 8),
-    "tag25h9": (cv2.aruco.DICT_APRILTAG_25h9, 34, 7),
-    "tag16h5": (cv2.aruco.DICT_APRILTAG_16h5, 29, 6),
-    # ArUco (1-cell black border)
-    "aruco_original": (cv2.aruco.DICT_ARUCO_ORIGINAL, 1023, 7),
-    "aruco_mip_36h12": (cv2.aruco.DICT_ARUCO_MIP_36h12, 249, 8),
-    "aruco_4x4_50": (cv2.aruco.DICT_4X4_50, 49, 6),
-    "aruco_4x4_100": (cv2.aruco.DICT_4X4_100, 99, 6),
-    "aruco_4x4_250": (cv2.aruco.DICT_4X4_250, 249, 6),
-    "aruco_4x4_1000": (cv2.aruco.DICT_4X4_1000, 999, 6),
-    "aruco_5x5_50": (cv2.aruco.DICT_5X5_50, 49, 7),
-    "aruco_5x5_100": (cv2.aruco.DICT_5X5_100, 99, 7),
-    "aruco_5x5_250": (cv2.aruco.DICT_5X5_250, 249, 7),
-    "aruco_5x5_1000": (cv2.aruco.DICT_5X5_1000, 999, 7),
-    "aruco_6x6_50": (cv2.aruco.DICT_6X6_50, 49, 8),
-    "aruco_6x6_100": (cv2.aruco.DICT_6X6_100, 99, 8),
-    "aruco_6x6_250": (cv2.aruco.DICT_6X6_250, 249, 8),
-    "aruco_6x6_1000": (cv2.aruco.DICT_6X6_1000, 999, 8),
-    "aruco_7x7_50": (cv2.aruco.DICT_7X7_50, 49, 9),
-    "aruco_7x7_100": (cv2.aruco.DICT_7X7_100, 99, 9),
-    "aruco_7x7_250": (cv2.aruco.DICT_7X7_250, 249, 9),
-    "aruco_7x7_1000": (cv2.aruco.DICT_7X7_1000, 999, 9),
-}
+
+@functools.cache
+def _families() -> dict[str, tuple[int, int, int]]:
+    """(DICT_ID, max_id, sidePixels) — sidePixels = markerSize + 2*borderBits.
+
+    AprilTag dicts use a 2-cell border; ArUco dicts use a 1-cell border.
+    """
+    import cv2
+
+    return {
+        # AprilTag (2-cell black border)
+        "tag36h11": (cv2.aruco.DICT_APRILTAG_36h11, 586, 8),
+        "tag25h9": (cv2.aruco.DICT_APRILTAG_25h9, 34, 7),
+        "tag16h5": (cv2.aruco.DICT_APRILTAG_16h5, 29, 6),
+        # ArUco (1-cell black border)
+        "aruco_original": (cv2.aruco.DICT_ARUCO_ORIGINAL, 1023, 7),
+        "aruco_mip_36h12": (cv2.aruco.DICT_ARUCO_MIP_36h12, 249, 8),
+        "aruco_4x4_50": (cv2.aruco.DICT_4X4_50, 49, 6),
+        "aruco_4x4_100": (cv2.aruco.DICT_4X4_100, 99, 6),
+        "aruco_4x4_250": (cv2.aruco.DICT_4X4_250, 249, 6),
+        "aruco_4x4_1000": (cv2.aruco.DICT_4X4_1000, 999, 6),
+        "aruco_5x5_50": (cv2.aruco.DICT_5X5_50, 49, 7),
+        "aruco_5x5_100": (cv2.aruco.DICT_5X5_100, 99, 7),
+        "aruco_5x5_250": (cv2.aruco.DICT_5X5_250, 249, 7),
+        "aruco_5x5_1000": (cv2.aruco.DICT_5X5_1000, 999, 7),
+        "aruco_6x6_50": (cv2.aruco.DICT_6X6_50, 49, 8),
+        "aruco_6x6_100": (cv2.aruco.DICT_6X6_100, 99, 8),
+        "aruco_6x6_250": (cv2.aruco.DICT_6X6_250, 249, 8),
+        "aruco_6x6_1000": (cv2.aruco.DICT_6X6_1000, 999, 8),
+        "aruco_7x7_50": (cv2.aruco.DICT_7X7_50, 49, 9),
+        "aruco_7x7_100": (cv2.aruco.DICT_7X7_100, 99, 9),
+        "aruco_7x7_250": (cv2.aruco.DICT_7X7_250, 249, 9),
+        "aruco_7x7_1000": (cv2.aruco.DICT_7X7_1000, 999, 9),
+    }
+
 
 _PAGE_SIZES = {
     "a0": A0,
@@ -102,7 +110,9 @@ def parse_id_spec(spec: str) -> list[int]:
 
 def cell_matrix(family: str, tag_id: int) -> list[list[int]]:
     """Return the tag's NxN binary cell matrix (1=black, 0=white)."""
-    dict_id, max_id, n = _FAMILIES[family]
+    import cv2
+
+    dict_id, max_id, n = _families()[family]
     if tag_id < 0 or tag_id > max_id:
         raise ValueError(f"id {tag_id} out of range for {family} (0..{max_id})")
     aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
@@ -284,8 +294,8 @@ def generate_pdf(
     """
     family = family.lower()
     page_size = page_size.lower()
-    if family not in _FAMILIES:
-        raise ValueError(f"unsupported family: {family}; choose from {sorted(_FAMILIES)}")
+    if family not in _families():
+        raise ValueError(f"unsupported family: {family}; choose from {sorted(_families())}")
     if page_size not in _PAGE_SIZES:
         raise ValueError(f"unsupported page_size: {page_size}; choose from {sorted(_PAGE_SIZES)}")
     if not ids:
@@ -368,8 +378,10 @@ class TagRequest:
         """Reject bad input up front, so describing a request can't trip over it."""
         if not self.ids:
             raise ValueError("no IDs to render")
-        if self.family.lower() not in _FAMILIES:
-            raise ValueError(f"unsupported family: {self.family}; choose from {sorted(_FAMILIES)}")
+        if self.family.lower() not in _families():
+            raise ValueError(
+                f"unsupported family: {self.family}; choose from {sorted(_families())}"
+            )
         if self.page_size.lower() not in _PAGE_SIZES:
             raise ValueError(
                 f"unsupported page_size: {self.page_size}; choose from {sorted(_PAGE_SIZES)}"

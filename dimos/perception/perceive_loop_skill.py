@@ -20,8 +20,6 @@ import os
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-import cv2
-
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -202,6 +200,8 @@ class PerceiveLoopSkill(Module):
 
 
 def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBBox]) -> None:
+    import cv2
+
     try:
         debug_img = image.to_opencv().copy()
         for det in detections.detections:

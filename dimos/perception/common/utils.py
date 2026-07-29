@@ -14,7 +14,6 @@
 
 from typing import Union
 
-import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
@@ -155,6 +154,8 @@ def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarr
 
     Returns an Image with numpy or cupy data depending on caller choice.
     """
+    import cv2
+
     rect = cv2.undistort(image.data, camera_matrix, dist_coeffs)
     return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
 
@@ -327,6 +328,8 @@ def colorize_depth(
     Returns:
         Colorized depth image (H, W, 3) in RGB format, or None if input is None
     """
+    import cv2
+
     if depth_img is None:
         return None
 
@@ -478,6 +481,8 @@ def draw_bounding_box(
     Returns:
         Image with bounding box drawn
     """
+    import cv2
+
     was_cu = _is_cu_array(image)
     img_np = _to_numpy(image)  # type: ignore[no-untyped-call]
     x1, y1, x2, y2 = map(int, bbox)
@@ -541,6 +546,8 @@ def draw_segmentation_mask(
     Returns:
         Image with mask overlay drawn
     """
+    import cv2
+
     if mask is None:
         return image
 

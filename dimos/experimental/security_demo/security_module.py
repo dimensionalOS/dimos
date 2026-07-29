@@ -19,7 +19,6 @@ import time
 from typing import TYPE_CHECKING, Any, Literal
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
-import cv2
 import numpy as np
 from dimos_lcm.std_msgs import String, Bool
 from reactivex.disposable import Disposable
@@ -83,6 +82,8 @@ def _draw_skeleton(
     bone_color: tuple[int, int, int] = (255, 255, 0),
 ) -> None:
     """Draw pose skeleton directly on *image* (in-place, BGR assumed)."""
+    import cv2
+
     kps = person.keypoints  # (17, 2)
     scores = person.keypoint_scores  # (17,)
 
@@ -319,6 +320,8 @@ class SecurityModule(Module):
 
     def _follow_step(self) -> None:
         """One iteration of the follow loop (EdgeTAM track + servo + publish)."""
+        import cv2
+
         with self._lock:
             latest_image = self._latest_image
 
