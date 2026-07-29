@@ -119,7 +119,9 @@ def create_app(repository: ReplayRepositoryBackend) -> FastAPI:
             async for chunk in request.stream():
                 received += len(chunk)
                 if received > content_length:
-                    raise HTTPException(status_code=400, detail="request body exceeds Content-Length")
+                    raise HTTPException(
+                        status_code=400, detail="request body exceeds Content-Length"
+                    )
                 source.write(chunk)
             if received != content_length:
                 raise HTTPException(

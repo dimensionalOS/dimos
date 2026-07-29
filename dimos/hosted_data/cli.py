@@ -61,8 +61,9 @@ def serve(
 ) -> None:
     """Start the hosted replay upload and download service."""
     try:
-        from dimos.hosted_data.api import create_app
         import uvicorn
+
+        from dimos.hosted_data.api import create_app
     except ImportError:
         _fail("server dependencies are missing; install DimOS with the 'web' extra")
     uvicorn.run(create_app(ReplayRepository(root)), host=host, port=port)

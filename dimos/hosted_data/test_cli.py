@@ -39,7 +39,10 @@ class _Response:
         return self._payload
 
     def iter_content(self, chunk_size: int):
-        yield from (self._body[index : index + chunk_size] for index in range(0, len(self._body), chunk_size))
+        yield from (
+            self._body[index : index + chunk_size]
+            for index in range(0, len(self._body), chunk_size)
+        )
 
     def close(self) -> None:
         return None
@@ -90,7 +93,9 @@ def test_download_streams_and_verifies(monkeypatch, tmp_path: Path) -> None:
     item = {"object_id": object_id, "size_bytes": len(payload), "filename": "capture.mp4"}
 
     def fake_get(url, **kwargs):
-        return _Response(item if False else ([item] if not kwargs.get("stream") else {}), body=payload)
+        return _Response(
+            item if False else ([item] if not kwargs.get("stream") else {}), body=payload
+        )
 
     monkeypatch.setattr(cli.requests, "get", fake_get)
     output = tmp_path / "result.mp4"
