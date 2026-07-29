@@ -115,6 +115,9 @@ export function parseManifest(value: unknown): Manifest {
         `encoding must be 1..${MAX_MANIFEST_ID_LEN} chars`,
       );
     }
+    // isFinite also bounds maxHz to float64: JSON.parse turns an
+    // out-of-range literal into Infinity. manifest.py mirrors this with an
+    // explicit float64 bound (Python parses such integers exactly).
     if (!Number.isFinite(spec.maxHz) || spec.maxHz <= 0) {
       throw new ManifestError("invalid_max_hz", `maxHz for ${spec.ch} must be a positive number`);
     }

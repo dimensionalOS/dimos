@@ -43,3 +43,18 @@ def test_invalid_manifest_rejected_with_pinned_code(vector):
 def test_every_vector_is_classified():
     assert VALID and INVALID
     assert len(VALID) + len(INVALID) == len(VECTORS)
+
+
+def test_huge_int_max_hz_rejected_like_ts():
+    # Not a golden vector: gen.ts cannot emit a number beyond float64
+    # (JSON.stringify(Infinity) is null). Python parses such a JSON integer
+    # exactly while JS JSON.parse yields Infinity; both sides must reject it
+    # with the same code (manifest_test.ts pins the JS half).
+    data = {
+        "channels": [
+            {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 10**400}
+        ]
+    }
+    with pytest.raises(ManifestError) as exc_info:
+        parse_manifest(data)
+    assert exc_info.value.code == "invalid_max_hz"

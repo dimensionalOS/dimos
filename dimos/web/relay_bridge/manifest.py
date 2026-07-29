@@ -22,6 +22,7 @@ minimal until T7 (the layout is a flat panel-id order, not a tree).
 """
 
 import json
+import sys
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -109,9 +110,11 @@ def parse_manifest(data: Any) -> Manifest:
             raise ManifestError(
                 "invalid_encoding", f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars"
             )
-        # Shape validation already rejects non-finite floats, so > 0 suffices
-        # (an isfinite() here would raise OverflowError on huge ints).
-        if spec.maxHz <= 0:
+        # Bounded to float64: a JSON integer beyond that range is exact in
+        # Python but Infinity through JS JSON.parse, and manifest.ts rejects
+        # it here with this code. Non-finite floats are already shape-rejected
+        # (and isfinite() would raise OverflowError on huge ints).
+        if not 0 < spec.maxHz <= sys.float_info.max:
             raise ManifestError("invalid_max_hz", f"maxHz for {spec.ch} must be a positive number")
 
     panel_ids: set[str] = set()

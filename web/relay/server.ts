@@ -46,11 +46,21 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
 };
 
-function resolveDirUrl(dir: string): URL {
+function resolveDirUrl(dir: string, label: string): URL {
   // Canonical (realPath) so serveFrom compares symlink-free paths (macOS /tmp
   // is itself a symlink); href must end with "/" so new URL(name, root)
-  // resolves under it.
-  const real = Deno.realPathSync(dir);
+  // resolves under it. Fail with a clear labeled error on a bad path: the
+  // raw NotFound is cryptic, and a plain file would "start" fine and then
+  // 404 every request.
+  let real: string;
+  try {
+    real = Deno.realPathSync(dir);
+  } catch {
+    throw new Error(`${label} does not exist: ${dir}`);
+  }
+  if (!Deno.statSync(real).isDirectory) {
+    throw new Error(`${label} is not a directory: ${dir}`);
+  }
   return pathToFileURL(real.endsWith("/") ? real : real + "/");
 }
 
@@ -106,6 +116,16 @@ export function installUnhandledRejectionGuard(): void {
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
+
+  // Resolve the served roots before binding anything so a bad path fails
+  // fast, without a QUIC endpoint or timer left behind.
+  const staticRoot = resolveDirUrl(
+    options.staticDir ?? fileURLToPath(new URL("./static/", import.meta.url)),
+    "staticDir",
+  );
+  const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
+  const roots = cockpitRoot !== null ? [cockpitRoot, staticRoot] : [staticRoot];
+
   const cert = await makeEphemeralCert();
 
   // QUIC always binds an ephemeral port; clients discover it via the ready
@@ -156,12 +176,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   })().catch(() => {
     // listener stopped (shutdown)
   });
-
-  const staticRoot = resolveDirUrl(
-    options.staticDir ?? fileURLToPath(new URL("./static/", import.meta.url)),
-  );
-  const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir) : null;
-  const roots = cockpitRoot !== null ? [cockpitRoot, staticRoot] : [staticRoot];
 
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);

@@ -23,3 +23,17 @@ Deno.test("invalid manifests are rejected with the pinned code", () => {
     assertEquals(err.code, v.error, v.name);
   }
 });
+
+Deno.test("maxHz beyond float64 is rejected", () => {
+  // Not a golden vector: gen.ts cannot emit a number beyond float64
+  // (JSON.stringify(Infinity) is null). JSON.parse turns such a literal into
+  // Infinity; test_manifest.py pins the Python half (an exact huge int) to
+  // the same code.
+  const data = {
+    channels: [
+      { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: Infinity },
+    ],
+  };
+  const err = assertThrows(() => parseManifest(data), ManifestError);
+  assertEquals(err.code, "invalid_max_hz");
+});

@@ -2,7 +2,7 @@
 // both robot and viewer. Deno's client CAN receive relay-initiated uni
 // streams (verified; the 2.6.10 incoming-uni bug is server-side receive
 // only), so this covers the full forwarding path without a browser.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fileURLToPath } from "node:url";
 import {
   type ChannelSpec,
@@ -504,4 +504,20 @@ Deno.test({
   } finally {
     await relay.shutdown();
   }
+});
+
+Deno.test("startRelay rejects a bad served dir with a labeled error", async () => {
+  // Before binding anything, so nothing leaks: a typo'd path names the
+  // offending option, and a file (realpath-able, would 404 everything) is
+  // rejected too.
+  await assertRejects(
+    () => startRelay({ staticDir: "/no/such/dir" }),
+    Error,
+    "staticDir does not exist: /no/such/dir",
+  );
+  await assertRejects(
+    () => startRelay({ cockpitDir: fileURLToPath(import.meta.url) }),
+    Error,
+    "cockpitDir is not a directory",
+  );
 });
