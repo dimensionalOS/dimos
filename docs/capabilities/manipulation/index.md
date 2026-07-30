@@ -83,7 +83,7 @@ execute()               # Execute via coordinator
 Manipulation planning separates the world backend from the planner algorithm:
 
 - `world_backend` selects the robot/world/collision representation.
-- `planner_name` selects the path-planning algorithm.
+- `planner.backend` selects the path-planning algorithm.
 - `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
   field remains available as a compatibility shim.
 
@@ -97,12 +97,12 @@ Select the legacy Drake world and generic RRT planner explicitly when needed:
 ```bash
 dimos run xarm7-planner-coordinator \
   -o manipulationmodule.world_backend=drake \
-  -o manipulationmodule.planner_name=rrt_connect
+  -o manipulationmodule.planner.backend=rrt_connect
 ```
 
 Valid combinations:
 
-| `world_backend` | `planner_name` | `kinematics.backend` | Status |
+| `world_backend` | `planner.backend` | `kinematics.backend` | Status |
 |-----------------|----------------|-------------------|--------|
 | `roboplan` | `roboplan` | `pink` or `jacobian` | Default path; RoboPlan-native planner |
 | `drake` | `rrt_connect` | `pink` | Legacy Drake world |
@@ -111,9 +111,44 @@ Valid combinations:
 | `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
 
 Invalid combinations fail during startup instead of waiting for the first plan
-request. For example, `planner_name=roboplan` requires
+request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
+
+RoboPlan Cartesian options are supplied per planning request:
+
+```python skip
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanCartesianPathConfig,
+)
+
+path_config = RoboPlanCartesianPathConfig(
+    speed_mode="bounded",
+    max_linear_speed=0.1,
+    max_angular_speed=0.5,
+    max_position_error=0.005,
+    max_orientation_error=0.01,
+)
+
+module.plan_cartesian_targets(
+    {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
+    path_config,
+)
+```
+
+The remaining settings mirror RoboPlan's standard Cartesian planner options,
+including bounded and time-optimal speed modes, sample time, solver weights,
+linear/angular acceleration limits, joint velocity/acceleration scaling,
+TOPP-RA corner blending, joint-limit handling, and per-step attempts.
+
+Cartesian path planning remains a low-level internal capability in this
+release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
+waypoint sequence for each target planning group. A sequence contains only
+`PoseStamped` absolute waypoints or only `Transform` displacements relative to
+the planning start, and begins at the current TCP pose or identity transform.
+RoboPlan plans all target groups simultaneously. The Viser panel constructs a
+two-waypoint absolute path for interactive planning. There is no skill, MCP
+tool, or CLI motion command yet.
 
 Install the manipulation dependencies:
 
@@ -189,6 +224,20 @@ for target evaluation, planning, preview, execution, cancellation, reset, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
+
+The panel's **Planning mode** selector chooses how the current target is
+reached:
+
+- **Joint space** is the default. It resolves the target to joints and invokes
+  the configured collision-free joint-path planner.
+- **Cartesian space** sends the existing transform-control poses as absolute
+  world-frame TCP goals to RoboPlan's Cartesian path planner. Selected groups
+  without a TCP participate as auxiliary groups.
+
+Cartesian planning failure never falls back to joint-space planning. A backend
+without Cartesian path support reports `UNSUPPORTED`; collision or tracking
+failure leaves the plan unavailable. Preview and execution use RoboPlan's
+original synchronized timestamps and velocities.
 
 External manipulation visualizers are initialized from a backend-neutral
 `VisualizationSession` after the planning world has added its robots. The

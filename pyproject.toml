@@ -107,6 +107,7 @@ dependencies = [
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
+    "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
     "attrs>=25.4.0",
@@ -290,7 +291,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan",
+    "roboplan>=0.5.1",
 ]
 
 cpu = [
@@ -455,7 +456,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan",
+    "roboplan>=0.5.1",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",

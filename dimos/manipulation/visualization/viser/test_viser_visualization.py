@@ -62,6 +62,7 @@ from dimos.manipulation.visualization.viser.scene import (
 )
 from dimos.manipulation.visualization.viser.state import (
     PanelPlanState,
+    PlanningMode,
     PlanStatus,
     TargetEvaluationRequest,
     TargetStatus,
@@ -209,6 +210,9 @@ class Module:
             for robot_name in robots
         }
         self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
+        self.cartesian_plans: list[tuple[dict[str, PoseStamped], object, tuple[str, ...]]] = []
+        self.cartesian_plan_success = True
+        self.error = ""
         self.executions = 0
         self.cancelled = 0
         self.cleared = 0
@@ -257,7 +261,7 @@ class Module:
         return "IDLE"
 
     def get_error(self) -> str:
-        return ""
+        return self.error
 
     def reset(self) -> SimpleNamespace:
         return SimpleNamespace(is_success=lambda: True)
@@ -378,6 +382,22 @@ class Operator:
     def plan_to_pose(self, request: object) -> GeneratedPlan:
         return self.module.make_plan(tuple(request.pose_targets))  # type: ignore[attr-defined]
 
+    def plan_cartesian(self, request: object) -> GeneratedPlan | None:
+        self.module.cartesian_plans.append(
+            (
+                dict(request.pose_targets),  # type: ignore[attr-defined]
+                request.config,  # type: ignore[attr-defined]
+                tuple(request.auxiliary_group_ids),  # type: ignore[attr-defined]
+            )
+        )
+        group_ids = tuple(
+            (
+                *request.pose_targets.keys(),  # type: ignore[attr-defined]
+                *request.auxiliary_group_ids,  # type: ignore[attr-defined]
+            )
+        )
+        return self.module.make_plan(group_ids) if self.module.cartesian_plan_success else None
+
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
         return self.module.preview_plan()
 
@@ -492,6 +512,7 @@ def test_panel_contract_group_order_defaults_and_controls(
     ]
     assert gui.state.selected_group_ids == ("arm/manipulator",)
     assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
+    assert server.gui.dropdowns[1].options == ["Joint space", "Cartesian space"]
     assert [
         (slider.label, slider.min, slider.max, slider.value) for slider in server.gui.sliders
     ] == [("arm/manipulator/j1", -1.0, 1.0, 0.1)]
@@ -569,6 +590,77 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
+
+
+def test_cartesian_space_mode_plans_absolute_pose_targets_with_auxiliary_groups(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pose_group = group("arm", "manipulator", ("j1",), pose=True)
+    auxiliary_group = group("arm", "gripper", ("j2",))
+    gui, module, server = panel([pose_group, auxiliary_group], states("arm"))
+    gui._toggle_group_selected(auxiliary_group.id)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+    gui._submit_plan()
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert len(module.cartesian_plans) == 1
+    targets, config, auxiliary_ids = module.cartesian_plans[0]
+    assert tuple(targets) == (pose_group.id,)
+    assert targets[pose_group.id].frame_id == "world"
+    assert config.speed_mode == "bounded"  # type: ignore[attr-defined]
+    assert auxiliary_ids == (auxiliary_group.id,)
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+    assert gui.state.last_result == "plan_cartesian_space=True"
+
+
+def test_changing_planning_mode_marks_existing_plan_stale(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    gui.state.plan_state.status = PlanStatus.FRESH
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert gui.state.plan_state.status == PlanStatus.STALE
+
+
+def test_cartesian_failure_surfaces_backend_error_without_fallback(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    module.cartesian_plan_success = False
+    module.error = "Cartesian planning failed: UNSUPPORTED"
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    gui._submit_plan()
+
+    assert len(module.cartesian_plans) == 1
+    assert module.plans == []
+    assert gui.state.plan_state.status == PlanStatus.FAILED
+    assert gui.state.error == "Cartesian planning failed: UNSUPPORTED"
 
 
 def test_initialization_waits_for_complete_fresh_telemetry(
