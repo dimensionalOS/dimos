@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation
 
 _reg = o3d.pipelines.registration
 
@@ -36,6 +37,12 @@ RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # voxel for the final ICP refinement
 RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
+
+# Tracking mode (`track()`): no FPFH/RANSAC, just a seeded ICP on wall-only
+# clouds. Correspondence distance is looser than RERANK_DIST since the seed
+# is a reused last-good transform, not a RANSAC-refined one.
+TRACKING_CORR_DIST = 0.3
+TRACKING_MAX_ICP_ITER = 50
 
 
 def _preprocess(
@@ -120,6 +127,25 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(z_world[2], -1.0, 1.0))))
 
 
+def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+    """Points with roughly-horizontal normals (walls), excluding floor/ceiling.
+
+    Floor/ceiling points have vertical normals; they fit equally well in any
+    yaw rotation (flat planes are rotationally symmetric), so a wrong-yaw
+    candidate can hide its wall misalignment behind a perfect floor fit.
+    Falls back to the full cloud if too few wall points survive (sparse/open
+    scenes).
+    """
+    nrm = np.asarray(cloud.normals)
+    mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
+    if mask.sum() < 100:
+        return cloud
+    sub = o3d.geometry.PointCloud()
+    sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
+    sub.normals = o3d.utility.Vector3dVector(nrm[mask])
+    return sub
+
+
 def relocalize(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
@@ -167,22 +193,13 @@ def relocalize(
     upright = [T for T in candidates if _gravity_tilt_deg(T) <= GRAVITY_TILT_MAX_DEG]
     pool = upright if upright else candidates
 
-    # Build WALL-ONLY clouds for scoring + polish. Floor/ceiling points have
-    # vertical normals; they fit equally well in any yaw rotation (flat planes
-    # are rotationally symmetric). Including them in scoring lets a 180°-flipped
-    # candidate hide its wall misalignment behind perfect floor alignment. The
-    # FULL clouds are still used for the final refinement, so the gravity
-    # anchor and inlier density are preserved in the output.
-    def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-        nrm = np.asarray(cloud.normals)
-        mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
-        if mask.sum() < 100:
-            return cloud  # too sparse -> fall back to full cloud
-        sub = o3d.geometry.PointCloud()
-        sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
-        sub.normals = o3d.utility.Vector3dVector(nrm[mask])
-        return sub
-
+    # Build WALL-ONLY clouds for scoring + polish (see `_wall_subset` above,
+    # hoisted to module level so `track()` can reuse it too). Floor/ceiling
+    # points have vertical normals; they fit equally well in any yaw rotation
+    # (flat planes are rotationally symmetric). Including them in scoring lets
+    # a 180°-flipped candidate hide its wall misalignment behind perfect
+    # floor alignment. The FULL clouds are still used for the final
+    # refinement, so the gravity anchor and inlier density are preserved.
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
 
@@ -220,3 +237,71 @@ def relocalize(
         _reg.ICPConvergenceCriteria(max_iteration=50),
     )
     return np.asarray(final.transformation), best_fit
+
+
+def track(
+    global_map: o3d.geometry.PointCloud,
+    local_map: o3d.geometry.PointCloud,
+    seed_T: np.ndarray,
+    *,
+    yaw_fan_deg: tuple[float, ...] = (0.0,),
+    correspondence_dist: float = TRACKING_CORR_DIST,
+    max_iterations: int = TRACKING_MAX_ICP_ITER,
+) -> tuple[np.ndarray, float]:
+    """Cheap seeded ICP for tracking mode: no FPFH, no RANSAC.
+
+    `seed_T` is reused directly from the last accepted `relocalize()`/
+    `track()` result (same convention: ``local_in_global = seed_T @
+    local_raw``) — the caller decides whether that's still a reasonable
+    starting point (recency, miss count, drift/sanity checks) before calling
+    this. `yaw_fan_deg` tries a small number of yaw offsets around `seed_T`
+    (0 first) since heading error rotates the whole cloud and is the
+    dimension most likely to have drifted since the seed was computed;
+    scored by wall-only fitness (same symmetry-breaking trick as
+    `relocalize()`'s rerank, reused via `_wall_subset`) so a wrong-yaw
+    candidate can't hide behind a good floor/ceiling fit.
+
+    Returns ``(best_T, best_wall_fitness)`` — caller applies its own accept
+    threshold, same as `relocalize()`.
+    """
+    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
+    src_fine.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
+    )
+    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+
+    src_walls = _wall_subset(src_fine)
+    tgt_walls = _wall_subset(tgt_fine)
+
+    # Yaw offsets are applied about the body cloud's own centroid (in the
+    # local/body frame, before seed_T maps it into the global frame) — same
+    # "rotate about centroid, not origin" trick as relocalize()'s yaw-flip
+    # variant, so a perturbed candidate stays near the seed's location
+    # instead of swinging the whole cloud across the map.
+    src_pts = np.asarray(src_fine.points)
+    c_body = np.array([src_pts[:, 0].mean(), src_pts[:, 1].mean(), 0.0])
+
+    tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=correspondence_dist))
+
+    best_fit = -1.0
+    best_T = seed_T
+    for dyaw in yaw_fan_deg:
+        rz = np.eye(4)
+        rz[:3, :3] = Rotation.from_euler("z", dyaw, degrees=True).as_matrix()
+        t_pivot = np.eye(4)
+        t_pivot[:3, 3] = c_body - rz[:3, :3] @ c_body
+        seed_variant = seed_T @ (t_pivot @ rz)
+
+        r = _reg.registration_icp(
+            src_walls,
+            tgt_walls,
+            correspondence_dist,
+            seed_variant,
+            tukey,
+            _reg.ICPConvergenceCriteria(max_iteration=max_iterations),
+        )
+        if r.fitness > best_fit:
+            best_fit = float(r.fitness)
+            best_T = np.asarray(r.transformation)
+
+    return best_T, best_fit
