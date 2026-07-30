@@ -38,10 +38,10 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual, _piper_dual],
     tasks=[
         TaskConfig(
-            name="traj_xarm", type="trajectory", joint_names=_xarm6_dual.joints, priority=10
-        ),
-        TaskConfig(
-            name="traj_piper", type="trajectory", joint_names=_piper_dual.joints, priority=10
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[*_xarm6_dual.joints, *_piper_dual.joints],
+            priority=10,
         ),
     ],
 )

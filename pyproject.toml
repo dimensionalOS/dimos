@@ -107,8 +107,10 @@ dependencies = [
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
+    "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
+    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
@@ -132,6 +134,7 @@ dependencies = [
     "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
+    "ipython",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
     "numba>=0.60.0", # First version supporting Python 3.12
@@ -288,7 +291,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan",
+    "roboplan>=0.5.1",
 ]
 
 cpu = [
@@ -410,7 +413,7 @@ tests = [
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.2.0",
+    "md-babel-py>=1.4.0",
     "py-spy",
     # Builds the pyo3 Rust extension modules into the venv.
     "maturin>=1.7",
@@ -453,7 +456,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan",
+    "roboplan>=0.5.1",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -485,7 +488,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

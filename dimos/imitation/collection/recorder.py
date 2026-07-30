@@ -16,11 +16,13 @@
 
 A `Recorder` (memory2) subscribes each declared `In` port and appends every
 message to a SQLite store, flushing durably on stop(). Only *connected*
-streams are recorded, so the same recorder works for any arm whose
-coordinator publishes `coordinator_joint_state`.
+streams are recorded, so the same recorder works for any arm once the
+collection blueprint remaps the joint port onto that coordinator's per-robot
+joint output.
 
-The recorded stream names match what DataPrep reads: `color_image`
-and `coordinator_joint_state` (observation), `status` (episode segmentation).
+The recorded stream names are the port names, and match what DataPrep reads:
+`color_image` and `coordinator_joint_state` (observation), `status` (episode
+segmentation).
 """
 
 from __future__ import annotations

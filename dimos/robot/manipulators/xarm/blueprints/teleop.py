@@ -19,7 +19,9 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import Out
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,
@@ -148,8 +150,15 @@ _xarm6_teleop_hw = xarm6_hardware(
 # While engaged, VR also owns the gripper joint (trigger), so the browser
 # gripper toggle only takes effect when VR is disengaged.
 
+
+class _XArm7TeleopCoordinator(ControlCoordinator):
+    arm_joints: Out[JointState]
+
+
 coordinator_teleop_xarm7 = autoconnect(
-    ControlCoordinator.blueprint(
+    _XArm7TeleopCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        publish_robot_joint_states=True,
         hardware=[_xarm7_teleop_hw],
         tasks=[
             teleop_ik_task(
