@@ -110,17 +110,6 @@ class PGOConfig(NativeModuleConfig):
     # spans negligible drift, so a closure there can only inject error. 0 disables.
     loop_min_id_gap: int = 0
 
-    # Long-jump agreement buffer. A closure whose candidate distance is within
-    # loop_instant_accept_distance_m is committed to the graph instantly; a longer
-    # jump is parked in a buffer (max 4, FIFO) and only committed once
-    # loop_buffer_min_agree buffered jumps agree on the same rigid map-correction:
-    # implied-correction translation within loop_buffer_agreement_trans_m and
-    # rotation within loop_buffer_agreement_rot_deg. <= 0 disables the buffer.
-    loop_instant_accept_distance_m: float = 0.0
-    loop_buffer_agreement_trans_m: float = 1.0
-    loop_buffer_agreement_rot_deg: float = 10.0
-    loop_buffer_min_agree: int = 2
-
     # Robust (Huber) kernel on all loop factors (lidar + location). Keeps ISAM2 determinate
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
     loop_robust_kernel: bool = True

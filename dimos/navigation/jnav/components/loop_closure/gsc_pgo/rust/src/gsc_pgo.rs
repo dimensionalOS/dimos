@@ -137,9 +137,6 @@ pub struct CommittedLoop {
     pub active_in_isam2: bool,
 }
 
-/// Max buffered long jumps kept at once. Oldest is evicted FIFO past this.
-const LONG_JUMP_BUFFER_MAX_LEN: usize = 4;
-
 /// gtsam's elimination/Bayes-tree code recurses proportionally to graph size;
 /// the 2 MB default thread stack overflows on multi-thousand-keyframe runs.
 pub const GTSAM_THREAD_STACK_BYTES: usize = 64 * 1024 * 1024;
@@ -153,31 +150,13 @@ pub(crate) const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
 /// near 0 (reject) or near 1 (keep), so the midpoint is a safe cut.
 pub(crate) const LOOP_GNC_INLIER_THRESHOLD: f64 = 0.5;
 
-/// A would-be long-jump loop closure parked in the buffer. It carries the same
-/// constraint a `LoopPair` does, plus the rigid map-correction SE3 it implies so
-/// buffered jumps can be tested for mutual agreement before any is committed.
-struct PendingJump {
-    pair: LoopPair,
-    /// Position-independent translation of the implied rigid correction SE3
-    /// (`t` in `refined = R * odom + t`). Comparable across jumps taken at
-    /// different points, so a shared drift correction reads as agreement.
-    correction_translation: Vec3,
-    /// Rotation of the implied rigid correction SE3 (`R`).
-    correction_rotation: Mat3,
-    /// Index into `loop_diagnostics` so the outcome can be rewritten to
-    /// "accept_buffered" when this jump is promoted.
-    diag_index: usize,
-}
-
 /// Per-search loop-closure diagnostics
 /// one record every time `search_for_loop_pairs` evaluates a keyframe, capturing the metric at each
 /// gate and the outcome (accepted, or the name of the gate that rejected it).
 /// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
 #[derive(Debug, Clone)]
 pub struct LoopCandidateDiag {
-    /// Outcome: a short accepted jump is "accepted"; a long jump is "buffered"
-    /// while parked and "accept_buffered" once agreement promotes it. Otherwise
-    /// the rejecting gate — one of "throttle_min_duration", "no_structure",
+    /// Outcome: "accepted", or the rejecting gate — one of "throttle_min_duration", "no_structure",
     /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
     /// "degeneracy_reject", "icp_reject", "yank_reject".
     pub outcome: &'static str,
@@ -298,21 +277,6 @@ pub struct Config {
     /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
     /// corrects nothing and can only inject error (structural alias). 0 disables.
     pub loop_min_id_gap: u64,
-    /// Long-jump buffer: an accepted closure whose candidate_distance is within
-    /// this many meters is committed to the graph instantly. A longer jump is
-    /// parked in a buffer and only committed once enough independent jumps agree
-    /// on the same correction (see the `loop_buffer_agreement_*` gates and
-    /// `loop_buffer_min_agree`). <= 0 disables the buffer (every accept instant).
-    pub loop_instant_accept_distance_m: f64,
-    /// Agreement gate: the two jumps' implied rigid map-correction SE3 must have
-    /// translations (position-independent `t`) within this many meters.
-    pub loop_buffer_agreement_trans_m: f64,
-    /// Agreement gate: the two jumps' implied correction rotations must match
-    /// within this many degrees.
-    pub loop_buffer_agreement_rot_deg: f64,
-    /// Number of mutually-agreeing buffered jumps required before the whole
-    /// agreeing set is promoted to real graph constraints.
-    pub loop_buffer_min_agree: u64,
     /// Robust (M-estimator) kernel wrapping all loop factors.
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
@@ -387,10 +351,6 @@ impl Default for Config {
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
             loop_min_id_gap: 0,
-            loop_instant_accept_distance_m: 0.0,
-            loop_buffer_agreement_trans_m: 1.0,
-            loop_buffer_agreement_rot_deg: 10.0,
-            loop_buffer_min_agree: 2,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
             loop_icp_max_iterations: 50,
@@ -436,7 +396,6 @@ pub struct GscPgo {
     history_pairs: Vec<(usize, usize)>,
     committed_loops: Vec<CommittedLoop>,
     cache_pairs: Vec<LoopPair>,
-    pending_long_jumps: Vec<PendingJump>,
     scan_context_descriptors: Vec<scan_context::Descriptor>,
     scan_context_ring_keys: Vec<scan_context::RingKey>,
     rotation_offset: Mat3,
@@ -517,7 +476,6 @@ impl GscPgo {
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
             cache_pairs: Vec::new(),
-            pending_long_jumps: Vec::new(),
             scan_context_descriptors: Vec::new(),
             scan_context_ring_keys: Vec::new(),
             rotation_offset: mat3::identity(),
@@ -1326,50 +1284,9 @@ impl GscPgo {
             noise,
         };
 
-        // Short jumps carry almost no drift correction and are trusted on their
-        // own; commit them instantly. A long jump could be a single spurious
-        // yank, so it is parked in the buffer until enough independent jumps
-        // agree on the same correction.
-        let buffer_active = self.config.loop_instant_accept_distance_m > 0.0;
-        if !buffer_active || diag.candidate_distance <= self.config.loop_instant_accept_distance_m {
-            diag.outcome = "accepted";
-            self.loop_diagnostics.push(diag);
-            self.commit_loop_pair(pair);
-            return;
-        }
-
-        // The rigid map-correction this constraint implies, as an SE3 transform
-        // (R, t) mapping current odom pose -> ICP-refined pose:
-        //   refined = R * odom + t   =>   t = refined - R * odom
-        // Recovering t this way makes it position-independent: jumps taken from
-        // different points along a return leg that imply the SAME rigid drift
-        // correction share the same (R, t), even when their raw
-        // (refined - odom) offsets differ because of the rotation. That is what
-        // lets independent revisit jumps reinforce each other.
-        let correction_rotation = mat3::mat_mul(
-            &rotation_refined,
-            &mat3::transpose(&self.key_poses[cur_idx].rotation_global),
-        );
-        let correction_translation = mat3::sub(
-            &translation_refined,
-            &mat3::mat_vec(
-                &correction_rotation,
-                &self.key_poses[cur_idx].translation_global,
-            ),
-        );
-        diag.outcome = "buffered";
-        let diag_index = self.loop_diagnostics.len();
+        diag.outcome = "accepted";
         self.loop_diagnostics.push(diag);
-        self.pending_long_jumps.push(PendingJump {
-            pair,
-            correction_translation,
-            correction_rotation,
-            diag_index,
-        });
-        self.try_promote_pending();
-        while self.pending_long_jumps.len() > LONG_JUMP_BUFFER_MAX_LEN {
-            self.pending_long_jumps.remove(0);
-        }
+        self.commit_loop_pair(pair);
     }
 
     /// Commit an accepted loop pair to the graph (between-factor cache) and the
@@ -1387,43 +1304,6 @@ impl GscPgo {
             active_in_isam2: true,
         });
         self.cache_pairs.push(pair);
-    }
-
-    /// After a long jump is parked, check whether the newest buffered jump now
-    /// has at least `loop_buffer_min_agree` mutually-agreeing peers (itself
-    /// included). If so, promote all agreeing jumps to real constraints and mark
-    /// their diagnostics "accept_buffered".
-    fn try_promote_pending(&mut self) {
-        let min_agree = self.config.loop_buffer_min_agree.max(1) as usize;
-        if self.pending_long_jumps.len() < min_agree {
-            return;
-        }
-        let (anchor_translation, anchor_rotation) = {
-            let anchor = self.pending_long_jumps.last().unwrap();
-            (anchor.correction_translation, anchor.correction_rotation)
-        };
-        let trans_tol = self.config.loop_buffer_agreement_trans_m;
-        let rot_tol = self.config.loop_buffer_agreement_rot_deg;
-        let agreeing: Vec<usize> = (0..self.pending_long_jumps.len())
-            .filter(|&index| {
-                let jump = &self.pending_long_jumps[index];
-                mat3::norm(&mat3::sub(
-                    &anchor_translation,
-                    &jump.correction_translation,
-                )) <= trans_tol
-                    && mat3::angular_distance(&anchor_rotation, &jump.correction_rotation)
-                        .to_degrees()
-                        <= rot_tol
-            })
-            .collect();
-        if agreeing.len() < min_agree {
-            return;
-        }
-        for &index in agreeing.iter().rev() {
-            let jump = self.pending_long_jumps.remove(index);
-            self.loop_diagnostics[jump.diag_index].outcome = "accept_buffered";
-            self.commit_loop_pair(jump.pair);
-        }
     }
 
     /// Ensure a graph variable for `to_id` (initialized from this node's

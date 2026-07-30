@@ -91,12 +91,6 @@ pub struct Config {
     pub loop_yank_gate_max_distance_m: f64,
     pub loop_min_id_gap: u64,
 
-    // Long-jump agreement buffer
-    pub loop_instant_accept_distance_m: f64,
-    pub loop_buffer_agreement_trans_m: f64,
-    pub loop_buffer_agreement_rot_deg: f64,
-    pub loop_buffer_min_agree: u64,
-
     /// Transform world-frame scans to body-frame using the paired odometry.
     pub subtract_odom_from_cloud: bool,
 
@@ -170,10 +164,6 @@ impl Config {
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
-            loop_instant_accept_distance_m: self.loop_instant_accept_distance_m,
-            loop_buffer_agreement_trans_m: self.loop_buffer_agreement_trans_m,
-            loop_buffer_agreement_rot_deg: self.loop_buffer_agreement_rot_deg,
-            loop_buffer_min_agree: self.loop_buffer_min_agree,
             loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
             loop_icp_max_iterations: self.loop_icp_max_iterations,
