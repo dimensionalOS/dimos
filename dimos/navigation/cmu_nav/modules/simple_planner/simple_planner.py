@@ -24,8 +24,6 @@ from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -635,6 +633,9 @@ class SimplePlanner(Module):
         Per-point colors: red for true obstacles (cells whose recorded height
         clears ``obstacle_height``), orange for inflation padding around them.
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         if now - self._last_costmap_pub < _COSTMAP_PUBLISH_PERIOD:
             return
         self._last_costmap_pub = now

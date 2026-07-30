@@ -16,8 +16,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
-
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
     Detection2D,
@@ -86,6 +84,8 @@ class ObjectTracking(Module):
             reid_fail_tolerance: Number of consecutive frames Re-ID can fail before
                                  tracking is stopped.
         """
+        import cv2
+
         # Call parent Module init
         super().__init__(**kwargs)
 
@@ -188,6 +188,8 @@ class ObjectTracking(Module):
         Returns:
             Dict containing tracking results with 2D and 3D detections
         """
+        import cv2
+
         if self._latest_rgb_frame is None:
             logger.warning("No RGB frame available for tracking")
 
@@ -353,6 +355,8 @@ class ObjectTracking(Module):
 
     def _process_tracking(self) -> None:
         """Process current frame for tracking and publish detections."""
+        import cv2
+
         if self.tracker is None or not self.tracking_initialized:
             return
 
@@ -556,6 +560,8 @@ class ObjectTracking(Module):
 
     def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Draw REID feature matches on the image."""
+        import cv2
+
         viz_image: NDArray[np.uint8] = image.copy()
 
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[misc]

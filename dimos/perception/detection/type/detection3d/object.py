@@ -19,11 +19,9 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -240,6 +238,9 @@ class Object(Detection3D):
         Returns:
             List of Object instances with pointclouds
         """
+        import cv2
+        import open3d as o3d  # type: ignore[import-untyped]
+
         color_cv = color_image.to_opencv()
         if color_cv.ndim == 3 and color_cv.shape[2] == 3:
             color_cv = cv2.cvtColor(color_cv, cv2.COLOR_BGR2RGB)
@@ -379,6 +380,8 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     Returns:
         Combined PointCloud2 with all points colored by object (empty if no points).
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     if not objects:
         return PointCloud2(pointcloud=o3d.geometry.PointCloud(), frame_id="", ts=0.0)
 

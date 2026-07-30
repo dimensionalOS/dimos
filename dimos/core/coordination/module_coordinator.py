@@ -793,9 +793,11 @@ def _verify_no_conflicts_with_existing(
 def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
+    from dimos.protocol.service.system_configurator.zenoh_config import zenoh_configurators
 
     lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
-    configurators = [*lcm_checks, *blueprint.configurator_checks]
+    zenoh_checks = zenoh_configurators() if global_config.transport == "zenoh" else []
+    configurators = [*lcm_checks, *zenoh_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)

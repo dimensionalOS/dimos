@@ -25,7 +25,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import rerun as rr
 import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
@@ -94,6 +93,8 @@ def main(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
 ) -> None:
+    import rerun as rr
+
     db_path = resolve_named_path(dataset, ".db")
 
     rr.init("raytrace_rrd", recording_id=db_path.stem)

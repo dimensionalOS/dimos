@@ -19,7 +19,6 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-import cv2
 import numpy as np
 from pydantic import Field
 import reactivex as rx
@@ -271,6 +270,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
 
     def _capture_loop(self) -> None:
+        import cv2
+
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)

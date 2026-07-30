@@ -29,12 +29,8 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-import rerun as rr
 import typer
 
-# Heavy dimos imports (memory2/perception → torch, scipy, cv2) are deferred into
-# main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
-# same pattern in dimos/mapping/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
 
@@ -66,6 +62,8 @@ def main(
     ),
 ) -> None:
     """Dump an AprilTag detection replay to .rrd and open it in rerun."""
+    import rerun as rr
+
     from dimos.memory2.cli.dataset import open_store, resolve_dataset
     from dimos.memory2.transform import QualityWindow, SpeedLimit
     from dimos.memory2.vis.color import Color

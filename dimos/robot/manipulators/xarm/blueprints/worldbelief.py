@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, cast
-
-import rerun.blueprint as rrb
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
@@ -37,6 +35,9 @@ from dimos.perception.worldbelief_recorder import WorldBeliefRecorder
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+if TYPE_CHECKING:
+    import rerun.blueprint as rrb
 
 XARM6_WORLDBELIEF_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
@@ -64,6 +65,8 @@ def _camera_info_to_rerun(msg: Any, image_topic: str) -> list[tuple[str, Any]]:
 
 
 def _rerun_blueprint() -> rrb.Blueprint:
+    import rerun.blueprint as rrb
+
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(origin="world/color_camera/color_image", name="Camera"),
