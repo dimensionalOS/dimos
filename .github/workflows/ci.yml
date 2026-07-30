@@ -333,6 +333,12 @@ jobs:
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
+    env:
+      # Arm faulthandler from interpreter start — before conftest is even
+      # imported — so import-time crashes are covered too. dimos/conftest.py
+      # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
+      # which is what makes a crash legible under xdist (one file per worker).
+      PYTHONFAULTHANDLER: "1"
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
@@ -385,6 +391,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -530,6 +546,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # See the `tests` job for why this is set.
+      PYTHONFAULTHANDLER: "1"
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -659,6 +677,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -724,6 +752,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
       DIMSIM_RENDER: gpu
+      # See the `tests` job for why this is set.
+      PYTHONFAULTHANDLER: "1"
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, large]
     permissions:
@@ -803,6 +833,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
