@@ -22,8 +22,7 @@ Run with::
 
 from __future__ import annotations
 
-import rerun as rr
-from rerun._baseclasses import Archetype
+from typing import TYPE_CHECKING
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -41,10 +40,15 @@ from dimos.navigation.nav_3d.mls_planner.viz import (
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+
 _POSE_MARKER_RADIUS = 0.4
 
 
 def _render_start_pose(msg: PoseStamped) -> Archetype:
+    import rerun as rr
+
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z]],
         colors=[[0, 255, 0]],
@@ -53,6 +57,8 @@ def _render_start_pose(msg: PoseStamped) -> Archetype:
 
 
 def _render_goal_pose(msg: PoseStamped) -> Archetype:
+    import rerun as rr
+
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z]],
         colors=[[255, 0, 0]],

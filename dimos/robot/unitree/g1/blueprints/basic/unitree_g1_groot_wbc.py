@@ -154,7 +154,7 @@ if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
 
 if global_config.simulation == "mujoco":
-    from dimos.mapping.voxels import VoxelGridMapper
+    from dimos.mapping.voxels.module import VoxelGridMapper
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
     from dimos.simulation.engines.robot_sim_binding import (
         RobotSimSpec,

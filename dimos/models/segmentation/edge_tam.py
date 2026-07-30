@@ -19,7 +19,6 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, TypedDict
 
-import cv2
 from hydra.utils import instantiate
 import numpy as np
 from numpy.typing import NDArray
@@ -108,6 +107,7 @@ class EdgeTAMProcessor(Detector):
 
     def _prepare_frame(self, image: Image) -> torch.Tensor:
         """Prepare frame for SAM2 (resize, normalize, convert to tensor)."""
+        import cv2
 
         cv_image = image.to_opencv()
         rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)

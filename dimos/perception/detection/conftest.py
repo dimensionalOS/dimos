@@ -63,7 +63,7 @@ class Moment3D(Moment):
 def tf():
     t = TF()
     yield t
-    t.stop()
+    t.dispose()
 
 
 @pytest.fixture(scope="session")

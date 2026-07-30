@@ -56,7 +56,7 @@ class Detection3DModule(Detection2DModule):
         self,
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        transform: Transform,
+        transform: Transform | None,
     ) -> ImageDetections3DPC:
         if not transform:
             return ImageDetections3DPC(detections.image, [])
@@ -141,7 +141,7 @@ class Detection3DModule(Detection2DModule):
             return None  # type: ignore[return-value]
 
         pc = self.pointcloud.get_next()
-        transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+        transform = self.tfbuffer.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
 
         detections3d = self.process_frame(detections, pc, transform)
 
@@ -163,7 +163,7 @@ class Detection3DModule(Detection2DModule):
 
         def detection2d_to_3d(args):  # type: ignore[no-untyped-def]
             detections, pc = args
-            transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+            transform = self.tfbuffer.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
         self.detection_stream_3d = align_timestamped(  # type: ignore[type-var]

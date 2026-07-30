@@ -22,7 +22,6 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-import cv2
 import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
@@ -32,6 +31,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.image_embedding import ImageEmbeddingProvider
 from dimos.perception.spatial_vector_db import SpatialVectorDB
 from dimos.perception.visual_memory import VisualMemory
@@ -81,6 +81,7 @@ class SpatialMemory(Module):
 
     # LCM inputs
     color_image: In[Image]
+    tf: In[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -182,6 +183,8 @@ class SpatialMemory(Module):
 
     @rpc
     def start(self) -> None:
+        import cv2
+
         super().start()
 
         # Subscribe to LCM streams
@@ -213,7 +216,7 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        tf = self.tf.get("world", "base_link")
+        tf = self.tfbuffer.get("world", "base_link")
 
         if tf is None:
             return
@@ -502,7 +505,7 @@ class SpatialMemory(Module):
         Returns:
             True if successfully added, False otherwise
         """
-        tf = self.tf.get("world", "base_link")
+        tf = self.tfbuffer.get("world", "base_link")
         if not tf:
             logger.error("No position available for robot location")
             return False

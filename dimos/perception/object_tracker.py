@@ -16,8 +16,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
-
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
     Detection2D,
@@ -39,9 +37,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
@@ -73,6 +71,7 @@ class ObjectTracking(Module):
     detection2darray: Out[Detection2DArray]
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -85,6 +84,8 @@ class ObjectTracking(Module):
             reid_fail_tolerance: Number of consecutive frames Re-ID can fail before
                                  tracking is stopped.
         """
+        import cv2
+
         # Call parent Module init
         super().__init__(**kwargs)
 
@@ -115,9 +116,6 @@ class ObjectTracking(Module):
         self.stop_tracking = threading.Event()
         self.tracking_rate = 30.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
-
-        # Initialize TF publisher
-        self.tf = TF()
 
         # Store latest detections for RPC access
         self._latest_detection2d: Detection2DArray | None = None
@@ -190,6 +188,8 @@ class ObjectTracking(Module):
         Returns:
             Dict containing tracking results with 2D and 3D detections
         """
+        import cv2
+
         if self._latest_rgb_frame is None:
             logger.warning("No RGB frame available for tracking")
 
@@ -355,6 +355,8 @@ class ObjectTracking(Module):
 
     def _process_tracking(self) -> None:
         """Process current frame for tracking and publish detections."""
+        import cv2
+
         if self.tracker is None or not self.tracking_initialized:
             return
 
@@ -505,7 +507,7 @@ class ObjectTracking(Module):
                         child_frame_id="tracked_object",
                         ts=header.ts,
                     )
-                    self.tf.publish(tracked_object_tf)
+                    self.tf.publish(TFMessage(tracked_object_tf))
 
         # Store latest detections for RPC access
         self._latest_detection2d = detection2darray
@@ -558,6 +560,8 @@ class ObjectTracking(Module):
 
     def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Draw REID feature matches on the image."""
+        import cv2
+
         viz_image: NDArray[np.uint8] = image.copy()
 
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[misc]

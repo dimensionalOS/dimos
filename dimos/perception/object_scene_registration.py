@@ -15,10 +15,8 @@
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -29,6 +27,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -53,6 +52,7 @@ class ObjectSceneRegistrationModule(Module):
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
+    tf: In[TFMessage]
 
     detections_2d: Out[Detection2DArray]
     detections_3d: Out[Detection3DArray]
@@ -176,6 +176,8 @@ class ObjectSceneRegistrationModule(Module):
 
     def _get_object_mask(self, object_id: str) -> NDArray[np.uint8] | None:
         """Get dilated mask for an object by ID."""
+        import cv2
+
         for obj in self._object_db.get_all_objects():
             if obj.object_id != object_id:
                 continue
@@ -199,6 +201,8 @@ class ObjectSceneRegistrationModule(Module):
         voxel_size: float = 0.01,
     ) -> PointCloud2 | None:
         """Get full scene pointcloud from depth, including table/surfaces for collision filtering."""
+        import open3d as o3d  # type: ignore[import-untyped]
+
         scene_snapshot = self._latest_scene_snapshot
         if scene_snapshot is None or self._camera_info is None:
             return None
@@ -330,7 +334,7 @@ class ObjectSceneRegistrationModule(Module):
         # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
         if self._target_frame != color_image.frame_id:
-            camera_transform = self.tf.get(
+            camera_transform = self.tfbuffer.get(
                 self._target_frame,
                 color_image.frame_id,
                 color_image.ts,
