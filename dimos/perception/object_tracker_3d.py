@@ -14,7 +14,6 @@
 
 
 # Import LCM messages
-import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import (
     Detection3D,
@@ -120,6 +119,8 @@ class ObjectTracker3D(ObjectTracker2D):
 
     def _process_tracking(self) -> None:
         """Override to add 3D detection creation after 2D tracking."""
+        import cv2
+
         # Call parent 2D tracking
         super()._process_tracking()
 

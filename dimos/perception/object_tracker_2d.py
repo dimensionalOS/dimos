@@ -17,8 +17,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
-
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
@@ -120,6 +118,8 @@ class ObjectTracker2D(Module):
         Returns:
             Dict containing tracking status
         """
+        import cv2
+
         if self._latest_rgb_frame is None:
             logger.warning("No RGB frame available for tracking")
             return {"status": "no_frame"}
@@ -215,6 +215,8 @@ class ObjectTracker2D(Module):
 
     def _process_tracking(self) -> None:
         """Process current frame for tracking and publish 2D detections."""
+        import cv2
+
         if self.tracker is None or not self.tracking_initialized:
             return
 
@@ -293,6 +295,8 @@ class ObjectTracker2D(Module):
 
     def _draw_visualization(self, image: NDArray[np.uint8], bbox: list[int]) -> NDArray[np.uint8]:
         """Draw tracking visualization."""
+        import cv2
+
         viz_image: NDArray[np.uint8] = image.copy()
         x1, y1, x2, y2 = bbox
         cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)

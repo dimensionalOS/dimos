@@ -18,7 +18,6 @@ import atexit
 import threading
 import time
 
-import cv2
 from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
@@ -279,6 +278,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._tracking_enabled = True
 
     def _capture_loop(self) -> None:
+        import cv2
+
         while self._running and self._zed is not None:
             try:
                 err = self._zed.grab(self._runtime_params)

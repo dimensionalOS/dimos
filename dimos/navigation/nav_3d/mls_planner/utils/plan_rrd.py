@@ -21,12 +21,10 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 from time import perf_counter
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-import rerun as rr
-import rerun.blueprint as rrb
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
@@ -37,6 +35,9 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.utils.data import resolve_named_path
+
+if TYPE_CHECKING:
+    import rerun.blueprint as rrb
 
 TIMELINE = "ts"
 
@@ -108,6 +109,8 @@ def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
 
 
 def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
+    import rerun as rr
+
     if edges.size == 0:
         rr.log(entity, rr.LineStrips3D([]))
         return
@@ -119,6 +122,8 @@ def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
 
 
 def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list[int]) -> None:
+    import rerun as rr
+
     if waypoints is None or len(waypoints) == 0:
         rr.log(entity, rr.LineStrips3D([]))
         return
@@ -130,6 +135,8 @@ def _log_odometry(
     pose: tuple[float, ...], ts: float, trail: list[tuple[float, float, float]]
 ) -> None:
     """Log the odometry pose as a moving body-frame transform and the growing trail."""
+    import rerun as rr
+
     px, py, pz, qx, qy, qz, qw = pose
     rr.set_time(TIMELINE, timestamp=ts)
     rr.log(
@@ -164,6 +171,8 @@ def _log_local_map(
     The close-up view takes that frame as its origin, so it rides along with the
     robot. Translation only: yaw would spin the view.
     """
+    import rerun as rr
+
     gx, gy, gz = ground
     rr.log("world/local", rr.Transform3D(translation=[gx, gy, gz]))
     rel = (
@@ -199,6 +208,8 @@ def _log_shared(
 
     Returns (surface, nodes, edges) for metric sizing.
     """
+    import rerun as rr
+
     rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
 
     voxel_map = planner.voxel_map()
@@ -237,6 +248,8 @@ def _log_shared(
 
 def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
     """Full map on the left; the robot-following crop and the metrics beside it."""
+    import rerun.blueprint as rrb
+
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial3DView(
@@ -261,6 +274,8 @@ def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
 
 
 def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: LocalCrop) -> None:
+    import rerun as rr
+
     rr.init("plan_rrd", recording_id=db_path.stem)
     if out is not None and live:
         # Generous viewer memory so the gRPC sink never backpressures the writer.
@@ -316,6 +331,8 @@ def _process_frame(
     crop: LocalCrop,
 ) -> dict[str, float]:
     """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
+    import rerun as rr
+
     assert ray_obs.pose_tuple is not None
     bounds = ray_obs.tags["region_bounds"]
     px, py, pz, *_ = ray_obs.pose_tuple
@@ -454,6 +471,8 @@ def main(
         None, "--to-time", help="End timestamp (s); default is the stream end"
     ),
 ) -> None:
+    import rerun as rr
+
     db_path = resolve_named_path(dataset, ".db")
     crop = LocalCrop(local_radius, local_above, local_below)
     _init_recording(db_path, out, live, crop)

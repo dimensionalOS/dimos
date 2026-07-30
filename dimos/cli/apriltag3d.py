@@ -33,7 +33,7 @@ import zipfile
 import numpy as np
 import trimesh
 
-from dimos.cli.apriltag import _FAMILIES, cell_matrix, display_color, row_runs
+from dimos.cli.apriltag import _families, cell_matrix, display_color, row_runs
 
 # Cutting solids overshoot the plate by this much so coplanar faces never meet in a
 # boolean; the exported solids stay at their exact nominal dimensions.
@@ -581,8 +581,8 @@ def build_tag_meshes(
 ) -> TagParts:
     """Build one tag's solids, all sharing one coordinate frame."""
     family = family.lower()
-    if family not in _FAMILIES:
-        raise ValueError(f"unsupported family: {family}; choose from {sorted(_FAMILIES)}")
+    if family not in _families():
+        raise ValueError(f"unsupported family: {family}; choose from {sorted(_families())}")
     if size_mm <= 0:
         raise ValueError(f"size_mm must be positive; got {size_mm}")
     if not 0 < marker_mm < thickness_mm:
@@ -595,7 +595,7 @@ def build_tag_meshes(
             f"keep it under {thickness_mm - marker_mm:g} mm"
         )
 
-    n = _FAMILIES[family][2]
+    n = _families()[family][2]
     margin = margin_cells * size_mm / n
     plate = size_mm + 2 * margin
     z_swap = thickness_mm - marker_mm
@@ -749,5 +749,5 @@ def generate_3d(
 
 def plate_size_mm(family: str, size_mm: float, margin_cells: float) -> float:
     """Outer plate edge length for the given tag size and quiet-zone margin."""
-    n = _FAMILIES[family.lower()][2]
+    n = _families()[family.lower()][2]
     return size_mm + 2 * margin_cells * size_mm / n
