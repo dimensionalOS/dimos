@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 from contextlib import suppress
+import faulthandler
 import hashlib
 import os
+import pathlib
 import platform
 import tempfile
 import threading
@@ -101,7 +104,71 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+# --- crash diagnostics -------------------------------------------------------
+# A segfault in a C extension leaves NO kernel log line: faulthandler installs a
+# SIGSEGV handler, and the kernel only prints "segfault at ..." for *unhandled*
+# signals. The Python traceback is therefore the only evidence, and it has two
+# gaps we close here.
+#
+# 1. pytest's builtin faulthandler plugin writes to stderr. Under xdist that is
+#    shared between workers with no attribution, and it dies with the job log's
+#    retention. A per-process file survives the crash and uploads as an artifact.
+# 2. That plugin is armed only between configure and unconfigure. Crashes during
+#    session teardown or interpreter finalization print nothing — and our
+#    LCM handler threads are daemons that outlive the session, which is exactly
+#    where a 2026-07-23 CI segfault landed (kernel-logged, no traceback).
+#    The hooks below re-arm the handler for that window.
+#
+# The file is deliberately never closed: closing it would leave faulthandler
+# writing to a dead fd during finalization.
+_crash_log = None
+_crash_log_disabled = False
+
+
+def _arm_crash_dumps() -> None:
+    """Open the per-process dump file (once) and point faulthandler at it.
+
+    Called from several hooks on purpose: pytest's builtin faulthandler plugin
+    re-arms the handler on stderr during configure and again during unconfigure,
+    and hook ordering between it and a conftest plugin is not something to rely
+    on. Re-arming is idempotent and cheap, so we do it at every point where the
+    builtin may have taken the handler back.
+    """
+    global _crash_log, _crash_log_disabled
+    if _crash_log_disabled:
+        return
+    if _crash_log is None:
+        base = os.environ.get("DIMOS_CRASH_DIR") or os.path.join(
+            tempfile.gettempdir(), "pytest-crash"
+        )
+        worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+        try:
+            directory = pathlib.Path(base)
+            directory.mkdir(parents=True, exist_ok=True)
+            _crash_log = open(directory / f"crash-{worker}-{os.getpid()}.log", "w", buffering=1)
+        except OSError as exc:  # never let diagnostics break a test run
+            _crash_log_disabled = True
+            print(f"crash diagnostics disabled ({base}): {exc}")
+            return
+        # Finalization can outlive every pytest hook, so re-arm one last time on
+        # the way out; atexit runs after unconfigure whatever the hook order was.
+        atexit.register(_arm_crash_dumps)
+    faulthandler.enable(file=_crash_log, all_threads=True)
+
+
+def pytest_sessionstart(session):
+    # Runs strictly after every pytest_configure, which is the only ordering
+    # guarantee strong enough to win the handler back from the builtin plugin.
+    _arm_crash_dumps()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    _arm_crash_dumps()
+
+
 def pytest_configure(config):
+    _arm_crash_dumps()
     config.addinivalue_line(
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",

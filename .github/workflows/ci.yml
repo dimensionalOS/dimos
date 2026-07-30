@@ -333,6 +333,13 @@ jobs:
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
+    env:
+      # Arm faulthandler from interpreter start — before conftest is even
+      # imported — so import-time crashes are covered too. dimos/conftest.py
+      # redirects it to a per-process file under DIMOS_CRASH_DIR, which is what
+      # makes a crash legible under xdist (one file per worker).
+      PYTHONFAULTHANDLER: "1"
+      DIMOS_CRASH_DIR: ${{ runner.temp }}/pytest-crash
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
@@ -385,6 +392,34 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
         shell: bash
+      - name: Collect crash diagnostics
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
+          # Runs that never crashed leave empty files; drop them so the artifact
+          # is either meaningful or absent.
+          find "$dir" -type f -empty -delete 2>/dev/null || true
+          shopt -s nullglob
+          files=("$dir"/*.log)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: Upload crash diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-${{ matrix.os }}-${{ matrix.pyver }}-${{ github.run_attempt }}
+          path: ${{ env.DIMOS_CRASH_DIR }}
+          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -530,6 +565,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # See the `tests` job for why both of these are set.
+      PYTHONFAULTHANDLER: "1"
+      DIMOS_CRASH_DIR: ${{ runner.temp }}/pytest-crash
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -659,6 +697,32 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
+      - name: Collect crash diagnostics
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
+          find "$dir" -type f -empty -delete 2>/dev/null || true
+          shopt -s nullglob
+          files=("$dir"/*.log)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: Upload crash diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-selfhosted-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ env.DIMOS_CRASH_DIR }}
+          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -724,6 +788,9 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
       DIMSIM_RENDER: gpu
+      # See the `tests` job for why both of these are set.
+      PYTHONFAULTHANDLER: "1"
+      DIMOS_CRASH_DIR: ${{ runner.temp }}/pytest-crash
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, large]
     permissions:
@@ -803,6 +870,32 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
+      - name: Collect crash diagnostics
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
+          find "$dir" -type f -empty -delete 2>/dev/null || true
+          shopt -s nullglob
+          files=("$dir"/*.log)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: Upload crash diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-selfhosted-large-${{ github.run_attempt }}
+          path: ${{ env.DIMOS_CRASH_DIR }}
+          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
