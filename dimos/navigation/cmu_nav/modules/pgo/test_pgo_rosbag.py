@@ -166,9 +166,9 @@ class TestPGORosbag:
         logger.info(f"  TF outputs:              {tf_count}")
 
         # Basic output checks
-        assert corrected_count > 0, "PGO produced no corrected odometry"
-        assert global_map_count > 0, "PGO produced no global map messages"
-        assert tf_count > 0, "PGO produced no TF messages"
+        assert corrected_count > 0, f"PGO produced no corrected odometry{runner.exit_report()}"
+        assert global_map_count > 0, f"PGO produced no global map messages{runner.exit_report()}"
+        assert tf_count > 0, f"PGO produced no TF messages{runner.exit_report()}"
 
         # Extract corrected trajectory
         corrected_positions = np.array(
@@ -301,7 +301,9 @@ class TestPGORosbag:
             corrected.stop(lcm_instance)
 
         published = len(corrected.messages)
-        assert published > 0, "PGO produced no corrected odometry for the burst"
+        assert published > 0, (
+            f"PGO produced no corrected odometry for the burst{runner.exit_report()}"
+        )
 
         # Each scan was stamped with a pose one metre further along, so the x of
         # the last correction says which scan PGO finished on.
