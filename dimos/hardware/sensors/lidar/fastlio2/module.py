@@ -52,6 +52,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
 
@@ -134,6 +135,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -145,21 +147,14 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
-            Transform(
-                frame_id=self.frame_id,
-                child_frame_id=self.config.sensor_frame_id,
-                translation=Vector3(
-                    msg.pose.position.x,
-                    msg.pose.position.y,
-                    msg.pose.position.z,
-                ),
-                rotation=Quaternion(
-                    msg.pose.orientation.x,
-                    msg.pose.orientation.y,
-                    msg.pose.orientation.z,
-                    msg.pose.orientation.w,
-                ),
-                ts=msg.ts or time.time(),
+            TFMessage(
+                Transform(
+                    frame_id=self.frame_id,
+                    child_frame_id=self.config.sensor_frame_id,
+                    translation=Vector3(msg.pose.position),
+                    rotation=Quaternion(msg.pose.orientation),
+                    ts=msg.ts or time.time(),
+                )
             )
         )
 

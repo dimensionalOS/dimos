@@ -39,7 +39,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import (
     ExecutionOutcome,
     ExecutionTarget,
@@ -97,6 +97,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
@@ -168,6 +169,7 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -284,7 +286,6 @@ class ManipulationModule(Module):
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
-            logger.info(f"Eager-initializing TF: {self.tf}")
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
@@ -402,7 +403,7 @@ class ManipulationModule(Module):
                             transforms.append(link_tf)
 
                 if transforms:
-                    self.tf.publish(*transforms)
+                    self.tf.publish(TFMessage(*transforms))
             except Exception as e:
                 logger.debug(f"TF publish error: {e}")
 

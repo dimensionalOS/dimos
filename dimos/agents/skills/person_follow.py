@@ -35,6 +35,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
@@ -63,6 +64,7 @@ class PersonFollowSkillContainer(Module):
     color_image: In[Image]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
+    tf: In[TFMessage]
 
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
@@ -89,11 +91,12 @@ class PersonFollowSkillContainer(Module):
             camera_info = DimSimConnection.camera_info_static
 
         self._visual_servo = VisualServoing2D(camera_info, bool(self.config.g.simulation))
-        self._detection_navigation = DetectionNavigation(self.tf, camera_info)
+        self._camera_info = camera_info
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._detection_navigation = DetectionNavigation(self.tfbuffer, self._camera_info)
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         if self.config.use_3d_navigation:
             self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))
