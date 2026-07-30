@@ -23,8 +23,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.module import Module, ModuleConfig
 from dimos.cli.config_flags import (
     FlagResolutionError,
     expand_field_flags,
@@ -32,6 +30,8 @@ from dimos.cli.config_flags import (
     split_run_tokens,
 )
 from dimos.cli.dimos import load_config_args
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import Module, ModuleConfig
 
 
 class MapperConfig(ModuleConfig):
