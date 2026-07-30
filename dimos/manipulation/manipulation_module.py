@@ -47,12 +47,11 @@ from dimos.manipulation.execution_manager import (
 )
 from dimos.manipulation.planning.factory import (
     KinematicsName,
-    PlannerName,
     WorldBackend,
     create_planning_specs,
     create_world,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
     joint_target_to_global_names,
@@ -63,14 +62,21 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.planners.config import (
+    CartesianPathConfig,
+    ManipulationPlannerConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
+    CartesianTarget,
     GeneratedPlan,
     IKResult,
     Obstacle,
     PlanningGroupID,
+    PlanningResult,
     RobotName,
     WorldRobotID,
 )
@@ -92,6 +98,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -137,7 +144,7 @@ class ManipulationModuleConfig(ModuleConfig):
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
     )
-    planner_name: PlannerName = "roboplan"
+    planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
@@ -224,7 +231,7 @@ class ManipulationModule(Module):
         planning_specs = create_planning_specs(
             world=world,
             world_backend=self.config.world_backend,
-            planner_name=self.config.planner_name,
+            planner=self.config.planner,
             kinematics_name=self.config.kinematics_name,
             kinematics=self.config.kinematics,
         )
@@ -672,6 +679,87 @@ class ManipulationModule(Module):
         self._validate_generated_trajectory(trajectory, expected_names, waypoints)
         return path, trajectory
 
+    def _materialize_timed_generated_plan(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        result: PlanningResult,
+    ) -> tuple[list[JointState], JointTrajectory]:
+        """Preserve a planner-supplied timed trajectory without reparameterizing it."""
+        assert self._world_monitor is not None
+        selection = self._world_monitor.planning_groups.select(group_ids)
+        expected_names = list(selection.joint_names)
+        path = [JointState(state) for state in result.path]
+        waypoints = self._validate_selected_path(path, expected_names)
+        timestamps = result.timestamps
+        if timestamps is None or len(timestamps) != len(path):
+            raise ValueError("Planner must return one timestamp per waypoint")
+        points: list[TrajectoryPoint] = []
+        for waypoint_index, (state, timestamp) in enumerate(zip(path, timestamps, strict=True)):
+            velocities = list(state.velocity)
+            if len(velocities) != len(expected_names):
+                raise ValueError(f"Waypoint {waypoint_index} velocity dimension mismatch")
+            points.append(
+                TrajectoryPoint(
+                    time_from_start=float(timestamp),
+                    positions=list(state.position),
+                    velocities=velocities,
+                )
+            )
+        trajectory = JointTrajectory(joint_names=expected_names, points=points)
+        self._validate_generated_trajectory(trajectory, expected_names, waypoints)
+        return path, trajectory
+
+    def _resolve_group_plan_start(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        planning_epoch: int,
+    ) -> tuple[PlanningGroupSelection, JointState] | None:
+        """Resolve an ordered group selection and its authoritative start state."""
+        assert self._world_monitor is not None
+        try:
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            current = self._world_monitor.current_global_joint_state()
+            start = filter_joint_state_to_selected_joints(current, selection.joint_names)
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
+            return None
+        return selection, start
+
+    def _store_generated_plan(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        result: PlanningResult,
+        planning_epoch: int,
+        *,
+        preserve_timing: bool = False,
+    ) -> GeneratedPlan | None:
+        """Validate, materialize, and atomically store a successful planning result."""
+        try:
+            if preserve_timing:
+                path, trajectory = self._materialize_timed_generated_plan(group_ids, result)
+            else:
+                path, trajectory = self._materialize_generated_plan(group_ids, result.path)
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
+            return None
+        plan = GeneratedPlan(
+            group_ids=group_ids,
+            trajectory=trajectory,
+            path=path,
+            status=result.status,
+            planning_time=result.planning_time,
+            path_length=result.path_length,
+            iterations=result.iterations,
+            message=result.message,
+        )
+        with self._lock:
+            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+                logger.info("Discarding cancelled planning result")
+                return None
+            self._last_plan = plan
+            self._state = ManipulationState.COMPLETED
+        return plan
+
     def _plan_selected_path(
         self,
         group_ids: tuple[PlanningGroupID, ...],
@@ -696,28 +784,7 @@ class ManipulationModule(Module):
             return None
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
-        try:
-            path, trajectory = self._materialize_generated_plan(group_ids, result.path)
-        except Exception as exc:
-            self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
-            return None
-        plan = GeneratedPlan(
-            group_ids=group_ids,
-            trajectory=trajectory,
-            path=path,
-            status=result.status,
-            planning_time=result.planning_time,
-            path_length=result.path_length,
-            iterations=result.iterations,
-            message=result.message,
-        )
-        with self._lock:
-            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
-                logger.info("Discarding cancelled planning result")
-                return None
-            self._last_plan = plan
-            self._state = ManipulationState.COMPLETED
-        return plan
+        return self._store_generated_plan(group_ids, result, planning_epoch)
 
     def _record_error(self, message: str) -> bool:
         """Record an error without changing the manipulation state."""
@@ -992,13 +1059,10 @@ class ManipulationModule(Module):
         if planning_epoch is None:
             return None
 
-        try:
-            selection = self._world_monitor.planning_groups.select(group_ids)
-            current = self._world_monitor.current_global_joint_state()
-            start = filter_joint_state_to_selected_joints(current, selection.joint_names)
-        except Exception as exc:
-            self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
             return None
+        _selection, start = resolved
 
         goal_names: list[str] = []
         goal_positions: list[float] = []
@@ -1041,13 +1105,10 @@ class ManipulationModule(Module):
         planning_epoch = self._begin_group_planning()
         if planning_epoch is None:
             return None
-        try:
-            selection = self._world_monitor.planning_groups.select(group_ids)
-            current = self._world_monitor.current_global_joint_state()
-            start = filter_joint_state_to_selected_joints(current, selection.joint_names)
-        except Exception as exc:
-            self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
             return None
+        _selection, start = resolved
         ik = self.inverse_kinematics(
             pose_targets=stamped_targets,
             auxiliary_group_ids=auxiliary_ids,
@@ -1059,6 +1120,64 @@ class ManipulationModule(Module):
             return None
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
+
+    @rpc
+    def plan_cartesian_targets(
+        self,
+        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+    ) -> bool:
+        """Plan TCP motion through absolute or relative Cartesian waypoints."""
+        return self.generate_cartesian_plan(targets, config, auxiliary_groups) is not None
+
+    def generate_cartesian_plan(
+        self,
+        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+    ) -> GeneratedPlan | None:
+        """Generate and store a timed Cartesian plan through PlannerSpec."""
+        if self._world_monitor is None or self._planner is None:
+            return None
+        if not targets:
+            self._fail("At least one Cartesian target is required")
+            return None
+        normalized_targets = {
+            planning_group_id_from_selector(group): target for group, target in targets.items()
+        }
+        if len(normalized_targets) != len(targets):
+            self._fail("Cartesian target groups must be unique")
+            return None
+        auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
+        group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
+        planning_epoch = self._begin_group_planning()
+        if planning_epoch is None:
+            return None
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
+            return None
+        selection, start = resolved
+        result = self._planner.plan_cartesian_path(
+            world=self._world_monitor.world,
+            selection=selection,
+            start=start,
+            targets=normalized_targets,
+            config=config,
+            auxiliary_groups=auxiliary_ids,
+        )
+        if not result.is_success():
+            detail = f": {result.message}" if result.message else ""
+            self._fail_planning_epoch(
+                planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+            )
+            return None
+        return self._store_generated_plan(
+            group_ids,
+            result,
+            planning_epoch,
+            preserve_timing=True,
+        )
 
     @rpc
     def preview_path(
