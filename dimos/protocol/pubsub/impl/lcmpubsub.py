@@ -105,10 +105,15 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
             return noop
 
+        # The lcm-level detach is deferred to the loop thread (see
+        # _defer_unsubscribe), but delivery must stop the moment unsubscribe()
+        # returns — gate dispatch on a liveness flag.
+        alive = True
+
         if topic.is_pattern:
 
             def handler(channel: str, msg: bytes) -> None:
-                if channel == "LCM_SELF_TEST":
+                if not alive or channel == "LCM_SELF_TEST":
                     return
                 callback(msg, Topic.from_channel_str(channel, topic.lcm_type))
 
@@ -119,19 +124,22 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
             lcm_subscription = self.l.subscribe(pattern_str, handler)
         else:
             topic_str = str(topic)
-            lcm_subscription = self.l.subscribe(topic_str, lambda _, msg: callback(msg, topic))
+
+            def plain_handler(_: str, msg: bytes) -> None:
+                if alive:
+                    callback(msg, topic)
+
+            lcm_subscription = self.l.subscribe(topic_str, plain_handler)
 
         # Set queue capacity to 10000 to handle high-volume bursts
         lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
-            # lcm-python's unsubscribe is not safe against a concurrently
-            # dispatching handle_timeout (nulls the subscription's fields under
-            # the handler → segfault), so serialize with the _lcm_loop poll.
-            with self._l_lock:
-                if self.l is None:
-                    return
-                self.l.unsubscribe(lcm_subscription)
+            nonlocal alive
+            if not alive:
+                return
+            alive = False
+            self._defer_unsubscribe(lcm_subscription)
 
         return unsubscribe
 
