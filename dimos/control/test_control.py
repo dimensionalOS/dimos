@@ -973,7 +973,7 @@ class TestTickLoop:
 
 
 class TestIntegration:
-    def test_full_trajectory_execution(self, mock_adapter):
+    def test_full_trajectory_execution(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -1017,10 +1017,15 @@ class TestIntegration:
         )
 
         tick_loop.start()
-        traj_task.execute(trajectory, trajectory_start_positions(trajectory))
-
-        time.sleep(0.6)
-        tick_loop.stop()
+        try:
+            traj_task.execute(trajectory, trajectory_start_positions(trajectory))
+            wait_until(
+                lambda: traj_task.get_state() == TrajectoryState.COMPLETED,
+                timeout=2.0,
+                interval=0.01,
+            )
+        finally:
+            tick_loop.stop()
 
         assert traj_task.get_state() == TrajectoryState.COMPLETED
         assert mock_adapter.write_joint_positions.call_count > 0

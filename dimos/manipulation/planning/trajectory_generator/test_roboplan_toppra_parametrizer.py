@@ -15,6 +15,7 @@
 """Tests for the RoboPlan TOPP-RA trajectory parametrizer."""
 
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -243,3 +244,135 @@ def test_cached_group_preserves_each_request_joint_order(
     constructor.assert_called_once()
     assert canonical.trajectory.joint_names == ["left/a", "right/b"]
     assert reversed_order.trajectory.joint_names == ["right/b", "left/a"]
+
+
+def test_roboplan_parametrizer_rejects_incompatible_world(
+    mocker: MockerFixture,
+) -> None:
+    selection, result = _selection_and_result()
+
+    with pytest.raises(
+        TrajectoryParametrizationError,
+        match="RoboPlan TOPP-RA requires RoboPlanWorld",
+    ):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            mocker.MagicMock(), selection, result
+        )
+
+
+def test_roboplan_parametrizer_reports_missing_generated_group() -> None:
+    selection, result = _selection_and_result()
+    model = replace(_model(), groups={})
+
+    with pytest.raises(
+        TrajectoryParametrizationError,
+        match=r"RoboPlan has no generated group for \['left/arm', 'right/arm'\]",
+    ):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            _World(model), selection, result
+        )
+
+
+def test_roboplan_parametrizer_rejects_group_with_different_joints() -> None:
+    selection, result = _selection_and_result()
+    model = _model()
+    mismatched_group = replace(model.all_group, public_names=("left/a", "right/other"))
+    model = replace(
+        model,
+        groups={frozenset(mismatched_group.group_ids): mismatched_group},
+        all_group=mismatched_group,
+    )
+
+    with pytest.raises(
+        TrajectoryParametrizationError,
+        match="does not match selected joints",
+    ):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            _World(model), selection, result
+        )
+
+
+def test_roboplan_parametrizer_rejects_limit_vector_with_wrong_size(
+    mocker: MockerFixture,
+) -> None:
+    selection, result = _selection_and_result()
+    model = _model()
+    mocker.patch.object(
+        model.scene,
+        "getVelocityLimitVectors",
+        return_value=([-1.0], [1.0]),
+    )
+
+    with pytest.raises(
+        TrajectoryParametrizationError,
+        match="velocity limits do not match group 'composite'",
+    ):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            _World(model), selection, result
+        )
+
+
+def test_roboplan_parametrizer_wraps_native_generation_error(
+    mocker: MockerFixture,
+) -> None:
+    native = mocker.MagicMock()
+    native.generate.side_effect = RuntimeError("native failure")
+    mocker.patch(
+        "dimos.manipulation.planning.trajectory_generator."
+        "roboplan_toppra_parametrizer.roboplan_toppra.PathParameterizerTOPPRA",
+        return_value=native,
+    )
+    selection, result = _selection_and_result()
+
+    with pytest.raises(
+        TrajectoryParametrizationError,
+        match="RoboPlan TOPP-RA parametrization failed: native failure",
+    ) as error:
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            _World(_model()), selection, result
+        )
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize(
+    ("generated", "message"),
+    [
+        (
+            SimpleNamespace(
+                joint_names=["native_a", "unexpected"],
+                times=[0.0],
+                positions=[np.asarray([0.0, 0.1])],
+                velocities=[np.asarray([0.0, 0.0])],
+            ),
+            "returned unexpected joint names",
+        ),
+        (
+            SimpleNamespace(
+                joint_names=["native_a", "native_b"],
+                times=[0.0],
+                positions=[np.asarray([0.0, 0.1])],
+                velocities=[],
+            ),
+            "returned inconsistent trajectory fields",
+        ),
+    ],
+)
+def test_roboplan_parametrizer_rejects_malformed_native_trajectory(
+    mocker: MockerFixture,
+    generated: SimpleNamespace,
+    message: str,
+) -> None:
+    native = mocker.MagicMock()
+    native.generate.return_value = generated
+    mocker.patch(
+        "dimos.manipulation.planning.trajectory_generator."
+        "roboplan_toppra_parametrizer.roboplan_toppra.PathParameterizerTOPPRA",
+        return_value=native,
+    )
+    selection, result = _selection_and_result()
+
+    with pytest.raises(TrajectoryParametrizationError, match=message):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            _World(_model()), selection, result
+        )
