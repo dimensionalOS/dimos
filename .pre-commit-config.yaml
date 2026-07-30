@@ -144,9 +144,12 @@ repos:
         entry: |
           bash -c '
             set -euo pipefail
+            # gsc_pgo/rust links C++ gtsam via an FFI shim and cannot build without
+            # it (see .github/workflows/ci.yml). Clippy it locally in the nix flake
+            # dev shell (`nix develop`); skip it here so plain environments pass.
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
-            done | sort -u | while read -r root; do
+            done | sort -u | grep -v "/gsc_pgo/rust/" | while read -r root; do
               cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
             done
           '
