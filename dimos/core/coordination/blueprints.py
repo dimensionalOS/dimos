@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
-from dimos.core.stream import In, Out, Transport
+from dimos.core.stream import IO, In, Out, Transport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -69,7 +69,7 @@ class DisabledModuleProxy:
 class StreamRef:
     name: str
     type: type
-    direction: Literal["in", "out"]
+    direction: Literal["in", "out", "inout"]
 
 
 @dataclass(frozen=True)
@@ -119,8 +119,8 @@ class BlueprintAtom:
         for name, annotation in all_annotations.items():
             origin = get_origin(annotation)
             # Streams
-            if origin in (In, Out):
-                direction = "in" if origin == In else "out"
+            if origin in (In, Out, IO):
+                direction = "in" if origin == In else "out" if origin == Out else "inout"
                 type_ = get_args(annotation)[0]
                 streams.append(
                     StreamRef(name=name, type=type_, direction=direction)  # type: ignore[arg-type]
