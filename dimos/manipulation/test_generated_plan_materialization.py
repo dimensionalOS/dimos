@@ -126,8 +126,8 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
 
 
-def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch):
-    module = _module(monkeypatch)
+def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
+    module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])
@@ -175,9 +175,9 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch)
     ],
 )
 def test_cartesian_plan_rejects_malformed_timed_results(
-    monkeypatch, timestamps, velocities, message
+    monkeypatch, module_factory, timestamps, velocities, message
 ):
-    module = _module(monkeypatch)
+    module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])

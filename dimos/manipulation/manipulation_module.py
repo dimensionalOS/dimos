@@ -98,6 +98,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
