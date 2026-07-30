@@ -117,9 +117,13 @@ my_robot = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(name="traj_left", type="trajectory", joint_names=[...], priority=10),
-        TaskConfig(name="traj_right", type="trajectory", joint_names=[...], priority=10),
-        TaskConfig(name="safety", type="trajectory", joint_names=[...], priority=100),
+        TaskConfig(
+            name="trajectory",
+            type="trajectory",
+            joint_names=[...],  # union of both arms
+            priority=10,
+            params={"start_position_tolerance": 0.05},
+        ),
     ],
 )
 ```
@@ -132,9 +136,8 @@ my_robot = ControlCoordinator.blueprint(
 | `list_joints()` | List all joint names |
 | `list_tasks()` | List task names |
 | `get_joint_positions()` | Get current positions |
-| `execute_trajectory(task, traj)` | Execute trajectory |
-| `get_trajectory_status(task)` | Get task status |
-| `cancel_trajectory(task)` | Cancel active trajectory |
+| `execute_trajectory(traj)` | Execute through the sole trajectory task |
+| `cancel_trajectory()` | Cancel the sole trajectory task |
 
 ## Control Modes
 

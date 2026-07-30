@@ -85,6 +85,7 @@ class ModuleCoordinator(Resource):
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
         self._started = False
         self._modules_lock = threading.RLock()
+        self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
 
     def start(self) -> None:
@@ -96,9 +97,10 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
-        if self._coordinator_rpc is not None:
-            self._coordinator_rpc.stop()
-            self._coordinator_rpc = None
+        with self._rpc_lock:
+            if self._coordinator_rpc is not None:
+                self._coordinator_rpc.stop()
+                self._coordinator_rpc = None
 
         for name, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=name)
@@ -118,9 +120,10 @@ class ModuleCoordinator(Resource):
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""
-        if self._coordinator_rpc is not None:
-            return
-        self._coordinator_rpc = CoordinatorRPC.serve(self)
+        with self._rpc_lock:
+            if self._coordinator_rpc is not None:
+                return
+            self._coordinator_rpc = CoordinatorRPC.serve(self)
 
     @property
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -632,9 +635,14 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
-        stop = threading.Event()
+        """Serve coordinator RPC and block until the process is interrupted.
+
+        Owning service startup here gives CLI and direct Python ``build().loop()``
+        launches the same attachment behavior.
+        """
+        self.start_rpc_service()
         try:
-            stop.wait()
+            threading.Event().wait()
         except KeyboardInterrupt:
             return
         finally:

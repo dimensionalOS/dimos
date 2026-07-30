@@ -54,6 +54,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
@@ -177,6 +178,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
+main.command()(shell)
 main.add_typer(cache_app, name="cache")
 
 
@@ -461,7 +463,6 @@ def run(
 
         daemonize(log_dir)
 
-        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -477,7 +478,6 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),

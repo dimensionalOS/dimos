@@ -30,8 +30,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+    from dimos.manipulation.planning.planners.config import CartesianPathConfig
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        CartesianTarget,
         IKResult,
         Obstacle,
         PlanningGroupID,
@@ -312,6 +314,19 @@ class PlannerSpec(Protocol):
         max_iterations: int = 5000,
     ) -> PlanningResult:
         """Plan a collision-free path for an ordered planning-group selection."""
+        ...
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+    ) -> PlanningResult:
+        """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...
 
     def get_name(self) -> str:
